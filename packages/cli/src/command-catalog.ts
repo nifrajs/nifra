@@ -1526,7 +1526,8 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
           ? `✓ ${out.mode === "api" ? "API-only app" : `${out.splits.length} route file${out.splits.length === 1 ? "" : "s"} split`}, ${out.moves.length} file${out.moves.length === 1 ? "" : "s"} moved`
           : `⚠ ${out.issues.length} issue${out.issues.length === 1 ? "" : "s"} need a decision; everything else is planned`,
         ...out.splits.map(
-          (split) => `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})`,
+          (split) =>
+            `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})${split.shared === undefined ? "" : `, shared data → ${split.shared}`}`,
         ),
         ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
         ...out.rewritten.map((file) => `  edit  ${file} (imports)`),

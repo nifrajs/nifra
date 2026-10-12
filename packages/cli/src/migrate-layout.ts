@@ -123,6 +123,8 @@ export interface LayoutMigrationResult {
     readonly file: string
     readonly backend: string
     readonly moved: readonly string[]
+    /** The module beside the route both halves import constant data from, when the split made one. */
+    readonly shared?: string
   }>
   /** Files that moved, app-relative. */
   readonly moves: ReadonlyArray<{ readonly from: string; readonly to: string }>
@@ -175,12 +177,29 @@ interface StatementInfo {
   readonly exports: ReadonlyMap<string, readonly string[]>
   readonly valueRefs: ReadonlySet<string>
   readonly typeRefs: ReadonlySet<string>
+  /** A local `export { a, b as c }`: each entry, which the reachability of its own half follows. */
+  readonly listed: ReadonlyArray<ListedExport>
+}
+
+interface ListedExport {
+  readonly exported: string
+  readonly local: string
+  /** `export type { X }` or `export { type X }`: a read in a type position. */
+  readonly type: boolean
+}
+
+/** The names one half reads, by position. */
+interface Uses {
+  readonly value: ReadonlySet<string>
+  readonly type: ReadonlySet<string>
 }
 
 export interface SplitResult {
   readonly frontend: string
   /** `undefined` when the file exports nothing for the server. */
   readonly backend: string | undefined
+  /** The module beside the route that holds constant data both halves import, when there is any. */
+  readonly shared?: string
   readonly moved: readonly string[]
   readonly issues: readonly string[]
 }
@@ -266,6 +285,7 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
   return sf.statements.map((node) => {
     const declares = new Set<string>()
     const exports = new Map<string, string[]>()
+    const listed: ListedExport[] = []
     const exported = hasModifier(ts, node, ts.SyntaxKind.ExportKeyword)
     const isDefault = hasModifier(ts, node, ts.SyntaxKind.DefaultKeyword)
     const addExport = (local: string, as: string): void => {
@@ -305,10 +325,10 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
       ts.isNamedExports(node.exportClause)
     ) {
       for (const el of node.exportClause.elements) {
-        addExport(
-          node.moduleSpecifier ? `\0${el.name.text}` : (el.propertyName ?? el.name).text,
-          el.name.text,
-        )
+        const local = (el.propertyName ?? el.name).text
+        addExport(node.moduleSpecifier ? `\0${el.name.text}` : local, el.name.text)
+        if (node.moduleSpecifier === undefined)
+          listed.push({ exported: el.name.text, local, type: node.isTypeOnly || el.isTypeOnly })
       }
     }
     const refs = ts.isImportDeclaration(node)
@@ -325,34 +345,72 @@ function describeStatements(ts: typeof TS, sf: TS.SourceFile): StatementInfo[] {
       exports,
       valueRefs: refs.value,
       typeRefs: refs.type,
+      listed,
     }
   })
 }
 
-/** Rebuild an import keeping only the bindings `keep` names. `undefined` when none remain. */
+/**
+ * Rebuild an import keeping only the bindings `uses` names; `undefined` when none remain. Bindings
+ * read only in types become `import type`, so no bundler loads the module for them: always in a
+ * `fresh` module, and in the page only where the split narrowed the import.
+ */
 function filterImport(
   ts: typeof TS,
   sf: TS.SourceFile,
   node: TS.ImportDeclaration,
-  keep: (name: string) => boolean,
+  uses: Uses,
+  fresh: boolean,
 ): string | undefined {
   const clause = node.importClause
   const spec = node.moduleSpecifier.getText(sf)
   const attributes = node.attributes ? ` ${node.attributes.getText(sf)}` : ""
   if (clause === undefined) return node.getFullText(sf)
-  const parts: string[] = []
-  if (clause.name && keep(clause.name.text)) parts.push(clause.name.text)
-  const bindings = clause.namedBindings
-  if (bindings && ts.isNamespaceImport(bindings) && keep(bindings.name.text))
-    parts.push(`* as ${bindings.name.text}`)
-  if (bindings && ts.isNamedImports(bindings)) {
-    const named = bindings.elements.filter((el) => keep(el.name.text)).map((el) => el.getText(sf))
-    if (named.length > 0) parts.push(`{ ${named.join(", ")} }`)
+  interface Part {
+    readonly text: string
+    /** Without an inline `type`, for an `import type`. */
+    readonly bare: string
+    readonly typeOnly: boolean
   }
-  if (parts.length === 0) return undefined
-  const typeOnly = clause.isTypeOnly ? "type " : ""
+  const heads: Part[] = []
+  const named: Part[] = []
+  let total = 0
+  const add = (into: Part[], name: string, text: string, bare: string): void => {
+    total++
+    if (uses.value.has(name) || uses.type.has(name))
+      into.push({ text, bare, typeOnly: !uses.value.has(name) })
+  }
+  if (clause.name) add(heads, clause.name.text, clause.name.text, clause.name.text)
+  const bindings = clause.namedBindings
+  if (bindings && ts.isNamespaceImport(bindings)) {
+    const text = `* as ${bindings.name.text}`
+    add(heads, bindings.name.text, text, text)
+  }
+  if (bindings && ts.isNamedImports(bindings)) {
+    for (const el of bindings.elements) {
+      const renamed = el.propertyName ? `${el.propertyName.getText(sf)} as ` : ""
+      add(named, el.name.text, el.getText(sf), `${renamed}${el.name.text}`)
+    }
+  }
+  const kept = [...heads, ...named]
+  if (kept.length === 0) return undefined
   const leading = node.getFullText(sf).slice(0, node.getStart(sf) - node.getFullStart())
-  return `${leading}import ${typeOnly}${parts.join(", ")} from ${spec}${attributes}${terminatorOf(sf, node)}`
+  const statement = (typeOnly: boolean, body: string): string =>
+    `import ${typeOnly ? "type " : ""}${body} from ${spec}${attributes}${terminatorOf(sf, node)}`
+  const list = (parts: readonly Part[], text: (part: Part) => string): string[] =>
+    parts.length === 0 ? [] : [`{ ${parts.map(text).join(", ")} }`]
+  if (
+    !clause.isTypeOnly &&
+    node.attributes === undefined &&
+    (fresh || kept.length < total) &&
+    kept.every((part) => part.typeOnly)
+  ) {
+    // `import type` takes one default, namespace or list, so each goes in its own statement.
+    const bodies = [...heads.map((part) => part.bare), ...list(named, (part) => part.bare)]
+    return `${leading}${bodies.map((body) => statement(true, body)).join("\n")}`
+  }
+  const body = [...heads.map((part) => part.text), ...list(named, (part) => part.text)]
+  return `${leading}${statement(clause.isTypeOnly, body.join(", "))}`
 }
 
 /** The `;` a statement was written with, so a rebuilt one keeps the file's style. */
@@ -382,6 +440,126 @@ const joinStatements = (texts: readonly string[]): string => {
   return body.endsWith("\n") ? body : `${body}\n`
 }
 
+/** Options for {@link splitRouteSource}. */
+export interface SplitOptions {
+  /**
+   * The file name of a module beside the route (`index.shared.ts`) to hold constant data both halves
+   * read, which each half then imports. Without it, that data is copied into each half.
+   */
+  readonly sharedFile?: string
+}
+
+const PURE_OBJECT_CALLS = new Set(["keys", "values", "entries", "freeze", "fromEntries"])
+
+/**
+ * Whether `node` builds constant data: literals, arrays and objects of it, operators over it,
+ * `Object.keys`-style reads, and the file's own top-level names, which go into `reads`. `undefined`
+ * when it is data; else the import it reads, or `""` for anything else (a call, a function, a global).
+ */
+function dataBlocker(
+  ts: typeof TS,
+  node: TS.Node,
+  isLocal: (name: string) => boolean,
+  reads: Set<string>,
+): string | undefined {
+  const data = (n: TS.Node): string | undefined => {
+    if (
+      ts.isStringLiteral(n) ||
+      ts.isNumericLiteral(n) ||
+      ts.isBigIntLiteral(n) ||
+      ts.isNoSubstitutionTemplateLiteral(n) ||
+      n.kind === ts.SyntaxKind.TrueKeyword ||
+      n.kind === ts.SyntaxKind.FalseKeyword ||
+      n.kind === ts.SyntaxKind.NullKeyword
+    )
+      return undefined
+    if (ts.isIdentifier(n)) {
+      if (isLocal(n.text)) {
+        reads.add(n.text)
+        return undefined
+      }
+      return n.text === "undefined" ? undefined : n.text
+    }
+    const every = (nodes: readonly TS.Node[]): string | undefined => {
+      for (const child of nodes) {
+        const blocker = data(child)
+        if (blocker !== undefined) return blocker
+      }
+      return undefined
+    }
+    if (ts.isTemplateExpression(n)) return every(n.templateSpans.map((span) => span.expression))
+    if (ts.isPrefixUnaryExpression(n))
+      return n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken
+        ? ""
+        : data(n.operand)
+    if (ts.isBinaryExpression(n)) {
+      const operator = n.operatorToken.kind
+      const assigns =
+        operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment
+      if (
+        assigns ||
+        operator === ts.SyntaxKind.CommaToken ||
+        operator === ts.SyntaxKind.InKeyword ||
+        operator === ts.SyntaxKind.InstanceOfKeyword
+      )
+        return ""
+      return every([n.left, n.right])
+    }
+    if (ts.isConditionalExpression(n)) return every([n.condition, n.whenTrue, n.whenFalse])
+    if (ts.isArrayLiteralExpression(n))
+      return every(
+        n.elements.flatMap((element) =>
+          ts.isOmittedExpression(element)
+            ? []
+            : [ts.isSpreadElement(element) ? element.expression : element],
+        ),
+      )
+    if (ts.isObjectLiteralExpression(n)) {
+      for (const property of n.properties) {
+        const blocker = ts.isPropertyAssignment(property)
+          ? ((ts.isComputedPropertyName(property.name)
+              ? data(property.name.expression)
+              : undefined) ?? data(property.initializer))
+          : ts.isShorthandPropertyAssignment(property)
+            ? property.objectAssignmentInitializer === undefined
+              ? data(property.name)
+              : ""
+            : ts.isSpreadAssignment(property)
+              ? data(property.expression)
+              : ""
+        if (blocker !== undefined) return blocker
+      }
+      return undefined
+    }
+    if (
+      ts.isParenthesizedExpression(n) ||
+      ts.isAsExpression(n) ||
+      ts.isSatisfiesExpression(n) ||
+      ts.isNonNullExpression(n) ||
+      ts.isTypeAssertionExpression(n)
+    )
+      return data(n.expression)
+    if (ts.isPropertyAccessExpression(n))
+      return ts.isPrivateIdentifier(n.name) ? "" : data(n.expression)
+    if (ts.isElementAccessExpression(n)) return every([n.expression, n.argumentExpression])
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression
+      const objectRead =
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Object" &&
+        !isLocal("Object") &&
+        PURE_OBJECT_CALLS.has(callee.name.text) &&
+        n.questionDotToken === undefined &&
+        n.typeArguments === undefined
+      return objectRead ? every(n.arguments) : ""
+    }
+    return ""
+  }
+  return data(node)
+}
+
 /**
  * Split one route module's source into its frontend and backend halves. `backendSpecifier` is how the
  * frontend refers to the backend half in an `import type` (`./index.backend.ts`).
@@ -391,6 +569,7 @@ export function splitRouteSource(
   source: string,
   fileName: string,
   backendSpecifier: string,
+  options: SplitOptions = {},
 ): SplitResult {
   const kind = fileName.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind)
@@ -403,70 +582,177 @@ export function splitRouteSource(
   if (moved.length === 0) return { frontend: source, backend: undefined, moved: [], issues: [] }
 
   const declaredBy = new Map<string, StatementInfo>()
+  const importedBy = new Map<string, StatementInfo>()
   for (const info of statements) {
-    if (ts.isImportDeclaration(info.node)) continue
-    for (const name of info.declares) declaredBy.set(name, info)
+    const into = ts.isImportDeclaration(info.node) ? importedBy : declaredBy
+    for (const name of info.declares) into.set(name, info)
   }
-
-  // The backend half: its export statements plus every top-level declaration they reach.
-  const backendSet = new Set<StatementInfo>()
-  const queue: StatementInfo[] = statements.filter(isBackendStatement)
-  for (const info of queue) backendSet.add(info)
-  while (queue.length > 0) {
-    const info = queue.pop() as StatementInfo
-    for (const name of [...info.valueRefs, ...info.typeRefs]) {
-      const target = declaredBy.get(name)
-      if (target !== undefined && !backendSet.has(target)) {
-        backendSet.add(target)
-        queue.push(target)
-      }
-    }
-    // An exported-name statement (`export { loader }`) reaches the declaration it names.
-    for (const local of info.exports.keys()) {
-      const target = declaredBy.get(local)
-      if (target !== undefined && !backendSet.has(target)) {
-        backendSet.add(target)
-        queue.push(target)
-      }
+  const isTypeDeclaration = (info: StatementInfo): boolean =>
+    ts.isInterfaceDeclaration(info.node) || ts.isTypeAliasDeclaration(info.node)
+  /** What `info` reads for one half: an export list reads only the locals it exports there. */
+  const readsFor = (info: StatementInfo, backend: boolean): Uses => {
+    if (info.listed.length === 0) return { value: info.valueRefs, type: info.typeRefs }
+    const mine = info.listed.filter((entry) => BACKEND_EXPORTS.has(entry.exported) === backend)
+    return {
+      value: new Set(mine.filter((entry) => !entry.type).map((entry) => entry.local)),
+      type: new Set(mine.filter((entry) => entry.type).map((entry) => entry.local)),
     }
   }
-
-  // The frontend half: everything that is not a backend export statement, minus declarations that only
-  // the backend half needs.
   const movedLocals = new Set<string>()
   for (const info of statements) {
     for (const [local, names] of info.exports)
       if (names.some((name) => BACKEND_EXPORTS.has(name))) movedLocals.add(local)
   }
-  const frontendCandidates = statements.filter((info) => !ts.isImportDeclaration(info.node))
-  const frontendKeep = new Set<StatementInfo>()
-  const seed = frontendCandidates.filter(
-    (info) =>
-      !backendSet.has(info) ||
-      (!isBackendStatement(info) && exportsOf(info).length > 0) ||
-      // a statement with no declaration (a side effect) stays where it ran
-      (info.declares.size === 0 && info.exports.size === 0),
-  )
-  const fqueue = [...seed]
-  for (const info of fqueue) frontendKeep.add(info)
-  while (fqueue.length > 0) {
-    const info = fqueue.pop() as StatementInfo
-    for (const name of info.valueRefs) {
-      if (movedLocals.has(name) && !info.declares.has(name)) continue
+
+  /** Each half's statements. What `shared` holds, both import, so neither half keeps a copy. */
+  const partition = (
+    shared: ReadonlySet<StatementInfo>,
+  ): { backendSet: Set<StatementInfo>; frontendKeep: Set<StatementInfo> } => {
+    const local = (name: string): StatementInfo | undefined => {
       const target = declaredBy.get(name)
-      if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
-        frontendKeep.add(target)
-        fqueue.push(target)
+      return target === undefined || shared.has(target) ? undefined : target
+    }
+    // The backend half: its export statements plus every top-level declaration they reach.
+    const backendSet = new Set<StatementInfo>()
+    const queue: StatementInfo[] = statements.filter(isBackendStatement)
+    for (const info of queue) backendSet.add(info)
+    while (queue.length > 0) {
+      const info = queue.pop() as StatementInfo
+      const reads = readsFor(info, true)
+      for (const name of [...reads.value, ...reads.type]) {
+        const target = local(name)
+        if (target !== undefined && !backendSet.has(target)) {
+          backendSet.add(target)
+          queue.push(target)
+        }
       }
     }
-    for (const name of info.typeRefs) {
-      if (movedLocals.has(name)) continue
-      const target = declaredBy.get(name)
-      if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
-        frontendKeep.add(target)
-        fqueue.push(target)
+
+    // The frontend half: everything that is not a backend export statement, minus declarations that
+    // only the backend half needs. An export list that also names backend exports keeps the rest.
+    const frontendKeep = new Set<StatementInfo>()
+    const seed = statements.filter(
+      (info) =>
+        !ts.isImportDeclaration(info.node) &&
+        !shared.has(info) &&
+        (!backendSet.has(info) ||
+          exportsOf(info).some((name) => !BACKEND_EXPORTS.has(name)) ||
+          // a statement with no declaration (a side effect) stays where it ran
+          (info.declares.size === 0 && info.exports.size === 0)),
+    )
+    const fqueue = [...seed]
+    for (const info of fqueue) frontendKeep.add(info)
+    while (fqueue.length > 0) {
+      const info = fqueue.pop() as StatementInfo
+      const reads = readsFor(info, false)
+      for (const name of reads.value) {
+        if (movedLocals.has(name) && !info.declares.has(name)) continue
+        const target = local(name)
+        if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
+          frontendKeep.add(target)
+          fqueue.push(target)
+        }
+      }
+      for (const name of reads.type) {
+        if (movedLocals.has(name)) continue
+        const target = local(name)
+        if (target !== undefined && !frontendKeep.has(target) && !isBackendStatement(target)) {
+          frontendKeep.add(target)
+          fqueue.push(target)
+        }
       }
     }
+    return { backendSet, frontendKeep }
+  }
+  let { backendSet, frontendKeep } = partition(new Set())
+  const copies = (): StatementInfo[] =>
+    [...frontendKeep].filter(
+      (info) =>
+        backendSet.has(info) &&
+        !isBackendStatement(info) &&
+        info.declares.size > 0 &&
+        !isTypeDeclaration(info),
+    )
+
+  // Constant data both halves read moves to a module beside the route, with the declarations it
+  // needs: one definition, which neither half's bundle can drift from.
+  const shared = new Set<StatementInfo>()
+  const sharedTypes = new Set<StatementInfo>()
+  const sharedImports = new Set<string>()
+  const unshared = new Map<StatementInfo, string>()
+  if (options.sharedFile !== undefined) {
+    interface Closure {
+      readonly values: Set<StatementInfo>
+      readonly types: Set<StatementInfo>
+      readonly imports: Set<string>
+    }
+    /** Why `info` cannot move to the shared module, or `undefined` once it and what it needs are in `closure`. */
+    const gather = (info: StatementInfo, closure: Closure): string | undefined => {
+      if (closure.values.has(info) || shared.has(info)) return undefined
+      const node = info.node
+      const reads = new Set<string>()
+      let blocker: string | undefined = ""
+      if (
+        !isBackendStatement(info) &&
+        ts.isVariableStatement(node) &&
+        (node.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+        !hasModifier(ts, node, ts.SyntaxKind.DeclareKeyword)
+      ) {
+        blocker = undefined
+        for (const declaration of node.declarationList.declarations) {
+          blocker =
+            ts.isIdentifier(declaration.name) && declaration.initializer !== undefined
+              ? dataBlocker(ts, declaration.initializer, (name) => declaredBy.has(name), reads)
+              : ""
+          if (blocker !== undefined) break
+        }
+      }
+      if (blocker !== undefined)
+        return blocker !== "" && importedBy.has(blocker)
+          ? `it reads the import "${blocker}"`
+          : "it is not constant data"
+      closure.values.add(info)
+      for (const name of reads) {
+        const target = declaredBy.get(name)
+        const why = target === undefined ? undefined : gather(target, closure)
+        if (why !== undefined) return `it reads "${name}", which ${why.slice(3)}`
+      }
+      for (const name of info.typeRefs) {
+        const why = gatherType(name, closure)
+        if (why !== undefined) return why
+      }
+      return undefined
+    }
+    const gatherType = (name: string, closure: Closure): string | undefined => {
+      const local = declaredBy.get(name)
+      if (local === undefined) {
+        if (importedBy.has(name)) closure.imports.add(name)
+        return undefined
+      }
+      if (!isTypeDeclaration(local)) {
+        const why = gather(local, closure)
+        return why === undefined ? undefined : `its type reads "${name}", which ${why.slice(3)}`
+      }
+      if (closure.types.has(local) || sharedTypes.has(local)) return undefined
+      closure.types.add(local)
+      for (const ref of [...local.typeRefs, ...local.valueRefs]) {
+        const why = gatherType(ref, closure)
+        if (why !== undefined) return why
+      }
+      return undefined
+    }
+    for (const info of copies()) {
+      const closure: Closure = { values: new Set(), types: new Set(), imports: new Set() }
+      const why = gather(info, closure)
+      if (why !== undefined) {
+        unshared.set(info, why)
+        continue
+      }
+      for (const value of closure.values) shared.add(value)
+      for (const type of closure.types) sharedTypes.add(type)
+      for (const name of closure.imports) sharedImports.add(name)
+    }
+    if (shared.size > 0) ({ backendSet, frontendKeep } = partition(shared))
   }
 
   // A moved name the frontend still mentions: in a type it becomes `import type`; at runtime it is an
@@ -474,44 +760,88 @@ export function splitRouteSource(
   const typeImports = new Set<string>()
   for (const info of frontendKeep) {
     if (isBackendStatement(info)) continue
+    const reads = readsFor(info, false)
     for (const name of movedLocals) {
       if (info.declares.has(name)) continue
-      if (info.valueRefs.has(name))
+      if (reads.value.has(name))
         issues.push(`the frontend uses "${name}" at runtime, but it runs on the server only`)
-      if (info.typeRefs.has(name) || info.valueRefs.has(name)) typeImports.add(name)
+      if (reads.type.has(name) || reads.value.has(name)) typeImports.add(name)
     }
   }
-  for (const info of frontendKeep) {
-    if (!backendSet.has(info) || isBackendStatement(info) || info.declares.size === 0) continue
-    const values = [...info.declares].filter(
-      () => !ts.isInterfaceDeclaration(info.node) && !ts.isTypeAliasDeclaration(info.node),
+  for (const info of copies()) {
+    const why = unshared.get(info)
+    issues.push(
+      `"${[...info.declares].join(", ")}" is needed by both halves and was copied into each${why === undefined ? "" : `, since ${why}`}; consider moving it to shared/`,
     )
-    if (values.length > 0)
-      issues.push(
-        `"${values.join(", ")}" is needed by both halves and was copied into each; consider moving it to shared/`,
-      )
   }
 
-  const used = (infos: Iterable<StatementInfo>): Set<string> => {
-    const names = new Set<string>()
-    for (const info of infos)
-      for (const name of [...info.valueRefs, ...info.typeRefs]) names.add(name)
-    return names
+  const uses = (infos: Iterable<StatementInfo>, backend: boolean): Uses => {
+    const value = new Set<string>()
+    const type = new Set<string>()
+    for (const info of infos) {
+      const reads = readsFor(info, backend)
+      for (const name of reads.value) value.add(name)
+      for (const name of reads.type) type.add(name)
+    }
+    return { value, type }
   }
-  const backendUses = used(backendSet)
-  const frontendUses = used([...frontendKeep].filter((info) => !isBackendStatement(info)))
+  const backendUses = uses(backendSet, true)
+  const frontendUses = uses(frontendKeep, false)
+
+  const semi = statements.some((info) => terminatorOf(sf, info.node) !== "") ? ";" : ""
+  // The imports the split writes quote the way the file's own imports do.
+  const firstImport = statements.find((info) => ts.isImportDeclaration(info.node))?.node
+  const quote =
+    firstImport !== undefined && ts.isImportDeclaration(firstImport)
+      ? (firstImport.moduleSpecifier.getText(sf)[0] ?? '"')
+      : '"'
+  const sharedNames = [...shared].flatMap((info) => [...info.declares])
+  const sharedSpecifier = (() => {
+    const file = options.sharedFile ?? ""
+    // The halves name the module the way the route names its other relative imports.
+    const relative = statements.flatMap((info) =>
+      ts.isImportDeclaration(info.node) &&
+      ts.isStringLiteral(info.node.moduleSpecifier) &&
+      info.node.moduleSpecifier.text.startsWith(".")
+        ? [info.node.moduleSpecifier.text]
+        : [],
+    )
+    const extension = relative
+      .map((specifier) => /\.(ts|tsx|js|jsx)$/.exec(specifier)?.[1])
+      .find((found) => found !== undefined)
+    const suffix = extension === undefined ? "" : extension.startsWith("t") ? ".ts" : ".js"
+    return `./${file.replace(/\.ts$/, "")}${suffix}`
+  })()
+  const sharedImport = (half: Uses): string[] => {
+    const names = sharedNames
+      .filter((name) => half.value.has(name) || half.type.has(name))
+      .sort(codeUnitOrder)
+    if (names.length === 0) return []
+    const typeOnly = names.every((name) => !half.value.has(name))
+    return [
+      `\nimport ${typeOnly ? "type " : ""}{ ${names.join(", ")} } from ${quote}${sharedSpecifier}${quote}${semi}`,
+    ]
+  }
+  // The page still exports what it exported, now from the shared module.
+  const reexported = [...shared].flatMap((info) =>
+    [...info.exports].flatMap(([local, names]) =>
+      names.map((name) => (name === local ? local : `${local} as ${name}`)),
+    ),
+  )
 
   const backendTexts: string[] = []
   const frontendTexts: string[] = []
   let afterImports = 0
+  let backendAfterImports = 0
   for (const info of statements) {
     const node = info.node
     if (ts.isImportDeclaration(node)) {
-      const back = filterImport(ts, sf, node, (name) => backendUses.has(name))
+      const back = filterImport(ts, sf, node, backendUses, true)
       if (back !== undefined) backendTexts.push(node.importClause ? back : "")
-      const front = filterImport(ts, sf, node, (name) => frontendUses.has(name))
+      const front = filterImport(ts, sf, node, frontendUses, false)
       if (front !== undefined) frontendTexts.push(front)
       afterImports = frontendTexts.length
+      backendAfterImports = backendTexts.length
       continue
     }
     if (isBackendStatement(info)) {
@@ -537,14 +867,17 @@ export function splitRouteSource(
     if (frontendKeep.has(info)) frontendTexts.push(info.text)
   }
   // After the other imports: the nearest relative path sorts last.
-  if (typeImports.size > 0) {
-    const semi = statements.some((info) => terminatorOf(sf, info.node) !== "") ? ";" : ""
-    frontendTexts.splice(
-      afterImports,
-      0,
-      `\nimport type { ${[...typeImports].sort().join(", ")} } from "${backendSpecifier}"${semi}`,
+  const frontendImports = sharedImport(frontendUses)
+  if (reexported.length > 0)
+    frontendImports.push(
+      `\nexport { ${reexported.join(", ")} } from ${quote}${sharedSpecifier}${quote}${semi}`,
     )
-  }
+  if (typeImports.size > 0)
+    frontendImports.push(
+      `\nimport type { ${[...typeImports].sort().join(", ")} } from ${quote}${backendSpecifier}${quote}${semi}`,
+    )
+  frontendTexts.splice(afterImports, 0, ...frontendImports)
+  backendTexts.splice(backendAfterImports, 0, ...sharedImport(backendUses))
   // A JSX pragma counts only in the file's leading comments, and the backend half has no JSX.
   const pragmas = (ts.getLeadingCommentRanges(source, 0) ?? [])
     .map((range) => source.slice(range.pos, range.end))
@@ -555,12 +888,34 @@ export function splitRouteSource(
       text,
     )
   const frontend = lift(joinStatements(frontendTexts))
-  return {
+  let sharedText: string | undefined
+  if (shared.size > 0) {
+    const texts: string[] = []
+    const typeUses: Uses = { value: new Set(), type: sharedImports }
+    for (const info of statements) {
+      if (ts.isImportDeclaration(info.node)) {
+        const kept = filterImport(ts, sf, info.node, typeUses, true)
+        if (kept !== undefined && info.node.importClause !== undefined) texts.push(kept)
+      } else if (shared.has(info) || sharedTypes.has(info)) {
+        texts.push(withExport(ts, sf, info))
+      }
+    }
+    sharedText = lift(joinStatements(texts))
+  }
+  const result: SplitResult = {
     frontend: pragmas.length > 0 ? `${pragmas.join("\n")}\n${frontend}` : frontend,
     backend: lift(joinStatements(backendTexts)),
     moved: [...new Set(moved)].sort(),
     issues,
   }
+  return sharedText === undefined ? result : { ...result, shared: sharedText }
+}
+
+/** A declaration the shared module holds is exported, so either half can import it. */
+function withExport(ts: typeof TS, sf: TS.SourceFile, info: StatementInfo): string {
+  if (hasModifier(ts, info.node, ts.SyntaxKind.ExportKeyword)) return info.text
+  const at = info.node.getStart(sf) - info.node.getFullStart()
+  return `${info.text.slice(0, at)}export ${info.text.slice(at)}`
 }
 
 /** A helper the backend half copies keeps its declaration; an `export` on it would add a backend export. */
@@ -1076,14 +1431,29 @@ function redirectMovedImports(
       node.arguments[0] !== undefined &&
       ts.isStringLiteralLike(node.arguments[0])
     ) {
-      const from = node.arguments[0].text
+      const literal = node.arguments[0]
+      const from = literal.text
       const split = splitOf(from)
       const reads =
         split === undefined ? [] : mentioned(split, (name) => new RegExp(`\\b${name}\\b`))
-      if (split !== undefined && reads.length > 0)
-        issues.push(
-          `loads "${from}" with import() and mentions ${quoted(reads)}, which moved to "${split.backend}"; load the backend half for them by hand`,
-        )
+      if (split !== undefined && reads.length > 0) {
+        const names = dynamicReads(ts, sf, node)
+        if (
+          names !== undefined &&
+          names.length > 0 &&
+          names.every((name) => split.moved.has(name))
+        ) {
+          edits.push({
+            start: literal.getStart(sf) + 1,
+            end: literal.getEnd() - 1,
+            text: split.specifier,
+          })
+          redirects.push({ names, from, to: split.specifier })
+        } else
+          issues.push(
+            `loads "${from}" with import() and mentions ${quoted(reads)}, which moved to "${split.backend}"; load the backend half for them by hand`,
+          )
+      }
     }
     ts.forEachChild(node, visit)
   }
@@ -1092,6 +1462,62 @@ function redirectMovedImports(
   for (const edit of edits.sort((a, b) => b.start - a.start))
     out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
   return { text: out, issues, redirects }
+}
+
+/**
+ * The exports code reads from what `import()` loads: off the awaited module (`(await import(x)).a`),
+ * through a destructuring, or through a variable used only as `mod.a`. `undefined` when the module
+ * goes anywhere else, so its reads cannot be listed.
+ */
+function dynamicReads(
+  ts: typeof TS,
+  sf: TS.SourceFile,
+  call: TS.CallExpression,
+): string[] | undefined {
+  let node: TS.Node = call
+  if (!ts.isAwaitExpression(node.parent)) return undefined
+  node = node.parent
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent
+  const parent = node.parent
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === node) return [parent.name.text]
+  if (!ts.isVariableDeclaration(parent) || parent.initializer !== node) return undefined
+  const binding = parent.name
+  if (ts.isObjectBindingPattern(binding)) {
+    const names: string[] = []
+    for (const element of binding.elements) {
+      const key = element.propertyName ?? element.name
+      if (
+        element.dotDotDotToken !== undefined ||
+        !(ts.isIdentifier(key) || ts.isStringLiteral(key))
+      )
+        return undefined
+      names.push(key.text)
+    }
+    return names
+  }
+  if (!ts.isIdentifier(binding)) return undefined
+  const names = new Set<string>()
+  let escapes = false
+  const visit = (current: TS.Node): void => {
+    if (ts.isIdentifier(current) && current.text === binding.text && current !== binding) {
+      const owner = current.parent
+      if (ts.isPropertyAccessExpression(owner) && owner.expression === current)
+        names.add(owner.name.text)
+      else if (
+        !(
+          (ts.isPropertyAccessExpression(owner) ||
+            ts.isPropertyAssignment(owner) ||
+            ts.isPropertyDeclaration(owner) ||
+            ts.isMethodDeclaration(owner)) &&
+          owner.name === current
+        )
+      )
+        escapes = true
+    }
+    ts.forEachChild(current, visit)
+  }
+  visit(sf)
+  return escapes ? undefined : [...names].sort(codeUnitOrder)
 }
 
 /** A `workspaces` glob as a matcher over package-relative folder paths. */
@@ -1534,7 +1960,7 @@ export async function migrateLayout(
       original.set(file, readFileSync(join(root, file), "utf8"))
   }
   const issues: LayoutMigrationIssue[] = []
-  const splits: Array<{ file: string; backend: string; moved: string[] }> = []
+  const splits: Array<{ file: string; backend: string; moved: string[]; shared?: string }> = []
   /** The app after the migration: new path -> text. */
   const next: Files = new Map(original)
   /** Old path -> new path, for every file that moves. */
@@ -1557,13 +1983,25 @@ export async function migrateLayout(
     if (!ROUTE_FILE.test(file)) continue
     const backendFile = file.replace(ROUTE_FILE, ".backend.ts")
     const specifier = `./${posix.basename(backendFile)}`
+    const sharedFile = file.replace(ROUTE_FILE, ".shared.ts")
+    // A taken name leaves data both halves read copied into each, as reported.
+    const splitOptions: SplitOptions =
+      next.has(sharedFile) || existsSync(join(root, sharedFile))
+        ? {}
+        : { sharedFile: posix.basename(sharedFile) }
     let result: SplitResult
     if (/\.(?:svelte|vue)$/.test(file)) {
       const blocks = scriptBlocks(text)
       const block =
         blocks.find((b) => b.module) ?? blocks.find((b) => !b.setup && file.endsWith(".vue"))
       if (block === undefined) continue
-      const inner = splitRouteSource(ts, text.slice(block.start, block.end), "block.ts", specifier)
+      const inner = splitRouteSource(
+        ts,
+        text.slice(block.start, block.end),
+        "block.ts",
+        specifier,
+        splitOptions,
+      )
       result = {
         ...inner,
         frontend: `${text.slice(0, block.start)}\n${inner.frontend}${text.slice(block.end)}`,
@@ -1581,7 +2019,7 @@ export async function migrateLayout(
       }
       continue
     } else {
-      result = splitRouteSource(ts, text, file, specifier)
+      result = splitRouteSource(ts, text, file, specifier, splitOptions)
     }
     if (result.backend === undefined) continue
     next.set(file, result.frontend)
@@ -1589,7 +2027,12 @@ export async function migrateLayout(
       backendFile,
       mergeModules(ts, backendHalves.get(backendFile) ?? "", result.backend),
     )
-    splits.push({ file, backend: backendFile, moved: [...result.moved] })
+    if (result.shared === undefined)
+      splits.push({ file, backend: backendFile, moved: [...result.moved] })
+    else {
+      next.set(sharedFile, result.shared)
+      splits.push({ file, backend: backendFile, moved: [...result.moved], shared: sharedFile })
+    }
     for (const reason of result.issues) issues.push({ file, reason })
   }
   for (const [file, text] of backendHalves) {

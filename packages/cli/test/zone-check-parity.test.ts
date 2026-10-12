@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { realpathSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
 import { join } from "node:path"
 import { buildClient } from "@nifrajs/web/build"
 import * as ts from "typescript"
@@ -282,5 +282,34 @@ describe("nifra migrate layout", () => {
     expect(await buildRefuses(root, "frontend/src/client.tsx")).toEqual([])
     // The shared module's type-only import of backend code is erased, so it is no zone edge.
     expect(await zoneFindings(root)).toEqual([])
+  })
+
+  test("a split route's shared data and its backend's type-only reads pass check and build", async () => {
+    const root = app({
+      "nifra.config.ts": 'export const clientModule = "./lib/client.tsx"\n',
+      "lib/client.tsx": "export function mountRouter() {\n  return 1\n}\n",
+      "components/card.tsx":
+        "export type CardProps = { n: number }\nexport const Card = (props: CardProps) => props.n\n",
+      "routes/guides/[slug].tsx": [
+        'import { Card, type CardProps } from "~/components/card"',
+        "const GUIDES = { a: 'A', b: 'B' } as const",
+        "export const GUIDE_KEYS = Object.keys(GUIDES)",
+        "export async function getStaticPaths() {",
+        "  return { paths: GUIDE_KEYS.map((slug) => ({ params: { slug } })), fallback: false }",
+        "}",
+        "export async function loader(): Promise<CardProps> {",
+        "  return { n: GUIDE_KEYS.length }",
+        "}",
+        "export default function Page() { return Card({ n: GUIDE_KEYS.length }) }",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(root, { typescript: ts, write: true })
+    expect(result.splits.map((split) => split.shared)).toEqual(["routes/guides/[slug].shared.ts"])
+    expect(readFileSync(join(root, "routes/guides/[slug].backend.ts"), "utf8")).toContain(
+      'import type { CardProps } from "~/frontend/components/card"',
+    )
+    expect(await zoneFindings(root)).toEqual([])
+    expect(await buildRefuses(root, "frontend/lib/client.tsx")).toEqual([])
   })
 })

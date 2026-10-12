@@ -15,7 +15,7 @@ const ROOT = createFixtureRoot("tmp-migrate-layout-")
 afterAll(() => removeFixtureRoot(ROOT))
 
 const split = (source: string, file = "routes/index.tsx") =>
-  splitRouteSource(ts, source, file, "./index.backend.ts")
+  splitRouteSource(ts, source, file, "./index.backend.ts", { sharedFile: "index.shared.ts" })
 
 function app(files: Record<string, string>): string {
   const dir = createFixtureProject(ROOT, "app-")
@@ -65,7 +65,7 @@ describe("splitRouteSource", () => {
     expect(split(source)).toEqual({ frontend: source, backend: undefined, moved: [], issues: [] })
   })
 
-  test("a helper both halves use is copied into each and reported", () => {
+  test("code both halves use is copied into each and reported", () => {
     const result = split(
       [
         "const format = (n: number) => n.toFixed(2)",
@@ -77,8 +77,182 @@ describe("splitRouteSource", () => {
     expect(result.backend).toContain("const format")
     expect(result.frontend).toContain("const format")
     expect(result.issues).toEqual([
-      '"format" is needed by both halves and was copied into each; consider moving it to shared/',
+      '"format" is needed by both halves and was copied into each, since it is not constant data; consider moving it to shared/',
     ])
+  })
+
+  test("constant data both halves read moves beside the route once, with the types it needs", () => {
+    const result = split(
+      [
+        'import type { Profile } from "../types"',
+        'import { Card } from "../components/card"',
+        "",
+        "interface Entry { readonly profile: Profile }",
+        "const BASE = { tier: 'free' } as const",
+        "/** Every entry, by slug. */",
+        "const ENTRIES: Record<string, Entry> = {",
+        "  a: { profile: { ...BASE, name: 'A' } },",
+        "  b: { profile: { ...BASE, name: `B${1 + 1}` } },",
+        "}",
+        "export const SLUGS = Object.keys(ENTRIES)",
+        "",
+        "export async function getStaticPaths() {",
+        "  return { paths: SLUGS.map((slug) => ({ params: { slug } })), fallback: false }",
+        "}",
+        "export async function loader({ params }: { params: { slug: string } }) {",
+        "  return ENTRIES[params.slug] ?? null",
+        "}",
+        "export default function Page() { return <Card count={SLUGS.length} /> }",
+        "",
+      ].join("\n"),
+    )
+    expect(result.issues).toEqual([])
+    expect(result.shared).toBe(
+      [
+        'import type { Profile } from "../types"',
+        "",
+        "export interface Entry { readonly profile: Profile }",
+        "export const BASE = { tier: 'free' } as const",
+        "/** Every entry, by slug. */",
+        "export const ENTRIES: Record<string, Entry> = {",
+        "  a: { profile: { ...BASE, name: 'A' } },",
+        "  b: { profile: { ...BASE, name: `B${1 + 1}` } },",
+        "}",
+        "export const SLUGS = Object.keys(ENTRIES)",
+        "",
+      ].join("\n"),
+    )
+    expect(result.backend).toContain('import { ENTRIES, SLUGS } from "./index.shared"')
+    expect(result.backend).not.toContain("const ENTRIES")
+    expect(result.backend).not.toContain("BASE")
+    expect(result.frontend).toContain('import { SLUGS } from "./index.shared"')
+    expect(result.frontend).toContain('export { SLUGS } from "./index.shared"')
+    expect(result.frontend).not.toContain("Object.keys")
+    expect(result.frontend).not.toContain("const ENTRIES")
+  })
+
+  test("data that changes, runs code or reads an import is copied, with the reason", () => {
+    const result = split(
+      [
+        'import { rates } from "../lib/rates"',
+        "let counter = 0",
+        "const PRICES = { base: rates.base }",
+        "const STAMP = Date.now()",
+        "const STAMPS = [STAMP]",
+        "export async function loader() { return { counter, PRICES, STAMPS } }",
+        "export default function Page() { return [counter, PRICES, STAMPS] }",
+        "",
+      ].join("\n"),
+    )
+    expect(result.shared).toBeUndefined()
+    const copied = (names: string, why: string): string =>
+      `"${names}" is needed by both halves and was copied into each, since ${why}; consider moving it to shared/`
+    expect([...result.issues].sort()).toEqual(
+      [
+        copied("counter", "it is not constant data"),
+        copied("PRICES", 'it reads the import "rates"'),
+        copied("STAMP", "it is not constant data"),
+        copied("STAMPS", 'it reads "STAMP", which is not constant data'),
+      ].sort(),
+    )
+    expect(result.backend).toContain('import { rates } from "../lib/rates"')
+    expect(result.frontend).toContain('import { rates } from "../lib/rates"')
+  })
+
+  test("the imports a split writes quote the way the file does", () => {
+    const result = split(
+      [
+        "import { db } from '../db'",
+        "const SLUGS = ['a']",
+        "export const loader = () => db(SLUGS)",
+        "export default function Page({ data }: { data: Awaited<ReturnType<typeof loader>> }) {",
+        "  return [SLUGS, data]",
+        "}",
+        "",
+      ].join("\n"),
+    )
+    expect(result.frontend).toContain("import { SLUGS } from './index.shared'")
+    expect(result.frontend).toContain("import type { loader } from './index.backend.ts'")
+    expect(result.backend).toContain("import { SLUGS } from './index.shared'")
+  })
+
+  test("without a free name beside the route, shared data is copied as before", () => {
+    const source = [
+      "const SLUGS = ['a', 'b']",
+      "export async function getStaticPaths() { return { paths: SLUGS, fallback: false } }",
+      "export default function Page() { return SLUGS.length }",
+      "",
+    ].join("\n")
+    const result = splitRouteSource(ts, source, "routes/index.tsx", "./index.backend.ts")
+    expect(result.shared).toBeUndefined()
+    expect(result.issues).toEqual([
+      '"SLUGS" is needed by both halves and was copied into each; consider moving it to shared/',
+    ])
+  })
+
+  test("a name the page exports by list keeps its import, in whichever half exports it", () => {
+    const result = split(
+      [
+        'import { SLUGS, LABELS } from "../data/slugs"',
+        'import type { Slug } from "../data/slugs"',
+        "export { SLUGS }",
+        "export { LABELS as NAMES }",
+        "export type { Slug }",
+        "export async function getStaticPaths() {",
+        "  return { paths: SLUGS.map((slug) => ({ params: { slug } })), fallback: false }",
+        "}",
+        "export default function Page() { return null }",
+        "",
+      ].join("\n"),
+    )
+    expect(result.issues).toEqual([])
+    expect(result.frontend).toContain('import { SLUGS, LABELS } from "../data/slugs"')
+    expect(result.frontend).toContain('import type { Slug } from "../data/slugs"')
+    expect(result.frontend).toContain(
+      "export { SLUGS }\nexport { LABELS as NAMES }\nexport type { Slug }",
+    )
+    expect(result.backend).toContain('import { SLUGS } from "../data/slugs"')
+    expect(result.backend).not.toContain("LABELS")
+
+    const mixed = split(
+      [
+        'import { SLUGS } from "../data/slugs"',
+        'import { db } from "../db"',
+        "async function loader() { return db }",
+        "export { loader, SLUGS }",
+        "export default function Page() { return null }",
+        "",
+      ].join("\n"),
+    )
+    expect(mixed.frontend).toContain('import { SLUGS } from "../data/slugs"')
+    expect(mixed.frontend).toContain("export { SLUGS }")
+    expect(mixed.frontend).not.toContain("db")
+    expect(mixed.backend).toContain("export { loader }")
+    expect(mixed.backend).not.toContain("SLUGS")
+  })
+
+  test("a half that reads an import only in types imports it as a type", () => {
+    const result = split(
+      [
+        'import { Card, type CardProps } from "../components/card"',
+        'import Chart from "../components/chart"',
+        'import { format, type Row } from "../lib/rows"',
+        "export async function loader(): Promise<CardProps & { chart?: typeof Chart }> {",
+        "  return { title: format([]) }",
+        "}",
+        "export default function Page({ rows }: { rows: Row[] } & Partial<CardProps>) {",
+        "  return <Card rows={rows} />",
+        "}",
+        "",
+      ].join("\n"),
+    )
+    expect(result.backend).toContain('import type { CardProps } from "../components/card"')
+    expect(result.backend).toContain('import type Chart from "../components/chart"')
+    expect(result.backend).toContain('import { format } from "../lib/rows"')
+    // The page's own import stays as written; one the split narrowed to types becomes a type import.
+    expect(result.frontend).toContain('import { Card, type CardProps } from "../components/card"')
+    expect(result.frontend).toContain('import type { Row } from "../lib/rows"')
+    expect(result.frontend).not.toContain("Chart")
   })
 
   test("a page that reads a moved name at runtime is reported, not guessed", () => {
@@ -889,6 +1063,10 @@ describe("migrateLayout", () => {
         "",
       ].join("\n"),
       "scripts/warm.ts": 'const route = await import("../routes/index")\nawait route.loader()\n',
+      "scripts/prerender.ts":
+        'const { loader: load } = await import("../routes/index")\nawait (await import("../routes/index")).loader()\nexport { load }\n',
+      "scripts/render.ts":
+        'const route = await import("../routes/index")\nawait route.loader()\nexport const page = route.default\n',
     })
     const result = await migrateLayout(dir, { typescript: ts, write: true })
     expect(read(dir, "routes/__tests__/index.test.ts")).toBe(
@@ -909,11 +1087,19 @@ describe("migrateLayout", () => {
       reason:
         'reads "loader" through a namespace import of "../index", but they moved to "routes/index.backend.ts"; import them from there by hand',
     })
+    // A loaded module read only for moved exports loads the backend half instead.
+    expect(read(dir, "scripts/warm.ts")).toBe(
+      'const route = await import("../routes/index.backend")\nawait route.loader()\n',
+    )
+    expect(read(dir, "scripts/prerender.ts")).toBe(
+      'const { loader: load } = await import("../routes/index.backend")\nawait (await import("../routes/index.backend")).loader()\nexport { load }\n',
+    )
     expect(result.issues).toContainEqual({
-      file: "scripts/warm.ts",
+      file: "scripts/render.ts",
       reason:
         'loads "../routes/index" with import() and mentions "loader", which moved to "routes/index.backend.ts"; load the backend half for them by hand',
     })
+    expect(result.issues.filter((issue) => issue.file.startsWith("scripts/"))).toHaveLength(1)
   })
 
   test("an app one folder down: the dry run from the package names --dir, and code beside it is reported", async () => {
@@ -1195,6 +1381,60 @@ describe("migrateLayout entries, tests and workspace siblings", () => {
       change: "exclude += shared/src/data",
     })
     expect(result.issues.filter((issue) => issue.file.startsWith("tsconfig"))).toEqual([])
+  })
+
+  test("shared route data is written beside the route, stays there, and a second run keeps it", async () => {
+    const route = [
+      'import { Card } from "../../components/card"',
+      "const GUIDES = { a: 'A', b: 'B' } as const",
+      "export const GUIDE_KEYS = Object.keys(GUIDES)",
+      "export { GUIDES }",
+      "export async function getStaticPaths() {",
+      "  return { paths: GUIDE_KEYS.map((slug) => ({ params: { slug } })), fallback: false }",
+      "}",
+      "export async function loader({ params }: { params: { slug: 'a' | 'b' } }) {",
+      "  return { name: GUIDES[params.slug] }",
+      "}",
+      "export default function Page() { return <Card n={GUIDE_KEYS.length} /> }",
+      "",
+    ].join("\n")
+    const dir = app({
+      "routes/guides/[slug].tsx": route,
+      "routes/taken.tsx": route.replace("../../components", "../components"),
+      "routes/taken.shared.ts": "export const other = 1\n",
+      "components/card.tsx": "export const Card = (props: { n: number }) => props.n\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.splits).toContainEqual({
+      file: "routes/guides/[slug].tsx",
+      backend: "routes/guides/[slug].backend.ts",
+      moved: ["getStaticPaths", "loader"],
+      shared: "routes/guides/[slug].shared.ts",
+    })
+    expect(read(dir, "routes/guides/[slug].shared.ts")).toBe(
+      "export const GUIDES = { a: 'A', b: 'B' } as const\nexport const GUIDE_KEYS = Object.keys(GUIDES)\n",
+    )
+    const page = read(dir, "routes/guides/[slug].tsx")
+    expect(page).toContain('import { GUIDES, GUIDE_KEYS } from "./[slug].shared"')
+    expect(page).toContain('export { GUIDE_KEYS } from "./[slug].shared"')
+    expect(page).toContain("export { GUIDES }")
+    expect(page).not.toContain("Object.keys")
+    expect(read(dir, "routes/guides/[slug].backend.ts")).toContain(
+      'import { GUIDES, GUIDE_KEYS } from "./[slug].shared"',
+    )
+    // The name is taken, so the data is copied into each half and reported.
+    expect(read(dir, "routes/taken.shared.ts")).toBe("export const other = 1\n")
+    expect(read(dir, "routes/taken.backend.ts")).toContain("const GUIDE_KEYS = Object.keys(GUIDES)")
+    expect(result.issues).toContainEqual({
+      file: "routes/taken.tsx",
+      reason:
+        '"GUIDE_KEYS" is needed by both halves and was copied into each; consider moving it to shared/',
+    })
+    const again = await migrateLayout(dir, { typescript: ts })
+    expect(again.splits).toEqual([])
+    expect(again.moves).toEqual([])
+    expect(again.issues.map((issue) => issue.file)).not.toContain("routes/guides/[slug].tsx")
+    expect(again.issues.map((issue) => issue.file)).not.toContain("routes/guides/[slug].shared.ts")
   })
 
   test("a workspace sibling that names a moved app file is reported, never edited", async () => {

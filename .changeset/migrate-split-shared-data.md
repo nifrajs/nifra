@@ -1,0 +1,5 @@
+---
+"@nifrajs/cli": patch
+---
+
+`nifra migrate layout` splits a route more cleanly. A local `export { X }` or `export { X as Y }` counts as a read of `X` by the half that keeps that export, so the page keeps the import it re-exports and an export list shared with `loader` gives each half only its own names. An import a half reads only in types becomes `import type` (always in the backend half, and in the page where the split narrowed the import), so neither bundler loads the module for it and `nifra check` sees no zone edge. Constant data both halves read (literals, arrays and objects of them, `Object.keys`-style reads, and the types they need) moves once to a `x.shared.ts` beside the route, which both halves import and the page re-exports from; data that changes, runs code or reads an import is still copied into each half, and the report says why. An `import()` of a split route read only for moved exports (`(await import(x)).loader`, a destructuring, or a variable used only as `mod.loader`) loads the backend half instead.
