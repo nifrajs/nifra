@@ -23,8 +23,9 @@
  *   `metadata`. To resume, send the continuation back via `message.taskId` +
  *   `message.metadata.resume` (`{ continuation, approval? }`); the runtime keeps state token-only,
  *   so a suspended tool's input must be replayed in `continuation.input`. The resuming peer is
- *   usually the agent that asked for the tool, so return `resumeApproval: "port"` from `ports` to
- *   let the approval port, not that peer, decide.
+ *   usually the agent that asked for the tool, so the approval port, not that peer, decides: the
+ *   peer's `approval` reaches it as `callerDecision`. Return `resumeApproval: "caller"` from `ports`
+ *   only when the peer is the approver (a human operator's client).
  * - Agent input is `message.metadata.input` when present, otherwise the first `text` part.
  *   Structured output is returned as a `text` part carrying JSON.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards,
@@ -246,6 +247,8 @@ async function dispatch<
             : AbortSignal.any([basePorts.signal, cancel])
         const ports = {
           ...basePorts,
+          // The resuming peer is the agent that asked for the tool, so it cannot approve its own call.
+          resumeApproval: basePorts.resumeApproval ?? "port",
           ...(combined === undefined ? {} : { telemetry: combined }),
           ...(signal === undefined ? {} : { signal }),
         }

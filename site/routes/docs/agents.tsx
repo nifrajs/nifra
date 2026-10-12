@@ -738,12 +738,13 @@ export default function Agents() {
       </p>
       <p>
         A step that suspends for approval resumes with the decision the caller sends in{" "}
-        <code>resume.approval</code>. Over A2A, or on an AG-UI or <code>mountAgent</code> route that
-        anyone can reach, that caller may be the party asking for the tool. Return{" "}
+        <code>resume.approval</code>. On an AG-UI or <code>mountAgent</code> route that anyone can
+        reach, that caller may be the party asking for the tool. Return{" "}
         <code>resumeApproval: "port"</code> from <code>ports</code> to keep the configured approval
         port authoritative: it is asked again on resume, receives the caller's decision as{" "}
         <code>callerDecision</code>, and its verdict stands. Without a port, such a resume suspends
-        again.
+        again. A2A does this by default, since the resuming peer is the agent that asked for the
+        tool; return <code>resumeApproval: "caller"</code> there only when the peer is the approver.
       </p>
 
       <h2 id="project-code">Where your code and secrets run</h2>

@@ -278,18 +278,37 @@ describe("mountA2A", () => {
     })
   })
 
-  test("suspends for approval as input-required and resumes via message metadata", async () => {
+  /** Suspend `reference.approve` on a pending approval, then resume it with the peer granting it. */
+  async function resumeWithPeerApproval(
+    overrides: Partial<AgentPorts>,
+    portDecision: () => "pending" | "approved",
+  ): Promise<{ state: string; executed: number; callerDecisions: unknown[] }> {
     const { app, callPost } = captureApp()
-    const store = new MemoryAgentStateStore()
-    const agent = definition([approvalTool])
+    let executed = 0
+    const tool = defineTool({
+      ...approvalTool,
+      execute: () => {
+        executed += 1
+        return { ok: true }
+      },
+    })
+    const callerDecisions: unknown[] = []
     mountA2A(app, {
-      agent,
+      agent: definition([tool]),
       card: cardInfo,
       ports: ports({
         model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "approved" }),
         capabilities: ["reference.approve"],
-        state: store,
-        approval: { request: ({ effectId }) => ({ status: "pending", effectId }) },
+        state: new MemoryAgentStateStore(),
+        approval: {
+          request: ({ effectId, callerDecision }) => {
+            if (callerDecision !== undefined) callerDecisions.push(callerDecision)
+            return callerDecision === undefined || portDecision() === "pending"
+              ? { status: "pending", effectId }
+              : { status: "approved", approval: { granted: true } }
+          },
+        },
+        ...overrides,
       }),
     })
 
@@ -325,7 +344,29 @@ describe("mountA2A", () => {
         ),
       )
     ).json()) as { result: { task: { status: { state: string } } } }
-    expect(resumed.result.task.status.state).toBe("TASK_STATE_COMPLETED")
+    return { state: resumed.result.task.status.state, executed, callerDecisions }
+  }
+
+  test("a resuming peer cannot approve its own tool call: the approval port decides", async () => {
+    const refused = await resumeWithPeerApproval({}, () => "pending")
+    expect(refused).toEqual({
+      state: "TASK_STATE_INPUT_REQUIRED",
+      executed: 0,
+      callerDecisions: [{ granted: true }],
+    })
+
+    const approved = await resumeWithPeerApproval({}, () => "approved")
+    expect(approved.state).toBe("TASK_STATE_COMPLETED")
+    expect(approved.executed).toBe(1)
+  })
+
+  test("a peer's approval stands alone without an approval port only under the caller opt-out", async () => {
+    const noPort = await resumeWithPeerApproval({ approval: undefined }, () => "pending")
+    expect(noPort.state).toBe("TASK_STATE_INPUT_REQUIRED")
+    expect(noPort.executed).toBe(0)
+
+    const optedOut = await resumeWithPeerApproval({ resumeApproval: "caller" }, () => "pending")
+    expect(optedOut).toEqual({ state: "TASK_STATE_COMPLETED", executed: 1, callerDecisions: [] })
   })
 
   test("a task suspended on a model failure resumes with its echoed continuation", async () => {

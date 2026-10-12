@@ -460,7 +460,7 @@ export interface AgentPorts {
    * Who decides a step that suspended for approval when the run resumes. `"caller"` (the default)
    * takes `resume.approval` as the decision. `"port"` asks `approval` again and hands it the caller's
    * decision as `callerDecision`; set it when the resuming caller is the party asking for the tool,
-   * as under A2A or a public AG-UI route, so it cannot approve its own call.
+   * as on a public AG-UI route, so it cannot approve its own call. `mountA2A` defaults to `"port"`.
    */
   readonly resumeApproval?: "caller" | "port"
   readonly telemetry?: AgentTelemetryPort

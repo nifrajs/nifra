@@ -7027,12 +7027,13 @@ fail-open OpenTelemetry run and step spans. Providers, credentials, durable stor
 and tenant policy remain application-owned ports.
 
 A step that suspends for approval resumes with the decision the caller sends in
-`resume.approval`. Over A2A, or on an AG-UI or `mountAgent` route that
-anyone can reach, that caller may be the party asking for the tool. Return
+`resume.approval`. On an AG-UI or `mountAgent` route that anyone can
+reach, that caller may be the party asking for the tool. Return
 `resumeApproval: "port"` from `ports` to keep the configured approval
 port authoritative: it is asked again on resume, receives the caller's decision as
 `callerDecision`, and its verdict stands. Without a port, such a resume suspends
-again.
+again. A2A does this by default, since the resuming peer is the agent that asked for the
+tool; return `resumeApproval: "caller"` there only when the peer is the approver.
 
 ### Where your code and secrets run
 
@@ -12599,6 +12600,8 @@ A suspended task's status message carries the pending continuation in `metadata`
   }
 }
 ```
+
+The resuming peer is usually the agent that asked for the tool, so it does not approve its own call: the run asks `ports.approval` again and hands it the peer's `approval` as `callerDecision`. With no approval port the task stays `TASK_STATE_INPUT_REQUIRED`. Return `resumeApproval: "caller"` from `ports` only when the peer is the approver, such as a human operator's client.
 
 Cross-request registries (cancellation, subscription fan-out, push notifications) are deliberately out of scope for the stateless seam; those spec methods answer `UnsupportedOperationError` (-32004).
 
