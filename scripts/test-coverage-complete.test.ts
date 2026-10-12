@@ -39,7 +39,7 @@ const EXEMPT: Readonly<Record<string, { readonly test?: string; readonly coverag
   // Deno's suite cannot run under `bun test` - it is driven by the separate `deno` CI job
   // (`bun run test:deno`, which ci.yml runs as its own matrix entry).
   "packages/deno/test": { test: "run by the deno CI job", coverage: "run by the deno CI job" },
-  // These run in the `test` script's second `bun test` invocation, which is deliberately outside the
+  // These run in `test:rest`, which is deliberately outside the
   // coverage run: they spawn MCP servers over stdio, and Bun's coverage instrumentation of a spawned
   // child is not what the ratchet's per-file baseline is measuring.
   "packages/mcp/test": {
@@ -58,8 +58,10 @@ async function testDirs(): Promise<string[]> {
 }
 
 test("every package with tests is listed in the `test` script", async () => {
+  // `test` ends by running `test:rest`, so a directory listed there runs too.
+  const listed = `${scripts.test ?? ""} ${scripts["test:rest"] ?? ""}`
   const missing = (await testDirs()).filter(
-    (dir) => !(scripts.test ?? "").includes(dir) && EXEMPT[dir]?.test === undefined,
+    (dir) => !listed.includes(dir) && EXEMPT[dir]?.test === undefined,
   )
   expect(missing).toEqual([])
 })

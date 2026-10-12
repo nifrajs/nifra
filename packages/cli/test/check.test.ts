@@ -83,9 +83,9 @@ describe("release verification", () => {
       "build",
       "lint",
       "typecheck",
-      "tests",
-      "cli-isolation",
       "coverage",
+      "rest-tests",
+      "cli-isolation",
       "corpus",
       "sitemap",
       "docs",
@@ -119,7 +119,7 @@ describe("release verification", () => {
     expect(renderVerificationPlan("release")).toContain("7. corpus: bun run check:corpus")
     expect(Object.isFrozen(release)).toBe(true)
     expect(release.find((gate) => gate.id === "core-performance")?.workflowRequired).toBe(false)
-    expect(release.find((gate) => gate.id === "tests")?.workflowRequired).toBe(true)
+    expect(release.find((gate) => gate.id === "rest-tests")?.workflowRequired).toBe(true)
     expect(omittedVerificationGateIds()).toContain("core-performance")
     expect(omittedVerificationGateIds()).not.toContain("public-manifest")
     expect(release.find((gate) => gate.id === "sitemap")?.workflowRequired).toBe(true)

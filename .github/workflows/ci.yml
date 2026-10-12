@@ -50,8 +50,16 @@ jobs:
       - name: Typecheck (also runs the *.test-d.ts type-level tests)
         run: bun run typecheck
 
-      - name: Test (scoped to the library test dirs; pass/fail only - coverage is the ratchet step below)
-        run: bun run test
+      # The coverage run is also the test run for the library suites: it fails on any failing test, so
+      # `bun run test` would run the same files a second time. `test:rest` runs what it leaves out.
+      # The floor in bunfig says "≥90%". This says "not less than last time". A file at 99% can shed
+      # coverage indefinitely without tripping a floor, and the drop only surfaces years later as
+      # somebody else's failing build - so the erosion is caught where it happens.
+      - name: Test with coverage ratchet (no file may lose coverage against the committed baseline)
+        run: bun run test:coverage && bun run check:coverage
+
+      - name: Test the suites outside the coverage run (MCP stdio servers, scripts, invariants)
+        run: bun run test:rest
 
       # Fixture roots are unique, but shared state can still hide an order dependency. Bun prints the
       # seed on failure; deriving it from the run number makes each CI run explore a different order
@@ -60,12 +68,6 @@ jobs:
         run: bun run check:cli-isolation
         env:
           NIFRA_TEST_SEED: ${{ github.run_number }}
-
-      # The floor in bunfig says "≥90%". This says "not less than last time". A file at 99% can shed
-      # coverage indefinitely without tripping a floor, and the drop only surfaces years later as
-      # somebody else's failing build - so the erosion is caught where it happens.
-      - name: Coverage ratchet (no file may lose coverage against the committed baseline)
-        run: bun run test:coverage && bun run check:coverage
 
       # Enforce the doc gates in CI (not just `bun run check` locally): documented snippets must
       # typecheck against the live API, and api-reference.md + the per-package LLM.md cards must be
@@ -246,7 +248,7 @@ jobs:
       - name: Published tarball installs + imports under Deno
         run: bun run check:deno-tarball
 
-  # The Node adapter exercised on Node, not on Bun. `bun run test` covers packages/node/test, which
+  # The Node adapter exercised on Node, not on Bun. The check job's Bun suite covers packages/node/test, which
   # proves the adapter's logic but runs it on the wrong runtime - and an HTTP adapter is precisely
   # where Bun and Node diverge (stream semantics, `node:` builtin behaviour, socket teardown). Deno
   # already had this job; Node and Workers did not, so two published adapters had zero coverage on
