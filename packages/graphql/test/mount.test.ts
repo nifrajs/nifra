@@ -79,6 +79,32 @@ describe("mountGraphql subscriptions", () => {
     expect(sent.map((frame) => frame.type)).toEqual(["connection_ack", "error"])
   })
 
+  test("introspection: false reaches the socket unless its own options turn it back on", async () => {
+    const introspect = {
+      id: "1",
+      type: "subscribe",
+      payload: { query: "{ __schema { queryType { name } } }" },
+    }
+    const frames = [{ type: "connection_init" }, introspect]
+    for (const subscriptions of [true, { schema }]) {
+      const { sent } = await exchange(mounted({ introspection: false, subscriptions }), {}, frames)
+      expect(sent.map((frame) => frame.type)).toEqual(["connection_ack", "error"])
+      expect(JSON.stringify(sent)).toContain("introspection has been disabled")
+    }
+    const reopened = mounted({
+      introspection: false,
+      subscriptions: { schema, introspection: true },
+    })
+    const answered = await exchange(reopened, {}, frames)
+    expect(answered.sent.map((frame) => frame.type)).toEqual(["connection_ack", "next", "complete"])
+    const byDefault = await exchange(mounted({ subscriptions: true }), {}, frames)
+    expect(byDefault.sent.map((frame) => frame.type)).toEqual([
+      "connection_ack",
+      "next",
+      "complete",
+    ])
+  })
+
   test("subscription options without their own admission are refused when HTTP is authorized", () => {
     expect(() => mounted({ authorize, subscriptions: { schema } })).toThrow(
       /`authorize` guards the HTTP endpoint only/,
