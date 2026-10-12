@@ -489,6 +489,8 @@ interface FixCommandOutput {
   /** Recipes that refused, with the reason. A recipe that cannot act says so here instead of
    * aborting the run or - worse - reporting nothing at all. */
   readonly failed: readonly { readonly code: string; readonly reason: string }[]
+  /** Findings whose recipe runs only when its code is named, because its change needs review. */
+  readonly skipped: readonly { readonly code: string; readonly reason: string }[]
   readonly diagnostics: readonly unknown[]
 }
 type MigrateCommandOutput =
@@ -1428,6 +1430,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
       ok: { type: "boolean" },
       changed: { type: "array" },
       failed: { type: "array" },
+      skipped: { type: "array" },
       diagnostics: { type: "array" },
     },
     required: ["ok", "diagnostics"],
@@ -1442,25 +1445,37 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
   },
   async run(value, ctx) {
     const { collectCheckResult } = await import("./check.ts")
-    const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
+    const { applyDiagnosticRecipe, getFixRecipe } = await import("./fix-recipes.ts")
     const result = await collectCheckResult(ctx.cwd, {
       lintsOnly: true,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     })
     const changed: string[] = []
     const failed: { code: string; reason: string }[] = []
-    for (const diagnostic of result.structuredDiagnostics ?? [])
-      if (value.code === undefined || diagnostic.code === value.code)
-        // One recipe that cannot act must not cancel the others, and must not pass silently either:
-        // record why and keep going, so a run over many diagnostics still reports every outcome.
-        try {
-          changed.push(...(await applyDiagnosticRecipe(ctx.cwd, diagnostic)))
-        } catch (error) {
-          failed.push({
+    const skipped: { code: string; reason: string }[] = []
+    for (const diagnostic of result.structuredDiagnostics ?? []) {
+      if (value.code !== undefined && diagnostic.code !== value.code) continue
+      const recipe =
+        diagnostic.fix?.recipe === undefined ? undefined : getFixRecipe(diagnostic.fix.recipe)
+      if (value.code === undefined && recipe?.onlyWhenNamed === true) {
+        if (!skipped.some((entry) => entry.code === diagnostic.code))
+          skipped.push({
             code: diagnostic.code,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: `${recipe.description} Review the finding, then run \`nifra fix --code ${diagnostic.code}\`.`,
           })
-        }
+        continue
+      }
+      // One recipe that cannot act must not cancel the others, and must not pass silently either:
+      // record why and keep going, so a run over many diagnostics still reports every outcome.
+      try {
+        changed.push(...(await applyDiagnosticRecipe(ctx.cwd, diagnostic)))
+      } catch (error) {
+        failed.push({
+          code: diagnostic.code,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
     const final = await collectCheckResult(ctx.cwd, {
       lintsOnly: true,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
@@ -1469,6 +1484,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
       ok: final.ok,
       changed,
       failed,
+      skipped,
       diagnostics: final.structuredDiagnostics ?? final.diagnostics,
     }
   },
@@ -1476,6 +1492,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
     out.ok ? "✓ fixes applied" : "✖ unresolved diagnostics remain",
     ...out.changed.map((file) => `  changed ${file}`),
     ...out.failed.map((f) => `  could not fix ${f.code}: ${f.reason}`),
+    ...out.skipped.map((s) => `  needs review ${s.code}: ${s.reason}`),
     ...out.diagnostics.map((d) => `  ${String((d as { code?: unknown }).code ?? "diagnostic")}`),
   ],
   success: (out) => out.ok,

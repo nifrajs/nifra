@@ -7,6 +7,8 @@ import { resolveWorkspaceLinkedPackage } from "./workspace-link.ts"
 export interface FixRecipe {
   readonly id: string
   readonly description: string
+  /** Run only by `nifra fix --code <code>`: the change it makes is a decision a person reviews first. */
+  readonly onlyWhenNamed?: true
   apply(root: string, diagnostic: Diagnostic): Promise<readonly string[]>
   readonly verify: string
 }
@@ -115,6 +117,8 @@ registerFixRecipe({
 registerFixRecipe({
   id: "contracts.snapshot",
   description: "Refresh the opt-in contract lock after reviewing an intentional route change.",
+  // Rewriting the lock accepts whatever the routes changed to, which is the review the lock exists for.
+  onlyWhenNamed: true,
   verify: "nifra contracts check",
   async apply(root) {
     const { snapshotContracts } = await import("./contracts.ts")
@@ -190,6 +194,7 @@ registerFixRecipe({
   id: "layout.migrate",
   description:
     "Move the app onto the frontend/backend layout, as `nifra migrate layout --write` does.",
+  onlyWhenNamed: true,
   verify: "nifra check --lints-only",
   async apply(root) {
     const { migrateLayout } = await import("./migrate-layout.ts")
