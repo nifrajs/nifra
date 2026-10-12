@@ -228,6 +228,28 @@ describe("handle()", () => {
     expect(source.cancelled()).toBe(true)
   })
 
+  test("a HEAD answer whose body throws on cancel still answers, with nothing left unhandled", async () => {
+    let cancelled = false
+    const app = server().get(
+      "/",
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled = true
+              throw new Error("source refuses to stop")
+            },
+          }),
+        ),
+    )
+    const result = await handle(app)(
+      v2Event({ requestContext: { http: { method: "HEAD", sourceIp: "203.0.113.9" } } }),
+    )
+    expect(result.statusCode).toBe(200)
+    expect(result.body).toBe("")
+    expect(cancelled).toBe(true)
+  })
+
   test("a broken app collapses to the flat internal_error 500, no event echo", async () => {
     const broken = {
       fetch(): Response {
