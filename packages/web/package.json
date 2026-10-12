@@ -42,6 +42,11 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./seo": {
+      "bun": "./src/seo.ts",
+      "types": "./dist/seo.d.ts",
+      "default": "./dist/seo.js"
+    },
     "./vitals": {
       "bun": "./src/vitals.ts",
       "types": "./dist/vitals.d.ts",

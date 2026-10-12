@@ -8870,7 +8870,9 @@ pass through, and every `<link>` attribute with a normal name -
 
 A route's `meta` emits the full social / structured-data head with three public
 helpers - `canonical()`, `openGraph()`, and `jsonLd()` - and
-builds **absolute** URLs from the `origin` argument. Because
+builds **absolute** URLs from the `origin` argument. Import them from
+`@nifrajs/web/seo`: the entry imports nothing at runtime, so a page's browser bundle
+gets the three helpers and none of the server modules the package root also exports. Because
 `meta()` runs in **both** SSR and client navigation it has
 **no server env**: never read `process.env` or the request inside it.
 The framework injects `origin` (the site's scheme + host, e.g.
@@ -8882,9 +8884,11 @@ base, a CDN host) belongs in the `loader`, not `meta()`.
 
 ```ts
 // routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
-// with ABSOLUTE URLs built from `origin`. The three helpers (canonical/openGraph/jsonLd) are public
-// exports of @nifrajs/web; `origin` is a MetaArgs field beside data, pageData and params.
-import { canonical, jsonLd, openGraph, type MetaArgs } from "@nifrajs/web"
+// with ABSOLUTE URLs built from `origin`. The three helpers (canonical/openGraph/jsonLd) come from
+// @nifrajs/web/seo, which imports nothing at runtime, so the page's browser bundle takes only them;
+// `origin` is a MetaArgs field beside data, pageData and params.
+import type { MetaArgs } from "@nifrajs/web"
+import { canonical, jsonLd, openGraph } from "@nifrajs/web/seo"
 
 // CAVEAT: meta() runs in BOTH SSR and client navigation, so it has NO server env - never read
 // `process.env` or the request here. The framework injects `origin` (the site's scheme+host, e.g.

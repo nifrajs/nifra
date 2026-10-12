@@ -6106,6 +6106,17 @@ _No named exports (side-effect entrypoint)._
 - **writeRouteTypes** _(function)_ - `writeRouteTypes: (options: RouteTypesOptions) => RouteTypesResult`
   Bring `.nifra/types` up to date with the app's routes. Unchanged files are left alone, so an editor watching them sees only real changes. Owns the directory: anything else in it is removed.
 
+### `@nifrajs/web/seo`
+
+- **OpenGraphInput** _(interface)_ - `interface OpenGraphInput`
+  Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
+- **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
+  A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
+- **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
+  Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
+- **openGraph** _(function)_ - `openGraph: (input: OpenGraphInput) => MetaDescriptor[]`
+  Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
+
 ### `@nifrajs/web/server-components`
 
 - **ComponentErrorCode** _(type)_ - `type ComponentErrorCode = (typeof COMPONENT_ERROR_CODES)[number]`
