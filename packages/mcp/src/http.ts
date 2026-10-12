@@ -158,6 +158,7 @@ const TEXT_DECODER = new TextDecoder()
 const TEXT_ENCODER = new TextEncoder()
 const SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
 const SSE_KEEP_ALIVE_MS = 15_000
+const GET_STREAM_LIFETIME_MS = 5 * 60_000
 
 /** Invalid byte caps make `total > maxBytes` fail open (especially for `NaN`). Reject configuration
  * before any request body is read so MCP cannot silently lose its memory bound. */
@@ -226,6 +227,8 @@ export interface McpHttpOptions {
    * Optional authorization, run once per request against the parsed message - after the body has been
    * read under the size cap, so it never costs a second read of the stream. Returning `false` answers
    * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.
+   * A GET for the server-message stream carries no message to authorize, so with this set it is
+   * answered `405` (no stream offered) instead.
    */
   readonly authorizeMessage?: (
     message: JsonRpcRequest,
@@ -481,7 +484,8 @@ function modernErrorStatus(response: JsonRpcResponse): number {
 /**
  * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → a JSON-RPC
  * response, or an SSE stream carrying progress notifications and the final response when the client
- * accepts `text/event-stream`; GET → a health page or a cancellable SSE stream; OPTIONS → CORS preflight.
+ * accepts `text/event-stream`; GET → a health page or a keep-alive SSE stream that closes after five minutes
+ * (`405` when `authorizeMessage` is set); OPTIONS → CORS preflight.
  * Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that
  * mirrors its method/name/version into headers is validated against the body before dispatch and gets spec
  * HTTP statuses; legacy requests are served unchanged. The dispatch is the shared, transport-agnostic
@@ -514,12 +518,22 @@ export async function respondMcpHttp(
       // Keep the GET side of Streamable HTTP usable for clients that open a server-message channel. This
       // transport has no durable session store, so the public seam is a cancellable keep-alive stream;
       // request-scoped progress still travels on the POST stream below.
+      if (options.authorizeMessage !== undefined) {
+        return new Response("method not allowed", {
+          status: 405,
+          headers: { allow: "POST, GET", ...cors },
+        })
+      }
       return eventStreamResponse(
         request,
         { allow: "POST, GET", ...cors },
         async (stream) => {
           stream.comment("connected")
+          // Nothing is ever sent here, so a bounded lifetime costs a client only a reconnect.
+          const lifetime = setTimeout(() => stream.close(), GET_STREAM_LIFETIME_MS)
+          ;(lifetime as { unref?: () => void }).unref?.()
           await stream.closed
+          clearTimeout(lifetime)
         },
         SSE_KEEP_ALIVE_MS,
         maxResponseBytes,
