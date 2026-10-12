@@ -288,6 +288,54 @@ Deno.test("a frame the route's sendSchema refuses never leaves, as on Bun", asyn
   }
 })
 
+/** Send one text frame and report the echo, or the close code when the server closes instead. */
+function echoOrClose(url: string, message: string): Promise<{ echo: string } | { close: number }> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url)
+    const timer = setTimeout(() => reject(new Error("ws timed out")), 5000)
+    socket.onopen = () => socket.send(message)
+    socket.onmessage = (ev) => {
+      clearTimeout(timer)
+      socket.close()
+      resolve({ echo: String(ev.data) })
+    }
+    socket.onclose = (ev) => {
+      clearTimeout(timer)
+      resolve({ close: ev.code })
+    }
+  })
+}
+
+Deno.test("wsMaxPayloadBytes counts UTF-8 bytes and sizes a message without copying it", async () => {
+  const app = server({ wsMaxPayloadBytes: 16 })
+    .use(websocket())
+    .ws("/echo", { message: (ws, data) => ws.send(data) })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const encode = Object.getOwnPropertyDescriptor(TextEncoder.prototype, "encode")
+  const encoded: string[] = []
+  Object.defineProperty(TextEncoder.prototype, "encode", {
+    configurable: true,
+    value(this: TextEncoder, input?: string) {
+      encoded.push(input ?? "")
+      return encode?.value.call(this, input)
+    },
+  })
+  try {
+    const url = `ws://127.0.0.1:${running.port}/echo`
+    assertEquals(await echoOrClose(url, "é".repeat(8)), { echo: "é".repeat(8) })
+    assertEquals(await echoOrClose(url, "😀".repeat(4)), { echo: "😀".repeat(4) })
+    assertEquals(await echoOrClose(url, "é".repeat(9)), { close: 1009 })
+    assertEquals(await echoOrClose(url, "x".repeat(17)), { close: 1009 })
+    assert(
+      !encoded.some((input) => input.startsWith("é") || input.startsWith("😀")),
+      "the size check encoded a message to measure it",
+    )
+  } finally {
+    if (encode !== undefined) Object.defineProperty(TextEncoder.prototype, "encode", encode)
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 Deno.test("a socket registered after a guard refuses a handshake without credentials", async () => {
   const app = server()
     .use(websocket())

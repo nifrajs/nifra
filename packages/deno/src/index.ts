@@ -11,6 +11,11 @@
  * This adapter adds a Bun-`listen()`-style graceful `stop()` (Deno's `shutdown()` drains
  * in-flight requests) and opt-in signal handling. The app-level request timeout and body
  * cap ride along inside `app.fetch`, so they apply here with no extra wiring.
+ *
+ * WebSocket message size: `Deno.upgradeWebSocket` takes no size limit, so Deno receives each inbound
+ * message whole (up to its own limit, 64 MiB on Deno 2.9) before the app sees it. `wsMaxPayloadBytes`
+ * then closes the socket with `1009` and keeps the message from the handler, but it cannot bound the
+ * memory Deno spent receiving it. Where that matters, cap message size in a proxy in front.
  */
 // WebSocket types: structurally mirrored from `@nifrajs/core` so this adapter keeps zero dependency on
 // nifra (and `deno check` never has to resolve `@nifrajs/core`'s types). The WS dispatch is inlined below,
@@ -287,9 +292,22 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   return Promise.resolve({ port: addr.port, stop })
 }
 
-/** Shared across sockets: only a capped route ever uses it, so a per-connection one would allocate
- * for every client to serve a feature most apps never enable. */
-const payloadEncoder = new TextEncoder()
+/** Whether a message is over `cap` UTF-8 bytes, without encoding a text one: each UTF-16 unit takes
+ * 1-3 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. The
+ * Deno copy of core's `exceedsPayloadCap`. */
+function exceedsPayloadCap(message: NifraWsData, cap: number): boolean {
+  if (typeof message !== "string") return message.byteLength > cap
+  const units = message.length
+  if (units > cap) return true
+  if (units * 3 <= cap) return false
+  let bytes = 0
+  for (let i = 0; i < units; i++) {
+    const unit = message.charCodeAt(i)
+    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
+    if (bytes > cap) return true
+  }
+  return false
+}
 
 function internalError(): Response {
   return new Response('{"ok":false,"error":"internal_error"}', {
@@ -351,17 +369,11 @@ function attachDenoWebSocket(
   socket.addEventListener("message", (event) => {
     const raw: unknown = event.data
     const payload: NifraWsData = typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer)
-    // Only a route that declared a cap pays for measuring the frame - sizing a text frame means a
-    // full UTF-8 encode and the buffer that comes with it, on every message.
-    if (maxPayloadBytes !== undefined) {
-      const payloadBytes =
-        typeof raw === "string"
-          ? payloadEncoder.encode(raw).byteLength
-          : (payload as Uint8Array).byteLength
-      if (payloadBytes > maxPayloadBytes) {
-        socket.close(1009, "message too large")
-        return
-      }
+    // `Deno.upgradeWebSocket` takes no size limit: Deno has buffered the whole message (up to its own
+    // limit) by now, so this keeps an oversize one from the handler but cannot bound that buffer.
+    if (maxPayloadBytes !== undefined && exceedsPayloadCap(payload, maxPayloadBytes)) {
+      socket.close(1009, "message too large")
+      return
     }
     safe(() => handler.message?.(ws, payload))
   })

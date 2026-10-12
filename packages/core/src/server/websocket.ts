@@ -336,18 +336,11 @@ export function attachWebSocket<
   socket.addEventListener("message", (event: { readonly data: unknown }) => {
     const raw = event.data
     const payload: WebSocketData = typeof raw === "string" ? raw : toBinary(raw)
-    // Measuring a text frame costs a full UTF-8 encode plus the buffer it allocates, so it happens
-    // only for a route that actually declared a cap. Reading `.byteLength` off an already-decoded
-    // binary frame is free, but the branch stays under the same guard to keep one shape here.
-    if (maxPayloadBytes !== undefined) {
-      const payloadBytes =
-        typeof raw === "string"
-          ? WS_PAYLOAD_ENCODER.encode(raw).byteLength
-          : (payload as Uint8Array).byteLength
-      if (payloadBytes > maxPayloadBytes) {
-        socket.close(1009, "message too large")
-        return
-      }
+    // The runtime hands over each message whole, so this bounds what reaches the handler, not what
+    // the runtime buffered to deliver it.
+    if (maxPayloadBytes !== undefined && exceedsPayloadCap(payload, maxPayloadBytes)) {
+      socket.close(1009, "message too large")
+      return
     }
     safe(() =>
       (
@@ -374,7 +367,25 @@ export function attachWebSocket<
 }
 
 const WS_MESSAGE_DECODER = new TextDecoder()
-const WS_PAYLOAD_ENCODER = new TextEncoder()
+
+/** Whether a message is over `cap` UTF-8 bytes, without encoding a text one: each UTF-16 unit takes
+ * 1-3 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. */
+export function exceedsPayloadCap(
+  message: string | ArrayBuffer | Uint8Array,
+  cap: number,
+): boolean {
+  if (typeof message !== "string") return message.byteLength > cap
+  const units = message.length
+  if (units > cap) return true
+  if (units * 3 <= cap) return false
+  let bytes = 0
+  for (let i = 0; i < units; i++) {
+    const unit = message.charCodeAt(i)
+    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
+    if (bytes > cap) return true
+  }
+  return false
+}
 
 type WebSocketSendPayload = string | ArrayBufferView | ArrayBuffer
 

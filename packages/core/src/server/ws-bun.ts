@@ -7,6 +7,7 @@
 
 import {
   createWebSocketSender,
+  exceedsPayloadCap,
   type NifraWebSocket,
   type TopicRegistry,
   type WebSocketData,
@@ -39,22 +40,6 @@ export interface BunSocket {
   unsubscribe(topic: string): void
   // readonly: we never reassign `ws.data` wholesale, only mutate its fields (`.nifra`, `.data`).
   readonly data: BunWsData
-}
-
-/** Whether a message is over `cap` bytes, without encoding a text one: each UTF-16 unit takes 1-3
- * UTF-8 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. */
-function exceedsPayloadCap(message: string | ArrayBuffer | Uint8Array, cap: number): boolean {
-  if (typeof message !== "string") return message.byteLength > cap
-  const units = message.length
-  if (units > cap) return true
-  if (units * 3 <= cap) return false
-  let bytes = 0
-  for (let i = 0; i < units; i++) {
-    const unit = message.charCodeAt(i)
-    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
-    if (bytes > cap) return true
-  }
-  return false
 }
 
 /**

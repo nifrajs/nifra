@@ -9,6 +9,7 @@ import {
   toFetchHandler,
   type WebSocketHandler,
 } from "../src/index.ts"
+import { exceedsPayloadCap } from "../src/server/websocket.ts"
 // The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
 import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
 import { firstContractFrame, sendContractApp } from "./ws-send-contract.ts"
@@ -985,6 +986,50 @@ describe("attachWebSocket", () => {
     bin.fire("message", { data: new Uint8Array([1, 2, 3, 4, 5]).buffer })
     expect(seenBin).toHaveLength(1)
     expect(bin.closedWith).toEqual({ code: 1009, reason: "message too large" })
+  })
+
+  test("sizing a capped text message makes no UTF-8 copy of it", () => {
+    const socket = new FakeSocket()
+    const seen: unknown[] = []
+    attachWebSocket(
+      socket,
+      {
+        message: (_ws, data) => {
+          seen.push(data)
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry(), maxPayloadBytes: 8 },
+    )
+    const encode = Object.getOwnPropertyDescriptor(TextEncoder.prototype, "encode")
+    Object.defineProperty(TextEncoder.prototype, "encode", {
+      configurable: true,
+      value: () => {
+        throw new Error("the size check encoded the message")
+      },
+    })
+    try {
+      socket.fire("message", { data: "é€" }) // 5 bytes, counted
+      socket.fire("message", { data: "😀😀" }) // 8 bytes, counted
+      socket.fire("message", { data: "ok" }) // under the cap by length alone
+      expect(seen).toEqual(["é€", "😀😀", "ok"])
+      socket.fire("message", { data: "😀😀é" }) // 10 bytes, counted
+    } finally {
+      if (encode !== undefined) Object.defineProperty(TextEncoder.prototype, "encode", encode)
+    }
+    expect(seen).toHaveLength(3)
+    expect(socket.closedWith).toEqual({ code: 1009, reason: "message too large" })
+  })
+
+  test("exceedsPayloadCap counts UTF-8 bytes at every boundary", () => {
+    const encoded = (text: string) => new TextEncoder().encode(text).byteLength
+    for (const text of ["", "abc", "é", "€", "😀", "aé€😀", "€".repeat(5), "😀".repeat(3)]) {
+      const bytes = encoded(text)
+      expect(exceedsPayloadCap(text, bytes)).toBe(false)
+      if (bytes > 0) expect(exceedsPayloadCap(text, bytes - 1)).toBe(true)
+    }
+    expect(exceedsPayloadCap(new Uint8Array(5), 5)).toBe(false)
+    expect(exceedsPayloadCap(new Uint8Array(5).buffer, 4)).toBe(true)
   })
 
   test("close threads code + reason; data is exposed and mutable", () => {

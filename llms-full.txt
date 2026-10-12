@@ -5884,6 +5884,14 @@ it). Install it when you use `app.ws()`; without it a WS upgrade gets a clean
 npm i ws
 ```
 
+`server({ wsMaxPayloadBytes })` caps one inbound message (default
+`maxBodyBytes`, 1 MB): a socket that sends more is closed with `1009`
+and the message never reaches your handler. Bun and Node refuse it while it arrives. Deno's
+`Deno.upgradeWebSocket` takes no size limit, so Deno receives each message whole
+(up to its own limit, 64 MiB on Deno 2.9) before nifra can check it: the cap still keeps the
+message from your handler, but it does not bound the memory Deno spent receiving it. Where that
+matters, cap message size in a proxy in front of a Deno app.
+
 ### In a composed app
 
 `mount({ path, app })` carries WebSocket upgrades as well as HTTP: when the
@@ -14198,6 +14206,14 @@ The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) a
 cap live inside `app.fetch`, so they apply through this adapter automatically.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM/TS. MIT.
+
+## WebSocket message size
+
+`app.ws()` routes upgrade through `Deno.upgradeWebSocket`, which takes no size limit: Deno receives
+each inbound message whole (up to its own limit, 64 MiB on Deno 2.9) before the app sees it.
+`server({ wsMaxPayloadBytes })` then closes the socket with `1009` and keeps the message from your
+handler, but it cannot bound the memory Deno spent receiving it. Where that matters, cap message
+size in a proxy in front of the app. On Bun and Node the cap is enforced while the message arrives.
 
 ## For AI agents
 

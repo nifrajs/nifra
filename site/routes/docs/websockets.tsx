@@ -315,6 +315,15 @@ export default function WebSockets() {
         <code>501</code> and the HTTP routes are unaffected.
       </p>
       <CodeBlock code={NODE_WS} />
+      <p>
+        <code>server({"{ wsMaxPayloadBytes }"})</code> caps one inbound message (default{" "}
+        <code>maxBodyBytes</code>, 1 MB): a socket that sends more is closed with <code>1009</code>{" "}
+        and the message never reaches your handler. Bun and Node refuse it while it arrives. Deno's{" "}
+        <code>Deno.upgradeWebSocket</code> takes no size limit, so Deno receives each message whole
+        (up to its own limit, 64 MiB on Deno 2.9) before nifra can check it: the cap still keeps the
+        message from your handler, but it does not bound the memory Deno spent receiving it. Where that
+        matters, cap message size in a proxy in front of a Deno app.
+      </p>
 
       <h2 id="composed">In a composed app</h2>
       <p>
