@@ -191,6 +191,25 @@ test("parity: an urlencoded form body is framed the same way", async () => {
   expect(e.status).toBe(c.status)
 })
 
+test("parity: a form body from another site is refused unless formOrigins lists it", async () => {
+  const req = (origin: string) => () =>
+    new Request("https://x.test/users", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin },
+      body: "name=ada&age=36",
+    })
+  const e = await wire(await edgeApp().fetch(req("https://evil.test")()))
+  expect(e).toEqual(await wire(await coreApp().fetch(req("https://evil.test")())))
+  expect(e.status).toBe(403)
+  const listed = server({ formOrigins: ["https://idp.test"] }).post(
+    "/users",
+    { body: userBody },
+    () => ({ ok: true }),
+  )
+  // Listed, the form reaches the schema, which rejects age as a string.
+  expect((await listed.fetch(req("https://idp.test")())).status).toBe(422)
+})
+
 /** A hand-rolled Standard Schema for an upload form: a text `title` and one `doc` file. */
 const uploadBody: StandardSchemaV1<{ title: string; doc: File }> = {
   "~standard": {

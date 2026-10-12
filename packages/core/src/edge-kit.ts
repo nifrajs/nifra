@@ -22,7 +22,7 @@
 
 export { type ErrorLogDetail, emitRequestErrorLog } from "./server/bare-error-lane.ts"
 export { capBodyBytes } from "./server/body.ts"
-export { readBodyFramed } from "./server/body-lane.ts"
+export { type FormOrigins, readBodyFramed } from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"
 export {
   answerNotFound,

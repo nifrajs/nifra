@@ -137,24 +137,25 @@ describe("input is never trusted", () => {
  * impossible rather than unlikely, so these two are the load-bearing tests in this file.
  */
 describe("cross-origin form posts cannot reach a server function", () => {
-  test("a urlencoded form is refused (this succeeds against a plain schema route)", async () => {
+  // Cross-site, core's body lane refuses a form body (403) before the function is reached; without
+  // an Origin it passes that check, and the function's own JSON requirement refuses it (415).
+  test("a urlencoded form is refused, cross-site or without an Origin", async () => {
     received = undefined
-    const res = await post("echo", "text=attacker", {
-      "content-type": "application/x-www-form-urlencoded",
-      origin: "https://evil.test",
-    })
-    expect(res.status).toBe(415)
+    const form = { "content-type": "application/x-www-form-urlencoded" }
+    expect(
+      (await post("echo", "text=attacker", { ...form, origin: "https://evil.test" })).status,
+    ).toBe(403)
+    expect((await post("echo", "text=attacker", form)).status).toBe(415)
     expect(received).toBeUndefined()
   })
 
   test("a text/plain body crafted to parse as JSON is refused", async () => {
     // A form sends `name=value`, so the field name carries the JSON and `=` lands inside a string.
     received = undefined
-    const res = await post("echo", '{"text":"attacker","x":"="}', {
-      "content-type": "text/plain",
-      origin: "https://evil.test",
-    })
-    expect(res.status).toBe(415)
+    const body = '{"text":"attacker","x":"="}'
+    const plain = { "content-type": "text/plain" }
+    expect((await post("echo", body, { ...plain, origin: "https://evil.test" })).status).toBe(403)
+    expect((await post("echo", body, plain)).status).toBe(415)
     expect(received).toBeUndefined()
   })
 
@@ -184,11 +185,11 @@ describe("cross-origin form posts cannot reach a server function", () => {
   })
 
   test("multipart is refused too", async () => {
-    const res = await post("echo", "--x--", {
-      "content-type": "multipart/form-data; boundary=x",
-      origin: "https://evil.test",
-    })
-    expect(res.status).toBe(415)
+    const multipart = { "content-type": "multipart/form-data; boundary=x" }
+    expect(
+      (await post("echo", "--x--", { ...multipart, origin: "https://evil.test" })).status,
+    ).toBe(403)
+    expect((await post("echo", "--x--", multipart)).status).toBe(415)
   })
 })
 

@@ -26,7 +26,7 @@
  *
  * An unparseable Origin is not same-origin.
  */
-export function isSameOriginRequest(origin: string, request: Request): boolean {
+export function isSameOriginRequest(origin: string, request: { readonly url: string }): boolean {
   try {
     const from = new URL(origin)
     const own = new URL(request.url)
@@ -40,4 +40,17 @@ export function isSameOriginRequest(origin: string, request: Request): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a
+ * browser sends a same-origin form POST with `Origin: null`; that one passes on its
+ * `Sec-Fetch-Site: same-origin`, a header page script cannot set.
+ */
+export function isSameOriginForm(
+  origin: string,
+  secFetchSite: string | null,
+  request: { readonly url: string },
+): boolean {
+  return origin === "null" ? secFetchSite === "same-origin" : isSameOriginRequest(origin, request)
 }

@@ -547,8 +547,12 @@ export default function Security() {
         </li>
         <li>
           <b>A form post is a simple cross-origin request.</b> A browser sends{" "}
-          <code>multipart/form-data</code> with cookies and no preflight, so a cookie-authenticated upload
-          route needs <code>csrf()</code> like any other state change.
+          <code>multipart/form-data</code>, urlencoded and <code>text/plain</code> with cookies and no
+          preflight. A body-schema route refuses one whose <code>Origin</code> is another site&rsquo;s
+          with <code>403</code> before reading it; list a site that must post forms to the app in the
+          server&rsquo;s <code>formOrigins</code>. A request without an <code>Origin</code> passes, so
+          a cookie-authenticated upload route still needs <code>csrf()</code> like any other state
+          change.
         </li>
         <li>
           <b>The form is held in memory.</b> Budget roughly twice <code>bodyLimit</code> per request in

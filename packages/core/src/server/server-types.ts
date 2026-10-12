@@ -64,6 +64,14 @@ export interface ServerOptions {
    */
   readonly protoPoisoning?: "reject" | "strip" | "ignore"
   /**
+   * Other sites whose HTML forms may post to a body-schema route: exact origins, or a function that
+   * receives the `Origin`. A urlencoded, multipart or `text/plain` body is one a form on any site can
+   * send with the visitor's cookies and no preflight, so one whose `Origin` names another site is
+   * refused with `403` before it is read. Same-origin posts and requests without an `Origin`, such
+   * as server-to-server calls, pass. JSON is not affected: a browser preflights it, so CORS decides.
+   */
+  readonly formOrigins?: ReadonlyArray<string> | ((origin: string) => boolean)
+  /**
    * Declare that every `Request` reaching `app.fetch` was framed by a runtime HTTP parser, so its
    * `Content-Length` is an exact transport boundary rather than a hint. Set this ONLY when the
    * runtime's own request object is handed through untouched with no adapter in between to mark it -

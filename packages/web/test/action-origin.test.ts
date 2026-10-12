@@ -60,6 +60,10 @@ test("a cross-site POST to an action is refused before the action runs", async (
   expect(await data.json()).toEqual({ ok: false, error: "forbidden_origin" })
   const opaque = await app.fetch(post("https://bank.example/settings", { origin: "null" }))
   expect(opaque.status).toBe(403)
+  const sandboxed = await app.fetch(
+    post("https://bank.example/settings", { origin: "null", "sec-fetch-site": "cross-site" }),
+  )
+  expect(sandboxed.status).toBe(403)
   expect(counts.action).toBe(0)
 })
 
@@ -70,10 +74,12 @@ test("a same-origin POST, one behind a TLS-terminating proxy, and one without Or
     post("https://bank.example/settings", { origin: "https://bank.example" }),
     post("http://bank.example/settings", { origin: "https://bank.example" }),
     post("https://bank.example/settings", {}),
+    // A same-origin form POST under `Referrer-Policy: no-referrer`, the securityHeaders() default.
+    post("https://bank.example/settings", { origin: "null", "sec-fetch-site": "same-origin" }),
   ]) {
     expect((await app.fetch(request)).status).toBe(200)
   }
-  expect(counts.action).toBe(3)
+  expect(counts.action).toBe(4)
 })
 
 test("a route's allowedOrigins replaces the same-origin default", async () => {

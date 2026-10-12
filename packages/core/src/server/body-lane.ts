@@ -3,6 +3,7 @@
  * reuse the exact trust-boundary lane without bundling the full context implementation (cookies,
  * deferred responses, and request helpers).
  */
+import { isSameOriginForm } from "../internal/same-origin.ts"
 import { drainCapped, hasTrustedBodyFraming, parseContentLength, RAW_BODY_READERS } from "./body.ts"
 import { plainError } from "./http.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
@@ -192,9 +193,38 @@ export type SchemaBodyReader = ((
 }
 
 /**
+ * Origins besides the request's own whose HTML forms may post a body: exact origins, or a function
+ * that receives the request's `Origin`.
+ */
+export type FormOrigins = ReadonlyArray<string> | ((origin: string) => boolean)
+
+/** The media types a cross-site HTML form can send with the visitor's cookies and no preflight. */
+function isFormMediaType(contentType: string): boolean {
+  const semi = contentType.indexOf(";")
+  const essence = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
+  return (
+    essence === "application/x-www-form-urlencoded" ||
+    essence === "multipart/form-data" ||
+    essence === "text/plain"
+  )
+}
+
+function formOriginAllowed(source: RequestSource, formOrigins: FormOrigins | undefined): boolean {
+  const origin = headerOf(source, "origin")
+  if (origin === null || isSameOriginForm(origin, headerOf(source, "sec-fetch-site"), source)) {
+    return true
+  }
+  if (formOrigins === undefined) return false
+  return typeof formOrigins === "function"
+    ? formOrigins(origin) === true
+    : formOrigins.includes(origin)
+}
+
+/**
  * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded
  * with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep
- * their lanes whatever the schema carries.
+ * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and
+ * not one of `formOrigins`, is refused with `403` before the body is read.
  */
 export function readBodyFramed<T>(
   source: RequestSource,
@@ -204,9 +234,14 @@ export function readBodyFramed<T>(
   wrapResponse: (response: Response | ResponseResult) => T,
   onError: (err: unknown) => MaybePromise<T>,
   bodySchema?: object,
+  formOrigins?: FormOrigins,
 ): Promise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
   if (!isJsonMediaType(contentType)) {
+    // JSON needs a preflight, so CORS judges it; a form body reaches here from any site with cookies.
+    if (isFormMediaType(contentType) && !formOriginAllowed(source, formOrigins)) {
+      return Promise.resolve(wrapResponse(plainError(403, "forbidden_origin")))
+    }
     if (isUrlEncodedForm(contentType)) {
       return readBoundedForm(source, maxBodyBytes).then(
         (form) => (isResponseResult(form) ? wrapResponse(form) : onParsed(form)),

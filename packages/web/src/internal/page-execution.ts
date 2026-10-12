@@ -4,7 +4,7 @@ import {
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
 } from "@nifrajs/core/mount"
 import {
-  isSameOriginRequest,
+  isSameOriginForm,
   type Platform,
   type ResponseResult,
   status as statusResult,
@@ -1536,7 +1536,8 @@ export function createPageRequestExecutor<Env = unknown>(
         const allowedOrigins = mod.allowedOrigins
         const allowed =
           allowedOrigins === undefined
-            ? origin === null || isSameOriginRequest(origin, c.req)
+            ? origin === null ||
+              isSameOriginForm(origin, c.req.headers.get("sec-fetch-site"), c.req)
             : typeof allowedOrigins === "function"
               ? allowedOrigins(origin) === true
               : origin !== null && allowedOrigins.includes(origin)

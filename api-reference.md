@@ -1761,9 +1761,11 @@ Every public export of every package and documented subpath - name, kind, signat
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
   Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+  {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`; that one passes on its `Sec-Fetch-Site: same-origin`, a header page script cannot set.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
-- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
+- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
@@ -2293,6 +2295,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
   How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option.
+- **FormOrigins** _(type)_ - `type FormOrigins = ReadonlyArray<string> | ((origin: string) => boolean)`
+  Origins besides the request's own whose HTML forms may post a body: exact origins, or a function that receives the request's `Origin`.
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
 - **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
   Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
@@ -2317,7 +2321,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The shared 422 response result used by every body-validation lane.
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
-  The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries.
+  The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and not one of `…
 - **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
   Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
@@ -3010,9 +3014,11 @@ Every public export of every package and documented subpath - name, kind, signat
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
   Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+  {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`; that one passes on its `Sec-Fetch-Site: same-origin`, a header page script cannot set.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
-- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
+- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
@@ -7384,9 +7390,11 @@ _No named exports (side-effect entrypoint)._
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
   Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+  {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`; that one passes on its `Sec-Fetch-Site: same-origin`, a header page script cannot set.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
-- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
+- **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…

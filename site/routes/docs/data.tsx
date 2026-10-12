@@ -165,7 +165,9 @@ export default function Data() {
       <p>
         A form can post to another site and the browser sends that site's cookies with it, so an action
         refuses a POST whose <code>Origin</code> is another site's with 403, before middleware, gates or
-        the action run. A request without an <code>Origin</code>, such as one from a server, passes.
+        the action run. A request without an <code>Origin</code>, such as one from a server, passes, and
+        so does a form on the app's own page sent under <code>Referrer-Policy: no-referrer</code>, which
+        arrives as <code>Origin: null</code> with <code>Sec-Fetch-Site: same-origin</code>.
         Same-origin is judged from the request URL's host, so a proxy in front must forward the{" "}
         <code>Host</code> header. A route that takes posts from elsewhere, such as an identity
         provider's <code>form_post</code> callback, exports <code>allowedOrigins</code> from its backend

@@ -74,6 +74,7 @@ import {
 } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import "./core-copies.ts"
+import type { FormOrigins } from "./body-lane.ts"
 import {
   hasLowercaseHeaderKeysMark,
   headerKeysAllLowercase,
@@ -982,6 +983,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     | undefined
   private readonly maxBodyBytes: number
   private readonly protoPoisoning: "reject" | "strip" | "ignore"
+  private readonly formOrigins: FormOrigins | undefined
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
   private readonly wsMaxPayloadBytes: number
@@ -1117,6 +1119,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
     this.protoPoisoning = options.protoPoisoning ?? "reject"
+    this.formOrigins = options.formOrigins
     this.trustBodyFraming = options.trustBodyFraming ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
@@ -4716,6 +4719,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
         bodySchema,
+        this.formOrigins,
       )
     }
   }
@@ -5130,6 +5134,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (response) => this.wrapWebResponse(response),
         (err) => Promise.resolve(logError(err, ctx)),
         bodySchema,
+        this.formOrigins,
       ) as MaybePromise<Response>
     }
   }
@@ -5561,6 +5566,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
         bodySchema,
+        this.formOrigins,
       )
     }
   }
@@ -6216,6 +6222,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (response) => response,
       (error) => Promise.reject(error),
       bodySchema,
+      this.formOrigins,
     )
   }
 

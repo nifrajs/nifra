@@ -22,7 +22,7 @@ export type Version = typeof VERSION
 
 export { FrameworkError, RouteConfigError, type RouteConfigErrorCode } from "./errors.ts"
 export { FRAMEWORK_NAME, type FrameworkName } from "./internal/brand.ts"
-export { isSameOriginRequest } from "./internal/same-origin.ts"
+export { isSameOriginForm, isSameOriginRequest } from "./internal/same-origin.ts"
 export {
   ROUTE_PATTERN_OVERLAP_MAX_STATES,
   RoutePatternOverlapLimitError,
