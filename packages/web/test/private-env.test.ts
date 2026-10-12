@@ -33,6 +33,33 @@ describe("privateEnvReads", () => {
     ])
   })
 
+  test("optional and bracket access read the named variable, on the env object and on its owner", () => {
+    const source = [
+      'const a = process.env?.["PUBLIC_A"]',
+      'const b = process?.env?.["SECRET_B"]',
+      'const c = Bun.env?.[ "PUBLIC_C" ]',
+      'const d = import.meta.env?.["MODE"]',
+      'const e = import.meta.env?.["API_KEY"]',
+      "const f = process['env'].PRIVATE_F",
+      'const g = process?.["env"]?.["PUBLIC_G"]',
+      'const h = Deno.env?.get?.("PUBLIC_H")',
+      'const i = Deno.env.get?.("SECRET_I")',
+      "const j = process.env?.[name]",
+      "const k = `${process.env?.['SECRET_K']}`",
+      "// process.env?.['IN_COMMENT']",
+      `const l = 'process.env?.["IN_STRING"]'`,
+      "",
+    ].join("\n")
+    expect(reads("a.ts", source)).toEqual([
+      'Deno.env.get("SECRET_I")',
+      'import.meta.env["API_KEY"]',
+      "process.env",
+      "process.env.PRIVATE_F",
+      'process.env["SECRET_B"]',
+      'process.env["SECRET_K"]',
+    ])
+  })
+
   test("text that only mentions a read is not one", () => {
     const source = [
       "// process.env.COMMENT",

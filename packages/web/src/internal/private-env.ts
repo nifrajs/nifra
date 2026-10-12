@@ -152,24 +152,37 @@ function envReads(tokens: readonly Token[]): EnvRead[] {
     const token = tokens[at]
     return token?.kind === "id" ? token.value : undefined
   }
-  /** A property read after an env object that ends at `at`: `.X` or `["X"]`. */
+  // The tokenizer reads `?.` as `.`, so `?.[` and `?.(` arrive as `.` before the bracket.
+  const open = (at: number, bracket: "[" | "("): number =>
+    is(at, "punct", ".") && is(at + 1, "punct", bracket) ? at + 1 : at
+  /** The string key of `["X"]` (or `?.["X"]`) at `at`, and the index after it. */
+  const keyAt = (at: number): { readonly key: string; readonly next: number } | undefined => {
+    const bracket = open(at, "[")
+    const key =
+      is(bracket, "punct", "[") && is(bracket + 2, "punct", "]") ? stringAt(bracket + 1) : undefined
+    return key === undefined ? undefined : { key, next: bracket + 3 }
+  }
+  /** A property read after an env object that ends at `at`: `.X`, `["X"]` or `?.["X"]`. */
   const member = (base: string, at: number, importMeta: boolean): EnvRead => {
     const property = is(at, "punct", ".") ? idAt(at + 1) : undefined
     if (property !== undefined)
       return { expression: `${base}.${property}`, name: property, importMeta }
-    const key = is(at, "punct", "[") && is(at + 2, "punct", "]") ? stringAt(at + 1) : undefined
+    const key = keyAt(at)?.key
     if (key !== undefined)
       return { expression: `${base}[${JSON.stringify(key)}]`, name: key, importMeta }
     return { expression: base, importMeta }
   }
+  /** The index after `.env`, `["env"]` or `?.["env"]` at `at`, or `-1`. */
+  const envAt = (at: number): number => {
+    if (is(at, "punct", ".") && is(at + 1, "id", "env")) return at + 2
+    const bracket = keyAt(at)
+    return bracket?.key === "env" ? bracket.next : -1
+  }
   for (let i = 0; i < tokens.length; i++) {
     const head = idAt(i)
-    if (
-      (head === "process" || head === "Bun") &&
-      is(i + 1, "punct", ".") &&
-      is(i + 2, "id", "env")
-    ) {
-      reads.push(member(`${head}.env`, i + 3, false))
+    const env = head === "process" || head === "Bun" ? envAt(i + 1) : -1
+    if (env !== -1) {
+      reads.push(member(`${head}.env`, env, false))
     } else if (
       head === "import" &&
       is(i + 1, "punct", ".") &&
@@ -180,12 +193,13 @@ function envReads(tokens: readonly Token[]): EnvRead[] {
       reads.push(member("import.meta.env", i + 5, true))
     } else if (head === "Deno" && is(i + 1, "punct", ".") && is(i + 2, "id", "env")) {
       const method = is(i + 3, "punct", ".") ? idAt(i + 4) : undefined
+      const call = open(i + 5, "(")
       const name =
-        (method === "get" || method === "has") && is(i + 5, "punct", "(")
-          ? stringAt(i + 6)
+        (method === "get" || method === "has") && is(call, "punct", "(")
+          ? stringAt(call + 1)
           : undefined
       reads.push(
-        name !== undefined && is(i + 7, "punct", ")")
+        name !== undefined && is(call + 2, "punct", ")")
           ? { expression: `Deno.env.${method}(${JSON.stringify(name)})`, name, importMeta: false }
           : {
               expression: method === undefined ? "Deno.env" : `Deno.env.${method}()`,
