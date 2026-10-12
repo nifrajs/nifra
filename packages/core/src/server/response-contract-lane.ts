@@ -153,19 +153,20 @@ function compileProjector(node: unknown): Projector | undefined {
     const projector = compileProjector(Reflect.get(properties, key))
     if (projector !== undefined) nested.set(key, projector)
   }
-  const patterns = Object.values(objectField(schema, "patternProperties") ?? {})
-  const values =
-    patterns.length === 1 && keys.length === 0 ? compileProjector(patterns[0]) : undefined
-  if (values !== undefined) {
-    return (value) => {
-      if (!isPlainObject(value)) return value
-      const out: Record<string, unknown> = {}
-      for (const key of Object.keys(value)) define(out, key, values(value[key]))
-      return out
+  const patterns: Array<readonly [RegExp, Projector | undefined]> = []
+  for (const [source, child] of Object.entries(objectField(schema, "patternProperties") ?? {})) {
+    let pattern: RegExp
+    try {
+      pattern = new RegExp(source, "u")
+    } catch {
+      return undefined // a pattern this engine can't read: the validator judges the value whole
     }
+    patterns.push([pattern, compileProjector(child)])
   }
   const closed = Reflect.get(schema, "additionalProperties") === false
-  if (!closed && nested.size === 0) return undefined
+  if (!closed && nested.size === 0 && patterns.every(([, projector]) => projector === undefined))
+    return undefined
+  const declared = new Set(keys)
   return (value) => {
     if (!isPlainObject(value)) return value
     const out: Record<string, unknown> = closed ? {} : { ...value }
@@ -175,7 +176,35 @@ function compileProjector(node: unknown): Projector | undefined {
       const projector = nested.get(key)
       define(out, key, projector === undefined ? value[key] : projector(value[key]))
     }
+    if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed)
     return out
+  }
+}
+
+/**
+ * Carry the undeclared keys a `patternProperties` entry admits: a closed record's keys are all
+ * pattern keys, so dropping them empties a valid value. A key two patterns match is copied verbatim,
+ * since projecting it onto one could strip what the other requires.
+ */
+function projectPatternKeys(
+  value: Record<string, unknown>,
+  out: Record<string, unknown>,
+  declared: ReadonlySet<string>,
+  patterns: ReadonlyArray<readonly [RegExp, Projector | undefined]>,
+  closed: boolean,
+): void {
+  for (const key of Object.keys(value)) {
+    if (declared.has(key)) continue
+    let projector: Projector | undefined
+    let matches = 0
+    for (const [pattern, child] of patterns)
+      if (pattern.test(key)) {
+        projector = child
+        matches++
+      }
+    if (matches === 0) continue
+    if (matches === 1 && projector !== undefined) define(out, key, projector(value[key]))
+    else if (closed) define(out, key, value[key])
   }
 }
 

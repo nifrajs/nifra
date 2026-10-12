@@ -350,6 +350,18 @@ describe('responseContract: extra "strip"', () => {
     const res = await app.fetch(new Request(`http://t${path}`))
     return { status: res.status, body: await res.text() }
   }
+  /** A schema carrying `jsonSchema` whose validator accepts anything, so the projection alone shows. */
+  const passthrough = (jsonSchema: object): StandardSchemaV1 =>
+    Object.assign(
+      {
+        "~standard": {
+          version: 1 as const,
+          vendor: "test",
+          validate: (value: unknown) => ({ value }),
+        },
+      },
+      { jsonSchema },
+    )
 
   test("a closed t.object serves only its declared fields", async () => {
     const res = await fetchJson(
@@ -386,6 +398,70 @@ describe('responseContract: extra "strip"', () => {
       byId: { a: clean },
       maybe: clean,
       none: null,
+    })
+  })
+
+  test("a closed record keeps every key its pattern admits", async () => {
+    // Primitive values need no projection; the record still must not collapse to `{}`.
+    const shape = t.object({
+      labels: t.record(t.string(), { additionalProperties: false }),
+      tags: t.record(t.array(t.string()), { additionalProperties: false }),
+      users: t.record(STRICT, { additionalProperties: false }),
+      open: t.record(t.string()),
+    })
+    const app = strip("enforce").get("/r", { response: shape }, () => ({
+      labels: { one: "valid", two: "also-valid" },
+      tags: { x: ["1", "2"] },
+      users: { a: LEAK },
+      open: { k: "v" },
+    }))
+    const res = await fetchJson(app, "/r")
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({
+      labels: { one: "valid", two: "also-valid" },
+      tags: { x: ["1", "2"] },
+      users: { a: { id: "u1", name: "Ada" } },
+      open: { k: "v" },
+    })
+  })
+
+  test("a closed object drops keys no pattern admits and copies a key two patterns match", async () => {
+    const schema = passthrough({
+      type: "object",
+      additionalProperties: false,
+      properties: { id: { type: "string" } },
+      patternProperties: {
+        "^x-": {
+          type: "object",
+          properties: { keep: { type: "string" } },
+          additionalProperties: false,
+        },
+        "^x-both$": { type: "object" },
+      },
+    })
+    const row = { keep: "k", drop: "d" }
+    const outcome = await checkResponseContract(
+      schema,
+      { id: "1", "x-one": row, "x-both": row, other: "gone" },
+      "enforce",
+      { extra: "strip" },
+    )
+    expect(outcome).toEqual({
+      kind: "ok",
+      value: { id: "1", "x-one": { keep: "k" }, "x-both": row },
+    })
+  })
+
+  test("a pattern the engine cannot compile leaves the value to the validator", async () => {
+    const schema = passthrough({
+      type: "object",
+      additionalProperties: false,
+      patternProperties: { "(": { type: "string" } },
+    })
+    const value = { a: "kept", b: "kept" }
+    expect(await checkResponseContract(schema, value, "enforce", { extra: "strip" })).toEqual({
+      kind: "ok",
+      value,
     })
   })
 
