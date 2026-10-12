@@ -131,6 +131,8 @@ registerFixRecipe({
   id: "workspace-dist.rebuild",
   description: "Rebuild the workspace-linked package whose artifact is older than its source.",
   verify: "nifra doctor --json",
+  // It runs that package's own build script, outside the project the command was pointed at.
+  onlyWhenNamed: true,
   async apply(root, diagnostic) {
     const packageName = diagnostic.evidence?.[0]
     if (packageName === undefined) return []
