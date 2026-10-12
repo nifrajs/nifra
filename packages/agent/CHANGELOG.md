@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - abb4354: The package now ships the MIT `LICENSE` text, as every other @nifrajs package already did.
+- b5ff0bb: `mountA2A` defaults `resumeApproval` to `"port"`: a resumed task asks `ports.approval` again and hands it the peer's `approval` as `callerDecision`, so the agent that asked for a tool can no longer approve its own call. Without an approval port such a resume stays `TASK_STATE_INPUT_REQUIRED`. Return `resumeApproval: "caller"` from `ports` to keep the previous behavior when the peer is the approver, such as a human operator's client.
 - Updated dependencies [b276c67]
 - Updated dependencies [2a0a5d3]
 - Updated dependencies [72e1b4b]
