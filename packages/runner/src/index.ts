@@ -104,13 +104,16 @@ function buildRequest(spec: RequestSpec, origin: string): Request {
   const url = /^https?:\/\//i.test(spec.path) ? spec.path : new URL(spec.path, origin).toString()
 
   const headers = new Headers(spec.headers as Record<string, string> | undefined)
-  const init: RequestInit = { method, headers }
+  const init: RequestInit & { duplex?: "half" } = { method, headers }
 
   if (spec.body !== undefined && !METHODS_WITHOUT_BODY.has(method)) {
     // A native Fetch body (URLSearchParams, FormData, a typed array) is an object too, so it is
     // matched first and sent with the content type Fetch gives it.
     if (isRequestBody(spec.body)) {
       init.body = spec.body
+      // Node's Request refuses a stream body without it; Bun and browsers accept it either way.
+      if (typeof ReadableStream !== "undefined" && spec.body instanceof ReadableStream)
+        init.duplex = "half"
     } else if (isJsonBody(spec.body)) {
       if (!headers.has("content-type")) headers.set("content-type", "application/json")
       init.body = JSON.stringify(spec.body)
