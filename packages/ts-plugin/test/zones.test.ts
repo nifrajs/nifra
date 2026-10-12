@@ -80,6 +80,17 @@ const FILES: Record<string, string> = {
     "",
   ].join("\n"),
   "backend/kit.ts": 'import { view } from "split-kit/react"\nexport const kit = view\n',
+  "package.json": JSON.stringify({
+    name: "app",
+    type: "module",
+    imports: { "#server/*": "./backend/*.ts" },
+  }),
+  "frontend/aliased.ts": [
+    'import { query } from "#server/db"',
+    'import { kit } from "#server/kit?raw"',
+    "export const aliased = [query, kit]",
+    "",
+  ].join("\n"),
   "node_modules/pg/package.json": JSON.stringify({ name: "pg", types: "index.d.ts" }),
   "node_modules/pg/index.d.ts": "export declare class Pool {}\n",
 }
@@ -168,6 +179,15 @@ test("a package's entries keep their own sides, though they share one file", () 
   const backend = zoneErrors("backend/kit.ts")
   expect(backend.map((error) => error.slice(0, error.indexOf(":")))).toEqual(['"split-kit/react"'])
   expect(backend[0]).toContain("backend code may not import frontend code")
+})
+
+test("a package.json import resolves through its `#` name, query or not", () => {
+  const errors = zoneErrors("frontend/aliased.ts")
+  expect(errors.map((error) => error.slice(0, error.indexOf(":")))).toEqual([
+    '"#server/db"',
+    '"#server/kit?raw"',
+  ])
+  for (const error of errors) expect(error).toContain("frontend code may not import backend code")
 })
 
 test("shared code may import only shared code, dynamic imports included", () => {

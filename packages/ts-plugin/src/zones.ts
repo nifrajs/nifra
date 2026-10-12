@@ -91,9 +91,10 @@ function resolveImport(
   edge: ImportEdge,
   options: ts.CompilerOptions,
 ): string | undefined {
-  // Cut by index: `/[?#].*$/` retries from every `#` and is quadratic on a long run of them.
-  const query = edge.specifier.indexOf("?")
-  const hash = edge.specifier.indexOf("#")
+  // Cut by index: `/[?#].*$/` retries from every `#` and is quadratic on a long run of them. The
+  // search starts past a leading `#`, which names a package.json import rather than a hash.
+  const query = edge.specifier.indexOf("?", 1)
+  const hash = edge.specifier.indexOf("#", 1)
   const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
   const specifier = cut === -1 ? edge.specifier : edge.specifier.slice(0, cut)
   const mode = tsm.getModeForUsageLocation(source, edge.literal, options)
