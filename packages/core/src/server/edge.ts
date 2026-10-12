@@ -116,7 +116,8 @@ export function toFetchHandler<Env = unknown>(
       const platform: Platform<Env> = { env, waitUntil: (promise) => ctx.waitUntil(promise) }
       // WebSocket broadcast on Workers: route upgrades to the hub Durable Object (it holds the
       // connections + runs the app's pub/sub, so `app.publish` reaches every client). The hub itself
-      // resolves the route and rejects non-WS paths. See `@nifrajs/workers`' `createWebSocketHub`.
+      // resolves the route, and a request that is no handshake for a WebSocket route gets its HTTP
+      // answer there. See `@nifrajs/workers`' `createWebSocketHub`.
       if (
         webSocketHub !== undefined &&
         request.headers.get("upgrade")?.toLowerCase() === "websocket"

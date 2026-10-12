@@ -100,6 +100,31 @@ describe("respondGraphql HTTP", () => {
     expect(body.data).toBeUndefined()
   })
 
+  test("introspection: false refuses __schema and __type with a 400; __typename still resolves", async () => {
+    for (const query of [
+      "{ __schema { queryType { name } } }",
+      '{ __type(name: "Query") { name } }',
+    ]) {
+      const open = await respondGraphql(post({ query }), { schema, rootValue })
+      expect(open.status).toBe(200)
+      const closed = await respondGraphql(post({ query }), {
+        schema,
+        rootValue,
+        introspection: false,
+      })
+      expect(closed.status).toBe(400)
+      const body: unknown = await closed.json()
+      expect(body).not.toHaveProperty("data")
+      expect(JSON.stringify(body)).toContain("introspection has been disabled")
+    }
+    const typename = await respondGraphql(post({ query: "{ __typename }" }), {
+      schema,
+      rootValue,
+      introspection: false,
+    })
+    expect(await typename.json()).toEqual({ data: { __typename: "Query" } })
+  })
+
   test("syntax error is a 400", async () => {
     const res = await respondGraphql(post({ query: "{ hello" }), { schema, rootValue })
     expect(res.status).toBe(400)

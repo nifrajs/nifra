@@ -122,8 +122,12 @@ export function mountGraphql<Context = unknown, Env = unknown>(
         "mountGraphql: subscriptions require a WebSocket-enabled app - call `.use(websocket())` first.",
       )
     }
+    const given = options.subscriptions === true ? sharedWsOptions(options) : options.subscriptions
+    // A schema hidden over HTTP stays hidden over the socket unless the WS options say otherwise.
     const wsOptions =
-      options.subscriptions === true ? sharedWsOptions(options) : options.subscriptions
+      options.introspection === false && given.introspection === undefined
+        ? { ...given, introspection: false }
+        : given
     if (
       options.authorize !== undefined &&
       wsOptions.authorize === undefined &&

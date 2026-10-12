@@ -14,6 +14,7 @@ import {
   type TransportCodec,
   type TransportCodecRegistry,
 } from "@nifrajs/core/transport-codec"
+import { buildQuery } from "./query.ts"
 import { hasDotSegment } from "./sendable-path.ts"
 import type { WsCallOptions, WsHandle } from "./treaty.ts"
 
@@ -33,11 +34,9 @@ interface WsRuntimeOptions extends WsCallOptions {
 }
 
 function toWsUrl(base: string, path: string, query: WsCallOptions["query"]): string {
-  const url = new URL(base + (path === "" ? "/" : path))
+  const search = query === undefined ? "" : buildQuery(query)
+  const url = new URL(base + (path === "" ? "/" : path) + (search === "" ? "" : `?${search}`))
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
-  for (const [key, value] of Object.entries(query ?? {})) {
-    url.searchParams.set(key, String(value))
-  }
   return url.toString()
 }
 

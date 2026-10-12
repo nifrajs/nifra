@@ -91,6 +91,12 @@ type WsUpgradeOutcome =
       readonly data: unknown
       readonly pubsub: WsPubSub
       readonly maxPayloadBytes?: number
+      /** Builds `ws.send` with the route's outbound contract (`validateSend`). */
+      sender?(
+        handler: NifraWsHandler,
+        send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
+        onError: (error: unknown) => void,
+      ): (payload: string | ArrayBufferView | ArrayBuffer) => void
     }
 
 /** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency - see `loadWsServer`). */
@@ -2926,14 +2932,14 @@ async function handleUpgrade(
     writeUpgradeRejection(socket, 501, "websocket_unavailable") // `ws` not installed
     return
   }
-  const { handler, data, pubsub, maxPayloadBytes } = outcome
+  const upgrade = outcome
   wss.handleUpgrade(nodeReq, socket, head, (ws) => {
     // An upgrade still resolving when stop() ran must not outlive it.
     if (!adopt(ws)) {
       ws.terminate()
       return
     }
-    attachNodeWebSocket(ws, handler, data, pubsub, maxPayloadBytes)
+    attachNodeWebSocket(ws, upgrade)
   })
 }
 
@@ -2942,13 +2948,12 @@ async function handleUpgrade(
  * routes to `error()` and never crashes the connection. */
 function attachNodeWebSocket(
   ws: WsSocket,
-  handler: NifraWsHandler,
-  data: unknown,
-  pubsub: WsPubSub,
-  maxPayloadBytes: number | undefined,
+  outcome: Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>,
 ): void {
+  const { handler, data, pubsub, maxPayloadBytes } = outcome
+  const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => ws.send(payload)
   const nifra: NifraWs = {
-    send: (payload) => ws.send(payload),
+    send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
     close: (code, reason) => ws.close(code, reason),
     get readyState() {
       return ws.readyState
@@ -2958,7 +2963,7 @@ function attachNodeWebSocket(
     data,
     raw: ws,
   }
-  const reportError = (error: unknown): void => {
+  function reportError(error: unknown): void {
     if (handler.error === undefined) return
     try {
       const r = handler.error(nifra, error)

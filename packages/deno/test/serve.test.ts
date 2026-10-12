@@ -7,6 +7,7 @@ import {
   requestTargetApp,
   requestTargetMismatches,
 } from "../../core/test/request-target-matrix.ts"
+import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { serve } from "../src/index.ts"
 
 // Minimal local assertions - keeps `deno test` offline + dependency-free.
@@ -272,6 +273,65 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
       ok: true,
     })
   } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a frame the route's sendSchema refuses never leaves, as on Bun", async () => {
+  const contract = sendContractApp(server().use(websocket()))
+  const running = await serve(contract.app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    assertEquals(await firstContractFrame(running.port), JSON.stringify({ ok: true }))
+    assertEquals(contract.errors.length, 1)
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+/** Send one text frame and report the echo, or the close code when the server closes instead. */
+function echoOrClose(url: string, message: string): Promise<{ echo: string } | { close: number }> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url)
+    const timer = setTimeout(() => reject(new Error("ws timed out")), 5000)
+    socket.onopen = () => socket.send(message)
+    socket.onmessage = (ev) => {
+      clearTimeout(timer)
+      socket.close()
+      resolve({ echo: String(ev.data) })
+    }
+    socket.onclose = (ev) => {
+      clearTimeout(timer)
+      resolve({ close: ev.code })
+    }
+  })
+}
+
+Deno.test("wsMaxPayloadBytes counts UTF-8 bytes and sizes a message without copying it", async () => {
+  const app = server({ wsMaxPayloadBytes: 16 })
+    .use(websocket())
+    .ws("/echo", { message: (ws, data) => ws.send(data) })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const encode = Object.getOwnPropertyDescriptor(TextEncoder.prototype, "encode")
+  const encoded: string[] = []
+  Object.defineProperty(TextEncoder.prototype, "encode", {
+    configurable: true,
+    value(this: TextEncoder, input?: string) {
+      encoded.push(input ?? "")
+      return encode?.value.call(this, input)
+    },
+  })
+  try {
+    const url = `ws://127.0.0.1:${running.port}/echo`
+    assertEquals(await echoOrClose(url, "é".repeat(8)), { echo: "é".repeat(8) })
+    assertEquals(await echoOrClose(url, "😀".repeat(4)), { echo: "😀".repeat(4) })
+    assertEquals(await echoOrClose(url, "é".repeat(9)), { close: 1009 })
+    assertEquals(await echoOrClose(url, "x".repeat(17)), { close: 1009 })
+    assert(
+      !encoded.some((input) => input.startsWith("é") || input.startsWith("😀")),
+      "the size check encoded a message to measure it",
+    )
+  } finally {
+    if (encode !== undefined) Object.defineProperty(TextEncoder.prototype, "encode", encode)
     await running.stop({ drainMs: 0 })
   }
 })

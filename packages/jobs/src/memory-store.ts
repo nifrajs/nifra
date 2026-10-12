@@ -5,6 +5,9 @@
  *
  * Leasing model: a leased job is hidden until its `leaseUntil` passes, so a worker that dies mid-job
  * (never calling `complete`/`retry`) releases the job back to the queue automatically - at-least-once.
+ * Every lease carries a fresh token; `complete`/`retry`/`deadLetter`/`renew` with a token that is no
+ * longer the job's current one are ignored, so a worker whose lease was taken over cannot settle the
+ * job under the worker that now holds it.
  */
 import type { JobCounts, JobStore, StoredJob } from "./types.ts"
 
@@ -18,6 +21,8 @@ interface Record {
   runAt: number
   /** Epoch-ms until which this job is hidden (leased). 0 = available. */
   leaseUntil: number
+  /** The current lease's token; `undefined` once the job is released. */
+  lease: string | undefined
 }
 
 interface DeadRecord {
@@ -31,6 +36,7 @@ export class MemoryJobStore implements JobStore {
   private readonly jobs = new Map<string, Record>()
   private readonly dead = new Map<string, DeadRecord>()
   private seq = 0
+  private leaseSeq = 0
   private readonly idFor: () => string
 
   constructor(options: { idFor?: () => string } = {}) {
@@ -54,6 +60,7 @@ export class MemoryJobStore implements JobStore {
       traceparent: job.traceparent,
       runAt: job.runAt,
       leaseUntil: 0,
+      lease: undefined,
     })
     return id
   }
@@ -64,12 +71,14 @@ export class MemoryJobStore implements JobStore {
       if (out.length >= limit) break
       if (r.runAt <= now && r.leaseUntil <= now) {
         r.leaseUntil = now + leaseMs
+        r.lease = String(++this.leaseSeq)
         const job: { -readonly [K in keyof StoredJob]: StoredJob[K] } = {
           id: r.id,
           name: r.name,
           payload: r.payload,
           attempt: r.attempt,
           maxAttempts: r.maxAttempts,
+          lease: r.lease,
         }
         if (r.traceparent !== undefined) job.traceparent = r.traceparent
         out.push(job)
@@ -78,23 +87,35 @@ export class MemoryJobStore implements JobStore {
     return out
   }
 
-  complete(id: string): void {
-    this.jobs.delete(id)
+  /** The job, when a call made under `lease` may still act on it (no token: any caller may). */
+  private held(id: string, lease: string | undefined): Record | undefined {
+    const r = this.jobs.get(id)
+    return r === undefined || (lease !== undefined && r.lease !== lease) ? undefined : r
   }
 
-  retry(id: string, runAt: number): void {
-    const r = this.jobs.get(id)
+  complete(id: string, lease?: string): void {
+    if (this.held(id, lease) !== undefined) this.jobs.delete(id)
+  }
+
+  retry(id: string, runAt: number, lease?: string): void {
+    const r = this.held(id, lease)
     if (r === undefined) return
     r.attempt += 1
     r.runAt = runAt
     r.leaseUntil = 0
+    r.lease = undefined
   }
 
-  deadLetter(id: string, error: string): void {
-    const r = this.jobs.get(id)
+  deadLetter(id: string, error: string, lease?: string): void {
+    const r = this.held(id, lease)
     if (r === undefined) return
     this.jobs.delete(id)
     this.dead.set(id, { id, name: r.name, error })
+  }
+
+  renew(id: string, until: number, lease?: string): void {
+    const r = this.held(id, lease)
+    if (r !== undefined && r.lease !== undefined) r.leaseUntil = until
   }
 
   counts(now: number = Date.now()): JobCounts {

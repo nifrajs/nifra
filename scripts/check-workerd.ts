@@ -4,6 +4,7 @@ import { type ChildProcess, spawn } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { rawUpgradeStatus } from "../packages/core/test/request-target-matrix.ts"
 import {
   certifyAdapter,
   defineCertificationProfile,
@@ -125,7 +126,12 @@ interface WorkerdCertificationAdapter {
 const workerdCertificationProfile = defineCertificationProfile<WorkerdCertificationAdapter>({
   id: "workers-workerd",
   version: 1,
-  capabilities: ["contract-lab", "durable-object-state", "websocket-broadcast"],
+  capabilities: [
+    "contract-lab",
+    "durable-object-state",
+    "websocket-broadcast",
+    "websocket-hub-http-pass",
+  ],
   checks: [
     {
       id: "contract-lab",
@@ -175,6 +181,17 @@ const workerdCertificationProfile = defineCertificationProfile<WorkerdCertificat
           first.close()
           second.close()
         }
+      },
+    },
+    {
+      // An upgrade request for a plain HTTP route gets that route's answer, as on every other runtime,
+      // although the hub Durable Object is what resolves it.
+      id: "websocket-hub-http-pass",
+      capability: "websocket-hub-http-pass",
+      target: { witnessKind: "websocket" },
+      async run(adapter) {
+        const status = await rawUpgradeStatus(Number(new URL(adapter.origin).port), "/lab/created")
+        if (status !== 201) throw new Error(`WebSocketHubHttpPass${status}`)
       },
     },
   ],

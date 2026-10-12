@@ -355,8 +355,10 @@ function streamingResponse(
   const stream = createAgentEvidenceStream()
   // A client that disconnects cancels the body; the run is told through its signal.
   const cancelled = new AbortController()
+  let clientGone = false
   const body = new ReadableStream<Uint8Array>({
     cancel() {
+      clientGone = true
       cancelled.abort()
       stream.complete()
     },
@@ -419,6 +421,12 @@ function streamingResponse(
           }),
         )
       } catch (error) {
+        // Nothing past the output budget reaches the client, so the run stops as on a disconnect
+        // rather than spending model calls nobody reads.
+        if (error instanceof A2AOutputLimitError) {
+          cancelled.abort()
+          stream.complete()
+        }
         try {
           send(
             rpcError(
@@ -432,7 +440,7 @@ function streamingResponse(
         }
       } finally {
         // Already closed for us when the client cancelled the body.
-        if (!cancelled.signal.aborted) controller.close()
+        if (!clientGone) controller.close()
       }
     },
   })

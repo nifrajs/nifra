@@ -3250,14 +3250,14 @@ _No named exports (side-effect entrypoint)._
 - **CronError** _(class)_ - `class CronError`
   Thrown on a malformed cron expression - loud at registration, never at fire time.
 - **CronFields** _(interface)_ - `interface CronFields`
-  A parsed expression: one allowed-values Set per field, + whether dom/dow were restricted (for the standard OR rule).
+  A parsed expression: one allowed-values Set per field, + whether dom/dow were restricted (for the standard OR rule). A field led by a star, a star-step included, is not restricted.
 - **CronHandler** _(type)_ - `type CronHandler = () => void | Promise<void>`
 - **Scheduler** _(interface)_ - `interface Scheduler`
 - **SchedulerOptions** _(interface)_ - `interface SchedulerOptions`
 - **createScheduler** _(function)_ - `createScheduler: (options?: SchedulerOptions) => Scheduler`
   Create an in-process cron scheduler.
 - **matches** _(function)_ - `matches: (fields: CronFields, date: Date) => boolean`
-  Does `date` (in its LOCAL time - cron is local-time by convention) match the fields, to the minute? Day-of-month and day-of-week follow the standard OR rule: when BOTH are restricted, a match on EITHER is a match; when only one is restricted, only that one must match.
+  Does `date` (in its LOCAL time - cron is local-time by convention) match the fields, to the minute? Day-of-month and day-of-week follow the standard OR rule: when BOTH are restricted, a match on EITHER is a match; otherwise both must match (a bare `*` matches every day).
 - **nextRun** _(function)_ - `nextRun: (fields: CronFields, from: Date) => Date | null`
   The next instant at/after `from` (exclusive of the current minute's already-started second) that matches. Steps minute-by-minute with a safety cap (~5 years) so a never-matching expression returns `null` instead of looping forever.
 - **parseCron** _(function)_ - `parseCron: (expression: string) => CronFields`
@@ -4152,7 +4152,7 @@ _No named exports (side-effect entrypoint)._
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ - `createCsrfToken: (secret: CsrfSecret, nonce?: string) => Promise<string>`
 - **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
-  Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
+  Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. A read retur…
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => IdentityPlugin`

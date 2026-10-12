@@ -35,6 +35,14 @@ cap live inside `app.fetch`, so they apply through this adapter automatically.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM/TS. MIT.
 
+## WebSocket message size
+
+`app.ws()` routes upgrade through `Deno.upgradeWebSocket`, which takes no size limit: Deno receives
+each inbound message whole (up to its own limit, 64 MiB on Deno 2.9) before the app sees it.
+`server({ wsMaxPayloadBytes })` then closes the socket with `1009` and keeps the message from your
+handler, but it cannot bound the memory Deno spent receiving it. Where that matters, cap message
+size in a proxy in front of the app. On Bun and Node the cap is enforced while the message arrives.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

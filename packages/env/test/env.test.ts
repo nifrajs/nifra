@@ -121,24 +121,53 @@ describe("defineEnv", () => {
     expect(message).not.toContain("sk_live_supersecret_value")
   })
 
-  test("a BYO validator that quotes the value has it redacted", () => {
-    const echo: StandardSchemaV1<string> = {
+  test("a BYO validator's message is withheld for a set value, in whatever form it quotes it", () => {
+    const quoting = (format: (value: string) => string): StandardSchemaV1<string> => ({
       "~standard": {
         version: 1 as const,
         vendor: "valibot",
-        validate: (v: unknown) => ({
-          issues: [{ message: `Invalid email: Received ${JSON.stringify(v)}` }],
-        }),
+        validate: (v: unknown) => ({ issues: [{ message: format(String(v)) }] }),
+      },
+    })
+    const cases = [
+      [(v: string) => `Received ${JSON.stringify(v)}`, 'sk_live_"quoted"\\tail', 'quoted\\"'],
+      [
+        (v: string) => `Received "${v.slice(0, 12)}..."`,
+        "sk_live_abcdefghijklmnop",
+        "sk_live_abcd",
+      ],
+      [(v: string) => `Received ${v.toUpperCase()}`, "sk_live_lower", "SK_LIVE_LOWER"],
+    ] as const
+    for (const [format, secret, fragment] of cases) {
+      let message = ""
+      try {
+        defineEnv({ SECRET: quoting(format) }, { source: { SECRET: secret } })
+      } catch (e) {
+        message = e instanceof Error ? e.message : ""
+      }
+      expect(message).toContain("SECRET: is invalid (the validator's message is withheld")
+      expect(message).not.toContain(fragment)
+      expect(message).not.toContain("Received")
+    }
+  })
+
+  test("a BYO validator's message for an unset value is shown: there is no value to quote", () => {
+    const required: StandardSchemaV1<string> = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "zod",
+        validate: (v: unknown) =>
+          typeof v === "string" && v !== ""
+            ? { value: v }
+            : { issues: [{ message: "Invalid input: expected string" }] },
       },
     }
-    let message = ""
-    try {
-      defineEnv({ SECRET: echo }, { source: { SECRET: "sk_live_supersecret_value" } })
-    } catch (e) {
-      message = e instanceof Error ? e.message : ""
-    }
-    expect(message).toContain('SECRET: Invalid email: Received "<redacted>"')
-    expect(message).not.toContain("sk_live_supersecret_value")
+    expect(() => defineEnv({ TOKEN: required }, { source: {} })).toThrow(
+      /TOKEN: Invalid input: expected string/,
+    )
+    expect(() => defineEnv({ TOKEN: required }, { source: { TOKEN: "" } })).toThrow(
+      /TOKEN: Invalid input: expected string/,
+    )
   })
 
   test("accepts a BYO Standard Schema (no coercion), validating the raw string", () => {
@@ -154,7 +183,7 @@ describe("defineEnv", () => {
     }
     expect(defineEnv({ CODE: upper }, { source: { CODE: "ABC" } }).CODE).toBe("ABC")
     expect(() => defineEnv({ CODE: upper }, { source: { CODE: "abc" } })).toThrow(
-      /CODE: must be uppercase/,
+      /CODE: is invalid/,
     )
   })
 

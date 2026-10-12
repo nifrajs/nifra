@@ -487,7 +487,10 @@ export default function Plugins() {
         <code>healthcheck()</code> adds liveness (<code>/health</code>) and readiness (<code>/ready</code>)
         endpoints - apply it <b>before</b> any auth guard so they stay public. <code>openapi()</code>{" "}
         serves an OpenAPI 3.1 document at <code>/openapi.json</code>, generated from your routes - add{" "}
-        <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. Paths,
+        <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. The page
+        loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own
+        copy with <code>ui: {"{ cdn, integrity }"}</code> to keep a third-party origin out of your
+        Content-Security-Policy. Paths,
         methods, and params are introspected; <code>servers</code>, <code>tags</code>,{" "}
         <code>security</code>, and <code>securitySchemes</code> are document options, and{" "}
         <code>operations</code> (keyed by <code>"GET /users/:id"</code>) supplies per-route bodies/security
@@ -515,7 +518,10 @@ export default function Plugins() {
         enforced by default, and claims (<code>iss</code>/<code>aud</code>/<code>nbf</code>) are checked.
         Read the typed claims off the returned plugin - <code>auth.requireClaims(c.req)</code> (throws{" "}
         <code>401</code>) or <code>auth.claims(c.req)</code> (nullable). For rotating keys, pass{" "}
-        <code>key: jwks({`{ url }`})</code> (HTTPS-only, cached, size/time-bounded). <code>basicAuth</code>{" "}
+        <code>key: jwks({`{ url }`})</code> (HTTPS-only, cached, size/time-bounded). A fetch that fails
+        or returns no keys is remembered for <code>failureCooldownMs</code> (default 5 s), so while the
+        identity provider is down a request fails at once instead of waiting on a fetch of its own.{" "}
+        <code>basicAuth</code>{" "}
         compares static credentials in <b>constant time</b> (or takes a <code>verify</code> callback).
       </p>
       <CodeBlock code={JWT_BASIC} />

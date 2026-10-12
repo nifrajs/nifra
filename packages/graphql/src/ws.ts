@@ -22,8 +22,8 @@ import {
   GraphQLError,
   type GraphQLSchema,
   parse,
-  specifiedRules,
   subscribe,
+  type ValidationRule,
   validate,
 } from "graphql"
 import {
@@ -41,6 +41,7 @@ import {
   graphqlLimits,
   overlapLimitError,
   requestLimitError,
+  validationRules,
 } from "./limits.ts"
 
 /** Per-connection state carried on `ws.data` for the graphql-ws bridge. */
@@ -96,6 +97,11 @@ export interface GraphqlWsOptions<
   /** Maximum concurrent subscription operation ids per connection. Default 20. */
   readonly maxSubscriptions?: number
   /**
+   * Answer introspection (`__schema`, `__type`). Default `true`. Set `false` to refuse such an
+   * operation with an `error` frame; `__typename` still resolves.
+   */
+  readonly introspection?: boolean
+  /**
    * Maximum time for initial execute/subscribe setup. Default 10 seconds. Each operation's abort
    * signal, which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline, when
    * the client completes the operation, and when the socket closes.
@@ -128,6 +134,7 @@ function subscriptionFrameError(
   message: string,
   schema: GraphQLSchema,
   limits: GraphqlLimits,
+  rules: readonly ValidationRule[],
 ): { readonly id: unknown; readonly message: string } | undefined {
   let frame: unknown
   try {
@@ -158,7 +165,7 @@ function subscriptionFrameError(
   const limitError =
     documentLimitError(documentMetrics(document), limits) ?? overlapLimitError(document, limits)
   if (limitError !== undefined) return { id, message: limitError }
-  const validationErrors = validate(schema, document, specifiedRules)
+  const validationErrors = validate(schema, document, rules)
   return validationErrors.length > 0
     ? { id, message: validationErrors[0]?.message ?? "Invalid GraphQL query." }
     : undefined
@@ -289,6 +296,7 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
   options: GraphqlWsOptions<Context>,
 ): WebSocketHandler<GraphqlWsConnection> {
   const limits = graphqlWsLimits(options)
+  const rules = validationRules(options.introspection)
   const maxSubscriptions = options.maxSubscriptions ?? 20
   assertWsNumber(maxSubscriptions, "maxSubscriptions", 1)
   const executionTimeoutMs = options.executionTimeoutMs ?? 10_000
@@ -404,7 +412,7 @@ export function graphqlWebSocket<Context extends Record<string, unknown> = Recor
       // schema suggestions and synchronous validation work.
       const rejected =
         ws.data.acknowledged === true
-          ? subscriptionFrameError(message, options.schema, limits)
+          ? subscriptionFrameError(message, options.schema, limits, rules)
           : undefined
       if (rejected !== undefined) {
         ws.send(

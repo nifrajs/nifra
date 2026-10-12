@@ -3359,7 +3359,10 @@ const app = server()
 `healthcheck()` adds liveness (`/health`) and readiness (`/ready`)
 endpoints - apply it **before** any auth guard so they stay public. `openapi()`
 serves an OpenAPI 3.1 document at `/openapi.json`, generated from your routes - add
-`ui: true` for a Scalar API-reference page at `/reference`. Paths,
+`ui: true` for a Scalar API-reference page at `/reference`. The page
+loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own
+copy with `ui: { cdn, integrity }` to keep a third-party origin out of your
+Content-Security-Policy. Paths,
 methods, and params are introspected; `servers`, `tags`,
 `security`, and `securitySchemes` are document options, and
 `operations` (keyed by `"GET /users/:id"`) supplies per-route bodies/security
@@ -3404,7 +3407,10 @@ app.use(idempotency({ store: new MemoryIdempotencyStore() }))
 enforced by default, and claims (`iss`/`aud`/`nbf`) are checked.
 Read the typed claims off the returned plugin - `auth.requireClaims(c.req)` (throws
 `401`) or `auth.claims(c.req)` (nullable). For rotating keys, pass
-`key: jwks({ url })` (HTTPS-only, cached, size/time-bounded). `basicAuth`
+`key: jwks({ url })` (HTTPS-only, cached, size/time-bounded). A fetch that fails
+or returns no keys is remembered for `failureCooldownMs` (default 5 s), so while the
+identity provider is down a request fails at once instead of waiting on a fetch of its own.
+`basicAuth`
 compares static credentials in **constant time** (or takes a `verify` callback).
 
 ```ts
@@ -4751,6 +4757,15 @@ a `SessionStore`; in **cookie mode** (no store) the data is signed into the cook
 Stores mirror the ISR discipline: `MemorySessionStore` is prod-guarded;
 `KVSessionStore` is the durable, shared production store.
 
+The signature covers the cookie name, so two managers that share a secret never read each
+other's cookies; still, give sessions a secret no other signed value uses. A cookie-mode
+session lives at most `maxAge`, whatever expiry its payload names. Upgrading from
+4.x, whose cookies were signed without the name, signs everyone out unless you pass
+`acceptLegacyCookies: true`: keep it for one `maxAge` after the upgrade
+(each such session is re-signed on its next commit), then remove it, since while it is on any
+session-shaped value the app signs with the same secret through `signValue` reads
+as a session.
+
 ```ts
 // backend/auth.ts - one session manager, created on first use so the secret is read at request time.
 // Store mode keeps data server-side; cookie mode (no store) is stateless.
@@ -5862,7 +5877,9 @@ bridge an external fan-out (Redis pub/sub, NATS, a queue) to broadcast across al
 **Cloudflare Workers**, a stateless isolate can’t broadcast across connections,
 so Nifra ships a Durable Object hub: `createWebSocketHub(app)` holds the
 connections, and `toFetchHandler(app, { webSocketHub })` routes upgrades to it
-- then `ws.subscribe` / `app.publish` behave exactly as on Bun.
+- then `ws.subscribe` / `app.publish` behave exactly as on Bun. An
+upgrade request for a path with no WebSocket route still gets that path's HTTP answer, as on
+every other runtime.
 
 ```ts
 // doc-check: skip - Workers entry: a Durable Object hub holds the connections.
@@ -5915,6 +5932,14 @@ it). Install it when you use `app.ws()`; without it a WS upgrade gets a clean
 npm i ws
 ```
 
+`server({ wsMaxPayloadBytes })` caps one inbound message (default
+`maxBodyBytes`, 1 MB): a socket that sends more is closed with `1009`
+and the message never reaches your handler. Bun and Node refuse it while it arrives. Deno's
+`Deno.upgradeWebSocket` takes no size limit, so Deno receives each message whole
+(up to its own limit, 64 MiB on Deno 2.9) before nifra can check it: the cap still keeps the
+message from your handler, but it does not bound the memory Deno spent receiving it. Where that
+matters, cap message size in a proxy in front of a Deno app.
+
 ### In a composed app
 
 `mount({ path, app })` carries WebSocket upgrades as well as HTTP: when the
@@ -5925,6 +5950,11 @@ implement it too, building the outcome from `@nifrajs/core/ws`:
 `attachWebSocket` wires the socket to a handler and a `TopicRegistry`
 owns its pub/sub. On Bun, install `websocket()` on the parent or on a mounted nifra
 child, or `listen()` refuses to start with `INVALID_WS_RUNTIME`.
+
+Each mounted nifra app keeps its own `wsMaxPayloadBytes`: a message over the
+child's cap closes that socket with `1009`, whether the cap is below or above the
+parent's. On Bun one listener serves them all, so its frame limit is the largest cap among the
+parent and the apps mounted on it, and a socket whose app declares less checks its own.
 
 `mountFetch(path, handler)` and a plain fetch handler carry HTTP only. An upgrade
 request under such a path reaches the handler as an ordinary request and never becomes a
@@ -12642,7 +12672,7 @@ The resuming peer is usually the agent that asked for the tool, so it does not a
 
 Cross-request registries (cancellation, subscription fan-out, push notifications) are deliberately out of scope for the stateless seam; those spec methods answer `UnsupportedOperationError` (-32004).
 
-A reply larger than `maxOutputBytes` answers the request with a JSON-RPC internal error (-32603, `output_limit`), the same error a stream sends when it runs out of budget. A request whose ports or store fail answers with -32603 `internal_error`, keeping the request's `id`.
+A reply larger than `maxOutputBytes` answers the request with a JSON-RPC internal error (-32603, `output_limit`), the same error a stream sends when it runs out of budget. A stream that runs out also aborts the run's signal, as a client disconnect does, so the run stops calling the model. A request whose ports or store fail answers with -32603 `internal_error`, keeping the request's `id`.
 
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 
@@ -13315,6 +13345,7 @@ How it holds the line:
 
 - **Post-decode body limits.** The body is decoded (base64 or UTF-8) and its real `byteLength` checked against `maxBodyBytes` (default 1,000,000 - match your app's setting if you changed it) *before* a `Request` is constructed. The event's own length claims are never trusted; over the limit answers a flat `413`.
 - **One header merge site.** Request headers come from the v2 `headers` map plus the separate `cookies` array in exactly one function; the array is canonical, so a `cookie` key smuggled into `headers` never reaches the app. Response `Set-Cookie` values travel in the result's `cookies` array, one entry each - never comma-joined.
+- **Body-less HEAD.** A `HEAD` answer keeps the GET route's status and headers but carries no body, on both handlers. A streaming body is cancelled rather than read, so its producer stops.
 - **Base64 honesty.** Response `isBase64Encoded` is decided by a strict UTF-8 decode of the actual bytes, never by content-type guessing. Binary round-trips exactly; text ships as text.
 - **Client IP.** `event.requestContext.http.sourceIp` feeds core's client-IP seam; `X-Forwarded-For` trust stays where it belongs, in the app's `clientIp` server option.
 - **Flat errors.** Uncaught failures collapse to the same `{"ok":false,"error":"internal_error"}` 500 as every other nifra runtime - the event is never echoed.
@@ -14164,8 +14195,11 @@ cron.stop()            // graceful - in-flight handlers finish
 
 Macros: `@hourly` `@daily` (`@midnight`) `@weekly` `@monthly` `@yearly` (`@annually`).
 
+Day-of-week runs 0-6 from Sunday, and 7 is Sunday too.
+
 Day-of-month + day-of-week follow the **standard OR rule**: when both are restricted, a match on
-either fires the job.
+either fires the job. A field that starts with `*` is not restricted, a step like `*/2` included,
+so `0 0 */2 * 1` fires on an odd day that is also a Monday, as in Vixie cron.
 
 ## Guarantees
 
@@ -14234,6 +14268,14 @@ The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) a
 cap live inside `app.fetch`, so they apply through this adapter automatically.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM/TS. MIT.
+
+## WebSocket message size
+
+`app.ws()` routes upgrade through `Deno.upgradeWebSocket`, which takes no size limit: Deno receives
+each inbound message whole (up to its own limit, 64 MiB on Deno 2.9) before the app sees it.
+`server({ wsMaxPayloadBytes })` then closes the socket with `1009` and keeps the message from your
+handler, but it cannot bound the memory Deno spent receiving it. Where that matters, cap message
+size in a proxy in front of the app. On Bun and Node the cap is enforced while the message arrives.
 
 ## For AI agents
 
@@ -14454,8 +14496,11 @@ pass the request's bindings: `defineEnv(shape, { source: env })`.
 ## Secret safety
 
 Error messages name the offending variable and the reason - **never its value** (it may be a
-secret). A BYO validator such as valibot may quote the value in its message; `defineEnv` replaces
-it with `<redacted>`. `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
+secret). A BYO validator such as valibot or zod may quote the value in its message, escaped or
+cut short, so when it refuses a set value `defineEnv` reports the variable as invalid without the
+validator's message. For an unset variable the message is shown, since there is no value to quote.
+Use the `env.*` helpers when you want the reason as well. `defineEnv` returns a frozen object, so a
+validated config can't be mutated downstream.
 
 ## For AI agents
 
@@ -14595,6 +14640,7 @@ With `subscriptions: true`, a socket is admitted only when `authorize` accepts i
 | `allowedOrigins` | reflect `*` | CORS origin allowlist. |
 | `authorize` | - | Per-request guard; return `false` for 401. |
 | `enableGet` | `true` | Serve `GET /graphql` (queries only). |
+| `introspection` | `true` | `false` refuses `__schema` and `__type` as a validation error (400 over HTTP, an `error` frame over WS); `__typename` still resolves. Subscriptions inherit it unless their own options set it. |
 | `subscriptions` | `false` | `true` (reuse schema, context, `authorize` and limits) or explicit WS options. |
 | `legacyJsonResponse` | `false` | Old always-200 `application/json` shape. |
 
@@ -14914,6 +14960,8 @@ fails at the call site, not three retries later.
 
 Per-job: `retries: number` (attempts) or `{ attempts, backoff }`. A handler that throws is routed to
 `onError`, then retried with the backoff delay; after the last attempt it's **dead-lettered**, not lost.
+An attempt count (and `createQueue({ defaultAttempts })`) must be a whole number; `NaN`, `Infinity` or
+a fraction throws a `RangeError`, and a count below 1 means one attempt.
 
 ```ts
 import { exponentialBackoff, fixedBackoff } from "@nifrajs/jobs"
@@ -14935,10 +14983,18 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+While a handler runs, the worker renews its lease about three times per `leaseMs` through the store's
+optional `renew(id, until, lease)`, so a job that runs longer than `leaseMs` is not handed to another
+worker. A store without `renew` cannot do that: such a job may then run twice, on two workers, though
+never twice on the same queue. Each `lease` may also return a `lease` token on the job; the queue
+passes it back to `complete` / `retry` / `deadLetter` / `renew`, so a store can ignore a worker whose
+lease another worker has since taken. `MemoryJobStore` does both.
+
 A job's `timeoutMs` bounds each attempt: one still running after that many ms fails with a
 `JobTimeoutError` (then retries or dead-letters), frees its worker slot, and aborts `ctx.signal`. Pass the
-signal on to `fetch` or your driver, since a handler that ignores it keeps running unobserved. Keep
-`timeoutMs` below `leaseMs`, after which the job can be leased again.
+signal on to `fetch` or your driver, since a handler that ignores it keeps running unobserved.
+`timeoutMs` must be below the worker's `leaseMs`: `start()` (and a later `define()`) throws a
+`RangeError` otherwise.
 
 ```ts
 q.define("render", { timeoutMs: 10_000, async handler(id, ctx) { await fetch(url(id), { signal: ctx.signal }) } })

@@ -304,6 +304,11 @@ export type _WsFrame = Expect<
 const room = wsApi.rooms({ room: "a" }).ws()
 export type _WsLooseSend = Expect<Equal<Parameters<typeof room.send>[0], unknown>>
 
+// the handshake query takes what an HTTP call's does: repeated keys as an array, optional values
+wsApi.chat.ws({ query: { tag: ["a", "b"], page: 2, room: undefined } })
+// @ts-expect-error a query value is a scalar or an array of scalars
+wsApi.chat.ws({ query: { filter: { nested: true } } })
+
 // @ts-expect-error sending a frame that violates the messageSchema input
 chat.send({ say: 1 })
 // @ts-expect-error an HTTP-only route has no .ws()
