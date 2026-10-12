@@ -5,6 +5,7 @@
  * Bun-plugin in `@nifrajs/web-solid/plugin`.
  */
 import type { RenderAdapter } from "@nifrajs/web"
+import { sharedConfig } from "solid-js"
 import {
   generateHydrationScript,
   renderToStream as solidRenderToStream,
@@ -14,6 +15,41 @@ import { compose } from "./compose.ts"
 
 const HYDRATION_HEAD = generateHydrationScript()
 
+// An unset NODE_ENV counts as production, as for the framework's own error pages.
+const showsErrors = (): boolean => {
+  const nodeEnv = typeof process === "undefined" ? undefined : process.env?.NODE_ENV
+  return nodeEnv === "development" || nodeEnv === "test"
+}
+
+/** What the browser receives for an error Solid hands to hydration: its text names server internals. */
+function redactedError(): Error {
+  // Built bare: a constructed Error carries a stack and, on Bun, the line, column and file it was made
+  // at, and Solid serializes every own property.
+  return Object.create(Error.prototype, {
+    message: { value: "Internal Server Error", writable: true, configurable: true },
+  }) as Error
+}
+
+/**
+ * Render `app` with every Error that Solid serializes for hydration replaced. An `<ErrorBoundary>` that
+ * caught on the server, or a failed resource, otherwise ships the message and stack in an inline script.
+ * Nested contexts copy this one, so they keep the wrapped `serialize`.
+ */
+function redactingErrors<T>(app: () => T): () => T {
+  if (showsErrors()) return app
+  return () => {
+    const context = sharedConfig.context as
+      | { serialize?: (id: string, value: unknown) => void }
+      | undefined
+    const serialize = context?.serialize
+    if (context !== undefined && serialize !== undefined) {
+      context.serialize = (id, value) =>
+        serialize(id, value instanceof Error ? redactedError() : value)
+    }
+    return app()
+  }
+}
+
 /** The Solid server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const solidAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). Solid's
@@ -21,8 +57,11 @@ export const solidAdapter: RenderAdapter = {
   // `generateHydrationScript()`) as `renderToStream`, but skips the TransformStream + Solid's
   // streaming machinery - the heaviest of the five renderers on Bun. A page that defer()s/Suspends
   // takes `renderToStream` below (progressive resolution needs it).
-  renderToString(chain, props) {
-    return solidRenderToString(compose(chain, props))
+  renderToString(chain, props, options) {
+    const app = redactingErrors(compose(chain, props))
+    return options?.nonce === undefined
+      ? solidRenderToString(app)
+      : solidRenderToString(app, { nonce: options.nonce })
   },
   renderToStream(chain, props, options) {
     // Solid's `renderToStream` streams `Uint8Array` chunks into a Web `WritableStream` via
@@ -31,7 +70,7 @@ export const solidAdapter: RenderAdapter = {
     // <head>) seeds client hydration. A render failure errors `ts.readable`, which `renderPage`
     // surfaces on the response body. The nonce reaches the resource and boundary scripts Solid streams.
     const ts = new TransformStream<Uint8Array, Uint8Array>()
-    const app = compose(chain, props)
+    const app = redactingErrors(compose(chain, props))
     const stream =
       options?.nonce === undefined
         ? solidRenderToStream(app)

@@ -501,7 +501,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // gets an automatic Content-Length. A render throw surfaces here exactly as the streaming path's
   // shell-readiness `await` does, so the `_error` boundary still maps it to a status.
   if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
-    const out = adapter.renderToString(chain, renderProps)
+    const out =
+      nonce === undefined
+        ? adapter.renderToString(chain, renderProps)
+        : adapter.renderToString(chain, renderProps, { nonce })
     return typeof out === "string"
       ? new BufferedRenderedPage(shellHtml + out + closeRootHtml + tailHtml, status, headers)
       : out.then(
