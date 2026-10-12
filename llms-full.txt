@@ -12639,7 +12639,7 @@ The resuming peer is usually the agent that asked for the tool, so it does not a
 
 Cross-request registries (cancellation, subscription fan-out, push notifications) are deliberately out of scope for the stateless seam; those spec methods answer `UnsupportedOperationError` (-32004).
 
-A reply larger than `maxOutputBytes` answers the request with a JSON-RPC internal error (-32603, `output_limit`), the same error a stream sends when it runs out of budget. A request whose ports or store fail answers with -32603 `internal_error`, keeping the request's `id`.
+A reply larger than `maxOutputBytes` answers the request with a JSON-RPC internal error (-32603, `output_limit`), the same error a stream sends when it runs out of budget. A stream that runs out also aborts the run's signal, as a client disconnect does, so the run stops calling the model. A request whose ports or store fail answers with -32603 `internal_error`, keeping the request's `id`.
 
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 

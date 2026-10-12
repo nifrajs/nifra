@@ -481,6 +481,47 @@ describe("mountA2A", () => {
     })
   })
 
+  test("a stream that hits maxOutputBytes stops its run instead of leaving it to spend model calls", async () => {
+    const step = defineTool({
+      name: "step",
+      description: "One step.",
+      input: t.object({ v: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "step",
+      execute: () => ({ ok: true }),
+    })
+    const signals: AbortSignal[] = []
+    const { app, callPost } = captureApp()
+    mountA2A(app, {
+      agent: definition([step]),
+      card: cardInfo,
+      maxOutputBytes: 2048,
+      maxTurns: 200,
+      ports: ports({
+        capabilities: ["step"],
+        model: {
+          complete: (request) => {
+            signals.push(request.signal)
+            return signals.length < 60
+              ? { kind: "tool", name: "step", input: { v: "x".repeat(50) } }
+              : { kind: "output", value: { answer: "done" } }
+          },
+        },
+      }),
+    })
+    const response = await callPost(
+      rpc("SendStreamingMessage", message([], { metadata: { input: { prompt: "p" } } }), "s"),
+    )
+    const sent = frames(await response.text())
+    expect(sent.at(-1)).toEqual({
+      jsonrpc: "2.0",
+      id: "s",
+      error: { code: A2A_ERROR_CODES.internalError, message: "output_limit" },
+    })
+    // The stream closed on the limit, and the run it carried was told to stop at that moment.
+    expect(signals.at(-1)?.aborted).toBe(true)
+  })
+
   test("a request the mount cannot complete gets a JSON-RPC error carrying its id", async () => {
     const failingPorts = captureApp()
     mountA2A(failingPorts.app, {
