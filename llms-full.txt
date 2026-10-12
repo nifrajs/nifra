@@ -12909,7 +12909,9 @@ on from where the response stopped; without one the run is cancelled.
 When more than one caller shares the route, also pass `evidenceOwner: (c) => <the caller's user or
 tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
 reused `turnId` finds none of them. Without it a turn id works as a bearer capability. The owner
-function runs before any replay; throwing from it refuses the request.
+function runs before any replay; throwing from it refuses the request with `403`, and a thrown
+`Response` answers the request as built, as one thrown from `ports` does. A JSON-mode run that
+throws answers `500 run_failed`, or `409 resume_unavailable` when the POST resumed a turn.
 
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. On POSIX each run leads its
