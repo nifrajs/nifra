@@ -564,6 +564,10 @@ describe("per-entry package environments", () => {
     [{ ".": "backend", "./react": "frontend" }, "pkg/react", "frontend"],
     [{ ".": "backend", "./*": "library", "./ui/*": "frontend" }, "pkg/ui/x", "frontend"],
     [{ ".": "backend" }, "pkg/react", undefined],
+    [{ ".": "backend", "./react": "frontend" }, "pkg/react?raw#x", "frontend"],
+    [{ ".": "backend", "./react": "frontend" }, "pkg/react#x?y", "frontend"],
+    // A long run of `#` before a line break: the query/hash cut takes the first one.
+    [{ ".": "backend", "./react": "frontend" }, `pkg/react${"#".repeat(20_000)}\n`, "frontend"],
     [{ ".": "server" }, "pkg", undefined],
     ["server", "pkg", undefined],
   ] as const)("declaredSide(%j, %s) is %s", (environment, specifier, side) => {

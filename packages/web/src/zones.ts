@@ -636,7 +636,7 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
     const info = name === undefined ? undefined : packageOf(file)
     if (name === undefined || info?.name !== name || info.declaration.kind !== "entries")
       return byPath(file)
-    const subpath = `.${specifier.slice(name.length).replace(/[?#].*$/, "")}`
+    const subpath = entrySubpath(specifier, name)
     const cacheKey = `${file}\0${subpath}`
     const cached = imports.get(cacheKey)
     if (cached !== undefined) return cached
@@ -702,6 +702,16 @@ export function specifierPackage(specifier: string): string | undefined {
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]
 }
 
+/** The export subpath (`"."`, `"./react"`) a bare specifier of package `name` names, without its
+ * `?query` or `#hash`. Cut by index: `/[?#].*$/` retries from every `#`, quadratic on a long run. */
+const entrySubpath = (specifier: string, name: string): string => {
+  const rest = specifier.slice(name.length)
+  const query = rest.indexOf("?")
+  const hash = rest.indexOf("#")
+  const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
+  return `.${cut === -1 ? rest : rest.slice(0, cut)}`
+}
+
 /**
  * The side a package's `"nifra": { "environment": ... }` value gives the bare import `specifier` of it:
  * the package-wide string, or the side of the entry it names - the map's exact subpath, else its most
@@ -715,10 +725,7 @@ export function declaredSide(
   if (declaration.kind === "package") return declaration.side
   const name = specifierPackage(specifier)
   if (declaration.kind !== "entries" || name === undefined) return undefined
-  const key = entryKey(
-    declaration.entries,
-    `.${specifier.slice(name.length).replace(/[?#].*$/, "")}`,
-  )
+  const key = entryKey(declaration.entries, entrySubpath(specifier, name))
   return key === undefined ? undefined : declaration.entries[key]
 }
 
