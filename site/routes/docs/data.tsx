@@ -170,7 +170,10 @@ export default function Data() {
         browser already holds that data, so the loader runs again only when a param the layout owns
         changes (<code>org</code> for <code>orgs/[org]/_layout.tsx</code>) or the query changes. After
         an action, every loader runs. A layout that exports <code>gate = true</code> runs on every
-        request; a layout loader without it is not an authorization boundary. A{" "}
+        request; a layout loader without it is not an authorization boundary: a client navigation can
+        skip it, and an action below it runs without it. Put a check that refuses access in a gate or
+        in middleware. In development, nifra warns the first time a layout loader without{" "}
+        <code>gate</code> refuses a request with a redirect, a <code>Response</code>, or a 401 or 403. A{" "}
         <code>_layout.backend.ts</code> that exports <code>middleware</code> guards a directory, with
         or without a layout component - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>

@@ -417,6 +417,25 @@ export function createPageRequestExecutor<Env = unknown>(
     return value
   }
 
+  // Development only. A layout loader that refuses access reads as a guard, and is not one: a client
+  // navigation can skip it and an action below it runs without it.
+  const warnsUngatedRefusal =
+    typeof process !== "undefined" && process.env?.NODE_ENV === "development"
+  const warnedUngated = new Set<string>()
+  const warnUngatedRefusal = (layoutId: string, outcome: unknown): void => {
+    if (warnedUngated.has(layoutId)) return
+    // notFound() and gone() say the record is missing, which a layout may decide without guarding.
+    const refusesAccess = isStatusSignal(outcome)
+      ? outcome.status === 401 || outcome.status === 403
+      : isControlFlow(outcome)
+    if (!refusesAccess) return
+    warnedUngated.add(layoutId)
+    const file = manifest.layouts?.[layoutId]?.file ?? layoutId
+    console.warn(
+      `[nifra/web] the loader in "${file}" refused a request, but that layout is not a gate. A client navigation that keeps the layout on screen can skip its loader, and an action below it runs without it, so it does not protect the pages under it. Export \`gate = true\` from that file, or move the check into middleware. (Shown in development only.)`,
+    )
+  }
+
   /**
    * Run layout loaders, awaiting gates before starting the page loader and retaining only safe data.
    * `gated` carries gates that already ran for this request, so none runs twice.
@@ -471,15 +490,25 @@ export function createPageRequestExecutor<Env = unknown>(
         if (value !== null && (typeof value === "object" || typeof value === "function")) {
           pending.push(
             (async () => {
+              let settled: unknown
               try {
-                results[index] = await value
+                settled = await value
               } catch (err) {
+                if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, err)
                 throw tagLayoutError(err, layoutId)
               }
+              // A returned redirect or Response refuses exactly as a thrown one: kept as layout data,
+              // it would ship beside the page loader's data.
+              if (isControlFlow(settled)) {
+                if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, settled)
+                throw tagLayoutError(settled, layoutId)
+              }
+              results[index] = settled
             })(),
           )
         } else results[index] = value
       } catch (err) {
+        if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, err)
         // Preserve a synchronous throw as a pending layout failure, just like the async lane.
         pending.push(Promise.reject(tagLayoutError(err, layoutId)))
       }

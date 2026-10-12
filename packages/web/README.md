@@ -15,6 +15,14 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
+## Guarding pages
+
+A `_layout.backend.ts` loader is data, not a guard: a client navigation can skip it while the browser
+keeps the layout's data, and an action below it runs without it. Refuse access in that file's
+`middleware`, or export `gate = true` so its loader runs on every request and before every action,
+ahead of the page loader. In development, nifra warns when a layout loader without `gate` refuses a
+request. See [Layout loaders on navigation](https://nifra.dev/docs/data).
+
 ## Install
 
 ```sh
