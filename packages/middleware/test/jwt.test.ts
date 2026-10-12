@@ -429,11 +429,98 @@ describe("jwt() / verifyJwt()", () => {
     }
   })
 
+  test("a failed JWKS fetch is remembered for failureCooldownMs instead of refetched per request", async () => {
+    const { token, jwk: publicJwk } = await rsaToken({ sub: "u1", exp: 2_000_000_000 }, "kid-down")
+    let calls = 0
+    let down = true
+    const fakeFetch = fetchStub(async () => {
+      calls += 1
+      if (down) throw new Error("idp down")
+      return Response.json({ keys: [publicJwk] })
+    })
+    const resolver = jwks({ url: "https://issuer.test/jwks.json", fetch: fakeFetch })
+    const opts = { key: resolver, algorithms: RS256, now: () => 1_900_000_000 }
+    try {
+      setSystemTime(new Date(3_000_000))
+      await expect(verifyJwt(token, opts)).rejects.toThrow(/idp down/)
+      await expect(verifyJwt(token, opts)).rejects.toThrow(/idp down/)
+      setSystemTime(new Date(3_004_999))
+      await expect(verifyJwt(token, opts)).rejects.toThrow(/idp down/)
+      // One fetch answered all three: none of them waited on a fetch of its own.
+      expect(calls).toBe(1)
+      down = false
+      setSystemTime(new Date(3_005_000))
+      expect((await verifyJwt(token, opts)).claims.sub).toBe("u1")
+      expect(calls).toBe(2)
+    } finally {
+      setSystemTime()
+    }
+  })
+
+  test("an empty JWKS is not refetched per request", async () => {
+    const { token } = await rsaToken({ sub: "u1", exp: 2_000_000_000 }, "kid-empty")
+    let calls = 0
+    const empty = jwks({
+      url: "https://issuer.test/jwks.json",
+      fetch: fetchStub(async () => {
+        calls += 1
+        return Response.json({ keys: [] })
+      }),
+      cooldownMs: 0,
+    })
+    const opts = { key: empty, algorithms: RS256, now: () => 1_900_000_000 }
+    await expect(verifyJwt(token, opts)).rejects.toThrow(/key/)
+    await expect(verifyJwt(token, opts)).rejects.toThrow(/key/)
+    expect(calls).toBe(1)
+  })
+
+  test("a stale set starts one background refresh per failure window, not one per request", async () => {
+    const { token, jwk: publicJwk } = await rsaToken({ sub: "u1", exp: 2_000_000_000 }, "kid-bg")
+    let staleCalls = 0
+    const stale = jwks({
+      url: "https://issuer.test/jwks.json",
+      fetch: fetchStub(async () => {
+        staleCalls += 1
+        if (staleCalls === 1) return Response.json({ keys: [publicJwk] })
+        throw new Error("network down")
+      }),
+      cacheMs: 0,
+      staleMs: 60_000,
+    })
+    const staleOpts = { key: stale, algorithms: RS256, now: () => 1_900_000_000 }
+    expect((await verifyJwt(token, staleOpts)).claims.sub).toBe("u1")
+    expect((await verifyJwt(token, staleOpts)).claims.sub).toBe("u1") // starts the failing refresh
+    // Let that refresh settle, so the next request finds no fetch in flight to join.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await verifyJwt(token, staleOpts)).claims.sub).toBe("u1")
+    expect(staleCalls).toBe(2)
+  })
+
+  test("failureCooldownMs: 0 fetches again for every request after a failure", async () => {
+    const { token } = await rsaToken({ sub: "u1", exp: 2_000_000_000 }, "kid-zero")
+    let calls = 0
+    const resolver = jwks({
+      url: "https://issuer.test/jwks.json",
+      fetch: fetchStub(async () => {
+        calls += 1
+        throw new Error("idp down")
+      }),
+      failureCooldownMs: 0,
+    })
+    const opts = { key: resolver, algorithms: RS256, now: () => 1_900_000_000 }
+    await expect(verifyJwt(token, opts)).rejects.toThrow(/idp down/)
+    await expect(verifyJwt(token, opts)).rejects.toThrow(/idp down/)
+    expect(calls).toBe(2)
+  })
+
   test("validates JWKS URL protocol", () => {
     expect(() => jwks({ url: "http://issuer.test/jwks.json" })).toThrow(/https/)
     expect(() => jwks({ url: "http://localhost/jwks.json" })).not.toThrow()
     expect(() => jwks({ url: "https://issuer.test/jwks.json", timeoutMs: 0 })).toThrow(/timeout/)
     expect(() => jwks({ url: "https://issuer.test/jwks.json", staleMs: -1 })).toThrow(/staleMs/)
+    expect(() =>
+      jwks({ url: "https://issuer.test/jwks.json", failureCooldownMs: Number.NaN }),
+    ).toThrow(/failureCooldownMs/)
     expect(() => jwks({ url: "https://issuer.test/jwks.json", maxBytes: 0 })).toThrow(/maxBytes/)
   })
 

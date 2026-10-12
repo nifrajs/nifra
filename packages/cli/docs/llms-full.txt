@@ -3380,7 +3380,10 @@ app.use(idempotency({ store: new MemoryIdempotencyStore() }))
 enforced by default, and claims (`iss`/`aud`/`nbf`) are checked.
 Read the typed claims off the returned plugin - `auth.requireClaims(c.req)` (throws
 `401`) or `auth.claims(c.req)` (nullable). For rotating keys, pass
-`key: jwks({ url })` (HTTPS-only, cached, size/time-bounded). `basicAuth`
+`key: jwks({ url })` (HTTPS-only, cached, size/time-bounded). A fetch that fails
+or returns no keys is remembered for `failureCooldownMs` (default 5 s), so while the
+identity provider is down a request fails at once instead of waiting on a fetch of its own.
+`basicAuth`
 compares static credentials in **constant time** (or takes a `verify` callback).
 
 ```ts

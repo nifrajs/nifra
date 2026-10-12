@@ -518,7 +518,10 @@ export default function Plugins() {
         enforced by default, and claims (<code>iss</code>/<code>aud</code>/<code>nbf</code>) are checked.
         Read the typed claims off the returned plugin - <code>auth.requireClaims(c.req)</code> (throws{" "}
         <code>401</code>) or <code>auth.claims(c.req)</code> (nullable). For rotating keys, pass{" "}
-        <code>key: jwks({`{ url }`})</code> (HTTPS-only, cached, size/time-bounded). <code>basicAuth</code>{" "}
+        <code>key: jwks({`{ url }`})</code> (HTTPS-only, cached, size/time-bounded). A fetch that fails
+        or returns no keys is remembered for <code>failureCooldownMs</code> (default 5 s), so while the
+        identity provider is down a request fails at once instead of waiting on a fetch of its own.{" "}
+        <code>basicAuth</code>{" "}
         compares static credentials in <b>constant time</b> (or takes a <code>verify</code> callback).
       </p>
       <CodeBlock code={JWT_BASIC} />
