@@ -495,6 +495,46 @@ describe("NF-S002 precision", () => {
   })
 })
 
+describe("NF-S001 severity by file role", () => {
+  const gate = (hatch = "") =>
+    `function canEdit() {\n  try {\n    check()\n  ${hatch}} catch {\n    toast("not allowed")\n  }\n}\n`
+  const finding = async (file: string, root: string, hatch?: string) =>
+    (await scan(file, gate(hatch), root)).find((f) => f.code === "NF-S001")
+
+  test("the same fail-open catch is advisory in a web app's browser code and fails everywhere else", async () => {
+    const root = webApp()
+    for (const file of ["routes/settings.tsx", "frontend/pages/Developers.tsx"]) {
+      const found = await finding(file, root)
+      expect(found?.severity).toBe("warn")
+      expect(found?.evidence).toContain("browser code: the server's own gate decides")
+    }
+    for (const file of [
+      "backend/admin.ts",
+      "routes/settings.backend.ts",
+      "shared/guard.ts",
+      "lib/guard.ts",
+    ])
+      expect((await finding(file, root))?.severity).toBe("error")
+    const api = project({ "package.json": manifest({ "@nifrajs/core": "5.0.0" }) })
+    expect((await finding("routes/settings.tsx", api))?.severity).toBe("error")
+  })
+
+  test("a reasoned nifra-expect is info everywhere; the retired marker silences nothing", async () => {
+    const root = webApp()
+    const reviewed =
+      "// nifra-expect NF-S001: the toast is the whole effect; the API checks again\n  "
+    for (const file of ["routes/settings.tsx", "backend/admin.ts"])
+      expect((await finding(file, root, reviewed))?.severity).toBe("info")
+    const retired = await finding(
+      "routes/settings.tsx",
+      root,
+      "// @nifra-gate-reviewed: reviewed\n  ",
+    )
+    expect(retired?.severity).toBe("warn")
+    expect(retired?.message).toContain("// nifra-expect NF-S001: <reason>")
+  })
+})
+
 describe("NF-S002 severity by file role", () => {
   const compare = "if (token === expected) deny()"
   const severityOf = async (file: string, root: string) =>

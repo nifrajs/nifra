@@ -74,8 +74,9 @@ function unexpectedMessage(
 const parentOf = (dir: string): string => dir.slice(0, Math.max(dir.lastIndexOf("/"), 0))
 
 /**
- * Whether NF-S002 may treat `file` as browser code, which compares values the client already holds,
- * so a finding there is advisory. It must be browser code by path (a route's frontend half,
+ * Whether NF-S001 and NF-S002 may treat `file` as browser code, where a finding is advisory: a
+ * browser compares values the client already holds, and a gate there that fails open grants nothing
+ * the server does not check again. It must be browser code by path (a route's frontend half,
  * `frontend/`) and sit inside a nifra web app: a `routes/` folder in an API-only project or a package
  * without a web dependency runs on the server. `shared/` also runs on the server, and a file that
  * cannot be classified is treated as server - fail closed.
@@ -621,10 +622,12 @@ export const failOpenGateRule: CheckRule = {
     const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S001", "Fail-open gate scan")
     const findings: Diagnostic[] = []
+    const webDirs = createWebAppProbe(ctx.root)
     for (const file of ctx.project.source.files) {
       const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
+      let browser: boolean | undefined
       const visit = (node: TSApi.Node): void => {
         if (ts.isCatchClause(node)) {
           let parent: TSApi.Node | undefined = node.parent
@@ -634,10 +637,11 @@ export const failOpenGateRule: CheckRule = {
             if (!failsClosed(ts, node.block)) {
               const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
               const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
+              browser ??= provenBrowserFile(ctx.root, file, webDirs)
               findings.push(
                 diagnostic({
                   code: "NF-S001",
-                  severity: reviewed ? "info" : "error",
+                  severity: reviewed ? "info" : browser ? "warn" : "error",
                   file,
                   line,
                   message: reviewed
@@ -651,6 +655,7 @@ export const failOpenGateRule: CheckRule = {
                   evidence: [
                     name,
                     "catch block has no denial or rethrow",
+                    ...(browser ? ["browser code: the server's own gate decides"] : []),
                     ...expectationEvidence(lines, line, "NF-S001"),
                   ],
                   verify: "nifra check --lints-only",
