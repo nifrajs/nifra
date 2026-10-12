@@ -1101,6 +1101,17 @@ test("redirect() rejects paths a URL parser resolves off-origin [AUDIT Sec-4]", 
   expect(redirect("/%5Cevil.example").plain?.headers?.location).toBe("/%5Cevil.example")
 })
 
+test("redirect() rejects a path whose dot segments resolve it to //host", () => {
+  // Same-origin as a Location, but the resolved path `//evil.example/x` is protocol-relative to any
+  // client that builds a URL from it.
+  for (const bad of ["/.//evil.example/x", "/a/..//evil.example/x", "/%2e//evil.example/x"]) {
+    expect(() => redirect(bad)).toThrow(/same-origin/)
+    expect(new URL(bad, "https://app.example").pathname).toBe("//evil.example/x")
+  }
+  for (const ok of ["/a/../b", "/./x", "/x.y/z", "/a%2Fb"])
+    expect(redirect(ok).plain?.headers?.location).toBe(ok)
+})
+
 // --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---
 
 // A backend with real routes under /api/* - the same shape an app feeds via `inProcessClient(backend)`.

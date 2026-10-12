@@ -167,9 +167,11 @@ function appTarget(location: string, requestUrl: string): string {
   } catch {
     return location // the browser fails on it the same way when it loads it
   }
-  return target.origin === new URL(requestUrl).origin
-    ? target.pathname + target.search + target.hash
-    : location
+  if (target.origin !== new URL(requestUrl).origin) return location
+  // A path starting `//` (from `/.//host`) is a protocol-relative URL to whoever resolves it next.
+  return target.pathname.startsWith("//")
+    ? target.href
+    : target.pathname + target.search + target.hash
 }
 
 export interface PageExecutionOptions<Env = unknown> {
