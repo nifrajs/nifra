@@ -14,7 +14,12 @@ import { runCapabilitySnapshot } from "../src/capabilities-tool.ts"
 import { runCheck } from "../src/check.ts"
 import { runLevels } from "../src/levels-tool.ts"
 import { runManifestEmit } from "../src/manifest-tool.ts"
-import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import {
+  createFixtureProject,
+  createFixtureRoot,
+  FIXTURE_TSCONFIG,
+  removeFixtureRoot,
+} from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("nifra-verification-golden-")
 
@@ -58,17 +63,6 @@ const PAY_BACKEND = [
 ].join("\n")
 
 // A project's own tsconfig, so the typecheck gate runs instead of failing for want of one.
-const TSCONFIG = JSON.stringify({
-  compilerOptions: {
-    module: "preserve",
-    moduleResolution: "bundler",
-    allowImportingTsExtensions: true,
-    noEmit: true,
-    skipLibCheck: true,
-    target: "esnext",
-  },
-})
-
 const FULL_CONFIG = [
   `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
   `import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"`,
@@ -90,7 +84,7 @@ async function fullProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "full-")
   await mkdir(join(cwd, "backend"), { recursive: true })
   await writeFile(join(cwd, "backend/app.ts"), PAY_BACKEND)
-  await writeFile(join(cwd, "tsconfig.json"), TSCONFIG)
+  await writeFile(join(cwd, "tsconfig.json"), FIXTURE_TSCONFIG)
   await writeFile(join(cwd, "nifra.assurance.ts"), FULL_CONFIG)
   const original = console.log
   console.log = () => {} // silence the emit tools' own progress logs during setup
@@ -108,7 +102,7 @@ async function plainProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "plain-")
   await mkdir(join(cwd, "backend"), { recursive: true })
   await writeFile(join(cwd, "backend/app.ts"), PAY_BACKEND)
-  await writeFile(join(cwd, "tsconfig.json"), TSCONFIG)
+  await writeFile(join(cwd, "tsconfig.json"), FIXTURE_TSCONFIG)
   return cwd
 }
 
