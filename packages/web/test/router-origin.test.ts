@@ -16,6 +16,7 @@ async function onPage(href: string, body: (fetched: string[]) => Promise<void>):
     configurable: true,
     value: { origin: new URL(href).origin, href },
   })
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a test double; the router only calls fetch, never its static members.
   globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     fetched.push(`${init?.method ?? "GET"} ${String(input)}`)
     return Response.json({ html: "<p>own</p>" })

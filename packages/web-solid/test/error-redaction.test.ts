@@ -1,17 +1,17 @@
 import { expect, test } from "bun:test"
 import type { RenderProps } from "@nifrajs/web"
-import { createComponent, ErrorBoundary } from "solid-js"
+import { createComponent, ErrorBoundary, type JSX } from "solid-js"
 import { solidAdapter } from "../src/index.ts"
 
 const SECRET = "password authentication failed for user admin@10.0.3.7"
 const Page = () =>
   createComponent(ErrorBoundary, {
     fallback: () => "Something went wrong",
-    get children(): unknown {
+    get children(): JSX.Element {
       throw new Error(SECRET)
     },
   })
-const props = { data: {}, params: {} } as unknown as RenderProps
+const props: RenderProps = { data: {}, layoutData: [], params: {}, path: "/" }
 
 async function underNodeEnv<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
   const previous = process.env.NODE_ENV

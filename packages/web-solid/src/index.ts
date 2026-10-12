@@ -25,6 +25,7 @@ const showsErrors = (): boolean => {
 function redactedError(): Error {
   // Built bare: a constructed Error carries a stack and, on Bun, the line, column and file it was made
   // at, and Solid serializes every own property.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Object.create over Error.prototype with a message is an Error minus its stack.
   return Object.create(Error.prototype, {
     message: { value: "Internal Server Error", writable: true, configurable: true },
   }) as Error
@@ -38,6 +39,7 @@ function redactedError(): Error {
 function redactingErrors<T>(app: () => T): () => T {
   if (showsErrors()) return app
   return () => {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Solid's server renderers set a context with serialize; the check below handles its absence.
     const context = sharedConfig.context as
       | { serialize?: (id: string, value: unknown) => void }
       | undefined

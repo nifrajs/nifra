@@ -66,9 +66,8 @@ for (const { file, re } of constants) {
 // The workbench's native shell declares its own version twice (Tauri config and Cargo manifest), and
 // neither is a package.json, so both trailed the app's package by two majors before this sync.
 {
-  const { version: workbench } = JSON.parse(
-    readFileSync("apps/workbench/package.json", "utf8"),
-  ) as { version: string }
+  const workbench: unknown = JSON.parse(readFileSync("apps/workbench/package.json", "utf8")).version
+  if (typeof workbench !== "string") throw new Error("apps/workbench/package.json has no version")
   for (const [file, re] of [
     ["apps/workbench/src-tauri/tauri.conf.json", /("version":\s*")[^"]+(")/],
     ["apps/workbench/src-tauri/Cargo.toml", /^(version = ")[^"]+(")/m],

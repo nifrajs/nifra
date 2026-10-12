@@ -7,6 +7,9 @@
 export const requestPattern = (pattern: string): string =>
   pattern.normalize("NFC").replace(/[^!-~]/gu, encodeURIComponent)
 
+// This module also compiles without the DOM lib; at runtime the name is the browser's own global.
+declare const location: { readonly origin: string } | undefined
+
 /**
  * An app path as a URL `fetch`, `history` and `location` resolve on this document's own origin. A path
  * starting `//` or `/\` is the path of a page here (`https://shop.example//evil.example/x`), but resolved
