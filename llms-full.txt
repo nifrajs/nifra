@@ -13309,6 +13309,7 @@ How it holds the line:
 
 - **Post-decode body limits.** The body is decoded (base64 or UTF-8) and its real `byteLength` checked against `maxBodyBytes` (default 1,000,000 - match your app's setting if you changed it) *before* a `Request` is constructed. The event's own length claims are never trusted; over the limit answers a flat `413`.
 - **One header merge site.** Request headers come from the v2 `headers` map plus the separate `cookies` array in exactly one function; the array is canonical, so a `cookie` key smuggled into `headers` never reaches the app. Response `Set-Cookie` values travel in the result's `cookies` array, one entry each - never comma-joined.
+- **Body-less HEAD.** A `HEAD` answer keeps the GET route's status and headers but carries no body, on both handlers. A streaming body is cancelled rather than read, so its producer stops.
 - **Base64 honesty.** Response `isBase64Encoded` is decided by a strict UTF-8 decode of the actual bytes, never by content-type guessing. Binary round-trips exactly; text ships as text.
 - **Client IP.** `event.requestContext.http.sourceIp` feeds core's client-IP seam; `X-Forwarded-For` trust stays where it belongs, in the app's `clientIp` server option.
 - **Flat errors.** Uncaught failures collapse to the same `{"ok":false,"error":"internal_error"}` 500 as every other nifra runtime - the event is never echoed.

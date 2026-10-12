@@ -219,17 +219,26 @@ const resultHeaders = (
   return { headers, cookies: response.headers.getSetCookie() }
 }
 
-const toResult = async (response: Response): Promise<LambdaResult> => {
+// Nothing reads a HEAD answer's body. Cancelled, its source learns the exchange is over, as on
+// the other adapters; left alone, a streaming route's producer runs on with no reader.
+const discardBody = (response: Response): void => {
+  response.body?.cancel().catch(() => {})
+}
+
+const toResult = async (response: Response, head: boolean): Promise<LambdaResult> => {
   const { headers, cookies } = resultHeaders(response)
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  let body: string
-  let isBase64Encoded: boolean
-  try {
-    body = UTF8_STRICT.decode(bytes)
-    isBase64Encoded = false
-  } catch {
-    body = toBase64(bytes)
-    isBase64Encoded = true
+  let body = ""
+  let isBase64Encoded = false
+  if (head) {
+    discardBody(response)
+  } else {
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    try {
+      body = UTF8_STRICT.decode(bytes)
+    } catch {
+      body = toBase64(bytes)
+      isBase64Encoded = true
+    }
   }
   const result: LambdaResult = { statusCode: response.status, headers, body, isBase64Encoded }
   if (cookies.length > 0) result.cookies = cookies
@@ -241,6 +250,8 @@ const INTERNAL_ERROR = (): Response => flatError(500, "internal_error")
 interface Invocation {
   response: Response
   pending: readonly Promise<unknown>[]
+  /** The request was a HEAD, so the answer goes out without its body. */
+  head: boolean
 }
 
 /** Run the app for one event. Never throws: failures collapse to the flat 500. */
@@ -251,9 +262,11 @@ const invoke = async (
   maxBodyBytes: number,
 ): Promise<Invocation> => {
   const pending: Promise<unknown>[] = []
+  let head = false
   try {
     const built = toRequest(event, maxBodyBytes)
-    if (built instanceof Response) return { response: built, pending }
+    if (built instanceof Response) return { response: built, pending, head }
+    head = built.method === "HEAD"
     const response = await app.fetch(built, {
       env: { event, context },
       clientIp: event.requestContext?.http?.sourceIp,
@@ -261,9 +274,9 @@ const invoke = async (
         pending.push(promise)
       },
     })
-    return { response, pending }
+    return { response, pending, head }
   } catch {
-    return { response: INTERNAL_ERROR(), pending }
+    return { response: INTERNAL_ERROR(), pending, head }
   }
 }
 
@@ -290,9 +303,9 @@ export function handle(
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   assertBodyLimit(maxBodyBytes)
   return async (event, context) => {
-    const { response, pending } = await invoke(app, event, context, maxBodyBytes)
+    const { response, pending, head } = await invoke(app, event, context, maxBodyBytes)
     try {
-      const result = await toResult(response)
+      const result = await toResult(response, head)
       await settle(pending)
       return result
     } catch {
@@ -326,13 +339,15 @@ export function streamHandle(
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   assertBodyLimit(maxBodyBytes)
   return awslambda.streamifyResponse(async (event, responseStream, context) => {
-    const { response, pending } = await invoke(app, event, context, maxBodyBytes)
+    const { response, pending, head } = await invoke(app, event, context, maxBodyBytes)
     const { headers, cookies } = resultHeaders(response)
     const metadata: StreamMetadata = { statusCode: response.status, headers }
     if (cookies.length > 0) metadata.cookies = cookies
     const out = awslambda.HttpResponseStream.from(responseStream, metadata)
     try {
-      if (response.body !== null) {
+      if (head) {
+        discardBody(response)
+      } else if (response.body !== null) {
         for await (const chunk of response.body) {
           if (out.write(chunk) === false && typeof out.once === "function") {
             await new Promise<void>((resolve) => {
