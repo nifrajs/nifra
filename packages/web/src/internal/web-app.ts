@@ -458,8 +458,10 @@ export function createWebApp<Env = unknown>(
     cacheChannel,
   })
 
+  let ownsRootCatchAll = false
   for (const route of manifest.routes) {
     const pattern = requestPattern(route.pattern)
+    if (pattern.startsWith("/*")) ownsRootCatchAll = true
     app.register(
       "GET",
       pattern,
@@ -518,8 +520,9 @@ export function createWebApp<Env = unknown>(
   }
 
   // Wildcard catch-all: unmatched paths render the nearest `_404` (404), or a plain text 404 if
-  // absent.
-  app.register("GET", "/*", undefined, pageExecutor.fallback)
+  // absent. A root catch-all page (`[...slug].tsx`) already answers every path, the root included,
+  // and the router refuses a second `/*` under another param name.
+  if (!ownsRootCatchAll) app.register("GET", "/*", undefined, pageExecutor.fallback)
 
   const evidenceProvider: ComposedEvidenceProvider = async (passed) => {
     const { traverseEvidence } = await import("./evidence-traversal.ts")
