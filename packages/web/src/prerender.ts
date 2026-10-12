@@ -9,7 +9,7 @@
  * routes are not supported.
  */
 import { mkdirSync, writeFileSync } from "node:fs"
-import { dirname, resolve, sep } from "node:path"
+import { dirname, join, resolve, sep } from "node:path"
 import { assertNoSecrets, buildEnvironment, type SecretExemption } from "./internal/secret-scan.ts"
 import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
 import { DATA_HEADER, PRERENDERED_GLOBAL, PRERENDERED_LIST_PATH } from "./router.ts"
@@ -141,15 +141,14 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
   // static (one path) and dynamic (one path per getStaticPaths entry) routes. A failed render is a skip;
   // a credential in the output fails the whole prerender.
   const renderPath = async (path: string): Promise<void> => {
-    if (
-      trimTrailingSlashes(path.replace(/^\/+/, ""))
-        .split("/")
-        .some((s) => s !== "" && fileSegment(s) === undefined)
-    ) {
-      skipped.push({
-        path,
-        reason: "unsafe output path",
-      })
+    // Refused before rendering: a segment no file name maps back to, or a file outside `outDir`.
+    const file = htmlFileFor(path)
+    const segments = trimTrailingSlashes(path.replace(/^\/+/, "")).split("/")
+    const abs = segments.every((s) => s === "" || fileSegment(s) !== undefined)
+      ? outputPath(outRoot, file)
+      : undefined
+    if (abs === undefined) {
+      skipped.push({ path, reason: "unsafe output path" })
       return
     }
     const res = await options.app.fetch(new Request(`${origin}${path}`))
@@ -160,12 +159,6 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
     }
     const html = await res.text()
     listUrl ??= PRERENDERED_LIST_URL.exec(html)?.[1]
-    const file = htmlFileFor(path)
-    const abs = outputPath(outRoot, file)
-    if (abs === undefined) {
-      skipped.push({ path, reason: "unsafe output path" })
-      return
-    }
     assertClean(file, html)
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, html)
@@ -183,15 +176,10 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       !(dataRes.headers.get("content-type") ?? "").includes("application/x-ndjson")
     ) {
       dataFile = dataFileFor(path)
-      const dataAbs = outputPath(outRoot, dataFile)
-      if (dataAbs === undefined) {
-        await dataRes.body?.cancel()
-        dataFile = undefined
-      } else {
-        const data = await dataRes.text()
-        assertClean(dataFile, data)
-        writeFileSync(dataAbs, data)
-      }
+      const data = await dataRes.text()
+      assertClean(dataFile, data)
+      // Beside `index.html`, so inside `outDir` whenever it is.
+      writeFileSync(join(dirname(abs), "_data.json"), data)
     } else {
       await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) - release the stream
     }
