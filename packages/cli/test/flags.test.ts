@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
-import { resolve } from "node:path"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
 import { assureBundleRequested, commandArgv, formatCliError, parseFlags } from "../src/cli.ts"
 
@@ -31,7 +33,7 @@ test("parseFlags: --port (and -p alias) beats the PORT env", () => {
 test("parseFlags rejects an out-of-range / non-numeric port", () => {
   delete Bun.env.PORT
   expect(() => parseFlags(["--port", "70000"])).toThrow(/invalid --port/)
-  expect(() => parseFlags(["--port", "-1"])).toThrow(/invalid --port/)
+  expect(() => parseFlags(["--port=-1"])).toThrow(/invalid --port/)
   expect(() => parseFlags(["--port", "abc"])).toThrow(/invalid --port/)
 })
 
@@ -52,6 +54,77 @@ test("parseFlags parses --allow-duplicate-identity (default off)", () => {
 test("parseFlags parses --no-indicator (default off)", () => {
   expect(parseFlags([]).noIndicator).toBe(false)
   expect(parseFlags(["--no-indicator"]).noIndicator).toBe(true)
+})
+
+test("parseFlags reads --flag=value as --flag value", () => {
+  delete Bun.env.PORT
+  const flags = parseFlags(["--target=vercel", "--out=build", "--port=8125", "--report=true"])
+  expect(flags.target).toBe("vercel")
+  expect(flags.out).toBe("build")
+  expect(flags.port).toBe(8125)
+  expect(flags.report).toBe(true)
+  expect(parseFlags(["--report=false"]).report).toBe(false)
+})
+
+test("parseFlags refuses an unknown flag, a stray argument, or a flag missing its value", () => {
+  expect(() => parseFlags(["--targt", "vercel"])).toThrow("[nifra] unknown option: --targt")
+  expect(() => parseFlags(["--target-vercel"])).toThrow("[nifra] unknown option: --target-vercel")
+  expect(() => parseFlags(["vercel"])).toThrow("[nifra] unexpected argument: vercel")
+  expect(() => parseFlags(["--target"])).toThrow("[nifra] --target needs a value")
+  expect(() => parseFlags(["--target="])).toThrow("[nifra] --target needs a value")
+  expect(() => parseFlags(["--out", "--poll"])).toThrow("[nifra] --out needs a value")
+  expect(() => parseFlags(["--port", "-1"])).toThrow("[nifra] --port needs a value")
+  expect(() => parseFlags(["--poll=yes"])).toThrow("[nifra] --poll takes no value")
+  expect(() => parseFlags(["constructor"])).toThrow("[nifra] unexpected argument: constructor")
+})
+
+test("`nifra build` refuses a mistyped flag before building, and `--help` prints the usage", async () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const run = async (args: readonly string[]) => {
+    const proc = Bun.spawn([process.execPath, cli, ...args], { stdout: "pipe", stderr: "pipe" })
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    return { stdout, stderr, exit }
+  }
+  const mistyped = await run(["build", "--targt=vercel"])
+  expect(mistyped.exit).toBe(1)
+  expect(mistyped.stderr).toContain("[nifra] unknown option: --targt=vercel")
+  const help = await run(["build", "--help"])
+  expect(help.exit).toBe(0)
+  expect(help.stdout).toContain("nifra build   [--out <dir>] [--report]")
+})
+
+test("a command that fails under --json still prints one JSON document on stdout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nifra-json-error-"))
+  try {
+    for (const args of [
+      ["routes", "--json"],
+      ["check", "--json", "--bogus"],
+      ["build", "--json"],
+    ]) {
+      const proc = Bun.spawn(
+        [process.execPath, resolve(import.meta.dir, "../src/cli.ts"), ...args],
+        {
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [stdout, stderr, exit] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect(exit).toBe(1)
+      const parsed: unknown = JSON.parse(stdout)
+      expect(parsed).toEqual({ ok: false, error: stderr.trim() })
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 // Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is

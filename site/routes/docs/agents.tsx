@@ -774,9 +774,11 @@ export default function Agents() {
         <li>
           <strong>No <code>.env</code> in the server.</strong> When Bun loaded <code>.env</code>{" "}
           values into the server at startup, the server hands the session to a copy of itself that
-          loads none, keeping the values from the environment and <code>--env-file</code>. The process
-          the client started stays to forward signals and the exit code: it still holds the values
-          Bun loaded, but runs no project code and reads no messages.
+          loads none, keeping the values from the environment and <code>--env-file</code>. A project
+          that installs another release of <code>@nifrajs/cli</code> gets the session handed to that
+          CLI the same way, with no <code>.env</code> loaded. The process the client started stays to
+          forward signals and the exit code: it still holds the values Bun loaded, but runs no project
+          code and reads no messages.
         </li>
         <li>
           <strong>A process per call has a cost.</strong> A call that loads the app pays one process

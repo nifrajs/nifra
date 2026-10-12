@@ -368,6 +368,8 @@ export interface CheckTypecheckResult {
   readonly note?: string
   readonly output?: string
   readonly missingTypeScript?: boolean
+  /** TypeScript sources found with no tsconfig.json to typecheck them. */
+  readonly sourcesWithoutTsconfig?: number
   readonly outsideProgram?: readonly string[]
 }
 

@@ -19,7 +19,12 @@ import { applyDiagnosticRecipe, listFixRecipes } from "../src/fix-recipes.ts"
 import { runReplay } from "../src/replay.ts"
 import { assertUniqueRuleCodes } from "../src/rules/codes.ts"
 import { validateRulePacks } from "../src/rules/index.ts"
-import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
+import {
+  createFixtureRoot,
+  FIXTURE_TSCONFIG,
+  removeFixtureRoot,
+  writeAppFile,
+} from "./fixture-root.ts"
 
 const ROOT = createFixtureRoot("tmp-agent-verification")
 
@@ -197,6 +202,7 @@ describe("agent verification surfaces", () => {
     const dir = join(ROOT, "bundle")
     await mkdir(dir, { recursive: true })
     writeAppFile(dir, "backend/app.ts", "export const backend = { routes: () => [] }\n")
+    writeAppFile(dir, "tsconfig.json", FIXTURE_TSCONFIG)
     await writeFile(
       join(dir, "nifra.assurance.ts"),
       'import { defineAssuranceConfig } from "@nifrajs/core/assurance"\nimport { backend } from "./backend/app.ts"\nexport default defineAssuranceConfig({ source: backend, policy: { rules: [], unmatched: "ignore", allowEmpty: true } })\n',

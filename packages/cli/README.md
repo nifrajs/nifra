@@ -22,6 +22,9 @@ nifra sdk     --lang <python|go> [--strict]
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
 
+`nifra dev`, `build` and `start` take a flag's value as `--target vercel` or `--target=vercel`, and refuse
+a flag or argument they do not know instead of ignoring it.
+
 ## `nifra doctor` - dependency health
 
 Doctor diffs source imports against declared dependencies, then resolves identity-sensitive
@@ -62,7 +65,8 @@ is the feedback plan and reports which release gates it omits. CI and release au
 `nifra verify --release` (or `bun run check:release`), which includes build, coverage, corpus,
 consumer, publish, and cross-runtime gates. Each gate runs a `package.json` script (`bun run lint`,
 `bun run check:docs`, ...); a gate whose script the project does not declare is reported as
-`undeclared` and does not fail the run. Run `nifra port --ci --target <target>` for an app's
+`undeclared` and does not fail the run. The nifra repository's own `bun run verify` and
+`bun run check:release` fail that gate instead, so a renamed script cannot drop it. Run `nifra port --ci --target <target>` for an app's
 resolved deployment target; CI never guesses a target when none is configured.
 
 ## `nifra check` - the drift gate (run as "done")
@@ -73,7 +77,8 @@ remember them. It does three things and exits non-zero if any fails:
 1. **Typecheck** (`tsc --noEmit`, using the project's own TypeScript) - the frontend↔backend contract is
    compiler-enforced. `client<typeof app>` derives request inputs **and** `res.data` from your routes, so
    a screen that expects the wrong shape is a type error. Running the typecheck is what turns that latent
-   guarantee into an enforced one.
+   guarantee into an enforced one. TypeScript sources with no `tsconfig.json` beside them fail this step,
+   as a missing `typescript` install does: nothing typechecked them. A JavaScript-only project skips it.
 2. **Typed-client lint** - flags any hand-rolled `fetch()` to your own API (a relative URL like
    `fetch("/users")`), which bypasses the typed client so the compiler can't see the drift. External
    absolute-URL fetches are not flagged.

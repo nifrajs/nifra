@@ -14,7 +14,12 @@ import { runCapabilitySnapshot } from "../src/capabilities-tool.ts"
 import { runCheck } from "../src/check.ts"
 import { runLevels } from "../src/levels-tool.ts"
 import { runManifestEmit } from "../src/manifest-tool.ts"
-import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import {
+  createFixtureProject,
+  createFixtureRoot,
+  FIXTURE_TSCONFIG,
+  removeFixtureRoot,
+} from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("nifra-verification-golden-")
 
@@ -50,13 +55,14 @@ async function capture(cwd: string, run: () => Promise<unknown>): Promise<string
 const PAY_BACKEND = [
   `import { server } from "@nifrajs/core"`,
   `const okBody = {`,
-  `  "~standard": { version: 1, vendor: "golden", validate: (value) => (typeof value?.amount === "number" ? { value } : { issues: [{ message: "amount" }] }) },`,
+  `  "~standard": { version: 1 as const, vendor: "golden", validate: (value: any) => (typeof value?.amount === "number" ? { value } : { issues: [{ message: "amount" }] }) },`,
   `  jsonSchema: { type: "object", properties: { amount: { type: "number", minimum: 1, maximum: 9 } }, required: ["amount"] },`,
   `}`,
   `export const backend = server().post("/pay", { body: okBody }, () => ({ ok: true }))`,
   "",
 ].join("\n")
 
+// A project's own tsconfig, so the typecheck gate runs instead of failing for want of one.
 const FULL_CONFIG = [
   `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
   `import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"`,
@@ -78,6 +84,7 @@ async function fullProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "full-")
   await mkdir(join(cwd, "backend"), { recursive: true })
   await writeFile(join(cwd, "backend/app.ts"), PAY_BACKEND)
+  await writeFile(join(cwd, "tsconfig.json"), FIXTURE_TSCONFIG)
   await writeFile(join(cwd, "nifra.assurance.ts"), FULL_CONFIG)
   const original = console.log
   console.log = () => {} // silence the emit tools' own progress logs during setup
@@ -95,11 +102,12 @@ async function plainProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "plain-")
   await mkdir(join(cwd, "backend"), { recursive: true })
   await writeFile(join(cwd, "backend/app.ts"), PAY_BACKEND)
+  await writeFile(join(cwd, "tsconfig.json"), FIXTURE_TSCONFIG)
   return cwd
 }
 
 /** A route module tripping three source lints at once: an own-API fetch, a server-only import, and a
- * raw-Response return (the advisory). No assurance config. */
+ * raw-Response return (the advisory). No assurance config, and no tsconfig.json for the typecheck. */
 async function dirtyProject(): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, "dirty-")
   await mkdir(join(cwd, "routes"), { recursive: true })

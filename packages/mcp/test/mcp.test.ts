@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, jest, test } from "bun:test"
 import {
   createMcpServer,
   defineMcpTool,
@@ -746,6 +746,45 @@ describe("respondMcpHttp - transport hardening", () => {
     )
     controller.abort()
     expect(await reader.read()).toMatchObject({ done: true })
+  })
+
+  test("with authorizeMessage set, GET offers no stream for an unchecked caller", async () => {
+    let asked = false
+    const res = await serve(
+      new Request("http://x/mcp", { headers: { accept: "text/event-stream" } }),
+      {
+        authorizeMessage: () => {
+          asked = true
+          return false
+        },
+      },
+    )
+    expect(res.status).toBe(405)
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/event-stream")
+    expect(asked).toBe(false)
+    expect(
+      (await serve(new Request("http://x/mcp"), { authorizeMessage: () => false })).status,
+    ).toBe(200)
+  })
+
+  test("the GET stream closes after five minutes", async () => {
+    jest.useFakeTimers()
+    try {
+      const res = await serve(
+        new Request("http://x/mcp", { headers: { accept: "text/event-stream" } }),
+      )
+      const reader = res.body?.getReader()
+      if (reader === undefined) throw new Error("SSE response has no body")
+      expect(new TextDecoder().decode((await reader.read()).value ?? new Uint8Array())).toBe(
+        ": connected\n\n",
+      )
+      jest.advanceTimersByTime(5 * 60_000)
+      let heartbeats = 0
+      for (let next = await reader.read(); !next.done; next = await reader.read()) heartbeats++
+      expect(heartbeats).toBeGreaterThan(0)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   test("a non-POST, non-GET method is rejected with Allow", async () => {

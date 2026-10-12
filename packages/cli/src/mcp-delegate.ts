@@ -6,7 +6,7 @@
  * answer still reads as authoritative. So the server settles the version before it serves:
  *
  *   1. The project installs its own `@nifrajs/cli` at a different version: hand the whole session to
- *      that CLI (`node_modules/.bin/nifra mcp`, stdio inherited) and step aside.
+ *      that CLI (its `bin` script, run by this Bun with `--no-env-file`, stdio inherited) and step aside.
  *   2. Handing off is impossible (no project CLI, a missing bin, or this process IS the hand-off and
  *      the versions still disagree): serve, but the version-sensitive tools refuse with the fix
  *      instead of answering for the wrong release.
@@ -31,27 +31,37 @@ export const VERSION_SENSITIVE_TOOLS: ReadonlySet<string> = new Set([
   "nifra_contracts",
 ])
 
-/** The project's own CLI: its version and, when the install linked one, its bin. */
+/** The project's own CLI: its version and, when it is on disk, the script its `bin` names. */
 export interface ProjectCli {
   readonly version: string
   readonly bin?: string
 }
 
-const BIN_NAME = process.platform === "win32" ? "nifra.exe" : "nifra"
 const MAX_ANCESTOR_DIRS = 8
+
+function binScript(bin: unknown): string | undefined {
+  if (typeof bin === "string") return bin
+  if (typeof bin !== "object" || bin === null) return undefined
+  const named: unknown = Reflect.get(bin, "nifra")
+  return typeof named === "string" ? named : undefined
+}
 
 /** The nearest `@nifrajs/cli` install at or above `root` (a monorepo app hoists to the repo root). */
 export async function findProjectCli(root: string): Promise<ProjectCli | undefined> {
   let dir = root
   for (let depth = 0; depth < MAX_ANCESTOR_DIRS; depth++) {
-    const modules = join(dir, "node_modules")
+    const pkg = join(dir, "node_modules", "@nifrajs", "cli")
     try {
-      const meta = JSON.parse(
-        await readFile(join(modules, "@nifrajs", "cli", "package.json"), "utf8"),
-      ) as { version?: unknown }
+      const meta = JSON.parse(await readFile(join(pkg, "package.json"), "utf8")) as {
+        version?: unknown
+        bin?: unknown
+      }
       if (typeof meta.version === "string" && meta.version.length > 0) {
-        const bin = join(modules, ".bin", BIN_NAME)
-        return existsSync(bin) ? { version: meta.version, bin } : { version: meta.version }
+        const script = binScript(meta.bin)
+        const bin = script === undefined ? undefined : join(pkg, script)
+        return bin !== undefined && existsSync(bin)
+          ? { version: meta.version, bin }
+          : { version: meta.version }
       }
     } catch {
       // Not installed at this level - keep walking up.
@@ -79,7 +89,9 @@ export async function delegateToProjectCli(options: {
   const cli = await findProjectCli(options.root)
   if (cli === undefined || cli.version === options.version || cli.bin === undefined)
     return undefined
-  return handOffSession([cli.bin, "mcp", ...options.args], {
+  // Not the `.bin` shim: its `bun` would load the project's `.env`, and the inherited
+  // NIFRA_MCP_WITHOUT_ENV_FILES then tells that CLI the values are already gone.
+  return handOffSession([process.execPath, "--no-env-file", cli.bin, "mcp", ...options.args], {
     cwd: options.cwd,
     env: { ...process.env, [MCP_DELEGATED_ENV]: "1" },
     announce: `[nifra] mcp: this CLI is ${options.version}; the project installs @nifrajs/cli ${cli.version} - serving this session from ${cli.bin}`,

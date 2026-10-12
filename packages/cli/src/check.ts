@@ -96,6 +96,10 @@ interface TypecheckResult {
   /** tsconfig.json exists but no `typescript` install was found walking up from cwd. The contract
    * gate could not run - the caller surfaces this as a FAILING diagnostic, never a silent skip. */
   readonly missingTypeScript?: boolean
+  /** No tsconfig.json at the project root. Fails the check only when TypeScript sources exist. */
+  readonly missingTsconfig?: boolean
+  /** TypeScript sources the scan found with no tsconfig.json to typecheck them. */
+  readonly sourcesWithoutTsconfig?: number
   /** Every file in the compiler's program, absolute. Absent when the compiler listed none. */
   readonly programFiles?: readonly string[]
   /** Zoned TypeScript files outside the program, project-relative: the typecheck never read them. */
@@ -124,7 +128,7 @@ function resolveTscBin(cwd: string): string | undefined {
 async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckResult> {
   const tsconfig = join(cwd, "tsconfig.json")
   if (!(await Bun.file(tsconfig).exists()))
-    return { ran: false, ok: true, note: "no tsconfig.json" }
+    return { ran: false, ok: true, missingTsconfig: true, note: "no tsconfig.json" }
   // Routes import their generated `./+types` modules; bring them up to date before tsc reads them.
   const { refreshRouteTypes } = await import("./route-types.ts")
   refreshRouteTypes(cwd, () => {})
@@ -310,6 +314,16 @@ async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
   }
 }
 
+/** A project whose TypeScript no tsconfig.json covers has no typecheck to pass: the gate fails. */
+function withoutTsconfig(
+  result: TypecheckResult,
+  sourceFiles: ReadonlyArray<{ readonly file: string }>,
+): TypecheckResult {
+  if (result.missingTsconfig !== true) return result
+  const sources = sourceFiles.filter(({ file }) => !/\.d\.[cm]?ts$/.test(file)).length
+  return sources === 0 ? result : { ...result, ok: false, sourcesWithoutTsconfig: sources }
+}
+
 /** Record the zoned files the compiler's program left out, minus the typecheck rule's `ignore` globs. */
 function withProgramCoverage(
   cwd: string,
@@ -377,11 +391,10 @@ async function buildProjectScan(
 
   // tsc compiles TypeScript sources only; the JavaScript and component files the scan reads are no
   // program's to cover.
-  const typecheckResult = withProgramCoverage(
-    cwd,
-    typecheckRun,
-    sourceFiles.filter(({ file }) => /\.[cm]?tsx?$/.test(file)),
-    checkConfig,
+  const typeScriptSources = sourceFiles.filter(({ file }) => /\.[cm]?tsx?$/.test(file))
+  const typecheckResult = withoutTsconfig(
+    withProgramCoverage(cwd, typecheckRun, typeScriptSources, checkConfig),
+    typeScriptSources,
   )
 
   // TypeScript 7's unstable API materializes source files through one project session. Build the

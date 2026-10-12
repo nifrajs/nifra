@@ -1099,27 +1099,126 @@ const existingStylexImport = (source: string): string | undefined => {
   return match?.[1]
 }
 
-const insertionOffset = (source: string): number => {
-  let offset = source.startsWith("#!") ? source.indexOf("\n") + 1 || source.length : 0
-  const lines = source.slice(offset).split(/(?<=\n)/)
-  let consumed = 0
-  let inImport = false
-  for (const line of lines) {
-    const trimmed = line.trim()
-    const directive = /^(['"])(?:use client|use server)\1;?$/.test(trimmed)
-    if (inImport || trimmed.startsWith("import ") || trimmed.startsWith("import{")) {
-      inImport = !/(?:from\s+["'][^"']+["']|import\s+["'][^"']+["'])\s*;?$/.test(trimmed)
-      consumed += line.length
-      continue
-    }
-    if (directive || trimmed === "") {
-      consumed += line.length
-      continue
-    }
-    break
+const isIdentifierChar = (char: string | undefined): boolean =>
+  char !== undefined && /[\w$]/.test(char)
+
+/** Past the whitespace and comments at `index`. `inLine` stops at the end of the line. */
+function skipTrivia(source: string, index: number, inLine = false): number {
+  let at = index
+  while (at < source.length) {
+    const char = source[at]
+    if (char === " " || char === "\t" || char === "\r" || (char === "\n" && !inLine)) at++
+    else if (source.startsWith("//", at)) {
+      const end = source.indexOf("\n", at)
+      if (end === -1) return source.length
+      at = inLine ? end : end + 1
+    } else if (source.startsWith("/*", at)) {
+      const end = source.indexOf("*/", at + 2)
+      if (end === -1) return source.length
+      at = end + 2
+    } else break
   }
-  offset += consumed
-  return offset
+  return at
+}
+
+function skipString(source: string, index: number): number {
+  const quote = source[index]
+  let at = index + 1
+  while (at < source.length && source[at] !== quote && source[at] !== "\n")
+    at += source[at] === "\\" ? 2 : 1
+  return Math.min(at + 1, source.length)
+}
+
+/** Past an import's specifier: its `with { ... }` (or `assert`) attributes and a `;`. */
+function afterSpecifier(source: string, index: number): number {
+  let at = index
+  const next = skipTrivia(source, at, true)
+  for (const keyword of ["with", "assert"]) {
+    if (!source.startsWith(keyword, next) || isIdentifierChar(source[next + keyword.length]))
+      continue
+    const open = skipTrivia(source, next + keyword.length)
+    const close = source[open] === "{" ? source.indexOf("}", open) : -1
+    if (close !== -1) at = close + 1
+  }
+  const semicolon = skipTrivia(source, at, true)
+  return source[semicolon] === ";" ? semicolon + 1 : at
+}
+
+/** Where the import declaration whose `import` keyword is at `index` ends, or `undefined` for an
+ * `import(...)` / `import.meta` expression or a declaration this scan cannot read. */
+function importEnd(source: string, index: number): number | undefined {
+  let at = skipTrivia(source, index + "import".length)
+  if (source[at] === "(" || source[at] === ".") return undefined
+  if (source[at] === '"' || source[at] === "'")
+    return afterSpecifier(source, skipString(source, at))
+  let depth = 0
+  while (at < source.length) {
+    const char = source[at]
+    if (char === '"' || char === "'") {
+      at = skipString(source, at)
+      continue
+    }
+    if (source.startsWith("//", at) || source.startsWith("/*", at)) {
+      at = skipTrivia(source, at)
+      continue
+    }
+    if (char === "{") depth++
+    else if (char === "}") depth--
+    else if (depth === 0 && (char === ";" || char === "=")) return undefined
+    else if (
+      depth === 0 &&
+      source.startsWith("from", at) &&
+      !isIdentifierChar(source[at - 1]) &&
+      !isIdentifierChar(source[at + 4])
+    ) {
+      const specifier = skipTrivia(source, at + 4)
+      if (source[specifier] === '"' || source[specifier] === "'")
+        return afterSpecifier(source, skipString(source, specifier))
+    }
+    at++
+  }
+  return undefined
+}
+
+/** Past the rest of the line `index` is on when only trivia is left on it, then any blank lines. */
+function nextLine(source: string, index: number): number {
+  let at = skipTrivia(source, index, true)
+  if (at < source.length && source[at] !== "\n") return index
+  for (;;) {
+    if (source[at] !== "\n") return at
+    let next = at + 1
+    while (source[next] === " " || source[next] === "\t" || source[next] === "\r") next++
+    if (next < source.length && source[next] !== "\n") return at + 1
+    at = next
+  }
+}
+
+/**
+ * Where the generated block goes: after the directive prologue and the import declarations. Comments
+ * are read as comments, so one before `"use client"` keeps the directive first, and a trailing
+ * `// note` on the last import does not hide where it ends.
+ */
+const insertionOffset = (source: string): number => {
+  let end = source.startsWith("#!") ? source.indexOf("\n") + 1 || source.length : 0
+  let prologue = true
+  for (;;) {
+    const at = skipTrivia(source, end)
+    const char = source[at]
+    let statementEnd: number | undefined
+    if (prologue && (char === '"' || char === "'")) {
+      const literal = skipString(source, at)
+      const after = skipTrivia(source, literal, true)
+      // A string with more of an expression after it on its line is not a directive.
+      if (source[after] === ";") statementEnd = after + 1
+      else if (after === source.length || source[after] === "\n") statementEnd = literal
+    } else if (source.startsWith("import", at) && !isIdentifierChar(source[at + 6])) {
+      prologue = false
+      statementEnd = importEnd(source, at)
+    }
+    if (statementEnd === undefined) break
+    end = nextLine(source, statementEnd)
+  }
+  return end
 }
 
 /** Transform one source file. The returned source is unchanged when every match is unsupported. */
@@ -1196,7 +1295,8 @@ export function migrateTailwindSource(source: string, file: string): SourceMigra
   const needsImport = existingStylexImport(source) === undefined
   const generated = `${needsImport ? `import * as ${stylexName} from "${STYLEX_SPECIFIER}"\n\n` : ""}const ${stylesName} = ${stylexName}.create(${JSON.stringify(Object.fromEntries(styles), null, 2)})\n\n`
   const offset = insertionOffset(rewritten)
-  const withGenerated = `${rewritten.slice(0, offset)}${generated}${rewritten.slice(offset)}`
+  const separator = offset > 0 && rewritten[offset - 1] !== "\n" ? "\n" : ""
+  const withGenerated = `${rewritten.slice(0, offset)}${separator}${generated}${rewritten.slice(offset)}`
   return { source: withGenerated, changed: true, replacements: replacements.length, issues }
 }
 

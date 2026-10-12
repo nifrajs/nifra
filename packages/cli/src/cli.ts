@@ -372,6 +372,14 @@ export function formatCliError(err: unknown): string {
   return String(err)
 }
 
+/** A failed command's message on stderr and, for a `--json` caller parsing stdout, as JSON there. */
+function reportFailure(err: unknown, argv: readonly string[]): void {
+  const message = formatCliError(err)
+  console.error(message)
+  if (argv.includes("--json") || argv.includes("--json=true"))
+    console.log(JSON.stringify({ ok: false, error: message }, null, 2))
+}
+
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   if (app.framework.componentPipeline !== undefined) {
     if (flags.bun)
@@ -960,35 +968,73 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   await import(serverFile)
 }
 
+const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target">> = {
+  "--port": "port",
+  "-p": "port",
+  "--out": "out",
+  "--target": "target",
+}
+
+type SwitchField = "poll" | "report" | "vite" | "bun" | "allowDuplicateIdentity" | "noIndicator"
+
+const SWITCH_FLAGS: Readonly<Record<string, SwitchField>> = {
+  "--poll": "poll",
+  "--report": "report",
+  "--vite": "vite",
+  "--bun": "bun",
+  "--allow-duplicate-identity": "allowDuplicateIdentity",
+  "--no-indicator": "noIndicator",
+}
+
+/** The flags of `nifra dev`, `build` and `start`, as `--flag value` or `--flag=value`. Anything else is
+ * refused: an ignored `--target=vercel` would build the default target and exit 0. */
 export function parseFlags(args: readonly string[]): Flags {
   // Port precedence: `--port`/`-p` (most specific) > `PORT` env > the framework default. The default is
   // the SAME uncommon port for `nifra dev` and `nifra start` (DEFAULT_DEV_PORT) so a project's URL is
   // stable across commands and doesn't collide with the usual 3000/5173/8080 crowd.
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out: string | undefined
-  let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
   let target: string | undefined
-  let report = false
-  let vite = false
-  let bun = false
-  let allowDuplicateIdentity = false
-  let noIndicator = false
+  const switches: Record<SwitchField, boolean> = {
+    poll: Bun.env.CHOKIDAR_USEPOLLING === "1",
+    report: false,
+    vite: false,
+    bun: false,
+    allowDuplicateIdentity: false,
+    noIndicator: false,
+  }
   for (let i = 0; i < args.length; i++) {
-    const a = args[i]
-    if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
-    else if (a === "--out" && args[i + 1]) out = args[++i] as string
-    else if (a === "--poll") poll = true
-    else if (a === "--target" && args[i + 1]) target = args[++i] as string
-    else if (a === "--report") report = true
-    else if (a === "--vite") vite = true
-    else if (a === "--bun") bun = true
-    else if (a === "--allow-duplicate-identity") allowDuplicateIdentity = true
-    else if (a === "--no-indicator") noIndicator = true
+    const arg = args[i] as string
+    const equals = arg.startsWith("--") ? arg.indexOf("=") : -1
+    const name = equals === -1 ? arg : arg.slice(0, equals)
+    const valueField = Object.hasOwn(VALUE_FLAGS, name) ? VALUE_FLAGS[name] : undefined
+    if (valueField !== undefined) {
+      const value = equals === -1 ? args[++i] : arg.slice(equals + 1)
+      if (value === undefined || value === "" || (equals === -1 && value.startsWith("-")))
+        throw new Error(`[nifra] ${name} needs a value`)
+      if (valueField === "port") port = Number(value)
+      else if (valueField === "out") out = value
+      else target = value
+      continue
+    }
+    const switchField = Object.hasOwn(SWITCH_FLAGS, name) ? SWITCH_FLAGS[name] : undefined
+    if (switchField !== undefined) {
+      const value = equals === -1 ? "true" : arg.slice(equals + 1)
+      if (value !== "true" && value !== "false")
+        throw new Error(`[nifra] ${name} takes no value (or =true / =false)`)
+      switches[switchField] = value === "true"
+      continue
+    }
+    throw new Error(
+      arg.startsWith("-")
+        ? `[nifra] unknown option: ${arg} - see \`nifra help\``
+        : `[nifra] unexpected argument: ${arg} - see \`nifra help\``,
+    )
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, target, report, vite, bun, allowDuplicateIdentity, noIndicator }
+  return { port, out, target, ...switches }
 }
 
 /**
@@ -1196,7 +1242,7 @@ async function main(): Promise<void> {
       // A thrown error is nifra's own reporting path, not a silent abort: clear the sentinel so the
       // hint stays reserved for the case where the process died inside the app import.
       markReflecting(undefined)
-      console.error(formatCliError(err))
+      reportFailure(err, argv)
       const candidate =
         typeof err === "object" && err !== null && "exitCode" in err
           ? (err as { readonly exitCode?: unknown }).exitCode
@@ -1259,6 +1305,7 @@ async function main(): Promise<void> {
       console.error(formatCliError(err))
       process.exitCode = 1
     }
+    exitIfHeldOpen(command)
     return
   }
   // `upgrade` is a pure cwd file-transformer (package.json pins + import moves) driven by a per-release
@@ -1281,9 +1328,10 @@ async function main(): Promise<void> {
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
-      console.error(formatCliError(err))
+      reportFailure(err, argv)
       process.exitCode = 1
     }
+    exitIfHeldOpen(command)
     return
   }
   // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) - like `check`/
@@ -1294,22 +1342,32 @@ async function main(): Promise<void> {
     process.exitCode = 1
     return
   }
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(HELP)
+    return
+  }
   const flags = parseFlags(argv.slice(1))
-  const app = await loadApp(process.cwd(), flags.out)
-  if (command !== "start" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) {
-    const { unservedRoutesWarning } = await import("./introspect.ts")
-    const unserved = unservedRoutesWarning(app)
-    if (unserved !== undefined) console.warn(unserved)
+  try {
+    const app = await loadApp(process.cwd(), flags.out)
+    if (command !== "start" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) {
+      const { unservedRoutesWarning } = await import("./introspect.ts")
+      const unserved = unservedRoutesWarning(app)
+      if (unserved !== undefined) console.warn(unserved)
+    }
+    if (command !== "start") {
+      const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
+      refreshRouteTypes(app.cwd)
+      // A relaunched `nifra dev --bun` child runs beside its parent, which already watches.
+      if (command === "dev" && process.env.NIFRA_BUN_DEV_TOKEN === undefined)
+        watchRouteTypes(app.cwd)
+    }
+    if (command === "dev") await dev(app, flags)
+    else if (command === "build") await buildForTarget(app, flags.target, flags)
+    else await start(app, flags)
+  } finally {
+    // `dev` and `start` keep serving after they return; a build is over.
+    if (command === "build") exitIfHeldOpen(command)
   }
-  if (command !== "start") {
-    const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
-    refreshRouteTypes(app.cwd)
-    // A relaunched `nifra dev --bun` child runs beside its parent, which already watches.
-    if (command === "dev" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) watchRouteTypes(app.cwd)
-  }
-  if (command === "dev") await dev(app, flags)
-  else if (command === "build") await buildForTarget(app, flags.target, flags)
-  else await start(app, flags)
 }
 
 /**
@@ -1496,7 +1554,7 @@ if (isMainModule() || isBunDevReexecChild() || hasCliCommandToken()) {
   try {
     await main()
   } catch (err) {
-    console.error(formatCliError(err))
+    reportFailure(err, cliArgv())
     process.exitCode = 1
   }
 }

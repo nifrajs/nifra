@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import {
   findProjectCli,
   MCP_DELEGATED_ENV,
@@ -21,8 +21,10 @@ afterAll(async () => {
   await Promise.all(grounds.map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-/** The shell-script fake below as a Bun program: Windows runs only a real `.bin/nifra.exe`. */
-const FAKE_CLI_SOURCE = `import { realpathSync } from "node:fs"
+/** The project's CLI, reduced to what the hand-off contract needs: it answers the first request
+ * with the argv, cwd, hand-off marker and `.env` secret it was started with. */
+const FAKE_CLI_SOURCE = `#!/usr/bin/env bun
+import { realpathSync } from "node:fs"
 const reader = Bun.stdin.stream().getReader()
 let text = ""
 while (!text.includes("\\n")) {
@@ -34,29 +36,11 @@ const result = {
   serverInfo: { name: "project-cli", version: ${JSON.stringify(PROJECT_VERSION)} },
   args: process.argv.slice(2).join(" "),
   marker: process.env[${JSON.stringify(MCP_DELEGATED_ENV)}] ?? "",
+  secret: process.env.NIFRA_DELEGATE_SECRET ?? "",
   cwd: realpathSync.native(process.cwd()),
 }
 process.stdout.write(\`\${JSON.stringify({ jsonrpc: "2.0", id: 1, result })}\\n\`)
 `
-
-let compiledFake: Promise<string> | undefined
-/** Compiled once per run and copied into each project that needs a bin. */
-const windowsFakeCli = (): Promise<string> => {
-  compiledFake ??= (async () => {
-    const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-delegate-fake-"))
-    grounds.push(dir)
-    await writeFile(join(dir, "fake.ts"), FAKE_CLI_SOURCE)
-    const exe = join(dir, "nifra.exe")
-    const built = Bun.spawnSync(
-      [process.execPath, "build", "--compile", join(dir, "fake.ts"), "--outfile", exe],
-      { stdout: "ignore", stderr: "pipe" },
-    )
-    if (built.exitCode !== 0)
-      throw new Error(`the fake project CLI did not compile: ${built.stderr}`)
-    return exe
-  })()
-  return compiledFake
-}
 
 /** A nifra project whose install pins `@nifrajs/*` to {@link PROJECT_VERSION}. */
 const project = async (
@@ -71,26 +55,22 @@ const project = async (
   for (const name of Object.keys(deps)) {
     const pkg = join(dir, "node_modules", ...name.split("/"))
     await mkdir(pkg, { recursive: true })
-    await writeFile(join(pkg, "package.json"), JSON.stringify({ name, version: PROJECT_VERSION }))
+    const bin =
+      name === "@nifrajs/cli" && over.bin === true ? { bin: { nifra: "dist/cli.js" } } : {}
+    await writeFile(
+      join(pkg, "package.json"),
+      JSON.stringify({ name, version: PROJECT_VERSION, ...bin }),
+    )
   }
   if (over.bin === true) {
-    // The project's CLI, reduced to what the hand-off contract needs: it answers the first request
-    // with the argv, cwd and hand-off marker it was started with.
-    await mkdir(join(dir, "node_modules", ".bin"), { recursive: true })
-    if (process.platform === "win32") {
-      await copyFile(await windowsFakeCli(), join(dir, "node_modules", ".bin", "nifra.exe"))
-    } else {
-      const bin = join(dir, "node_modules", ".bin", "nifra")
-      await writeFile(
-        bin,
-        [
-          "#!/bin/sh",
-          "read line",
-          `printf '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"project-cli","version":"${PROJECT_VERSION}"},"args":"%s","marker":"%s","cwd":"%s"}}\\n' "$*" "$${MCP_DELEGATED_ENV}" "$(pwd -P)"`,
-          "",
-        ].join("\n"),
-      )
-      await chmod(bin, 0o755)
+    const script = join(dir, "node_modules", "@nifrajs", "cli", "dist", "cli.js")
+    await mkdir(dirname(script), { recursive: true })
+    await writeFile(script, FAKE_CLI_SOURCE)
+    await chmod(script, 0o755)
+    // Linked as an install links it; a client launching this shim gets Bun's `.env` loading.
+    if (process.platform !== "win32") {
+      await mkdir(join(dir, "node_modules", ".bin"), { recursive: true })
+      await symlink("../@nifrajs/cli/dist/cli.js", join(dir, "node_modules", ".bin", "nifra"))
     }
   }
   return dir
@@ -214,8 +194,17 @@ describe("nifra mcp against a project on another nifra release", () => {
       serverInfo: { name: "project-cli", version: PROJECT_VERSION },
       args: "mcp",
       marker: "1",
+      secret: "",
       cwd: dir,
     })
+  }, 45_000)
+
+  test("the project's CLI gets none of the project's .env values", async () => {
+    const dir = await project("handoff-env", { cli: true, bin: true })
+    await writeFile(join(dir, ".env"), "NIFRA_DELEGATE_SECRET=hunter2\n")
+    const answered = await rpc(dir, [], [initialize], [1])
+    expect(answered[1]).toHaveProperty("result.serverInfo.name", "project-cli")
+    expect(answered[1]).toHaveProperty("result.secret", "")
   }, 45_000)
 
   test("an explicit project dir is passed through to the project's CLI", async () => {

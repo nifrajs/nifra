@@ -70,13 +70,15 @@ export interface BoundedProcessResult {
 }
 
 const KILL_GRACE_MS = 2_000
+// How long the pipes are still read once the child has exited, for output it wrote just before.
+const DRAIN_GRACE_MS = 2_000
 const PROCESS_GROUPS = process.platform !== "win32"
 
 /**
  * Run a trusted command to completion within `timeoutMs`. On POSIX the child leads its own process
  * group, so a timeout reaches every process it started: SIGTERM, then SIGKILL after a grace period.
- * Once the child is gone, pipes still held open by something outside the group are no longer
- * waited on, so the call always settles.
+ * The call settles when the child exits: a process it left running that still holds the pipes open
+ * is read from for a short grace and then no longer waited on, and `timedOut` stays `false`.
  */
 export async function runBoundedProcess(
   argv: readonly string[],
@@ -110,15 +112,25 @@ export async function runBoundedProcess(
       void proc.exited.then(() => reading.abort())
     }, graceMs)
   }, options.timeoutMs)
+  let drain: ReturnType<typeof setTimeout> | undefined
+  // Awaited below, so the drain timer is armed before the `finally` that clears it can run.
+  const exited = proc.exited.then((status) => {
+    if (!timedOut) {
+      clearTimeout(timer)
+      drain = setTimeout(() => reading.abort(), DRAIN_GRACE_MS)
+    }
+    return status
+  })
   try {
     const [stdout, stderr, status] = await Promise.all([
       readBoundedText(proc.stdout, options.maxStdoutBytes, reading.signal),
       readBoundedText(proc.stderr, options.maxStderrBytes, reading.signal),
-      proc.exited,
+      exited,
     ])
     return { stdout, stderr, status, timedOut }
   } finally {
     clearTimeout(timer)
     clearTimeout(escalation)
+    clearTimeout(drain)
   }
 }

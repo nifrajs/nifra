@@ -71,7 +71,8 @@ export interface CreateMcpServerOptions {
    * This is the seam for "this caller may list tools but may not call the write ones" - the HTTP
    * layer above only sees one opaque POST, so a route guard cannot make that distinction.
    * `fetch(request, { authorizeMessage })` overrides it per request when the decision depends on
-   * something the surrounding handler resolved (a session, a tenant).
+   * something the surrounding handler resolved (a session, a tenant). With it set, a GET for the
+   * server-message stream is answered `405`, since that stream has no message to authorize.
    */
   readonly authorizeMessage?: (
     message: JsonRpcRequest,

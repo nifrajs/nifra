@@ -45,6 +45,14 @@ const TEMPLATES = {
 } as const
 export type TemplateName = keyof typeof TEMPLATES
 
+/** Where each template's `dev` script serves: `PORT ?? 3000`, `nifra dev`'s default, `wrangler dev`'s. */
+export const TEMPLATE_DEV_URLS: Readonly<Record<TemplateName, string>> = {
+  api: "http://localhost:3000",
+  site: "http://localhost:4321",
+  isr: "http://localhost:8787",
+  batteries: "http://localhost:3000",
+}
+
 /** Frontend frameworks the `site` template can scaffold. React is the default (`template-site`); the
  * rest live in `template-site-<framework>` siblings - same multi-target deploy story, different adapter
  * + routes. */
@@ -436,7 +444,8 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // Wire the Drizzle data layer (db/ module + drizzle.config + .env.example + gitignore entries).
   if (db !== undefined) await writeDbFiles(dir, db)
   // Wire auth AFTER the DB (it appends to the .env.example the DB preset wrote; --auth requires --db).
-  if (auth !== undefined && db !== undefined) await writeAuthFiles(dir, auth, db)
+  if (auth !== undefined && db !== undefined)
+    await writeAuthFiles(dir, auth, db, TEMPLATE_DEV_URLS[template])
 
   // Emit a CI deploy workflow for the site's target.
   let ciResult: { ci: "github"; ciSecrets: readonly string[] } | undefined

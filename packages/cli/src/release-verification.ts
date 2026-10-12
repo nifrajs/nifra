@@ -59,6 +59,11 @@ export interface ReleaseVerificationOptions {
    * runner swings too far run to run to gate a release on.
    */
   readonly sharedRunner?: boolean
+  /**
+   * Fail a gate whose script package.json does not declare, instead of reporting it `undeclared`.
+   * The repository's own gate runs every gate in its plan, so a renamed script cannot drop one.
+   */
+  readonly requireScripts?: boolean
   readonly runCommand?: (spec: ReleaseCommandSpec) => Promise<ReleaseCommandResult>
 }
 
@@ -213,6 +218,14 @@ const undeclaredGate = (gate: VerificationGateSpec, script: string): ReleaseGate
   remediation: `Declare a \`${script}\` script to run this gate.`,
 })
 
+const missingScriptGate = (gate: VerificationGateSpec, script: string): ReleaseGateResult => ({
+  id: gate.id,
+  status: "fail",
+  commands: gate.commands.map(commandLabel),
+  message: `\`${script}\` is not a script in package.json`,
+  remediation: `Declare the \`${script}\` script this gate runs, or rename the gate's command to the script that replaced it.`,
+})
+
 /** The first `bun run <script>` of a gate that the root package.json does not declare. */
 const undeclaredScript = (
   gate: VerificationGateSpec,
@@ -248,6 +261,12 @@ export async function collectReleaseVerification(
       }
       // The plan names the nifra repository's own scripts; a project without one has nothing to run.
       const missing = undeclaredScript(gate, scripts)
+      if (missing !== undefined && options.requireScripts === true) {
+        const result = missingScriptGate(gate, missing)
+        gates.push(result)
+        failedId = result.id
+        continue
+      }
       if (missing !== undefined) {
         gates.push(undeclaredGate(gate, missing))
         continue
@@ -315,6 +334,7 @@ if (import.meta.main) {
   const ok = await runReleaseVerification(process.cwd(), {
     mode,
     sharedRunner: process.argv.includes("--shared-runner"),
+    requireScripts: true,
     json: process.argv.includes("--json"),
   })
   if (!ok) process.exitCode = 1

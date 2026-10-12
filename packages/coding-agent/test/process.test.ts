@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { readBoundedText } from "../src/process.ts"
+import { readBoundedText, runBoundedProcess } from "../src/process.ts"
 
 const encoder = new TextEncoder()
 
@@ -51,3 +51,26 @@ test("a chunk after the cap is filled exactly marks the text truncated", async (
   expect(await readBoundedText(chunks("abcd", "e"), 4)).toEqual({ text: "abcd", truncated: true })
   expect(await readBoundedText(chunks("abcd"), 4)).toEqual({ text: "abcd", truncated: false })
 })
+
+test.skipIf(process.platform === "win32")(
+  "a child that exits while a process it started holds stdout open settles without timing out",
+  async () => {
+    // The background sleep inherits both pipes and outlives the shell; its pid goes to stderr.
+    const result = await runBoundedProcess(["sh", "-c", "printf done; sleep 60 & echo $! >&2"], {
+      cwd: import.meta.dir,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutMs: 120_000,
+      maxStdoutBytes: 1024,
+      maxStderrBytes: 1024,
+    })
+    try {
+      expect(result.status).toBe(0)
+      expect(result.timedOut).toBe(false)
+      expect(result.stdout.text).toBe("done")
+    } finally {
+      const pid = Number(result.stderr.text.trim())
+      if (Number.isSafeInteger(pid) && pid > 0) process.kill(pid)
+    }
+  },
+  20_000,
+)
