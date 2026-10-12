@@ -5,6 +5,7 @@
  * a full page load). DOM-only - never imported on the server, so the store stays SSR-safe.
  */
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
+import { appUrl } from "./internal/route-path.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import type { Meta } from "./manifest.ts"
 import {
@@ -232,7 +233,7 @@ export function installHistory(
   router: ClientRouter,
   options: InstallHistoryOptions = {},
 ): () => void {
-  const fallback = options.fallback ?? ((path: string) => location.assign(path))
+  const fallback = options.fallback ?? ((path: string) => location.assign(appUrl(path)))
 
   // We manage scroll ourselves (save per history entry, restore after the navigated content
   // renders), so disable the browser's native restoration which would otherwise fight us.
@@ -364,7 +365,7 @@ export function installHistory(
     if (mode === "replace") {
       // Replace the current entry (same index) with the new URL. The entry we're leaving is discarded, so
       // its scroll isn't worth saving; the new route scrolls to its fragment target, else the top.
-      history.replaceState(entryState, "", path)
+      history.replaceState(entryState, "", appUrl(path))
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     } else {
       // Save the leaving entry's scroll (spread keeps its nifraIndex), push a fresh higher-indexed entry
@@ -372,7 +373,7 @@ export function installHistory(
       history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
       index += 1
       entryState.nifraIndex = index
-      history.pushState(entryState, "", path)
+      history.pushState(entryState, "", appUrl(path))
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     }
     here = url.pathname + url.search + url.hash
@@ -555,9 +556,9 @@ export function installHistory(
       if (expected === undefined) {
         history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
         index += 1
-        history.pushState({ nifraIndex: index }, "", path)
+        history.pushState({ nifraIndex: index }, "", appUrl(path))
       } else {
-        history.replaceState(history.state, "", path + location.hash)
+        history.replaceState(history.state, "", appUrl(path) + location.hash)
       }
       here = location.pathname + location.search + location.hash
       pendingScroll = location.hash !== "" ? { hash: hashId(location.hash) } : { pos: [0, 0] }
