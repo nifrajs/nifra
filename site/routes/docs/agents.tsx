@@ -676,7 +676,10 @@ export default function Agents() {
         coordinates. Resolve it through the host or RPC with <code>approval.resolve</code>; the backend
         emits <code>approval.resolved</code> and only then executes the tool. Denial, cancellation,
         timeout, and closed sessions all fail closed, and <code>approvalTimeoutMs</code> bounds how long
-        a pending decision can remain open.
+        a pending decision can remain open: 5 minutes by default, at most 24 hours, or{" "}
+        <code>"never"</code> to wait until it is answered, cancelled, its turn ends, or the session
+        closes. The host's broker takes the same values as <code>approvals.timeoutMs</code> on{" "}
+        <code>CodingAgentHost</code> and <code>CodingAgentRpcServer</code>.
       </p>
 
       <h2>Expose the same agent to other clients</h2>

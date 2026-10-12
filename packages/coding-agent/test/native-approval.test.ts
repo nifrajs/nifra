@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, jest, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -7,6 +7,7 @@ import type {
   AgentApprovalResolvedEvent,
   AgentEvent,
 } from "@nifrajs/agent-protocol"
+import { APPROVAL_NEVER_EXPIRES_AT, type ApprovalTimeout } from "../src/approvals.ts"
 import { CodingAgentHost } from "../src/host.ts"
 import { type NativeApprovalPort, NifraBackend } from "../src/native.ts"
 import { ReplayBackend } from "../src/replay.ts"
@@ -43,7 +44,7 @@ async function drain(iterator: AsyncIterator<AgentEvent>, events: AgentEvent[]):
 
 function makeNativeBackend(options: {
   readonly approval?: NativeApprovalPort
-  readonly approvalTimeoutMs?: number
+  readonly approvalTimeoutMs?: ApprovalTimeout
   readonly execute?: (input: unknown, context: { readonly signal: AbortSignal }) => unknown
 }) {
   const executed: unknown[] = []
@@ -74,9 +75,12 @@ function makeNativeBackend(options: {
   return { backend, executed }
 }
 
-async function startApprovalTurn(backend: NifraBackend) {
+async function startApprovalTurn(
+  backend: NifraBackend,
+  signal: AbortSignal = new AbortController().signal,
+) {
   await backend.createSession({ cwd: "/workspace", sessionId: "native" })
-  const stream = backend.send({ sessionId: "native", message: "write the file" })
+  const stream = backend.send({ sessionId: "native", message: "write the file", signal })
   const iterator = stream[Symbol.asyncIterator]()
   const events: AgentEvent[] = []
   const required = await readUntil(iterator, events, isApprovalRequired)
@@ -305,4 +309,191 @@ describe("NifraBackend native approvals", () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+})
+
+const MINUTE_MS = 60_000
+const DAY_MS = 24 * 60 * MINUTE_MS
+
+async function withFakeTimers(run: () => Promise<void>): Promise<void> {
+  jest.useFakeTimers()
+  try {
+    await run()
+  } finally {
+    jest.useRealTimers()
+  }
+}
+
+/** Records every decision the host forwards to the backend. */
+function forwardedDecisions(backend: NifraBackend) {
+  const forwarded: { readonly approvalId: string; readonly approved: boolean }[] = []
+  const resolve = backend.resolveApproval.bind(backend)
+  backend.resolveApproval = (sessionId, approvalId, approved, reason) => {
+    forwarded.push({ approvalId, approved })
+    return resolve(sessionId, approvalId, approved, reason)
+  }
+  return forwarded
+}
+
+describe('NifraBackend approvalTimeoutMs: "never"', () => {
+  test("an approval is still pending and answerable after more than 24 hours", () =>
+    withFakeTimers(async () => {
+      const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: "never" })
+      const { events, iterator, required } = await startApprovalTurn(backend)
+      expect(jest.getTimerCount()).toBe(0)
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+      expect(await backend.resolveApproval("native", required.approvalId, true)).toBe(true)
+      await drain(iterator, events)
+
+      expect(events.filter(isApprovalResolved).map((event) => event.approved)).toEqual([true])
+      expect(events.find((event) => event.type === "tool.completed")?.ok).toBe(true)
+      expect(executed).toHaveLength(1)
+      await backend.close("native")
+    }))
+
+  for (const end of ["cancel", "turn end"] as const)
+    test(`an approval is still denied on ${end}`, () =>
+      withFakeTimers(async () => {
+        const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: "never" })
+        const turn = new AbortController()
+        const { events, iterator, required } = await startApprovalTurn(backend, turn.signal)
+        jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+        if (end === "cancel") await backend.cancel("native", "user cancelled")
+        else turn.abort("turn ended")
+        await drain(iterator, events)
+
+        expect(events.filter(isApprovalResolved)).toEqual([
+          expect.objectContaining({
+            approvalId: required.approvalId,
+            approved: false,
+            reason: "approval cancelled",
+          }),
+        ])
+        expect(await backend.resolveApproval("native", required.approvalId, true)).toBeUndefined()
+        expect(executed).toHaveLength(0)
+        await backend.close("native")
+      }))
+
+  test("an approval is still denied when its session closes", () =>
+    withFakeTimers(async () => {
+      const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: "never" })
+      const { events, iterator, required } = await startApprovalTurn(backend)
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+      await backend.close("native")
+      await drain(iterator, events)
+
+      expect(events.filter(isApprovalResolved)).toEqual([
+        expect.objectContaining({
+          approvalId: required.approvalId,
+          approved: false,
+          reason: "approval closed",
+        }),
+      ])
+      expect(executed).toHaveLength(0)
+    }))
+
+  test("numeric timeouts and the default still time out", () =>
+    withFakeTimers(async () => {
+      for (const approvalTimeoutMs of [undefined, DAY_MS]) {
+        const { backend, executed } = makeNativeBackend(
+          approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs },
+        )
+        const { events, iterator, required } = await startApprovalTurn(backend)
+        jest.advanceTimersByTime((approvalTimeoutMs ?? 5 * MINUTE_MS) - 1)
+        expect(events.some(isApprovalResolved)).toBe(false)
+        jest.advanceTimersByTime(1)
+        await drain(iterator, events)
+
+        expect(events.find(isApprovalResolved)?.reason).toBe("approval timed out")
+        expect(events.find((event) => event.type === "tool.completed")?.error?.code).toBe(
+          "APPROVAL_TIMEOUT",
+        )
+        expect(await backend.resolveApproval("native", required.approvalId, true)).toBeUndefined()
+        expect(executed).toHaveLength(0)
+        await backend.close("native")
+      }
+    }))
+
+  test("rejects every other approvalTimeoutMs", () => {
+    const model = { complete: () => ({ type: "text" as const, text: "ok" }) }
+    // As an untyped caller (plain JS, a parsed config file) would pass them.
+    const invalid: readonly unknown[] = [
+      0,
+      -1,
+      1.5,
+      DAY_MS + 1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      "forever",
+      "Never",
+      "",
+      null,
+      false,
+    ]
+    for (const approvalTimeoutMs of invalid)
+      expect(() => Reflect.construct(NifraBackend, [{ model, approvalTimeoutMs }])).toThrow(
+        RangeError,
+      )
+    for (const approvalTimeoutMs of [1, DAY_MS, "never"] as const)
+      expect(() => new NifraBackend({ model, approvalTimeoutMs })).not.toThrow()
+  })
+
+  test("through CodingAgentHost, an approval survives past 5 minutes and is not denied in the backend", () =>
+    withFakeTimers(async () => {
+      const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: "never" })
+      const forwarded = forwardedDecisions(backend)
+      const host = new CodingAgentHost({ backend, approvals: { timeoutMs: "never" } })
+      await host.start({ cwd: "/workspace", sessionId: "native" })
+      const iterator = host.prompt("write the file")[Symbol.asyncIterator]()
+      const events: AgentEvent[] = []
+      const required = await readUntil(iterator, events, isApprovalRequired)
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+
+      expect(host.pendingApprovals.map(({ id, expiresAt }) => ({ id, expiresAt }))).toEqual([
+        { id: required.approvalId, expiresAt: APPROVAL_NEVER_EXPIRES_AT },
+      ])
+      expect(forwarded).toEqual([])
+      expect((await host.resolveApproval(required.approvalId, true))?.approved).toBe(true)
+      await drain(iterator, events)
+
+      expect(forwarded).toEqual([{ approvalId: required.approvalId, approved: true }])
+      expect(events.filter(isApprovalResolved).map((event) => event.approved)).toEqual([true])
+      expect(executed).toHaveLength(1)
+      await host.stop()
+    }))
+
+  test("through CodingAgentHost, a turn its reader abandons denies the approval in both", () =>
+    withFakeTimers(async () => {
+      const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: "never" })
+      const forwarded = forwardedDecisions(backend)
+      const host = new CodingAgentHost({ backend, approvals: { timeoutMs: "never" } })
+      await host.start({ cwd: "/workspace", sessionId: "native" })
+      const iterator = host.prompt("write the file")[Symbol.asyncIterator]()
+      const required = await readUntil(iterator, [], isApprovalRequired)
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+      // What the RPC server does when the client of a non-resumable turn disconnects.
+      await iterator.return?.()
+      await backend.cancel("native", "client disconnected")
+
+      expect(host.pendingApprovals).toHaveLength(0)
+      expect(await host.resolveApproval(required.approvalId, true)).toBeUndefined()
+      expect(forwarded).toEqual([{ approvalId: required.approvalId, approved: false }])
+      expect(executed).toHaveLength(0)
+      await host.stop()
+    }))
+
+  test("through CodingAgentHost, stopping the host denies the approval in both", () =>
+    withFakeTimers(async () => {
+      const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: "never" })
+      const host = new CodingAgentHost({ backend, approvals: { timeoutMs: "never" } })
+      await host.start({ cwd: "/workspace", sessionId: "native" })
+      const iterator = host.prompt("write the file")[Symbol.asyncIterator]()
+      const events: AgentEvent[] = []
+      await readUntil(iterator, events, isApprovalRequired)
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+      await host.stop()
+      await iterator.return?.()
+
+      expect(host.pendingApprovals).toHaveLength(0)
+      expect(executed).toHaveLength(0)
+    }))
 })

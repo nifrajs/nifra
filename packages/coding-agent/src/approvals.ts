@@ -21,7 +21,42 @@ export interface ApprovalRequest {
    */
   readonly coordinate?: DecisionCoordinate
   readonly createdAt: number
+  /**
+   * Absolute epoch-ms after which the approval is denied as timed out. An approval opened with a
+   * `"never"` timeout reports {@link APPROVAL_NEVER_EXPIRES_AT}, so `now < expiresAt` keeps treating
+   * it as live.
+   */
   readonly expiresAt: number
+}
+
+/**
+ * How long an approval may wait: whole milliseconds from 1 ms to 24 h, or `"never"` for no timer. A
+ * `"never"` approval still settles on an answer, a cancel, the end of its turn, and close.
+ */
+export type ApprovalTimeout = number | "never"
+
+/**
+ * The `expiresAt` of an approval that never times out: the largest epoch-ms a `Date` holds
+ * (+275760-09-13). It survives JSON, unlike `Infinity`, and `new Date(expiresAt)` stays valid.
+ */
+export const APPROVAL_NEVER_EXPIRES_AT = 8_640_000_000_000_000
+
+const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
+const MAX_APPROVAL_TIMEOUT_MS = 24 * 60 * 60_000
+
+/** True for `"never"` or a whole number of milliseconds from 1 ms to 24 h. */
+export function isApprovalTimeout(value: unknown): value is ApprovalTimeout {
+  return (
+    value === "never" ||
+    (typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 1 &&
+      value <= MAX_APPROVAL_TIMEOUT_MS)
+  )
+}
+
+function approvalExpiresAt(createdAt: number, timeoutMs: ApprovalTimeout): number {
+  return timeoutMs === "never" ? APPROVAL_NEVER_EXPIRES_AT : createdAt + timeoutMs
 }
 
 /** Stable, content-free reasons a coordinate-matched resolution is refused. */
@@ -45,7 +80,11 @@ export interface ApprovalDecision {
 
 export interface ApprovalManagerOptions {
   readonly maxPending?: number
-  readonly timeoutMs?: number
+  /**
+   * How long an approval waits before it is denied as timed out (default 5 minutes, at most 24 h).
+   * `"never"` removes the timer; `maxPending` still bounds how many approvals can wait.
+   */
+  readonly timeoutMs?: ApprovalTimeout
   readonly onRequired?: (request: ApprovalRequest) => void | PromiseLike<void>
   readonly onResolved?: (decision: ApprovalDecision) => void | PromiseLike<void>
 }
@@ -55,7 +94,7 @@ interface PendingApproval {
   /** Settles with the decision; it exists before `onRequired` runs, so no decision can miss it. */
   readonly decided: Promise<boolean>
   readonly settle: (approved: boolean) => void
-  readonly timer: ReturnType<typeof setTimeout>
+  readonly timer: ReturnType<typeof setTimeout> | undefined
 }
 
 /** The agent protocol's token alphabet, so every protocol-valid id is accepted here too. */
@@ -77,16 +116,17 @@ export class ApprovalManager {
     this.options = {
       ...options,
       maxPending: options.maxPending ?? 32,
-      timeoutMs: options.timeoutMs ?? 5 * 60_000,
+      timeoutMs: options.timeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS,
     }
     if (!Number.isSafeInteger(this.options.maxPending) || this.options.maxPending < 1)
       throw new RangeError("approvals: maxPending must be positive")
-    if (
-      !Number.isSafeInteger(this.options.timeoutMs) ||
-      this.options.timeoutMs < 1 ||
-      this.options.timeoutMs > 24 * 60 * 60_000
-    )
-      throw new RangeError("approvals: timeoutMs must be between 1ms and 24h")
+    if (!isApprovalTimeout(this.options.timeoutMs))
+      throw new RangeError('approvals: timeoutMs must be between 1ms and 24h, or "never"')
+  }
+
+  /** The configured timeout, for {@link approvalRequestFromEvent}. */
+  get timeoutMs(): ApprovalTimeout {
+    return this.options.timeoutMs
   }
 
   get pending(): readonly ApprovalRequest[] {
@@ -219,13 +259,17 @@ export class ApprovalManager {
       ...(input.reason === undefined ? {} : { reason: input.reason.slice(0, 512) }),
       ...(input.coordinate === undefined ? {} : { coordinate: input.coordinate }),
       createdAt,
-      expiresAt: createdAt + this.options.timeoutMs,
+      expiresAt: approvalExpiresAt(createdAt, this.options.timeoutMs),
     })
     const { promise: decided, resolve: settle } = Promise.withResolvers<boolean>()
-    const timer = setTimeout(() => {
-      this.settle(request.id, false, "approval timed out")
-    }, this.options.timeoutMs)
-    ;(timer as unknown as { unref?: () => void }).unref?.()
+    const timeoutMs = this.options.timeoutMs
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (timeoutMs !== "never") {
+      timer = setTimeout(() => {
+        this.settle(request.id, false, "approval timed out")
+      }, timeoutMs)
+      ;(timer as unknown as { unref?: () => void }).unref?.()
+    }
     const pending: PendingApproval = { request, decided, settle, timer }
     this.pendingApprovals.set(request.id, pending)
     await this.options.onRequired?.(request)
@@ -233,7 +277,17 @@ export class ApprovalManager {
   }
 }
 
-export function approvalRequestFromEvent(event: AgentApprovalRequiredEvent): ApprovalRequest {
+/**
+ * Project a backend approval event into a request. Pass the broker's timeout
+ * (`ApprovalManager.timeoutMs`) so `expiresAt` matches when it will actually be denied; the default
+ * is the broker's default of 5 minutes.
+ */
+export function approvalRequestFromEvent(
+  event: AgentApprovalRequiredEvent,
+  timeoutMs: ApprovalTimeout = DEFAULT_APPROVAL_TIMEOUT_MS,
+): ApprovalRequest {
+  if (!isApprovalTimeout(timeoutMs))
+    throw new RangeError('approvals: timeoutMs must be between 1ms and 24h, or "never"')
   return Object.freeze({
     id: event.approvalId,
     sessionId: event.sessionId,
@@ -242,7 +296,7 @@ export function approvalRequestFromEvent(event: AgentApprovalRequiredEvent): App
     capability: event.capability,
     ...(event.reason === undefined ? {} : { reason: event.reason }),
     createdAt: event.at,
-    expiresAt: event.at + 5 * 60_000,
+    expiresAt: approvalExpiresAt(event.at, timeoutMs),
   })
 }
 

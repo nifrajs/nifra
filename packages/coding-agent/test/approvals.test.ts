@@ -1,10 +1,40 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, jest, test } from "bun:test"
 import {
   AGENT_PROTOCOL_VERSION,
   type AgentApprovalRequiredEvent,
   type DecisionCoordinate,
 } from "@nifrajs/agent-protocol"
-import { ApprovalManager } from "../src/approvals.ts"
+import {
+  APPROVAL_NEVER_EXPIRES_AT,
+  ApprovalManager,
+  approvalRequestFromEvent,
+} from "../src/approvals.ts"
+
+const MINUTE_MS = 60_000
+const DAY_MS = 24 * 60 * MINUTE_MS
+
+function requiredEvent(at: number): AgentApprovalRequiredEvent {
+  return {
+    version: AGENT_PROTOCOL_VERSION,
+    sessionId: "session",
+    seq: 1,
+    at,
+    type: "approval.required",
+    turnId: "turn-1",
+    approvalId: "tool-1",
+    action: "write file",
+    capability: "filesystem",
+  }
+}
+
+async function withFakeTimers(run: () => Promise<void>): Promise<void> {
+  jest.useFakeTimers()
+  try {
+    await run()
+  } finally {
+    jest.useRealTimers()
+  }
+}
 
 function coordinate(overrides: Partial<DecisionCoordinate> = {}): DecisionCoordinate {
   return {
@@ -196,5 +226,119 @@ describe("coordinate-matched approvals", () => {
     })
     expect(manager.pending).toHaveLength(0)
     manager.close()
+  })
+})
+
+describe("approval timeouts", () => {
+  const input = { sessionId: "session", action: "deploy", capability: "deploy" }
+
+  test("the default timeout is still 5 minutes and expires closed", () =>
+    withFakeTimers(async () => {
+      const manager = new ApprovalManager()
+      expect(manager.timeoutMs).toBe(5 * MINUTE_MS)
+      const approved = manager.request({ ...input, id: "default" })
+      const [request] = manager.pending
+      expect(request?.expiresAt).toBe((request?.createdAt ?? 0) + 5 * MINUTE_MS)
+      jest.advanceTimersByTime(5 * MINUTE_MS - 1)
+      expect(manager.pending).toHaveLength(1)
+      jest.advanceTimersByTime(1)
+      expect(manager.pending).toHaveLength(0)
+      await expect(approved).resolves.toBe(false)
+    }))
+
+  test("a numeric timeout up to 24 hours expires closed at that timeout", () =>
+    withFakeTimers(async () => {
+      const decisions: (string | undefined)[] = []
+      const manager = new ApprovalManager({
+        timeoutMs: DAY_MS,
+        onResolved: (decision) => {
+          decisions.push(decision.reason)
+        },
+      })
+      const approved = manager.request({ ...input, id: "day" })
+      const [request] = manager.pending
+      expect(request?.expiresAt).toBe((request?.createdAt ?? 0) + DAY_MS)
+      jest.advanceTimersByTime(DAY_MS - 1)
+      expect(manager.resolve("other", true)).toBeUndefined()
+      expect(manager.pending).toHaveLength(1)
+      jest.advanceTimersByTime(1)
+      await expect(approved).resolves.toBe(false)
+      expect(decisions).toEqual(["approval timed out"])
+    }))
+
+  test('a "never" approval is still pending and answerable after more than 24 hours', () =>
+    withFakeTimers(async () => {
+      const manager = new ApprovalManager({ timeoutMs: "never" })
+      expect(manager.timeoutMs).toBe("never")
+      const approved = manager.request({ ...input, id: "slow" })
+      expect(jest.getTimerCount()).toBe(0)
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+      const [request] = manager.pending
+      expect(request?.id).toBe("slow")
+      expect(request?.expiresAt).toBe(APPROVAL_NEVER_EXPIRES_AT)
+      // The sentinel survives JSON and reads as live to the `now < expiresAt` a client runs.
+      const wire: { expiresAt: number } = JSON.parse(JSON.stringify(request))
+      expect(wire.expiresAt).toBe(APPROVAL_NEVER_EXPIRES_AT)
+      expect(Date.now() < wire.expiresAt).toBe(true)
+      expect(Number.isNaN(new Date(wire.expiresAt).getTime())).toBe(false)
+      expect(manager.resolve("slow", true, "back from lunch")?.approved).toBe(true)
+      await expect(approved).resolves.toBe(true)
+    }))
+
+  test('a "never" approval is still denied by an explicit answer and by close', () =>
+    withFakeTimers(async () => {
+      const manager = new ApprovalManager({ timeoutMs: "never" })
+      const denied = manager.request({ ...input, id: "denied" })
+      const closed = manager.request({ ...input, id: "closed" })
+      jest.advanceTimersByTime(DAY_MS + MINUTE_MS)
+      expect(manager.resolve("denied", false)?.approved).toBe(false)
+      await expect(denied).resolves.toBe(false)
+      manager.close()
+      await expect(closed).resolves.toBe(false)
+      expect(manager.pending).toHaveLength(0)
+    }))
+
+  test('maxPending still bounds "never" approvals', async () => {
+    const manager = new ApprovalManager({ timeoutMs: "never", maxPending: 1 })
+    expect(await manager.offer({ ...input, id: "first" })).toBeDefined()
+    expect(await manager.offer({ ...input, id: "second" })).toBeUndefined()
+    manager.close()
+  })
+
+  test("rejects every other timeout value", () => {
+    // As an untyped caller (plain JS, a parsed config file) would pass them.
+    const invalid: readonly unknown[] = [
+      0,
+      -1,
+      1.5,
+      DAY_MS + 1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      "forever",
+      "Never",
+      "",
+      "300000",
+      false,
+    ]
+    for (const timeoutMs of invalid) {
+      expect(() => Reflect.construct(ApprovalManager, [{ timeoutMs }])).toThrow(RangeError)
+      expect(() =>
+        Reflect.apply(approvalRequestFromEvent, undefined, [requiredEvent(0), timeoutMs]),
+      ).toThrow(RangeError)
+    }
+    expect(new ApprovalManager({ timeoutMs: 1 }).timeoutMs).toBe(1)
+    expect(new ApprovalManager({ timeoutMs: DAY_MS }).timeoutMs).toBe(DAY_MS)
+  })
+
+  test("approvalRequestFromEvent reports the configured timeout", () => {
+    expect(approvalRequestFromEvent(requiredEvent(1_000)).expiresAt).toBe(1_000 + 5 * MINUTE_MS)
+    expect(approvalRequestFromEvent(requiredEvent(1_000), 30_000).expiresAt).toBe(31_000)
+    expect(approvalRequestFromEvent(requiredEvent(1_000), "never").expiresAt).toBe(
+      APPROVAL_NEVER_EXPIRES_AT,
+    )
+    const manager = new ApprovalManager({ timeoutMs: "never" })
+    expect(approvalRequestFromEvent(requiredEvent(1_000), manager.timeoutMs).expiresAt).toBe(
+      APPROVAL_NEVER_EXPIRES_AT,
+    )
   })
 })

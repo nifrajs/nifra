@@ -21,6 +21,7 @@ import {
   type SendMessageInput,
   splitAgentText,
 } from "@nifrajs/agent-protocol"
+import { type ApprovalTimeout, isApprovalTimeout } from "./approvals.ts"
 
 export interface NativeMessage {
   readonly role: "user" | "assistant" | "tool"
@@ -135,8 +136,12 @@ export interface NifraBackendOptions {
   readonly model: NativeModelPort
   readonly tools?: readonly NativeTool[]
   readonly approval?: NativeApprovalPort
-  /** Maximum time a protocol-visible native approval may remain unresolved. */
-  readonly approvalTimeoutMs?: number
+  /**
+   * Maximum time a protocol-visible native approval may remain unresolved (default 5 minutes, at
+   * most 24 h). `"never"` removes the timer: the approval waits for an answer, a cancel, the end of
+   * its turn, or session close.
+   */
+  readonly approvalTimeoutMs?: ApprovalTimeout
   readonly maxSteps?: number
   /** Longest message `send` accepts (default 64 KiB). */
   readonly maxMessageChars?: number
@@ -175,7 +180,7 @@ interface NativePendingApproval {
   readonly action: string
   readonly capability: string
   readonly resolve: (resolution: NativeApprovalResolution) => void
-  readonly timer: ReturnType<typeof setTimeout>
+  readonly timer: ReturnType<typeof setTimeout> | undefined
   readonly onAbort: () => void
   readonly signal: AbortSignal
 }
@@ -238,11 +243,11 @@ export class NifraBackend implements AgentBackend {
       throw new RangeError("nifra backend: maxHistoryChars must be at least 256")
     if (
       this.options.approvalTimeoutMs !== undefined &&
-      (!Number.isSafeInteger(this.options.approvalTimeoutMs) ||
-        this.options.approvalTimeoutMs < 1 ||
-        this.options.approvalTimeoutMs > 24 * 60 * 60_000)
+      !isApprovalTimeout(this.options.approvalTimeoutMs)
     )
-      throw new RangeError("nifra backend: approvalTimeoutMs must be between 1ms and 24h")
+      throw new RangeError(
+        'nifra backend: approvalTimeoutMs must be between 1ms and 24h, or "never"',
+      )
   }
 
   async createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
@@ -627,13 +632,14 @@ export class NifraBackend implements AgentBackend {
           session.closed ? "APPROVAL_CLOSED" : "APPROVAL_CANCELLED",
         )
       }
-      const timer = setTimeout(
-        () => {
+      const timeoutMs = this.options.approvalTimeoutMs ?? 5 * 60_000
+      let timer: ReturnType<typeof setTimeout> | undefined
+      if (timeoutMs !== "never") {
+        timer = setTimeout(() => {
           this.settleApproval(session, approvalId, false, "approval timed out", "APPROVAL_TIMEOUT")
-        },
-        this.options.approvalTimeoutMs ?? 5 * 60_000,
-      )
-      ;(timer as unknown as { unref?: () => void }).unref?.()
+        }, timeoutMs)
+        ;(timer as unknown as { unref?: () => void }).unref?.()
+      }
       pending = {
         id: approvalId,
         sessionId: session.id,

@@ -1034,6 +1034,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AGENT_CAPABILITY_MANIFEST_VERSION** _(const)_ - `AGENT_CAPABILITY_MANIFEST_VERSION: 1`
   Small, backend-neutral capability manifest.
 - **AGENT_PRESETS** _(const)_ - `AGENT_PRESETS: Readonly<Record<AgentPresetName, AgentPreset>>`
+- **APPROVAL_NEVER_EXPIRES_AT** _(const)_ - `APPROVAL_NEVER_EXPIRES_AT: 8640000000000000`
+  The `expiresAt` of an approval that never times out: the largest epoch-ms a `Date` holds (+275760-09-13). It survives JSON, unlike `Infinity`, and `new Date(expiresAt)` stays valid.
 - **AgentCapability** _(type)_ - `type AgentCapability = | "filesystem.read" | "filesystem.write" | "process.exec" | "network.request" | "credentials.read"`
 - **AgentCapabilityManifest** _(interface)_ - `interface AgentCapabilityManifest`
 - **AgentPlan** _(interface)_ - `interface AgentPlan`
@@ -1047,6 +1049,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Stable, content-free reasons a coordinate-matched resolution is refused.
 - **ApprovalMatchResult** _(type)_ - `type ApprovalMatchResult = | { readonly ok: true; readonly decision: ApprovalDecision } | { readonly ok: false; readonly code: ApprovalMatchRejection }`
 - **ApprovalRequest** _(interface)_ - `interface ApprovalRequest`
+- **ApprovalTimeout** _(type)_ - `type ApprovalTimeout = number | "never"`
+  How long an approval may wait: whole milliseconds from 1 ms to 24 h, or `"never"` for no timer. A `"never"` approval still settles on an answer, a cancel, the end of its turn, and close.
 - **BoundedSubagentRunner** _(class)_ - `class BoundedSubagentRunner`
   Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget.
 - **BoundedText** _(interface)_ - `interface BoundedText`
@@ -1175,7 +1179,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Bounded orchestration primitives. The kernel knows no provider, UI, or framework package.
 - **WorkflowRunnerOptions** _(interface)_ - `interface WorkflowRunnerOptions`
 - **WorkflowStep** _(type)_ - `type WorkflowStep`
-- **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent) => ApprovalRequest`
+- **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent, timeoutMs?: ApprovalTimeout) => ApprovalRequest`
+  Project a backend approval event into a request. Pass the broker's timeout (`ApprovalManager.timeoutMs`) so `expiresAt` matches when it will actually be denied; the default is the broker's default of 5 minutes.
 - **approvalResolvedEvent** _(function)_ - `approvalResolvedEvent: (sessionId: string, seq: number, decision: ApprovalDecision, turnId?: string) => AgentApprovalResolvedEvent`
 - **createCapabilityManifest** _(function)_ - `createCapabilityManifest: (requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string) => AgentCapabilityManifest`
 - **createCiDeploymentAdapter** _(function)_ - `createCiDeploymentAdapter: () => CiDeploymentAdapter`

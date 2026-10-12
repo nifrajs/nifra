@@ -191,31 +191,40 @@ export class CodingAgentHost {
     const sessionId = this.session.id
     let nextMessage = message
     let repairAttempts = 0
-    for (;;) {
-      const stream = this.backend.send({
-        sessionId,
-        message: nextMessage,
-        ...(signal === undefined ? {} : { signal }),
-      })
-      for await (const rawEvent of stream) {
-        const event = this.acceptBackendEvent(rawEvent)
-        await this.recordEvent(event)
-        yield event
-        if (event.type === "session.stopped") return
-        if (event.type === "session.failed") {
-          if (event.error.code === "BACKEND_PROTOCOL")
-            await this.backend.cancel(sessionId, "backend protocol error").catch(() => {})
-          return
+    // A reader that leaves early (an RPC client disconnecting) never records the backend's
+    // `approval.resolved`, so the turn's approvals are denied here instead of waiting on a timer.
+    const raised = new Set<string>()
+    try {
+      for (;;) {
+        const stream = this.backend.send({
+          sessionId,
+          message: nextMessage,
+          ...(signal === undefined ? {} : { signal }),
+        })
+        for await (const rawEvent of stream) {
+          const event = this.acceptBackendEvent(rawEvent)
+          await this.recordEvent(event)
+          if (event.type === "approval.required") raised.add(event.approvalId)
+          yield event
+          if (event.type === "session.stopped") return
+          if (event.type === "session.failed") {
+            if (event.error.code === "BACKEND_PROTOCOL")
+              await this.backend.cancel(sessionId, "backend protocol error").catch(() => {})
+            return
+          }
         }
+        if (signal?.aborted === true) return
+
+        const repairTasks = await this.verifyTurn()
+        for (const event of repairTasks.events) yield event
+        if (repairTasks.tasks.length === 0 || repairAttempts >= this.maxRepairAttempts) return
+
+        repairAttempts++
+        nextMessage = createRepairPrompt(repairTasks.tasks, repairAttempts, this.maxRepairAttempts)
       }
-      if (signal?.aborted === true) return
-
-      const repairTasks = await this.verifyTurn()
-      for (const event of repairTasks.events) yield event
-      if (repairTasks.tasks.length === 0 || repairAttempts >= this.maxRepairAttempts) return
-
-      repairAttempts++
-      nextMessage = createRepairPrompt(repairTasks.tasks, repairAttempts, this.maxRepairAttempts)
+    } finally {
+      for (const approvalId of raised)
+        this.approvals.resolve(approvalId, false, "approval turn ended")
     }
   }
 

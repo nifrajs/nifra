@@ -39,7 +39,7 @@ export interface CodingAgentRpcServerOptions {
   readonly extensionEvents?: CodingAgentHostOptions["extensionEvents"]
   /**
    * The host's approval broker: how long an approval or a tool's question waits for its answer
-   * (`timeoutMs`, default 5 minutes), how many may wait (`maxPending`, default 32),
+   * (`timeoutMs`, default 5 minutes, or `"never"`), how many may wait (`maxPending`, default 32),
    * and its `onRequired`/`onResolved` hooks.
    */
   readonly approvals?: CodingAgentHostOptions["approvals"]

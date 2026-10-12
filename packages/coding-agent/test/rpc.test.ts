@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AgentBackend, AgentEvent } from "@nifrajs/agent-protocol"
 import { PiBackend } from "@nifrajs/pi"
+import { APPROVAL_NEVER_EXPIRES_AT } from "../src/approvals.ts"
 import { ExtensionHost } from "../src/extensions.ts"
 import { NifraBackend } from "../src/native.ts"
 import { CodingAgentRpcServer, type CodingAgentRpcServerOptions } from "../src/rpc.ts"
@@ -639,6 +640,12 @@ describe("coding agent RPC approval broker", () => {
       const { offered, listed } = await listedLifetimes(call)
       expect(offered).toBe(5 * 60_000)
       expect(listed).toEqual([5 * 60_000])
+    }))
+
+  test('a server given timeoutMs: "never" reports the never-expires sentinel', () =>
+    withServer({ approvals: { timeoutMs: "never" } }, async (call) => {
+      const { expiresAt } = await listedLifetimes(call)
+      expect(expiresAt).toEqual([APPROVAL_NEVER_EXPIRES_AT])
     }))
 
   test("passes maxPending and the hooks through to the broker", async () => {
