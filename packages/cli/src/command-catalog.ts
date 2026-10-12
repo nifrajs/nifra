@@ -1532,6 +1532,12 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
         ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
         ...out.rewritten.map((file) => `  edit  ${file} (imports)`),
         ...out.tooling.map((edit) => `  edit  ${edit.file} (${edit.change})`),
+        ...out.schemas
+          .filter((entry) => entry.reason === undefined)
+          .map(
+            (entry) =>
+              `  draft ${entry.file} ${entry.schema} - review what it lets the browser see${entry.omitted === undefined ? "" : `; leaves out ${entry.omitted.join(", ")}`}`,
+          ),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]
@@ -1710,7 +1716,9 @@ const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
             ? "edited by hand under its nifra:generated line"
             : entry.dropped.length > 0
               ? `drops ${entry.dropped.join(", ")}`
-              : undefined)
+              : entry.omitted !== undefined
+                ? `leaves out ${entry.omitted.join(", ")}`
+                : undefined)
         return `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`
       }),
       ...(out.write || !out.entries.some((e) => e.status === "missing" || e.status === "stale")

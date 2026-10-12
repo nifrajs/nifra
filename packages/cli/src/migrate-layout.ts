@@ -48,6 +48,7 @@ import { configPathReader, type StaticConfigPath } from "./internal/config-paths
 import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
 import { createSpecifierResolver, isFile } from "./internal/project-specifiers.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
+import { type OutputSchemaEntry, planOutputSchemas } from "./output-schemas.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
 
 /** Exports only the server or the build reads: `@nifrajs/web`'s route-pair contract. */
@@ -132,6 +133,11 @@ export interface LayoutMigrationResult {
   readonly rewritten: readonly string[]
   /** Tooling config the migration updated so it still covers what moved. */
   readonly tooling: ReadonlyArray<{ readonly file: string; readonly change: string }>
+  /**
+   * Output schemas drafted for the backend halves the split wrote, from their return types:
+   * `missing` in a dry run, `generated` once written. Each is a draft the author reviews.
+   */
+  readonly schemas: readonly OutputSchemaEntry[]
   readonly issues: readonly LayoutMigrationIssue[]
 }
 
@@ -2628,14 +2634,40 @@ export async function migrateLayout(
     })
   }
 
-  // The server refuses data a loader or action returns without an output schema; only the author
-  // knows which fields the browser may see.
+  // The server refuses data a loader or action returns without an output schema. Each half the split
+  // wrote gets a draft from its return type, read from the layout as planned so the dry run shows
+  // what --write adds; only the author knows which fields the browser may see, so it is a draft.
+  const halves = [...new Set(splits.map((split) => split.backend))].filter((file) =>
+    final.has(file),
+  )
+  const unwritten = new Map<string, string>()
+  for (const [file, text] of final) if (original.get(file) !== text) unwritten.set(file, text)
+  const schemaPlan =
+    halves.length === 0
+      ? undefined
+      : await planOutputSchemas(root, halves, (file) => final.get(file), {
+          overlay: unwritten,
+          // What NF-C030 would flag: a schema for data the function returns, not for `return null`.
+          draft: (file, schema) =>
+            missingOutputSchemas(final.get(file) ?? "").some((found) => found.schema === schema),
+        })
+  for (const [file, text] of schemaPlan?.edits ?? []) final.set(file, text)
+  const schemas = (schemaPlan?.entries ?? []).filter((entry) => entry.status === "missing")
   for (const [file, text] of final) {
     if (!file.startsWith("routes/") || !/\.backend\.[cm]?[jt]s$/.test(file)) continue
     for (const { name, schema } of missingOutputSchemas(text)) {
+      const why = schemaPlan?.entries.find(
+        (entry) => entry.file === file && entry.schema === schema && entry.reason !== undefined,
+      )?.reason
+      const draft =
+        why !== undefined
+          ? `; no draft was written: ${why}`
+          : schemaPlan === undefined || schemaPlan.warnings.length === 0
+            ? `, or run \`nifra schemas --write\` after the migration to draft it from the ${name}'s return type`
+            : `; no draft was written: ${schemaPlan.warnings.join("; ")}`
       issues.push({
         file,
-        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... }), or run \`nifra schemas --write\` after the migration to draft it from the ${name}'s return type`,
+        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... })${draft}`,
       })
     }
   }
@@ -2696,6 +2728,11 @@ export async function migrateLayout(
     moves,
     rewritten: rewritten.sort(),
     tooling,
+    schemas: schemas.map((entry) =>
+      options.write === true && entry.reason === undefined
+        ? { ...entry, status: "generated" }
+        : entry,
+    ),
     issues,
   }
 }

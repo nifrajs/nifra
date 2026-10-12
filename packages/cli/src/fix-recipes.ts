@@ -158,6 +158,45 @@ registerFixRecipe({
   },
 })
 
+registerFixRecipe({
+  id: "schemas.draft",
+  description:
+    "Draft the missing loader or action output schema from the function's return type, for the author to review.",
+  verify: "nifra check --lints-only",
+  async apply(root, diagnostic) {
+    const file = diagnostic.file
+    if (file === undefined) return []
+    const path = await resolveInsideProject(root, file)
+    if (path === undefined) return []
+    const schema = diagnostic.evidence
+      ?.find((line) => line.startsWith("missing: "))
+      ?.slice("missing: ".length)
+    if (schema !== "loaderOutput" && schema !== "actionOutput") return []
+    const { planOutputSchemas } = await import("./output-schemas.ts")
+    const source = await readFile(path, "utf8")
+    // Only this declaration: other schemas in the file, generated or hand-written, stay as they are.
+    const plan = await planOutputSchemas(
+      root,
+      [file],
+      (read) => (read === file ? source : undefined),
+      {
+        draft: (at, name) => at === file && name === schema,
+      },
+    )
+    const blocked =
+      plan.warnings.length > 0
+        ? plan.warnings.join("; ")
+        : plan.entries.find((entry) => entry.schema === schema && entry.reason !== undefined)
+            ?.reason
+    if (blocked !== undefined)
+      throw new Error(`[nifra] no ${schema} was drafted in ${file}: ${blocked}`)
+    const drafted = plan.edits.get(file)
+    if (drafted === undefined) return []
+    await writeFile(path, drafted, "utf8")
+    return [file]
+  },
+})
+
 /**
  * How many typecheck passes the reserved-segment codemod will run. A nested collision
  * (`/api/delete/then`) only reveals its second site once the first is rewritten, so one pass is not

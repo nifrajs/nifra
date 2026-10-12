@@ -790,14 +790,16 @@ describe("migrateLayout", () => {
     expect(result.moves.map((move) => move.from)).not.toContain("lib/db.server.ts")
   })
 
-  test("a loader or action that returns data without an output schema is reported", async () => {
-    const dir = app({
+  test("a loader that returns data without an output schema gets a draft from its return type", async () => {
+    const files = {
       "routes/index.tsx": [
-        "export async function loader() { return { n: 1 } }",
+        'import { db } from "../lib/db"',
+        "export async function loader() { return { n: db.count(), token: db.token } }",
         "export async function action() { return null }",
         "export default function Page() { return null }",
         "",
       ].join("\n"),
+      "lib/db.ts": 'export const db = { count: () => 1, token: "x" }\n',
       "routes/typed.tsx": [
         'import { t } from "@nifrajs/schema"',
         "export const loader = () => ({ n: 1 })",
@@ -805,16 +807,57 @@ describe("migrateLayout", () => {
         "export default function Page() { return null }",
         "",
       ].join("\n"),
-    })
-    const result = await migrateLayout(dir, { typescript: ts })
-    expect(result.ok).toBe(false)
-    expect(result.issues).toEqual([
+      // `t` names something else, so no draft is written and the half is reported.
+      "routes/taken.tsx": [
+        "const t = 1",
+        "export async function loader() { return { t } }",
+        "export default function Page() { return null }",
+        "",
+      ].join("\n"),
+    }
+    const dir = app(files)
+    // The draft reads the types of the layout as planned: db.ts has not moved on disk yet.
+    const dry = await migrateLayout(dir, { typescript: ts })
+    expect(
+      dry.schemas.map(({ file, schema, status, omitted }) => ({ file, schema, status, omitted })),
+    ).toEqual([
       {
         file: "routes/index.backend.ts",
-        reason:
-          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... }), or run `nifra schemas --write` after the migration to draft it from the loader's return type",
+        schema: "loaderOutput",
+        status: "missing",
+        omitted: ["token"],
+      },
+      {
+        file: "routes/taken.backend.ts",
+        schema: "loaderOutput",
+        status: "missing",
+        omitted: undefined,
       },
     ])
+    expect(dry.issues).toEqual([
+      {
+        file: "routes/taken.backend.ts",
+        reason:
+          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... }); no draft was written: `t` already names something else in this file, so it was left as is",
+      },
+    ])
+    expect(read(dir, "routes/index.tsx")).toBe(files["routes/index.tsx"])
+
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.schemas.map((entry) => entry.status)).toEqual(["generated", "missing"])
+    const half = read(dir, "routes/index.backend.ts")
+    expect(half).toContain('import { t } from "@nifrajs/schema"')
+    expect(half).toContain(
+      "export const loaderOutput = t.object({\n  n: t.number(),\n  // left out: token - a credential-like name",
+    )
+    expect(half).toMatch(
+      /\/\/ nifra:generated [0-9a-f]{8} - drafted from the loader's return type; review/,
+    )
+    expect(half).not.toContain("actionOutput")
+    // A hand-written schema moves with its loader and is never redrafted.
+    const typed = read(dir, "routes/typed.backend.ts")
+    expect(typed).toContain("export const loaderOutput = t.object({ n: t.number() })")
+    expect(typed).not.toContain("nifra:generated")
   })
 
   test("test-runner mocks follow the module they name", async () => {
@@ -1126,9 +1169,9 @@ describe("migrateLayout", () => {
         'imports "../src/lib/db", which moves to "backend/lib/db.ts" - it is outside src/, so the migration does not rewrite it',
     })
     expect(read(pkg, "test/index.test.ts")).toContain('from "../src/routes/index"')
-    expect(
-      result.issues.find((issue) => issue.file === "routes/index.backend.ts")?.reason,
-    ).toContain("run `nifra schemas --write` after the migration")
+    expect(result.schemas.map((entry) => `${entry.file} ${entry.status}`)).toEqual([
+      "routes/index.backend.ts generated",
+    ])
   })
 })
 

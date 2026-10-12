@@ -289,6 +289,7 @@ export const missingOutputRule: CheckRule = {
               `missing: ${schema}`,
               ...(proven ? ["returns: a data literal"] : []),
             ],
+            fix: { recipe: "schemas.draft", command: "nifra fix --code NF-C030" },
             verify: "nifra check",
           }),
         )
