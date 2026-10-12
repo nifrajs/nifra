@@ -22,6 +22,9 @@ nifra sdk     --lang <python|go> [--strict]
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
 
+`nifra dev`, `build` and `start` take a flag's value as `--target vercel` or `--target=vercel`, and refuse
+a flag or argument they do not know instead of ignoring it.
+
 ## `nifra doctor` - dependency health
 
 Doctor diffs source imports against declared dependencies, then resolves identity-sensitive
