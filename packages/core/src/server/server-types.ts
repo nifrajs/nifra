@@ -59,8 +59,8 @@ export interface ServerOptions {
    * `__proto__` key, or a `constructor` carrying a `prototype`, is the payload shape that turns a
    * later innocent merge/assign into prototype pollution. `"reject"` (default) answers the same
    * flat 400 as malformed JSON; `"strip"` removes the offending keys and continues; `"ignore"`
-   * parses as-is (only for routes that never merge body input into other objects). Clean payloads
-   * pay a substring pre-scan only - the deep walk runs solely on suspect text.
+   * parses as-is (only for routes that never merge body input into other objects). Every guarded
+   * payload pays one iterative pass over its parsed object nodes; `"ignore"` skips it.
    */
   readonly protoPoisoning?: "reject" | "strip" | "ignore"
   /**
