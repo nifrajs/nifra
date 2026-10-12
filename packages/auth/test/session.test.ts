@@ -10,6 +10,10 @@ import {
 
 const SECRET = "test-secret-at-least-32-bytes-ok!"
 
+/** A value signed as the manager signs its `nifra_session` cookie, with the cookie name bound in. */
+const signSession = async (value: string): Promise<string> =>
+  (await signValue(`nifra_session\n${value}`, SECRET)).slice("nifra_session\n".length)
+
 /** A stub SessionContext that records cookie writes/deletes and exposes them for assertions. */
 function ctx(cookies: Record<string, string> = {}) {
   const setCalls: Array<{ name: string; value: string; options?: unknown }> = []
@@ -82,8 +86,56 @@ test("a session cookie does not verify under another name that shares the secret
   }
 })
 
-test("a cookie signed before names were bound still loads, and is re-signed bound", async () => {
+test("a value signed with the session secret outside a session is not a session", async () => {
+  // An app that signs a user-influenced value with the same secret through core's signValue must not
+  // hand that user a session of their choosing.
+  const forged = await signValue(
+    JSON.stringify({ data: { userId: "admin" }, expiresAt: 9e15 }),
+    SECRET,
+  )
   const sessions = createSessions<Data>({ secret: SECRET })
+  expect((await sessions.get(ctx({ nifra_session: forged }).context)).isEmpty).toBe(true)
+  expect(
+    (
+      await sessions.read(
+        new Request("http://x/", {
+          headers: { cookie: `nifra_session=${encodeURIComponent(forged)}` },
+        }),
+      )
+    ).isEmpty,
+  ).toBe(true)
+})
+
+test("an accepted legacy cookie lives no longer than maxAge, whatever expiry it names", async () => {
+  let clock = 1_000_000
+  const sessions = createSessions<Data>({
+    secret: SECRET,
+    acceptLegacyCookies: true,
+    rolling: false,
+    maxAge: 60,
+    now: () => clock,
+  })
+  const legacy = await signValue(
+    JSON.stringify({ data: { userId: "u1" }, expiresAt: 9e15 }),
+    SECRET,
+  )
+  const source = ctx({ nifra_session: legacy })
+  const loaded = await sessions.get(source.context)
+  expect(loaded.get("userId")).toBe("u1")
+  await sessions.commit(source.context, loaded)
+  const written = source.setCalls.at(-1)?.options
+  expect(
+    typeof written === "object" && written !== null && "maxAge" in written
+      ? written.maxAge
+      : undefined,
+  ).toBe(60)
+  const resigned = lastCookie(source.setCalls)
+  clock += 60_000
+  expect((await sessions.get(ctx({ nifra_session: resigned }).context)).isEmpty).toBe(true)
+})
+
+test("with acceptLegacyCookies, a cookie signed before names were bound loads and is re-signed bound", async () => {
+  const sessions = createSessions<Data>({ secret: SECRET, acceptLegacyCookies: true })
   const expiresAt = Date.now() + 60_000
   const legacy = await signValue(JSON.stringify({ data: { userId: "u1" }, expiresAt }), SECRET)
   const source = ctx({ nifra_session: legacy })
@@ -156,7 +208,7 @@ describe("session - store mode", () => {
     session.set("userId", "u1")
     await sessions.commit(a.context, session)
     // Sign a *valid* but unknown id with the same secret → passes the signature check, misses the store.
-    const ghost = await signValue("never-stored-id", SECRET)
+    const ghost = await signSession("never-stored-id")
     expect((await sessions.get(ctx({ nifra_session: ghost }).context)).isEmpty).toBe(true)
   })
 
@@ -326,10 +378,10 @@ describe("session - cookie mode (stateless)", () => {
   test("a tampered or non-JSON-but-validly-signed payload fails closed", async () => {
     const sessions = make()
     // Validly signed (passes HMAC) but not a session payload → parsePayload returns null → anonymous.
-    const garbage = await signValue("not-json", SECRET)
+    const garbage = await signSession("not-json")
     expect((await sessions.get(ctx({ nifra_session: garbage }).context)).isEmpty).toBe(true)
     // Signed JSON but wrong shape (missing expiresAt) → anonymous.
-    const wrongShape = await signValue(JSON.stringify({ data: { userId: "x" } }), SECRET)
+    const wrongShape = await signSession(JSON.stringify({ data: { userId: "x" } }))
     expect((await sessions.get(ctx({ nifra_session: wrongShape }).context)).isEmpty).toBe(true)
   })
 
