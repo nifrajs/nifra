@@ -89,9 +89,12 @@ export interface ServerOptions {
    * untrusted input.
    */
   readonly trustBodyFraming?: boolean
-  /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun - frames over this are rejected
-   * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).
-   * Default: `maxBodyBytes` (1 MB). */
+  /**
+   * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
+   * socket closes with `1009`. Default: `maxBodyBytes` (1 MB). Bun and Node stop buffering at the cap,
+   * so a huge frame is never held in memory; on Bun a mounted app's smaller cap, and on Deno and
+   * Workers every cap, is checked after the runtime has buffered the whole message.
+   */
   readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
