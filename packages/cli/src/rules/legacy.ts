@@ -1083,7 +1083,9 @@ const contractRule: CheckRule = {
         }),
       ]
     }
-    if (contract.vacuous) {
+    // `vacuous` describes the routes as they are now, so it only stands in for drift when the lock has
+    // none: a lock whose schemas were all deleted is drift, not an empty contract.
+    if (contract.vacuous && contract.error === undefined && contract.diagnostics.length === 0) {
       return [
         diagnostic({
           code: LEGACY_RULE_CODES["contract-drift"]!,
