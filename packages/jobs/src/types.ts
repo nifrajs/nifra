@@ -53,7 +53,8 @@ export type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | 
 export type Backoff = (attempt: number) => number
 
 export interface RetryPolicy {
-  /** Total attempts before dead-lettering (incl. the first). Default 3. `1` = no retries. */
+  /** Total attempts before dead-lettering (incl. the first): a whole number, below 1 counting as 1.
+   * Default 3. `1` = no retries. `define` throws a `RangeError` on `NaN`, `Infinity` or a fraction. */
   readonly attempts: number
   /** Delay before each retry. Default {@link exponentialBackoff}. */
   readonly backoff?: Backoff

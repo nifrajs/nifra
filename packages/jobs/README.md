@@ -35,6 +35,8 @@ fails at the call site, not three retries later.
 
 Per-job: `retries: number` (attempts) or `{ attempts, backoff }`. A handler that throws is routed to
 `onError`, then retried with the backoff delay; after the last attempt it's **dead-lettered**, not lost.
+An attempt count (and `createQueue({ defaultAttempts })`) must be a whole number; `NaN`, `Infinity` or
+a fraction throws a `RangeError`, and a count below 1 means one attempt.
 
 ```ts
 import { exponentialBackoff, fixedBackoff } from "@nifrajs/jobs"

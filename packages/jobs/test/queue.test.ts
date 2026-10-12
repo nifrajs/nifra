@@ -60,6 +60,30 @@ describe("createQueue - define + enqueue + run", () => {
     await expect(send.enqueue({ to: "ok" })).resolves.toBeString()
   })
 
+  test("attempt counts must be whole numbers, so a failing job cannot retry forever", async () => {
+    const q = createQueue()
+    for (const retries of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
+      expect(() => q.define(`n${retries}`, { retries, handler() {} })).toThrow(RangeError)
+      expect(() =>
+        q.define(`p${retries}`, { retries: { attempts: retries }, handler() {} }),
+      ).toThrow(/retries\.attempts must be a whole number/)
+    }
+    expect(() => createQueue({ defaultAttempts: Number.NaN })).toThrow(/defaultAttempts/)
+    expect(() => createQueue({ defaultAttempts: 1.5 })).toThrow(RangeError)
+
+    // Below 1 still means one attempt: the job dead-letters on its first failure.
+    const clock = makeClock()
+    const once = createQueue({ now: clock.now, onError: () => {}, defaultAttempts: 0 })
+    once.define("fails", {
+      handler() {
+        throw new Error("no")
+      },
+    })
+    await once.enqueue("fails", {})
+    await once.drain()
+    expect(await once.counts()).toEqual({ pending: 0, active: 0, dead: 1 })
+  })
+
   test("unknown job + duplicate define throw", async () => {
     const q = createQueue()
     q.define("a", { handler() {} })

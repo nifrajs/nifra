@@ -76,7 +76,8 @@ export interface QueueOptions {
   readonly onError?: (error: unknown, jobName: string) => void
   /** Injectable clock (tests). Default `() => Date.now()`. */
   readonly now?: () => number
-  /** Default attempts for jobs that don't set `retries`. Default 3. */
+  /** Default attempts for jobs that don't set `retries`: a whole number (below 1 counts as 1).
+   * Default 3. `createQueue` throws a `RangeError` on anything else. */
   readonly defaultAttempts?: number
   /** Default backoff for jobs that don't set one. Default {@link exponentialBackoff}. */
   readonly backoff?: Backoff
@@ -167,6 +168,15 @@ interface Def {
   readonly timeoutMs: number | undefined
 }
 
+/** A whole number of attempts, at least 1. `NaN` would make `attempt >= maxAttempts` never true, so a
+ * failing job would retry forever instead of dead-lettering. */
+function attemptCount(value: number, label: string): number {
+  if (!Number.isSafeInteger(value)) {
+    throw new RangeError(`jobs: ${label} must be a whole number of attempts, got ${String(value)}`)
+  }
+  return Math.max(1, value)
+}
+
 function normalizeRetries(
   retries: number | RetryPolicy | undefined,
   defaultAttempts: number,
@@ -174,8 +184,11 @@ function normalizeRetries(
 ): { attempts: number; backoff: Backoff } {
   if (retries === undefined) return { attempts: defaultAttempts, backoff: defaultBackoff }
   if (typeof retries === "number")
-    return { attempts: Math.max(1, retries), backoff: defaultBackoff }
-  return { attempts: Math.max(1, retries.attempts), backoff: retries.backoff ?? defaultBackoff }
+    return { attempts: attemptCount(retries, "retries"), backoff: defaultBackoff }
+  return {
+    attempts: attemptCount(retries.attempts, "retries.attempts"),
+    backoff: retries.backoff ?? defaultBackoff,
+  }
 }
 
 function assertTimeoutBelowLease(
@@ -251,7 +264,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
   const onError =
     options.onError ??
     ((error, name) => console.error(`[nifra/jobs] job ${JSON.stringify(name)} failed:`, error))
-  const defaultAttempts = options.defaultAttempts ?? 3
+  const defaultAttempts =
+    options.defaultAttempts === undefined
+      ? 3
+      : attemptCount(options.defaultAttempts, "defaultAttempts")
   const defaultBackoff = options.backoff ?? exponentialBackoff()
   const enqueueToken = options.capabilities?.enqueue ?? "jobs.enqueue"
   const instrument = options.instrument
