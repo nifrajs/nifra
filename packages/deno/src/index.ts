@@ -55,6 +55,12 @@ type WsUpgradeOutcome =
       readonly data: unknown
       readonly pubsub: WsPubSub
       readonly maxPayloadBytes?: number
+      /** Builds `ws.send` with the route's outbound contract (`validateSend`). */
+      sender?(
+        handler: NifraWsHandler,
+        send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
+        onError: (error: unknown) => void,
+      ): (payload: string | ArrayBufferView | ArrayBuffer) => void
     }
 
 /** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */
@@ -213,7 +219,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     if (o.kind === "pass") return runFetch(request, info)
     if (o.kind === "reject") return o.response
     const { socket, response } = Deno.upgradeWebSocket(request)
-    attachDenoWebSocket(socket, o.handler, o.data, o.pubsub, o.maxPayloadBytes)
+    attachDenoWebSocket(socket, o)
     return response
   }
 
@@ -308,13 +314,12 @@ function serverClosing(): Response {
  */
 function attachDenoWebSocket(
   socket: WebSocket,
-  handler: NifraWsHandler,
-  data: unknown,
-  pubsub: WsPubSub,
-  maxPayloadBytes?: number,
+  outcome: Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>,
 ): void {
+  const { handler, data, pubsub, maxPayloadBytes } = outcome
+  const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => socket.send(payload)
   const ws: NifraWs = {
-    send: (payload) => socket.send(payload),
+    send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
     close: (code, reason) => socket.close(code, reason),
     get readyState() {
       return socket.readyState
@@ -324,7 +329,7 @@ function attachDenoWebSocket(
     data,
     raw: socket,
   }
-  const reportError = (error: unknown): void => {
+  function reportError(error: unknown): void {
     if (handler.error === undefined) return
     try {
       const r = handler.error(ws, error)

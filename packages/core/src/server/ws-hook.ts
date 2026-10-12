@@ -15,6 +15,7 @@ import type {
   TopicRegistry,
   WebSocketContext,
   WebSocketHandler,
+  WsSender,
 } from "./websocket.ts"
 
 /** The Bun serve `websocket` callback trio, closed over one app's `TopicRegistry`. The `ws`
@@ -46,4 +47,6 @@ export interface WsRuntime {
     data: unknown,
     options: { openNow: boolean; pubsub: TopicRegistry },
   ): NifraWebSocket
+  /** `webSocketSender` - `ws.send` for an adapter that wires its own sockets (Node, Deno). */
+  sender: WsSender
 }

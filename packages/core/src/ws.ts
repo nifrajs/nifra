@@ -25,6 +25,7 @@ import {
   attachWebSocket,
   handshakeUpgradeStep,
   TopicRegistry,
+  webSocketSender,
   wrapWebSocketMessageValidation,
 } from "./server/websocket.ts"
 import { createBunWsHandlers } from "./server/ws-bun.ts"
@@ -37,6 +38,7 @@ const WS_RUNTIME: WsRuntime = {
   createTopics: () => new TopicRegistry(),
   bunHandlers: createBunWsHandlers,
   attach: attachWebSocket,
+  sender: webSocketSender,
 }
 
 /** The install seam a server exposes so the `websocket()` plugin can hand it the runtime. */

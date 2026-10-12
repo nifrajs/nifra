@@ -7,6 +7,7 @@ import {
   requestTargetApp,
   requestTargetMismatches,
 } from "../../core/test/request-target-matrix.ts"
+import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { serve } from "../src/index.ts"
 
 // Minimal local assertions - keeps `deno test` offline + dependency-free.
@@ -271,6 +272,17 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
     assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/health`)).json(), {
       ok: true,
     })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a frame the route's sendSchema refuses never leaves, as on Bun", async () => {
+  const contract = sendContractApp(server().use(websocket()))
+  const running = await serve(contract.app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    assertEquals(await firstContractFrame(running.port), JSON.stringify({ ok: true }))
+    assertEquals(contract.errors.length, 1)
   } finally {
     await running.stop({ drainMs: 0 })
   }

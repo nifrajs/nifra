@@ -3574,6 +3574,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               pubsub,
               attach: runtime.attach,
               maxPayloadBytes: this.wsMaxPayloadBytes,
+              sender: runtime.sender,
             }
       }
       const wrap = (response: Response | ResponseResult): WebSocketUpgradeOutcome =>

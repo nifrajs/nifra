@@ -11,6 +11,7 @@ import {
 } from "../src/index.ts"
 // The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
 import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
+import { firstContractFrame, sendContractApp } from "./ws-send-contract.ts"
 
 let running: RunningServer | undefined
 afterEach(() => {
@@ -313,6 +314,13 @@ describe("app.listen() WebSockets", () => {
     expect(await collect(`ws://127.0.0.1:${running.port}/validated`, [], 1)).toEqual([
       JSON.stringify({ text: "ok" }),
     ])
+  })
+
+  test("the cross-runtime send contract: a refused frame never leaves and reaches error()", async () => {
+    const contract = sendContractApp(server().use(websocket()))
+    running = contract.app.listen(0, { hostname: "127.0.0.1" })
+    expect(await firstContractFrame(running.port)).toBe(JSON.stringify({ ok: true }))
+    expect(contract.errors).toHaveLength(1)
   })
 
   test("guarded: accepts with a valid token, threading data to ws.data", async () => {

@@ -233,7 +233,18 @@ export type WebSocketUpgradeOutcome =
        * `.use(websocket())` tree-shaking). `@nifrajs/workers` may import `attachWebSocket` directly instead. */
       readonly attach: WsAttach
       readonly maxPayloadBytes?: number
+      /** Builds `ws.send` over an adapter's native send, enforcing the route's {@link
+       * WebSocketHandler.validateSend}. Set on every outcome a nifra app produces; an adapter that
+       * wires its own sockets instead of calling `attach` (Node, Deno) builds `send` with it. */
+      readonly sender?: WsSender
     }
+
+/** The send-builder the upgrade outcome carries (the installed runtime's `sender`). */
+export type WsSender = (
+  handler: WebSocketHandler,
+  send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
+  onError: (error: unknown) => void,
+) => (payload: string | ArrayBufferView | ArrayBuffer) => void
 
 /** The socket-wiring signature the upgrade outcome carries (the installed runtime's `attach`). */
 export type WsAttach = (
@@ -447,6 +458,10 @@ export function createWebSocketSender(
     send(payload)
   }
 }
+
+/** {@link createWebSocketSender} configured from a route's handler: the outcome's `sender`. */
+export const webSocketSender: WsSender = (handler, send, onError) =>
+  createWebSocketSender(send, handler.sendSchema, handler.validateSend, handler.transport, onError)
 
 /**
  * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -
