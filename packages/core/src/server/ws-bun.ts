@@ -20,6 +20,9 @@ export interface BunWsData {
   readonly handler: WebSocketHandler
   /** Mounted/modern upgrades carry this registry; old/manual fixtures may omit it. */
   readonly pubsub?: TopicRegistry
+  /** The inbound cap of the app this socket belongs to (the upgrade outcome's). Absent, the
+   * listening app's applies. */
+  readonly maxPayloadBytes?: number | undefined
   data: unknown
   nifra?: NifraWebSocket
 }
@@ -36,6 +39,47 @@ export interface BunSocket {
   unsubscribe(topic: string): void
   // readonly: we never reassign `ws.data` wholesale, only mutate its fields (`.nifra`, `.data`).
   readonly data: BunWsData
+}
+
+/** Whether a message is over `cap` bytes, without encoding a text one: each UTF-16 unit takes 1-3
+ * UTF-8 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. */
+function exceedsPayloadCap(message: string | ArrayBuffer | Uint8Array, cap: number): boolean {
+  if (typeof message !== "string") return message.byteLength > cap
+  const units = message.length
+  if (units > cap) return true
+  if (units * 3 <= cap) return false
+  let bytes = 0
+  for (let i = 0; i < units; i++) {
+    const unit = message.charCodeAt(i)
+    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
+    if (bytes > cap) return true
+  }
+  return false
+}
+
+/**
+ * The largest `wsMaxPayloadBytes` among the nifra apps mounted under `app` that serve sockets, or
+ * `floor` when none declares more. Bun takes one frame limit per listener, so it has to admit every
+ * mounted app's cap. Reads each server's own mount table, as reflection does, so an app that never
+ * listens pays nothing for it; a child that is not a nifra server names no cap here.
+ */
+function mountedPayloadCeiling(app: object, floor: number, seen: Set<object>): number {
+  if (seen.has(app)) return floor
+  seen.add(app)
+  const mounts: unknown = Reflect.get(app, "fetchMounts")
+  if (!Array.isArray(mounts)) return floor
+  let ceiling = floor
+  for (const mount of mounts) {
+    const child: unknown = typeof mount === "object" && mount !== null ? mount.app : undefined
+    if (typeof child !== "object" || child === null) continue
+    const routes: unknown = Reflect.get(child, "wsRoutes")
+    const cap: unknown = Reflect.get(child, "wsMaxPayloadBytes")
+    if (Array.isArray(routes) && routes.length > 0 && typeof cap === "number" && cap > ceiling) {
+      ceiling = cap
+    }
+    ceiling = mountedPayloadCeiling(child, ceiling, seen)
+  }
+  return ceiling
 }
 
 /** Normalize a received binary frame to `Uint8Array` (Bun hands a `Buffer`, already one; an
@@ -127,9 +171,21 @@ function dispatchWsCallback(
  * `nativePubsub` (set by `listen()` when the app has no validated-send route) makes subscriptions use
  * Bun's own pub/sub; there the registry holds nothing and Bun auto-drops native subscriptions on
  * close, so the `unsubscribeAll` sweep is skipped.
+ *
+ * `app` is the listening server. Its `wsMaxPayloadBytes` and its mounted apps' set the listener's
+ * `maxPayloadLength`; a socket whose app declares less is closed with `1009` here.
  */
-export function createBunWsHandlers(topics: TopicRegistry, nativePubsub = false): BunWsHandlers {
+export function createBunWsHandlers(
+  topics: TopicRegistry,
+  nativePubsub = false,
+  app?: object,
+): BunWsHandlers {
+  const own: unknown = app === undefined ? undefined : Reflect.get(app, "wsMaxPayloadBytes")
+  const appCap = typeof own === "number" ? own : Number.POSITIVE_INFINITY
+  const listenerCap =
+    app === undefined ? appCap : mountedPayloadCeiling(app, appCap, new Set<object>())
   return {
+    maxPayloadLength: listenerCap,
     open: (raw) => {
       const ws = raw as BunSocket
       const nifra = wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
@@ -138,6 +194,12 @@ export function createBunWsHandlers(topics: TopicRegistry, nativePubsub = false)
     },
     message: (raw, message) => {
       const ws = raw as BunSocket
+      // Only a socket whose app declares less than the listener admits pays for a size check.
+      const cap = ws.data.maxPayloadBytes ?? appCap
+      if (cap < listenerCap && exceedsPayloadCap(message, cap)) {
+        ws.close(1009, "message too large")
+        return
+      }
       const handler = ws.data.handler
       const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, handler, nativePubsub)
       const data: WebSocketData = typeof message === "string" ? message : toBinaryData(message)

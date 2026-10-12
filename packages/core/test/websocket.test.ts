@@ -255,6 +255,24 @@ describe("resolveWebSocketUpgrade", () => {
 })
 
 // A real Bun websocket round-trip through app.listen() - the WS-1 MVP.
+/** Send one text frame and report the echo, or the close code when the server closes instead. */
+function echoOrClose(url: string, message: string): Promise<{ echo: string } | { close: number }> {
+  return new Promise((resolve, reject) => {
+    const c = new WebSocket(url)
+    const timer = setTimeout(() => reject(new Error("timeout")), 3000)
+    c.addEventListener("open", () => c.send(message))
+    c.addEventListener("message", (e) => {
+      clearTimeout(timer)
+      c.close()
+      resolve({ echo: String(e.data) })
+    })
+    c.addEventListener("close", (e) => {
+      clearTimeout(timer)
+      resolve({ close: e.code })
+    })
+  })
+}
+
 describe("app.listen() WebSockets", () => {
   function collect(url: string, send: string[], count: number): Promise<string[]> {
     return new Promise((resolve, reject) => {
@@ -375,6 +393,42 @@ describe("app.listen() WebSockets", () => {
     // 1006 (abnormal closure); the `attachWebSocket` path used by the other adapters sends 1009.
     // What matters at this level is that the frame was refused and never reached the handler.
     expect([1006, 1009]).toContain(closed)
+  })
+
+  test("each mounted app keeps its own wsMaxPayloadBytes, below or above the parent's", async () => {
+    const echo = (cap: number) =>
+      server({ wsMaxPayloadBytes: cap })
+        .use(websocket())
+        .ws("/s", { message: (ws, data) => ws.send(data) })
+    running = server({ wsMaxPayloadBytes: 64 })
+      .use(websocket())
+      .ws("/own", { message: (ws, data) => ws.send(data) })
+      .mount({ path: "/small", app: echo(16), stripPrefix: true })
+      .mount({ path: "/big", app: echo(8192), stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    const base = `ws://127.0.0.1:${running.port}`
+    expect(await echoOrClose(`${base}/small/s`, "x".repeat(17))).toEqual({ close: 1009 })
+    expect(await echoOrClose(`${base}/small/s`, "x".repeat(16))).toEqual({ echo: "x".repeat(16) })
+    // UTF-8 bytes, not UTF-16 units: 8 two-byte and 4 four-byte characters are 16 bytes each.
+    expect(await echoOrClose(`${base}/small/s`, "é".repeat(8))).toEqual({ echo: "é".repeat(8) })
+    expect(await echoOrClose(`${base}/small/s`, "é".repeat(9))).toEqual({ close: 1009 })
+    expect(await echoOrClose(`${base}/small/s`, "😀".repeat(4))).toEqual({ echo: "😀".repeat(4) })
+    expect(await echoOrClose(`${base}/small/s`, "😀".repeat(5))).toEqual({ close: 1009 })
+    expect(await echoOrClose(`${base}/big/s`, "x".repeat(5000))).toEqual({ echo: "x".repeat(5000) })
+    expect(await echoOrClose(`${base}/own`, "x".repeat(65))).toEqual({ close: 1009 })
+    expect(await echoOrClose(`${base}/own`, "x".repeat(64))).toEqual({ echo: "x".repeat(64) })
+  })
+
+  test("an app mounted under itself still listens with its own cap", async () => {
+    const app = server({ wsMaxPayloadBytes: 16 })
+      .use(websocket())
+      .ws("/s", { message: (ws, data) => ws.send(data) })
+    app.mount({ path: "/alias", app, stripPrefix: true })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    const base = `ws://127.0.0.1:${running.port}`
+    expect(await echoOrClose(`${base}/alias/s`, "x".repeat(16))).toEqual({ echo: "x".repeat(16) })
+    // Bun's own limit refuses this one: the client sees 1006 or 1009, never an echo.
+    expect(await echoOrClose(`${base}/s`, "x".repeat(17))).not.toHaveProperty("echo")
   })
 
   test("a normal HTTP route works alongside WS routes", async () => {

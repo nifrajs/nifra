@@ -328,6 +328,12 @@ export default function WebSockets() {
         child, or <code>listen()</code> refuses to start with <code>INVALID_WS_RUNTIME</code>.
       </p>
       <p>
+        Each mounted nifra app keeps its own <code>wsMaxPayloadBytes</code>: a message over the
+        child's cap closes that socket with <code>1009</code>, whether the cap is below or above the
+        parent's. On Bun one listener serves them all, so its frame limit is the largest cap among the
+        parent and the apps mounted on it, and a socket whose app declares less checks its own.
+      </p>
+      <p>
         <code>mountFetch(path, handler)</code> and a plain fetch handler carry HTTP only. An upgrade
         request under such a path reaches the handler as an ordinary request and never becomes a
         socket. Serve that path's WebSockets from a mounted child, or keep that server beside nifra.

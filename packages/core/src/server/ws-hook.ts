@@ -25,6 +25,9 @@ export interface BunWsHandlers {
   open(ws: unknown): void
   message(ws: unknown, message: string | ArrayBuffer | Uint8Array): void
   close(ws: unknown, code: number, reason: string): void
+  /** The listener's `maxPayloadLength`: the largest `wsMaxPayloadBytes` among the app and the apps
+   * mounted on it. A socket whose app declares less checks its own cap per message. */
+  readonly maxPayloadLength: number
 }
 
 /** What `@nifrajs/core/ws` registers: everything `server.ts` and `toFetchHandler` need at runtime. */
@@ -38,8 +41,9 @@ export interface WsRuntime {
   /** One in-process pub/sub registry per app (backs `ws.subscribe` + `app.publish`). */
   createTopics(): TopicRegistry
   /** The Bun `websocket` config for `listen()` when the app has WS routes. `nativePubsub` routes
-   * `ws.subscribe` through Bun's own pub/sub (set when no route validates outbound frames). */
-  bunHandlers(topics: TopicRegistry, nativePubsub?: boolean): BunWsHandlers
+   * `ws.subscribe` through Bun's own pub/sub (set when no route validates outbound frames). `app` is
+   * the listening server, whose mount table names the payload caps the listener has to admit. */
+  bunHandlers(topics: TopicRegistry, nativePubsub?: boolean, app?: object): BunWsHandlers
   /** `attachWebSocket` - wires a standard server socket (Workers `WebSocketPair`) to a handler. */
   attach(
     socket: StandardWebSocket,

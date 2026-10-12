@@ -5895,6 +5895,11 @@ implement it too, building the outcome from `@nifrajs/core/ws`:
 owns its pub/sub. On Bun, install `websocket()` on the parent or on a mounted nifra
 child, or `listen()` refuses to start with `INVALID_WS_RUNTIME`.
 
+Each mounted nifra app keeps its own `wsMaxPayloadBytes`: a message over the
+child's cap closes that socket with `1009`, whether the cap is below or above the
+parent's. On Bun one listener serves them all, so its frame limit is the largest cap among the
+parent and the apps mounted on it, and a socket whose app declares less checks its own.
+
 `mountFetch(path, handler)` and a plain fetch handler carry HTTP only. An upgrade
 request under such a path reaches the handler as an ordinary request and never becomes a
 socket. Serve that path's WebSockets from a mounted child, or keep that server beside nifra.

@@ -3687,9 +3687,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (o.kind === "pass")
         return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
       if (o.kind === "reject") return o.response
-      return server.upgrade(req, {
-        data: { handler: o.handler, data: o.data, pubsub: o.pubsub },
-      })
+      // A copy: the Bun socket keeps per-connection state on it, and a hand-built outcome may be shared.
+      return server.upgrade(req, { data: { ...o } })
         ? undefined
         : jsonError(426, "upgrade_required")
     }
@@ -6582,7 +6581,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // the parent.
     const nativePubsub =
       this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
-    const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
+    const wsHandlers = wsRuntime?.bunHandlers(
+      this.topics ?? wsRuntime.createTopics(),
+      nativePubsub,
+      this,
+    )
     // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
     // an explicit undefined as a value on some option paths, and omitting is what selects its own
     // defaults, 0.0.0.0 among them.
@@ -6630,8 +6633,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
           websocket: {
             // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
-            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes).
-            maxPayloadLength: this.wsMaxPayloadBytes,
+            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
+            // limit per listener: the largest cap among this app and the apps mounted on it.
+            maxPayloadLength: wsHandlers.maxPayloadLength,
             open: (ws) => wsHandlers.open(ws),
             message: (ws, message) => wsHandlers.message(ws, message),
             close: (ws, code, reason) => wsHandlers.close(ws, code, reason),
