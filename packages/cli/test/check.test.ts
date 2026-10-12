@@ -792,9 +792,11 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     expect(result.typecheck).toBe("skipped")
     expect(result.diagnostics.map((d) => d.rule).sort()).toEqual([
       "server-only-import",
+      "typecheck",
       "typed-client",
     ])
-    expect(result.diagnostics.every((d) => d.file === "routes/notes.tsx")).toBe(true)
+    const lints = result.diagnostics.filter((d) => d.rule !== "typecheck")
+    expect(lints.every((d) => d.file === "routes/notes.tsx")).toBe(true)
     const fetchDiag = result.diagnostics.find((d) => d.rule === "typed-client")
     expect(fetchDiag?.suggestion?.kind).toBe("manual")
     expect(fetchDiag?.suggestion?.steps?.join("\n")).toContain("nifra_routes")
@@ -820,7 +822,7 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
         'export const a = () => fetch("/auth/session")',
       ].join("\n"),
     )
-    const expected = await collectCheckResult(dir)
+    const expected = await collectCheckResult(dir, { lintsOnly: true })
     const info = expected.diagnostics.find((d) => d.rule === "typed-client")
     expect(expected.ok).toBe(true)
     expect(info?.severity).toBe("info")
@@ -831,7 +833,7 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       join(dir, "routes", "chat.tsx"),
       ["// nifra-expect NF-C002", 'export const a = () => fetch("/auth/session")'].join("\n"),
     )
-    const unreasoned = await collectCheckResult(dir)
+    const unreasoned = await collectCheckResult(dir, { lintsOnly: true })
     const error = unreasoned.diagnostics.find((d) => d.rule === "typed-client")
     expect(unreasoned.ok).toBe(false)
     expect(error?.severity).toBe("error")
@@ -1232,7 +1234,7 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
       join(dir, "backend.ts"),
       backend('.get("/a", () => Response.json({ ok: true }))'),
     )
-    const result = await collectCheckResult(dir)
+    const result = await collectCheckResult(dir, { lintsOnly: true })
     const warns = result.diagnostics.filter((d) => d.rule === "response-route")
     expect(warns).toHaveLength(1)
     expect(warns[0]?.severity).toBe("warning")
@@ -1320,12 +1322,12 @@ describe("nifra.check.json - external-mount allowlist", () => {
       'export const signIn = () => fetch("/auth/sign-in/email", { method: "POST" })',
     )
     // Without the allowlist: the typed-client rule fails the gate.
-    const before = await collectCheckResult(dir)
+    const before = await collectCheckResult(dir, { lintsOnly: true })
     expect(before.diagnostics.some((d) => d.rule === "typed-client")).toBe(true)
     expect(before.ok).toBe(false)
     // Declare the mount as intentional external → the finding disappears and the mounts are echoed.
     await writeFile(join(dir, "nifra.check.json"), JSON.stringify({ externalMounts: ["/auth/**"] }))
-    const after = await collectCheckResult(dir)
+    const after = await collectCheckResult(dir, { lintsOnly: true })
     expect(after.diagnostics.some((d) => d.rule === "typed-client")).toBe(false)
     expect(after.externalMounts).toEqual(["/auth"])
     expect(after.ok).toBe(true)
@@ -2964,6 +2966,37 @@ describe("typecheck gate - project TypeScript resolution", () => {
     expect(tc[0]?.message).toContain("did NOT run")
     expect(tc[0]?.suggestion?.command).toEqual(["bun", "add", "-d", "typescript"])
     expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("TypeScript sources with no tsconfig.json → failing diagnostic, never a silent skip", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "backend"), { recursive: true })
+    await writeFile(join(dir, "backend", "app.ts"), 'export const port: number = "not a number"\n')
+    await writeFile(join(dir, "backend", "env.d.ts"), "declare const APP: string\n")
+    const result = await collectCheckResult(dir)
+    expect(result.typecheck).toBe("skipped")
+    expect(result.typecheckNote).toBe("no tsconfig.json")
+    const tc = result.diagnostics.filter((d) => d.rule === "typecheck")
+    expect(tc).toHaveLength(1)
+    expect(tc[0]?.severity).toBe("error")
+    expect(tc[0]?.file).toBe("tsconfig.json")
+    expect(tc[0]?.message).toBe(
+      "1 TypeScript file(s) but no tsconfig.json in this directory - the typecheck gate did NOT run",
+    )
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a project with no TypeScript sources needs no tsconfig.json", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "backend"), { recursive: true })
+    await writeFile(join(dir, "backend", "app.js"), "export const port = 3000\n")
+    await writeFile(join(dir, "backend", "env.d.ts"), "declare const APP: string\n")
+    const result = await collectCheckResult(dir)
+    expect(result.typecheck).toBe("skipped")
+    expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toEqual([])
+    expect(result.ok).toBe(true)
     await rm(dir, { recursive: true, force: true })
   })
 

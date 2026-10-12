@@ -13581,7 +13581,8 @@ remember them. It does three things and exits non-zero if any fails:
 1. **Typecheck** (`tsc --noEmit`, using the project's own TypeScript) - the frontend↔backend contract is
    compiler-enforced. `client<typeof app>` derives request inputs **and** `res.data` from your routes, so
    a screen that expects the wrong shape is a type error. Running the typecheck is what turns that latent
-   guarantee into an enforced one.
+   guarantee into an enforced one. TypeScript sources with no `tsconfig.json` beside them fail this step,
+   as a missing `typescript` install does: nothing typechecked them. A JavaScript-only project skips it.
 2. **Typed-client lint** - flags any hand-rolled `fetch()` to your own API (a relative URL like
    `fetch("/users")`), which bypasses the typed client so the compiler can't see the drift. External
    absolute-URL fetches are not flagged.

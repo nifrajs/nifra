@@ -3,7 +3,7 @@
 exports[`verification golden output: nifra check full assurance project: human report 1`] = `
 "nifra check
 
-⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
+✓ typecheck passed
 ✓ hand-rolled fetch()/EventSource/WebSocket to your own API: none
 ✓ client("…") missing its <typeof app> type argument: none
 ✓ backend code in browser code: none
@@ -27,8 +27,7 @@ tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + 
 exports[`verification golden output: nifra check full assurance project: --json 1`] = `
 "{
   "ok": true,
-  "typecheck": "skipped",
-  "typecheckNote": "no tsconfig.json",
+  "typecheck": "pass",
   "diagnostics": [],
   "hooks": {
     "complete": true,
@@ -52,7 +51,7 @@ exports[`verification golden output: nifra check full assurance project: --json 
 exports[`verification golden output: nifra check plain project (no config): human report with tips 1`] = `
 "nifra check
 
-⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
+✓ typecheck passed
 ✓ hand-rolled fetch()/EventSource/WebSocket to your own API: none
 ✓ client("…") missing its <typeof app> type argument: none
 ✓ backend code in browser code: none
@@ -77,6 +76,11 @@ exports[`verification golden output: nifra check dirty project: human report wit
 "nifra check
 
 ⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
+    tsconfig.json  1 TypeScript file(s) but no tsconfig.json in this directory - the typecheck gate did NOT run
+      fix: Add a tsconfig.json so the contract gate can run
+      - Create tsconfig.json in the directory \`nifra check\` runs from, with \`include\` covering the project's TypeScript sources.
+      - In a monorepo, run \`nifra check\` from each app that has its own tsconfig.json.
+      - Run \`nifra_check\` again: the typecheck now runs \`tsc --noEmit -p tsconfig.json\`.
 ✗ hand-rolled fetch()/EventSource/WebSocket to your own API: 1
     routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift; for a call no typed client covers (a foreign handler, a static file), add a \`// nifra-expect NF-C002: <reason>\` comment
       fix: Replace own-API fetch with the typed nifra client
@@ -106,7 +110,7 @@ exports[`verification golden output: nifra check dirty project: human report wit
     routes/notes.tsx:2  routes/notes.tsx exports "loader", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to routes/notes.backend.ts.
     routes/notes.tsx:6  routes/notes.tsx exports "action", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to routes/notes.backend.ts.
 
-✗ check failed: 4 errors
+✗ check failed: 5 errors
 
 tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + agent files (no-clobber)."
 `;
@@ -117,6 +121,22 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
   "typecheck": "skipped",
   "typecheckNote": "no tsconfig.json",
   "diagnostics": [
+    {
+      "rule": "typecheck",
+      "severity": "error",
+      "file": "tsconfig.json",
+      "message": "1 TypeScript file(s) but no tsconfig.json in this directory - the typecheck gate did NOT run",
+      "fix": "add a tsconfig.json that includes the project's sources",
+      "suggestion": {
+        "kind": "manual",
+        "title": "Add a tsconfig.json so the contract gate can run",
+        "steps": [
+          "Create tsconfig.json in the directory \`nifra check\` runs from, with \`include\` covering the project's TypeScript sources.",
+          "In a monorepo, run \`nifra check\` from each app that has its own tsconfig.json.",
+          "Run \`nifra_check\` again: the typecheck now runs \`tsc --noEmit -p tsconfig.json\`."
+        ]
+      }
+    },
     {
       "rule": "typed-client",
       "severity": "error",
