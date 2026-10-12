@@ -152,6 +152,7 @@ describe("agent verification surfaces", () => {
       JSON.stringify({ ...current, routes: { "POST /users": stale } }),
     )
     const lock = await Bun.file(join(dir, "contracts.lock.json")).text()
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the catalog registers `fix` with an optional `code` input and an output carrying these fields.
     const fix = findCommandSpec("fix") as CommandSpec<
       { code?: string },
       {
