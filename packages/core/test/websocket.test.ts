@@ -1271,28 +1271,6 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
     expect(seen.request).toBe(req)
   })
 
-  test("webSocketHub keeps a non-GET request with an upgrade header on the normal fetch path", async () => {
-    const ns = {
-      idFromName: () => {
-        throw new Error("the hub must not be consulted for a request that cannot be a handshake")
-      },
-      get: () => ({ fetch: () => Promise.resolve(new Response(null)) }),
-    }
-    const handler = toFetchHandler(
-      server()
-        .use(websocket())
-        .ws("/ws", { open: () => {} })
-        .post("/ws", async (c) => ({ body: await c.req.text() })),
-      { webSocketHub: () => ns },
-    )
-    const res = await handler.fetch(
-      new Request("http://t/ws", { method: "POST", headers: { upgrade: "websocket" }, body: "hi" }),
-      {},
-      ctx,
-    )
-    expect(await res.json()).toEqual({ body: "hi" })
-  })
-
   test("webSocketHub leaves non-upgrade requests on the normal fetch path", async () => {
     const ns = {
       idFromName: () => {

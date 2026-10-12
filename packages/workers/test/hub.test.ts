@@ -102,6 +102,23 @@ describe("createWebSocketHub", () => {
     expect((await hub.fetch(upgrade("/no-such-route"))).status).toBe(404)
   })
 
+  test("a non-GET request with an upgrade header is no handshake: its HTTP route answers, body intact", async () => {
+    const app = server()
+      .use(websocket())
+      .ws("/room", { open: () => {} })
+      .post("/room", async (c) => ({ body: await c.req.text() }))
+    const hub = new (createWebSocketHub(app))({}, {})
+    const res = await hub.fetch(
+      new Request("http://t/room", {
+        method: "POST",
+        headers: { upgrade: "websocket" },
+        body: "hi",
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ body: "hi" })
+  })
+
   test("an app with no fetch answers an upgrade to a non-WS path with 426", async () => {
     const app = server()
       .use(websocket())
