@@ -1450,6 +1450,16 @@ export default function NewUser() {
 }
 ```
 
+A form can post to another site and the browser sends that site's cookies with it, so an action
+refuses a POST whose `Origin` is another site's with 403, before middleware, gates or
+the action run. A request without an `Origin`, such as one from a server, passes.
+Same-origin is judged from the request URL's host, so a proxy in front must forward the
+`Host` header. A route that takes posts from elsewhere, such as an identity
+provider's `form_post` callback, exports `allowedOrigins` from its backend
+file: an array of exact origins, or a function that receives the origin (`null` when
+absent). It checks where the browser says the request comes from, not who sent it, so keep the
+action's own authentication.
+
 ### Layout loaders on navigation
 
 A `_layout.backend.ts` can have a `loader` too; its output reaches the

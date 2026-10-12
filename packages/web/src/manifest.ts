@@ -338,6 +338,15 @@ export interface RouteModule {
   readonly gate?: boolean
   readonly action?: Action
   /**
+   * Backend half only: which browser origins may POST to {@link action}. When omitted, a request
+   * whose `Origin` is another site's is refused with 403 before middleware, gates or the action run;
+   * requests without an `Origin` (non-browser clients) pass. An array allows exactly those origins
+   * (and refuses a request without one); a function decides, receiving `null` when there is none.
+   * Use it for a callback a third party posts to, such as an identity provider's `form_post`.
+   * `Origin` is browser-enforced, not authentication: keep the action's own auth checks.
+   */
+  readonly allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean)
+  /**
    * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the
    * loader returns data. Keys it does not declare are dropped before the page renders; a declared
    * field of the wrong shape fails the request with a 500 naming the field's path.
@@ -642,6 +651,7 @@ export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "middleware",
   "gate",
   "shouldRevalidate",
+  "allowedOrigins",
 ])
 
 const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)

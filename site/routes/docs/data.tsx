@@ -162,6 +162,17 @@ export default function Data() {
       </p>
       <CodeBlock code={ACTION} lang="ts" />
       <CodeBlock code={FORM} />
+      <p>
+        A form can post to another site and the browser sends that site's cookies with it, so an action
+        refuses a POST whose <code>Origin</code> is another site's with 403, before middleware, gates or
+        the action run. A request without an <code>Origin</code>, such as one from a server, passes.
+        Same-origin is judged from the request URL's host, so a proxy in front must forward the{" "}
+        <code>Host</code> header. A route that takes posts from elsewhere, such as an identity
+        provider's <code>form_post</code> callback, exports <code>allowedOrigins</code> from its backend
+        file: an array of exact origins, or a function that receives the origin (<code>null</code> when
+        absent). It checks where the browser says the request comes from, not who sent it, so keep the
+        action's own authentication.
+      </p>
 
       <h2>Layout loaders on navigation</h2>
       <p>

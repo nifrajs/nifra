@@ -3,7 +3,12 @@ import {
   NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
 } from "@nifrajs/core/mount"
-import { type Platform, type ResponseResult, status as statusResult } from "@nifrajs/core/server"
+import {
+  isSameOriginRequest,
+  type Platform,
+  type ResponseResult,
+  status as statusResult,
+} from "@nifrajs/core/server"
 import {
   type BoundaryRequestCtx,
   type BoundaryStates,
@@ -1524,6 +1529,31 @@ export function createPageRequestExecutor<Env = unknown>(
             headers: { allow: "GET", "content-type": "text/plain; charset=utf-8" },
           })
         }
+        const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
+        // Before anything runs: a form posts cross-site without a preflight and carries the visitor's
+        // cookies, so an action is a CSRF target unless its route names the origins it accepts.
+        const origin = c.req.headers.get("origin")
+        const allowedOrigins = mod.allowedOrigins
+        const allowed =
+          allowedOrigins === undefined
+            ? origin === null || isSameOriginRequest(origin, c.req)
+            : typeof allowedOrigins === "function"
+              ? allowedOrigins(origin) === true
+              : origin !== null && allowedOrigins.includes(origin)
+        if (!allowed) {
+          return isDataRequest
+            ? Response.json(
+                { ok: false, error: "forbidden_origin" },
+                { status: 403, headers: { "cache-control": PRIVATE_NO_STORE } },
+              )
+            : new Response("Forbidden", {
+                status: 403,
+                headers: {
+                  "content-type": "text/plain; charset=utf-8",
+                  "cache-control": PRIVATE_NO_STORE,
+                },
+              })
+        }
         const requestApi = apiFor(c)
         const actionContext: LoaderContext = {
           params: c.params,
@@ -1535,7 +1565,6 @@ export function createPageRequestExecutor<Env = unknown>(
           search: loaderSearch(mod.searchSchema, c.req),
           set: controls.scope(ACTION_SCOPE),
         }
-        const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
         let gated: GatedLayouts
         let result: unknown
         try {
