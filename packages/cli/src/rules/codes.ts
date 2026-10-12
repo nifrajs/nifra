@@ -31,7 +31,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C032": "Credential in browser code",
   "NF-C033": "Generated output schema out of date",
   "NF-C034": "Root status page wraps the root layout itself",
-  "NF-C035": "Backend mounted at the implicit /api",
+  "NF-C035": "Backend not served over HTTP",
   "NF-C036": "Route path the static scan cannot read",
   "NF-C037": "API-only declaration over a web app",
   "NF-C038": "Retired root layout file",

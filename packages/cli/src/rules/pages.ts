@@ -159,10 +159,35 @@ export const statusLayoutRule: CheckRule = {
   },
 }
 
+const FRAMEWORK_MODULE = String.raw`\.\/backend\/framework(?:\.[cm]?[jt]s)?`
+const FRAMEWORK_STAR = new RegExp(String.raw`\bexport\s*\*\s*from\s*["']${FRAMEWORK_MODULE}["']`)
+const FRAMEWORK_SPECIFIER = new RegExp(String.raw`\bfrom\s*["'](${FRAMEWORK_MODULE})["']`)
+
+/** The two framework configs' sources, `undefined` for one the app lacks. Production's generated server
+ * entry imports backend/framework.ts when it exists, while `nifra dev` loads nifra.config.ts when it
+ * exists. */
+export interface ApiPrefixSources {
+  readonly framework: string | undefined
+  readonly config: string | undefined
+}
+
+/** `apiPrefix` as nifra.config.ts exports it when backend/framework.ts exists too: its own, or every
+ * export of backend/framework.ts through `export *`. */
+function configApiPrefix(config: string, framework: StaticApiPrefix): StaticApiPrefix {
+  const own = readStaticApiPrefix(config)
+  if (own.kind !== "default") return own
+  return FRAMEWORK_STAR.test(stripComments(config)) ? framework : own
+}
+
+/** Whether a read leaves the backend unmounted: no `apiPrefix`, or an empty one. */
+const unmounted = (read: StaticApiPrefix): boolean =>
+  read.kind === "default" || (read.kind === "literal" && read.value === "")
+
 /**
- * NF-C035: `backend/app.ts` exports a backend and the framework config sets no `apiPrefix`, so the
- * backend is not served over HTTP - a browser call to `/api` reaches page routing. Loader-only is a
- * valid choice; the finding asks for it to be stated. An unreadable `apiPrefix` is NF-C027's to report.
+ * NF-C035: `backend/app.ts` exports a backend that is not served over HTTP, so a browser call to `/api`
+ * reaches page routing. Either the framework config sets no `apiPrefix` (loader-only is a valid choice;
+ * the finding asks for it to be stated), or backend/framework.ts sets one that nifra.config.ts does not
+ * export, so `nifra dev` alone leaves the backend unmounted. An unreadable `apiPrefix` is NF-C027's.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",
@@ -172,20 +197,47 @@ export const implicitApiMountRule: CheckRule = {
     // An API-only app serves its backend itself; there is no page routing to fall into.
     if (!existsSync(backendFile) || !hasWebConfig(ctx.root, ".")) return []
     if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
-    const configFile = CONFIG_FILES.find((file) => existsSync(join(ctx.root, file)))
-    if (
-      configFile !== undefined &&
-      readStaticApiPrefix(readFileSync(join(ctx.root, configFile), "utf8")).kind !== "default"
-    ) {
-      return []
+    const read = (file: string): string | undefined =>
+      existsSync(join(ctx.root, file)) ? readFileSync(join(ctx.root, file), "utf8") : undefined
+    const framework = read(FRAMEWORK_FILE)
+    const config = read(CONFIG_FILE)
+    const served = framework ?? config
+    if (served === undefined) return []
+    const production = readStaticApiPrefix(served)
+    const dev =
+      framework !== undefined && config !== undefined
+        ? configApiPrefix(config, production)
+        : production
+
+    if (production.kind === "default") {
+      // nifra.config.ts setting what backend/framework.ts does not fails `nifra dev` and `nifra build`
+      // at load, naming the field.
+      if (dev.kind !== "default") return []
+      const file = framework === undefined ? CONFIG_FILE : FRAMEWORK_FILE
+      const reexport =
+        config === undefined || framework === undefined
+          ? ""
+          : `, and re-export it from ${CONFIG_FILE}, which nifra dev loads: \`export { apiPrefix } from "${frameworkSpecifier(config)}"\``
+      return [
+        diagnostic({
+          code: "NF-C035",
+          severity: "warn",
+          file,
+          message: `${BACKEND_APP_FILE}'s backend is not served over HTTP, because ${file} sets no apiPrefix: a browser call to /api reaches page routing instead. Add \`export const apiPrefix = "/api"\` to ${file} to serve it there, as 4.x did by default, or \`export const apiPrefix = ""\` to keep it loader-only${reexport}.`,
+          fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
+          verify: "nifra check",
+        }),
+      ]
     }
-    const file = configFile ?? FRAMEWORK_FILE
+    if (config === undefined || unmounted(production) || !unmounted(dev)) return []
+    const at = production.kind === "literal" ? production.value : "the apiPrefix it exports"
     return [
       diagnostic({
         code: "NF-C035",
-        severity: "info",
-        file,
-        message: `${BACKEND_APP_FILE}'s backend is not served over HTTP, because ${file} sets no apiPrefix: a browser call to /api reaches page routing instead. Add \`export const apiPrefix = "/api"\` to ${file} to serve it there, as 4.x did by default, or \`export const apiPrefix = ""\` to keep it loader-only.`,
+        severity: "warn",
+        file: CONFIG_FILE,
+        message: `${FRAMEWORK_FILE} serves ${BACKEND_APP_FILE}'s backend at ${at}, but ${CONFIG_FILE}, which nifra dev loads instead, does not export apiPrefix: nifra dev serves the backend nowhere, so a browser call to it reaches page routing in dev while a production build serves it. Re-export it from ${CONFIG_FILE}: \`export { apiPrefix } from "${frameworkSpecifier(config)}"\`.`,
+        evidence: [`production: ${FRAMEWORK_FILE}`, `nifra dev: ${CONFIG_FILE}`],
         fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
         verify: "nifra check",
       }),
@@ -193,12 +245,36 @@ export const implicitApiMountRule: CheckRule = {
   },
 }
 
+/** How nifra.config.ts already names backend/framework.ts, so a re-export added to it resolves the same
+ * way; the scaffold's extensionless spelling when it names it nowhere. */
+function frameworkSpecifier(config: string): string {
+  return FRAMEWORK_SPECIFIER.exec(stripComments(config))?.[1] ?? "./backend/framework"
+}
+
+const appendLine = (source: string, line: string): string =>
+  source === "" ? line : `${source}${source.endsWith("\n") ? "" : "\n"}${line}`
+
 /** Append `export const apiPrefix = "/api"` to a framework config that sets none, creating it if needed. */
 export function withDefaultApiPrefix(source: string | undefined): string | undefined {
   if (source !== undefined && readStaticApiPrefix(source).kind !== "default") return undefined
-  const line = 'export const apiPrefix = "/api"\n'
-  if (source === undefined || source === "") return line
-  return `${source}${source.endsWith("\n") ? "" : "\n"}${line}`
+  return appendLine(source ?? "", 'export const apiPrefix = "/api"\n')
+}
+
+/**
+ * The edits that serve the backend at `/api` in production and in `nifra dev` alike: the mount where the
+ * generated server entry reads it, and a re-export in nifra.config.ts when both configs exist. A file that
+ * needs no edit comes back `undefined`; an explicit `apiPrefix` is never replaced.
+ */
+export function apiPrefixFix(sources: ApiPrefixSources): ApiPrefixSources {
+  const { framework, config } = sources
+  if (framework === undefined) return { framework, config: withDefaultApiPrefix(config) }
+  const nextFramework = withDefaultApiPrefix(framework)
+  const production = readStaticApiPrefix(nextFramework ?? framework)
+  const reexport =
+    config === undefined || configApiPrefix(config, production).kind !== "default"
+      ? undefined
+      : appendLine(config, `export { apiPrefix } from "${frameworkSpecifier(config)}"\n`)
+  return { framework: nextFramework, config: reexport }
 }
 
 const LOADER_EXPORT =

@@ -82,18 +82,33 @@ registerFixRecipe({
 registerFixRecipe({
   id: "framework.api-prefix",
   description:
-    "Serve the backend over HTTP at /api by exporting apiPrefix from the framework config.",
+    "Serve the backend over HTTP at /api by exporting apiPrefix from the framework config, re-exported from nifra.config.ts for nifra dev.",
   verify: "nifra check",
-  async apply(root, diagnostic) {
-    if (diagnostic.file === undefined) return []
-    const path = await resolveInsideProject(root, diagnostic.file)
-    if (path === undefined) return []
-    const { withDefaultApiPrefix } = await import("./rules/pages.ts")
-    const file = Bun.file(path)
-    const next = withDefaultApiPrefix((await file.exists()) ? await file.text() : undefined)
-    if (next === undefined) return []
-    await writeFile(path, next, "utf8")
-    return [diagnostic.file]
+  async apply(root) {
+    const { CONFIG_FILE, FRAMEWORK_FILE } = await import("./app-files.ts")
+    const { apiPrefixFix } = await import("./rules/pages.ts")
+    const frameworkPath = await resolveInsideProject(root, FRAMEWORK_FILE)
+    const configPath = await resolveInsideProject(root, CONFIG_FILE)
+    if (frameworkPath === undefined || configPath === undefined) return []
+    const source = async (path: string): Promise<string | undefined> => {
+      const file = Bun.file(path)
+      return (await file.exists()) ? await file.text() : undefined
+    }
+    const next = apiPrefixFix({
+      framework: await source(frameworkPath),
+      config: await source(configPath),
+    })
+    const edits: readonly (readonly [string, string, string | undefined])[] = [
+      [FRAMEWORK_FILE, frameworkPath, next.framework],
+      [CONFIG_FILE, configPath, next.config],
+    ]
+    const changed: string[] = []
+    for (const [file, path, text] of edits) {
+      if (text === undefined) continue
+      await writeFile(path, text, "utf8")
+      changed.push(file)
+    }
+    return changed
   },
 })
 

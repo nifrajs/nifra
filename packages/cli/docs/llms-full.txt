@@ -8091,6 +8091,14 @@ written down: `nifra fix --code NF-C035` adds
 `export const apiPrefix = "/api"`, which is what 4.x mounted by default, and
 `""` keeps the backend loader-only.
 
+With both files, `nifra dev` loads `nifra.config.ts` while the server
+entry `nifra build` generates imports `backend/framework.ts`, so
+`nifra.config.ts` re-exports the prefix:
+`export { apiPrefix } from "./backend/framework"`. Without it,
+`nifra dev` serves the backend nowhere while production serves it, and
+`NF-C035` reports that too. A hand-written `createWebApp` call passes
+`apiPrefix` itself.
+
 Because the backend answers first and its 404 is final, a page file under the prefix (
 `routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
 silent 404: `createWebApp` throws at startup naming the file, `nifra build`

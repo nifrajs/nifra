@@ -181,6 +181,15 @@ export default function Backends() {
         <code>""</code> keeps the backend loader-only.
       </p>
       <p>
+        With both files, <code>nifra dev</code> loads <code>nifra.config.ts</code> while the server
+        entry <code>nifra build</code> generates imports <code>backend/framework.ts</code>, so{" "}
+        <code>nifra.config.ts</code> re-exports the prefix:{" "}
+        <code>export {"{"} apiPrefix {"}"} from "./backend/framework"</code>. Without it,{" "}
+        <code>nifra dev</code> serves the backend nowhere while production serves it, and{" "}
+        <code>NF-C035</code> reports that too. A hand-written <code>createWebApp</code> call passes{" "}
+        <code>apiPrefix</code> itself.
+      </p>
+      <p>
         Because the backend answers first and its 404 is final, a page file under the prefix (
         <code>routes/api/report.tsx</code>) could never render. Nifra refuses it instead of serving a
         silent 404: <code>createWebApp</code> throws at startup naming the file, <code>nifra build</code>{" "}

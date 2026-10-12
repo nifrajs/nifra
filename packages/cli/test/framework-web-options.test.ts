@@ -6,6 +6,7 @@ import {
   assertNoShadowedPages,
   showsIndicator,
 } from "../src/cli.ts"
+import type { Diagnostic } from "../src/diagnostics.ts"
 import { getFixRecipe } from "../src/fix-recipes.ts"
 import { buildRouteTable } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
@@ -431,7 +432,7 @@ describe("NF-C035", () => {
     const findings = await scan(dir)
     expect(findings.map((finding) => [finding.severity, finding.file, finding.fix])).toEqual([
       [
-        "info",
+        "warn",
         "backend/framework.ts",
         { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
       ],
@@ -465,6 +466,98 @@ describe("NF-C035", () => {
       ).toEqual([])
     }
     expect(await scan(project({ "backend/framework.ts": adapterSource.join("\n") }))).toEqual([])
+  })
+
+  const fix = async (dir: string, finding: Diagnostic | undefined): Promise<readonly string[]> => {
+    const recipe = getFixRecipe("framework.api-prefix")
+    if (recipe === undefined || finding === undefined) throw new Error("no fix recipe")
+    return recipe.apply(dir, finding)
+  }
+
+  test("an apiPrefix nifra.config.ts does not re-export is reported there: nifra dev loads it alone", async () => {
+    const config = 'export { adapter } from "./backend/framework"\n'
+    const dir = project({
+      "backend/app.ts": backendSource,
+      "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/api"'].join("\n"),
+      "nifra.config.ts": config,
+    })
+    const findings = await scan(dir)
+    expect(findings.map((finding) => [finding.severity, finding.file, finding.evidence])).toEqual([
+      [
+        "warn",
+        "nifra.config.ts",
+        ["production: backend/framework.ts", "nifra dev: nifra.config.ts"],
+      ],
+    ])
+    expect(findings[0]?.message).toContain("serves backend/app.ts's backend at /api")
+    expect(findings[0]?.message).toContain('export { apiPrefix } from "./backend/framework"')
+    expect(await fix(dir, findings[0])).toEqual(["nifra.config.ts"])
+    expect(readFileSync(join(dir, "nifra.config.ts"), "utf8")).toBe(
+      `${config}export { apiPrefix } from "./backend/framework"\n`,
+    )
+    expect(await scan(dir)).toEqual([])
+  })
+
+  test("both configs without apiPrefix: the fix mounts it in backend/framework.ts and re-exports it", async () => {
+    const dir = project({
+      "backend/app.ts": backendSource,
+      "backend/framework.ts": adapterSource.join("\n"),
+      "nifra.config.ts": 'export { adapter } from "./backend/framework.ts"',
+    })
+    const findings = await scan(dir)
+    expect(findings.map((finding) => [finding.severity, finding.file])).toEqual([
+      ["warn", "backend/framework.ts"],
+    ])
+    expect(findings[0]?.message).toContain(
+      're-export it from nifra.config.ts, which nifra dev loads: `export { apiPrefix } from "./backend/framework.ts"`',
+    )
+    expect(await fix(dir, findings[0])).toEqual(["backend/framework.ts", "nifra.config.ts"])
+    expect(readFileSync(join(dir, "nifra.config.ts"), "utf8")).toBe(
+      'export { adapter } from "./backend/framework.ts"\nexport { apiPrefix } from "./backend/framework.ts"\n',
+    )
+    expect(await scan(dir)).toEqual([])
+    expect(await fix(dir, findings[0])).toEqual([])
+  })
+
+  test("nifra.config.ts exporting the same apiPrefix, or both sides loader-only, is not reported", async () => {
+    const framework = [...adapterSource, 'export const apiPrefix = "/api"'].join("\n")
+    for (const config of [
+      'export { adapter, apiPrefix } from "./backend/framework"\n',
+      'export * from "./backend/framework.ts"\n',
+      'export { adapter } from "./backend/framework"\nexport const apiPrefix = "/api"\n',
+    ]) {
+      expect(
+        await scan(
+          project({
+            "backend/app.ts": backendSource,
+            "backend/framework.ts": framework,
+            "nifra.config.ts": config,
+          }),
+        ),
+      ).toEqual([])
+    }
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "backend/framework.ts": [...adapterSource, 'export const apiPrefix = ""'].join("\n"),
+          "nifra.config.ts": 'export { adapter } from "./backend/framework"\n',
+        }),
+      ),
+    ).toEqual([])
+  })
+
+  test("an apiPrefix only nifra.config.ts sets is left to the load error that names it", async () => {
+    expect(
+      await scan(
+        project({
+          "backend/app.ts": backendSource,
+          "backend/framework.ts": adapterSource.join("\n"),
+          "nifra.config.ts":
+            'export { adapter } from "./backend/framework"\nexport const apiPrefix = "/api"\n',
+        }),
+      ),
+    ).toEqual([])
   })
 
   test("an API-only app, with no web config or a nifra.config.ts with no adapter, is not reported", async () => {
