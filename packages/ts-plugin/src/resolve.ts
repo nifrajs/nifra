@@ -21,18 +21,25 @@ type CompiledRouteLocation = {
   readonly pattern: ReturnType<typeof compileRoutePattern>
 }
 
-// The language service asks for definitions repeatedly while the cursor moves. Cache the immutable
-// compilation/specificity sort by manifest identity so each query only performs route matching; a new
-// manifest array naturally gets a fresh entry when routes are added or removed.
-const compiledRouteCache = new WeakMap<readonly RouteLocation[], readonly CompiledRouteLocation[]>()
+// The language service asks for definitions repeatedly while the cursor moves, and route discovery
+// hands over a new array each time. So the compilation/specificity sort is cached by what the routes
+// are, not by the array: each query then only matches, and a changed route set compiles afresh.
+const compiledRouteCache = new Map<string, readonly CompiledRouteLocation[]>()
+/** Route sets kept compiled at once: a workspace's apps, plus the sets an edit just replaced. */
+const MAX_CACHED_ROUTE_SETS = 8
 
 function compiledRoutes(routes: readonly RouteLocation[]): readonly CompiledRouteLocation[] {
-  const cached = compiledRouteCache.get(routes)
+  const key = JSON.stringify(routes.map((route) => [route.pattern, route.file]))
+  const cached = compiledRouteCache.get(key)
   if (cached !== undefined) return cached
   const compiled = sortRoutesBySpecificity(
     routes.map((route) => ({ route, pattern: compileRoutePattern(route.pattern) })),
   )
-  compiledRouteCache.set(routes, compiled)
+  if (compiledRouteCache.size >= MAX_CACHED_ROUTE_SETS) {
+    const oldest = compiledRouteCache.keys().next()
+    if (oldest.done !== true) compiledRouteCache.delete(oldest.value)
+  }
+  compiledRouteCache.set(key, compiled)
   return compiled
 }
 
