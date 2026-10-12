@@ -35,7 +35,9 @@ import {
   withApiKindHint,
 } from "../internal/nifra-project.ts"
 import { createSpecifierResolver } from "../internal/project-specifiers.ts"
+import { createSourceFacts } from "../internal/source-facts.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
+import { loadRuleTypeScript } from "./typescript.ts"
 
 const ZONE_FOLDER = new Set(["routes", "frontend", "backend", "shared"])
 const FRONTEND = new Set(["route-frontend", "frontend"])
@@ -186,6 +188,15 @@ export const zoneImportRule: CheckRule = {
     // Outside any web app, a finding may only mean the project serves no pages: say how to declare it.
     const inWebApp = createWebAppProbe(ctx.root)
     const resolveSpecifier = createSpecifierResolver()
+    // Without a compiler nothing proves an import erased, so every import stays an edge.
+    const { compiler } = await loadRuleTypeScript(ctx)
+    const facts =
+      compiler === undefined
+        ? undefined
+        : createSourceFacts(compiler, {
+            keepsTypeOnlyImports: (file) =>
+              resolveSpecifier.keepsTypeOnlyImports(isAbsolute(file) ? file : join(ctx.root, file)),
+          })
     const queue: Importer[] = []
     const queued = new Set<string>()
     const follow = (importer: Importer): void => {
@@ -235,7 +246,7 @@ export const zoneImportRule: CheckRule = {
     for (const { file, app, zone: from } of queue) {
       const content = ctx.sources.read(file)
       if (content === undefined) continue
-      for (const { specifier, line } of importSites(content, file)) {
+      for (const { specifier, line } of importSites(content, file, facts)) {
         const target = resolveSpecifier(join(ctx.root, file), specifier)
         if (target === undefined) continue
         const to = classifierFor(app).classify(target)

@@ -2939,7 +2939,8 @@ function staticImportEdges(
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     if (positions[m.index] === " ") continue
     if (m[1] === undefined) continue
-    if (facts !== undefined && file !== undefined) {
+    // Only a `type` modifier can erase a clause the pattern matched, so other clauses skip the parse.
+    if (facts !== undefined && file !== undefined && /\btype\b/.test(m[0])) {
       const source = facts.parse(file, content)
       if (source !== undefined && facts.isValueImportAt(source, m.index, m[1]) === false) continue
     }
@@ -3020,12 +3021,14 @@ function importEdges(
   return edges.sort((a, b) => a.index - b.index)
 }
 
-/** The runtime imports of a module with the line each sits on, in source order. Pure. */
+/** The runtime imports of a module with the line each sits on, in source order. With `facts`, an
+ * import the compiler erases (`import { type X }`) is none. Pure. */
 export function importSites(
   content: string,
   file?: string,
+  facts?: SourceFacts,
 ): Array<{ readonly specifier: string; readonly line: number }> {
-  return importEdges(content, undefined, file).map(({ specifier, index }) => ({
+  return importEdges(content, facts, file).map(({ specifier, index }) => ({
     specifier,
     line: lineAt(content, index),
   }))

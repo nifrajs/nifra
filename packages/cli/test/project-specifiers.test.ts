@@ -252,3 +252,48 @@ describe("respell", () => {
     expect(respell(from, "plain", join(root, "src2/plain.ts"))).toBeUndefined()
   })
 })
+
+describe("keepsTypeOnlyImports", () => {
+  test("reads verbatimModuleSyntax and the retired emit options through extends", () => {
+    const root = project({
+      "plain/tsconfig.json": tsconfig({ isolatedModules: true }),
+      "plain/a.ts": "",
+      "verbatim/tsconfig.json": tsconfig({}, { extends: "./base.json" }),
+      "verbatim/base.json": tsconfig({ verbatimModuleSyntax: true }),
+      "verbatim/a.ts": "",
+      "override/tsconfig.json": tsconfig({ verbatimModuleSyntax: false }, { extends: "./base" }),
+      "override/base.json": tsconfig({ verbatimModuleSyntax: true }),
+      "override/a.ts": "",
+      "later/tsconfig.json": tsconfig({}, { extends: ["./one.json", "./two.json"] }),
+      "later/one.json": tsconfig({ verbatimModuleSyntax: false }),
+      "later/two.json": tsconfig({ verbatimModuleSyntax: true }),
+      "later/a.ts": "",
+      "legacy/tsconfig.json": tsconfig({ importsNotUsedAsValues: "preserve" }),
+      "legacy/a.ts": "",
+      "untyped/a.ts": "",
+    })
+    const { keepsTypeOnlyImports } = createSpecifierResolver()
+    expect(keepsTypeOnlyImports(join(root, "plain/a.ts"))).toBe(false)
+    expect(keepsTypeOnlyImports(join(root, "verbatim/a.ts"))).toBe(true)
+    expect(keepsTypeOnlyImports(join(root, "override/a.ts"))).toBe(false)
+    expect(keepsTypeOnlyImports(join(root, "later/a.ts"))).toBe(true)
+    expect(keepsTypeOnlyImports(join(root, "legacy/a.ts"))).toBe(true)
+    expect(keepsTypeOnlyImports(join(root, "untyped/a.ts"))).toBe(false)
+  })
+
+  test("a chain it cannot read keeps type-only imports", () => {
+    const root = project({
+      "broken/tsconfig.json": "{ not json",
+      "broken/a.ts": "",
+      "missing/tsconfig.json": tsconfig({}, { extends: "./absent.json" }),
+      "missing/a.ts": "",
+      "loop/tsconfig.json": tsconfig({}, { extends: "./other.json" }),
+      "loop/other.json": tsconfig({}, { extends: "./tsconfig.json" }),
+      "loop/a.ts": "",
+    })
+    const { keepsTypeOnlyImports } = createSpecifierResolver()
+    expect(keepsTypeOnlyImports(join(root, "broken/a.ts"))).toBe(true)
+    expect(keepsTypeOnlyImports(join(root, "missing/a.ts"))).toBe(true)
+    expect(keepsTypeOnlyImports(join(root, "loop/a.ts"))).toBe(true)
+  })
+})

@@ -390,7 +390,24 @@ async function buildProjectScan(
   const loadedTypeScript = await loadProjectTypeScript(cwd, opts.loadTypeScript, source)
   try {
     const sqlCompiler = loadedTypeScript.compiler
-    const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
+    // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
+    // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
+    // The resolver answers with real paths, so the project root is read as one too.
+    const realCwd = (() => {
+      try {
+        return realpathSync(cwd)
+      } catch {
+        return cwd
+      }
+    })()
+    const resolveSpecifier = createSpecifierResolver()
+    const sourceFacts =
+      sqlCompiler === undefined
+        ? undefined
+        : createSourceFacts(sqlCompiler, {
+            keepsTypeOnlyImports: (file) =>
+              resolveSpecifier.keepsTypeOnlyImports(isAbsolute(file) ? file : join(realCwd, file)),
+          })
     const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
     const project = new Map(
       sourceFiles.map(({ file, content }) => [file.replaceAll("\\", "/"), content]),
@@ -403,17 +420,6 @@ async function buildProjectScan(
         interpolatedSql.push(...scanSqlSites(file, content, sqlCompiler, sqlImports))
     }
 
-    // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
-    // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
-    // The resolver answers with real paths, so the project root is read as one too.
-    const realCwd = (() => {
-      try {
-        return realpathSync(cwd)
-      } catch {
-        return cwd
-      }
-    })()
-    const resolveSpecifier = createSpecifierResolver()
     const projectPath = (path: string): string => {
       const rel = relative(realCwd, path).replaceAll("\\", "/")
       return rel.startsWith("../") || isAbsolute(rel) ? path : rel

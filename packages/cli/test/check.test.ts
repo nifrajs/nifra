@@ -3262,6 +3262,45 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("an all-type inline import is an edge only where the compiler keeps it", async () => {
+    const files = {
+      "frontend/theme.ts": 'export type Theme = "dark"\nexport const theme: Theme = "dark"\n',
+      "backend/report.ts":
+        'import { type Theme } from "../frontend/theme"\nexport const report: Theme = "dark"\n',
+      "backend/mixed.ts":
+        'import { type Theme, theme } from "../frontend/theme"\nexport const mixed: Theme = theme\n',
+      "backend/empty.ts": 'import {} from "../frontend/theme"\nexport const empty = 1\n',
+    }
+    const erased = await project({ ...files, "tsconfig.json": '{ "compilerOptions": {} }' })
+    expect((await findings(erased, "NF-C028")).map((f) => f.split(" ")[0])).toEqual([
+      "backend/empty.ts:1",
+      "backend/mixed.ts:1",
+    ])
+    const kept = await project({
+      ...files,
+      "tsconfig.json": '{ "compilerOptions": { "verbatimModuleSyntax": true } }',
+    })
+    expect((await findings(kept, "NF-C028")).map((f) => f.split(" ")[0])).toEqual([
+      "backend/empty.ts:1",
+      "backend/mixed.ts:1",
+      "backend/report.ts:1",
+    ])
+    await rm(erased, { recursive: true, force: true })
+    await rm(kept, { recursive: true, force: true })
+  })
+
+  test("a default import beside type-only names still reaches server code", async () => {
+    const dir = await project({
+      "backend/db.ts":
+        'import { Database } from "bun:sqlite"\nexport type Row = { id: number }\nexport default new Database("app.db")\n',
+      "routes/index.tsx":
+        'import db, { type Row } from "../backend/db"\nexport default () => String(db) as unknown as Row\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.filter((d) => d.rule === "server-only-import")).not.toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("a zoned app is clean", async () => {
     const dir = await project({
       "shared/format.ts": "export const format = (n: number) => String(n)\n",

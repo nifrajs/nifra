@@ -82,8 +82,26 @@ function rawResponseExpression(ts: TypeScriptApi, node: TSApi.Expression): boole
   )
 }
 
-export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
+export interface SourceFactsOptions {
+  /** Whether the compiler settings for a parsed file keep an import whose named specifiers are all
+   * type-only (`verbatimModuleSyntax`). Without it such an import is erased. */
+  readonly keepsTypeOnlyImports?: (file: string) => boolean
+}
+
+export function createSourceFacts(
+  ts: TypeScriptApi,
+  options: SourceFactsOptions = {},
+): SourceFacts {
   const cache = new Map<string, { content: string; source: TSApi.SourceFile | undefined }>()
+  // `{}` loads its module in every bundler; a list of type-only specifiers is erased unless the
+  // compiler keeps it as `import {} from "x"`.
+  const loadsModule = (
+    source: TSApi.SourceFile,
+    elements: readonly { readonly isTypeOnly: boolean }[],
+  ): boolean =>
+    elements.length === 0 ||
+    elements.some((element) => !element.isTypeOnly) ||
+    (options.keepsTypeOnlyImports?.(source.fileName) ?? false)
 
   const parse = (file: string, content: string): TSApi.SourceFile | undefined => {
     const cached = cache.get(file)
@@ -118,7 +136,7 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
       if (reexport.isTypeOnly) return false
       const named = reexport.exportClause
       if (named !== undefined && ts.isNamedExports(named))
-        return named.elements.some((element) => !element.isTypeOnly)
+        return loadsModule(source, named.elements)
       return true // `export *` and `export * as ns`
     }
     const declaration = ancestorAt(ts, source, position, ts.isImportDeclaration)
@@ -128,9 +146,9 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     const clause = declaration.importClause
     if (clause === undefined) return true // side-effect import
     if (clause.isTypeOnly) return false
-    if (clause.namedBindings !== undefined && ts.isNamedImports(clause.namedBindings)) {
-      return clause.namedBindings.elements.some((element) => !element.isTypeOnly)
-    }
+    // A default binding is a runtime import whatever its named list holds.
+    const named = clause.name === undefined ? clause.namedBindings : undefined
+    if (named !== undefined && ts.isNamedImports(named)) return loadsModule(source, named.elements)
     return true // default and namespace bindings are runtime imports
   }
 

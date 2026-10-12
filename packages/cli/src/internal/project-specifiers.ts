@@ -22,6 +22,12 @@ export interface ProjectResolver extends SpecifierResolver {
   readonly respell: (fromFile: string, specifier: string, file: string) => string | undefined
   /** The `paths` patterns of the nearest tsconfig at or above `dir`, after its `extends` chain. */
   readonly pathPatterns: (dir: string) => readonly string[]
+  /**
+   * Whether the compiler settings for `file` keep an import whose named specifiers are all
+   * type-only, as `import {} from "x"` (`verbatimModuleSyntax`). `true` when its tsconfig chain
+   * cannot be read, so a scan that trusts the answer keeps the edge.
+   */
+  readonly keepsTypeOnlyImports: (file: string) => boolean
 }
 
 /** How an alias specifier reached its file: what a rewrite through the same alias has to fit. */
@@ -59,7 +65,18 @@ interface PathsConfig {
   readonly pathsBase: string
   readonly paths: ReadonlyArray<readonly [string, readonly string[]]>
   readonly baseUrl: string | undefined
+  /** The {@link IMPORT_EMIT_OPTIONS} the chain sets, later configs winning; `undefined` when part of
+   * the chain could not be read. */
+  readonly importEmit: Readonly<Record<string, unknown>> | undefined
 }
+
+// The options that decide whether an import left with only type specifiers is emitted. The last two
+// are removed in TypeScript 6 but still read by older compilers and bundlers.
+const IMPORT_EMIT_OPTIONS = [
+  "verbatimModuleSyntax",
+  "importsNotUsedAsValues",
+  "preserveValueImports",
+]
 
 /** JSON with comments and trailing commas, as tsconfig files are written. Throws on anything else. */
 export function parseJsonc(text: string): unknown {
@@ -209,7 +226,7 @@ export function createSpecifierResolver(): ProjectResolver {
     }
   }
 
-  /** The `paths` and `baseUrl` a config ends up with after its `extends` chain. */
+  /** The `paths`, `baseUrl` and import-emit options a config ends up with after its `extends` chain. */
   const pathsConfig = (
     file: string,
     seen: ReadonlySet<string> = new Set(),
@@ -218,6 +235,7 @@ export function createSpecifierResolver(): ProjectResolver {
     if (seen.has(file) || seen.size >= MAX_EXTENDS) return undefined
     const config = readJsonc(file)
     let inherited: PathsConfig | undefined
+    let importEmit: Record<string, unknown> | undefined = {}
     const extended = config?.extends
     for (const name of typeof extended === "string"
       ? [extended]
@@ -227,15 +245,24 @@ export function createSpecifierResolver(): ProjectResolver {
       if (typeof name !== "string") continue
       const base = extendedConfig(file, name)
       const parent = base === undefined ? undefined : pathsConfig(base, new Set([...seen, file]))
+      importEmit =
+        importEmit === undefined || parent?.importEmit === undefined
+          ? undefined
+          : { ...importEmit, ...parent.importEmit }
       if (parent === undefined) continue
       inherited = {
         paths: parent.paths.length > 0 ? parent.paths : (inherited?.paths ?? []),
         baseUrl: parent.baseUrl ?? inherited?.baseUrl,
         pathsBase:
           parent.paths.length > 0 ? parent.pathsBase : (inherited?.pathsBase ?? parent.pathsBase),
+        importEmit,
       }
     }
     const options = record(config?.compilerOptions)
+    if (importEmit !== undefined) {
+      for (const key of IMPORT_EMIT_OPTIONS)
+        if (options?.[key] !== undefined) importEmit = { ...importEmit, [key]: options[key] }
+    }
     const baseUrl =
       typeof options?.baseUrl === "string"
         ? join(dirname(file), options.baseUrl)
@@ -255,7 +282,7 @@ export function createSpecifierResolver(): ProjectResolver {
           )
     const pathsBase =
       baseUrl ?? (ownPaths === undefined ? (inherited?.pathsBase ?? dirname(file)) : dirname(file))
-    const resolved = config === undefined ? undefined : { paths, baseUrl, pathsBase }
+    const resolved = config === undefined ? undefined : { paths, baseUrl, pathsBase, importEmit }
     configs.set(file, resolved)
     return resolved
   }
@@ -401,7 +428,20 @@ export function createSpecifierResolver(): ProjectResolver {
     return (config?.paths ?? []).map(([pattern]) => pattern)
   }
 
-  return Object.assign(resolve, { respell, pathPatterns })
+  const keepsTypeOnlyImports = (file: string): boolean => {
+    const tsconfig = tsconfigFor(dirname(file))
+    if (tsconfig === undefined) return false
+    const emit = pathsConfig(tsconfig)?.importEmit
+    if (emit === undefined) return true
+    return (
+      emit.verbatimModuleSyntax === true ||
+      emit.preserveValueImports === true ||
+      emit.importsNotUsedAsValues === "preserve" ||
+      emit.importsNotUsedAsValues === "error"
+    )
+  }
+
+  return Object.assign(resolve, { respell, pathPatterns, keepsTypeOnlyImports })
 
   function resolveFrom(fromFile: string, specifier: string): string | undefined {
     let found: string | undefined
