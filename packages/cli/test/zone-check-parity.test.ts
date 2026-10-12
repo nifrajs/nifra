@@ -200,4 +200,34 @@ describe("nifra migrate layout", () => {
     expect(await buildRefuses(root, "frontend/lib/client.tsx")).toEqual([])
     expect(await zoneFindings(root)).toEqual([])
   })
+
+  test("an alias narrower than the zones is rewritten so check and build accept the result", async () => {
+    const root = app({
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+      "nifra.config.ts": 'export const clientModule = "./src/client.tsx"\n',
+      "src/client.tsx":
+        'import { api } from "@/lib/api"\nexport function mountRouter() {\n  return api\n}\n',
+      "src/lib/api.ts":
+        'import { type Row } from "@/data/rows"\nexport const api: Row = { id: 1 }\n',
+      "src/data/rows.ts":
+        'import { api } from "@/lib/api"\nexport type Row = { id: number }\nexport const rows = [api]\n',
+      "routes/index.tsx": [
+        'import { api } from "@/lib/api"',
+        'import { rows } from "@/data/rows"',
+        "export const loader = () => ({ rows })",
+        "export default () => api.id",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(root, { typescript: ts, write: true })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/client.tsx -> frontend/src/client.tsx",
+      "src/data/rows.ts -> backend/src/data/rows.ts",
+      "src/lib/api.ts -> shared/src/lib/api.ts",
+    ])
+    expect(result.issues.filter((issue) => /alias|reaches/.test(issue.reason))).toEqual([])
+    expect(await buildRefuses(root, "frontend/src/client.tsx")).toEqual([])
+    // The shared module's type-only import of backend code is erased, so it is no zone edge.
+    expect(await zoneFindings(root)).toEqual([])
+  })
 })

@@ -293,21 +293,88 @@ describe("migrateLayout", () => {
       'entries: { client: "./frontend/entry-client.tsx", ssr: "./backend/entry-server.tsx" }',
     )
     expect(result.rewritten).toContain("nifra.config.ts")
-    // No target of `@app/*` or `#db/*` covers the new place: left as written and reported.
-    expect(read(dir, "routes/index.tsx")).toContain('from "@app/money"')
-    expect(read(dir, "routes/index.backend.ts")).toContain('from "#db/pool"')
+    // No target of `@app/*` or `#db/*` covers the new place: a relative path names it.
+    expect(read(dir, "routes/index.tsx")).toContain('from "../frontend/src/money"')
+    expect(read(dir, "routes/index.backend.ts")).toContain('from "../backend/db/pool"')
     const reasons = result.issues.map((issue) => `${issue.file}: ${issue.reason}`)
     expect(reasons).toContain(
       'routes/index.tsx: "not-a-real-package-xyz" names no installed package and no file through the app\'s tsconfig paths or package.json imports, so the migration cannot tell where it belongs; check it by hand',
     )
-    expect(reasons).toContain(
-      'routes/index.backend.ts: the path alias "#db/pool" names "db/pool.ts", which moves to "backend/db/pool.ts", and no target of that alias covers the new location; point it there by hand',
+    // An installed package and every alias the migration rewrote are not issues.
+    expect(
+      reasons.filter((reason) => /typescript|alias|reaches|clientModule/.test(reason)),
+    ).toEqual([])
+  })
+
+  test("an alias no target covers after the move becomes a relative path that reaches it", async () => {
+    const files = {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "@/*": ["./src/*"], "@home": ["./routes/index.tsx"] } },
+      }),
+      "src/lib/fetcher.ts": 'export const fetcher = "api"\n',
+      "src/lib/icons/index.ts": 'export const icon = "*"\n',
+      "src/lib/logo.svg": "<svg/>\n",
+      "src/data/x.ts": 'import { fetcher } from "@/lib/fetcher"\nexport const x = fetcher\n',
+      "src/lib/stays.ts": 'export const stays = "unreached"\n',
+      "src/pages/Home.tsx": [
+        'import { fetcher } from "@/lib/fetcher"',
+        'import { icon } from "@/lib/icons"',
+        'import logo from "@/lib/logo.svg?url"',
+        'import type { stays } from "@/lib/stays"',
+        "export default () => fetcher + icon + logo",
+        "export type S = typeof stays",
+        "",
+      ].join("\n"),
+      "src/pages/Home.test.tsx": [
+        'import { vi } from "vitest"',
+        'vi.mock("@/lib/fetcher", () => ({ fetcher: "mock" }))',
+        'import Home from "@/pages/Home"',
+        "export const rendered = Home()",
+        "",
+      ].join("\n"),
+      "src/home.test.ts": 'import { loader } from "@home"\nexport const data = loader()\n',
+      "routes/index.tsx": [
+        'import Home from "@/pages/Home"',
+        'import { x } from "@/data/x"',
+        "export async function loader() { return { x } }",
+        "export default Home",
+        "",
+      ].join("\n"),
+    }
+    const dir = app(files)
+    const dry = await migrateLayout(dir, { typescript: ts })
+    expect(read(dir, "src/pages/Home.tsx")).toBe(files["src/pages/Home.tsx"])
+    expect(dry.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/data/x.ts -> backend/src/data/x.ts",
+      "src/lib/fetcher.ts -> shared/src/lib/fetcher.ts",
+      "src/lib/icons/index.ts -> frontend/src/lib/icons/index.ts",
+      "src/lib/logo.svg -> frontend/src/lib/logo.svg",
+      "src/pages/Home.tsx -> frontend/src/pages/Home.tsx",
+    ])
+    expect(dry.issues.filter((issue) => /alias|reaches/.test(issue.reason))).toEqual([])
+
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.issues).toEqual(dry.issues)
+    const home = read(dir, "frontend/src/pages/Home.tsx")
+    expect(home).toContain('from "../../../shared/src/lib/fetcher"')
+    expect(home).toContain('from "../lib/icons"')
+    expect(home).toContain('from "../lib/logo.svg?url"')
+    // Its target stays in src/, where the alias still reaches it from the new place.
+    expect(home).toContain('from "@/lib/stays"')
+    expect(read(dir, "backend/src/data/x.ts")).toContain('from "../../../shared/src/lib/fetcher"')
+    expect(read(dir, "routes/index.tsx")).toContain('from "../frontend/src/pages/Home"')
+    expect(read(dir, "routes/index.backend.ts")).toContain('from "../backend/src/data/x"')
+    const test = read(dir, "src/pages/Home.test.tsx")
+    expect(test).toContain('vi.mock("../../shared/src/lib/fetcher"')
+    expect(test).toContain('from "../../frontend/src/pages/Home"')
+    // An alias that cannot name the route's backend half reaches its loader by a relative path.
+    expect(read(dir, "src/home.test.ts")).toContain(
+      'import { loader } from "../routes/index.backend"',
     )
-    expect(reasons).toContain(
-      'routes/index.tsx: the path alias "@app/money" names "src/money.ts", which moves to "frontend/src/money.ts", and no target of that alias covers the new location; point it there by hand',
-    )
-    // An installed package and the aliases that still resolve are not issues.
-    expect(reasons.filter((reason) => /typescript|~\/|clientModule/.test(reason))).toEqual([])
+    // Nothing is left to move or rewrite.
+    const again = await migrateLayout(dir, { typescript: ts })
+    expect(again.moves).toEqual([])
+    expect(again.rewritten).toEqual([])
   })
 
   test("a page the server imports is rendered there, so what only pages use still goes to frontend/", async () => {

@@ -12,16 +12,18 @@
  *      the server side -> `backend/`, both -> `shared/`. Imports through tsconfig `paths`/`baseUrl` and
  *      package.json `imports` count as the bundler reads them;
  *   5. rewrites every import in the app to the new locations (test-runner mocks included), an alias
- *      through the same alias, the config's `clientModule` and `componentPipeline.entries` paths,
- *      `@nifrajs/web/server-only` to `@nifrajs/web/backend-only`, and `ServerOnly` to `BackendOnly`;
+ *      through the same alias when one of its targets covers the new place and as a relative path
+ *      otherwise, each checked to resolve to its target after the moves; the config's `clientModule`
+ *      and `componentPipeline.entries` paths; `@nifrajs/web/server-only` to
+ *      `@nifrajs/web/backend-only`; and `ServerOnly` to `BackendOnly`;
  *   6. adds the zone folders moved TypeScript lands in to tsconfig `include`, and `.nifra/` to
  *      `.gitignore`.
  *
  * Data files (JSON, YAML, CSV, ...) and folders the app zones in package.json stay where they are.
  *
  * It is a dry run unless `write` is set, and it reports what it could not decide (a frontend that uses
- * a moved name at runtime, a helper both halves need, a loader with no output schema, an alias no
- * target covers after a move, a specifier that names nothing) instead of guessing.
+ * a moved name at runtime, a helper both halves need, a loader with no output schema, an import no
+ * specifier reaches after the moves, a specifier that names nothing) instead of guessing.
  */
 import {
   existsSync,
@@ -43,7 +45,7 @@ import type * as TS from "typescript"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE, retiredRootFiles } from "./app-files.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
-import { createSpecifierResolver } from "./internal/project-specifiers.ts"
+import { createSpecifierResolver, isFile } from "./internal/project-specifiers.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
 
@@ -127,6 +129,9 @@ export interface LayoutMigrationOptions {
 type Files = Map<string, string>
 
 const toPosix = (path: string): string => path.replaceAll("\\", "/")
+
+/** A specifier without its `?query` or `#hash`; a leading `#` names a package.json import. */
+const withoutQuery = (specifier: string): string => specifier.replace(/(?!^)[?#].*$/, "")
 
 /** Every first-party file under `root`, app-relative and posix. */
 function listFiles(root: string): string[] {
@@ -898,7 +903,7 @@ function respecify(
   newFrom: string,
   newTarget: string,
 ): string {
-  const query = /[?#].*$/.exec(original)?.[0] ?? ""
+  const query = original.slice(withoutQuery(original).length)
   const clean = original.slice(0, original.length - query.length)
   let target = newTarget
   const writtenExt = extname(clean)
@@ -928,16 +933,16 @@ function rebase(specifier: string, from: string, newFrom: string): string | unde
 }
 
 /** A split route as an importer sees it: the names that left it, and how this importer spells the
- * backend half they went to (`undefined` when an alias cannot name it). */
+ * backend half they went to. */
 interface SplitTarget {
   readonly backend: string
   readonly moved: ReadonlySet<string>
-  readonly specifier: string | undefined
+  readonly specifier: string
 }
 
 /** `specifier` re-pointed from a split route to its backend half, in the author's extension style. */
 function backendSpecifier(specifier: string, route: string, backend: string, from: string): string {
-  const query = /[?#].*$/.exec(specifier)?.[0] ?? ""
+  const query = specifier.slice(withoutQuery(specifier).length)
   const written = extname(specifier.slice(0, specifier.length - query.length))
   const stem = backend.slice(0, -extname(backend).length)
   const target =
@@ -953,8 +958,7 @@ function backendSpecifier(specifier: string, route: string, backend: string, fro
 /**
  * Point an importer's named imports of a split route's moved exports (`loader`, `action`, ...) at the
  * backend half, splitting a statement that also names what stayed. What cannot be rewritten (a
- * namespace or dynamic import that reads a moved name, `export *`, an alias with no target there) is
- * returned as an issue.
+ * namespace or dynamic import that reads a moved name, `export *`) is returned as an issue.
  */
 function redirectMovedImports(
   ts: typeof TS,
@@ -1010,12 +1014,6 @@ function redirectMovedImports(
         split.moved.has((el.propertyName ?? el.name).text)
       const moved = elements.filter(isMoved)
       if (moved.length === 0) return
-      if (split.specifier === undefined) {
-        issues.push(
-          `imports ${quoted(moved.map((el) => (el.propertyName ?? el.name).text))} from "${from}", but they moved to "${split.backend}" and no target of that alias covers it; point the import there by hand`,
-        )
-        return
-      }
       redirects.push({
         names: moved.map((el) => (el.propertyName ?? el.name).text),
         from,
@@ -1453,7 +1451,11 @@ export async function migrateLayout(
   for (const [from, to] of Object.entries(rootMoves)) if (next.has(from)) moveMap.set(from, to)
   // Assets (images, fonts) resolve too, so they move with the modules that import them.
   const known = new Set([...next.keys(), ...everyFile])
-  const resolver = createSpecifierResolver()
+  const knownPaths = new Set([...known].map((file) => join(root, file)))
+  // Route halves the split creates resolve before they are written.
+  const resolver = createSpecifierResolver({
+    moduleExists: (path) => knownPaths.has(path) || isFile(path),
+  })
   const realRoot = (() => {
     try {
       return realpathSync(root)
@@ -1461,14 +1463,21 @@ export async function migrateLayout(
       return root
     }
   })()
+  /** An app file as the migration names it, from a path the resolver found (real, or as planned). */
+  const appFile = (path: string | undefined): string | undefined => {
+    if (path === undefined) return undefined
+    for (const base of [realRoot, root]) {
+      const rel = toPosix(relative(base, path))
+      if (!rel.startsWith("../") && !isAbsolute(rel)) return rel
+    }
+    return undefined
+  }
   /** A non-relative specifier the app's tsconfig `paths`/`baseUrl` or package.json `imports` maps to
-   * one of its files, read from disk as the bundler reads it. */
+   * one of its files, as the bundler reads it. */
   const viaAlias = (file: string, specifier: string): string | undefined => {
     if (specifier.startsWith(".") || isAbsolute(specifier)) return undefined
-    const found = resolver(join(root, file), specifier)
-    if (found === undefined) return undefined
-    const rel = toPosix(relative(realRoot, found))
-    return rel.startsWith("../") || isAbsolute(rel) || !known.has(rel) ? undefined : rel
+    const rel = appFile(resolver(join(root, file), withoutQuery(specifier)))
+    return rel === undefined || !known.has(rel) ? undefined : rel
   }
   const resolveAny = (file: string, specifier: string): string | undefined =>
     resolveIn(known, file, specifier) ?? viaAlias(file, specifier)
@@ -1485,7 +1494,7 @@ export async function migrateLayout(
    * scheme the bundler owns, the app's own package name, or a package installed at or above it. */
   const external = (specifier: string): boolean => {
     if (/^[a-z][a-z\d+.-]*:/i.test(specifier) || specifier === "bun") return true
-    const name = packageName(specifier.replace(/[?#].*$/, ""))
+    const name = packageName(withoutQuery(specifier))
     if (builtinModules.includes(name) || name === ownName) return true
     let found = installed.get(name)
     if (found === undefined) {
@@ -1518,9 +1527,10 @@ export async function migrateLayout(
       const split = route === undefined ? undefined : splitRoutes.get(route)
       if (route === undefined || split === undefined) return undefined
       const inBase = (path: string): string => toPosix(relative(base, join(root, path)))
+      const relativePath = backendSpecifier(specifier, inBase(route), inBase(split.backend), file)
       const respelled = specifier.startsWith(".")
-        ? backendSpecifier(specifier, inBase(route), inBase(split.backend), file)
-        : resolver.respell(join(base, file), specifier, join(root, split.backend))
+        ? relativePath
+        : (resolver.respell(join(base, file), specifier, join(root, split.backend)) ?? relativePath)
       return { backend: split.backend, moved: split.moved, specifier: respelled }
     }
   const redirectedFiles = new Set<string>()
@@ -1698,19 +1708,53 @@ export async function migrateLayout(
   const newPath = (file: string): string => moveMap.get(file) ?? file
   const final: Files = new Map()
   const rewritten: string[] = []
-  const unspelled = new Set<string>()
-  /** An alias for a target that moves, through the same alias, or an issue when none covers it. */
-  const respellAlias = (file: string, specifier: string, target: string): string | undefined => {
-    if (newPath(target) === target) return undefined
-    const respelled = resolver.respell(join(root, file), specifier, join(root, newPath(target)))
-    if (respelled === undefined && !unspelled.has(`${file}\0${specifier}`)) {
-      unspelled.add(`${file}\0${specifier}`)
-      issues.push({
-        file,
-        reason: `the path alias "${specifier}" names "${target}", which moves to "${newPath(target)}", and no target of that alias covers the new location; point it there by hand`,
-      })
-    }
-    return respelled
+  // The app as the migration leaves it, where every rewritten specifier must reach its target.
+  const planned = new Set(
+    [...known].filter((file) => next.has(file) || !original.has(file)).map(newPath),
+  )
+  const plannedResolver = createSpecifierResolver({
+    moduleExists: (path) => {
+      const file = appFile(path)
+      if (file !== undefined && (planned.has(file) || known.has(file))) return planned.has(file)
+      return isFile(path)
+    },
+  })
+  /** Whether `specifier`, written in `from` after the moves, loads `target` there. */
+  const reaches = (from: string, specifier: string, target: string): boolean =>
+    specifier.startsWith(".")
+      ? resolveIn(planned, from, specifier) === target
+      : appFile(plannedResolver(join(root, from), withoutQuery(specifier))) === target
+  const unreached = new Set<string>()
+  const unreachable = (file: string, specifier: string, target: string, from: string): void => {
+    if (unreached.has(`${file}\0${specifier}`)) return
+    unreached.add(`${file}\0${specifier}`)
+    issues.push({
+      file,
+      reason: `"${specifier}" names "${target}", which moves to "${newPath(target)}", and no specifier the migration can write from "${from}" reaches it there; point it there by hand`,
+    })
+  }
+  /**
+   * How `from` names `target` after the moves, for the alias `specifier` that `file` writes: as written
+   * while it still reaches it, through the same alias when one of its targets covers the new place,
+   * else as a relative path. `undefined` leaves it as written.
+   */
+  const aliasTo = (
+    file: string,
+    specifier: string,
+    target: string,
+    from = newPath(file),
+  ): string | undefined => {
+    const to = newPath(target)
+    if (to === target && from === file) return undefined
+    const written = withoutQuery(specifier)
+    if (reaches(from, written, to)) return undefined
+    const respelled = resolver.respell(join(root, file), written, join(root, to))
+    if (respelled !== undefined && reaches(from, respelled, to))
+      return `${respelled}${specifier.slice(written.length)}`
+    const relativePath = respecify(specifier, target, from, to)
+    if (reaches(from, relativePath, to)) return relativePath
+    unreachable(file, specifier, target, from)
+    return undefined
   }
   for (const [file, text] of next) {
     const imports = rewriteImports(ts, file, text, (specifier) => {
@@ -1719,9 +1763,12 @@ export async function migrateLayout(
       const target = resolveAny(file, specifier)
       // Outside the app (or a skipped dir): the target stays put, so only a moved importer re-bases it.
       if (target === undefined) return rebase(specifier, file, newPath(file))
-      if (!specifier.startsWith(".")) return respellAlias(file, specifier, target)
+      if (!specifier.startsWith(".")) return aliasTo(file, specifier, target)
       if (newPath(target) === target && newPath(file) === file) return undefined
-      return respecify(specifier, target, newPath(file), newPath(target))
+      const relativePath = respecify(specifier, target, newPath(file), newPath(target))
+      if (!reaches(newPath(file), relativePath, newPath(target)))
+        unreachable(file, specifier, target, newPath(file))
+      return relativePath
     })
     const updated = renameRetiredTypes(ts, file, imports)
     final.set(newPath(file), updated)
@@ -1743,7 +1790,7 @@ export async function migrateLayout(
       if (target === undefined || newPath(target) === target) continue
       const value = entry.value.startsWith(".")
         ? respecify(entry.value, target, "nifra.config.ts", newPath(target))
-        : respellAlias(configFile, entry.value, target)
+        : aliasTo(configFile, entry.value, target, "nifra.config.ts")
       if (value !== undefined) edits.push({ start: entry.start, end: entry.end, text: value })
     }
     if (edits.length === 0) continue

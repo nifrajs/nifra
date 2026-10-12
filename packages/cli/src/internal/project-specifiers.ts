@@ -118,8 +118,14 @@ const record = (value: unknown): Readonly<Record<string, unknown>> | undefined =
     ? Object.fromEntries(Object.entries(value))
     : undefined
 
-const isFile = (path: string): boolean =>
-  statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
+/** Whether `path` is a file. A path through a file (`a.ts/index.ts`) is none, not an error. */
+export const isFile = (path: string): boolean => {
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
+  } catch {
+    return false
+  }
+}
 
 const real = (path: string): string => {
   try {
@@ -130,18 +136,18 @@ const real = (path: string): string => {
 }
 
 /** The file a path names: as written, its source for a `.js` name, with an extension, or an index. */
-function probe(base: string): string | undefined {
-  if (isFile(base)) return base
+function probe(base: string, exists: (path: string) => boolean): string | undefined {
+  if (exists(base)) return base
   const ext = extname(base)
   for (const source of SOURCE_FOR[ext] ?? []) {
     const candidate = `${base.slice(0, -ext.length)}${source}`
-    if (isFile(candidate)) return candidate
+    if (exists(candidate)) return candidate
   }
   for (const extension of EXTENSIONS)
-    if (isFile(`${base}${extension}`)) return `${base}${extension}`
+    if (exists(`${base}${extension}`)) return `${base}${extension}`
   for (const extension of EXTENSIONS) {
     const index = join(base, `index${extension}`)
-    if (isFile(index)) return index
+    if (exists(index)) return index
   }
   return undefined
 }
@@ -181,7 +187,14 @@ function matchPattern(
   return best
 }
 
-export function createSpecifierResolver(): ProjectResolver {
+export interface SpecifierResolverOptions {
+  /** Whether a module file exists, for resolving against a planned layout rather than the disk.
+   * Config files (tsconfig, package.json) are still read from the disk. */
+  readonly moduleExists?: (path: string) => boolean
+}
+
+export function createSpecifierResolver(options: SpecifierResolverOptions = {}): ProjectResolver {
+  const exists = options.moduleExists ?? isFile
   const configs = new Map<string, PathsConfig | undefined>()
   const tsconfigByDir = new Map<string, string | undefined>()
   const manifests = new Map<string, Readonly<Record<string, unknown>> | undefined>()
@@ -342,7 +355,7 @@ export function createSpecifierResolver(): ProjectResolver {
     if (template === undefined) return undefined
     const base = dirname(manifestPath)
     const written = join(base, template.replaceAll(STAR, match.star ?? ""))
-    const found = probe(written)
+    const found = probe(written, exists)
     return found === undefined
       ? undefined
       : { key: match.pattern, keys, base, templates: [template], written, found }
@@ -362,7 +375,7 @@ export function createSpecifierResolver(): ProjectResolver {
     if (match === undefined) {
       if (config.baseUrl === undefined) return undefined
       const written = join(config.baseUrl, specifier)
-      const found = probe(written)
+      const found = probe(written, exists)
       return found === undefined
         ? undefined
         : { key: undefined, keys, base: config.baseUrl, templates: [STAR], written, found }
@@ -373,7 +386,7 @@ export function createSpecifierResolver(): ProjectResolver {
     )
     for (const target of targets) {
       const written = join(config.pathsBase, target.replaceAll("*", match.star ?? ""))
-      const found = probe(written)
+      const found = probe(written, exists)
       if (found === undefined) continue
       const templates = targets.map((t) => t.replaceAll("*", STAR))
       return { key: match.pattern, keys, base: config.pathsBase, templates, written, found }
@@ -451,8 +464,8 @@ export function createSpecifierResolver(): ProjectResolver {
       specifier === "." ||
       specifier === ".."
     )
-      found = probe(join(dirname(fromFile), specifier))
-    else if (isAbsolute(specifier)) found = probe(specifier)
+      found = probe(join(dirname(fromFile), specifier), exists)
+    else if (isAbsolute(specifier)) found = probe(specifier, exists)
     // A `#` name is a package.json import first; a tsconfig may still map it.
     else if (specifier.startsWith("#"))
       found = viaImports(fromFile, specifier) ?? viaTsconfig(fromFile, specifier)
