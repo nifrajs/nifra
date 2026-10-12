@@ -3,7 +3,12 @@ import { createHash } from "node:crypto"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ChromePage, findChrome, launchChrome } from "../../cli/test/headless-chrome.ts"
+import {
+  CHROME_LAUNCH_TIMEOUT_MS,
+  type ChromePage,
+  findChrome,
+  launchChrome,
+} from "../../cli/test/headless-chrome.ts"
 import { createDevSession } from "../src/dev-session.ts"
 
 /**
@@ -87,7 +92,7 @@ describe.skipIf(chrome === undefined)("dev issues indicator in a browser", () =>
   beforeAll(async () => {
     if (chrome === undefined) throw new Error("unreachable: the suite is skipped without Chrome")
     page = await launchChrome(chrome)
-  }, 30_000)
+  }, CHROME_LAUNCH_TIMEOUT_MS)
   afterAll(async () => {
     await page?.close()
   }, 30_000)
