@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs"
-import { isAbsolute, relative, resolve } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { readBoundedText } from "./process.ts"
 
@@ -321,7 +321,8 @@ export class IsolatedExtensionWorker {
 
 function isWithin(root: string, candidate: string): boolean {
   const path = relative(resolve(root), resolve(candidate))
-  return path === "" || (!path.startsWith("..") && !path.includes("/.."))
+  // On Windows a path on another drive has no relative form, so `relative` returns it absolute.
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
 }
 
 function isValidPort(value: unknown): value is number {
