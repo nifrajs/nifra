@@ -49,15 +49,15 @@ export function sendContractApp<App extends WsRoutable>(
 export function firstContractFrame(port: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws://127.0.0.1:${port}${SEND_CONTRACT_PATH}`)
-    const timer = setTimeout(() => reject(new Error("no frame arrived")), 5000)
-    socket.addEventListener("message", (event) => {
+    // A frame, a socket error, or no frame in time: the timer calls this with no event.
+    const settle = (event?: Event): void => {
       clearTimeout(timer)
       socket.close()
-      resolve(String(event.data))
-    })
-    socket.addEventListener("error", () => {
-      clearTimeout(timer)
-      reject(new Error("socket errored"))
-    })
+      if (event instanceof MessageEvent) resolve(String(event.data))
+      else reject(new Error(event === undefined ? "no frame arrived" : "socket errored"))
+    }
+    const timer = setTimeout(settle, 5000)
+    socket.addEventListener("message", settle)
+    socket.addEventListener("error", settle)
   })
 }
