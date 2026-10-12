@@ -5831,7 +5831,9 @@ bridge an external fan-out (Redis pub/sub, NATS, a queue) to broadcast across al
 **Cloudflare Workers**, a stateless isolate can’t broadcast across connections,
 so Nifra ships a Durable Object hub: `createWebSocketHub(app)` holds the
 connections, and `toFetchHandler(app, { webSocketHub })` routes upgrades to it
-- then `ws.subscribe` / `app.publish` behave exactly as on Bun.
+- then `ws.subscribe` / `app.publish` behave exactly as on Bun. An
+upgrade request for a path with no WebSocket route still gets that path's HTTP answer, as on
+every other runtime.
 
 ```ts
 // doc-check: skip - Workers entry: a Durable Object hub holds the connections.

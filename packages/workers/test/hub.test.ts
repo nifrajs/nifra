@@ -84,11 +84,31 @@ describe("createWebSocketHub", () => {
     expect(res.status).toBe(403)
   })
 
-  test("an upgrade to a non-WS path returns 426", async () => {
+  test("an upgrade to a path with no WS route gets the HTTP answer, as on other runtimes", async () => {
+    let hooked = 0
+    const app = server()
+      .use(websocket())
+      .onRequest(() => {
+        hooked++
+      })
+      .ws("/room", { open: () => {} })
+      .get("/plain", () => ({ plain: true }))
+    const hub = new (createWebSocketHub(app))({}, {})
+    const plain = await hub.fetch(upgrade("/plain"))
+    expect(plain.status).toBe(200)
+    expect(await plain.json()).toEqual({ plain: true })
+    // The handshake check and the HTTP answer share one request, so its hooks ran once.
+    expect(hooked).toBe(1)
+    expect((await hub.fetch(upgrade("/no-such-route"))).status).toBe(404)
+  })
+
+  test("an app with no fetch answers an upgrade to a non-WS path with 426", async () => {
     const app = server()
       .use(websocket())
       .ws("/room", { open: () => {} })
-    const hub = new (createWebSocketHub(app))({}, {})
+    const hub = new (createWebSocketHub({
+      resolveWebSocketUpgrade: (request: Request) => app.resolveWebSocketUpgrade(request),
+    }))({}, {})
     expect((await hub.fetch(upgrade("/no-such-route"))).status).toBe(426)
   })
 

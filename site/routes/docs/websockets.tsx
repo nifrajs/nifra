@@ -251,7 +251,9 @@ export default function WebSockets() {
         <strong>Cloudflare Workers</strong>, a stateless isolate can’t broadcast across connections,
         so Nifra ships a Durable Object hub: <code>createWebSocketHub(app)</code> holds the
         connections, and <code>toFetchHandler(app, {"{ webSocketHub }"})</code> routes upgrades to it
-        - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun.
+        - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun. An
+        upgrade request for a path with no WebSocket route still gets that path's HTTP answer, as on
+        every other runtime.
       </p>
       <CodeBlock code={WORKERS} />
 

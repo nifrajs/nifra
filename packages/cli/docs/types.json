@@ -15942,7 +15942,7 @@
     "name": "WebSocketHubApp",
     "kind": "interface",
     "package": "@nifrajs/workers",
-    "signature": "export interface WebSocketHubApp<Env = unknown> {\n    resolveWebSocketUpgrade(request: Request, platform?: {\n        readonly env: Env;\n        readonly waitUntil: (promise: Promise<unknown>) => void;\n    }): WebSocketUpgradeOutcome | Promise<WebSocketUpgradeOutcome>;\n}",
+    "signature": "export interface WebSocketHubApp<Env = unknown> {\n    resolveWebSocketUpgrade(request: Request, platform?: {\n        readonly env: Env;\n        readonly waitUntil: (promise: Promise<unknown>) => void;\n    }): WebSocketUpgradeOutcome | Promise<WebSocketUpgradeOutcome>;\n    /** Answers an upgrade request for a path with no WebSocket route, as `fetch` does on every other\n     * runtime. An app without it gets `426`. */\n    fetch?(request: Request, platform?: {\n        readonly env: Env;\n        readonly waitUntil: (promise: Promise<unknown>) => void;\n    }): Response | Promise<Response>;\n}",
     "doc": "/** The nifra-app surface the hub needs - every `server()` app satisfies it. */"
   },
   {

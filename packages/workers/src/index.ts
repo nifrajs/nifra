@@ -39,6 +39,12 @@ export interface WebSocketHubApp<Env = unknown> {
     request: Request,
     platform?: { readonly env: Env; readonly waitUntil: (promise: Promise<unknown>) => void },
   ): WebSocketUpgradeOutcome | Promise<WebSocketUpgradeOutcome>
+  /** Answers an upgrade request for a path with no WebSocket route, as `fetch` does on every other
+   * runtime. An app without it gets `426`. */
+  fetch?(
+    request: Request,
+    platform?: { readonly env: Env; readonly waitUntil: (promise: Promise<unknown>) => void },
+  ): Response | Promise<Response>
 }
 
 /** Structural view of a Durable Object's state (only `waitUntil` is used). */
@@ -90,8 +96,11 @@ export function createWebSocketHub<Env = unknown>(
       const outcome = await app.resolveWebSocketUpgrade(request, platform)
       if (outcome.kind === "reject") return outcome.response
       if (outcome.kind !== "upgrade") {
-        // Not a registered WS route (or not an upgrade) - nothing for the hub to do.
-        return new Response("Upgrade Required", { status: 426 })
+        // Not a WebSocket route: its HTTP route answers, with this same request so the app's
+        // onRequest hooks, which the handshake check already ran, do not run again.
+        return app.fetch === undefined
+          ? new Response("Upgrade Required", { status: 426 })
+          : app.fetch(request, platform)
       }
       const Pair = (globalThis as { WebSocketPair?: WebSocketPairCtor }).WebSocketPair
       if (Pair === undefined) {
