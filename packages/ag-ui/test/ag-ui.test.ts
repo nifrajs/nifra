@@ -686,6 +686,25 @@ describe("mountAgUI refusals and failures", () => {
     )
   })
 
+  test("a body the run never reads is answered by the shared body lane", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, { agent: definition(), ports: ports() })
+    const post = (headers: Record<string, string>) =>
+      call(
+        new Request("http://local/agui", { method: "POST", headers, body: "threadId=t&runId=r" }),
+      )
+    const unread = await post({ "content-type": "text/plain" })
+    expect(unread.status).toBe(415)
+    expect(await unread.json()).toEqual({ ok: false, error: "unsupported_media_type" })
+    // A form another site posts with the visitor's cookies is refused before it is parsed.
+    const crossSite = await post({
+      "content-type": "application/x-www-form-urlencoded",
+      origin: "https://evil.test",
+    })
+    expect(crossSite.status).toBe(403)
+    expect(await crossSite.json()).toEqual({ ok: false, error: "forbidden_origin" })
+  })
+
   test("evidenceOwner refuses with 403, or answers with a Response it throws", async () => {
     const { app, call } = captureApp()
     mountAgUI(app, {

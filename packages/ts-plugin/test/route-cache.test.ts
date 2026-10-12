@@ -43,3 +43,13 @@ test("a changed route set compiles afresh", () => {
   expect(resolveRouteFile("/route-cache-probe/new", added)).toBe("routes/route-cache-probe/new.tsx")
   expect(compiles).toBe(3)
 })
+
+test("past its eight route sets the cache drops the oldest, so that set compiles again", () => {
+  const set = (n: number) => [{ pattern: `/evict-${n}`, file: `routes/evict-${n}.tsx` }]
+  for (let n = 0; n < 9; n++) resolveRouteFile(`/evict-${n}`, set(n))
+  compiles = 0
+  resolveRouteFile("/evict-8", set(8))
+  expect(compiles).toBe(0)
+  resolveRouteFile("/evict-0", set(0))
+  expect(compiles).toBe(1)
+})
