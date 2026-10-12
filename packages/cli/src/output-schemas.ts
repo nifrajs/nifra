@@ -267,6 +267,9 @@ async function shapeOf<T>(
     for (const property of properties) {
       if (property.name.startsWith("__@") || (await reader.callable(property.type))) continue
       const shape = await shapeOf(reader, property.type, seen, depth + 1)
+      // `key?: undefined` is how TypeScript lines up a union of object literals: a key the other
+      // members have and this one never sends.
+      if (shape.kind === "undefined" || shape.kind === "never") continue
       const defined = withoutUndefined(shape)
       fields.push({
         name: property.name,
@@ -361,6 +364,33 @@ export function omittedPaths(shape: Shape, path = ""): string[] {
           ? [at]
           : omittedPaths(field.shape, at)
       })
+    default:
+      return []
+  }
+}
+
+/** The paths a draft of `shape` admits any value at: `any` or `unknown` there, or a type too deep or
+ * recursive to read. The output guard drops nothing below them. */
+export function openPaths(shape: Shape, path = ""): string[] {
+  switch (shape.kind) {
+    case "json":
+      return shape.reason === undefined ? [] : [path === "" ? "(the whole value)" : path]
+    case "array":
+      return openPaths(shape.items, `${path}[]`)
+    case "tuple":
+      return openPaths(unionOf(shape.items), `${path}[]`)
+    case "record":
+      return openPaths(shape.values, `${path}{}`)
+    case "deferred":
+      return openPaths(shape.value, path)
+    case "union":
+      return [...new Set(shape.members.flatMap((member) => openPaths(member, path)))]
+    case "object":
+      return shape.fields.flatMap((field) =>
+        isSensitiveFieldName(field.name) || field.shape.kind === "opaque"
+          ? []
+          : openPaths(field.shape, path === "" ? field.name : `${path}.${field.name}`),
+      )
     default:
       return []
   }
@@ -827,6 +857,9 @@ export interface OutputSchemaEntry {
   readonly reason?: string
   /** Returned paths a draft leaves out: credential-like names, and values that are not JSON. */
   readonly omitted?: readonly string[]
+  /** Returned paths a generated schema admits any value at, because the type there is `any` or
+   * `unknown`: the output guard drops nothing below them until the type says what is sent. */
+  readonly open?: readonly string[]
 }
 
 interface SchemaDeclaration {
@@ -1017,13 +1050,15 @@ export async function planOutputSchemas(
         reason?: string,
         edited = false,
         omitted: readonly string[] = [],
+        open: readonly string[] = [],
       ): number => {
         const schema = target.schema
         const generated = declaration?.hash !== undefined
         const base: OutputSchemaEntry = { file, line, schema, status, generated, dropped }
         const item: OutputSchemaEntry =
           reason !== undefined ? { ...base, reason } : edited ? { ...base, edited } : base
-        return entries.push(omitted.length === 0 ? item : { ...item, omitted }) - 1
+        const withOmitted = omitted.length === 0 ? item : { ...item, omitted }
+        return entries.push(open.length === 0 ? withOmitted : { ...withOmitted, open }) - 1
       }
       if (target.annotated) {
         // A `Route.Loader` annotation returns the schema's own input type: comparing the two would
@@ -1062,6 +1097,7 @@ export async function planOutputSchemas(
       }
       const body = schemaSource(returned)
       const omitted = omittedPaths(returned)
+      const open = openPaths(returned)
       if (declaration === undefined) {
         // The name bound any other way (declared, imported) would clash with the one written here.
         if (new RegExp(`(?<![\\w$.])${target.schema}(?![\\w$])`).test(mask)) {
@@ -1072,7 +1108,7 @@ export async function planOutputSchemas(
           )
           continue
         }
-        const at = entry("missing", [], undefined, false, omitted)
+        const at = entry("missing", [], undefined, false, omitted, open)
         const written = declarationText(target.schema, target.fn, body)
         const text = target.insertAt === content.length ? `\n${written}\n` : `${written}\n\n`
         replacements.push({ start: target.insertAt, end: target.insertAt, text, entry: at })
@@ -1080,11 +1116,11 @@ export async function planOutputSchemas(
         declaration.hash === hashOf(body) &&
         schemaTokens(declaration.value) === schemaTokens(body)
       ) {
-        entry("current")
+        entry("current", [], undefined, false, [], open)
       } else {
         // The marker still matches what would be written, so the text under it was edited.
         const edited = declaration.hash === hashOf(body)
-        const at = entry("stale", dropped, undefined, edited, omitted)
+        const at = entry("stale", dropped, undefined, edited, omitted, open)
         const text = declarationText(target.schema, target.fn, body)
         replacements.push({ start: declaration.start, end: declaration.end, text, entry: at })
       }
@@ -1139,7 +1175,7 @@ export interface OutputSchemasReport {
  */
 export async function outputSchemas(
   dir: string,
-  options: { readonly write?: boolean } = {},
+  options: { readonly write?: boolean; readonly check?: boolean } = {},
 ): Promise<OutputSchemasReport> {
   const write = options.write === true
   const { entries, edits, warnings } = await planOutputSchemas(dir, routeBackends(dir), (file) => {
@@ -1166,8 +1202,13 @@ export async function outputSchemas(
             : entry,
     )
   }
+  // `check` also fails what a review still owes: a schema not written yet, and one that admits anything.
+  const owed = (entry: OutputSchemaEntry): boolean =>
+    entry.status === "missing" || (entry.open?.length ?? 0) > 0
   return {
-    ok: warnings.length === 0 && !final.some((entry) => entry.status === "stale"),
+    ok:
+      warnings.length === 0 &&
+      !final.some((entry) => entry.status === "stale" || (options.check === true && owed(entry))),
     write,
     entries: final,
     written,

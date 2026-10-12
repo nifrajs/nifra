@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -13,6 +13,7 @@ import { bindCommandArgv } from "../src/command-catalog.ts"
 import {
   errorsSpec,
   explainLatest,
+  explainSpec,
   inspectRequests,
   logsSpec,
   renderErrors,
@@ -310,4 +311,33 @@ test("--prompt prints one error's agent prompt alone; --id and --option pick whi
 
   const argv = bindCommandArgv(errorsSpec, ["--prompt", "--id", older.id, "--option", "Fix"])
   expect(argv).toMatchObject({ prompt: true, id: older.id, option: "Fix" })
+})
+
+test("explain turns a pasted error into a diagnostic from the CLI, and says when there is none", async () => {
+  const root = tempRoot()
+  mkdirSync(join(root, "routes"))
+  writeFileSync(join(root, "routes/a.backend.ts"), "export function loader() {\n  return x()\n}\n")
+  const input = bindCommandArgv(explainSpec, [
+    "x is not a function",
+    "--name",
+    "TypeError",
+    "--stack",
+    `TypeError: x is not a function\n    at loader (${join(root, "routes/a.backend.ts")}:2:10)`,
+    "--dir",
+    root,
+  ])
+  const out = await explainSpec.run(input, { cwd: root })
+  expect(out.code).toBe("NIFRA_UNHANDLED")
+  const lines = explainSpec.render?.(out, input) ?? []
+  expect(lines[0]).toBe("NIFRA_UNHANDLED  TypeError: x is not a function")
+  expect(lines).toContain("  >    2 |   return x()")
+  expect(explainSpec.exitCode?.(out, input)).toBe(0)
+
+  // No stack: no frame, rather than one inside the command itself.
+  const bare = await explainSpec.run({ error: "boom", dir: root }, { cwd: root })
+  expect("frames" in bare ? bare.frames : []).toEqual([])
+
+  const none = await explainSpec.run({ dir: root }, { cwd: root })
+  expect(none.code).toBe("NIFRA_NONE")
+  expect(explainSpec.exitCode?.(none, {})).toBe(2)
 })

@@ -123,6 +123,7 @@ describe("generating a missing schema", () => {
         generated: false,
         dropped: [],
         omitted: ["rows[].passwordHash", "tags"],
+        open: ["meta"],
       },
     ])
     expect(read(root, "routes/feed.backend.ts")).toBe(FEED)
@@ -147,6 +148,16 @@ describe("generating a missing schema", () => {
     const again = await outputSchemas(root)
     expect(again.entries.map((e) => e.status)).toEqual(["current"])
     expect(again.ok).toBe(true)
+    // `meta` was drafted from `unknown`: --check and nifra check report the open value.
+    expect((await outputSchemas(root, { check: true })).ok).toBe(false)
+    writeFileSync(join(root, "routes/feed.tsx"), "export default () => null\n")
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    const open = check.diagnostics.filter(
+      (d) => d.code === "NF-C030" && d.message.includes("admits any value"),
+    )
+    expect(open.map((d) => [d.severity, d.line])).toEqual([
+      ["warning", text.split("\n").findIndex((line) => line.includes("meta: t.json()")) + 1],
+    ])
 
     // The written module runs as a route's backend half: the output guard accepts what its loader
     // returns and drops what the schema left out.
@@ -225,6 +236,32 @@ describe("generating a missing schema", () => {
     ])
     expect(report.written).toEqual([])
     expect(read(root, "routes/page.backend.ts")).toBe(source)
+  }, 60_000)
+})
+
+describe("check mode and union drafts", () => {
+  test("--check fails a missing schema; a typed one passes", async () => {
+    const root = project({
+      "routes/me.backend.ts": "export const loader = () => ({ name: 'Ada' })\n",
+    })
+    expect((await outputSchemas(root)).ok).toBe(true)
+    expect((await outputSchemas(root, { check: true })).ok).toBe(false)
+    expect((await outputSchemas(root, { write: true, check: true })).ok).toBe(true)
+  }, 60_000)
+
+  test("a union of object literals drafts each member without the keys it never sends", async () => {
+    const root = project({
+      "routes/pick.backend.ts": [
+        "export const loader = ({ request }: { request: Request }) =>",
+        "  request.url.endsWith('/a') ? { kind: 'a' as const, a: 1 } : { kind: 'b' as const, b: 'x' }",
+        "",
+      ].join("\n"),
+    })
+    await outputSchemas(root, { write: true })
+    const text = read(root, "routes/pick.backend.ts")
+    expect(text).not.toContain("t.optional(t.null())")
+    expect(text).toContain('kind: t.literal("a"),\n  a: t.number(),')
+    expect(text).toContain('kind: t.literal("b"),\n  b: t.string(),')
   }, 60_000)
 })
 

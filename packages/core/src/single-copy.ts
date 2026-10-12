@@ -375,6 +375,17 @@ const nodeModulesDirs = (root: string): readonly string[] => {
   return dirs
 }
 
+/** Where a real package folder lives when only its files are links: Bun installs a `file:` folder
+ * dependency as a directory of per-file symlinks, so its imports resolve beside the linked files. */
+const fileLinkedDir = (dir: string): string | undefined => {
+  const manifest = join(dir, "package.json")
+  try {
+    return lstatSync(manifest).isSymbolicLink() ? dirname(realpathOrSelf(manifest)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Package directories that are symlinked OUT of this repository - the `link:` / `file:` / `npm link`
  * consumers whose own imports resolve somewhere this install does not own. Those are the only
@@ -408,9 +419,8 @@ const linkedPackageDirs = (root: string): readonly string[] => {
         } catch {
           continue
         }
-        if (!link.isSymbolicLink()) continue
-        const target = realpathOrSelf(candidate)
-        if (inside(repo, target)) continue
+        const target = link.isSymbolicLink() ? realpathOrSelf(candidate) : fileLinkedDir(candidate)
+        if (target === undefined || inside(repo, target)) continue
         found.add(target)
       }
     }

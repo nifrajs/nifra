@@ -8146,13 +8146,12 @@ written down: `nifra fix --code NF-C035` adds
 `export const apiPrefix = "/api"`, which is what 4.x mounted by default, and
 `""` keeps the backend loader-only.
 
-With both files, `nifra dev` loads `nifra.config.ts` while the server
-entry `nifra build` generates imports `backend/framework.ts`, so
-`nifra.config.ts` re-exports the prefix:
-`export { apiPrefix } from "./backend/framework"`. Without it,
-`nifra dev` serves the backend nowhere while production serves it, and
-`NF-C035` reports that too. A hand-written `createWebApp` call passes
-`apiPrefix` itself.
+With both files, `nifra dev` and `nifra build` take
+`apiPrefix`, `apiStrip`, `mounts`, `csp`,
+`nonce`, `serverComponents` and `use` from
+`backend/framework.ts` when `nifra.config.ts` does not set them, so the
+server entry and the dev server read one value without a re-export. A hand-written
+`createWebApp` call passes `apiPrefix` itself.
 
 Because the backend answers first and its 404 is final, a page file under the prefix (
 `routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
@@ -10585,6 +10584,140 @@ If the project has `nifra.assurance.ts`, run `nifra assure --json`.
 -
 Exercise every redirect path - loader, action, and layout gate - and, if the app proxies,
 each deploy adapter it uses.
+
+## Nifra 5.0 migration guide - upgrade from 3.x or 4.x
+
+> Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates.
+
+Nifra 4.0 split every app into a frontend and a backend half, and 5.0 enforces the split and
+changes a handful of defaults. The upgrade command pins the packages and moves imports; the
+layout migration moves files; this guide covers what each leaves to you and how to tell a
+finished migration from one that needs a decision.
+
+### 1. Run the executable upgrade
+
+```ts
+
+```
+
+Run the command from the release you are moving to. It chains every release recipe between
+the installed version and 5.0, so a 3.x app takes the 4.0 steps (the retired
+`@nifrajs/web/server-only` import moves to `@nifrajs/web/backend-only`)
+and the 5.0 ones in one pass, and prints each release's notes. It lists every
+`@nifra-gate-reviewed` comment, which silences nothing in 5.0: after review, write
+`// nifra-expect : ` with the code `nifra check`
+reports there. The upgrade never writes a reason for you.
+
+### 2. Move onto the frontend/backend layout (from 3.x)
+
+```ts
+
+```
+
+Each route file splits into `x.tsx`, the page, and `x.backend.ts`, which
+holds `loader`, `action`, `middleware` and the other server
+exports. The root `backend.ts` and `framework.ts` move to
+`backend/app.ts` and `backend/framework.ts`, and every other module goes
+to `frontend/`, `backend/` or `shared/` by who imports it at
+runtime. A folder whose imported files all land in one zone moves whole, so a component nothing
+imports yet travels with its folder; a folder split between zones is reported instead.
+
+```ts
+
+```
+
+To keep a folder where it is, declare it a zone before migrating. The migration leaves zoned
+folders in place, and builds, `nifra dev` and `nifra check` enforce them
+like the default folders.
+
+```ts
+
+```
+
+The command exits `0` when nothing needs a decision. A step with a known command,
+such as drafting an output schema for a backend half it did not write, is listed under
+`next` and in `followUps` with `--json`, and does not fail it.
+An issue (an import it could not place, a frontend that still uses a moved name at runtime)
+exits `1`.
+
+5.0 refuses a route file that still exports a server name: `nifra build` and the
+server stop on it, and `nifra check` reports it as NF-C041.
+`nifra fix --code NF-C041` moves the export and the code only it uses into the
+route's backend half.
+
+### 3. Draft and review output schemas
+
+A loader or action that returns data needs `loaderOutput` or
+`actionOutput`; the data is projected through it, so undeclared keys never reach
+the page. `nifra schemas --write` drafts each missing one from the function's return
+type, leaves out credential-like fields and marks it `nifra:generated` so later runs
+keep it current. A value typed `any` or `unknown` drafts as
+`t.json()`, which admits anything: `nifra schemas` lists those paths and
+`nifra check` warns on them (NF-C030). Give the value a type and draft again.
+`nifra schemas --check` fails on a missing, stale or open schema, for CI.
+
+### 4. Choose where the backend is served
+
+3.x and 4.x served `backend/app.ts` at `/api` by default. In 5.0
+`createWebApp` serves it over HTTP only at an `apiPrefix` the app sets;
+without one the backend is loader-only, reached in-process through `ctx.api`, and a
+browser call to `/api` reaches page routing. `nifra migrate layout` adds
+`apiPrefix = "/api"` when it moves a root `backend.ts`, and
+`nifra check` reports a framework config that sets none (NF-C035).
+
+```ts
+
+```
+
+With both `nifra.config.ts` and `backend/framework.ts`, every command
+takes `apiPrefix`, `apiStrip`, `mounts`, `csp`,
+`nonce`, `serverComponents` and `use` from
+`backend/framework.ts` when `nifra.config.ts` leaves them unset. The
+backend sees each request's full path unless `apiStrip` is on, so its routes are
+registered under the prefix; `nifra routes` marks one outside it as in-process
+only, and `nifra dev` and `nifra build` warn about it.
+
+### 5. Review the 5.0 defaults that changed
+
+-
+Root status pages (`_404.tsx`, `_<status>.tsx`) and
+`_error.tsx` render inside the layouts above them. One that imports the root
+layout to wrap itself renders it twice (NF-C034); remove the wrap, or export
+`inLayouts = false`.
+
+-
+A layout's `meta` receives its own loader data as `data` and the page's
+as `pageData` (NF-C040).
+
+-
+A WebSocket handshake runs the route chain an HTTP `GET` at the same point runs, so
+guards added before `app.ws()` apply to it.
+
+-
+A `Response` returned to more than one request is no longer shared; build one per
+request.
+
+-
+`nifra check` fails a secret comparison (NF-S002) outside browser code of a web
+app.
+
+`nifra upgrade` prints the full list with the finding or the one-line change that
+keeps the 4.x behavior for each.
+
+### 6. Run the release gates
+
+-
+Run `nifra check --json` and fix every error. `nifra doctor` lists any
+package still on another release.
+
+-
+If the project has `nifra.assurance.ts`, run `nifra assure --json`.
+
+- Run the application test suite and a production build.
+
+-
+Exercise the pages that load or post data, and every browser call to the backend, under
+`nifra dev` and against the production build.
 
 ## Nifra - Migrating from Express, Hono, Fastify & Elysia
 

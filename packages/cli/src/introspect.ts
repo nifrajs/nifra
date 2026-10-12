@@ -438,6 +438,9 @@ export interface RouteTableEntry {
    * through the same web app, no hand-wired `if (pathname.startsWith("/api/"))`). Pages are never
    * auto-mounted (they ARE the page router); only API routes carry this flag. */
   readonly autoMounted?: boolean
+  /** True for an API route outside a set `apiPrefix` while `apiStrip` is off: the mount passes the
+   * request's full path, so no HTTP request reaches it; loaders still call it in-process. */
+  readonly inProcessOnly?: boolean
 }
 
 /** A page route + whether its module exports an `action` (→ it also serves POST). The caller resolves
@@ -506,6 +509,8 @@ export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
       path,
       methods: [...info.methods].sort(),
       autoMounted: info.autoMounted,
+      // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: only a route outside apiPrefix carries the flag, so every other row keeps its shape.
+      ...(apiPrefix !== "" && !info.autoMounted ? { inProcessOnly: true } : {}),
     })
   }
   return rows.sort(
@@ -544,7 +549,12 @@ export function renderRouteTable(rows: readonly RouteTableEntry[]): string {
   const display = rows.map((r) => ({
     methods: r.methods.join(", "),
     kind: r.kind,
-    path: r.kind === "api" && r.autoMounted ? `${r.path}  (auto-mounted)` : r.path,
+    path:
+      r.kind === "api" && r.autoMounted
+        ? `${r.path}  (auto-mounted)`
+        : r.inProcessOnly === true
+          ? `${r.path}  (in-process only: outside apiPrefix)`
+          : r.path,
     client: clientSpellingFor(r.path),
   }))
   const methodW = Math.max("METHOD".length, ...display.map((d) => d.methods.length))
@@ -577,6 +587,7 @@ export interface RouteJsonRow {
   readonly methods: readonly string[]
   readonly file?: string
   readonly autoMounted?: boolean
+  readonly inProcessOnly?: boolean
   /** The reserved typed-client key a static segment of this path collides with, when one does. */
   readonly reservedKey?: string
   /** The typed-client call spelling that reaches this route, present only alongside `reservedKey`. */
@@ -599,6 +610,8 @@ export function routeTableToJson(rows: readonly RouteTableEntry[]): {
         methods: r.methods,
         ...(r.file !== undefined ? { file: r.file } : {}),
         ...(r.kind === "api" ? { autoMounted: r.autoMounted === true } : {}),
+        // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: `--json` rows gain the key only where it is true, so existing consumers see no change.
+        ...(r.inProcessOnly === true ? { inProcessOnly: true } : {}),
         ...(client === undefined
           ? {}
           : { reservedKey: client.reserved, clientSpelling: client.spelling }),
@@ -746,6 +759,31 @@ async function collectRouteTable(app: IntrospectedApp): Promise<RouteTableEntry[
     ...(framework?.apiStrip !== undefined ? { apiStrip: framework.apiStrip } : {}),
   })
   return rows
+}
+
+/**
+ * The warning `nifra dev` and `nifra build` print for backend routes no HTTP request reaches, read from
+ * the routes the backend registers, prefixes and mounts resolved; `undefined` when there are none.
+ */
+export function unservedRoutesWarning(
+  app: Pick<IntrospectedApp, "framework" | "backend">,
+): string | undefined {
+  const apiPrefix = app.framework?.apiPrefix ?? ""
+  if (apiPrefix === "" || app.backend === undefined) return undefined
+  const rows = buildRouteTable({
+    pages: [],
+    api: backendRoutes(app.backend),
+    apiPrefix,
+    apiStrip: app.framework?.apiStrip === true,
+  }).filter((row) => row.inProcessOnly === true)
+  if (rows.length === 0) return undefined
+  const listed = rows.map((row) => `${row.methods.join(",")} ${row.path}`)
+  const named =
+    listed.length > 3
+      ? `${listed.slice(0, 3).join(", ")} and ${listed.length - 3} more`
+      : listed.join(", ")
+  const one = rows.length === 1
+  return `[nifra] ${one ? "a backend route is" : `${rows.length} backend routes are`} served over HTTP nowhere: ${named}. backend/app.ts is mounted at apiPrefix ${apiPrefix} with apiStrip off, so it sees each request's full path, and ${one ? "this route sits" : "these sit"} outside it; loaders still call ${one ? "it" : "them"} in-process. Register ${one ? "it" : "them"} under ${apiPrefix}, or export \`apiStrip = true\` to serve every backend route at ${apiPrefix} plus its path.`
 }
 
 export async function describeRoutes(

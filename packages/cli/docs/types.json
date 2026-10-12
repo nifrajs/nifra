@@ -19513,7 +19513,8 @@
     "name": "installForms",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function installForms(router: ClientRouter): () => void;"
+    "signature": "export declare function installForms(router: ClientRouter): () => void;",
+    "doc": "/**\n * Intercept submissions of same-origin `<form method=\"post\">` whose action targets an app route:\n * submit via the router (no full reload - POST the action, then revalidate the active loader). On\n * failure it falls back to a native submit, so the form still works. Returns a teardown function.\n */"
   },
   {
     "name": "installHistory",

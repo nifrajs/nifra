@@ -82,7 +82,7 @@ registerFixRecipe({
 registerFixRecipe({
   id: "framework.api-prefix",
   description:
-    "Serve the backend over HTTP at /api by exporting apiPrefix from the framework config, re-exported from nifra.config.ts for nifra dev.",
+    "Serve the backend over HTTP at /api by exporting apiPrefix from the framework config.",
   verify: "nifra check",
   async apply(root) {
     const { CONFIG_FILE, FRAMEWORK_FILE } = await import("./app-files.ts")
@@ -170,6 +170,38 @@ registerFixRecipe({
     if (rewritten === source) return []
     await writeFile(path, rewritten, "utf8")
     return [diagnostic.file]
+  },
+})
+
+registerFixRecipe({
+  id: "route.split",
+  description:
+    "Move a route frontend file's server-only exports, and the code only they use, into its x.backend.ts.",
+  verify: "nifra check",
+  async apply(root, diagnostic) {
+    const file = diagnostic.file
+    if (file === undefined || (await resolveInsideProject(root, file)) === undefined) return []
+    const { splitRouteFile } = await import("./migrate-layout.ts")
+    return splitRouteFile(root, file)
+  },
+})
+
+registerFixRecipe({
+  id: "layout.migrate",
+  description:
+    "Move the app onto the frontend/backend layout, as `nifra migrate layout --write` does.",
+  verify: "nifra check --lints-only",
+  async apply(root) {
+    const { migrateLayout } = await import("./migrate-layout.ts")
+    const result = await migrateLayout(root, { write: true })
+    return [
+      ...new Set([
+        ...result.moves.map((move) => move.to),
+        ...result.splits.flatMap((split) => [split.file, split.backend]),
+        ...result.rewritten,
+        ...result.tooling.map((edit) => edit.file),
+      ]),
+    ].sort()
   },
 })
 

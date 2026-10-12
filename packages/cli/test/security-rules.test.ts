@@ -188,6 +188,27 @@ describe("built-in security rules", () => {
     ])
   })
 
+  test("NF-S001 counts a result object's false decision and an authenticator's nobody as denials", async () => {
+    const findings = await scan(
+      "backend/results.ts",
+      [
+        "function requireA() { try { check() } catch (e) { return { ok: false, error: String(e) } } }",
+        'function requireB() { try { check() } catch { return { "allowed": false } } }',
+        "function authenticateToken() { try { return read() } catch { return null } }",
+        "function authenticateKey() { try { return read() } catch { return undefined } }",
+        "function authenticateSession() { try { return read() } catch { return } }",
+        "function requireC() { try { check() } catch { return { ok: true } } }",
+        "function requireD() { try { check() } catch { return null } }",
+        "function authenticateUser() { try { return read() } catch { return { id: 'guest' } } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S001:6",
+      "NF-S001:7",
+      "NF-S001:8",
+    ])
+  })
+
   test("NF-S001 knows the names gates go by", async () => {
     const gates = [
       "verifyToken",
@@ -198,8 +219,24 @@ describe("built-in security rules", () => {
       "authenticate",
       "authoriseUser",
       "adminGuard",
+      "checkPermissions",
+      "checkAuthorization",
+      "verifySignatures",
+      "ensureOwnership",
+      "checkUserAccess",
     ]
-    const other = ["ensureDir", "checkHealth", "verifyChecksum", "validateEmail", "Guard"]
+    const other = [
+      "ensureDir",
+      "checkHealth",
+      "verifyChecksum",
+      "validateEmail",
+      "Guard",
+      // The noun ends the gate's name; past it, another word names something else.
+      "validateTokenizer",
+      "checkAccessibility",
+      "validateOriginalUrl",
+      "checkUsers",
+    ]
     const findings = await scan(
       "backend/names.ts",
       [...gates, ...other]

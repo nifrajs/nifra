@@ -558,29 +558,46 @@ const GATE_NAMES = [
   /^(?:require|assert|authori[sz]e|authenticate)/i,
   /^can[A-Z]/,
   /.Guard$/,
-  /^(?:ensure|verify|check|validate)(?:Auth|LoggedIn|Login|Session|Token|Jwt|JWT|Signature|Webhook|Hmac|HMAC|Password|Credential|Permission|Access|Role|Admin|Owner|Scope|Csrf|CSRF|ApiKey|Origin|Tenant|User|Member)/,
+  /^(?:ensure|verify|check|validate)(?:Auth\w*|LoggedIn|Login|Session|Token|Jwt|JWT|Signatures?|Webhook|Hmac|HMAC|Password|Credentials?|Permissions?|Access|Roles?|Admin(?:istrator)?|Owner(?:ship)?|Scopes?|Csrf|CSRF|ApiKey|Origin|Tenant|User|Member(?:ship)?)(?![a-z])/,
 ]
+
+/** An authenticator returns who is calling, so its "nobody" result (`null`, `undefined`) is a denial. */
+const AUTHENTICATOR = /^authenticate/i
+
+/** Result-object fields whose `false` is the denial (`{ ok: false, error }`). */
+const DECISION_FIELDS = new Set([
+  "ok",
+  "allowed",
+  "authorized",
+  "authenticated",
+  "valid",
+  "success",
+  "granted",
+])
 
 /** Helpers whose whole job is to fail (`fail(…)`, `deny(…)`, `reject(…)`, …). */
 const FAILING_HELPERS = new Set(["fail", "deny", "reject", "forbid", "unauthorized", "abort"])
 
 /**
- * Whether a gate's catch block fails closed: it throws, returns `false`, a `new Response(…)` or a
- * `deny…(…)` call, or hands the failure to a {@link FAILING_HELPERS} helper. The last form is why
+ * Whether a gate's catch block fails closed: it throws, returns `false`, a result object whose decision
+ * field is `false`, a `new Response(…)` or a `deny…(…)` call (an authenticator also `null` or
+ * nothing), or hands the failure to a {@link FAILING_HELPERS} helper. The last form is why
  * conformance/invariant asserts that funnel every error through a `never`-returning `fail()` are not
  * fail-open - the scanner reads no types, so it trusts the helper by name, the same trade the SQL and
  * gate-name heuristics already make. Read from the syntax, so a "throw" in a comment or a string counts
  * for nothing, and a nested function's statements are not the catch's own.
  */
-function failsClosed(ts: typeof TSApi, block: TSApi.Block): boolean {
+function failsClosed(ts: typeof TSApi, block: TSApi.Block, gate: string): boolean {
+  const authenticator = AUTHENTICATOR.test(gate)
   let closed = false
   const visit = (node: TSApi.Node): void => {
     if (closed || ts.isFunctionLike(node)) return
     if (
       ts.isThrowStatement(node) ||
       (ts.isReturnStatement(node) &&
-        node.expression !== undefined &&
-        isDenial(ts, node.expression)) ||
+        (node.expression === undefined
+          ? authenticator
+          : isDenial(ts, node.expression, authenticator))) ||
       (ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
         FAILING_HELPERS.has(node.expression.text))
@@ -594,7 +611,7 @@ function failsClosed(ts: typeof TSApi, block: TSApi.Block): boolean {
   return closed
 }
 
-function isDenial(ts: typeof TSApi, expression: TSApi.Expression): boolean {
+function isDenial(ts: typeof TSApi, expression: TSApi.Expression, authenticator: boolean): boolean {
   let value = expression
   while (
     ts.isParenthesizedExpression(value) ||
@@ -604,6 +621,22 @@ function isDenial(ts: typeof TSApi, expression: TSApi.Expression): boolean {
   )
     value = value.expression
   if (value.kind === ts.SyntaxKind.FalseKeyword) return true
+  if (
+    authenticator &&
+    (value.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isVoidExpression(value) ||
+      (ts.isIdentifier(value) && value.text === "undefined"))
+  )
+    return true
+  if (ts.isObjectLiteralExpression(value)) {
+    return value.properties.some(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        DECISION_FIELDS.has(property.name.text) &&
+        property.initializer.kind === ts.SyntaxKind.FalseKeyword,
+    )
+  }
   if (ts.isNewExpression(value))
     return ts.isIdentifier(value.expression) && value.expression.text === "Response"
   return (
@@ -634,7 +667,7 @@ export const failOpenGateRule: CheckRule = {
           while (parent !== undefined && !ts.isFunctionLike(parent)) parent = parent.parent
           const name = parent === undefined ? undefined : functionName(ts, parent)
           if (name !== undefined && GATE_NAMES.some((gate) => gate.test(name))) {
-            if (!failsClosed(ts, node.block)) {
+            if (!failsClosed(ts, node.block, name)) {
               const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
               const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
               browser ??= provenBrowserFile(ctx.root, file, webDirs)

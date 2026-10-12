@@ -342,9 +342,31 @@ export async function loadBackendApp(
   return { cwd, backend }
 }
 
+/** The fields the generated server entry imports from backend/framework.ts. */
+const SERVER_OPTIONS = [...FRAMEWORK_WEB_OPTIONS, "use"] as const
+
+/**
+ * `config` with each server option it leaves unset taken from backend/framework.ts, so `nifra dev` and
+ * the server entry `nifra build` generates read one value without nifra.config.ts re-exporting it.
+ */
+async function withServerOptions(
+  config: Partial<NifraFramework>,
+  frameworkPath: string,
+  importQuery: string | undefined,
+): Promise<Partial<NifraFramework>> {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a config module, read like nifra.config.ts; every web option taken from it is validated below.
+  const framework = (await importWithQuery(frameworkPath, importQuery)) as Partial<NifraFramework>
+  const taken: Record<string, unknown> = {}
+  for (const name of SERVER_OPTIONS) {
+    if (config[name] === undefined && framework[name] !== undefined) taken[name] = framework[name]
+  }
+  assertFrameworkWebOptions(taken, FRAMEWORK_FILE)
+  return { ...config, ...taken }
+}
+
 /** Discover + validate the app conventions rooted at `cwd`. Prefers `nifra.config.ts`, falls back
- * to
- * `backend/framework.ts`. Throws a clear, actionable error if neither exists or the config is
+ * to `backend/framework.ts`; with both, a server option nifra.config.ts leaves unset comes from
+ * backend/framework.ts. Throws a clear, actionable error if neither exists or the config is
  * malformed. */
 export async function loadApp(
   cwd: string,
@@ -375,7 +397,11 @@ export async function loadApp(
       `[nifra] no routes/ directory in ${cwd} - nifra apps are file-routed under routes/.`,
     )
   }
-  const fw = (await importWithQuery(configPath, options.importQuery)) as Partial<NifraFramework>
+  const loaded = (await importWithQuery(configPath, options.importQuery)) as Partial<NifraFramework>
+  const fw =
+    configFile === CONFIG_FILE && existsSync(resolve(cwd, FRAMEWORK_FILE))
+      ? await withServerOptions(loaded, resolve(cwd, FRAMEWORK_FILE), options.importQuery)
+      : loaded
   if (!isAdapter(fw.adapter) || typeof fw.clientModule !== "string") {
     throw new Error(
       `[nifra] ${configFile} must export \`adapter\` (a render adapter object) and \`clientModule\` (a string).`,

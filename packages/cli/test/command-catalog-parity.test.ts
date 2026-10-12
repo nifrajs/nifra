@@ -42,6 +42,7 @@ test("the stable catalog is the public command allowlist", () => {
     "port",
     "i18n",
     "errors",
+    "explain",
     "logs",
     "cdn-check",
     "db-schema",

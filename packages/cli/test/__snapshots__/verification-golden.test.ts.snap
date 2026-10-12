@@ -102,8 +102,11 @@ exports[`verification golden output: nifra check dirty project: human report wit
 ✓ effect/capability assurance: none
 ✓ capability assurance config: none
 ✓ nifra.check.json: none
+✗ Server-only export in a route frontend file (NF-C041): 2
+    routes/notes.tsx:2  routes/notes.tsx exports "loader", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to routes/notes.backend.ts.
+    routes/notes.tsx:6  routes/notes.tsx exports "action", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to routes/notes.backend.ts.
 
-✗ check failed: 2 errors
+✗ check failed: 4 errors
 
 tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + agent files (no-clobber)."
 `;
@@ -152,6 +155,32 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
           "A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk."
         ]
       }
+    },
+    {
+      "rule": "NF-C041",
+      "severity": "error",
+      "code": "NF-C041",
+      "file": "routes/notes.tsx",
+      "line": 2,
+      "message": "routes/notes.tsx exports \\"loader\\", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to routes/notes.backend.ts.",
+      "evidence": [
+        "export: loader",
+        "backend half: routes/notes.backend.ts"
+      ],
+      "verify": "nifra check"
+    },
+    {
+      "rule": "NF-C041",
+      "severity": "error",
+      "code": "NF-C041",
+      "file": "routes/notes.tsx",
+      "line": 6,
+      "message": "routes/notes.tsx exports \\"action\\", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to routes/notes.backend.ts.",
+      "evidence": [
+        "export: action",
+        "backend half: routes/notes.backend.ts"
+      ],
+      "verify": "nifra check"
     }
   ]
 }"

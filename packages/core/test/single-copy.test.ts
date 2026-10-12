@@ -30,6 +30,8 @@ const linkedRepos = async (
     readonly declaration?: unknown
     readonly siblingVersion?: string
     readonly bunfig?: string
+    /** `file`: the folder Bun installs for a `file:` dependency, real directories of per-file links. */
+    readonly install?: "link" | "file"
   } = {},
 ) => {
   // Realpath up front: on macOS `/var` is a symlink to `/private/var`, and every path this plugin
@@ -75,7 +77,13 @@ const linkedRepos = async (
       "const seenBy = new Set();\nexport const mark = (who) => seenBy.add(who);\nexport const seen = () => [...seenBy];\n",
     )
   }
-  await symlink(ui, join(app, "node_modules", "@example", "ui"))
+  const installed = join(app, "node_modules", "@example", "ui")
+  if (over.install === "file") {
+    await mkdir(installed)
+    for (const file of ["package.json", "index.js"]) {
+      await symlink(join(ui, file), join(installed, file))
+    }
+  } else await symlink(ui, installed)
   return { ground, app, ours, theirs }
 }
 
@@ -209,6 +217,20 @@ test("planSingleCopy redirects a linked repo's copy at the app's, and refuses ac
   }
 })
 
+test("a file: dependency installed as a folder of linked files is planned like a linked one", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("file-plan", {
+    declaration: ["state"],
+    install: "file",
+  })
+  try {
+    expect(planSingleCopy({ cwd: app }).redirects).toEqual([
+      { package: "state", from: theirs, to: ours, version: "1.0.0" },
+    ])
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
 test("an undeclared package is left alone", async () => {
   const { ground, app } = await linkedRepos("undeclared")
   try {
@@ -218,8 +240,14 @@ test("an undeclared package is left alone", async () => {
   }
 })
 
-test("the plugin collapses two copies into one module instance at RUNTIME", async () => {
-  const { ground, app } = await linkedRepos("runtime", { declaration: ["state"] })
+test.each([
+  "link",
+  "file",
+] as const)("the plugin collapses two copies into one module instance at RUNTIME (%s install)", async (install) => {
+  const { ground, app } = await linkedRepos(`runtime-${install}`, {
+    declaration: ["state"],
+    install,
+  })
   try {
     // Proved in a child process: `Bun.plugin` is global and permanent, so registering it in this
     // process would leak into every other test file. The child is also the honest test - the runtime

@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
-import { shadowedPages } from "@nifrajs/web/route-manifest"
+import { BACKEND_ROUTE_EXPORTS, shadowedPages } from "@nifrajs/web/route-manifest"
 import type * as TSApi from "typescript"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { stripComments } from "../check-scan.ts"
@@ -159,35 +159,24 @@ export const statusLayoutRule: CheckRule = {
   },
 }
 
-const FRAMEWORK_MODULE = String.raw`\.\/backend\/framework(?:\.[cm]?[jt]s)?`
-const FRAMEWORK_STAR = new RegExp(String.raw`\bexport\s*\*\s*from\s*["']${FRAMEWORK_MODULE}["']`)
-const FRAMEWORK_SPECIFIER = new RegExp(String.raw`\bfrom\s*["'](${FRAMEWORK_MODULE})["']`)
-
-/** The two framework configs' sources, `undefined` for one the app lacks. Production's generated server
- * entry imports backend/framework.ts when it exists, while `nifra dev` loads nifra.config.ts when it
- * exists. */
+/** The two framework configs' sources, `undefined` for one the app lacks. */
 export interface ApiPrefixSources {
   readonly framework: string | undefined
   readonly config: string | undefined
 }
 
-/** `apiPrefix` as nifra.config.ts exports it when backend/framework.ts exists too: its own, or every
- * export of backend/framework.ts through `export *`. */
-function configApiPrefix(config: string, framework: StaticApiPrefix): StaticApiPrefix {
-  const own = readStaticApiPrefix(config)
-  if (own.kind !== "default") return own
-  return FRAMEWORK_STAR.test(stripComments(config)) ? framework : own
+/** `apiPrefix` as the app runs it: nifra.config.ts's own, else backend/framework.ts's, which every
+ * command takes for an option nifra.config.ts leaves unset. */
+function effectiveApiPrefix({ framework, config }: ApiPrefixSources): StaticApiPrefix {
+  const own: StaticApiPrefix =
+    config === undefined ? { kind: "default" } : readStaticApiPrefix(config)
+  return own.kind !== "default" || framework === undefined ? own : readStaticApiPrefix(framework)
 }
-
-/** Whether a read leaves the backend unmounted: no `apiPrefix`, or an empty one. */
-const unmounted = (read: StaticApiPrefix): boolean =>
-  read.kind === "default" || (read.kind === "literal" && read.value === "")
 
 /**
  * NF-C035: `backend/app.ts` exports a backend that is not served over HTTP, so a browser call to `/api`
- * reaches page routing. Either the framework config sets no `apiPrefix` (loader-only is a valid choice;
- * the finding asks for it to be stated), or backend/framework.ts sets one that nifra.config.ts does not
- * export, so `nifra dev` alone leaves the backend unmounted. An unreadable `apiPrefix` is NF-C027's.
+ * reaches page routing. The framework config sets no `apiPrefix`; loader-only is a valid choice, and
+ * the finding asks for it to be stated. An unreadable `apiPrefix` is NF-C027's.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",
@@ -199,56 +188,21 @@ export const implicitApiMountRule: CheckRule = {
     if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
     const read = (file: string): string | undefined =>
       existsSync(join(ctx.root, file)) ? readFileSync(join(ctx.root, file), "utf8") : undefined
-    const framework = read(FRAMEWORK_FILE)
-    const config = read(CONFIG_FILE)
-    const served = framework ?? config
-    if (served === undefined) return []
-    const production = readStaticApiPrefix(served)
-    const dev =
-      framework !== undefined && config !== undefined
-        ? configApiPrefix(config, production)
-        : production
-
-    if (production.kind === "default") {
-      // nifra.config.ts setting what backend/framework.ts does not fails `nifra dev` and `nifra build`
-      // at load, naming the field.
-      if (dev.kind !== "default") return []
-      const file = framework === undefined ? CONFIG_FILE : FRAMEWORK_FILE
-      const reexport =
-        config === undefined || framework === undefined
-          ? ""
-          : `, and re-export it from ${CONFIG_FILE}, which nifra dev loads: \`export { apiPrefix } from "${frameworkSpecifier(config)}"\``
-      return [
-        diagnostic({
-          code: "NF-C035",
-          severity: "warn",
-          file,
-          message: `${BACKEND_APP_FILE}'s backend is not served over HTTP, because ${file} sets no apiPrefix: a browser call to /api reaches page routing instead. Add \`export const apiPrefix = "/api"\` to ${file} to serve it there, as 4.x did by default, or \`export const apiPrefix = ""\` to keep it loader-only${reexport}.`,
-          fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
-          verify: "nifra check",
-        }),
-      ]
-    }
-    if (config === undefined || unmounted(production) || !unmounted(dev)) return []
-    const at = production.kind === "literal" ? production.value : "the apiPrefix it exports"
+    const sources = { framework: read(FRAMEWORK_FILE), config: read(CONFIG_FILE) }
+    if (sources.framework === undefined && sources.config === undefined) return []
+    if (effectiveApiPrefix(sources).kind !== "default") return []
+    const file = sources.framework === undefined ? CONFIG_FILE : FRAMEWORK_FILE
     return [
       diagnostic({
         code: "NF-C035",
         severity: "warn",
-        file: CONFIG_FILE,
-        message: `${FRAMEWORK_FILE} serves ${BACKEND_APP_FILE}'s backend at ${at}, but ${CONFIG_FILE}, which nifra dev loads instead, does not export apiPrefix: nifra dev serves the backend nowhere, so a browser call to it reaches page routing in dev while a production build serves it. Re-export it from ${CONFIG_FILE}: \`export { apiPrefix } from "${frameworkSpecifier(config)}"\`.`,
-        evidence: [`production: ${FRAMEWORK_FILE}`, `nifra dev: ${CONFIG_FILE}`],
+        file,
+        message: `${BACKEND_APP_FILE}'s backend is not served over HTTP, because ${file} sets no apiPrefix: a browser call to /api reaches page routing instead. Add \`export const apiPrefix = "/api"\` to ${file} to serve it there, as 4.x did by default, or \`export const apiPrefix = ""\` to keep it loader-only.`,
         fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
         verify: "nifra check",
       }),
     ]
   },
-}
-
-/** How nifra.config.ts already names backend/framework.ts, so a re-export added to it resolves the same
- * way; the scaffold's extensionless spelling when it names it nowhere. */
-function frameworkSpecifier(config: string): string {
-  return FRAMEWORK_SPECIFIER.exec(stripComments(config))?.[1] ?? "./backend/framework"
 }
 
 const appendLine = (source: string, line: string): string =>
@@ -261,28 +215,27 @@ export function withDefaultApiPrefix(source: string | undefined): string | undef
 }
 
 /**
- * The edits that serve the backend at `/api` in production and in `nifra dev` alike: the mount where the
- * generated server entry reads it, and a re-export in nifra.config.ts when both configs exist. A file that
- * needs no edit comes back `undefined`; an explicit `apiPrefix` is never replaced.
+ * The edit that serves the backend at `/api`: the mount in backend/framework.ts, where the server
+ * entry reads it, or in nifra.config.ts when it is the only config. A file that needs no edit comes
+ * back `undefined`; an `apiPrefix` either file sets is never replaced.
  */
 export function apiPrefixFix(sources: ApiPrefixSources): ApiPrefixSources {
-  const { framework, config } = sources
-  if (framework === undefined) return { framework, config: withDefaultApiPrefix(config) }
-  const nextFramework = withDefaultApiPrefix(framework)
-  const production = readStaticApiPrefix(nextFramework ?? framework)
-  const reexport =
-    config === undefined || configApiPrefix(config, production).kind !== "default"
-      ? undefined
-      : appendLine(config, `export { apiPrefix } from "${frameworkSpecifier(config)}"\n`)
-  return { framework: nextFramework, config: reexport }
+  if (effectiveApiPrefix(sources).kind !== "default")
+    return { framework: undefined, config: undefined }
+  return sources.framework === undefined
+    ? { framework: undefined, config: withDefaultApiPrefix(sources.config) }
+    : { framework: withDefaultApiPrefix(sources.framework), config: undefined }
 }
 
 const LOADER_EXPORT =
   /\bexport\s+(?:async\s+)?(?:const|let|var|function\*?)\s+loader\b|\bexport\s*\{[^}]*\bloader\b[^}]*\}/
 const SCRIPT_LAYOUT = /\.[cm]?[jt]sx?$/
 
-const hasModifier = (ts: typeof TSApi, node: TSApi.Node, kind: TSApi.SyntaxKind): boolean =>
-  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind)
+// Read from the node, not `ts.getModifiers`: TypeScript 7's API has no getModifiers or canHaveModifiers.
+const hasModifier = (
+  node: TSApi.VariableStatement | TSApi.FunctionDeclaration | TSApi.ClassDeclaration,
+  kind: TSApi.SyntaxKind,
+): boolean => node.modifiers?.some((m) => m.kind === kind) === true
 
 /** The function an exported `meta` names: a declaration, or a const initialized with one. */
 function exportedMetaFunction(
@@ -290,9 +243,13 @@ function exportedMetaFunction(
   tree: TSApi.SourceFile,
 ): TSApi.FunctionDeclaration | TSApi.ArrowFunction | TSApi.FunctionExpression | undefined {
   for (const statement of tree.statements) {
-    if (!hasModifier(ts, statement, ts.SyntaxKind.ExportKeyword)) continue
-    if (ts.isFunctionDeclaration(statement) && statement.name?.text === "meta") return statement
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name?.text === "meta" && hasModifier(statement, ts.SyntaxKind.ExportKeyword))
+        return statement
+      continue
+    }
     if (!ts.isVariableStatement(statement)) continue
+    if (!hasModifier(statement, ts.SyntaxKind.ExportKeyword)) continue
     for (const declaration of statement.declarationList.declarations) {
       if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "meta") continue
       let init = declaration.initializer
@@ -402,9 +359,114 @@ export const layoutMetaDataRule: CheckRule = {
   },
 }
 
+/** The names a module exports at runtime, each with its line: declarations and `export { ... }` lists.
+ * `export *` names nothing it can read, and type-only exports carry no value. */
+function runtimeExports(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+): Array<{ readonly name: string; readonly line: number }> {
+  const found: Array<{ name: string; line: number }> = []
+  const add = (name: string, node: TSApi.Node): void => {
+    found.push({ name, line: tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1 })
+  }
+  for (const statement of tree.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly || statement.exportClause === undefined) continue
+      if (!ts.isNamedExports(statement.exportClause)) continue
+      for (const element of statement.exportClause.elements) {
+        if (!element.isTypeOnly) add(element.name.text, element)
+      }
+      continue
+    }
+    if (
+      !(
+        ts.isVariableStatement(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement)
+      ) ||
+      !hasModifier(statement, ts.SyntaxKind.ExportKeyword) ||
+      hasModifier(statement, ts.SyntaxKind.DeclareKeyword)
+    )
+      continue
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) add(declaration.name.text, declaration)
+      }
+    } else if (statement.name !== undefined) {
+      add(statement.name.text, statement)
+    }
+  }
+  return found
+}
+
+/**
+ * NF-C041: a route's frontend file (`x.tsx`, a layout, a status or error page) exports a name only
+ * the server reads, such as `loader` or `action`. The frontend file ships to the browser whole, so
+ * `nifra build` and the server refuse it; this reports it before either runs.
+ */
+export const frontendServerExportRule: CheckRule = {
+  code: "NF-C041",
+  title: "Server-only export in a route frontend file",
+  async scan(ctx) {
+    const routesDir = join(ctx.root, "routes")
+    if (!existsSync(routesDir)) return []
+    let manifest: ReturnType<typeof discoverRoutes>
+    try {
+      manifest = discoverRoutes(routesDir)
+    } catch {
+      return []
+    }
+    const files = new Set<string>()
+    for (const entry of [
+      ...manifest.routes,
+      ...Object.values(manifest.layouts),
+      ...Object.values(manifest.errors ?? {}),
+      ...(manifest.notFound === undefined ? [] : [manifest.notFound]),
+      ...Object.values(manifest.notFounds ?? {}),
+      ...Object.values(manifest.statusPages ?? {}),
+      ...Object.values(manifest.loadings ?? {}),
+    ]) {
+      if (SCRIPT_LAYOUT.test(entry.file)) files.add(entry.file)
+    }
+    if (files.size === 0) return []
+    const loaded = await loadRuleTypeScript(ctx)
+    const ts = loaded.compiler
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const file of [...files].sort(codeUnitOrder)) {
+      const text = readFileSync(join(routesDir, file), "utf8")
+      const tree = ts.createSourceFile(
+        file,
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKindOf(ts, file),
+      )
+      for (const { name, line } of runtimeExports(ts, tree)) {
+        if (!BACKEND_ROUTE_EXPORTS.has(name)) continue
+        const backend = `routes/${file.replace(SCRIPT_LAYOUT, ".backend.ts")}`
+        findings.push(
+          diagnostic({
+            code: "NF-C041",
+            severity: "error",
+            file: `routes/${file}`,
+            line,
+            message: `routes/${file} exports "${name}", which runs on the server only, and a route's frontend file ships to the browser whole, so nifra build and the server refuse it. Move it to ${backend}.`,
+            evidence: [`export: ${name}`, `backend half: ${backend}`],
+            fix: { recipe: "route.split", command: "nifra fix --code NF-C041" },
+            verify: "nifra check",
+          }),
+        )
+      }
+    }
+    return findings
+  },
+}
+
 export const pageRules = Object.freeze([
   shadowedPageRule,
   statusLayoutRule,
   implicitApiMountRule,
   layoutMetaDataRule,
+  frontendServerExportRule,
 ])

@@ -586,6 +586,17 @@ const linkedRepoBoundary = async (packageRoot: string): Promise<string> => {
   return packageRoot
 }
 
+/** Where a real package folder lives when only its files are links: Bun installs a `file:` folder
+ * dependency as a directory of per-file symlinks, so its imports resolve beside the linked files. */
+const fileLinkedDir = async (dir: string): Promise<string | undefined> => {
+  const manifest = join(dir, "package.json")
+  try {
+    return (await lstat(manifest)).isSymbolicLink() ? dirname(await realpath(manifest)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const linkedPackageRoots = async (
   importerRoots: readonly string[],
   manifests: readonly Record<string, unknown>[],
@@ -605,8 +616,10 @@ const linkedPackageRoots = async (
       }
       const candidate = join(importerRoot, "node_modules", ...name.split("/"))
       const link = await lstat(candidate).catch(() => undefined)
-      if (link === undefined || !link.isSymbolicLink()) continue
-      const resolved = await realpath(candidate).catch(() => undefined)
+      if (link === undefined) continue
+      const resolved = link.isSymbolicLink()
+        ? await realpath(candidate).catch(() => undefined)
+        : await fileLinkedDir(candidate)
       if (resolved === undefined || pathInside(realScanRoot, resolved)) continue
       found.set(resolved, true)
     }

@@ -1290,6 +1290,11 @@ async function main(): Promise<void> {
   }
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
+  if (command !== "start" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) {
+    const { unservedRoutesWarning } = await import("./introspect.ts")
+    const unserved = unservedRoutesWarning(app)
+    if (unserved !== undefined) console.warn(unserved)
+  }
   if (command !== "start") {
     const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
     refreshRouteTypes(app.cwd)

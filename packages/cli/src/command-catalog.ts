@@ -17,7 +17,7 @@ import { cdnCheckSpec } from "./cdn-check.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
 import { dbAuditSpec, dbQuerySpec, dbRoleSpec, dbSchemaSpec } from "./db-tool.ts"
-import { errorsSpec, logsSpec } from "./dev-feed-tool.ts"
+import { errorsSpec, explainSpec, logsSpec } from "./dev-feed-tool.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
@@ -395,6 +395,7 @@ interface TypesInput {
 
 interface SchemasInput {
   readonly write?: boolean | undefined
+  readonly check?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -799,11 +800,16 @@ const TYPES_SCHEMA = input<TypesInput>(
 )
 
 const SCHEMAS_SCHEMA = input<SchemasInput>(
-  objectSchema({ write: { type: "boolean" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  objectSchema({
+    write: { type: "boolean" },
+    check: { type: "boolean" },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
   (value) => {
     const raw = withDir(record(value))
     return {
-      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...parseBooleanFlags(raw, ["write", "check", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1493,6 +1499,7 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       moves: { type: "array" },
       rewritten: { type: "array" },
       tooling: { type: "array" },
+      followUps: { type: "array" },
       mode: { type: "string" },
     },
     required: ["ok", "write", "issues"],
@@ -1536,9 +1543,12 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
           .filter((entry) => entry.reason === undefined)
           .map(
             (entry) =>
-              `  draft ${entry.file} ${entry.schema} - review what it lets the browser see${entry.omitted === undefined ? "" : `; leaves out ${entry.omitted.join(", ")}`}`,
+              `  draft ${entry.file} ${entry.schema} - review what it lets the browser see${entry.omitted === undefined ? "" : `; leaves out ${entry.omitted.join(", ")}`}${entry.open === undefined ? "" : `; admits any value at ${entry.open.join(", ")}, typed any or unknown`}`,
           ),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
+        ...out.followUps.map(
+          (step) => `  next  ${step.file}: ${step.reason} - \`${step.command}\``,
+        ),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]
     }
@@ -1690,18 +1700,22 @@ const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
   argv: {
     flags: [
       { name: "write", field: "write", type: "boolean" },
+      { name: "check", field: "check", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
       { name: "dir", field: "dir", type: "string" },
     ],
   },
   async run(value, ctx) {
     const { outputSchemas } = await import("./output-schemas.ts")
-    return outputSchemas(resolve(ctx.cwd, value.dir ?? "."), { write: value.write === true })
+    return outputSchemas(resolve(ctx.cwd, value.dir ?? "."), {
+      write: value.write === true,
+      check: value.check === true,
+    })
   },
   render: (out) => {
     const shown = out.entries.filter(
       (entry) =>
-        entry.status !== "current" &&
+        (entry.status !== "current" || entry.open !== undefined) &&
         entry.status !== "no-data" &&
         (entry.status !== "declared" || entry.dropped.length > 0),
     )
@@ -1719,7 +1733,16 @@ const schemasSpec: CommandSpec<SchemasInput, OutputSchemasReport> = {
               : entry.omitted !== undefined
                 ? `leaves out ${entry.omitted.join(", ")}`
                 : undefined)
-        return `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`
+        const open =
+          entry.open === undefined
+            ? []
+            : [
+                `      admits any value at ${entry.open.join(", ")}: the type there is any or unknown, so the output guard drops nothing below it`,
+              ]
+        return [
+          `  ${SCHEMA_STATUS_LINE[entry.status]} ${entry.file}:${entry.line} ${entry.schema}${detail === undefined ? "" : ` - ${detail}`}`,
+          ...open,
+        ].join("\n")
       }),
       ...(out.write || !out.entries.some((e) => e.status === "missing" || e.status === "stale")
         ? []
@@ -2029,6 +2052,7 @@ export const commandSpecs = Object.freeze([
   portSpec,
   i18nSpec,
   errorsSpec,
+  explainSpec,
   logsSpec,
   cdnCheckSpec,
   dbSchemaSpec,

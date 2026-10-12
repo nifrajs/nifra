@@ -553,7 +553,7 @@ function scan(cwd: string, pattern: string, dot = false): string[] {
 }
 
 // The fixed version group: every package released together at one version.
-const isFixedGroup = (name: string): boolean =>
+export const isFixedGroup = (name: string): boolean =>
   name.startsWith("@nifrajs/") || name === "nifra" || name === "create-nifra"
 
 const groupPins = (version: string): UpgradeRecipe["pins"] => [
@@ -561,6 +561,20 @@ const groupPins = (version: string): UpgradeRecipe["pins"] => [
   { match: "create-nifra", to: version },
   { match: "nifra", to: version },
 ]
+
+/** Every fixed-group package a package.json under `cwd` names, whatever its spec. */
+export function groupDeclaredNames(cwd: string): ReadonlySet<string> {
+  const names = new Set<string>()
+  for (const rel of scan(cwd, "**/package.json")) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(cwd, rel), "utf8")) as Record<string, unknown>
+      for (const { target } of pinEntries(parsed)) if (isFixedGroup(target)) names.add(target)
+    } catch {
+      // Not JSON: it declares nothing.
+    }
+  }
+  return names
+}
 
 /**
  * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each

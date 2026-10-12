@@ -5601,6 +5601,7 @@ _No named exports (side-effect entrypoint)._
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
 - **installForms** _(function)_ - `installForms: (router: ClientRouter) => () => void`
+  Intercept submissions of same-origin `<form method="post">` whose action targets an app route: submit via the router (no full reload - POST the action, then revalidate the active loader). On failure it falls back to a native submit, so the form still works. Returns a teardown function.
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
   Attach history + link interception to a router. Returns a teardown function that removes the listeners. A data-fetch failure during a client navigation falls back to a full-page load, so navigation degrades gracefully rather than leaving the user stuck.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`

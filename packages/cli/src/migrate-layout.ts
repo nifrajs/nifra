@@ -50,6 +50,7 @@ import { createSpecifierResolver, isFile } from "./internal/project-specifiers.t
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { type OutputSchemaEntry, planOutputSchemas } from "./output-schemas.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
+import { apiPrefixFix } from "./rules/pages.ts"
 
 /** Exports only the server or the build reads: `@nifrajs/web`'s route-pair contract. */
 const BACKEND_EXPORTS = BACKEND_ROUTE_EXPORTS
@@ -114,7 +115,15 @@ export interface LayoutMigrationIssue {
   readonly reason: string
 }
 
+/** A step left for after the migration that a command takes: it needs no decision, so `ok` ignores it. */
+export interface LayoutMigrationFollowUp {
+  readonly file: string
+  readonly reason: string
+  readonly command: string
+}
+
 export interface LayoutMigrationResult {
+  /** No issue needs a decision; follow-ups may remain. */
   readonly ok: boolean
   readonly write: boolean
   /** `"api"` for an app that serves no pages: only its backend entry moves, nothing is split or zoned. */
@@ -139,6 +148,8 @@ export interface LayoutMigrationResult {
    */
   readonly schemas: readonly OutputSchemaEntry[]
   readonly issues: readonly LayoutMigrationIssue[]
+  /** Commands to run after the migration, each with what it settles. */
+  readonly followUps: readonly LayoutMigrationFollowUp[]
 }
 
 export interface LayoutMigrationOptions {
@@ -2292,6 +2303,42 @@ export async function migrateLayout(
     }
     moveMap.set(file, `${zone}/${file}`)
   }
+  // A folder whose reached files all move into one zone takes its other files along: a file nothing
+  // imports at runtime (a component not used yet, an asset) has no zone of its own, and leaving it
+  // behind splits the folder for every tool that lists it. Server built-ins never go to the browser.
+  const zonesUnder = new Map<string, Set<string>>()
+  for (const [from, to] of moveMap) {
+    if (isTestFile(from)) continue
+    for (let dir = posix.dirname(from); dir !== "."; dir = posix.dirname(dir)) {
+      zonesUnder.set(dir, (zonesUnder.get(dir) ?? new Set<string>()).add(to.split("/")[0] ?? ""))
+    }
+  }
+  for (const file of api ? [] : files) {
+    if (moveMap.has(file) || browser.has(file) || server.has(file)) continue
+    if (ZONE_DIRS.has(file.split("/")[0] ?? "") || inConfiguredFolder(file)) continue
+    // A test and its snapshot follow their subject below.
+    if (
+      isTestFile(file) ||
+      file.endsWith(".snap") ||
+      file.endsWith(".d.ts") ||
+      DATA_FILE.test(file)
+    )
+      continue
+    let zones: ReadonlySet<string> | undefined
+    for (
+      let dir = posix.dirname(file);
+      dir !== "." && zones === undefined;
+      dir = posix.dirname(dir)
+    ) {
+      // A nested package is its own install, never part of the app's folder.
+      if (existsSync(join(root, dir, "package.json"))) break
+      zones = zonesUnder.get(dir)
+    }
+    const [zone] = zones?.size === 1 ? zones : []
+    if (zone === undefined) continue
+    if (zone !== "backend" && /from\s+["'](?:node:|bun:)/.test(next.get(file) ?? "")) continue
+    moveMap.set(file, `${zone}/${file}`)
+  }
   const claimed = new Map<string, string>()
   for (const [from, to] of moveMap) {
     const holder = claimed.get(to) ?? (known.has(to) && !moveMap.has(to) ? to : undefined)
@@ -2659,21 +2706,27 @@ export async function migrateLayout(
         })
   for (const [file, text] of schemaPlan?.edits ?? []) final.set(file, text)
   const schemas = (schemaPlan?.entries ?? []).filter((entry) => entry.status === "missing")
+  const followUps: LayoutMigrationFollowUp[] = []
   for (const [file, text] of final) {
     if (!file.startsWith("routes/") || !/\.backend\.[cm]?[jt]s$/.test(file)) continue
     for (const { name, schema } of missingOutputSchemas(text)) {
       const why = schemaPlan?.entries.find(
         (entry) => entry.file === file && entry.schema === schema && entry.reason !== undefined,
       )?.reason
-      const draft =
-        why !== undefined
-          ? `; no draft was written: ${why}`
-          : schemaPlan === undefined || schemaPlan.warnings.length === 0
-            ? `, or run \`nifra schemas --write\` after the migration to draft it from the ${name}'s return type`
-            : `; no draft was written: ${schemaPlan.warnings.join("; ")}`
+      const missing = `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request`
+      // A half this run did not write keeps the schema it had: drafting one is the next command, not a
+      // decision the migration left open.
+      if (why === undefined && (schemaPlan === undefined || schemaPlan.warnings.length === 0)) {
+        followUps.push({
+          file,
+          reason: `${missing}; draft it from the ${name}'s return type`,
+          command: "nifra schemas --write",
+        })
+        continue
+      }
       issues.push({
         file,
-        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... })${draft}`,
+        reason: `${missing}. Declare what the browser may see: export const ${schema} = t.object({ ... }); no draft was written: ${why ?? schemaPlan?.warnings.join("; ")}`,
       })
     }
   }
@@ -2695,6 +2748,24 @@ export async function migrateLayout(
   if (gitignore !== undefined) {
     toolingWrites.set(".gitignore", gitignore)
     tooling.push({ file: ".gitignore", change: "ignore .nifra/ (dev and build state)" })
+  }
+  // A root backend.ts was served at /api by default until 5.0, which mounts it only where apiPrefix says.
+  if (!api && rootMoves["backend.ts"] !== undefined) {
+    const mount = apiPrefixFix({
+      framework: final.get(FRAMEWORK_FILE),
+      config: final.get(CONFIG_FILE),
+    })
+    for (const [file, text] of [
+      [FRAMEWORK_FILE, mount.framework],
+      [CONFIG_FILE, mount.config],
+    ] as const) {
+      if (text === undefined) continue
+      final.set(file, text)
+      tooling.push({
+        file,
+        change: 'export const apiPrefix = "/api", the mount 4.x made by default',
+      })
+    }
   }
   // `nifra check` reads the declaration statically; without it, a later routes/ or config would zone the app.
   const kind = api && createKindProbe(root)(root).kind === undefined ? declareApiKind(ts, root) : {}
@@ -2730,6 +2801,7 @@ export async function migrateLayout(
     ok: issues.length === 0,
     write: options.write === true,
     mode,
+    followUps,
     splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
@@ -2741,6 +2813,43 @@ export async function migrateLayout(
     ),
     issues,
   }
+}
+
+/**
+ * Split one route file in place: its server-only exports, and the code only they use, move into its
+ * `x.backend.ts`, created or merged into. Returns the files written, app-relative; nothing for a file
+ * that exports nothing for the server. Refuses, naming why, a split that would need a decision.
+ */
+export async function splitRouteFile(
+  appRoot: string,
+  file: string,
+  options: Pick<LayoutMigrationOptions, "typescript"> = {},
+): Promise<readonly string[]> {
+  if (!/\.[jt]sx$/.test(file)) return []
+  const ts = options.typescript ?? (await importTypeScript())
+  if (ts === undefined)
+    throw new Error("[nifra] splitting a route needs TypeScript: bun add -d typescript")
+  const root = resolve(appRoot)
+  const backendFile = file.replace(ROUTE_FILE, ".backend.ts")
+  const sharedFile = file.replace(ROUTE_FILE, ".shared.ts")
+  const result = splitRouteSource(
+    ts,
+    readFileSync(join(root, file), "utf8"),
+    file,
+    `./${posix.basename(backendFile)}`,
+    existsSync(join(root, sharedFile)) ? {} : { sharedFile: posix.basename(sharedFile) },
+  )
+  if (result.backend === undefined) return []
+  if (result.issues.length > 0) {
+    throw new Error(`[nifra] ${file} was not split: ${result.issues.join("; ")}`)
+  }
+  const backendPath = join(root, backendFile)
+  const existing = existsSync(backendPath) ? readFileSync(backendPath, "utf8") : ""
+  writeFileSync(join(root, file), result.frontend)
+  writeFileSync(backendPath, mergeModules(ts, existing, result.backend))
+  if (result.shared === undefined) return [file, backendFile]
+  writeFileSync(join(root, sharedFile), result.shared)
+  return [file, backendFile, sharedFile]
 }
 
 /** The app's `"nifra": { "zones": ... }`, so folders it already zones are left where they are. */

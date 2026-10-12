@@ -37,12 +37,21 @@ class FakeElement {
   readonly dataset: Record<string, string | undefined> = {}
   readonly tagName: string
   href = ""
-  target = ""
+  #target = ""
   scrolled = 0
   parent: FakeElement | null = null
 
   constructor(tagName = "div") {
     this.tagName = tagName
+  }
+
+  // An accessor, as in a browser, so a form's named control can shadow it.
+  get target(): string {
+    return this.#target
+  }
+
+  set target(value: string) {
+    this.#target = value
   }
 
   closest(selector: string): FakeElement | null {
@@ -74,14 +83,31 @@ class FakeElement {
   }
 }
 
+/** Its `method`/`action` are prototype accessors, as `target` is, so a named control can shadow them. */
 class FakeFormElement extends FakeElement {
-  method = "post"
-  action = "http://example.test/submit"
+  #method = "post"
+  #action = "http://example.test/submit"
   nativeSubmits = 0
   readonly nativeSubmitters: Array<FakeElement | null> = []
 
   constructor() {
     super("form")
+  }
+
+  get method(): string {
+    return this.#method
+  }
+
+  set method(value: string) {
+    this.#method = value
+  }
+
+  get action(): string {
+    return this.#action
+  }
+
+  set action(value: string) {
+    this.#action = value
   }
 
   submit(): void {
@@ -766,7 +792,7 @@ test("form integration intercepts app POSTs, preserves revalidation choice and f
 
   const form = new FakeFormElement()
   form.action = "http://example.test/submit?q=1"
-  form.dataset.nifraRevalidate = "false"
+  form.setAttribute("data-nifra-revalidate", "false")
   const first = fakeEvent(form)
   document.emit("submit", first)
   await Bun.sleep(0)
@@ -789,6 +815,38 @@ test("form integration intercepts app POSTs, preserves revalidation choice and f
   const getSubmit = fakeEvent(form)
   document.emit("submit", getSubmit)
   expect(getSubmit.defaultPrevented).toBe(false)
+  stop()
+})
+
+test("controls named like form properties do not change how the form submits", async () => {
+  resetBrowser()
+  const submissions: string[] = []
+  let reject: Error | undefined
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: installForms calls only match and submit
+  const router = {
+    match: (path: string) => (path === "/submit" ? { routeId: "submit", params: {} } : null),
+    submit: async (path: string, _body: FormData) => {
+      submissions.push(path)
+      if (reject !== undefined) throw reject
+    },
+  } as ClientRouter
+  const stop = installForms(router)
+  const form = new FakeFormElement()
+  // A browser resolves `form.<name>` to the control with that name before the form's own property.
+  for (const name of ["method", "action", "target", "requestSubmit", "getAttribute"]) {
+    Object.defineProperty(form, name, { value: new FakeElement("input") })
+  }
+
+  const event = fakeEvent(form)
+  document.emit("submit", event)
+  await Bun.sleep(0)
+  expect(event.defaultPrevented).toBe(true)
+  expect(submissions).toEqual(["/submit"])
+
+  reject = new Error("offline")
+  document.emit("submit", fakeEvent(form))
+  await Bun.sleep(0)
+  expect(form.nativeSubmits).toBe(1)
   stop()
 })
 

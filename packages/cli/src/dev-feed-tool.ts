@@ -793,6 +793,117 @@ export const logsSpec: CommandSpec<LogsInput, LogsOutput> = {
   json: (out) => out,
 }
 
+export interface ExplainInput {
+  readonly error?: string | undefined
+  readonly stack?: string | undefined
+  readonly name?: string | undefined
+  readonly port?: number | undefined
+  readonly dir?: string | undefined
+  readonly json?: boolean | undefined
+}
+
+/** A diagnostic, or `NIFRA_NONE` with why there was nothing to explain. */
+export type ExplainOutput =
+  | (Diagnostic & { readonly entry?: object; readonly note?: string })
+  | { code: "NIFRA_NONE"; message: string }
+
+const explained = (out: ExplainOutput): out is Diagnostic => out.code !== "NIFRA_NONE"
+
+export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
+  name: "explain",
+  summary:
+    "Turn an error into a structured diagnostic: its code, the frame in your source with a codeframe, and the cause and fix when nifra recognises it. With no message, the running dev server's latest error.",
+  input: {
+    jsonSchema: {
+      type: "object",
+      properties: {
+        error: { type: "string", description: "The error message to explain." },
+        stack: {
+          type: "string",
+          description: "Its stack trace, for the codeframe and source frame.",
+        },
+        name: { type: "string", description: "Its class name, such as TypeError." },
+        port: SHARED_PROPERTIES.port,
+        dir: { type: "string", description: "The app directory." },
+        json: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
+    parse: (value) => {
+      const raw = fields(value)
+      return {
+        error: text(raw, "error"),
+        stack: text(raw, "stack"),
+        name: text(raw, "name"),
+        port: count(raw, "port"),
+        dir: text(raw, "dir"),
+        json: flag(raw, "json"),
+      }
+    },
+  },
+  output: {
+    version: 1,
+    jsonSchema: {
+      type: "object",
+      properties: { code: { type: "string" }, message: { type: "string" } },
+      required: ["code", "message"],
+    },
+    parse: (value) => {
+      if (isDiagnostic(value)) return value
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "code" in value &&
+        value.code === "NIFRA_NONE" &&
+        "message" in value &&
+        typeof value.message === "string"
+      )
+        return { code: "NIFRA_NONE", message: value.message }
+      throw new TypeError("explain output must be a diagnostic or NIFRA_NONE")
+    },
+  },
+  transports: ["cli"],
+  stability: "experimental",
+  argv: {
+    positionals: ["error"],
+    flags: [
+      { name: "stack", field: "stack", type: "string" },
+      { name: "name", field: "name", type: "string" },
+      { name: "port", field: "port", type: "number" },
+      { name: "dir", field: "dir", type: "string" },
+      { name: "json", field: "json", type: "boolean" },
+    ],
+  },
+  async run(input, ctx) {
+    const root = resolve(ctx.cwd, input.dir ?? ".")
+    if (input.error === undefined && input.stack === undefined) {
+      return explainLatest(root, input.port, ctx.signal)
+    }
+    const { buildDiagnostic } = await import("@nifrajs/web/diagnostic")
+    const { explainSourceGate } = await import("./mcp-exec.ts")
+    const error = new Error(input.error ?? "")
+    if (input.name !== undefined) error.name = input.name
+    // Without --stack the frames would be this command's own, not the app's.
+    error.stack = input.stack ?? `${error.name}: ${error.message}`
+    return buildDiagnostic(error, { root, showSource: explainSourceGate(root) })
+  },
+  render: (out) => {
+    if (!explained(out)) return [out.message]
+    const at = topFrame(out)
+    return [
+      `${out.code}  ${headline(out)}`,
+      ...(at === undefined ? [] : [`  at ${at}`]),
+      ...(out.codeframe?.lines ?? []).map(
+        (line) => `  ${line.caret ? ">" : " "} ${String(line.number).padStart(4)} | ${line.text}`,
+      ),
+      ...(out.cause === undefined ? [] : [`  cause: ${out.cause}`]),
+      ...(out.fix === undefined ? [] : [`  fix: ${out.fix}`]),
+    ]
+  },
+  exitCode: (out) => (explained(out) ? 0 : 2),
+  json: (out) => out,
+}
+
 // ---------------------------------------------------------------------------------------------------
 // nifra_explain / nifra_inspect reads
 // ---------------------------------------------------------------------------------------------------
@@ -802,7 +913,7 @@ export async function explainLatest(
   cwd: string,
   port: number | undefined,
   signal?: AbortSignal,
-): Promise<unknown> {
+): Promise<ExplainOutput> {
   const { findDevServer, describeLookup, readDevFeed } = await import("./dev-server-client.ts")
   const lookup = await findDevServer(cwd, { port }, signal)
   if (lookup.status === "live") {

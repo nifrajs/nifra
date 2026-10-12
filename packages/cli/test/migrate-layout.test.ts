@@ -393,6 +393,82 @@ describe("migrateLayout", () => {
     expect(existsSync(join(dir, "routes/index.backend.ts"))).toBe(false)
   })
 
+  test("a root backend keeps the /api mount it had before 5.0; a stated apiPrefix is kept", async () => {
+    const dir = app(files)
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.tooling).toContainEqual({
+      file: "backend/framework.ts",
+      change: 'export const apiPrefix = "/api", the mount 4.x made by default',
+    })
+    expect(read(dir, "backend/framework.ts")).toContain('export const apiPrefix = "/api"\n')
+    expect(read(dir, "nifra.config.ts")).not.toContain("apiPrefix")
+
+    const stated = app({
+      ...files,
+      "framework.ts": `${files["framework.ts"]}export const apiPrefix = ""\n`,
+    })
+    const kept = await migrateLayout(stated, { typescript: ts, write: true })
+    expect(kept.tooling.filter((edit) => edit.change.includes("apiPrefix"))).toEqual([])
+    expect(read(stated, "backend/framework.ts")).toContain('export const apiPrefix = ""\n')
+  })
+
+  test("a folder whose reached files go to one zone moves whole; a mixed one stays and is reported", async () => {
+    const dir = app({
+      "nifra.config.ts":
+        'export const adapter = {}\nexport const clientModule = "@nifrajs/web-react/client"\n',
+      "routes/index.tsx": [
+        'import { Button } from "../src/ui/button.tsx"',
+        'import { a } from "../src/mixed/a.ts"',
+        'import { b } from "../src/mixed/b.ts"',
+        "export async function loader() { return { b } }",
+        "export default () => Button(a)",
+        "",
+      ].join("\n"),
+      "src/ui/button.tsx": "export const Button = (n: number) => n\n",
+      "src/ui/card.tsx": "export const Card = () => null\n",
+      "src/ui/icons/star.svg": "<svg/>\n",
+      "src/ui/disk.ts":
+        'import { readFileSync } from "node:fs"\nexport const disk = readFileSync\n',
+      "src/ui/vendor/package.json": '{ "name": "vendor" }\n',
+      "src/ui/vendor/index.ts": "export const vendor = 1\n",
+      "src/mixed/a.ts": "export const a = 1\n",
+      "src/mixed/b.ts": "export const b = 2\n",
+      "src/mixed/c.ts": "export const c = 3\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/mixed/a.ts -> frontend/src/mixed/a.ts",
+      "src/mixed/b.ts -> backend/src/mixed/b.ts",
+      "src/ui/button.tsx -> frontend/src/ui/button.tsx",
+      "src/ui/card.tsx -> frontend/src/ui/card.tsx",
+      "src/ui/icons/star.svg -> frontend/src/ui/icons/star.svg",
+    ])
+    // A server built-in never moves toward the browser, so it still splits src/ui/.
+    expect(result.issues.map((issue) => issue.file)).toEqual([
+      "src/mixed/a.ts",
+      "src/ui/button.tsx",
+    ])
+    expect(result.issues[1]?.reason).toContain('"src/ui/disk.ts" stays in src/ui/')
+  })
+
+  test("a backend half the run did not write is a follow-up, not an issue", async () => {
+    const dir = app({
+      ...files,
+      "routes/index.tsx": "export default () => null\n",
+      "routes/index.backend.ts": "export async function loader() { return { n: 1 } }\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.followUps).toEqual([
+      {
+        file: "routes/index.backend.ts",
+        reason:
+          "exports a loader but no loaderOutput, so data it returns fails the request; draft it from the loader's return type",
+        command: "nifra schemas --write",
+      },
+    ])
+    expect(result.issues.filter((issue) => issue.file.startsWith("routes/"))).toEqual([])
+  })
+
   test("--write applies it: halves, zones, rewritten imports, folded middleware", async () => {
     const dir = app(files)
     const result = await migrateLayout(dir, { typescript: ts, write: true })
@@ -952,9 +1028,17 @@ describe("migrateLayout", () => {
 
     // Already covered by a glob, or no include at all: tsc's own rules hold, so nothing changes.
     const covered = app({ ...files, "tsconfig.json": '{ "include": ["**/*.ts", "**/*.tsx"] }\n' })
-    expect((await migrateLayout(covered, { typescript: ts })).tooling).toEqual([])
+    expect(
+      (await migrateLayout(covered, { typescript: ts })).tooling.filter(
+        (edit) => edit.file === "tsconfig.json",
+      ),
+    ).toEqual([])
     const open = app({ ...files, "tsconfig.json": '{ "compilerOptions": { "strict": true } }\n' })
-    expect((await migrateLayout(open, { typescript: ts })).tooling).toEqual([])
+    expect(
+      (await migrateLayout(open, { typescript: ts })).tooling.filter(
+        (edit) => edit.file === "tsconfig.json",
+      ),
+    ).toEqual([])
   })
 
   test("tailwind content globs that lose a moved file are reported", async () => {

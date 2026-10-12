@@ -223,6 +223,8 @@ describe("agent verification surfaces", () => {
       "contracts.snapshot",
       "workspace-dist.rebuild",
       "imports.moved-export",
+      "route.split",
+      "layout.migrate",
       "schemas.draft",
       "client.reserved-segment",
     ])
