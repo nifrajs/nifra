@@ -327,7 +327,8 @@ export async function runMcpServer(
     // the code it started with: re-read the installed version per call so no answer is for a stale one.
     if (message.method === "tools/call") drift = await detectToolingDrift(rootState.root, version)
 
-    if (ANSWERED_WITHOUT_THE_APP.has(message.method)) {
+    const method = message.method ?? ""
+    if (ANSWERED_WITHOUT_THE_APP.has(method)) {
       const response = await handleRpc(
         message,
         [],
@@ -342,7 +343,7 @@ export async function runMcpServer(
       if (response) send(response)
       // Ask for the client's workspace roots once the handshake completes, and again whenever the
       // client says they changed. The answer comes back through the interception above.
-      if (message.method.startsWith("notifications/")) requestRoots()
+      if (method.startsWith("notifications/")) requestRoots()
       return
     }
     const project = await ctx
