@@ -67,6 +67,31 @@ test("release workflow verifies release PRs and never invokes Version Packages a
   expect(workflow).not.toContain("changesets/action@")
 })
 
+test("a release PR run skips the publish queue and a newer push cancels its verification", () => {
+  const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")
+  const workflow: unknown = Bun.YAML.parse(release)
+  expect(workflow).toHaveProperty(["concurrency", "queue"], "max")
+  expect(workflow).toHaveProperty(["concurrency", "cancel-in-progress"], false)
+  expect(workflow).toHaveProperty(
+    ["concurrency", "group"],
+    expect.stringContaining("'publish' || github.run_id }}"),
+  )
+  expect(workflow).toHaveProperty(["jobs", "verify-release-pr", "concurrency"], {
+    group: expect.stringContaining("release-verification-"),
+    "cancel-in-progress": true,
+  })
+  expect(workflow).toHaveProperty(
+    ["jobs", "verify-release-pr", "concurrency", "group"],
+    expect.stringContaining("github.event.pull_request.number }}"),
+  )
+  const jobs: unknown =
+    typeof workflow === "object" && workflow !== null ? Reflect.get(workflow, "jobs") : undefined
+  const cancelling = Object.entries(typeof jobs === "object" && jobs !== null ? jobs : {})
+    .filter(([, job]) => typeof job === "object" && job !== null && "concurrency" in job)
+    .map(([name]) => name)
+  expect(cancelling).toEqual(["verify-release-pr"])
+})
+
 test("release verification provisions the runtimes its gates run and leaves timing to the local run", () => {
   const read = (name: string): string =>
     readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8")

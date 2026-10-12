@@ -37,8 +37,11 @@ on:
 permissions:
   contents: read
 
+# Publish runs queue and run one at a time. A pull request run gets a group of its own, so it never
+# waits in that queue; its verification job cancels a superseded one instead (queue: max cannot be
+# combined with cancel-in-progress).
 concurrency:
-  group: release-${{ github.event_name != 'pull_request' && 'publish' || github.event.pull_request.number }}
+  group: release-${{ github.event_name != 'pull_request' && 'publish' || github.run_id }}
   queue: max
   cancel-in-progress: false
 
@@ -51,6 +54,11 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    # Publishing needs a successful check on the merged head SHA only, so a run for an older head
+    # is cancelled once a newer push starts one.
+    concurrency:
+      group: release-verification-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: read
     steps:
