@@ -7065,9 +7065,11 @@ values (`nifra mcp --env-file .env.secrets`), reach all of them.
 -
 **No `.env` in the server.** When Bun loaded `.env`
 values into the server at startup, the server hands the session to a copy of itself that
-loads none, keeping the values from the environment and `--env-file`. The process
-the client started stays to forward signals and the exit code: it still holds the values
-Bun loaded, but runs no project code and reads no messages.
+loads none, keeping the values from the environment and `--env-file`. A project
+that installs another release of `@nifrajs/cli` gets the session handed to that
+CLI the same way, with no `.env` loaded. The process the client started stays to
+forward signals and the exit code: it still holds the values Bun loaded, but runs no project
+code and reads no messages.
 
 -
 **A process per call has a cost.** A call that loads the app pays one process
