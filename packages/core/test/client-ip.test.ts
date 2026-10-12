@@ -46,6 +46,19 @@ describe("resolveClientIp (unit)", () => {
     expect(resolveClientIp("9.9.9.9", req("1.1.1.1"), { trustedHops: 5 })).toBeUndefined()
   })
 
+  test("trustedHops without a socket peer picks the same XFF entry, never a forged one", () => {
+    // The proxy appended the caller 2.2.2.2 after the client's forged 6.6.6.6.
+    const forged = req("6.6.6.6, 2.2.2.2")
+    expect(resolveClientIp(undefined, forged, { trustedHops: 1 })).toBe("2.2.2.2")
+    expect(resolveClientIp("9.9.9.9", forged, { trustedHops: 1 })).toBe("2.2.2.2")
+    expect(resolveClientIp(undefined, req("6.6.6.6, 1.1.1.1, 2.2.2.2"), { trustedHops: 2 })).toBe(
+      "1.1.1.1",
+    )
+    // Hop 0 is the unknown peer itself, not the rightmost header entry.
+    expect(resolveClientIp(undefined, forged, { trustedHops: 0 })).toBeUndefined()
+    expect(resolveClientIp(undefined, req(), { trustedHops: 1 })).toBeUndefined()
+  })
+
   test("header trust → the named header's first value", () => {
     expect(resolveClientIp("9.9.9.9", req(undefined, "3.3.3.3"), { header: "x-real-ip" })).toBe(
       "3.3.3.3",
@@ -74,6 +87,13 @@ describe("c.clientIp (integration through fetch)", () => {
   test("trustedHops derives the caller from XFF + peer", async () => {
     const app = ipApp({ clientIp: { trustedHops: 1 } })
     expect(await clientIpOf(app, { "x-forwarded-for": "1.1.1.1, 2.2.2.2" }, "9.9.9.9")).toEqual({
+      ip: "2.2.2.2",
+    })
+  })
+
+  test("trustedHops on a peer-less fetch handler ignores a forged XFF entry", async () => {
+    const app = ipApp({ clientIp: { trustedHops: 1 } })
+    expect(await clientIpOf(app, { "x-forwarded-for": "6.6.6.6, 2.2.2.2" }, undefined)).toEqual({
       ip: "2.2.2.2",
     })
   })
