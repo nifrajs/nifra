@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#
+# Pre-push has no repository gate of its own. An untracked, machine-local hook may add one: it lives in
+# the common git dir's hooks/ (never committed), gets the same arguments, and reads the same ref list
+# on stdin. The common dir, because in a linked worktree `.git` is a file.
+set -euo pipefail
+
+local_hook="$(git rev-parse --git-common-dir)/hooks/pre-push-local"
+if [ -x "$local_hook" ]; then
+  "$local_hook" "$@"
+fi
