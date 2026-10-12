@@ -187,7 +187,8 @@ describe("migrateLayout", () => {
     "lib/format.ts": "export const format = (n: number) => String(n)\n",
     "components/card.tsx":
       'import { format } from "../lib/format.ts"\nexport const Card = () => format(1)\n',
-    "build.ts": 'const out = import.meta.dir + "/lib/db.ts"\nconsole.log(out)\n',
+    "build.ts":
+      'const out = import.meta.dir + "/lib/db.ts"\nconst seed = "lib/db.ts"\nconsole.log(out, seed)\n',
     "routes/index.tsx": [
       'import { Card } from "../components/card.tsx"',
       'import { format } from "../lib/format.ts"',
@@ -235,7 +236,10 @@ describe("migrateLayout", () => {
     expect(read(dir, "routes/admin/_layout.backend.ts")).toContain(
       "export const middleware = (ctx) => ctx.next()",
     )
-    // a path in a string is not an import: reported, not rewritten
+    // a path built from the module's own folder follows its target; a bare string is reported
+    expect(read(dir, "build.ts")).toContain('import.meta.dir + "/backend/lib/db.ts"')
+    expect(read(dir, "build.ts")).toContain('const seed = "lib/db.ts"')
+    expect(result.rewritten).toContain("build.ts")
     expect(result.issues).toContainEqual({
       file: "build.ts",
       reason: 'mentions "lib/db.ts" by path; it moved to "backend/lib/db.ts"',
@@ -349,6 +353,7 @@ describe("migrateLayout", () => {
       "src/lib/fetcher.ts -> shared/src/lib/fetcher.ts",
       "src/lib/icons/index.ts -> frontend/src/lib/icons/index.ts",
       "src/lib/logo.svg -> frontend/src/lib/logo.svg",
+      "src/pages/Home.test.tsx -> frontend/src/pages/Home.test.tsx",
       "src/pages/Home.tsx -> frontend/src/pages/Home.tsx",
     ])
     expect(dry.issues.filter((issue) => /alias|reaches/.test(issue.reason))).toEqual([])
@@ -364,9 +369,10 @@ describe("migrateLayout", () => {
     expect(read(dir, "backend/src/data/x.ts")).toContain('from "../../../shared/src/lib/fetcher"')
     expect(read(dir, "routes/index.tsx")).toContain('from "../frontend/src/pages/Home"')
     expect(read(dir, "routes/index.backend.ts")).toContain('from "../backend/src/data/x"')
-    const test = read(dir, "src/pages/Home.test.tsx")
-    expect(test).toContain('vi.mock("../../shared/src/lib/fetcher"')
-    expect(test).toContain('from "../../frontend/src/pages/Home"')
+    // The test followed its subject; its mock and import name the new places.
+    const test = read(dir, "frontend/src/pages/Home.test.tsx")
+    expect(test).toContain('vi.mock("../../../shared/src/lib/fetcher"')
+    expect(test).toContain('from "./Home"')
     // An alias that cannot name the route's backend half reaches its loader by a relative path.
     expect(read(dir, "src/home.test.ts")).toContain(
       'import { loader } from "../routes/index.backend"',
@@ -665,7 +671,7 @@ describe("migrateLayout", () => {
     )
   })
 
-  test("tsconfig include gains the zone folders moved code lands in, layout and comments kept", async () => {
+  test("tsconfig include follows moved code into the zone folders, layout and comments kept", async () => {
     const files = {
       "backend.ts": 'import { db } from "./lib/db.ts"\nexport const backend = db\n',
       "lib/db.ts": "export const db = 1\n",
@@ -687,9 +693,10 @@ describe("migrateLayout", () => {
       ].join("\n"),
     })
     const result = await migrateLayout(multiline, { typescript: ts, write: true })
+    // backend.ts sat outside the include, so the whole backend folder would take in its new place.
     expect(result.tooling).toContainEqual({
       file: "tsconfig.json",
-      change: "include += backend, frontend",
+      change: "include += backend/lib, frontend",
     })
     expect(read(multiline, "tsconfig.json")).toBe(
       [
@@ -699,7 +706,7 @@ describe("migrateLayout", () => {
         '    "routes",',
         '    "lib",',
         '    "components", // UI',
-        '    "backend",',
+        '    "backend/lib",',
         '    "frontend",',
         "  ],",
         "}",
@@ -714,7 +721,7 @@ describe("migrateLayout", () => {
     })
     await migrateLayout(noTrailingComma, { typescript: ts, write: true })
     expect(read(noTrailingComma, "tsconfig.json")).toBe(
-      '{\n  "include": [\n    "routes",\n    "lib",\n    "components", // UI\n    "backend",\n    "frontend"\n  ]\n}\n',
+      '{\n  "include": [\n    "routes",\n    "lib",\n    "components", // UI\n    "backend/lib",\n    "frontend"\n  ]\n}\n',
     )
 
     const inline = app({
@@ -723,7 +730,7 @@ describe("migrateLayout", () => {
     })
     await migrateLayout(inline, { typescript: ts, write: true })
     expect(read(inline, "tsconfig.json")).toBe(
-      '{ "include": ["routes", "lib", "components", "backend", "frontend"] }\n',
+      '{ "include": ["routes", "lib", "components", "backend/lib", "frontend"] }\n',
     )
 
     // Already covered by a glob, or no include at all: tsc's own rules hold, so nothing changes.
@@ -1024,5 +1031,215 @@ describe("migrateLayout on an API-only app", () => {
     await expect(migrateLayout(app({ "lib/x.ts": "" }), { typescript: ts })).rejects.toThrow(
       "there is nothing to migrate",
     )
+  })
+})
+
+describe("migrateLayout entries, tests and workspace siblings", () => {
+  test("a config path joined onto its own folder is an entry and follows its module", async () => {
+    const dir = app({
+      "nifra.config.ts": [
+        'import { resolve } from "node:path"',
+        'import * as path from "node:path"',
+        'import { fileURLToPath } from "node:url"',
+        'export const clientModule = resolve(import.meta.dir, "src/browser-main.tsx")',
+        "export const componentPipeline = {",
+        '  adapter: "react",',
+        "  entries: {",
+        '    client: path.join(import.meta.dirname, "src", "hydrate.tsx"),',
+        '    ssr: fileURLToPath(new URL("./src/render.tsx", import.meta.url)),',
+        "  },",
+        "} as const",
+        "",
+      ].join("\n"),
+      "src/browser-main.tsx":
+        'import { theme } from "./theme"\nexport function mountRouter() {\n  return theme\n}\n',
+      "src/theme.ts": 'export const theme = "dark"\n',
+      "src/hydrate.tsx": "export const hydrate = 1\n",
+      "src/render.tsx": "export const render = 1\n",
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/browser-main.tsx -> frontend/src/browser-main.tsx",
+      "src/hydrate.tsx -> frontend/src/hydrate.tsx",
+      "src/render.tsx -> backend/src/render.tsx",
+      "src/theme.ts -> frontend/src/theme.ts",
+    ])
+    const config = read(dir, "nifra.config.ts")
+    expect(config).toContain('resolve(import.meta.dir, "frontend/src/browser-main.tsx")')
+    expect(config).toContain('path.join(import.meta.dirname, "frontend", "src", "hydrate.tsx")')
+    expect(config).toContain('new URL("./backend/src/render.tsx", import.meta.url)')
+    expect(result.rewritten).toContain("nifra.config.ts")
+    expect(result.issues.filter((issue) => issue.file === "nifra.config.ts")).toEqual([])
+  })
+
+  test("a test moves with the subject beside it, and stays when its subjects part", async () => {
+    const files = {
+      "src/lib/fmt.ts": "export const fmt = (n: number) => String(n)\n",
+      "src/lib/fmt.test.ts":
+        'import { fmt } from "./fmt"\nimport { helper } from "../../test/helper"\nexport const t = fmt(helper)\n',
+      "src/lib/__snapshots__/fmt.test.ts.snap": 'exports[`fmt 1`] = `"1"`;\n',
+      "src/lib/pad.ts": "export const pad = 1\n",
+      "src/lib/__tests__/pad.test.ts": 'import { pad } from "../pad"\nexport const t = pad\n',
+      "src/both.ts": "export const both = 1\n",
+      "src/both.tsx": "export const Both = () => null\n",
+      "src/both.test.ts": 'import { both } from "./both"\nexport const t = both\n',
+      "test/helper.ts": 'import { pad } from "../src/lib/pad"\nexport const helper = pad\n',
+      // A runner's own config names the test; the app's excludes it.
+      "tsconfig.json": JSON.stringify({
+        include: ["src", "routes"],
+        exclude: ["src/lib/fmt.test.ts"],
+      }),
+      "tsconfig.bun.json": JSON.stringify({
+        include: ["./src/lib/fmt.test.ts", "src/**/*.bun.ts"],
+      }),
+      "routes/index.tsx": [
+        'import { fmt } from "../src/lib/fmt"',
+        'import { pad } from "../src/lib/pad"',
+        'import { Both } from "../src/both.tsx"',
+        'import { both } from "../src/both.ts"',
+        "export async function loader() { return { both } }",
+        "export default () => fmt(pad) + Both()",
+        "",
+      ].join("\n"),
+    }
+    const dir = app(files)
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/both.ts -> backend/src/both.ts",
+      "src/both.tsx -> frontend/src/both.tsx",
+      "src/lib/__snapshots__/fmt.test.ts.snap -> frontend/src/lib/__snapshots__/fmt.test.ts.snap",
+      "src/lib/__tests__/pad.test.ts -> frontend/src/lib/__tests__/pad.test.ts",
+      "src/lib/fmt.test.ts -> frontend/src/lib/fmt.test.ts",
+      "src/lib/fmt.ts -> frontend/src/lib/fmt.ts",
+      "src/lib/pad.ts -> frontend/src/lib/pad.ts",
+    ])
+    expect(read(dir, "frontend/src/lib/__snapshots__/fmt.test.ts.snap")).toBe(
+      files["src/lib/__snapshots__/fmt.test.ts.snap"],
+    )
+    const fmtTest = read(dir, "frontend/src/lib/fmt.test.ts")
+    expect(fmtTest).toContain('from "./fmt"')
+    expect(fmtTest).toContain('from "../../../test/helper"')
+    expect(read(dir, "frontend/src/lib/__tests__/pad.test.ts")).toContain('from "../pad"')
+    // A helper only tests use stays where it is, still reaching what moved.
+    expect(read(dir, "test/helper.ts")).toContain('from "../frontend/src/lib/pad"')
+    expect(read(dir, "src/both.test.ts")).toContain('from "../backend/src/both"')
+    expect(JSON.parse(read(dir, "tsconfig.json")).exclude).toEqual(["frontend/src/lib/fmt.test.ts"])
+    expect(JSON.parse(read(dir, "tsconfig.bun.json")).include).toEqual([
+      "./frontend/src/lib/fmt.test.ts",
+      "src/**/*.bun.ts",
+    ])
+    expect(result.issues.filter((issue) => issue.file.startsWith("tsconfig"))).toEqual([])
+    expect(result.issues).toContainEqual({
+      file: "src/both.test.ts",
+      reason:
+        'tests "src/both.ts" and "src/both.tsx", which end up in different folders, so it stays here; move it by hand',
+    })
+    const again = await migrateLayout(dir, { typescript: ts })
+    expect(again.moves).toEqual([])
+    expect(again.issues.filter((issue) => issue.file.endsWith(".test.ts"))).toEqual([])
+  })
+
+  test("each tsconfig keeps checking what it checked and leaving out what it left out", async () => {
+    const dir = app({
+      "tsconfig.json": JSON.stringify({ include: ["src"], exclude: ["src/data"] }),
+      "tsconfig.data.json": JSON.stringify({
+        extends: "./tsconfig.json",
+        include: ["src/data"],
+        exclude: ["node_modules"],
+      }),
+      "tsconfig.check.json": JSON.stringify({
+        extends: "./tsconfig.json",
+        include: ["src/**/*.ts"],
+      }),
+      "src/ui/card.tsx": "export const Card = (props: object) => props\n",
+      "src/lib/money.ts": "export const money = 1\n",
+      "src/lib/db.ts": "export const db = () => []\n",
+      "src/data/inventory.ts": "export const inventory = 1\n",
+      "src/data/inventory.test.ts": 'import { inventory } from "./inventory"\nexport const t = inventory\n',
+      "routes/index.tsx": [
+        'import { Card } from "../src/ui/card"',
+        'import { money } from "../src/lib/money"',
+        'import { inventory } from "../src/data/inventory"',
+        'import { db } from "../src/lib/db"',
+        "export async function loader() { return { rows: db(), money, inventory } }",
+        "export default () => Card({ money, inventory })",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves.map((move) => `${move.from} -> ${move.to}`)).toEqual([
+      "src/data/inventory.test.ts -> shared/src/data/inventory.test.ts",
+      "src/data/inventory.ts -> shared/src/data/inventory.ts",
+      "src/lib/db.ts -> backend/src/lib/db.ts",
+      "src/lib/money.ts -> shared/src/lib/money.ts",
+      "src/ui/card.tsx -> frontend/src/ui/card.tsx",
+    ])
+    // The whole zone folder where that takes in nothing new; else the folder's twin, and the
+    // excluded folder's twin beside it.
+    expect(JSON.parse(read(dir, "tsconfig.json"))).toEqual({
+      include: ["src", "backend", "frontend", "shared/src"],
+      exclude: ["src/data", "shared/src/data"],
+    })
+    expect(JSON.parse(read(dir, "tsconfig.data.json")).include).toEqual([
+      "src/data",
+      "shared/src/data",
+    ])
+    // An inherited exclude already moved with the base config.
+    expect(JSON.parse(read(dir, "tsconfig.check.json"))).toEqual({
+      extends: "./tsconfig.json",
+      include: ["src/**/*.ts", "backend", "shared"],
+    })
+    expect(result.tooling).toContainEqual({
+      file: "tsconfig.json",
+      change: "exclude += shared/src/data",
+    })
+    expect(result.issues.filter((issue) => issue.file.startsWith("tsconfig"))).toEqual([])
+  })
+
+  test("a workspace sibling that names a moved app file is reported, never edited", async () => {
+    const ws = createFixtureProject(ROOT, "ws-")
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["apps/*", "!apps/ignored"] }),
+      "apps/web/package.json": JSON.stringify({ name: "@ws/web" }),
+      "apps/web/src/lib/origins.ts": "export const hosts = 1\n",
+      "apps/web/src/lib/x.ts": "export const x = 1\n",
+      "apps/web/routes/index.tsx": [
+        'import { hosts } from "../src/lib/origins"',
+        'import { x } from "../src/lib/x"',
+        "export default () => hosts + x",
+        "",
+      ].join("\n"),
+      "apps/api/package.json": JSON.stringify({ name: "@ws/api" }),
+      "apps/api/src/lib/origins.ts": "export const own = 1\n",
+      "apps/api/src/boot.test.ts": [
+        'const REPO = new URL("../../../", import.meta.url).pathname',
+        "const script = 'const m = await import(\"./src/lib/origins.ts\"); console.log(m)'",
+        'Bun.spawnSync(["bun", "-e", script], { cwd: `${REPO}apps/web` })',
+        "",
+      ].join("\n"),
+      "apps/api/src/uses.ts": 'import { x } from "../../web/src/lib/x"\nexport const y = x\n',
+      "apps/api/src/other.ts":
+        'import "../../web/README.md"\nexport const p = "packages/foo/src/lib/x.ts"\n',
+      "apps/api/src/own.ts": 'export const p = "src/lib/origins.ts"\n',
+      "apps/ignored/package.json": JSON.stringify({ name: "@ws/ignored" }),
+      "apps/ignored/src/a.ts": 'import { x } from "../../web/src/lib/x"\nexport const a = x\n',
+    }
+    for (const [path, content] of Object.entries(files)) writeAppFile(ws, path, content)
+    const result = await migrateLayout(join(ws, "apps/web"), { typescript: ts, write: true })
+    expect(result.issues.filter((issue) => issue.file.startsWith("../"))).toEqual([
+      {
+        file: "../api/src/boot.test.ts",
+        reason:
+          'names "src/lib/origins.ts" on line 2, and it moves to "frontend/src/lib/origins.ts" - it is outside the app, so the migration does not rewrite it',
+      },
+      {
+        file: "../api/src/uses.ts",
+        reason:
+          'names "src/lib/x.ts" on line 1, and it moves to "frontend/src/lib/x.ts" - it is outside the app, so the migration does not rewrite it',
+      },
+    ])
+    for (const path of Object.keys(files).filter((path) => !path.startsWith("apps/web/")))
+      expect(read(ws, path)).toBe(files[path] ?? "")
   })
 })

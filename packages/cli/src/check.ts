@@ -445,7 +445,7 @@ async function buildProjectScan(
     // An app's `clientModule` is browser code wherever it lives: the generated client entry imports it.
     const browserRoots = new Set<string>()
     for (const app of appDirs(source.files)) {
-      const entry = clientModuleRoot(cwd, app, resolveSpecifier)
+      const entry = clientModuleRoot(cwd, app, resolveSpecifier, sqlCompiler)
       if (entry === undefined) continue
       const rel = projectPath(entry.file)
       if (isBrowserSource(rel) || browserRoots.has(rel)) continue

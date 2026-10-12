@@ -212,7 +212,7 @@ export const zoneImportRule: CheckRule = {
     // The browser entry imports the app's `clientModule`, so the build classifies it like any file it
     // loads, and loads what it imports.
     for (const app of appDirs(ctx.sources.files)) {
-      const entry = clientModuleRoot(ctx.root, app, resolveSpecifier)
+      const entry = clientModuleRoot(ctx.root, app, resolveSpecifier, compiler)
       if (entry === undefined) continue
       let classification: Classification
       try {

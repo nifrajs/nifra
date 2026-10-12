@@ -169,6 +169,59 @@ describe("clientModuleRoot", () => {
     expect(clientModuleRoot(root, "pkg", resolve)).toBeUndefined()
     expect(clientModuleRoot(root, "missing", resolve)).toBeUndefined()
   })
+
+  test("with the compiler, a path joined onto the config's folder names its file too", () => {
+    const root = app({
+      "web/nifra.config.ts": [
+        'import { resolve as from } from "node:path"',
+        "",
+        'export const clientModule = from(import.meta.dir, "src/browser-main.tsx")',
+        "",
+      ].join("\n"),
+      "web/src/browser-main.tsx": "export function mountRouter() {}\n",
+      "own/nifra.config.ts": [
+        "const resolve = (...parts: string[]) => parts.join('/')",
+        'export const clientModule = resolve(import.meta.dir, "src/browser-main.tsx")',
+        "",
+      ].join("\n"),
+      "own/src/browser-main.tsx": "export function mountRouter() {}\n",
+      "lit/nifra.config.ts": 'export const clientModule = "./src/browser-main.tsx" as const\n',
+      "lit/src/browser-main.tsx": "export function mountRouter() {}\n",
+    })
+    const resolve = createSpecifierResolver()
+    expect(clientModuleRoot(root, "web", resolve, ts)).toEqual({
+      config: "web/nifra.config.ts",
+      line: 3,
+      specifier: "src/browser-main.tsx",
+      file: join(realpathSync(root), "web/src/browser-main.tsx"),
+    })
+    // Without the compiler only a literal reads; a `resolve` that is not node:path's never does.
+    expect(clientModuleRoot(root, "web", resolve)).toBeUndefined()
+    expect(clientModuleRoot(root, "own", resolve, ts)).toBeUndefined()
+    expect(clientModuleRoot(root, "lit", resolve, ts)?.file).toBe(
+      join(realpathSync(root), "lit/src/browser-main.tsx"),
+    )
+  })
+})
+
+describe("NF-C028 and an anchored clientModule", () => {
+  test("check reads the entry as browser code, as the build does", async () => {
+    const root = app({
+      "nifra.config.ts": [
+        'import { resolve } from "node:path"',
+        'export const clientModule = resolve(import.meta.dir, "src/client.tsx")',
+        "",
+      ].join("\n"),
+      "src/client.tsx":
+        'import { session } from "../backend/session"\nexport function mountRouter() {\n  return session\n}\n',
+      "backend/session.ts": "export const session = 1\n",
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const found = await zoneFindings(root)
+    expect(found.map((f) => f.at)).toEqual(["nifra.config.ts:2"])
+    expect(found[0]?.message).toContain("puts src/client.tsx in the browser bundle")
+    expect(await buildRefuses(root, "src/client.tsx")).toContain("src/client.tsx")
+  })
 })
 
 describe("nifra migrate layout", () => {
