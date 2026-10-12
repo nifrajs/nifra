@@ -228,4 +228,16 @@ describe("wire codec: fidelity and safety", () => {
       decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "buf", v: "AQIDBA==" }] }, { maxDecodedBytes: 3 }),
     ).toThrow(WireDecodeError)
   })
+
+  test("a bigint past the digit limit is refused before it is parsed", () => {
+    const token = (digits: number, sign = "") => ({
+      r: { $w: "bigint", v: `${sign}${"9".repeat(digits)}` },
+      n: [],
+    })
+    expect(decode(token(4096, "-"))).toBe(-(10n ** 4096n - 1n))
+    expect(() => decode(token(4097))).toThrow("wire bigint digit limit exceeded")
+    expect(() => decode(token(900_000))).toThrow("wire bigint digit limit exceeded")
+    expect(decode(token(5), { maxBigIntDigits: 5 })).toBe(99999n)
+    expect(() => decode(token(6), { maxBigIntDigits: 5 })).toThrow(WireDecodeError)
+  })
 })

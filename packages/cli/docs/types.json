@@ -16010,7 +16010,7 @@
     "name": "WireDecodeLimits",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface WireDecodeLimits {\n    /** Maximum number of interned nodes. Default 10,000. */\n    readonly maxNodes?: number;\n    /** Maximum nesting depth across containers and references. Default 256. */\n    readonly maxDepth?: number;\n    /** Maximum total object/array/map/set entries visited. Default 100,000. */\n    readonly maxCollectionEntries?: number;\n    /** Maximum UTF-8 string plus decoded binary bytes materialized. Default 16 MiB. */\n    readonly maxDecodedBytes?: number;\n}",
+    "signature": "export interface WireDecodeLimits {\n    /** Maximum number of interned nodes. Default 10,000. */\n    readonly maxNodes?: number;\n    /** Maximum nesting depth across containers and references. Default 256. */\n    readonly maxDepth?: number;\n    /** Maximum total object/array/map/set entries visited. Default 100,000. */\n    readonly maxCollectionEntries?: number;\n    /** Maximum UTF-8 string plus decoded binary bytes materialized. Default 16 MiB. */\n    readonly maxDecodedBytes?: number;\n    /**\n     * Maximum decimal digits in one `bigint`. Default 4,096 (past 8192-bit integers). Parsing grows\n     * faster than the digit count, so one long token would cost seconds of CPU under the byte limit.\n     */\n    readonly maxBigIntDigits?: number;\n}",
     "doc": "/** Resource limits applied while reconstructing transport-controlled wire data. */"
   },
   {
