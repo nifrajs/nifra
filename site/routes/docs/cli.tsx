@@ -167,10 +167,13 @@ nifra migrate --from tailwind --to stylex --dir src`}
         that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
         directory or <code>package.json</code> is never followed, and a group package installed by a
         link from outside the root is listed under &quot;Left alone&quot; for you to upgrade in its
-        own repository. So is another version pinned outside <code>package.json</code>, with its
-        line: an MCP config such as <code>.mcp.json</code>, a Dockerfile or compose file, a CI
-        workflow, and a lockfile other than the workspace&apos;s own (an image build&apos;s frozen
-        lockfile, say), which you regenerate after installing. With <code>--write</code> it also
+        own repository. The MCP launch pin in <code>.mcp.json</code>, <code>.cursor/mcp.json</code>,{" "}
+        <code>CLAUDE.md</code> and <code>AGENTS.md</code> moves to the target, the edit{" "}
+        <code>nifra init-agents --sync-mcp</code> makes. Another version pinned outside{" "}
+        <code>package.json</code> is listed with its line: the rest of an agent file, an MCP config
+        elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
+        workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
+        installing. With <code>--write</code> it also
         prints how hook scope changed across the
         upgrade (<code>--no-hooks</code> skips that). <code>nifra doctor</code> and{" "}
         <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;

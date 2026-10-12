@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
@@ -348,7 +348,7 @@ describe("computeUpgrade / runUpgrade", () => {
   test("versions pinned outside package.json are listed with their line and never edited", async () => {
     const root = await scaffold()
     const files: Record<string, string> = {
-      ".mcp.json":
+      "tools/.mcp.json":
         '{\n  "mcpServers": {\n    "nifra": { "command": "bunx", "args": ["@nifrajs/cli@1.7.0", "mcp"] }\n  }\n}\n',
       "infra/Dockerfile": "FROM oven/bun:1\nRUN bun add -g nifra@1.7.0 create-nifra@1.8.0\n",
       "infra/build.bun.lock":
@@ -361,8 +361,8 @@ describe("computeUpgrade / runUpgrade", () => {
       await writeFile(join(root, path), text)
     }
     const plan = computeUpgrade(root, RECIPE, true)
+    expect(plan.agentPins).toEqual([])
     expect(plan.strayPins).toEqual([
-      { file: ".mcp.json", line: 3, pin: "@nifrajs/cli@1.7.0", lockfile: false, more: 0 },
       { file: "infra/Dockerfile", line: 2, pin: "nifra@1.7.0", lockfile: false, more: 0 },
       {
         file: "infra/build.bun.lock",
@@ -371,9 +371,67 @@ describe("computeUpgrade / runUpgrade", () => {
         lockfile: true,
         more: 1,
       },
+      { file: "tools/.mcp.json", line: 3, pin: "@nifrajs/cli@1.7.0", lockfile: false, more: 0 },
     ])
     for (const [path, text] of Object.entries(files))
       expect(await readFile(join(root, path), "utf8")).toBe(text)
+  })
+
+  const registry = (version: string): string =>
+    `{\n  "mcpServers": {\n    "nifra": { "command": "bunx", "args": ["@nifrajs/cli@${version}", "mcp"] }\n  }\n}\n`
+  const agentFiles = (version: string): Record<string, string> => ({
+    ".mcp.json": registry(version),
+    ".cursor/mcp.json": registry(version),
+    "CLAUDE.md": `# CLAUDE.md\n\nLaunch: \`bunx @nifrajs/cli@${version} mcp\`\n`,
+    "AGENTS.md": `# AGENTS.md\n\nBuilt on @nifrajs/core@1.7.0.\n\n## MCP server\n\n\`bunx @nifrajs/cli@${version} mcp\`\n`,
+  })
+  const writeAll = async (root: string, files: Record<string, string>): Promise<void> => {
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(join(root, path, ".."), { recursive: true })
+      await writeFile(join(root, path), text)
+    }
+  }
+
+  test("the MCP launch pin in the agent files moves to the target; other pins there are listed", async () => {
+    const root = await scaffold()
+    await writeAll(root, agentFiles("1.7.0"))
+    const preview = computeUpgrade(root, RECIPE, false)
+    const moved = [".mcp.json", ".cursor/mcp.json", "CLAUDE.md", "AGENTS.md"].map((file) => ({
+      file,
+      from: ["1.7.0"],
+      to: "1.8.0",
+    }))
+    expect(preview.agentPins).toEqual(moved)
+    // The dry run lists what --write leaves: the launch pins move, the AGENTS.md prose does not.
+    const prose = {
+      file: "AGENTS.md",
+      line: 3,
+      pin: "@nifrajs/core@1.7.0",
+      lockfile: false,
+      more: 0,
+    }
+    expect(preview.strayPins).toEqual([prose])
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(registry("1.7.0"))
+
+    const applied = computeUpgrade(root, RECIPE, true)
+    expect(applied.agentPins).toEqual(moved)
+    expect(applied.strayPins).toEqual([prose])
+    const expected = agentFiles("1.8.0")
+    for (const [path, text] of Object.entries(expected))
+      expect(await readFile(join(root, path), "utf8")).toBe(text)
+    expect(computeUpgrade(root, RECIPE, true).agentPins).toEqual([])
+  })
+
+  test("a symlinked agent file or folder is never written through", async () => {
+    const root = await scaffold()
+    const outside = join(root, "..", "outside-agent-files")
+    await writeAll(outside, agentFiles("1.7.0"))
+    await symlink(join(outside, ".cursor"), join(root, ".cursor"))
+    await symlink(join(outside, "CLAUDE.md"), join(root, "CLAUDE.md"))
+    const plan = computeUpgrade(root, RECIPE, true)
+    expect(plan.agentPins).toEqual([])
+    for (const [path, text] of Object.entries(agentFiles("1.7.0")))
+      expect(await readFile(join(outside, path), "utf8")).toBe(text)
   })
 
   test("an override counts as an installed version", async () => {
