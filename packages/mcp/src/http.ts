@@ -531,7 +531,6 @@ export async function respondMcpHttp(
           stream.comment("connected")
           // Nothing is ever sent here, so a bounded lifetime costs a client only a reconnect.
           const lifetime = setTimeout(() => stream.close(), GET_STREAM_LIFETIME_MS)
-          ;(lifetime as { unref?: () => void }).unref?.()
           await stream.closed
           clearTimeout(lifetime)
         },
