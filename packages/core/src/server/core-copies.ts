@@ -47,7 +47,7 @@ const labelled = (url: string): string => {
 
 /** Why `merge()` refused a value that is not a server of this copy: when another copy is loaded, the
  * value is most likely its server, so both copies are named, with their versions where recorded
- * (copies before 5.3 record none), and the way to collapse them. Called only outside production. */
+ * (copies before 5.2 record none), and the way to collapse them. Called only outside production. */
 export function mergeRefusal(): string {
   const base = "merge() requires a server() from this copy of @nifrajs/core"
   const others = copies.filter((url) => url !== here)

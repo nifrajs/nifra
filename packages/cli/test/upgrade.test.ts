@@ -573,13 +573,13 @@ describe("computeUpgrade / runUpgrade", () => {
     ).toBe(true)
   })
 
-  test("an upgrade from 5.0 to 5.3 carries the notes of every minor, in order", () => {
-    const notes = chainRecipes("5.3.0", "5.0.0").notes ?? []
+  test("an upgrade from 5.0 to 5.2 carries the notes of every minor, in order", () => {
+    const notes = chainRecipes("5.2.0", "5.0.0").notes ?? []
     const at = (prefix: string) => notes.findIndex((note) => note.startsWith(prefix))
     const order = [
       at("5.1.0: "),
       at("5.2.0: A closed request-header schema"),
-      at("5.3.0: The development `unusedScopedHooks` audit"),
+      at("5.2.0: The development `unusedScopedHooks` audit"),
     ]
     expect(order.every((index) => index >= 0)).toBe(true)
     expect(order.toSorted((a, b) => a - b)).toEqual(order)
