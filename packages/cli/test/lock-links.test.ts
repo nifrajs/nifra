@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { bindCommandArgv, findCommandSpec } from "../src/command-catalog.ts"
 import { collectDoctorResult } from "../src/doctor.ts"
 import { parseJsonc } from "../src/internal/project-specifiers.ts"
 import {
@@ -225,6 +226,18 @@ describe("doctor, check, and upgrade", () => {
       recipe: "lock.refresh-file-links",
       command: "bun update linked-kit",
     })
+  })
+
+  test("`nifra doctor` prints the advisories it collected, not only pass or fail", async () => {
+    const root = linkedApp({ "@nifrajs/core": "5.0.0", "dep-a": "^1.0.0" })
+    const doctor = findCommandSpec("doctor")
+    const out = await doctor?.run(bindCommandArgv(doctor, []), { cwd: root })
+    const printed = doctor?.render(out).join("\n") ?? ""
+    expect(printed).toStartWith("nifra doctor\n")
+    expect(printed).toContain(
+      "⚠ bun.lock records dependencies its file: packages no longer declare",
+    )
+    expect(printed).toContain("(NF-D003)")
   })
 
   test("an exact recorded nifra pin is a version the workspace installs", () => {

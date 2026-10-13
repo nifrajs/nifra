@@ -978,136 +978,138 @@ export async function runDoctor(
   const result = opts.autoFix
     ? await applyDoctorAutoFix(cwd, opts)
     : await collectDoctorResult(cwd, opts)
-  if (opts.json) {
-    console.log(JSON.stringify(result, null, 2))
-    return result.ok
-  }
-  console.log("nifra doctor\n")
+  console.log(
+    opts.json ? JSON.stringify(result, null, 2) : doctorReport(result, opts.cliVersion).join("\n"),
+  )
+  return result.ok
+}
+
+/** The human report of a doctor run, one printed line per entry. */
+export function doctorReport(result: DoctorResult, cliVersion?: string): string[] {
+  const lines: string[] = []
+  lines.push("nifra doctor\n")
   if (!result.ran) {
-    console.log("• no package.json at this directory - nothing to check")
-    return true
+    lines.push("• no package.json at this directory - nothing to check")
+    return lines
   }
   if (result.fixed && result.fixed.length > 0) {
-    console.log("✓ updated package.json dependencies:")
+    lines.push("✓ updated package.json dependencies:")
     for (const f of result.fixed) {
-      console.log(`  ${f.package}@${f.version} (${f.source})`)
+      lines.push(`  ${f.package}@${f.version} (${f.source})`)
     }
-    console.log("")
+    lines.push("")
   }
   if (result.skippedFixes && result.skippedFixes.length > 0) {
-    console.log("• not auto-fixed:")
+    lines.push("• not auto-fixed:")
     for (const f of result.skippedFixes) {
-      console.log(`  ${f.package} - ${f.reason}; run \`${f.command.join(" ")}\``)
+      lines.push(`  ${f.package} - ${f.reason}; run \`${f.command.join(" ")}\``)
     }
-    console.log("")
+    lines.push("")
   }
   // Printed before the findings and regardless of ok: which bundler owns this app is the frame the
   // rest of the report is read in, not a footnote to it.
   if (result.pipeline !== undefined) {
     const p = result.pipeline
-    console.log(
+    lines.push(
       p.pipeline === "unknown"
         ? `• bundler: could not be read from ${p.configFile} - ${p.reason}\n`
         : `• bundler: ${p.pipeline} (${p.reason})\n`,
     )
     for (const f of p.findings) {
-      console.log(`${f.severity === "error" ? "✗" : "⚠"} ${f.file}:${f.line ?? 0}  ${f.message}`)
-      console.log(`      fix: ${f.fix}\n`)
+      lines.push(`${f.severity === "error" ? "✗" : "⚠"} ${f.file}:${f.line ?? 0}  ${f.message}`)
+      lines.push(`      fix: ${f.fix}\n`)
     }
   }
   if (result.scanScope !== undefined) {
-    console.log(
+    lines.push(
       `• dependency scan scope: ${result.scanScope.kind} (${result.scanScope.includeTests ? "includes tests" : "production package source only"})`,
     )
     if (result.scanScope.excluded.length > 0)
-      console.log(`  excluded: ${result.scanScope.excluded.join(", ")}`)
-    console.log("")
+      lines.push(`  excluded: ${result.scanScope.excluded.join(", ")}`)
+    lines.push("")
   }
   // Advisory, printed regardless of ok: a stale linked dist doesn't fail doctor, but silently eating
   // it costs an hour of misdiagnosis when the dev server 500s inside the package.
   if (result.staleDists.length > 0) {
-    console.log(
+    lines.push(
       `⚠ ${result.staleDists.length} workspace-linked package(s) with a build artifact older than their source (Bun reads src, Vite SSR/node consumers read dist):\n`,
     )
     for (const f of result.staleDists) {
-      console.log(
+      lines.push(
         f.missing
           ? `  ${f.package} - ${f.distFile} was never built`
           : `  ${f.package} - ${f.distFile} is ${f.behindSeconds}s behind ${f.sourceFile}`,
       )
-      console.log(`      rebuild ${f.package}`)
+      lines.push(`      rebuild ${f.package}`)
     }
-    console.log("")
+    lines.push("")
   }
   if (result.readiness !== undefined) {
     const readiness = result.readiness
-    console.log(
+    lines.push(
       `production readiness (${readiness.target}${readiness.targetSource === null ? "" : `, detected from ${readiness.targetSource}`}):\n`,
     )
     for (const item of readiness.items) {
       const marker =
         item.status === "configured" ? "✓" : item.status === "not-applicable" ? "-" : "✗"
       const evidence = item.evidence === undefined ? "" : ` (${item.evidence})`
-      console.log(`  ${marker} ${item.label}: ${item.status}${evidence}`)
+      lines.push(`  ${marker} ${item.label}: ${item.status}${evidence}`)
     }
     if (readiness.strict && !readiness.ok) {
-      console.log("\n  --strict: every applicable readiness rule must be configured")
+      lines.push("\n  --strict: every applicable readiness rule must be configured")
     }
-    console.log("")
+    lines.push("")
   }
   // Advisory, printed regardless of ok: the binary answering is a different feature version than the
   // one the project builds with, so its types/checks/docs describe a surface the code does not have.
   if (result.toolingDrift !== undefined) {
     const drift = result.toolingDrift
-    console.log(
+    lines.push(
       `⚠ this CLI is nifra ${drift.cli}, but the project installs ${drift.package} ${drift.project} - ` +
         "its types, checks, and docs may describe a different version than your code builds with.",
     )
-    console.log(
+    lines.push(
       `      fix: \`${syncMcpCommand(drift.cli)}\` re-pins the project's MCP launch to the nifra it installs; ` +
         "for the CLI itself, run the project's own (`bunx --bun nifra doctor` from the project directory, " +
         "or ./node_modules/.bin/nifra)\n",
     )
   }
   if (result.versionDrift !== undefined) {
-    console.log(`⚠ ${versionDriftMessage(result.versionDrift)}\n`)
+    lines.push(`⚠ ${versionDriftMessage(result.versionDrift)}\n`)
   }
   if (result.staleLinkLocks !== undefined) {
-    console.log(`⚠ ${staleLinkLockMessage(result.staleLinkLocks)}\n`)
+    lines.push(`⚠ ${staleLinkLockMessage(result.staleLinkLocks)}\n`)
   }
   for (const finding of result.handBuiltManifests ?? []) {
-    console.log(`⚠ ${handBuiltManifestMessage(finding)}\n`)
+    lines.push(`⚠ ${handBuiltManifestMessage(finding)}\n`)
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
   // release even when the CLI running doctor matches the project.
   if (result.staleMcpPins !== undefined) {
     const { target, files } = result.staleMcpPins
-    console.log(
+    lines.push(
       `⚠ the MCP launch pins a nifra other than the project's ${target} - an agent's nifra server answers for that release:`,
     )
-    for (const file of files)
-      console.log(`    ${file.path}: @nifrajs/cli@${file.pinned.join(", ")}`)
+    for (const file of files) lines.push(`    ${file.path}: @nifrajs/cli@${file.pinned.join(", ")}`)
     const command =
-      opts.cliVersion !== undefined
-        ? syncMcpCommand(opts.cliVersion)
-        : "nifra init-agents --sync-mcp"
-    console.log(
+      cliVersion !== undefined ? syncMcpCommand(cliVersion) : "nifra init-agents --sync-mcp"
+    lines.push(
       `      fix: \`${command}\` rewrites only the pinned version, then restart the agent\n`,
     )
   }
   if (result.ok) {
-    console.log(
+    lines.push(
       "✓ every imported package is declared and identity-sensitive installs are deduplicated",
     )
-    if (result.identityBasis !== undefined) console.log(`  identity scan: ${result.identityBasis}`)
+    if (result.identityBasis !== undefined) lines.push(`  identity scan: ${result.identityBasis}`)
     // A partial scan that prints a bare ✓ is a lie by omission - the packages past the cap were never
     // looked at, and the reader has no way to know that from the tick alone.
     if (result.identityScanTruncated === true) {
-      console.log(
+      lines.push(
         "  ! the identity scan was truncated, so this is not a clean bill for the whole workspace",
       )
     }
-    return true
+    return lines
   }
   // Group by package so the fix ("add X to dependencies") is stated once with its import sites.
   const byPkg = new Map<string, DoctorFinding[]>()
@@ -1117,52 +1119,52 @@ export async function runDoctor(
     byPkg.set(f.package, list)
   }
   if (byPkg.size > 0) {
-    console.log(`✗ ${byPkg.size} package(s) imported but not declared in package.json:\n`)
+    lines.push(`✗ ${byPkg.size} package(s) imported but not declared in package.json:\n`)
     for (const [pkg, sites] of [...byPkg.entries()].sort()) {
-      console.log(`  ${pkg} - add to dependencies (\`bun add ${pkg}\`)`)
-      for (const s of sites) console.log(`      ${s.file}:${s.line}`)
+      lines.push(`  ${pkg} - add to dependencies (\`bun add ${pkg}\`)`)
+      for (const s of sites) lines.push(`      ${s.file}:${s.line}`)
     }
   }
   if (result.duplicateInstalls.length > 0) {
-    console.log(
+    lines.push(
       `${byPkg.size > 0 ? "\n" : ""}✗ identity-sensitive packages resolve to multiple physical copies:\n`,
     )
-    if (result.identityBasis !== undefined) console.log(`  scan: ${result.identityBasis}\n`)
+    if (result.identityBasis !== undefined) lines.push(`  scan: ${result.identityBasis}\n`)
     for (const finding of result.duplicateInstalls) {
-      console.log(`  ${finding.package} [${finding.cause}]`)
-      console.log(`      versions: ${finding.versions.join(", ")}`)
+      lines.push(`  ${finding.package} [${finding.cause}]`)
+      lines.push(`      versions: ${finding.versions.join(", ")}`)
       for (const copy of finding.copies) {
-        console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
+        lines.push(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
-      console.log(`      ${finding.explanation}`)
+      lines.push(`      ${finding.explanation}`)
       // A planted symlink is the cause no reinstall here can see, so it is named before the fix.
-      if (finding.provenance !== undefined) console.log(`      links: ${finding.provenance}`)
+      if (finding.provenance !== undefined) lines.push(`      links: ${finding.provenance}`)
       // The shape of the split decides which fix can work, so it is printed above the fix itself.
-      if (finding.topology !== undefined) console.log(`      topology: ${finding.topology}`)
+      if (finding.topology !== undefined) lines.push(`      topology: ${finding.topology}`)
       // Why a copy this directory never imports still counts. Without it, a workspace-wide answer
       // read from inside one app looks like the tool checking the wrong project.
-      if (finding.scope !== undefined) console.log(`      scope: ${finding.scope}`)
-      console.log(`      fix: ${finding.remediation}`)
+      if (finding.scope !== undefined) lines.push(`      scope: ${finding.scope}`)
+      lines.push(`      fix: ${finding.remediation}`)
     }
   }
   // Not a failure and not silence: the copies are real, and whoever reads this report needs to know
   // the graph is held together by a declaration rather than by the install.
   if (result.deduplicatedInstalls !== undefined && result.deduplicatedInstalls.length > 0) {
-    console.log("\n• identity-sensitive packages deduplicated by declaration:\n")
+    lines.push("\n• identity-sensitive packages deduplicated by declaration:\n")
     for (const finding of result.deduplicatedInstalls) {
-      console.log(`  ${finding.package} @ ${finding.versions.join(", ")}`)
+      lines.push(`  ${finding.package} @ ${finding.versions.join(", ")}`)
       for (const copy of finding.copies) {
-        console.log(`      ${copy.path} ← ${copy.importers.join(", ")}`)
+        lines.push(`      ${copy.path} ← ${copy.importers.join(", ")}`)
       }
-      console.log(`      ${finding.remediation}`)
+      lines.push(`      ${finding.remediation}`)
     }
   }
   if (result.readiness?.strict === true && result.readiness.ok === false) {
-    console.log("\n✗ production readiness is incomplete under --strict")
+    lines.push("\n✗ production readiness is incomplete under --strict")
   }
   if (byPkg.size > 0)
-    console.log(
+    lines.push(
       "\nThese resolve at Bun runtime via hoisting/workspace but break `tsc` and a standalone install.",
     )
-  return false
+  return lines
 }
