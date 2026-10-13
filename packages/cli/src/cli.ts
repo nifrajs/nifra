@@ -276,14 +276,16 @@ Usage:
                 [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact), then verify with nifra check.
-                [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                [--allow-linked-skew]    to skip), then prints how hook scope changed (--no-hooks to
-                [--no-hooks]             skip). --list shows the targets with each newer release's
-                                         notes. A version newer than this CLI prints the command for
-                                         that release's CLI. Fail-closed on an unknown version, a
-                                         rollback (--allow-downgrade overrides), or a linked repository
-                                         that loads its own nifra at another version
-                                         (--allow-linked-skew overrides). Deterministic + idempotent.
+                [--allow-downgrade]      Dry-run by default; --write applies, then verifies (--no-verify
+                [--allow-linked-skew]    to skip) and prints how hook scope changed (--no-hooks to skip)
+                [--no-hooks]             once the target is installed, else prints the install command
+                                         to run first. --list shows the targets with each newer
+                                         release's notes. A version newer than this CLI prints the
+                                         command for that release's CLI. Fail-closed on an unknown
+                                         version, a rollback (--allow-downgrade overrides), or a
+                                         linked repository that loads its own nifra at another
+                                         version (--allow-linked-skew overrides). Deterministic +
+                                         idempotent.
   nifra migrate layout [--write] [--zones] [--json]
                                          Move an app onto the frontend/backend split: split each route
                                          into x.tsx + x.backend.ts, fold _middleware.ts into

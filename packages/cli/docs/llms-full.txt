@@ -3205,7 +3205,7 @@ app&rsquo;s `responseHeaders()`.
 
 `nifra routes --hooks --json` writes the report; `--since <file>`
 prints what runs differently from a saved one. `nifra upgrade --write` saves the
-report before it edits anything and prints the scope diff, and `nifra check --json`
+report before it edits anything and prints the scope diff once the target is installed, and `nifra check --json`
 includes it as `hooks` when `nifra.assurance.ts` names a
 `source`. Origins are recorded only outside production builds.
 
@@ -6633,7 +6633,9 @@ The pins in `overrides`, `resolutions` and
 ```bash
 nifra upgrade --list          # the release targets this CLI knows
 nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.0.0 --write   # apply, then nifra check verifies (--no-verify skips it)
+nifra upgrade 5.0.0 --write   # apply; it verifies with nifra check once the target is installed
+bun install                   # install the new pins
+nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left
 ```
 
@@ -6650,9 +6652,14 @@ the edit `nifra init-agents --sync-mcp` makes. Another version pinned outside
 `package.json` is listed with its line: the rest of an agent file, an MCP config
 elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
 workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
-installing. With `--write` it also
-prints how hook scope changed across the
-upgrade (`--no-hooks` skips that). `nifra doctor` and
+installing. `nifra check` reads the installed packages, so `--write`
+runs it (`--no-verify` skips that) only once they match the target: until the new
+pins are installed it would judge the release you are leaving, and the command prints the
+install to run first instead. With `--write` it also saves the hook report from
+before the edits and, once the target is installed, prints how hook scope changed across the
+upgrade (`--no-hooks` skips that); before then,
+`nifra routes --hooks --since` compares after the install.
+`nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
 see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A
 `file:` package whose dependencies this upgrade moves keeps its old ones in

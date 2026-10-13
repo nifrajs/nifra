@@ -185,18 +185,32 @@ describe("nifra upgrade --write", () => {
       error.mockRestore()
     }
   }
-  const upgradable = (name: string): string => {
+  const upgradable = (name: string, pin = "^4.0.0"): string => {
     const root = project(name)
     writeAppFile(
       root,
       "package.json",
-      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^4.0.0" } }),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": pin } }),
     )
     return root
   }
 
+  test("before the new pins are installed, saves the pre-upgrade report and says what to run after", async () => {
+    const root = upgradable("upgrade-uninstalled-")
+    const { result, out } = await capture(() =>
+      runUpgrade(root, { version: "4.0.2", cliVersion: "4.0.2", write: true, verify: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).not.toContain("Hook scope across the edits")
+    expect(out).toContain(
+      `The new release's hooks run once its packages are installed. After installing, compare against the report saved before the edits:\n  nifra routes --hooks --since ${HOOKS_BEFORE_UPGRADE_FILE}`,
+    )
+    const saved = parseHookReport(await readFile(join(root, HOOKS_BEFORE_UPGRADE_FILE), "utf8"))
+    expect(saved?.routes.length).toBe(3)
+  }, 30_000)
+
   test("saves the pre-upgrade hook report and prints the scope diff", async () => {
-    const root = upgradable("upgrade-")
+    const root = upgradable("upgrade-", "^4.0.2")
     const { result, out } = await capture(() =>
       runUpgrade(root, { version: "4.0.2", cliVersion: "4.0.2", write: true, verify: false }),
     )

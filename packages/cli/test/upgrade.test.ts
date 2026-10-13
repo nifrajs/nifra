@@ -10,6 +10,7 @@ import {
   computeUpgrade,
   installedGroupVersion,
   moveDependenciesText,
+  pendingInstall,
   pinSweepText,
   rewriteVersionSpec,
   runUpgrade,
@@ -725,29 +726,91 @@ describe("chained upgrades", () => {
     )
   })
 
-  test("--write --json verifies inside the one JSON document", async () => {
-    const root = await scaffoldV1("chain-json-verify")
+  interface UpgradeReport {
+    readonly write: boolean
+    readonly check?: { readonly ok: boolean }
+    readonly install?: unknown
+  }
+  const jsonUpgrade = async (root: string): Promise<{ result: boolean; report: UpgradeReport }> => {
     const lines: string[] = []
     const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
     const error = spyOn(console, "error").mockImplementation(() => {})
-    let result: boolean
     try {
-      result = await runUpgrade(root, {
+      const result = await runUpgrade(root, {
         version: "4.0.0",
         cliVersion: "4.0.0",
         write: true,
         json: true,
         hooks: false,
       })
+      return { result, report: JSON.parse(lines.join("\n")) }
     } finally {
       log.mockRestore()
       error.mockRestore()
     }
-    const report = JSON.parse(lines.join("\n"))
+  }
+
+  test("--write leaves the check until the edited pins are installed", async () => {
+    const root = await scaffoldV1("chain-uninstalled")
+    const { result, out } = await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, hooks: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain(
+      "Not checked yet: `nifra check` reads the installed packages, and the edited pins are not installed yet, so it would judge the release this upgrade leaves rather than 4.0.0. Install, then check:\n  bun install\n  nifra check",
+    )
+    expect(out).not.toContain("upgrade applied but")
+
+    const json = await jsonUpgrade(await scaffoldV1("chain-uninstalled-json"))
+    expect(json.result).toBe(true)
+    expect(json.report.check).toBeUndefined()
+    expect(json.report.install).toEqual({ command: "bun install", installed: [] })
+  })
+
+  test("--write --json verifies inside the one JSON document once the target is installed", async () => {
+    const root = await scaffoldV1("chain-json-verify")
+    await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, verify: false }),
+    )
+    const { result, report } = await jsonUpgrade(root)
     expect(report.write).toBe(true)
-    expect(typeof report.check.ok).toBe("boolean")
-    expect(result).toBe(report.check.ok)
+    expect(report.install).toBeUndefined()
+    expect(typeof report.check?.ok).toBe("boolean")
+    expect(result).toBe(report.check?.ok === true)
   }, 120_000)
+
+  test("an install below the target, or a lockfile, decides what the deferred check names", async () => {
+    const root = join(FIXTURES, "installed-below")
+    const core = join(root, "node_modules", "@nifrajs", "core")
+    await mkdir(core, { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "4.0.0" } }),
+    )
+    await writeFile(
+      join(core, "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "3.7.0" }),
+    )
+    await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
+    const plan = computeUpgrade(root, chainRecipes("4.0.0", "4.0.0"), false)
+    expect(plan.pins).toEqual([])
+    expect(pendingInstall(root, plan)).toEqual({
+      command: "pnpm install",
+      installed: [{ package: "@nifrajs/core", version: "3.7.0" }],
+    })
+    const { result, out } = await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, hooks: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain("and node_modules still holds @nifrajs/core 3.7.0, so it would judge")
+    expect(out).toContain("  pnpm install\n  nifra check")
+
+    await writeFile(
+      join(core, "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "4.0.0" }),
+    )
+    expect(pendingInstall(root, plan)).toBeUndefined()
+  })
 
   test("--exact pins the exact version", async () => {
     const root = await scaffoldV1("chain-exact")

@@ -12,7 +12,9 @@
  *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
- *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface.
+ *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface. It reads the
+ *      installed packages, so while the edited pins are not installed yet it is skipped with the
+ *      install command to run first: a check then would judge the release being left.
  *
  * Upgrading across several releases runs every recipe between the installed version (the lowest
  * fixed-group version the workspace declares) and the target, oldest first, then pins the target. A
@@ -69,7 +71,8 @@ export interface UpgradeOptions {
   readonly json?: boolean
   /** Print the available target versions and return. */
   readonly list?: boolean
-  /** After `--write`, run `nifra check` and fail the command if it fails. Default true. */
+  /** After `--write`, run `nifra check` and fail the command if it fails, once the install matches
+   * the target; until then, print the install command to run first. Default true. */
   readonly verify?: boolean
   /** Permit a target BELOW the installed version (a rollback). Default false → fail-closed. */
   readonly allowDowngrade?: boolean
@@ -1133,7 +1136,7 @@ function renderPlan(
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)
-  if (!write) lines.push("\nRe-run with --write to apply, then nifra check verifies.")
+  if (!write) lines.push("\nRe-run with --write to apply, then install and run nifra check.")
   return lines.join("\n").trimEnd()
 }
 
@@ -1174,10 +1177,60 @@ function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[
   ].join("\n")
 }
 
-/** The hook report around `--write`: the diff and where the pre-upgrade report was saved, or why not. */
+/** The hook report around `--write`: the diff and where the pre-upgrade report was saved, or why not.
+ * `install` means the edits are not installed yet, so only the pre-upgrade report was taken. */
 export type UpgradeHookScope =
   | { readonly saved: string; readonly changes: readonly HookReportChange[] }
+  | { readonly saved: string; readonly pending: "install" }
   | { readonly error: string; readonly saved?: string }
+
+/** The edits `--write` made that the installed packages do not reflect yet. */
+export interface PendingInstall {
+  /** The command that installs them, by the lockfile the project keeps. */
+  readonly command: string
+  /** Fixed-group packages installed inside the root at a version other than the target. */
+  readonly installed: readonly { readonly package: string; readonly version: string }[]
+}
+
+const INSTALL_COMMANDS: readonly (readonly [lockfile: string, command: string])[] = [
+  ["pnpm-lock.yaml", "pnpm install"],
+  ["yarn.lock", "yarn install"],
+  ["package-lock.json", "npm install"],
+]
+
+/**
+ * Whether the project needs an install before a check can judge the target: `--write` changed what
+ * package.json declares or what bun.lock records, or node_modules holds a group package at another
+ * version. A link from outside the root is left out; installing here does not move it.
+ */
+export function pendingInstall(cwd: string, plan: UpgradePlan): PendingInstall | undefined {
+  const installed = installedGroupPackages(cwd)
+    .filter((entry) => entry.inside && entry.version !== plan.version)
+    .map(({ package: name, version }) => ({ package: name, version }))
+  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0 || plan.lockPruned
+  if (!edited && installed.length === 0) return undefined
+  const command =
+    INSTALL_COMMANDS.find(([lockfile]) => existsSync(join(cwd, lockfile)))?.[1] ?? "bun install"
+  return { command, installed }
+}
+
+const SHOWN_INSTALLS = 3
+
+function renderPendingInstall(pending: PendingInstall, version: string): string {
+  const shown = pending.installed
+    .slice(0, SHOWN_INSTALLS)
+    .map((entry) => `${entry.package} ${entry.version}`)
+  const more = pending.installed.length - shown.length
+  const holds =
+    shown.length === 0
+      ? "the edited pins are not installed yet"
+      : `node_modules still holds ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`
+  return [
+    `Not checked yet: \`nifra check\` reads the installed packages, and ${holds}, so it would judge the release this upgrade leaves rather than ${version}. Install, then check:`,
+    `  ${pending.command}`,
+    "  nifra check",
+  ].join("\n")
+}
 
 async function hookReportBefore(cwd: string): Promise<ReflectedHookReport | { error: string }> {
   try {
@@ -1190,15 +1243,18 @@ async function hookReportBefore(cwd: string): Promise<ReflectedHookReport | { er
 }
 
 /** The report after the edits, from a fresh process: the edited sources must not come from this one's
- * module cache. Saves the pre-upgrade report for `nifra routes --hooks --since` after an install. */
+ * module cache. Saves the pre-upgrade report for `nifra routes --hooks --since` after an install.
+ * While the edits are not installed, the old release would load in its place, so none is taken. */
 async function hookScopeAcross(
   cwd: string,
   before: ReflectedHookReport | { error: string },
+  installed: boolean,
 ): Promise<UpgradeHookScope> {
   if ("error" in before) return { error: before.error }
   const saved = join(cwd, HOOKS_BEFORE_UPGRADE_FILE)
   mkdirSync(dirname(saved), { recursive: true })
   writeFileSync(saved, `${JSON.stringify(before, null, 2)}\n`)
+  if (!installed) return { saved: HOOKS_BEFORE_UPGRADE_FILE, pending: "install" }
   const entry = fileURLToPath(
     new URL(import.meta.url.endsWith(".ts") ? "./cli.ts" : "./cli.js", import.meta.url),
   )
@@ -1232,6 +1288,7 @@ function renderHookScope(scope: UpgradeHookScope): string {
     const head = `Hook scope: not captured (${scope.error}).`
     return scope.saved === undefined ? head : [head, ...since(scope.saved)].join("\n")
   }
+  if ("pending" in scope) return since(scope.saved).join("\n")
   return [
     "Hook scope across the edits (nifra routes --hooks):",
     renderHookDiff(scope.changes)
@@ -1392,14 +1449,18 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
   const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
-  const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
+  const pending = write ? pendingInstall(cwd, plan) : undefined
+  const hooks =
+    before === undefined ? undefined : await hookScopeAcross(cwd, before, pending === undefined)
 
-  // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.
-  const verify = write && options.verify !== false
+  // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
+  // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
+  const verify = write && options.verify !== false && pending === undefined
   if (options.json) {
     // The check result rides inside the one JSON document; its human report would break the stream.
     const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
     if (hooks !== undefined) report.hooks = hooks
+    if (pending !== undefined) report.install = pending
     let ok = true
     if (verify) {
       const { collectProjectVerification } = await import("./verification.ts")
@@ -1415,6 +1476,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   if (plan.linkedSkew.length > 0)
     console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
   if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
+  if (pending !== undefined && options.verify !== false)
+    console.log(`\n${renderPendingInstall(pending, recipe.version)}`)
 
   if (verify) {
     const { runCheck } = await import("./check.ts")
