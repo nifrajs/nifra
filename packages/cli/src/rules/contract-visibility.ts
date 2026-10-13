@@ -5,6 +5,7 @@
  *
  * The served routes come from the backend the contract-lock check already loaded; this rule runs no
  * project code of its own. Without a lock the backend is not loaded and the comparison is skipped.
+ * A contract imported from a workspace package is read through that package's `exports`.
  */
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { join, relative } from "node:path"
@@ -13,6 +14,7 @@ import { BACKEND_APP_FILE } from "../app-files.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { createSpecifierResolver, type SpecifierResolver } from "../internal/project-specifiers.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
+import { createExportedFileResolver } from "../internal/workspace-packages.ts"
 import type { CheckRule } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -192,7 +194,19 @@ export const contractVisibilityRule: CheckRule = {
     const loaded = await loadRuleTypeScript(ctx)
     const ts = loaded.compiler
     if (ts === undefined) return []
-    const resolve = createSpecifierResolver()
+    const projectResolve = createSpecifierResolver()
+    const packageEntry = await createExportedFileResolver(ctx.root)
+    /** Why a package specifier could not be read, by importing file and specifier. */
+    const packageReasons = new Map<string, string>()
+    const resolve: SpecifierResolver = (from, specifier) => {
+      const local = projectResolve(from, specifier)
+      if (local !== undefined) return local
+      const entry = packageEntry(from, specifier)
+      if (entry === undefined) return undefined
+      if ("path" in entry) return entry.path
+      packageReasons.set(`${from}\0${specifier}`, entry.reason)
+      return undefined
+    }
     // The resolver answers with real paths, so the root is read as one to name files project-relative.
     const realRoot = (() => {
       try {
@@ -281,13 +295,23 @@ export const contractVisibilityRule: CheckRule = {
             contract = "an inline contract"
           }
           if (literal === undefined) {
+            const from =
+              arg !== undefined && ts.isIdentifier(arg)
+                ? parsed.bound.imported.get(arg.text)?.specifier
+                : undefined
+            const reason =
+              from === undefined
+                ? undefined
+                : packageReasons.get(`${join(ctx.root, file)}\0${from}`)
             implementations.push({
               file,
               line,
               contract,
               operations: [],
               unreadable: [
-                `the contract ${contract} is not a defineContract({...}) the scan can read`,
+                reason === undefined
+                  ? `the contract ${contract} is not a defineContract({...}) the scan can read`
+                  : `the contract ${contract} is imported from "${from}", which the scan cannot read: ${reason}`,
               ],
             })
           } else implementations.push({ file, line, contract, ...operationsOf(ts, literal) })

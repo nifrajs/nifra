@@ -12330,8 +12330,10 @@ The tooling reads the backend `backend/app.ts` exports. An app that
 `implement`s a contract somewhere else, such as a `createApp(deps)`
 factory, is invisible to the contract lock and the route lints until that file serves it.
 `nifra check` names each implemented operation the backend does not serve
-(NF-C039), and counts them when there is no `backend/app.ts` at all. Export the
-same app built with stand-in dependencies:
+(NF-C039), and counts them when there is no `backend/app.ts` at all. It reads a
+contract imported from a workspace package through that package&apos;s
+`exports`; a package installed from a registry is never read, and the check says
+so rather than passing it. Export the same app built with stand-in dependencies:
 
 ```ts
 // backend/app.ts - the backend nifra's tooling reads

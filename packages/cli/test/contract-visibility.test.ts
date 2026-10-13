@@ -177,6 +177,63 @@ describe("NF-C039", () => {
     expect(await findings(root)).toEqual([])
   })
 
+  describe("a contract in a workspace package", () => {
+    const workspace = (implementation: string, backend: string): Promise<string> =>
+      project(
+        {
+          "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+          "packages/contracts/package.json": JSON.stringify({
+            name: "@team/contracts",
+            exports: {
+              "./contract": { types: "./src/contract.ts", default: "./dist/contract.js" },
+              "./ops/*": "./src/ops/*.ts",
+            },
+          }),
+          "packages/contracts/src/contract.ts": CONTRACT,
+          "packages/contracts/src/ops/users.ts": CONTRACT,
+          "node_modules/@vendor/contracts/package.json": JSON.stringify({
+            name: "@vendor/contracts",
+            exports: { "./contract": "./src/contract.ts" },
+          }),
+          "node_modules/@vendor/contracts/src/contract.ts": CONTRACT,
+          "src/app.ts": IMPLEMENTATION.replace('"~/contract"', `"${implementation}"`),
+          "backend/app.ts": [
+            'import { server } from "@nifrajs/core"',
+            `export const backend = server()${backend}`,
+            "",
+          ].join("\n"),
+        },
+        true,
+      )
+    const BOTH = '.get("/users", () => []).post("/users", () => ({}))'
+
+    test("is read through the package's exports, conditions and * subpaths alike", async () => {
+      for (const specifier of ["@team/contracts/contract", "@team/contracts/ops/users"]) {
+        expect(await findings(await workspace(specifier, BOTH))).toEqual([])
+        const found = await findings(await workspace(specifier, '.get("/users", () => [])'))
+        expect(found).toHaveLength(1)
+        expect(found[0]?.message).toStartWith(
+          "implement(users) serves 1 operation(s) that backend/app.ts does not: POST /users.",
+        )
+      }
+    })
+
+    test("a package installed from a registry, or a subpath it does not export, is named as unreadable", async () => {
+      const vendor = await findings(await workspace("@vendor/contracts/contract", BOTH))
+      expect(vendor.map((f) => f.message)).toEqual([
+        expect.stringContaining(
+          'the contract users is imported from "@vendor/contracts/contract", which the scan cannot read: @vendor/contracts is installed from a registry, not a workspace package',
+        ),
+      ])
+      const missing = await findings(await workspace("@team/contracts/missing", BOTH))
+      expect(missing.map((f) => f.message)).toEqual([
+        expect.stringContaining(
+          'which the scan cannot read: @team/contracts does not export "./missing"',
+        ),
+      ])
+    })
+  })
+
   test("a project that implements no contract gets nothing", async () => {
     const root = await project(
       {

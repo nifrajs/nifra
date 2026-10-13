@@ -156,13 +156,13 @@ const isFile = (path: string): Promise<boolean> =>
     .catch(() => false)
 
 /**
- * The nifra projects among `dir`'s package-manager workspace members, in declaration order. Empty when
- * `dir` declares no `workspaces`. A member is a directory a pattern matches that holds a `package.json`;
- * `node_modules` is never a member.
+ * `dir`'s package-manager workspace members, in declaration order; `null` when `dir` declares no
+ * `workspaces`. A member is a directory a pattern matches that holds a `package.json`; `node_modules`
+ * is never a member.
  */
-export async function workspaceProjects(dir: string): Promise<string[]> {
+export async function workspaceMemberDirs(dir: string): Promise<string[] | null> {
   const patterns = await workspacePatterns(dir)
-  if (patterns === null) return []
+  if (patterns === null) return null
   const members = new Set<string>()
   const budget = { directories: MAX_WORKSPACE_DIRECTORIES }
   for (const pattern of patterns) {
@@ -171,8 +171,14 @@ export async function workspaceProjects(dir: string): Promise<string[]> {
       members.add(join(dir, member))
     }
   }
+  return [...members]
+}
+
+/** The nifra projects among `dir`'s workspace members, in declaration order. */
+export async function workspaceProjects(dir: string): Promise<string[]> {
   const projects: string[] = []
-  for (const member of members) if (await isNifraProjectDir(member)) projects.push(member)
+  for (const member of (await workspaceMemberDirs(dir)) ?? [])
+    if (await isNifraProjectDir(member)) projects.push(member)
   return projects
 }
 

@@ -142,8 +142,10 @@ export default function TypesFirst() {
         <code>implement</code>s a contract somewhere else, such as a <code>createApp(deps)</code>{" "}
         factory, is invisible to the contract lock and the route lints until that file serves it.{" "}
         <code>nifra check</code> names each implemented operation the backend does not serve
-        (NF-C039), and counts them when there is no <code>backend/app.ts</code> at all. Export the
-        same app built with stand-in dependencies:
+        (NF-C039), and counts them when there is no <code>backend/app.ts</code> at all. It reads a
+        contract imported from a workspace package through that package&apos;s{" "}
+        <code>exports</code>; a package installed from a registry is never read, and the check says
+        so rather than passing it. Export the same app built with stand-in dependencies:
       </p>
       <CodeBlock code={STUB_ENTRY} lang="ts" />
 
