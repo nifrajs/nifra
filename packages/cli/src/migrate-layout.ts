@@ -1660,7 +1660,8 @@ function workspaceSiblings(root: string): readonly string[] | undefined {
  * Where code in a workspace sibling names an app file that moves: a relative import into the app, or
  * the file's path in a string or command (`bun -e 'import("./src/x.ts")'` with the app as its working
  * directory). Only files that mention the app's folder or package name are read further, and a path
- * the sibling's own package holds is its own file. Report-only: the migration never edits a sibling.
+ * the sibling's own package holds is its own file. Every line that names a path is listed, each marked
+ * when it lies only in a comment. Report-only: the migration never edits a sibling.
  */
 function siblingReferences(
   ts: typeof TS,
@@ -1671,17 +1672,27 @@ function siblingReferences(
   moves: ReadonlyMap<string, string>,
   known: ReadonlySet<string>,
   ownName: string | undefined,
-): Array<{ readonly from: string; readonly to: string; readonly line: number }> {
+): Array<{
+  readonly from: string
+  readonly to: string
+  readonly lines: readonly number[]
+  readonly commentLines: readonly number[]
+}> {
   const abs = join(pkg, file)
   // A process started in the app (`cwd: \`${repo}apps/web\``) reads its paths from the app root.
   const runsInApp = new RegExp(
     `\\bcwd\\s*:[^,\\n]*\\b${escapeRegExp(posix.basename(toPosix(root)))}\\b`,
   ).test(text)
-  const found = new Map<string, { from: string; to: string; line: number }>()
-  const report = (from: string, index: number): void => {
+  const comments = /\.[cm]?[jt]sx?$/.test(file) ? triviaCommentRanges(ts, file, text) : []
+  const found = new Map<string, { to: string; lines: Set<number>; commentLines: Set<number> }>()
+  const report = (from: string, index: number, length: number): void => {
     const to = moves.get(from)
-    if (to === undefined || found.has(from)) return
-    found.set(from, { from, to, line: text.slice(0, index).split("\n").length })
+    if (to === undefined) return
+    const entry = found.get(from) ?? { to, lines: new Set(), commentLines: new Set() }
+    found.set(from, entry)
+    const line = text.slice(0, index).split("\n").length
+    const inComment = comments.some(([start, end]) => start <= index && index + length <= end)
+    ;(inComment ? entry.commentLines : entry.lines).add(line)
   }
   if (/\.(?:[cm]?[jt]sx?)$/.test(file)) {
     for (const { specifier } of importsOf(ts, file, text)) {
@@ -1693,7 +1704,7 @@ function siblingReferences(
           : undefined
       if (inApp === undefined || inApp.startsWith("../") || isAbsolute(inApp)) continue
       const target = resolveIn(known, "index.ts", `./${inApp}`)
-      if (target !== undefined) report(target, text.indexOf(specifier))
+      if (target !== undefined) report(target, text.indexOf(specifier), specifier.length)
     }
   }
   for (const from of moves.keys()) {
@@ -1712,11 +1723,16 @@ function siblingReferences(
       if (prefix !== "" && !bases.some((base) => resolve(base, prefix) === root)) continue
       const own = existsSync(join(pkg, from)) || existsSync(join(dirname(abs), from))
       if (prefix === "" && own && !runsInApp) continue
-      report(from, match.index)
-      break
+      report(from, match.index, match[0].length)
     }
   }
-  return [...found.values()]
+  const byNumber = (a: number, b: number): number => a - b
+  return [...found].map(([from, { to, lines, commentLines }]) => ({
+    from,
+    to,
+    lines: [...lines].sort(byNumber),
+    commentLines: [...commentLines].filter((line) => !lines.has(line)).sort(byNumber),
+  }))
 }
 
 /** The package folder an app without its own package.json sits in (`--dir src`), at most two levels
@@ -2714,7 +2730,9 @@ export async function migrateLayout(
       if (!mentionsApp.test(text) && (ownName === undefined || !text.includes(`${ownName}/`)))
         continue
       const at = toPosix(relative(root, join(sibling, file)))
-      for (const { from, to, line } of siblingReferences(
+      const onLines = (lines: readonly number[]): string =>
+        `on line${lines.length === 1 ? "" : "s"} ${lines.join(", ")}`
+      for (const { from, to, lines, commentLines } of siblingReferences(
         ts,
         root,
         sibling,
@@ -2724,10 +2742,18 @@ export async function migrateLayout(
         known,
         ownName,
       )) {
-        issues.push({
-          file: at,
-          reason: `names "${from}" on line ${line}, and it moves to "${to}" - it is outside the app, so the migration does not rewrite it`,
-        })
+        const comments =
+          commentLines.length === 0 ? "" : ` (and in a comment ${onLines(commentLines)})`
+        if (lines.length > 0)
+          issues.push({
+            file: at,
+            reason: `names "${from}" ${onLines(lines)}${comments}, and it moves to "${to}" - it is outside the app, so the migration does not rewrite it`,
+          })
+        else
+          commentFollowUps.push({
+            file: at,
+            reason: `a comment ${onLines(commentLines)} names "${from}", which moved to "${to}"`,
+          })
       }
     }
   }

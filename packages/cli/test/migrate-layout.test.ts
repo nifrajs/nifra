@@ -1731,4 +1731,39 @@ describe("migrateLayout entries, tests and workspace siblings", () => {
     for (const path of Object.keys(files).filter((path) => !path.startsWith("apps/web/")))
       expect(read(ws, path)).toBe(files[path] ?? "")
   })
+
+  test("a sibling's every line naming a moved path is listed, and a comment-only mention is a follow-up", async () => {
+    const ws = createFixtureProject(ROOT, "ws-")
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["apps/*"] }),
+      "apps/web/package.json": JSON.stringify({ name: "@ws/web" }),
+      "apps/web/src/lib/bark.ts": "export const bark = 1\n",
+      "apps/web/routes/index.tsx":
+        'import { bark } from "../src/lib/bark"\nexport default () => bark\n',
+      "apps/jobs/package.json": JSON.stringify({ name: "@ws/jobs" }),
+      "apps/jobs/src/sync.ts": [
+        "// bark.ts sits in web at src/lib/bark.ts",
+        "export const a = 1",
+        'export const barkFile = new URL("../../web/src/lib/bark.ts", import.meta.url)',
+        "",
+      ].join("\n"),
+      "apps/jobs/src/notes.ts": "// Copied from ../web/src/lib/bark.ts.\nexport const c = 1\n",
+    }
+    for (const [path, content] of Object.entries(files)) writeAppFile(ws, path, content)
+    const result = await migrateLayout(join(ws, "apps/web"), { typescript: ts })
+    expect(result.issues.filter((issue) => issue.file.startsWith("../"))).toEqual([
+      {
+        file: "../jobs/src/sync.ts",
+        reason:
+          'names "src/lib/bark.ts" on line 3 (and in a comment on line 1), and it moves to "frontend/src/lib/bark.ts" - it is outside the app, so the migration does not rewrite it',
+      },
+    ])
+    expect(result.followUps.filter((step) => step.file.startsWith("../"))).toEqual([
+      {
+        file: "../jobs/src/notes.ts",
+        reason:
+          'a comment on line 1 names "src/lib/bark.ts", which moved to "frontend/src/lib/bark.ts"',
+      },
+    ])
+  })
 })
