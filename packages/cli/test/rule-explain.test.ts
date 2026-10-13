@@ -30,7 +30,7 @@ describe("the rule explanation catalog", () => {
       if (fixCode !== undefined) expect(fixCode).toBe(code)
       for (const text of [entry.why, entry.fix]) {
         expect(text).toMatch(/[.)]$/)
-        expect(text).not.toMatch(/[–—]/)
+        expect(text).not.toMatch(/[\u2013\u2014]/)
       }
     }
   })
