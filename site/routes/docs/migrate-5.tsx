@@ -152,6 +152,15 @@ export default function Migrate5() {
         registered under the prefix; <code>nifra routes</code> marks one outside it as in-process
         only, and <code>nifra dev</code> and <code>nifra build</code> warn about it.
       </p>
+      <p>
+        An app that strips the prefix itself, with a <code>Proxy</code> or a wrapper around the
+        backend's <code>fetch</code> that cuts <code>/api</code> before routing, gets that warning
+        for every route: the check reads the registered paths, and a rewrite at run time is invisible
+        to it. Delete the wrapper and export <code>apiStrip = true</code> beside{" "}
+        <code>apiPrefix</code>, which does the same cut where the framework can see it. A second
+        prefix the wrapper served (a <code>/v1</code> alias, a webhook path) becomes an entry in{" "}
+        <code>mounts</code>.
+      </p>
 
       <h2>5. Review the 5.0 defaults that changed</h2>
       <ul>
@@ -176,6 +185,22 @@ export default function Migrate5() {
         <li>
           <code>nifra check</code> fails a secret comparison (NF-S002) outside browser code of a web
           app.
+        </li>
+      </ul>
+      <p>
+        From 3.x, two 4.0 changes also show up in tests and tooling rather than in pages:
+      </p>
+      <ul>
+        <li>
+          Page data is handed over in one{" "}
+          <code>{'<script type="application/json" id="__nifra-handover">'}</code>, not a script that
+          assigns <code>window.__NIFRA_DATA__</code>. A test that read the data out of the HTML
+          parses that element (<code>HANDOVER_ID</code> from <code>@nifrajs/web</code>).
+        </li>
+        <li>
+          <code>x-nifra-isr-revalidate</code> and <code>x-nifra-isr-tags</code> are set only under a
+          cache wrapper such as <code>withISR</code>, which removes them before responding. A test
+          that read a page's TTL from them on an unwrapped app reads nothing.
         </li>
       </ul>
       <p>

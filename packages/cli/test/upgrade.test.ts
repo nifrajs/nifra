@@ -685,6 +685,11 @@ describe("chained upgrades", () => {
       to: "@nifrajs/web/backend-only",
     })
     expect(chain.notes?.[0]).toStartWith("4.0.0: Run `nifra migrate layout`")
+    // What a test suite or tool reads off the wire changed too: the handover and the ISR headers.
+    const notes = chain.notes?.join("\n") ?? ""
+    expect(notes).toContain('id="__nifra-handover"')
+    expect(notes).toContain("window.__NIFRA_DATA__")
+    expect(notes).toContain("`x-nifra-isr-revalidate` and `x-nifra-isr-tags`")
   })
 
   test("a target without a recipe pins the fixed group; an unknown install runs only the target's", () => {

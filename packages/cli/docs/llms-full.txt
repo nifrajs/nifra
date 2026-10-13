@@ -11169,6 +11169,14 @@ backend sees each request's full path unless `apiStrip` is on, so its routes are
 registered under the prefix; `nifra routes` marks one outside it as in-process
 only, and `nifra dev` and `nifra build` warn about it.
 
+An app that strips the prefix itself, with a `Proxy` or a wrapper around the
+backend's `fetch` that cuts `/api` before routing, gets that warning
+for every route: the check reads the registered paths, and a rewrite at run time is invisible
+to it. Delete the wrapper and export `apiStrip = true` beside
+`apiPrefix`, which does the same cut where the framework can see it. A second
+prefix the wrapper served (a `/v1` alias, a webhook path) becomes an entry in
+`mounts`.
+
 ### 5. Review the 5.0 defaults that changed
 
 -
@@ -11192,6 +11200,19 @@ request.
 -
 `nifra check` fails a secret comparison (NF-S002) outside browser code of a web
 app.
+
+From 3.x, two 4.0 changes also show up in tests and tooling rather than in pages:
+
+-
+Page data is handed over in one
+`<script type="application/json" id="__nifra-handover">`, not a script that
+assigns `window.__NIFRA_DATA__`. A test that read the data out of the HTML
+parses that element (`HANDOVER_ID` from `@nifrajs/web`).
+
+-
+`x-nifra-isr-revalidate` and `x-nifra-isr-tags` are set only under a
+cache wrapper such as `withISR`, which removes them before responding. A test
+that read a page's TTL from them on an unwrapped app reads nothing.
 
 `nifra upgrade` prints the full list with the finding or the one-line change that
 keeps the 4.x behavior for each.
