@@ -823,9 +823,19 @@ interface HookAuditState {
   readonly hasCustomLogger: boolean
   readonly sites: {
     readonly kind: string
+    /** Routes that captured the chain so far: merged routes excluded, they keep their own. */
     readonly routesAtPush: number
+    readonly mergedAtPush: number
     readonly site: string | undefined
   }[]
+  /** Registration-time plugins installed after routes they would have covered. */
+  readonly lateInstalls: {
+    readonly plugin: string
+    readonly site: string | undefined
+    readonly routes: readonly string[]
+  }[]
+  /** Routes adopted by `merge()`, which keep the chain of the server that declared them. */
+  merged: number
   checked: boolean
 }
 const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
@@ -860,7 +870,14 @@ const beginHookAudit = (
   policy: "warn" | "error" | "off",
   hasCustomLogger: boolean,
 ): void => {
-  hookAudit.set(key, { policy, hasCustomLogger, sites: [], checked: false })
+  hookAudit.set(key, {
+    policy,
+    hasCustomLogger,
+    sites: [],
+    lateInstalls: [],
+    merged: 0,
+    checked: false,
+  })
 }
 
 /** Record one order-scoped hook push: the route count at that moment (so `routesAtPush === total` at
@@ -877,7 +894,27 @@ const recordScopedHook = (key: object, routesAtPush: number, kind: string): void
   }
   const state = hookAudit.get(key)
   if (state === undefined || state.policy === "off") return
-  state.sites.push({ kind, routesAtPush, site: captureCallerSite() })
+  state.sites.push({
+    kind,
+    routesAtPush: routesAtPush - state.merged,
+    mergedAtPush: state.merged,
+    site: captureCallerSite(),
+  })
+}
+
+/** Count routes a `merge()` adopted: they never run this server's order-scoped hooks, so a hook
+ * followed only by merges covers nothing. */
+const noteMergedRoutes = (key: object, count: number): void => {
+  const state = hookAudit.get(key)
+  if (state !== undefined) state.merged += count
+}
+
+/** Record a registration-time plugin (`responseContract()`, `effectLedger()`) installed after routes
+ * it would have covered, named as `METHOD /path`. Reported with the dead hooks at seal. */
+const recordLateInstall = (key: object, plugin: string, routes: readonly string[]): void => {
+  const state = hookAudit.get(key)
+  if (state === undefined || state.policy === "off" || routes.length === 0) return
+  state.lateInstalls.push({ plugin, site: captureCallerSite(), routes })
 }
 
 /** Hook provenance for an adoption (dev only, see `internal/hook-origins.ts`): which scope each
@@ -914,20 +951,46 @@ const sealHookAudit = (
   if (state === undefined || state.checked) return
   state.checked = true
   if (state.policy === "off" || total + sockets === 0) return
+  const own = total - state.merged
   const dead = state.sites.filter(
     (hook) =>
       hook.routesAtPush ===
       (hook.kind === "around" || hook.kind === "aroundCapability" || hook.kind === "afterHandle"
-        ? total
-        : total + sockets),
+        ? own
+        : own + sockets),
   )
-  if (dead.length === 0) return
-  const detail = dead.map((hook) => `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}`).join("\n")
-  const message =
-    `[nifra] ${dead.length} order-scoped hook(s) apply to no route - they were added after the ` +
-    `last route was registered, and register() snapshots the chain into each route as it is ` +
-    `declared:\n${detail}\nMove them before the routes they should cover. App-global hooks ` +
-    `(onRequest/onResponse) are not order-scoped and can be added at any time.`
+  const parts: string[] = []
+  if (dead.length > 0) {
+    const mergedAfter = (hook: (typeof dead)[number]): boolean => state.merged > hook.mergedAtPush
+    const detail = dead
+      .map(
+        (hook) =>
+          `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}${mergedAfter(hook) ? "  (only merge()d routes follow it)" : ""}`,
+      )
+      .join("\n")
+    parts.push(
+      `[nifra] ${dead.length} order-scoped hook(s) apply to no route - they were added after the ` +
+        `last route was registered, and register() snapshots the chain into each route as it is ` +
+        `declared:\n${detail}\nMove them before the routes they should cover. App-global hooks ` +
+        `(onRequest/onResponse) are not order-scoped and can be added at any time.` +
+        (dead.some(mergedAfter)
+          ? " A merge()d route keeps the hooks of the server that declared it and never runs this " +
+            "server's: wire the hook on the merged server, or declare those routes in a group()."
+          : ""),
+    )
+  }
+  for (const late of state.lateInstalls) {
+    const shown = late.routes.slice(0, 5).join(", ")
+    const more = late.routes.length > 5 ? ` and ${late.routes.length - 5} more` : ""
+    parts.push(
+      `[nifra] ${late.plugin}() at ${late.site ?? "<unknown>"} was installed after ` +
+        `${late.routes.length} route(s) it would have covered: ${shown}${more}. It is decided per ` +
+        `route at registration and merge(), so those routes run without it. Install it before the ` +
+        `routes and merge() calls it should cover.`,
+    )
+  }
+  if (parts.length === 0) return
+  const message = parts.join("\n")
   if (state.policy === "error") throw new FrameworkError("UNUSED_SCOPED_HOOKS", message)
   if (state.hasCustomLogger) logger.warn(message)
   else console.warn(message)
@@ -1391,8 +1454,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError('authenticate() stage mode must be "sync" or "async"')
     }
     this.authStages.push(stage as unknown as RawAuthStage)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "authenticate")
       tagHook(stage, "authenticate", this)
+    }
     return this as unknown as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
   }
 
@@ -2465,6 +2530,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void {
     this.assertConfigurable("responseContract()")
     this.responseContractRuntime = runtime
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordLateInstall(
+        this,
+        "responseContract",
+        this.catalog
+          .entries()
+          .filter(
+            ({ entry }) =>
+              entry.responseContract === undefined &&
+              (entry.schema?.response !== undefined || entry.schema?.errors !== undefined),
+          )
+          .map((route) => `${route.method} ${route.path}`),
+      )
   }
 
   /** @internal Symbol-keyed install seam for the response observer plugin. */
@@ -2640,6 +2718,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     this.adopt(source, undefined, 0)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      noteMergedRoutes(this, source.catalog.size)
     return this as unknown as Server<R & R2, Ctx, HookOutput>
   }
 
@@ -4322,6 +4402,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_EFFECT_LEDGER](runtime: EffectLedgerRuntime): void {
     this.assertConfigurable("effectLedger()")
     this.effectLedgerRuntime = runtime
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordLateInstall(
+        this,
+        "effectLedger",
+        this.catalog
+          .entries()
+          .filter(
+            ({ entry, descriptor }) =>
+              entry.ledgered === undefined && (descriptor.capabilities?.length ?? 0) > 0,
+          )
+          .map((route) => `${route.method} ${route.path}`),
+      )
   }
 
   /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "../../schema/src/index.ts"
+import { effectLedger } from "../src/effect-ledger.ts"
 import type { Logger } from "../src/index.ts"
 import { FrameworkError, server } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseContract } from "../src/server/response-contract-lane.ts"
 import { websocket } from "../src/ws.ts"
 
 /** Capture `console.warn` for one act, restoring it after. Returns every message it received. */
@@ -193,5 +196,145 @@ describe("unused order-scoped hooks", () => {
     expect(consoleWarnings.length).toBe(0)
     expect(seen.length).toBe(1)
     expect(seen[0]).toContain("derive()")
+  })
+})
+
+describe("hooks followed only by merged routes", () => {
+  test("a derive followed only by merges is dead, and the message says merge is why", async () => {
+    const child = server().get("/c", () => "ok")
+    const app = server()
+      .derive(() => ({ user: "u1" }))
+      .merge(child)
+    const warnings = await withWarnSpy(() => app.fetch(GET("/c")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("derive()")
+    expect(warnings[0]).toContain("(only merge()d routes follow it)")
+    expect(warnings[0]).toContain("A merge()d route keeps the hooks of the server that declared it")
+  })
+
+  test("a parent hook that also covers a later own route is silent", async () => {
+    const child = server().get("/c", () => "ok")
+    const app = server()
+      .derive(() => ({ user: "u1" }))
+      .merge(child)
+      .get("/p", () => "ok")
+    const warnings = await withWarnSpy(() => app.fetch(GET("/p")))
+    expect(warnings).toEqual([])
+  })
+
+  test("a group() after the hook covers it: group routes inherit the chain", async () => {
+    const child = server().get("/c", () => "ok")
+    const app = server()
+      .beforeHandle(() => undefined)
+      .merge(child)
+      .group("/g", (g) => g.get("/x", () => "ok"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/g/x")))
+    expect(warnings).toEqual([])
+  })
+
+  test("authenticate() after the last route is reported", async () => {
+    const app = server().get("/a", () => "ok")
+    app.authenticate({ id: "session", run: () => ({ ok: true, principal: { id: "u1" } }) } as never)
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("authenticate()")
+  })
+
+  test("authenticate() followed only by merges is reported in error mode", () => {
+    const child = server().get("/c", () => "ok")
+    const app = server({ unusedScopedHooks: "error" })
+      .authenticate({ id: "session", run: () => ({ ok: true, principal: { id: "u1" } }) } as never)
+      .merge(child)
+    expect(() => app.fetch(GET("/c"))).toThrow("(only merge()d routes follow it)")
+  })
+})
+
+describe("registration-time plugins installed after the routes they cover", () => {
+  const typed = { response: t.object({ id: t.string() }) }
+
+  test("responseContract() after a route with a response schema warns, naming the route", async () => {
+    const app = server().get("/a", typed, () => ({ id: "1" }))
+    app.use(responseContract("enforce"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("responseContract() at ")
+    expect(warnings[0]).toContain("1 route(s) it would have covered: GET /a")
+  })
+
+  test("responseContract() after a merge warns for the merged routes", async () => {
+    const child = server().get("/c", typed, () => ({ id: "1" }))
+    const app = server().merge(child)
+    app.use(responseContract("enforce"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/c")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("GET /c")
+  })
+
+  test("responseContract() before the routes and merges is silent", async () => {
+    const child = server().get("/c", typed, () => ({ id: "1" }))
+    const app = server()
+      .use(responseContract("enforce"))
+      .merge(child)
+      .get("/a", typed, () => ({ id: "1" }))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings).toEqual([])
+  })
+
+  test("routes without a response schema do not count", async () => {
+    const app = server().get("/health", () => "ok")
+    app.use(responseContract("enforce"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/health")))
+    expect(warnings).toEqual([])
+  })
+
+  test("a merged route that already has its own contract does not count", async () => {
+    const child = server()
+      .use(responseContract("enforce"))
+      .get("/c", typed, () => ({ id: "1" }))
+    const app = server().merge(child)
+    app.use(responseContract("warn"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/c")))
+    expect(warnings).toEqual([])
+  })
+
+  test("the route list is capped at five with a count of the rest", async () => {
+    let app = server()
+    for (let i = 0; i < 7; i++) app = app.get(`/r${i}`, typed, () => ({ id: "1" })) as never
+    app.use(responseContract("enforce"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/r0")))
+    expect(warnings[0]).toContain("7 route(s)")
+    expect(warnings[0]).toContain("GET /r4 and 2 more")
+  })
+
+  test("effectLedger() after a capability-declaring route warns", async () => {
+    const app = server().post("/write", { capabilities: ["db.write"] }, () => "ok")
+    app.use(effectLedger({ sink() {} }))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/write")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("effectLedger() at ")
+    expect(warnings[0]).toContain("POST /write")
+  })
+
+  test('unusedScopedHooks: "error" throws for a late install', () => {
+    const app = server({ unusedScopedHooks: "error" }).get("/a", typed, () => ({ id: "1" }))
+    app.use(responseContract("enforce"))
+    expect(() => app.fetch(GET("/a"))).toThrow("installed after 1 route(s)")
+  })
+
+  test('unusedScopedHooks: "off" records nothing', async () => {
+    const app = server({ unusedScopedHooks: "off" }).get("/a", typed, () => ({ id: "1" }))
+    app.use(responseContract("enforce"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings).toEqual([])
+  })
+
+  test("a dead hook and a late install share one message", async () => {
+    const app = server().get("/a", typed, () => ({ id: "1" }))
+    app.derive(() => ({ n: 1 }))
+    app.use(responseContract("enforce"))
+    const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain("derive()")
+    expect(warnings[0]).toContain("responseContract() at ")
   })
 })
