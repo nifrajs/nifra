@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/proxy",
-  "version": "5.2.1",
+  "version": "5.3.0",
   "description": "Reverse proxy for nifra - stream requests to one fixed upstream origin with hop-by-hop hygiene, SSRF-proof by construction. Dependency-free.",
   "keywords": [
     "bun",

@@ -1,5 +1,30 @@
 # @nifrajs/cli
 
+## 5.3.0
+
+### Minor Changes
+
+- 437f6d6: `nifra check` reports NF-C045, a warning, for a route added to a server as a statement of its own (`app.get("/x", h)` with its result unused) when that server is exported or read by `typeof`. The route is served, but `typeof app`, which the typed client reads, never includes it. `// nifra-expect NF-C045: <reason>` above the statement accepts a route kept off the type on purpose.
+  
+  The raw-`Response` advisory (NF-C007) and the static route scan read routes chained onto `createWebApp(...)` as well as `server(...)`. NF-C007 also counts a `Response` held in a local before it is returned, a handler's `c.json()` or `c.text()`, and a call to a function imported from a relative module that returns one, reported at each route that returns it.
+
+### Patch Changes
+
+- c917759: `nifra check` reports NF-C044, a warning, for a `createWebApp` call that passes a `clientEntry` and no `copyChunks` in an app with copy tables (`@nifrajs/i18n/copy`). A production client build moves the tables into one chunk per locale that a page loads from the `copyChunks` its server lists, so such a server fails on the first page that renders copy, while `nifra dev` (which never splits) and e2e pass. The finding names the server manifest the module already imports from, which exports `copyChunks`; `// nifra-expect NF-C044: <reason>` on the call accepts a server that never serves those pages. An app on TypeScript 7, whose build keeps tables whole, is not reported.
+- f23abcb: `nifra upgrade 5.3.0` prints what changes for a 5.2 app: `status()` with a `number` code types `data` as its body, a plain return beside `status(200, ...)` unions the two bodies, NF-C045, NF-C044, the wider raw-`Response` advisory, and peer ranges left alone.
+- e27a13d: `nifra upgrade` leaves a `peerDependencies` range alone when it already admits the target, and raises one that excludes it keeping its operator, even with `--exact`: a library's `">=3.1.0"` floor stays put instead of becoming `">=5.2.0"`. A peer range no longer sets the version an upgrade starts from either: that comes from the lowest version a dependency, devDependency or override pins, then the lowest installed, and a peer floor only when nothing else names one, so a library workspace whose devDependencies are already on the target's major no longer replays the recipes of the releases its peer floor names. `nifra check` (NF-D002) and `nifra doctor` no longer count a peer floor as a second version of nifra in the workspace.
+- Updated dependencies [437f6d6]
+  - @nifrajs/core@5.3.0
+  - @nifrajs/client@5.3.0
+  - @nifrajs/i18n@5.3.0
+  - @nifrajs/mcp@5.3.0
+  - @nifrajs/schema@5.3.0
+  - @nifrajs/testing@5.3.0
+  - @nifrajs/web@5.3.0
+  - @nifrajs/agent-review@5.3.0
+  - @nifrajs/mcp-db@5.3.0
+  - @nifrajs/runner@5.3.0
+
 ## 5.2.1
 
 ### Patch Changes
