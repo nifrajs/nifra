@@ -12,6 +12,7 @@
 
 - 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
 - 746ada9: Under Vite 8, a framework plugin's `optimizeDeps.rollupOptions` no longer prints Vite's "`optimizeDeps.rollupOptions` ... is deprecated" warning on every `nifra dev` start and Vite build. `@vitejs/plugin-react@4.x` sets `optimizeDeps.rollupOptions.jsx`; nifra already dropped the `jsx` key, but left the empty `rollupOptions` behind, which Vite still warns about. The key is now removed when nothing is left in it, and any remaining options move to `optimizeDeps.rolldownOptions`, where Vite reads them anyway. `ssr.optimizeDeps` is handled the same way, and the Vite production build now applies this to `vitePlugins` too.
+- f9a19f3: The Bun build's `import.meta.glob` expansion writes each key, import path and `import` export name as a string literal with U+2028 and U+2029 escaped, so the generated code stays on one line for every JavaScript parser.
 - Updated dependencies [9498cf8]
 - Updated dependencies [1f3ff32]
 - Updated dependencies [4bb8e52]
