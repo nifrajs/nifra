@@ -79,6 +79,9 @@ remember them. It does three things and exits non-zero if any fails:
    a screen that expects the wrong shape is a type error. Running the typecheck is what turns that latent
    guarantee into an enforced one. TypeScript sources with no `tsconfig.json` beside them fail this step,
    as a missing `typescript` install does: nothing typechecked them. A JavaScript-only project skips it.
+   Every project `tsconfig.json` references is typechecked too, each as its own program; a project that
+   splits its code across sibling configs lists them in `nifra.check.json`:
+   `{ "tsconfigs": ["tsconfig.json", "tsconfig.server.json"] }`. A zoned file no program reads fails it.
 2. **Typed-client lint** - flags any hand-rolled `fetch()` to your own API (a relative URL like
    `fetch("/users")`), which bypasses the typed client so the compiler can't see the drift. External
    absolute-URL fetches are not flagged.

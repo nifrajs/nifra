@@ -170,3 +170,116 @@ process.exit(0)
     expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
   }, 30_000)
 })
+
+describe("nifra check - more than one TypeScript program", () => {
+  const options = { strict: true, noEmit: true, skipLibCheck: true, types: [] }
+
+  function zones(cwd: string, backendSource = "export const port: number = 3000\n"): string {
+    writeAppFile(cwd, "routes/index.ts", "export const title: string = 'home'\n")
+    writeAppFile(cwd, "backend/app.ts", backendSource)
+    return cwd
+  }
+
+  test("a solution-style tsconfig typechecks every project it references", async () => {
+    const cwd = zones(createFixtureProject(root, "refs-"))
+    writeAppFile(
+      cwd,
+      "tsconfig.json",
+      JSON.stringify({
+        files: [],
+        references: [{ path: "./tsconfig.web.json" }, { path: "./server" }],
+      }),
+    )
+    const composite = { ...options, composite: true, noEmit: undefined, emitDeclarationOnly: true }
+    writeAppFile(
+      cwd,
+      "tsconfig.web.json",
+      JSON.stringify({ compilerOptions: composite, include: ["routes"] }),
+    )
+    writeAppFile(
+      cwd,
+      "server/tsconfig.json",
+      JSON.stringify({ compilerOptions: composite, include: ["../backend"] }),
+    )
+    const result = await collectCheckResult(cwd)
+    expect(result.typecheck).toBe("pass")
+    expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toEqual([])
+
+    // An error in a referenced project fails the check; tsc -p on the root alone read no file.
+    writeAppFile(cwd, "backend/app.ts", "export const port: number = 'many'\n")
+    const failing = await collectCheckResult(cwd)
+    expect(failing.typecheck).toBe("fail")
+    expect(failing.diagnostics.map((d) => [d.file, d.message])).toEqual([
+      ["backend/app.ts", "Type 'string' is not assignable to type 'number'."],
+    ])
+  }, 60_000)
+
+  test('nifra.check.json "tsconfigs" runs each named config, and a file both hold reports once', async () => {
+    const cwd = zones(
+      createFixtureProject(root, "configs-"),
+      "export const port: number = 'many'\n",
+    )
+    writeAppFile(
+      cwd,
+      "tsconfig.json",
+      JSON.stringify({ compilerOptions: options, include: ["routes", "backend"] }),
+    )
+    writeAppFile(
+      cwd,
+      "tsconfig.server.json",
+      JSON.stringify({ extends: "./tsconfig.json", include: ["backend"] }),
+    )
+    writeAppFile(
+      cwd,
+      "nifra.check.json",
+      JSON.stringify({ tsconfigs: ["tsconfig.json", "tsconfig.server.json"] }),
+    )
+    const result = await collectCheckResult(cwd)
+    expect(result.tsconfigs).toEqual(["tsconfig.json", "tsconfig.server.json"])
+    expect(result.typecheck).toBe("fail")
+    expect(result.diagnostics.map((d) => [d.file, d.message])).toEqual([
+      ["backend/app.ts", "Type 'string' is not assignable to type 'number'."],
+    ])
+    expect(renderCheckReport(result)).toContain(
+      '• typecheck programs (nifra.check.json "tsconfigs"): tsconfig.json, tsconfig.server.json',
+    )
+  }, 60_000)
+
+  test("each config covers its own folder: zoned files in either program are read", async () => {
+    const cwd = zones(createFixtureProject(root, "split-"))
+    writeAppFile(
+      cwd,
+      "tsconfig.json",
+      JSON.stringify({ compilerOptions: options, include: ["routes"] }),
+    )
+    writeAppFile(
+      cwd,
+      "tsconfig.server.json",
+      JSON.stringify({ compilerOptions: options, include: ["backend"] }),
+    )
+    expect((await collectCheckResult(cwd)).typecheck).toBe("fail")
+    writeAppFile(
+      cwd,
+      "nifra.check.json",
+      JSON.stringify({ tsconfigs: ["tsconfig.json", "tsconfig.server.json"] }),
+    )
+    const result = await collectCheckResult(cwd)
+    expect(result.typecheck).toBe("pass")
+    expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toEqual([])
+  }, 60_000)
+
+  test("a configured tsconfig that does not exist fails the typecheck, naming it", async () => {
+    const cwd = zones(createFixtureProject(root, "missing-"))
+    writeAppFile(
+      cwd,
+      "tsconfig.json",
+      JSON.stringify({ compilerOptions: options, include: ["routes", "backend"] }),
+    )
+    writeAppFile(cwd, "nifra.check.json", JSON.stringify({ tsconfigs: ["tsconfig.gone.json"] }))
+    const result = await collectCheckResult(cwd)
+    expect(result.typecheck).toBe("fail")
+    expect(JSON.stringify(result.diagnostics)).toContain(
+      'nifra.check.json \\"tsconfigs\\" names \\"tsconfig.gone.json\\", which does not exist',
+    )
+  }, 30_000)
+})

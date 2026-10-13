@@ -44,7 +44,7 @@ import { forwardTerminalSignals, OWN_PROCESS_GROUP, signalProcessGroup } from ".
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
-import { filesOutsideProgram, splitListedFiles } from "./typecheck-coverage.ts"
+import { filesOutsideProgram, splitListedFiles, typecheckProjects } from "./typecheck-coverage.ts"
 
 export type {
   CheckAnalysisInput,
@@ -124,10 +124,24 @@ function resolveTscBin(cwd: string): string | undefined {
   }
 }
 
-/** Run the project's own `tsc --noEmit`, if TypeScript + a tsconfig are present. Never auto-installs. */
-async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckResult> {
-  const tsconfig = join(cwd, "tsconfig.json")
-  if (!(await Bun.file(tsconfig).exists()))
+/**
+ * Run the project's own `tsc --noEmit` over each tsconfig `typecheckProjects` names, one program at a
+ * time, if TypeScript and a tsconfig are present. Never auto-installs.
+ */
+async function typecheck(
+  cwd: string,
+  signal?: AbortSignal,
+  configured?: readonly string[],
+): Promise<TypecheckResult> {
+  const projects = typecheckProjects(cwd, configured)
+  if (projects.missing.length > 0) {
+    return {
+      ran: true,
+      ok: false,
+      output: `nifra.check.json "tsconfigs" names ${projects.missing.map((path) => `"${path}"`).join(", ")}, which does not exist`,
+    }
+  }
+  if (projects.paths.length === 0)
     return { ran: false, ok: true, missingTsconfig: true, note: "no tsconfig.json" }
   // Routes import their generated `./+types` modules; bring them up to date before tsc reads them.
   const { refreshRouteTypes } = await import("./route-types.ts")
@@ -141,11 +155,28 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
       note: "typescript not installed (run: bun add -d typescript)",
     }
   }
-  const first = await runTsc(cwd, tscBin, tsconfig, true, signal)
-  // A compiler that rejects `--listFiles` still gets its typecheck; only the coverage check is lost.
-  if (!first.ok && !first.cancelled && /TS50(?:23|25)\b[^\n]*listFiles/.test(first.output ?? ""))
-    return runTsc(cwd, tscBin, tsconfig, false, signal)
-  return first
+  const runs: TypecheckResult[] = []
+  for (const tsconfig of projects.paths) {
+    let run = await runTsc(cwd, tscBin, tsconfig, true, signal)
+    // A compiler that rejects `--listFiles` still gets its typecheck; only the coverage check is lost.
+    if (!run.ok && !run.cancelled && /TS50(?:23|25)\b[^\n]*listFiles/.test(run.output ?? ""))
+      run = await runTsc(cwd, tscBin, tsconfig, false, signal)
+    if (run.cancelled === true) return run
+    runs.push(run)
+  }
+  const [only] = runs
+  if (runs.length === 1 && only !== undefined) return only
+  // A file two programs both hold reports each error twice; keep one copy of each diagnostic block.
+  const blocks = new Set(
+    runs.flatMap((run) => (run.output ?? "").split(/\n(?=\S)/).filter((block) => block !== "")),
+  )
+  const programFiles = [...new Set(runs.flatMap((run) => run.programFiles ?? []))]
+  const merged: TypecheckResult = {
+    ran: true,
+    ok: runs.every((run) => run.ok),
+    output: [...blocks].join("\n"),
+  }
+  return programFiles.length > 0 ? { ...merged, programFiles } : merged
 }
 
 async function runTsc(
@@ -221,6 +252,7 @@ async function loadCheckConfig(
     const parsed = JSON.parse(await Bun.file(path).text()) as {
       externalMounts?: unknown
       rules?: unknown
+      tsconfigs?: unknown
     }
     const raw = Array.isArray(parsed.externalMounts) ? parsed.externalMounts : []
     const externalMounts = raw
@@ -273,7 +305,25 @@ async function loadCheckConfig(
         }
       }
     }
-    return { config: { externalMounts, rules }, warnings }
+    let tsconfigs: readonly string[] | undefined
+    if (parsed.tsconfigs !== undefined) {
+      if (
+        Array.isArray(parsed.tsconfigs) &&
+        parsed.tsconfigs.length > 0 &&
+        parsed.tsconfigs.every(
+          (entry): entry is string =>
+            typeof entry === "string" && entry.endsWith(".json") && !isAbsolute(entry),
+        )
+      )
+        tsconfigs = parsed.tsconfigs
+      else
+        warnings.push(
+          '`tsconfigs` must be a non-empty array of tsconfig paths relative to the project, such as ["tsconfig.json"] - ignored',
+        )
+    }
+    const config: CheckConfig =
+      tsconfigs === undefined ? { externalMounts, rules } : { externalMounts, rules, tsconfigs }
+    return { config, warnings }
   } catch (error) {
     return {
       config: empty,
@@ -369,7 +419,7 @@ async function buildProjectScan(
   const [typecheckRun, _, doctor, manifestDrift, contracts] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
-      : typecheck(cwd, opts.signal),
+      : typecheck(cwd, opts.signal, checkConfig.tsconfigs),
     walkSource(
       cwd,
       (rel, content) => {
@@ -605,6 +655,11 @@ export function renderCheckReport(result: CheckResult): string[] {
   if (result.externalMounts !== undefined && result.externalMounts.length > 0) {
     lines.push(
       `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
+    )
+  }
+  if (result.tsconfigs !== undefined) {
+    lines.push(
+      `• typecheck programs (nifra.check.json "tsconfigs"): ${result.tsconfigs.join(", ")}`,
     )
   }
   for (const gap of result.knownGaps ?? []) {

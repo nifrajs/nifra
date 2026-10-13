@@ -95,6 +95,8 @@ export interface CheckResult {
    * better-auth). Echoed here so `--json` / the MCP tool / the report can show what the typed-client scan
    * deliberately skipped - a suppressed prefix stays auditable instead of silently hiding real drift. */
   readonly externalMounts?: readonly string[]
+  /** The tsconfigs `nifra.check.json` names for the typecheck, echoed so a narrowed program is visible. */
+  readonly tsconfigs?: readonly string[]
   /** Mounts declared `opaque` - outside capability assurance on purpose, each with its stated reason.
    * Listed on every run so the report states its own boundary; never a failure. */
   readonly knownGaps?: readonly CapabilityGap[]
@@ -161,6 +163,9 @@ export interface CheckAssuranceContext {
 export interface CheckConfig {
   readonly externalMounts: readonly string[]
   readonly rules: Readonly<Record<string, RuleOverride>>
+  /** The tsconfigs the typecheck runs, each its own program, project-relative. Unset: `tsconfig.json`
+   * and every project it references. */
+  readonly tsconfigs?: readonly string[]
 }
 
 /**
@@ -676,6 +681,7 @@ export async function collectCheckDiagnostics(
     ...(checkConfig.externalMounts.length === 0
       ? {}
       : { externalMounts: checkConfig.externalMounts }),
+    ...(checkConfig.tsconfigs === undefined ? {} : { tsconfigs: checkConfig.tsconfigs }),
     ...(knownGaps.length === 0 ? {} : { knownGaps }),
     ...(hooks === undefined ? {} : { hooks }),
     ...(Object.keys(checkConfig.rules).length === 0 ? {} : { ruleOverrides: checkConfig.rules }),
