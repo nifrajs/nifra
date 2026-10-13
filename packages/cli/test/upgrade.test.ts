@@ -572,6 +572,16 @@ describe("computeUpgrade / runUpgrade", () => {
       (chained.notes ?? []).some((note) => note.startsWith("5.1.0: `merge()` now recompiles")),
     ).toBe(true)
   })
+
+  test("an upgrade from 5.0 to 5.2 carries the notes of both minors, in order", () => {
+    const notes = chainRecipes("5.2.0", "5.0.0").notes ?? []
+    const first = notes.findIndex((note) => note.startsWith("5.1.0: "))
+    const second = notes.findIndex((note) =>
+      note.startsWith("5.2.0: A closed request-header schema"),
+    )
+    expect(first).toBeGreaterThanOrEqual(0)
+    expect(second).toBeGreaterThan(first)
+  })
 })
 
 // ── chained upgrades across releases ──────────────────────────────────────────
