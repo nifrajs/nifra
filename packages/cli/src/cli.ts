@@ -182,10 +182,12 @@ Usage:
                                          structure" sections. No-clobber by default (skips a file you've
                                          customized); --force overwrites the owned files. AGENTS.md is
                                          only appended to, never overwritten.
-  nifra init-agents --sync-mcp [--json]  Re-pin an existing app's MCP launch to the nifra the project
+  nifra init-agents --sync-mcp [--json]  Move an existing app's MCP launch to the nifra the project
                                          installs: rewrites only the @nifrajs/cli@x.y.z version in
                                          .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
-                                         section - every other byte stays as it is. Creates nothing.
+                                         section - every other byte stays as it is - and drops it
+                                         when the project declares @nifrajs/cli, so the launch runs
+                                         that install from then on. Creates nothing.
                                          At a workspace root with one nifra member, the two registries'
                                          launch also names that member (\`mcp app\`). Run in a member,
                                          it also re-pins the files above it, up to the repository

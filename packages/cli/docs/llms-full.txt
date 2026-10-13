@@ -6473,8 +6473,9 @@ that release&apos;s CLI. It edits files under the workspace root only: a symlink
 directory or `package.json` is never followed, and a group package installed by a
 link from outside the root is listed under "Left alone" for you to upgrade in its
 own repository. The MCP launch pin in `.mcp.json`, `.cursor/mcp.json`,
-`CLAUDE.md` and `AGENTS.md` moves to the target, the edit
-`nifra init-agents --sync-mcp` makes. Another version pinned outside
+`CLAUDE.md` and `AGENTS.md` moves to the target, or is dropped when
+the project declares `@nifrajs/cli` so the launch runs that install from then on:
+the edit `nifra init-agents --sync-mcp` makes. Another version pinned outside
 `package.json` is listed with its line: the rest of an agent file, an MCP config
 elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
 workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
@@ -6573,10 +6574,14 @@ nifra init-agents
 
 # Then restart the agent so it picks the server up.
 
-# The server is pinned to an exact @nifrajs/cli. After upgrading nifra, re-pin it to the version the
-# project installs. Only that version string changes; every other byte of every file is kept.
+# A project that declares @nifrajs/cli launches `bunx @nifrajs/cli mcp`, unpinned: bunx runs the
+# installed CLI, so the server moves with every upgrade. Elsewhere the launch is pinned to an exact
+# version, since an unpinned bunx would fetch the latest release.
+# This moves an old pinned launch to that form: unpinned when the project declares the CLI, else the
+# version it installs. Only the version string changes; every other byte of every file is kept.
 # At a workspace root whose one nifra app is a member, the launch also names it: `mcp app`.
-# Run in that member, it also re-pins the root's files whose every nifra launch serves it.
+# Run in that member, it also re-pins the root's files whose every nifra launch serves it (they stay
+# pinned: the root's own node_modules need not hold the CLI).
 nifra init-agents --sync-mcp
 ```
 

@@ -48,7 +48,7 @@ import {
   parseHookReport,
   renderHookDiff,
 } from "./hooks-report.ts"
-import { type AncestorPinSite, ancestorPins, PIN_SITES } from "./init-agents.ts"
+import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
 import {
   BUN_LOCK,
   describeChange,
@@ -116,6 +116,8 @@ export interface AgentPinChange {
   readonly file: string
   /** The versions it pinned, in order of appearance. */
   readonly from: readonly string[]
+  /** The target version, or `unpinned` when the project declares `@nifrajs/cli`: the launch then runs
+   * that install and never needs re-pinning. */
   readonly to: string
 }
 
@@ -715,6 +717,7 @@ function agentPinEdits(
   version: string,
   above: readonly AncestorPinSite[],
 ): Array<{ readonly change: AgentPinChange; readonly text: string; readonly abs: string }> {
+  const target = declaresCli(cwd) ? null : version
   const edits: Array<{ change: AgentPinChange; text: string; abs: string }> = []
   const sites = [
     ...PIN_SITES.map((site) => ({ dir: cwd, file: site.path, path: site.path, site })),
@@ -723,10 +726,16 @@ function agentPinEdits(
   for (const { dir, file, path, site } of sites) {
     if (!plainFileAt(dir, file)) continue
     const abs = join(dir, file)
+    // A launch above the project runs from that directory, which need not see the install: it stays pinned.
+    const to = dir === cwd ? target : version
     // latin1 is one char per byte, so every byte outside a pin is written back as it was.
-    const scan = site.repin(readFileSync(abs, "latin1"), version)
+    const scan = site.repin(readFileSync(abs, "latin1"), to)
     if (scan.stale.length === 0) continue
-    edits.push({ change: { file: path, from: scan.stale, to: version }, text: scan.text, abs })
+    edits.push({
+      change: { file: path, from: scan.stale, to: to ?? "unpinned" },
+      text: scan.text,
+      abs,
+    })
   }
   return edits
 }

@@ -168,8 +168,9 @@ nifra migrate --from tailwind --to stylex --dir src`}
         directory or <code>package.json</code> is never followed, and a group package installed by a
         link from outside the root is listed under &quot;Left alone&quot; for you to upgrade in its
         own repository. The MCP launch pin in <code>.mcp.json</code>, <code>.cursor/mcp.json</code>,{" "}
-        <code>CLAUDE.md</code> and <code>AGENTS.md</code> moves to the target, the edit{" "}
-        <code>nifra init-agents --sync-mcp</code> makes. Another version pinned outside{" "}
+        <code>CLAUDE.md</code> and <code>AGENTS.md</code> moves to the target, or is dropped when
+        the project declares <code>@nifrajs/cli</code> so the launch runs that install from then on:
+        the edit <code>nifra init-agents --sync-mcp</code> makes. Another version pinned outside{" "}
         <code>package.json</code> is listed with its line: the rest of an agent file, an MCP config
         elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
         workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after

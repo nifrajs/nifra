@@ -8170,14 +8170,14 @@
     "kind": "const",
     "package": "create-nifra",
     "signature": "export declare const MCP_CLI_VERSION: string;",
-    "doc": "/**\n * The `@nifrajs/cli` version the launch command pins to - DERIVED at load time from this package's own\n * `version`, never hardcoded. `fixed` changeset versioning ([[\"@nifrajs/*\", \"create-nifra\", \"nifra\"]] in\n * `.changeset/config.json`) bumps `create-nifra` and `@nifrajs/cli` in lockstep, so `create-nifra@x`\n * always means `@nifrajs/cli@x`. Deriving it here means a release bump has nothing to forget to update -\n * there is no stale literal to drift (the 1.0.0 cut shipped a beta pin exactly this way). `check:publish`\n * still asserts it equals `@nifrajs/cli`'s version as a belt-and-suspenders guard on the `fixed` link.\n *\n * Resolves correctly under BOTH export conditions: the `bun` export runs `src/agent-files.ts`\n * (`../package.json` → the package root) and the tsc `default` export runs `dist/agent-files.js`\n * (`../package.json` → the same root, since `dist/` sits beside the manifest). npm always ships a\n * package's own `package.json`, so the read can't miss at install time.\n *\n * Why pin at all instead of `bunx @nifrajs/cli mcp`: `bunx` keys its cache on the exact version spec.\n * An UNPINNED spec resolves to the `latest` tag once, then `bunx` reuses that cached copy on every\n * later spawn WITHOUT re-checking the registry - so an editor that once launched an older `@nifrajs/cli`\n * keeps respawning the stale binary even after a newer one is published (the MCP server silently runs\n * old code). Pinning the exact version makes the version part of the cache key, so each release fetches\n * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes\n * at its scaffold-time version until `nifra init-agents --sync-mcp` re-pins it to the nifra the project\n * installs - an acceptable, deterministic trade.\n */"
+    "doc": "/**\n * The `@nifrajs/cli` version the launch command pins to - DERIVED at load time from this package's own\n * `version`, never hardcoded. `fixed` changeset versioning ([[\"@nifrajs/*\", \"create-nifra\", \"nifra\"]] in\n * `.changeset/config.json`) bumps `create-nifra` and `@nifrajs/cli` in lockstep, so `create-nifra@x`\n * always means `@nifrajs/cli@x`. Deriving it here means a release bump has nothing to forget to update -\n * there is no stale literal to drift (the 1.0.0 cut shipped a beta pin exactly this way). `check:publish`\n * still asserts it equals `@nifrajs/cli`'s version as a belt-and-suspenders guard on the `fixed` link.\n *\n * Resolves correctly under BOTH export conditions: the `bun` export runs `src/agent-files.ts`\n * (`../package.json` → the package root) and the tsc `default` export runs `dist/agent-files.js`\n * (`../package.json` → the same root, since `dist/` sits beside the manifest). npm always ships a\n * package's own `package.json`, so the read can't miss at install time.\n *\n * Two launch forms. A project that declares `@nifrajs/cli` gets the unpinned\n * `bunx @nifrajs/cli mcp` ({@link MCP_SERVER_ARGS_INSTALLED}): `bunx` runs the copy the project installs\n * (its `node_modules`, or an ancestor's) whenever there is one, so an upgrade moves the server with it\n * and nothing needs re-pinning. A pinned spec never does that, not even at the installed version: it\n * always runs a registry copy. Every scaffold declares the CLI, so every scaffold is unpinned.\n *\n * A project that does not declare it keeps the pin ({@link MCP_SERVER_ARGS}): with no local install an\n * unpinned spec resolves `latest` once and `bunx` reuses that cached copy on every later spawn without\n * re-checking the registry, so the server would silently run old code. The exact version is part of the\n * cache key, so each release fetches fresh; `nifra init-agents --sync-mcp` moves it to the installed\n * nifra, or unpins it once the project declares the CLI.\n */"
   },
   {
     "name": "MCP_CONFIG",
     "kind": "const",
     "package": "create-nifra",
     "signature": "export declare const MCP_CONFIG: McpConfig;",
-    "doc": "/** The one canonical MCP config object both registries serialize - the anti-drift seam. */"
+    "doc": "/** The config a scaffold writes: every scaffold declares the CLI, so its launch is unpinned. */"
   },
   {
     "name": "MCP_ERROR",
@@ -8198,6 +8198,13 @@
     "kind": "const",
     "package": "create-nifra",
     "signature": "export declare const MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, \"mcp\"];"
+  },
+  {
+    "name": "MCP_SERVER_ARGS_INSTALLED",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const MCP_SERVER_ARGS_INSTALLED: readonly [\"@nifrajs/cli\", \"mcp\"];",
+    "doc": "/** The launch args for a project that declares `@nifrajs/cli`: unpinned, so `bunx` runs its install. */"
   },
   {
     "name": "MCP_SERVER_COMMAND",
@@ -16262,7 +16269,7 @@
     "name": "agentsMcpSection",
     "kind": "function",
     "package": "create-nifra",
-    "signature": "export declare function agentsMcpSection(): string;",
+    "signature": "export declare function agentsMcpSection(pin?: string): string;",
     "doc": "/**\n * The \"## MCP server\" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude\n * agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer.\n * Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.\n */"
   },
   {
@@ -20063,10 +20070,17 @@
     "doc": "/**\n * Enable MCP declarations on a server: `.use(mcp())` turns on `.tool()`, `.resource()`, and\n * `.prompt()`. Applying it twice is a no-op (named plugin dedupe).\n */"
   },
   {
+    "name": "mcpConfig",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function mcpConfig(pin?: string): McpConfig;",
+    "doc": "/** The one canonical MCP config both registries serialize - the anti-drift seam. `pin` is the\n * `@nifrajs/cli` version to pin; without one the launch follows the project's install. */"
+  },
+  {
     "name": "mcpJson",
     "kind": "function",
     "package": "create-nifra",
-    "signature": "export declare function mcpJson(): string;",
+    "signature": "export declare function mcpJson(pin?: string): string;",
     "doc": "/** Serialize the canonical MCP config as the JSON written to `.mcp.json` and `.cursor/mcp.json`.\n * Trailing newline so the file is POSIX-clean and diffs don't flag a missing EOL. */"
   },
   {

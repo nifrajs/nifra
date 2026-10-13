@@ -29,7 +29,7 @@
  * a second nifra member arrives.
  */
 
-import type { Stats } from "node:fs"
+import { readFileSync, type Stats } from "node:fs"
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
@@ -63,9 +63,12 @@ export interface InitAgentsFileResult {
 export interface InitAgentsResult {
   readonly cwd: string
   readonly files: readonly InitAgentsFileResult[]
-  /** Under --sync-mcp: the `@nifrajs/cli` version every pin was brought to. */
+  /** Under --sync-mcp: the `@nifrajs/cli` version every pin was brought to, or {@link UNPINNED}. */
   readonly syncedTo?: string
 }
+
+/** `syncedTo` when every launch was unpinned to follow the project's installed CLI. */
+export const UNPINNED = "installed"
 
 export interface InitAgentsOptions {
   /** Overwrite an existing `.mcp.json` / `CLAUDE.md` / `.cursor/mcp.json` instead of skipping it. */
@@ -182,12 +185,12 @@ async function atomicWrite(
  * `--force` is irrelevant here - we never overwrite the user's existing guidance. The structure section
  * is for an app with `routes/`; an API-only app has no frontend to keep apart.
  */
-async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
+async function ensureAgentsMd(cwd: string, pin?: string): Promise<InitAgentsFileResult> {
   const abs = safeJoin(cwd, AGENTS_MD_PATH)
   await assertSafeParents(cwd, abs)
   const irregular = await nonRegularTarget(abs, AGENTS_MD_PATH)
   if (irregular !== undefined) return irregular
-  const sections = [{ heading: "## MCP server", text: agentsMcpSection() }]
+  const sections = [{ heading: "## MCP server", text: agentsMcpSection(pin) }]
   if (await isDirectory(safeJoin(cwd, "routes"))) {
     sections.push({ heading: STRUCTURE_HEADING, text: agentsStructureSection() })
   }
@@ -225,11 +228,12 @@ const isDirectory = (path: string): Promise<boolean> =>
 /** An exact version: the only pin --sync-mcp rewrites. A dist-tag or a range is a deliberate choice,
  * not a scaffold-time freeze. Prerelease and build suffixes are part of the version. */
 const PIN_VERSION = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`
-/** The pin as both MCP registries hold it: one JSON string in the server's `args`. */
-const JSON_PIN = new RegExp(`"@nifrajs/cli@(${PIN_VERSION})"`, "g")
-/** The pin as the markdown quotes it: the whole launch command, so prose that merely mentions a
- * version (an upgrade note, a changelog line) is never touched. */
-const LAUNCH_PIN = new RegExp(`${MCP_SERVER_COMMAND} @nifrajs/cli@(${PIN_VERSION}) mcp`, "g")
+/** The launch as both MCP registries hold it: one JSON string in the server's `args`, pinned (group 1
+ * is the version) or unpinned, which follows the project's install. */
+const JSON_PIN = new RegExp(`"@nifrajs/cli(?:@(${PIN_VERSION}))?"`, "g")
+/** The launch as the markdown quotes it: the whole command, so prose that merely mentions a version
+ * (an upgrade note, a changelog line) is never touched. */
+const LAUNCH_PIN = new RegExp(`${MCP_SERVER_COMMAND} @nifrajs/cli(?:@(${PIN_VERSION}))? mcp`, "g")
 
 /** The one nifra workspace member `cwd` resolves to, as a POSIX path relative to it, when `cwd` is a
  * workspace root and not itself a nifra project. */
@@ -238,9 +242,13 @@ async function workspaceMember(cwd: string): Promise<string | undefined> {
   return state.source === "workspace" ? relative(cwd, state.root).split(sep).join("/") : undefined
 }
 
-/** The registries' launch args when they name no directory: `["@nifrajs/cli@x.y.z", "mcp"]`. Group 2
- * is the whitespace between the two, reused before the member so the file keeps its own layout. */
-const JSON_BARE_LAUNCH = new RegExp(`("@nifrajs/cli@${PIN_VERSION}"\\s*,(\\s*)"mcp")(\\s*\\])`, "g")
+/** The registries' launch args when they name no directory: `["@nifrajs/cli@x.y.z", "mcp"]`, pinned or
+ * not. Group 2 is the whitespace between the two, reused before the member so the file keeps its own
+ * layout. */
+const JSON_BARE_LAUNCH = new RegExp(
+  `("@nifrajs/cli(?:@${PIN_VERSION})?"\\s*,(\\s*)"mcp")(\\s*\\])`,
+  "g",
+)
 
 /** Add `member` after a bare `"mcp"` launch arg; a launch that already names a directory is left alone. */
 function nameMember(
@@ -261,7 +269,7 @@ function nameMember(
 export interface PinScan {
   /** The input with every stale pin rewritten - every other character untouched. */
   readonly text: string
-  /** Pins found, current or stale. */
+  /** Launches found, pinned or not, current or stale. */
   readonly pins: number
   /** The distinct stale versions, in order of appearance. */
   readonly stale: readonly string[]
@@ -269,21 +277,26 @@ export interface PinScan {
   readonly named?: string
 }
 
-function repin(text: string, pattern: RegExp, target: string): PinScan {
+/**
+ * Move every pinned launch to `target`, or unpin it when `target` is `null` (the project installs the
+ * CLI, so the launch follows that install). An unpinned launch is already current: it is never pinned
+ * again, since dropping the pin was a choice.
+ */
+function repin(text: string, pattern: RegExp, target: string | null): PinScan {
   let pins = 0
   const stale: string[] = []
-  const rewritten = text.replace(pattern, (match: string, version: string) => {
+  const rewritten = text.replace(pattern, (match: string, version: string | undefined) => {
     pins++
-    if (version === target) return match
+    if (version === undefined || version === target) return match
     if (!stale.includes(version)) stale.push(version)
-    return match.replace(`@${version}`, () => `@${target}`)
+    return match.replace(`@${version}`, () => (target === null ? "" : `@${target}`))
   })
   return { text: rewritten, pins, stale }
 }
 
 /** AGENTS.md is the user's file: only its `## MCP server` section - the heading up to the next `#` or
  * `##` heading, or the end of the file - is ours to re-pin. */
-function repinMcpSection(text: string, target: string): PinScan {
+function repinMcpSection(text: string, target: string | null): PinScan {
   const heading = /^## MCP server\b.*$/m.exec(text)
   if (heading === null) return { text, pins: 0, stale: [] }
   const start = heading.index + heading[0].length
@@ -295,7 +308,7 @@ function repinMcpSection(text: string, target: string): PinScan {
 
 /** An MCP registry: its pin, and at a workspace root the member its launch names. Only the registries
  * launch the server, so the markdown launch commands keep their wording. */
-function repinRegistry(text: string, target: string, member?: string): PinScan {
+function repinRegistry(text: string, target: string | null, member?: string): PinScan {
   const scan = repin(text, JSON_PIN, target)
   if (member === undefined || scan.pins === 0) return scan
   const { text: rewritten, named } = nameMember(scan.text, member)
@@ -306,7 +319,7 @@ function repinRegistry(text: string, target: string, member?: string): PinScan {
  * rewrite. */
 export const PIN_SITES: readonly {
   readonly path: string
-  readonly repin: (text: string, target: string, member?: string) => PinScan
+  readonly repin: (text: string, target: string | null, member?: string) => PinScan
 }[] = [
   { path: MCP_JSON_PATH, repin: repinRegistry },
   { path: CURSOR_MCP_JSON_PATH, repin: repinRegistry },
@@ -329,7 +342,7 @@ type PinState =
 async function readPin(
   cwd: string,
   site: (typeof PIN_SITES)[number],
-  target: string,
+  target: string | null,
   member?: string,
 ): Promise<PinState> {
   const abs = safeJoin(cwd, site.path)
@@ -348,7 +361,7 @@ async function readPin(
   // latin1 is one char per byte, so writing it back reproduces every byte outside a pin exactly,
   // whatever the file's encoding; the pin patterns are ASCII, so they match as they would in UTF-8.
   const scan = site.repin(await readFile(abs, "latin1"), target, member)
-  if (scan.pins === 0) return { kind: "skip", note: "no pinned @nifrajs/cli launch command" }
+  if (scan.pins === 0) return { kind: "skip", note: "no @nifrajs/cli launch command" }
   if (scan.stale.length === 0 && scan.named === undefined) return { kind: "current" }
   return { kind: "stale", abs, mode: stat.mode & 0o777, scan }
 }
@@ -373,7 +386,7 @@ export interface AncestorPins {
 }
 
 const REGISTRY_PATHS: ReadonlySet<string> = new Set([MCP_JSON_PATH, CURSOR_MCP_JSON_PATH])
-const LAUNCH_ARG = new RegExp(`^@nifrajs/cli@${PIN_VERSION}$`)
+const LAUNCH_ARG = new RegExp(`^@nifrajs/cli(?:@${PIN_VERSION})?$`)
 
 /** The directories above `dir`, nearest first, up to the repository root; none outside a repository. */
 async function ancestorsToRepoRoot(dir: string): Promise<string[]> {
@@ -468,8 +481,32 @@ export async function ancestorPins(cwd: string): Promise<AncestorPins> {
   return { owned, foreign }
 }
 
+/** Whether the project at `dir` declares `@nifrajs/cli` in its own manifest, so `bunx` run there
+ * finds its install. */
+export function declaresCli(dir: string): boolean {
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))
+    return ["dependencies", "devDependencies", "optionalDependencies"].some((field) =>
+      Object.hasOwn(Object(Reflect.get(Object(manifest), field)), "@nifrajs/cli"),
+    )
+  } catch {
+    return false
+  }
+}
+
 /**
- * The version --sync-mcp pins to: the nifra the project installs, so the server an agent launches
+ * What --sync-mcp and `nifra upgrade --write` move the project's own launches to: `null`, unpinned,
+ * when the project declares `@nifrajs/cli`, so the launch follows that install from then on; otherwise
+ * {@link mcpPinTarget}. Only the launch directory's own manifest counts: a workspace root whose member
+ * declares the CLI keeps the pin, since an isolated install puts no `nifra` bin at the root and bunx
+ * would fetch the latest release instead.
+ */
+export async function mcpLaunchTarget(cwd: string): Promise<string | null> {
+  return declaresCli(cwd) ? null : mcpPinTarget(cwd)
+}
+
+/**
+ * The version a pinned launch moves to: the nifra the project installs, so the server an agent launches
  * describes the surface the code builds with. The running CLI's own version when nothing is
  * installed. Not simply the running CLI's version: the command that fixes a drifted server is run
  * by that drifted CLI, and it must not re-pin to itself.
@@ -484,7 +521,7 @@ export async function mcpPinTarget(cwd: string): Promise<string> {
   return memberInstalled?.version ?? MCP_CLI_VERSION
 }
 
-/** One file whose launch command pins a version other than {@link mcpPinTarget}. */
+/** One file whose launch command pins a version other than {@link mcpLaunchTarget}. */
 export interface StaleMcpPin {
   readonly path: string
   readonly pinned: readonly string[]
@@ -493,15 +530,17 @@ export interface StaleMcpPin {
 /** Read-only: every agent file whose pinned `@nifrajs/cli` is not the one the project installs. */
 export async function collectStaleMcpPins(
   cwd: string,
-): Promise<{ readonly target: string; readonly files: readonly StaleMcpPin[] }> {
-  const target = await mcpPinTarget(cwd)
+): Promise<{ readonly target: string | null; readonly files: readonly StaleMcpPin[] }> {
+  const target = await mcpLaunchTarget(cwd)
   const files: StaleMcpPin[] = []
   for (const site of PIN_SITES) {
     const state = await readPin(cwd, site, target)
     if (state.kind === "stale") files.push({ path: site.path, pinned: state.scan.stale })
   }
+  // A launch above the project runs from that directory, so it stays pinned.
+  const pinned = target ?? (await mcpPinTarget(cwd))
   for (const above of (await ancestorPins(cwd)).owned) {
-    const state = await readPin(above.dir, above.site, target)
+    const state = await readPin(above.dir, above.site, pinned)
     if (state.kind === "stale") files.push({ path: above.path, pinned: state.scan.stale })
   }
   return { target, files }
@@ -510,29 +549,36 @@ export async function collectStaleMcpPins(
 /** --sync-mcp: rewrite each stale pin to the project's version and touch nothing else. Creates no
  * file and appends no section - a file without a pin is reported, not repaired. */
 async function syncMcpPins(cwd: string): Promise<InitAgentsResult> {
-  const target = await mcpPinTarget(cwd)
+  const target = await mcpLaunchTarget(cwd)
   const member = await workspaceMember(cwd)
   const files: InitAgentsFileResult[] = []
-  const sync = async (path: string, state: PinState): Promise<void> => {
+  const sync = async (path: string, state: PinState, to: string | null): Promise<void> => {
     if (state.kind === "skip") {
       files.push({ path, action: "skipped", note: state.note })
     } else if (state.kind === "current") {
-      files.push({ path, action: "present", note: `already pinned to ${target}` })
+      files.push({
+        path,
+        action: "present",
+        note: to === null ? "already follows the installed CLI" : `already pinned to ${to}`,
+      })
     } else {
       await atomicWrite(state.abs, Buffer.from(state.scan.text, "latin1"), state.mode)
+      const moved = to ?? "the installed CLI (unpinned)"
       const notes = [
-        ...(state.scan.stale.length > 0 ? [`${state.scan.stale.join(", ")} -> ${target}`] : []),
+        ...(state.scan.stale.length > 0 ? [`${state.scan.stale.join(", ")} -> ${moved}`] : []),
         ...(state.scan.named !== undefined ? [`launches \`mcp ${state.scan.named}\``] : []),
       ]
       files.push({ path, action: "synced", note: notes.join("; ") })
     }
   }
-  for (const site of PIN_SITES) await sync(site.path, await readPin(cwd, site, target, member))
+  for (const site of PIN_SITES)
+    await sync(site.path, await readPin(cwd, site, target, member), target)
   const above = await ancestorPins(cwd)
+  const pinned = target ?? (await mcpPinTarget(cwd))
   for (const site of above.owned)
-    await sync(site.path, await readPin(site.dir, site.site, target, site.member))
+    await sync(site.path, await readPin(site.dir, site.site, pinned, site.member), pinned)
   for (const { path, note } of above.foreign) files.push({ path, action: "skipped", note })
-  return { cwd, files, syncedTo: target }
+  return { cwd, files, syncedTo: target ?? UNPINNED }
 }
 
 /**
@@ -552,26 +598,31 @@ export async function initAgents(
   }
   // Order: the two MCP registries and each agent's pointer (owned, no-clobber), then AGENTS.md (additive).
   const member = await workspaceMember(cwd)
-  const registry = member === undefined ? mcpJson() : nameMember(mcpJson(), member).text
+  const pin = declaresCli(cwd) ? undefined : MCP_CLI_VERSION
+  const registry = member === undefined ? mcpJson(pin) : nameMember(mcpJson(pin), member).text
   const files: InitAgentsFileResult[] = []
   files.push(await writeOwned(cwd, MCP_JSON_PATH, registry, force))
   files.push(await writeOwned(cwd, CURSOR_MCP_JSON_PATH, registry, force))
   for (const pointer of AGENT_POINTERS) {
     files.push(await writeOwned(cwd, pointer.path, pointer.content(), force))
   }
-  files.push(await ensureAgentsMd(cwd))
+  files.push(await ensureAgentsMd(cwd, pin))
   // A file the run left alone may still launch an old CLI. Say so where the file is reported, with
   // the command that fixes only that. Advisory: a file it cannot read costs the hint, not the run.
   const { target, files: stale } = await collectStaleMcpPins(cwd).catch(() => ({
     target: "",
     files: [] as readonly StaleMcpPin[],
   }))
+  const fix =
+    target === null
+      ? "`nifra init-agents --sync-mcp` unpins it to follow the installed CLI"
+      : `\`nifra init-agents --sync-mcp\` re-pins it to ${target}`
   return {
     cwd,
     files: files.map((file) => {
       const pin = stale.find((entry) => entry.path === file.path)
       if (pin === undefined || (file.action !== "skipped" && file.action !== "present")) return file
-      const hint = `pinned to ${pin.pinned.join(", ")}; \`nifra init-agents --sync-mcp\` re-pins it to ${target}`
+      const hint = `pinned to ${pin.pinned.join(", ")}; ${fix}`
       return { ...file, note: file.note === undefined ? hint : `${file.note}; ${hint}` }
     }),
   }
@@ -592,9 +643,15 @@ export function renderInitAgents(result: InitAgentsResult): string {
     return `  ${ACTION_GLYPH[f.action]} ${f.path}${tail}`
   })
   if (result.syncedTo !== undefined) {
+    const launch =
+      result.syncedTo === UNPINNED
+        ? "runs the installed @nifrajs/cli (unpinned), so an upgrade needs no re-pin"
+        : `pins @nifrajs/cli@${result.syncedTo}`
     const footer = result.files.some((f) => f.action === "synced")
-      ? `\nThe nifra MCP launch now pins @nifrajs/cli@${result.syncedTo}. Restart your agent so it respawns the server.`
-      : `\nNothing to re-pin - no file pins a version other than @nifrajs/cli@${result.syncedTo}.`
+      ? `\nThe nifra MCP launch now ${launch}. Restart your agent so it respawns the server.`
+      : result.syncedTo === UNPINNED
+        ? "\nNothing to re-pin - every launch already follows the installed @nifrajs/cli."
+        : `\nNothing to re-pin - no file pins a version other than @nifrajs/cli@${result.syncedTo}.`
     return `nifra init-agents --sync-mcp\n\n${lines.join("\n")}\n${footer}`
   }
   const wroteAny = result.files.some((f) => f.action === "wrote" || f.action === "appended")

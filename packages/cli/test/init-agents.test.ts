@@ -22,6 +22,7 @@ import {
   renderInitAgents,
   runInitAgents,
   safeJoin,
+  UNPINNED,
 } from "../src/init-agents.ts"
 
 const roots: string[] = []
@@ -501,6 +502,88 @@ describe("initAgents --sync-mcp - re-pins the MCP launch and nothing else", () =
       })),
     })
     expect(await snapshot(dir)).toEqual(before)
+  })
+})
+
+describe("initAgents in a project that declares @nifrajs/cli - the launch follows the install", () => {
+  const registry = (args: readonly string[]) =>
+    `${JSON.stringify({ mcpServers: { nifra: { command: "bunx", args } } }, null, 2)}\n`
+  const claude = (spec: string) =>
+    `# Rules\n\nOur agent launches \`bunx ${spec} mcp\`.\n\n@AGENTS.md\n`
+
+  async function declaring(): Promise<string> {
+    const dir = await freshDir()
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", devDependencies: { "@nifrajs/cli": "^5.1.0" } }),
+    )
+    return dir
+  }
+
+  test("a plain run writes the unpinned launch to both registries and AGENTS.md", async () => {
+    const dir = await declaring()
+    await initAgents(dir)
+    for (const path of [".mcp.json", ".cursor/mcp.json"])
+      expect(await read(dir, path)).toBe(registry(["@nifrajs/cli", "mcp"]))
+    expect(await read(dir, "AGENTS.md")).toContain("`bunx @nifrajs/cli mcp`")
+  })
+
+  test("--sync-mcp drops an old pin, every other byte kept, and a second run finds it current", async () => {
+    const dir = await declaring()
+    await writeFile(join(dir, ".mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp"]))
+    await writeFile(join(dir, "CLAUDE.md"), claude("@nifrajs/cli@3.1.0"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe(UNPINNED)
+    expect(result.files.find((f) => f.path === ".mcp.json")).toEqual({
+      path: ".mcp.json",
+      action: "synced",
+      note: "3.1.0 -> the installed CLI (unpinned)",
+    })
+    expect(await read(dir, ".mcp.json")).toBe(registry(["@nifrajs/cli", "mcp"]))
+    expect(await read(dir, "CLAUDE.md")).toBe(claude("@nifrajs/cli"))
+    const again = await initAgents(dir, { syncMcp: true })
+    expect(again.files.find((f) => f.path === "CLAUDE.md")).toEqual({
+      path: "CLAUDE.md",
+      action: "present",
+      note: "already follows the installed CLI",
+    })
+    expect(await collectStaleMcpPins(dir)).toEqual({ target: null, files: [] })
+    expect(renderInitAgents(again)).toContain("Nothing to re-pin")
+  })
+
+  test("without the declaration a pinned launch stays pinned and an unpinned one is left as written", async () => {
+    const dir = await freshDir()
+    await writeFile(join(dir, ".mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp"]))
+    await writeFile(join(dir, "CLAUDE.md"), claude("@nifrajs/cli"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe(MCP_CLI_VERSION)
+    expect(await read(dir, ".mcp.json")).toBe(registry([`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"]))
+    expect(actionFor(result, "CLAUDE.md")).toBe("present")
+    expect(await read(dir, "CLAUDE.md")).toBe(claude("@nifrajs/cli"))
+  })
+
+  test("a member's sync unpins its own files but keeps the root's launch pinned", async () => {
+    const dir = await freshDir()
+    await mkdir(join(dir, ".git"))
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "root", private: true, workspaces: ["app"] }),
+    )
+    await mkdir(join(dir, "app/node_modules/@nifrajs/cli"), { recursive: true })
+    await writeFile(
+      join(dir, "app/package.json"),
+      JSON.stringify({ name: "app", devDependencies: { "@nifrajs/cli": "3.4.2" } }),
+    )
+    await writeFile(
+      join(dir, "app/node_modules/@nifrajs/cli/package.json"),
+      JSON.stringify({ name: "@nifrajs/cli", version: "3.4.2" }),
+    )
+    await writeFile(join(dir, ".mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp", "app"]))
+    await writeFile(join(dir, "app/.mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp"]))
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    expect(result.files.find((f) => f.path === "../.mcp.json")?.note).toBe("3.1.0 -> 3.4.2")
+    expect(await read(dir, ".mcp.json")).toBe(registry(["@nifrajs/cli@3.4.2", "mcp", "app"]))
+    expect(await read(dir, "app/.mcp.json")).toBe(registry(["@nifrajs/cli", "mcp"]))
   })
 })
 

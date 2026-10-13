@@ -443,6 +443,38 @@ describe("computeUpgrade / runUpgrade", () => {
     expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("1.8.0"))
   })
 
+  test("a project that declares @nifrajs/cli drops the launch pin; a root launch above it stays pinned", async () => {
+    const root = join(FIXTURES, "declaring-repo")
+    const app = join(root, "app")
+    await mkdir(join(root, ".git"), { recursive: true })
+    await mkdir(app, { recursive: true })
+    await writeFile(join(root, "package.json"), JSON.stringify({ workspaces: ["app"] }))
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", devDependencies: { "@nifrajs/cli": "1.7.0" } }),
+    )
+    await writeAll(app, agentFiles("1.7.0"))
+    const launch = (spec: string) =>
+      `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["${spec}", "mcp", "app"] } } }\n`
+    await writeFile(join(root, ".mcp.json"), launch("@nifrajs/cli@1.7.0"))
+    const above = (await ancestorPins(app)).owned
+    const plan = computeUpgrade(app, RECIPE, true, false, false, above)
+    expect(plan.agentPins).toEqual([
+      ...[".mcp.json", ".cursor/mcp.json", "CLAUDE.md", "AGENTS.md"].map((file) => ({
+        file,
+        from: ["1.7.0"],
+        to: "unpinned",
+      })),
+      { file: "../.mcp.json", from: ["1.7.0"], to: "1.8.0" },
+    ])
+    expect(await readFile(join(app, ".mcp.json"), "utf8")).toBe(
+      registry("1.7.0").replace("@nifrajs/cli@1.7.0", "@nifrajs/cli"),
+    )
+    expect(await readFile(join(app, "CLAUDE.md"), "utf8")).toContain("`bunx @nifrajs/cli mcp`")
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("@nifrajs/cli@1.8.0"))
+    expect(computeUpgrade(app, RECIPE, true, false, false, above).agentPins).toEqual([])
+  })
+
   test("a symlinked agent file or folder is never written through", async () => {
     const root = await scaffold()
     const outside = join(root, "..", "outside-agent-files")

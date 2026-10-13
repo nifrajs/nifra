@@ -209,7 +209,12 @@ export interface DoctorResult {
    * the agent's server answers for a release the code no longer builds with. Advisory (never folded
    * into `ok`). Present only when at least one file is stale. Computed by {@link collectStaleMcpPins}.
    */
-  readonly staleMcpPins?: { readonly target: string; readonly files: readonly StaleMcpPin[] }
+  readonly staleMcpPins?: {
+    /** The installed version a pin moves to, or `null` when the project declares `@nifrajs/cli` and
+     * the launch should drop its pin. */
+    readonly target: string | null
+    readonly files: readonly StaleMcpPin[]
+  }
   /**
    * `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json no
    * longer declares: Bun never refreshes them, so it installs a second copy under the linked package.
@@ -1069,7 +1074,7 @@ export function doctorReport(result: DoctorResult, cliVersion?: string): string[
         "its types, checks, and docs may describe a different version than your code builds with.",
     )
     lines.push(
-      `      fix: \`${syncMcpCommand(drift.cli)}\` re-pins the project's MCP launch to the nifra it installs; ` +
+      `      fix: \`${syncMcpCommand(drift.cli)}\` points the project's MCP launch at the nifra it installs; ` +
         "for the CLI itself, run the project's own (`bunx --bun nifra doctor` from the project directory, " +
         "or ./node_modules/.bin/nifra)\n",
     )
@@ -1088,13 +1093,17 @@ export function doctorReport(result: DoctorResult, cliVersion?: string): string[
   if (result.staleMcpPins !== undefined) {
     const { target, files } = result.staleMcpPins
     lines.push(
-      `⚠ the MCP launch pins a nifra other than the project's ${target} - an agent's nifra server answers for that release:`,
+      target === null
+        ? "⚠ the MCP launch pins a nifra release while the project installs its own CLI - an agent's nifra server answers for the pinned release:"
+        : `⚠ the MCP launch pins a nifra other than the project's ${target} - an agent's nifra server answers for that release:`,
     )
     for (const file of files) lines.push(`    ${file.path}: @nifrajs/cli@${file.pinned.join(", ")}`)
     const command =
       cliVersion !== undefined ? syncMcpCommand(cliVersion) : "nifra init-agents --sync-mcp"
     lines.push(
-      `      fix: \`${command}\` rewrites only the pinned version, then restart the agent\n`,
+      target === null
+        ? `      fix: \`${command}\` drops the pin so the launch runs the installed CLI from then on, then restart the agent\n`
+        : `      fix: \`${command}\` rewrites only the pinned version, then restart the agent\n`,
     )
   }
   if (result.ok) {
