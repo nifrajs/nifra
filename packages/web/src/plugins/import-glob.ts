@@ -4,7 +4,7 @@
  * `import.meta.glob` is `undefined` in the browser and every file it named is missing from the build.
  */
 import { existsSync } from "node:fs"
-import { dirname, extname, relative, resolve } from "node:path"
+import { dirname, extname, relative, resolve, sep } from "node:path"
 import type { BunPlugin } from "bun"
 import { readSource } from "./kit.ts"
 
@@ -200,10 +200,12 @@ function readOptions(value: Literal | undefined): GlobOptions {
 
 /** The files a set of patterns matches from `importer`, by Vite's rules, sorted; `!` excludes. */
 function matchGlob(importer: string, root: string, patterns: readonly string[]): string[] {
+  // Globs read `\` as an escape, so on Windows every path is matched with forward slashes.
+  const slash = (path: string): string => (sep === "\\" ? path.replaceAll("\\", "/") : path)
   const absolute = (pattern: string): string => {
-    if (pattern.startsWith("/")) return resolve(root, `.${pattern}`)
+    if (pattern.startsWith("/")) return slash(resolve(root, `.${pattern}`))
     if (pattern.startsWith("./") || pattern.startsWith("../"))
-      return resolve(dirname(importer), pattern)
+      return slash(resolve(dirname(importer), pattern))
     throw new SyntaxError(`pattern ${pattern}`)
   }
   const include = patterns.filter((pattern) => !pattern.startsWith("!")).map(absolute)
@@ -221,13 +223,14 @@ function matchGlob(importer: string, root: string, patterns: readonly string[]):
     const base = segments.slice(0, wild).join("/") || "/"
     const rest = segments.slice(wild).join("/")
     for (const file of new Bun.Glob(rest).scanSync({ cwd: base, onlyFiles: true })) {
-      const path = resolve(base, file)
+      const path = slash(resolve(base, file))
       if (!rest.includes("node_modules") && path.split("/").includes("node_modules")) continue
       found.add(path)
     }
   }
+  const self = slash(importer)
   return [...found]
-    .filter((path) => path !== importer && !exclude.some((glob) => glob.match(path)))
+    .filter((path) => path !== self && !exclude.some((glob) => glob.match(path)))
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
