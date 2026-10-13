@@ -2,9 +2,14 @@
 
 ## 5.2.0
 
+### Minor Changes
+
+- df0fbb3: A project that declares `@nifrajs/cli` now launches its MCP server as `bunx @nifrajs/cli mcp`, with no version pin. `bunx` runs the CLI the project installs, so the server moves with every upgrade and the launch never goes stale. New scaffolds and `nifra init-agents` write this form. `nifra init-agents --sync-mcp` and `nifra upgrade --write` drop an existing pin in such a project, and `nifra doctor` points out a pin that is left. A project that does not declare the CLI keeps the exact-version pin, since an unpinned `bunx` there would run a cached `latest`. A launch in a workspace root's files stays pinned too, because the root need not hold the CLI's bin. `create-nifra/agent-files`: `mcpConfig(pin?)`, `mcpJson(pin?)` and `agentsMcpSection(pin?)` take an optional pin. `MCP_CONFIG` is now the unpinned config a scaffold writes.
+
 ### Patch Changes
 
 - 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- f2065e2: A new app's `nifra.assurance.ts` now carries a `response-contract` baseline: every route that declares a `response` schema must enforce it, matched with `hasResponse: true`. The backend already installs `responseContract("enforce")`, so a fresh app passes. A route the contract does not cover now fails `nifra assure` and level L1 instead of sending fields its schema never declared.
 
 ## 5.1.0
 

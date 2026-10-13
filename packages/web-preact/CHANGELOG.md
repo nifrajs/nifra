@@ -9,6 +9,13 @@
 - Updated dependencies [1f3ff32]
 - Updated dependencies [4bb8e52]
 - Updated dependencies [cdff19d]
+- Updated dependencies [5edd0ba]
+- Updated dependencies [000b4cb]
+- Updated dependencies [c5455fb]
+- Updated dependencies [6082ba5]
+- Updated dependencies [fd58beb]
+- Updated dependencies [ea25a61]
+- Updated dependencies [ed13e36]
   - @nifrajs/core@5.2.0
   - @nifrajs/i18n@5.2.0
   - @nifrajs/image@5.2.0

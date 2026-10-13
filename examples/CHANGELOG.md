@@ -16,6 +16,15 @@
 - Updated dependencies [a040478]
 - Updated dependencies [d66ba12]
 - Updated dependencies [3edee08]
+- Updated dependencies [5edd0ba]
+- Updated dependencies [df0fbb3]
+- Updated dependencies [000b4cb]
+- Updated dependencies [c5455fb]
+- Updated dependencies [6082ba5]
+- Updated dependencies [fd58beb]
+- Updated dependencies [ea25a61]
+- Updated dependencies [a3e6c9f]
+- Updated dependencies [ed13e36]
   - @nifrajs/auth@5.2.0
   - @nifrajs/cli@5.2.0
   - @nifrajs/client@5.2.0
