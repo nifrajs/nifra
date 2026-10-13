@@ -3472,6 +3472,12 @@ _No named exports (side-effect entrypoint)._
 - **CatalogCheckResult** _(interface)_ - `interface CatalogCheckResult`
 - **CatalogCheckSeverity** _(type)_ - `type CatalogCheckSeverity = "error" | "warning" | "info"`
 - **CatalogFinding** _(interface)_ - `interface CatalogFinding`
+- **CatalogRule** _(type)_ - `type CatalogRule = ( context: CatalogRuleContext, ) => CatalogRuleFinding | readonly CatalogRuleFinding[] | undefined`
+  An app's own check, run on every message of every locale.
+- **CatalogRuleContext** _(interface)_ - `interface CatalogRuleContext`
+  What a {@link CatalogRule} is given: one message of one locale.
+- **CatalogRuleFinding** _(interface)_ - `interface CatalogRuleFinding`
+  A finding a {@link CatalogRule} returns.
 - **CopyTableEntry** _(interface)_ - `interface CopyTableEntry`
   A copy table, as {@link tablesToCatalogs} takes it: its id and its values by locale key.
 - **LocaleCoverage** _(interface)_ - `interface LocaleCoverage`
@@ -3553,13 +3559,14 @@ _No named exports (side-effect entrypoint)._
 - **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>`
 - **HreflangLink** _(interface)_ - `interface HreflangLink`
   One `hreflang` alternate: a URL plus the tag search engines match on.
-- **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions`
+- **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions<K extends string = string>`
+- **LocalizeOptions** _(interface)_ - `interface LocalizeOptions`
 - **LocalizedRouter** _(interface)_ - `interface LocalizedRouter<K extends string = string>`
 - **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string>`
   What a `[lang]` segment value means for the request.
 - **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath<K extends string = string>`
   A pathname with its locale prefix removed (or not, when it carries none).
-- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>`
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions<K>) => LocalizedRouter<K>`
   Bind the app's locale-prefixed URL scheme to a {@link Locales} registry.
 
 ## @nifrajs/image
@@ -5154,6 +5161,8 @@ _No named exports (side-effect entrypoint)._
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **LAYOUT_DATA_GLOBAL** _(const)_ - `LAYOUT_DATA_GLOBAL: "__NIFRA_LAYOUT_DATA__"`
   Per-layout loader data for hydration.
+- **LOCALES_GLOBAL** _(const)_ - `LOCALES_GLOBAL: "__NIFRA_LOCALES__"`
+  The handover global carrying {@link PageLocales}.
 - **LayoutEntry** _(interface)_ - `interface LayoutEntry`
   A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
 - **LinkDescriptor** _(interface)_ - `interface LinkDescriptor`
@@ -5222,6 +5231,10 @@ _No named exports (side-effect entrypoint)._
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`
   Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
+- **PageLocale** _(interface)_ - `interface PageLocale`
+  A served locale as a page renders in it: from the app's locale registry.
+- **PageLocales** _(interface)_ - `interface PageLocales`
+  The served locales, handed to the client so it names a page's locale from its path the way the server does.
 - **PendingBoundary** _(interface)_ - `interface PendingBoundary`
   A dynamic load that has started but is not part of the initial render barrier.
 - **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
@@ -5330,6 +5343,8 @@ _No named exports (side-effect entrypoint)._
   One module of the rendered chain, as `useMatches` returns it.
 - **UnsafeScriptDescriptor** _(interface)_ - `interface UnsafeScriptDescriptor`
   Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
+- **WebAppI18n** _(interface)_ - `interface WebAppI18n`
+  An app's locale routing as `createWebApp` reads it: what `defineI18nRouting()` from `@nifrajs/i18n/routing` returns.
 - **assertCssLoadingCompatible** _(function)_ - `assertCssLoadingCompatible: (cssCodeSplit: boolean, cssLoading: CssLoadingMode) => void`
   Guard the only Vite combination that would claim to solve the stylesheet-insertion regression while leaving the cause in place. A deferred split build can still attach CSS when a prefetched lazy chunk evaluates, so it must fail closed instead of producing a misleadingly healthy deployment.
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
@@ -5388,6 +5403,8 @@ _No named exports (side-effect entrypoint)._
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
+- **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
+  The locale of the page `props` render: the server's answer on SSR, else the one the client names from `props.path`. What every adapter's `useLocale` reads.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **nifraScriptHashes** _(function)_ - `nifraScriptHashes: (adapter: RenderAdapter) => Promise<readonly string[]>`
@@ -5398,6 +5415,8 @@ _No named exports (side-effect entrypoint)._
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
 - **openGraph** _(function)_ - `openGraph: (input: OpenGraphInput) => MetaDescriptor[]`
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
+- **pageLocaleIn** _(function)_ - `pageLocaleIn: (config: PageLocales, path: string) => PageLocale | undefined`
+  The locale a path is in, by the rule `@nifrajs/i18n/routing`'s `localeOf` follows: a first path segment that names a served locale, ignoring ASCII case, or else the default.
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => ResponseResult`
@@ -5493,7 +5512,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
@@ -5652,7 +5671,7 @@ _No named exports (side-effect entrypoint)._
 - **InstallHistoryOptions** _(interface)_ - `interface InstallHistoryOptions`
 - **WaitForStylesOptions** _(interface)_ - `interface WaitForStylesOptions`
   Options for {@link waitForStyles}.
-- **applyHead** _(function)_ - `applyHead: (head: Meta) => void`
+- **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
   Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so the first…
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
@@ -5668,6 +5687,8 @@ _No named exports (side-effect entrypoint)._
   Intercept submissions of same-origin `<form method="post">` whose action targets an app route: submit via the router (no full reload - POST the action, then revalidate the active loader). On failure it falls back to a native submit, so the form still works. Returns a teardown function.
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
   Attach history + link interception to a router. Returns a teardown function that removes the listeners. A data-fetch failure during a client navigation falls back to a full-page load, so navigation degrades gracefully rather than leaving the user stuck.
+- **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
+  The locale of the page `props` render: the server's answer on SSR, else the one the client names from `props.path`. What every adapter's `useLocale` reads.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
@@ -6475,6 +6496,8 @@ _No named exports (side-effect entrypoint)._
   Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => ComponentChildren`
   The message at `key` with its tags rendered by `tags`, as Preact nodes - no HTML, no `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is…
+- **useLocale** _(function)_ - `useLocale: () => string`
+  The page's locale key (`ur`, the URL segment), in an app that registers its locale routing (`i18n` in `backend/framework.ts`): from the request on the server, from the URL after each navigation. Without one, the nearest `<I18nProvider>`'s locale; with neither, it throws.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
@@ -6599,6 +6622,8 @@ _No named exports (side-effect entrypoint)._
   Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => ReactNode`
   The message at `key` with its tags rendered by `tags`, as React nodes - no HTML, no `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is …
+- **useLocale** _(function)_ - `useLocale: () => string`
+  The page's locale key (`ur`, the URL segment), in an app that registers its locale routing (`i18n` in `backend/framework.ts`): from the request on the server, from the URL after each navigation. Without one, the nearest `<I18nProvider>`'s locale; with neither, it throws.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
@@ -6799,6 +6824,8 @@ _No named exports (side-effect entrypoint)._
   Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => JSX.Element`
   The message at `key` with its tags rendered by `tags`, as Solid nodes - no HTML, no `innerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a `<br>`, and …
+- **useLocale** _(function)_ - `useLocale: () => Accessor<string>`
+  The page's locale key (`ur`, the URL segment), in an app that registers its locale routing (`i18n` in `backend/framework.ts`): from the request on the server, from the URL after each navigation. Without one, the nearest `<I18nProvider>`'s locale; with neither, reading it throws.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
@@ -6923,6 +6950,8 @@ _No named exports (side-effect entrypoint)._
   Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s.
 - **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>) => (string | R)[]`
   The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution, `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no catalog has returns `[key]`.
+- **useLocale** _(function)_ - `useLocale: () => () => string`
+  The page's locale key (`ur`, the URL segment) as an accessor, in an app that registers its locale routing (`i18n` in `backend/framework.ts`): from the request on the server, from the URL after each navigation. Without one, the nearest `<I18nProvider>`'s locale; with neither, calling it throws. Call…
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
@@ -7050,12 +7079,14 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Translation>; required: true; }; fallback: { type: PropType<N…`
+- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; }; messages: { type: PropType<Translation>; required: true; }; fallback: { type: PropType<NonNullable<Forma…`
   Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes when any of them changes, so a locale switch re-renders consumers. Renders its default slot.
 - **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: VNodeChild) => VNodeChild>>`
   Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => VNodeChild`
   The message at `key` with its tags rendered by `tags`, as Vue vnodes - no HTML, no `v-html`. `"Read the <link>terms</link>"` with `{ link: (content) => h("a", { href: "/terms" }, [content]) }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a `<br>`, a…
+- **useLocale** _(function)_ - `useLocale: () => ComputedRef<string>`
+  The page's locale key (`ur`, the URL segment) as a computed ref, in an app that registers its locale routing (`i18n` in `backend/framework.ts`): from the request on the server, from the URL after each navigation. Without one, the nearest `<I18nProvider>`'s locale; with neither, reading it throws.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 

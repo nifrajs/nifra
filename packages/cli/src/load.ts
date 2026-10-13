@@ -111,6 +111,10 @@ export interface NifraFramework {
   readonly csp?: CreateWebAppOptions["csp"]
   /** A per-request CSP nonce resolver. Exclusive with {@link csp}. */
   readonly nonce?: CreateWebAppOptions["nonce"]
+  /** The app's locale routing, `defineI18nRouting()` from `@nifrajs/i18n/routing`: every document
+   * takes its `<html lang dir>`, `Content-Language` and adapter locale from it. See `createWebApp`'s
+   * `i18n`. */
+  readonly i18n?: CreateWebAppOptions["i18n"]
 }
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
@@ -122,6 +126,7 @@ export const FRAMEWORK_WEB_OPTIONS = [
   "csp",
   "nonce",
   "serverComponents",
+  "i18n",
 ] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
@@ -161,6 +166,12 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.nonce !== undefined && typeof fw.nonce !== "function") {
     wrong("nonce", "a nonce resolver function, such as createNonceResolver() returns")
+  }
+  if (
+    fw.i18n !== undefined &&
+    (typeof fw.i18n !== "object" || fw.i18n === null || typeof fw.i18n.localeOf !== "function")
+  ) {
+    wrong("i18n", "the router defineI18nRouting() from @nifrajs/i18n/routing returns")
   }
   if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
     wrong("secretExemptions", "an array of { rule, file, reason } entries")

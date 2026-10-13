@@ -14,8 +14,10 @@ import {
   type Translation,
 } from "@nifrajs/i18n"
 import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
+import { localeOfProps } from "@nifrajs/web/client"
 import { type ComponentChildren, createContext, createElement, Fragment, type VNode } from "preact"
 import { useContext, useMemo } from "preact/hooks"
+import { RenderPropsContext } from "./router.ts"
 
 const I18nContext = createContext<Formatter | null>(null)
 
@@ -30,7 +32,9 @@ const createProvider = createElement as (
 ) => VNode
 
 export interface I18nProviderProps extends FormatterOptions {
-  readonly locale: string
+  /** The locale to format in. Default: the page's locale tag, in an app that registers its locale
+   * routing. */
+  readonly locale?: string
   /** The catalog for `locale`, checked against the registered catalog type when one is declared. */
   readonly messages: Translation
   readonly children?: ComponentChildren
@@ -41,7 +45,14 @@ export interface I18nProviderProps extends FormatterOptions {
  * on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by
  * catalog identity, so an inline `fallback={[en]}` still yields the same instance. */
 export function I18nProvider(props: I18nProviderProps): VNode {
-  const { locale, messages, fallback, onMissing, timeZone, numberingSystem } = props
+  const { messages, fallback, onMissing, timeZone, numberingSystem } = props
+  const page = localeOfProps(useContext(RenderPropsContext))
+  const locale = props.locale ?? page?.lang
+  if (locale === undefined) {
+    throw new Error(
+      "[nifra/web-preact] <I18nProvider> needs a `locale`, or an app that registers its locale routing (export `i18n` from backend/framework.ts)",
+    )
+  }
   const formatter = useMemo(
     () => createFormatter(locale, messages, { fallback, onMissing, timeZone, numberingSystem }),
     [locale, messages, fallback, onMissing, timeZone, numberingSystem],
@@ -56,6 +67,23 @@ export function useT(): Formatter {
     throw new Error("[nifra/web-preact] useT() must be used within an <I18nProvider>")
   }
   return formatter
+}
+
+/**
+ * The page's locale key (`ur`, the URL segment), in an app that registers its locale routing (`i18n`
+ * in `backend/framework.ts`): from the request on the server, from the URL after each navigation.
+ * Without one, the nearest `<I18nProvider>`'s locale; with neither, it throws.
+ */
+export function useLocale(): string {
+  const page = localeOfProps(useContext(RenderPropsContext))
+  const formatter = useContext(I18nContext)
+  const locale = page?.key ?? formatter?.locale
+  if (locale === undefined) {
+    throw new Error(
+      "[nifra/web-preact] useLocale() needs an app that registers its locale routing (export `i18n` from backend/framework.ts), or an <I18nProvider> above it",
+    )
+  }
+  return locale
 }
 
 /** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */

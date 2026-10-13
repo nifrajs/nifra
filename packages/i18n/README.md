@@ -35,6 +35,17 @@ locales.documentMeta("ur") // { lang: "ur-PK", dir: "rtl" }
 Guard a `[lang]` route segment with `matchSegment()` in `routes/[lang]/_middleware.ts`: an unknown or
 draft value answers 404, and the default's prefix (`/en/...`) or a wrong case redirects.
 
+A page that exists in some locales only is declared once, with
+`defineI18nRouting(locales, { pageLocales: (pathname) => K[] | undefined })`: `matchSegment` answers
+404 for the other locales, `alternates` lists only the page's own, `localesOf(path)` names them, and
+`localizePathname(path, locale, { fallback: "default" })` links to the default locale's page where the
+page is missing.
+
+Register the router once, as `export const i18n = urls` in `backend/framework.ts`, and `@nifrajs/web`
+sets every document's `<html lang dir>` and `Content-Language` from it, guards `[lang]` and `[[lang]]`
+routes with `matchSegment`, and each adapter's `useLocale()` and `<I18nProvider>` read the page's
+locale.
+
 ## Messages
 
 `createFormatter(locale, messages, options)` formats ICU messages: interpolation, `plural`,
@@ -96,7 +107,13 @@ the tables of a `copy` export like catalogs, at each table's `file:line`; `table
 and unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural
 cases the locale's grammar needs, script purity (`Intl.Locale(tag).maximize().script` against Unicode
 script properties - a Telugu sign in Gujarati, a Cyrillic `е` in English), and untranslated messages.
-It is pure; `nifra i18n check [entry]` runs it over the module exporting `locales` and `catalogs`.
+It also catches partly translated text in a locale that does not write in Latin: `latin-share` reports
+a message of 6 words or more that is mostly Latin-script words (`latinWords` lists the brands a
+translation keeps), and each locale's coverage carries its `latinShare`; `volume` reports a long
+message translated to under a third of its length. `rules` adds the app's own checks, reported as
+`custom:<code>`.
+It is pure; `nifra i18n check [entry]` runs it over the module exporting `locales` and `catalogs`,
+and passes the rest of the options from its `check` export.
 
 ## Locale detection
 

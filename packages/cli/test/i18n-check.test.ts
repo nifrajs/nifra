@@ -18,6 +18,28 @@ export const catalogs = {
 export const ignore = { untranslated: ["brand"] }
 `
 
+const OPTIONS_ENTRY = `import { defineLocales } from ${I18N}
+export const locales = defineLocales({ default: "en", locales: { en: {}, ru: {} } })
+export const catalogs = {
+  en: {
+    ride: "Check the saddle and the brakes before every ride",
+    shop: "Velora Cycle Works repairs brakes and gears",
+  },
+  ru: {
+    ride: "Перед каждой поездкой проверьте седло и тормоза",
+    shop: "Velora Cycle Works чинит тормоза и передачи",
+  },
+}
+export const check = {
+  latinWords: ["Velora"],
+  ignore: { "custom:brakes": ["shop"] },
+  rules: [
+    ({ message }) =>
+      message.includes("brakes") ? { code: "brakes", message: "mentions brakes", severity: "info" } : undefined,
+  ],
+}
+`
+
 let root = ""
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "nifra-i18n-check-"))
@@ -29,6 +51,8 @@ beforeAll(async () => {
   )
   // Written up front: Bun caches a directory's entries once a module in it has been resolved.
   await writeFile(join(root, "bad.ts"), "export const locales = {}\n")
+  await writeFile(join(root, "options.ts"), OPTIONS_ENTRY)
+  await writeFile(join(root, "bad-options.ts"), `${ENTRY}export const check = "strict"\n`)
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
 
@@ -56,6 +80,19 @@ describe("nifra i18n check", () => {
     expect(text).toContain("✖ fr  placeholder: home.title drops {name} that en's message shows")
     expect(text).toContain("• hi  missing-key (2): brand, cta")
     expect(text).toContain("2 errors, 2 warnings")
+  })
+
+  test("an entry's `check` export carries the rest of checkCatalogs' options", async () => {
+    const out = await runI18nCheck(root, { entry: "options.ts" })
+    expect(
+      out.result.findings.map((f) => `${f.severity} ${f.locale} ${f.code} ${f.key ?? ""}`),
+    ).toEqual(["info en custom:brakes ride", "warning ru latin-share "])
+    const text = renderI18nCheck(out).join("\n")
+    expect(text).toContain("  ru               2/2 (100%), 16.7% Latin words")
+    expect(text).toContain("custom:brakes: ride: mentions brakes")
+    await expect(runI18nCheck(root, { entry: "bad-options.ts" })).rejects.toThrow(
+      "`check` in bad-options.ts must be an object of checkCatalogs() options",
+    )
   })
 
   test("an explicit entry, and the errors a malformed entry gets", async () => {

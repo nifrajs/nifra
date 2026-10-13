@@ -51,3 +51,35 @@ test("<Rich> draws tags with snippets and keeps values and unknown tags as text"
   )
   expect(html).toContain('<p id="count"><strong>1,200</strong> items</p>')
 })
+
+test("useLocale and <I18nProvider> read the page's locale, and an explicit locale wins", async () => {
+  const code = `
+    import { plugin } from "bun";
+    import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
+    plugin(svelteBunPlugin("ssr"));
+    const { render } = await import(${JSON.stringify(import.meta.resolve("svelte/server"))});
+    const App = (await import(${asImport("./fixtures/i18n-locale-app.svelte")})).default;
+    const ur = { key: "ur", lang: "ur-PK", dir: "rtl" };
+    const server = render(App, { props: { renderProps: { data: null, path: "/ur/x", locale: ur } } }).body;
+    globalThis.__NIFRA_LOCALES__ = { default: "en", locales: [{ key: "en", lang: "en", dir: "ltr" }, ur] };
+    const browser = render(App, { props: { renderProps: { data: null, path: "/ur/x" } } }).body;
+    delete globalThis.__NIFRA_LOCALES__;
+    const explicit = render(App, { props: { locale: "fr" } }).body;
+    let missing = "";
+    try { missing = "rendered:" + render(App, { props: {} }).body } catch (error) { missing = String(error) }
+    process.stdout.write(JSON.stringify({ server, browser, explicit, missing }));
+  `
+  const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  expect(stderr).toBe("")
+  expect(exit).toBe(0)
+  const out = new Map(Object.entries(JSON.parse(stdout)))
+  expect(out.get("server")).toContain("ur|ur-PK")
+  expect(out.get("browser")).toContain("ur|ur-PK")
+  expect(out.get("explicit")).toContain("fr|fr")
+  expect(out.get("missing")).toContain("<I18nProvider> needs a `locale`")
+})

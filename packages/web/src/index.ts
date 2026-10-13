@@ -121,6 +121,7 @@ export {
   type CreateWebAppOptions,
   createWebApp,
   type NonceResolver,
+  type WebAppI18n,
   webProjectEvidence,
 } from "./internal/web-app.ts"
 // ISR (incremental static regeneration): a pluggable cache store + the `withISR` stale-while-revalidate
@@ -256,7 +257,12 @@ export {
   type DocumentParts,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
+  LOCALES_GLOBAL,
+  localeOfProps,
   type MatchChain,
+  type PageLocale,
+  type PageLocales,
+  pageLocaleIn,
   type RenderAdapter,
   type RenderProps,
   type RenderStreamOptions,

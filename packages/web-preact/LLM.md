@@ -29,7 +29,7 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-preact/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-preact/fetcher`
 
-_…and 26 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 27 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { LOCALES_GLOBAL, type RenderProps } from "@nifrajs/web"
 import { createSSRApp, defineComponent, h } from "vue"
 import { renderToString } from "vue/server-renderer"
-import { I18nProvider, rich, useT } from "../src/i18n.ts"
+import { I18nProvider, rich, useLocale, useT } from "../src/i18n.ts"
+import { RenderPropsProvider } from "../src/router.ts"
 
 const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
@@ -109,4 +111,65 @@ test("rich() renders tags as vnodes and values as text", async () => {
   expect(html.split(/<!--[\s\S]*?-->/).join("")).toBe(
     '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br>&lt;b&gt;Ada&lt;/b&gt;! x</p>',
   )
+})
+
+describe("the page's locale", () => {
+  const ur = { key: "ur", lang: "ur-PK", dir: "rtl" } as const
+  const Locale = defineComponent({
+    setup() {
+      const key = useLocale()
+      const { locale } = useT()
+      return () => h("p", null, `${key.value}|${locale}`)
+    },
+  })
+  const KeyOnly = defineComponent({
+    setup() {
+      const key = useLocale()
+      return () => h("p", null, key.value)
+    },
+  })
+  // The throwing cases are expected: keep Vue's warning about them out of the test output.
+  const quiet = (app: ReturnType<typeof createSSRApp>) => {
+    app.config.warnHandler = () => {}
+    return renderToString(app)
+  }
+  const page = (renderProps: RenderProps | undefined, locale?: string): Promise<string> => {
+    const provider = () =>
+      h(I18nProvider, locale === undefined ? { messages } : { locale, messages }, {
+        default: () => h(Locale),
+      })
+    return quiet(
+      createSSRApp({
+        render: () =>
+          renderProps === undefined
+            ? provider()
+            : h(RenderPropsProvider, { value: renderProps }, { default: provider }),
+      }),
+    )
+  }
+
+  test("on the server, useLocale and <I18nProvider> read the request's locale", async () => {
+    expect(await page({ data: null, path: "/ur/x", locale: ur })).toContain("ur|ur-PK")
+  })
+
+  test("in the browser, the handed-over locales name it from the path", async () => {
+    Reflect.set(globalThis, LOCALES_GLOBAL, {
+      default: "en",
+      locales: [ur, { key: "en", lang: "en", dir: "ltr" }],
+    })
+    try {
+      expect(await page({ data: null, path: "/ur/x" })).toContain("ur|ur-PK")
+    } finally {
+      Reflect.deleteProperty(globalThis, LOCALES_GLOBAL)
+    }
+  })
+
+  test("an explicit locale wins; without routing useLocale reads the provider; with neither, both throw", async () => {
+    expect(await page({ data: null, path: "/ur/x", locale: ur }, "fr")).toContain("ur|fr")
+    expect(await page(undefined, "fr")).toContain("fr|fr")
+    await expect(page(undefined)).rejects.toThrow("<I18nProvider> needs a `locale`")
+    await expect(quiet(createSSRApp({ render: () => h(KeyOnly) }))).rejects.toThrow(
+      "useLocale() needs an app that registers its locale routing",
+    )
+  })
 })

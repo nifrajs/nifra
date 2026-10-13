@@ -2,7 +2,8 @@
  * `nifra i18n check [entry]` - runs `checkCatalogs()` from `@nifrajs/i18n/check` over an app's locale
  * registry and catalogs. Unlike `nifra check`, this IMPORTS app code: the entry module, which exports
  * `locales` (from `defineLocales`) and `catalogs` (by locale key: a catalog, or a function returning
- * one or a promise of one, such as `() => import("./messages/fr.json")`), plus an optional `ignore`.
+ * one or a promise of one, such as `() => import("./messages/fr.json")`), plus an optional `ignore`
+ * and `check`, the rest of `checkCatalogs()`'s options (`latinWords`, thresholds, `rules`).
  * The default entry is the first of {@link DEFAULT_ENTRIES} that exists.
  *
  * An entry may export a copy function (`defineCopy` from `@nifrajs/i18n/copy`) as well as, or instead
@@ -95,7 +96,7 @@ export async function runI18nCheck(
   const path = resolveEntry(cwd, options.entry)
   const mod = (await import(pathToFileURL(path).href)) as Record<string, unknown>
   const source = isObject(mod.default) && mod.locales === undefined ? mod.default : mod
-  const { catalogs, ignore } = source
+  const { catalogs, ignore, check } = source
   const entry = relative(cwd, path).replaceAll("\\", "/") || path
   const copies = Object.entries(source).filter(
     (entry): entry is [string, { readonly locales: unknown }] => isCopy(entry[1]),
@@ -113,6 +114,11 @@ export async function runI18nCheck(
   }
   if (ignore !== undefined && !isObject(ignore)) {
     throw new Error(`i18n check: \`ignore\` in ${entry} must be an object of key patterns by check`)
+  }
+  if (check !== undefined && !isObject(check)) {
+    throw new Error(
+      `i18n check: \`check\` in ${entry} must be an object of checkCatalogs() options`,
+    )
   }
   const loaded: Record<string, MessageTree | undefined> = {}
   for (const [key, entryValue] of isObject(catalogs) ? Object.entries(catalogs) : []) {
@@ -133,9 +139,13 @@ export async function runI18nCheck(
           loaded,
         )
   const result = checkCatalogs({
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the app's own entry module supplies these options; checkCatalogs reads each one by name.
+    ...(check as Omit<CatalogCheckOptions, "locales" | "catalogs"> | undefined),
     locales,
     catalogs: copy?.catalogs ?? loaded,
-    ignore: ignore as CatalogCheckOptions["ignore"],
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the app's own entry module supplies the patterns; checkCatalogs only compares them with keys.
+    ignore: (ignore ??
+      (isObject(check) ? check.ignore : undefined)) as CatalogCheckOptions["ignore"],
   })
   if (copy === undefined) return { entry, result }
   const findings = [...copy.findings, ...result.findings]
@@ -351,7 +361,11 @@ export function renderI18nCheck(out: I18nCheckOutput): readonly string[] {
     const counts = row.default
       ? `${row.total} messages`
       : `${row.translated}/${row.total} (${percent(row.coverage)})${row.own === row.translated ? "" : `, ${row.own} own`}`
-    lines.push(`  ${row.locale.padEnd(width)}  ${label.padEnd(7)}  ${counts}`)
+    const latin =
+      row.latinShare === undefined || row.latinShare === 0
+        ? ""
+        : `, ${percent(row.latinShare)} Latin words`
+    lines.push(`  ${row.locale.padEnd(width)}  ${label.padEnd(7)}  ${counts}${latin}`)
   }
   if (result.coverage.length > 0) lines.push("")
 

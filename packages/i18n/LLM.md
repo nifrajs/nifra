@@ -21,7 +21,7 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 - **createCopyScanner** _(function)_ - `createCopyScanner: (ts: typeof TS, host: CopySourceHost) => CopyScanner` · from `@nifrajs/i18n/extract`
 - **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>)…` · from `@nifrajs/i18n`
 - **defineCopy** _(function)_ - `defineCopy: <K extends string, D extends K>(locales: Locales<K, D>, options?: CopyOptions<K>) => Copy<K, D>` · from `@nifrajs/i18n/copy`
-- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>` · from `@nifrajs/i18n/routing`
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions<K>) => LocalizedRouter<K>` · from `@nifrajs/i18n/routing`
 - **defineLocales** _(function)_ - `defineLocales: <const K extends string, const D extends K>(config: LocalesConfig<K, D>) => Locales<K, D>` · from `@nifrajs/i18n`
 - **localeCookie** _(function)_ - `localeCookie: (name: string, locale: string, options?: LocaleCookieOptions) => string` · from `@nifrajs/i18n`
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>` · from `@nifrajs/i18n/detector`
@@ -29,7 +29,7 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale` · from `@nifrajs/i18n`
 - **renderRich** _(function)_ - `renderRich: <N, M extends object = import("./format.ts").MessageTree>(renderer: RichRenderer<N>, formatter: Formatter<M>, key: MessageKey<M…` · from `@nifrajs/i18n/rich`
 
-_…and 60 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
+_…and 64 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
 
 ## Footguns
 

@@ -20,10 +20,21 @@ export const locales = defineLocales({
     gu: { draft: true }, // catalogs in progress: never routed, never an alternate
   },
 })
-export const urls = defineI18nRouting(locales)
+export const urls = defineI18nRouting(locales, {
+  // The pages that exist in some locales only, declared once; undefined = every served locale.
+  pageLocales: (pathname) => (pathname.startsWith("/guides/") ? ["en", "hi"] : undefined),
+})
 
 urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+urls.localizePathname("/guides/setup", "ur", { fallback: "default" }) // "/guides/setup"
+urls.localesOf("/hi/guides/setup") // ["en", "hi"]
 locales.chain("hi") // ["hi", "en"] - the catalog fallback order`
+
+const REGISTER_ROUTING = `// doc-check: skip - imports the app's own routing module.
+// backend/framework.ts - nifra dev, nifra build and the generated server entry read it from here.
+import { urls } from "../shared/i18n"
+
+export const i18n = urls`
 
 const GUARD = `// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
 import { defineLocales } from "@nifrajs/i18n"
@@ -155,7 +166,15 @@ export const catalogs = {
   gu: () => import("./messages/gu.json"),
 }
 // Keys a check skips: exact, a prefix ending in ".*", or "*".
-export const ignore = { script: ["languages.*"], untranslated: ["brand"] }`
+export const ignore = { script: ["languages.*"], untranslated: ["brand"] }
+// The rest of checkCatalogs()'s options: Latin words a translation keeps, and your own rules.
+export const check = {
+  latinWords: ["PDF", "OK"],
+  rules: [
+    ({ message }: { readonly message: string }) =>
+      message === message.trim() ? undefined : { code: "spacing", message: "starts or ends with a space" },
+  ],
+}`
 
 const CHECK_TEST = `// Or as a test, with no CLI: the same checks, pure.
 import { expect, test } from "bun:test"
@@ -276,6 +295,38 @@ export default function I18n() {
         builds can never start with <code>//</code>.
       </p>
       <CodeBlock code={ALTERNATES} lang="ts" />
+      <p>
+        A page that exists in some languages only is declared once, with <code>pageLocales</code>{" "}
+        (given the path without its locale prefix; it must be pure). Then{" "}
+        <code>matchSegment</code> answers not-found for the other locales, <code>alternates</code>{" "}
+        lists only the page's own (none for a page in one locale), <code>localesOf(path)</code> names
+        them for a prerender's static paths, and <code>localizePathname(path, locale, {`{ fallback: "default" }`})</code>{" "}
+        links a menu entry to the default locale's page where the page is missing. A{" "}
+        <code>pageLocales</code> that throws, or names a locale the registry does not declare, throws
+        rather than serving every locale.
+      </p>
+
+      <h2>Register the routing once</h2>
+      <p>
+        Export the router as <code>i18n</code> from <code>backend/framework.ts</code> (re-export it from{" "}
+        <code>nifra.config.ts</code> when both exist), or pass it to a hand-written{" "}
+        <code>createWebApp({`{ i18n }`})</code>. Every document then takes its locale from the URL:
+      </p>
+      <ul>
+        <li><code>&lt;html lang dir&gt;</code> come from <code>documentMeta(localeOf(path))</code>,
+          unless the route's meta sets <code>lang</code>, on a hard load and after each client
+          navigation alike.</li>
+        <li>The response carries <code>Content-Language</code>.</li>
+        <li>Each adapter's <code>useLocale()</code> names the page's locale key, and{" "}
+          <code>&lt;I18nProvider&gt;</code> formats in its tag when no <code>locale</code> is passed;
+          no loader has to hand either over.</li>
+        <li>A route under a <code>[lang]</code> or <code>[[lang]]</code> directory runs{" "}
+          <code>matchSegment</code> before any middleware: an unserved locale, or a page missing from
+          it, is a 404 through your <code>_404</code>, and a non-canonical prefix (<code>/en/x</code>{" "}
+          when the default is unprefixed) is a 308 to the canonical URL. The guard middleware above is
+          then only needed for checks of your own.</li>
+      </ul>
+      <CodeBlock code={REGISTER_ROUTING} lang="ts" />
 
       <h2>Negotiate the locale</h2>
       <p>
@@ -331,6 +382,9 @@ export default function I18n() {
       <p>In React, provide it once and read it with <code>useT()</code>:</p>
       <CodeBlock code={PROVIDER} />
       <p>
+        In an app that registers its routing, <code>locale</code> may be left out: the provider formats
+        in the page's locale, and <code>useLocale()</code> reads the page's locale key anywhere below
+        the route.{" "}
         <code>locale</code>, <code>messages</code> and <code>fallback</code> are serializable, so SSR
         renders the negotiated catalogs and the client rebuilds the same formatter on hydrate - no
         mismatch. Switching language re-navigates (a cookie or <code>?lang=</code>); the loader returns
@@ -419,6 +473,15 @@ export default function I18n() {
           <code>Intl.Locale(tag).maximize().script</code>, and, as a warning, words mixing Latin with
           the locale's script. Latin words (brands, units) stay allowed.</li>
         <li><b>Untranslated</b> messages identical to the default in another language, as a warning.</li>
+        <li><b>Partly translated</b> text in a locale that does not write in Latin: a message of 6 words
+          or more that is over 60% Latin-script words (<code>latin-share</code>; words split by{" "}
+          <code>Intl.Segmenter</code>, so Japanese counts), with each locale's share in the coverage
+          table and a warning above 10%; and a message of 80 graphemes or more translated to under 32%
+          of its length (<code>volume</code>), a summary rather than a translation. Han scripts, which
+          write a sentence in far fewer graphemes, are left out of <code>volume</code>. Every threshold
+          is an option.</li>
+        <li><b>Your rules</b>: each of <code>rules</code> runs on every message of every locale, and
+          its findings read <code>custom:&lt;code&gt;</code>, which <code>ignore</code> takes.</li>
       </ul>
       <CodeBlock code={CHECK_ENTRY} lang="ts" />
       <p>

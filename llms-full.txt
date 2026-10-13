@@ -5259,9 +5259,14 @@ export const locales = defineLocales({
     gu: { draft: true }, // catalogs in progress: never routed, never an alternate
   },
 })
-export const urls = defineI18nRouting(locales)
+export const urls = defineI18nRouting(locales, {
+  // The pages that exist in some locales only, declared once; undefined = every served locale.
+  pageLocales: (pathname) => (pathname.startsWith("/guides/") ? ["en", "hi"] : undefined),
+})
 
 urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+urls.localizePathname("/guides/setup", "ur", { fallback: "default" }) // "/guides/setup"
+urls.localesOf("/hi/guides/setup") // ["en", "hi"]
 locales.chain("hi") // ["hi", "en"] - the catalog fallback order
 ```
 
@@ -5324,6 +5329,45 @@ export function meta({ params, origin }: MetaArgs): Meta {
     ],
   }
 }
+```
+
+A page that exists in some languages only is declared once, with `pageLocales`
+(given the path without its locale prefix; it must be pure). Then
+`matchSegment` answers not-found for the other locales, `alternates`
+lists only the page's own (none for a page in one locale), `localesOf(path)` names
+them for a prerender's static paths, and `localizePathname(path, locale, { fallback: "default" })`
+links a menu entry to the default locale's page where the page is missing. A
+`pageLocales` that throws, or names a locale the registry does not declare, throws
+rather than serving every locale.
+
+### Register the routing once
+
+Export the router as `i18n` from `backend/framework.ts` (re-export it from
+`nifra.config.ts` when both exist), or pass it to a hand-written
+`createWebApp({ i18n })`. Every document then takes its locale from the URL:
+
+- `<html lang dir>` come from `documentMeta(localeOf(path))`,
+unless the route's meta sets `lang`, on a hard load and after each client
+navigation alike.
+
+- The response carries `Content-Language`.
+
+- Each adapter's `useLocale()` names the page's locale key, and
+`<I18nProvider>` formats in its tag when no `locale` is passed;
+no loader has to hand either over.
+
+- A route under a `[lang]` or `[[lang]]` directory runs
+`matchSegment` before any middleware: an unserved locale, or a page missing from
+it, is a 404 through your `_404`, and a non-canonical prefix (`/en/x`
+when the default is unprefixed) is a 308 to the canonical URL. The guard middleware above is
+then only needed for checks of your own.
+
+```ts
+// doc-check: skip - imports the app's own routing module.
+// backend/framework.ts - nifra dev, nifra build and the generated server entry read it from here.
+import { urls } from "../shared/i18n"
+
+export const i18n = urls
 ```
 
 ### Negotiate the locale
@@ -5470,6 +5514,9 @@ function Body() {
 }
 ```
 
+In an app that registers its routing, `locale` may be left out: the provider formats
+in the page's locale, and `useLocale()` reads the page's locale key anywhere below
+the route.
 `locale`, `messages` and `fallback` are serializable, so SSR
 renders the negotiated catalogs and the client rebuilds the same formatter on hydrate - no
 mismatch. Switching language re-navigates (a cookie or `?lang=`); the loader returns
@@ -5606,6 +5653,17 @@ the locale's script. Latin words (brands, units) stay allowed.
 
 - **Untranslated** messages identical to the default in another language, as a warning.
 
+- **Partly translated** text in a locale that does not write in Latin: a message of 6 words
+or more that is over 60% Latin-script words (`latin-share`; words split by
+`Intl.Segmenter`, so Japanese counts), with each locale's share in the coverage
+table and a warning above 10%; and a message of 80 graphemes or more translated to under 32%
+of its length (`volume`), a summary rather than a translation. Han scripts, which
+write a sentence in far fewer graphemes, are left out of `volume`. Every threshold
+is an option.
+
+- **Your rules**: each of `rules` runs on every message of every locale, and
+its findings read `custom:<code>`, which `ignore` takes.
+
 ```ts
 // doc-check: skip - imports the app's own catalog files.
 // shared/i18n.ts - the module `nifra i18n check` imports.
@@ -5623,6 +5681,14 @@ export const catalogs = {
 }
 // Keys a check skips: exact, a prefix ending in ".*", or "*".
 export const ignore = { script: ["languages.*"], untranslated: ["brand"] }
+// The rest of checkCatalogs()'s options: Latin words a translation keeps, and your own rules.
+export const check = {
+  latinWords: ["PDF", "OK"],
+  rules: [
+    ({ message }: { readonly message: string }) =>
+      message === message.trim() ? undefined : { code: "spacing", message: "starts or ends with a space" },
+  ],
+}
 ```
 
 When the module also exports a `copy` from `defineCopy()` (or only
@@ -8290,7 +8356,7 @@ written down: `nifra fix --code NF-C035` adds
 
 With both files, `nifra dev` and `nifra build` take
 `apiPrefix`, `apiStrip`, `mounts`, `csp`,
-`nonce`, `serverComponents` and `use` from
+`nonce`, `serverComponents`, `i18n` and `use` from
 `backend/framework.ts` when `nifra.config.ts` does not set them, so the
 server entry and the dev server read one value without a re-export. A hand-written
 `createWebApp` call passes `apiPrefix` itself; import it from
@@ -8306,7 +8372,7 @@ mount in front of the page router.
 
 An app run by `nifra dev` and `nifra build` sets these options from
 `backend/framework.ts`: `apiPrefix`, `apiStrip`, `mounts`,
-`csp` and `nonce`. The generated server entry imports them from there, so
+`csp`, `nonce` and `i18n`. The generated server entry imports them from there, so
 export them from `framework.ts` (and re-export from `nifra.config.ts` when
 both exist). A `mounts` entry hands a path to another app; a single extra URL
 outside the prefix, such as a sitemap, is a plain route registered in `use`:
@@ -14778,6 +14844,17 @@ locales.documentMeta("ur") // { lang: "ur-PK", dir: "rtl" }
 Guard a `[lang]` route segment with `matchSegment()` in `routes/[lang]/_middleware.ts`: an unknown or
 draft value answers 404, and the default's prefix (`/en/...`) or a wrong case redirects.
 
+A page that exists in some locales only is declared once, with
+`defineI18nRouting(locales, { pageLocales: (pathname) => K[] | undefined })`: `matchSegment` answers
+404 for the other locales, `alternates` lists only the page's own, `localesOf(path)` names them, and
+`localizePathname(path, locale, { fallback: "default" })` links to the default locale's page where the
+page is missing.
+
+Register the router once, as `export const i18n = urls` in `backend/framework.ts`, and `@nifrajs/web`
+sets every document's `<html lang dir>` and `Content-Language` from it, guards `[lang]` and `[[lang]]`
+routes with `matchSegment`, and each adapter's `useLocale()` and `<I18nProvider>` read the page's
+locale.
+
 ## Messages
 
 `createFormatter(locale, messages, options)` formats ICU messages: interpolation, `plural`,
@@ -14839,7 +14916,13 @@ the tables of a `copy` export like catalogs, at each table's `file:line`; `table
 and unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural
 cases the locale's grammar needs, script purity (`Intl.Locale(tag).maximize().script` against Unicode
 script properties - a Telugu sign in Gujarati, a Cyrillic `е` in English), and untranslated messages.
-It is pure; `nifra i18n check [entry]` runs it over the module exporting `locales` and `catalogs`.
+It also catches partly translated text in a locale that does not write in Latin: `latin-share` reports
+a message of 6 words or more that is mostly Latin-script words (`latinWords` lists the brands a
+translation keeps), and each locale's coverage carries its `latinShare`; `volume` reports a long
+message translated to under a third of its length. `rules` adds the app's own checks, reported as
+`custom:<code>`.
+It is pure; `nifra i18n check [entry]` runs it over the module exporting `locales` and `catalogs`,
+and passes the rest of the options from its `check` export.
 
 ## Locale detection
 
@@ -17180,7 +17263,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

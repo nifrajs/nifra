@@ -33,6 +33,61 @@ export interface RenderProps {
   readonly boundaries?: BoundaryStates
   /** The rendered chain's module ids and `handle` exports, for the adapter's `useMatches`. */
   readonly matchChain?: MatchChain
+  /** The page's locale, when the app registers its locale routing (`createWebApp`'s `i18n`). Set on
+   * SSR only; the client names it from `path` (see {@link localeOfProps}). */
+  readonly locale?: PageLocale
+}
+
+/** A served locale as a page renders in it: from the app's locale registry. */
+export interface PageLocale {
+  /** The registry key, which is also the URL segment (`ur`). */
+  readonly key: string
+  /** The BCP-47 tag `<html lang>` and `Content-Language` carry (`ur-PK`). */
+  readonly lang: string
+  readonly dir: "ltr" | "rtl"
+}
+
+/** The served locales, handed to the client so it names a page's locale from its path the way the
+ * server does. */
+export interface PageLocales {
+  /** The default locale's key. */
+  readonly default: string
+  /** Every served locale, in registry order. */
+  readonly locales: readonly PageLocale[]
+}
+
+/** The handover global carrying {@link PageLocales}. */
+export const LOCALES_GLOBAL = "__NIFRA_LOCALES__"
+
+/**
+ * The locale a path is in, by the rule `@nifrajs/i18n/routing`'s `localeOf` follows: a first path
+ * segment that names a served locale, ignoring ASCII case, or else the default.
+ */
+export function pageLocaleIn(config: PageLocales, path: string): PageLocale | undefined {
+  // One linear pass: separators, then the segment up to the next separator, query or hash.
+  const first = /^[/\\]*([^/\\?#]*)/.exec(path.replace(/[\t\n\r]/g, ""))?.[1]?.toLowerCase()
+  return (
+    config.locales.find((locale) => first !== "" && locale.key.toLowerCase() === first) ??
+    config.locales.find((locale) => locale.key === config.default)
+  )
+}
+
+const isPageLocales = (value: unknown): value is PageLocales =>
+  typeof value === "object" && value !== null && "locales" in value && Array.isArray(value.locales)
+
+/** The locale of the page at `path`, from the served locales the server handed over; `undefined`
+ * outside a browser page, or when the app registers no locale routing. */
+export function handoverLocale(path: string): PageLocale | undefined {
+  const config: unknown = Reflect.get(globalThis, LOCALES_GLOBAL)
+  return isPageLocales(config) ? pageLocaleIn(config, path) : undefined
+}
+
+/** The locale of the page `props` render: the server's answer on SSR, else the one the client names
+ * from `props.path`. What every adapter's `useLocale` reads. */
+export function localeOfProps(props: RenderProps | undefined): PageLocale | undefined {
+  if (props === undefined) return undefined
+  if (props.locale !== undefined) return props.locale
+  return props.path === undefined ? undefined : handoverLocale(props.path)
 }
 
 /**

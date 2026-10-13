@@ -10,6 +10,7 @@ import {
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
+  LOCALES_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
 } from "../render-seam.ts"
@@ -25,6 +26,7 @@ const HANDOVER_GLOBALS = [
   BOUNDARY_GLOBAL,
   COMPONENT_GLOBAL,
   PRERENDERED_GLOBAL,
+  LOCALES_GLOBAL,
 ]
 export interface GenerateClientEntryOptions {
   /**
@@ -399,7 +401,7 @@ export function generateClientEntry(
     // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
     "      const nonce = currentDocumentNonce()",
     "      const args = { data: s.data, pageData: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
-    "      applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)))",
+    "      applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)), s.path)",
     "    }",
     "  })",
     "}).catch((error) => console.error('[nifra/web] hydration failed:', error))",

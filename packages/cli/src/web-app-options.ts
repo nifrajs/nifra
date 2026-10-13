@@ -11,7 +11,15 @@ import { FRAMEWORK_WEB_OPTIONS, type FrameworkWebOption, type NifraFramework } f
 
 type FrameworkWebAppOptions = Pick<
   CreateWebAppOptions,
-  "use" | "api" | "apiPrefix" | "apiStrip" | "mounts" | "csp" | "nonce" | "serverComponents"
+  | "use"
+  | "api"
+  | "apiPrefix"
+  | "apiStrip"
+  | "mounts"
+  | "csp"
+  | "nonce"
+  | "serverComponents"
+  | "i18n"
 >
 
 /** `use`, the backend as `api`, and every forwarded framework field the config sets. */

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { LOCALES_GLOBAL, type RenderProps } from "@nifrajs/web"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { I18nProvider, rich, useT } from "../src/i18n.ts"
+import { I18nProvider, rich, useLocale, useT } from "../src/i18n.ts"
+import { RouterContext } from "../src/router.ts"
 
 const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
@@ -110,4 +112,64 @@ test("rich() renders tags as elements, values as text, and asks React for no key
     console.error = original
   }
   expect(errors).toEqual([])
+})
+
+describe("the page's locale", () => {
+  const ur = { key: "ur", lang: "ur-PK", dir: "rtl" } as const
+  function Locale() {
+    const key = useLocale()
+    return createElement("p", null, `${key}|${useT().locale}`)
+  }
+  function KeyOnly() {
+    return createElement("p", null, useLocale())
+  }
+  const onPage = (renderProps: RenderProps, child: ReturnType<typeof createElement>) =>
+    createElement(
+      RouterContext.Provider,
+      {
+        value: {
+          params: {},
+          path: renderProps.path ?? "",
+          search: {},
+          pending: false,
+          renderProps,
+        },
+      },
+      child,
+    )
+  const provided = () => createElement(I18nProvider, { messages }, createElement(Locale))
+
+  test("on the server, useLocale and <I18nProvider> read the request's locale", () => {
+    const html = renderToStaticMarkup(onPage({ data: null, path: "/ur/x", locale: ur }, provided()))
+    expect(html).toContain("ur|ur-PK")
+  })
+
+  test("in the browser, the handed-over locales name it from the path", () => {
+    Reflect.set(globalThis, LOCALES_GLOBAL, {
+      default: "en",
+      locales: [ur, { key: "en", lang: "en", dir: "ltr" }],
+    })
+    try {
+      expect(renderToStaticMarkup(onPage({ data: null, path: "/ur/x" }, provided()))).toContain(
+        "ur|ur-PK",
+      )
+      expect(renderToStaticMarkup(onPage({ data: null, path: "/x" }, provided()))).toContain(
+        "en|en",
+      )
+    } finally {
+      Reflect.deleteProperty(globalThis, LOCALES_GLOBAL)
+    }
+  })
+
+  test("an explicit locale wins; without routing useLocale reads the provider; with neither, both throw", () => {
+    const explicit = createElement(I18nProvider, { locale: "fr", messages }, createElement(Locale))
+    expect(
+      renderToStaticMarkup(onPage({ data: null, path: "/ur/x", locale: ur }, explicit)),
+    ).toContain("ur|fr")
+    expect(renderToStaticMarkup(explicit)).toContain("fr|fr")
+    expect(() => renderToStaticMarkup(provided())).toThrow("<I18nProvider> needs a `locale`")
+    expect(() => renderToStaticMarkup(createElement(KeyOnly))).toThrow(
+      "useLocale() needs an app that registers its locale routing",
+    )
+  })
 })

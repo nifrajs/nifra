@@ -34,7 +34,7 @@ import type {
   ShouldRevalidate,
 } from "../manifest.ts"
 import type { NonceResolver } from "../nonce.ts"
-import type { MatchChain, RenderAdapter } from "../render-seam.ts"
+import type { MatchChain, PageLocale, PageLocales, RenderAdapter } from "../render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
@@ -54,9 +54,11 @@ import {
   isStatusSignal,
   type LoadedLayoutModules,
   layoutErrorId,
+  notFound,
   type RenderAssemblyCache,
   type RenderedPage,
   type RevalidateResult,
+  redirect,
   renderPageResult,
   STATUS_SIGNAL,
   STATUS_TEXT,
@@ -179,6 +181,24 @@ function appTarget(location: string, requestUrl: string): string {
     : target.pathname + target.search + target.hash
 }
 
+/** The app's locale routing, as page execution reads it. */
+export interface PageI18n {
+  readonly locales: PageLocales
+  /** The served locale key a `pathname + search` is in. */
+  localeOf(path: string): string
+  /** The answer for a `[lang]` / `[[lang]]` segment's value (`undefined` when an optional one is
+   * absent), as `@nifrajs/i18n/routing`'s `matchSegment` gives it. */
+  matchSegment(
+    value: string | undefined,
+    pathname: string,
+  ):
+    | { readonly kind: "ok" | "not-found" }
+    | { readonly kind: "redirect"; readonly location: string }
+}
+
+// The route directories whose first segment names the locale.
+const LOCALE_SEGMENTS: ReadonlySet<string> = new Set(["[lang]", "[[lang]]"])
+
 export interface PageExecutionOptions<Env = unknown> {
   readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
   readonly rerenderOwnerGET?: (
@@ -200,6 +220,8 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly prerenderedListUrl?: string
   /** Locale key -> copy chunk URL, from a build that split copy tables by locale. */
   readonly copyChunks?: Readonly<Record<string, string>>
+  /** The app's locale routing: each document's locale, and the check on a `[lang]` segment. */
+  readonly i18n?: PageI18n
   readonly staticFallbacks?: Readonly<Record<string, "ssr" | "404">>
   readonly staticBoundaryCache?: StaticBoundaryCache
   /** Per-request CSP nonce for framework-owned executable document scripts. */
@@ -304,6 +326,22 @@ export function createPageRequestExecutor<Env = unknown>(
       ? { prerenderedPaths: options.prerenderedPaths ?? [] }
       : { prerenderedListUrl: options.prerenderedListUrl }
   const copyOption = options.copyChunks === undefined ? {} : { copyChunks: options.copyChunks }
+  const { i18n } = options
+  const pageLocales = new Map(i18n?.locales.locales.map((locale) => [locale.key, locale]))
+  /** The request's locale for a document, with the served locales the client names locales from. */
+  const localeOption = (req: Request): { locale?: PageLocale; locales?: PageLocales } => {
+    if (i18n === undefined) return {}
+    const locale = pageLocales.get(i18n.localeOf(pathOf(req)))
+    return locale === undefined ? { locales: i18n.locales } : { locale, locales: i18n.locales }
+  }
+  /** Whether a route sits under a `[lang]` or `[[lang]]` directory, which the locale routing checks. */
+  const localeGuarded = (route: RouteEntry): boolean => {
+    if (i18n === undefined) return false
+    for (const segment of route.id.split("/")) {
+      if (!(segment.startsWith("(") && segment.endsWith(")"))) return LOCALE_SEGMENTS.has(segment)
+    }
+    return false
+  }
   const matchManifestRoute = createMatcher(
     manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
   )
@@ -556,6 +594,21 @@ export function createPageRequestExecutor<Env = unknown>(
     ctx: LoaderContext,
     controls: PageResponseControls,
   ): Promise<void> => {
+    if (i18n !== undefined && localeGuarded(route)) {
+      // Before any app middleware, as a root `_middleware` would run: an unserved locale, or a page
+      // missing from it, never reaches the app's code.
+      const match = i18n.matchSegment(ctx.params.lang, pathOf(ctx.request))
+      if (match.kind === "redirect") {
+        throw tagLayoutError(redirect(match.location, { status: 308 }), "_layout")
+      }
+      if (match.kind === "not-found") {
+        try {
+          notFound()
+        } catch (signal) {
+          throw tagLayoutError(signal, "_layout")
+        }
+      }
+    }
     const ids = route.middlewareIds ?? []
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i] as string
@@ -779,6 +832,7 @@ export function createPageRequestExecutor<Env = unknown>(
         chain: components,
         data,
         ...(wrapped === undefined ? {} : { head: wrapped.head }),
+        ...localeOption(req),
         clientEntry,
         routeId: errorId,
         status: 500,
@@ -943,6 +997,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ...(chain === undefined ? stylesOf(routeId) : stylesFrom(options.styles)),
       ...prerenderedHandover,
       ...copyOption,
+      ...localeOption(req),
       ...titleOption,
     }
     if (chain === undefined) return renderPageResult(statusPage)
@@ -1092,6 +1147,7 @@ export function createPageRequestExecutor<Env = unknown>(
         ...stylesOf(route.id),
         ...prerenderedHandover,
         ...copyOption,
+        ...localeOption(req),
         ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
         // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
         ...(mod.revalidate !== undefined && !personalized && options.cacheChannel?.enabled === true
@@ -1218,6 +1274,7 @@ export function createPageRequestExecutor<Env = unknown>(
       matchChain: matchChainOf(page.layoutIds, layoutModules, id, mod),
       status: 404,
       hydrate: false,
+      ...localeOption(req),
       ...(layoutData !== undefined ? { layoutData } : {}),
       ...stylesOf(id),
       ...(headers === undefined ? {} : { headers }),
@@ -1309,12 +1366,14 @@ export function createPageRequestExecutor<Env = unknown>(
   return {
     get: (route) => {
       const is404Fallback = options.staticFallbacks?.[route.pattern] === "404"
-      let assemblySlot: RenderAssemblyCache | undefined
+      // One shell per locale: `<html lang>` is in it, and one route serves every locale.
+      let assemblySlots = new Map<string, RenderAssemblyCache>()
       let assemblySlotMod: unknown
       let assemblySlotLayouts: LoadedLayoutModules | undefined
       const assemblyCacheFor = (
         mod: RouteModule,
         layouts: LoadedLayoutModules,
+        req: Request,
       ): RenderAssemblyCache | undefined => {
         if (typeof mod.meta === "function") return undefined
         for (const layout of layouts) if (typeof layout.meta === "function") return undefined
@@ -1323,11 +1382,17 @@ export function createPageRequestExecutor<Env = unknown>(
           assemblySlotLayouts.length === layouts.length &&
           assemblySlotLayouts.every((layout, index) => layout === layouts[index])
         if (assemblySlotMod !== mod || !layoutsUnchanged) {
-          assemblySlot = {}
+          assemblySlots = new Map()
           assemblySlotMod = mod
           assemblySlotLayouts = layouts
         }
-        return assemblySlot
+        const key = i18n === undefined ? "" : i18n.localeOf(pathOf(req))
+        let slot = assemblySlots.get(key)
+        if (slot === undefined) {
+          slot = {}
+          assemblySlots.set(key, slot)
+        }
+        return slot
       }
 
       return withResponseControls(async (c, controls) => {
@@ -1369,7 +1434,9 @@ export function createPageRequestExecutor<Env = unknown>(
             search: loaderSearch(mod.searchSchema, c.req),
             set: controls.scope(PAGE_SCOPE),
           }
-          if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls)
+          if (route.middlewareIds !== undefined || localeGuarded(route)) {
+            await runMiddleware(route, ctx, controls)
+          }
           run = await runLayoutChain(
             route,
             ctx,
@@ -1515,7 +1582,7 @@ export function createPageRequestExecutor<Env = unknown>(
           layoutModules ?? (await loadLayoutModules(route)),
           layoutRetained,
           boundaryStates,
-          layoutModules === undefined ? undefined : assemblyCacheFor(mod, layoutModules),
+          layoutModules === undefined ? undefined : assemblyCacheFor(mod, layoutModules, c.req),
           responseHeaders,
           controls.personalized,
           componentState,
@@ -1574,7 +1641,9 @@ export function createPageRequestExecutor<Env = unknown>(
         let gated: GatedLayouts
         let result: unknown
         try {
-          if (route.middlewareIds !== undefined) await runMiddleware(route, actionContext, controls)
+          if (route.middlewareIds !== undefined || localeGuarded(route)) {
+            await runMiddleware(route, actionContext, controls)
+          }
           gated = await runLayoutGates(route, actionContext, controls)
           result = await mod.action(actionContext)
         } catch (err) {
@@ -1764,6 +1833,7 @@ export function createPageRequestExecutor<Env = unknown>(
           ...stylesOf(route.id),
           ...prerenderedHandover,
           ...copyOption,
+          ...localeOption(c.req),
           ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
           ...(nonce === undefined ? {} : { nonce }),
           ...cspOption,

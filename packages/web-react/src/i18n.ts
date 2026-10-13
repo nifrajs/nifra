@@ -2,8 +2,9 @@
  * `@nifrajs/web-react/i18n` - React bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
  * `Formatter` (memoized) and provides it; `useT()` reads it. Both `locale` + `messages` are
  * serializable, so a loader returns them, the page renders with the negotiated catalog on the server,
- * and the client rebuilds the same formatter from the same props (no mismatch). Imports only `react` +
- * `@nifrajs/i18n`; no JSX (the package builds with plain `tsc`).
+ * and the client rebuilds the same formatter from the same props (no mismatch). In an app that
+ * registers its locale routing (`i18n` in `backend/framework.ts`), `locale` defaults to the page's and
+ * `useLocale()` names it. No JSX (the package builds with plain `tsc`).
  */
 import {
   createFormatter,
@@ -14,12 +15,16 @@ import {
   type Translation,
 } from "@nifrajs/i18n"
 import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
+import { localeOfProps } from "@nifrajs/web/client"
 import { createContext, createElement, Fragment, type ReactNode, useContext, useMemo } from "react"
+import { RouterContext } from "./router.ts"
 
 const I18nContext = createContext<Formatter | null>(null)
 
 export interface I18nProviderProps extends FormatterOptions {
-  readonly locale: string
+  /** The locale to format in. Default: the page's locale tag, in an app that registers its locale
+   * routing. */
+  readonly locale?: string
   /** The catalog for `locale`, checked against the registered catalog type when one is declared. */
   readonly messages: Translation
   readonly children?: ReactNode
@@ -30,7 +35,14 @@ export interface I18nProviderProps extends FormatterOptions {
  * on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by
  * catalog identity, so an inline `fallback={[en]}` still yields the same instance. */
 export function I18nProvider(props: I18nProviderProps): ReactNode {
-  const { locale, messages, fallback, onMissing, timeZone, numberingSystem } = props
+  const { messages, fallback, onMissing, timeZone, numberingSystem } = props
+  const page = localeOfProps(useContext(RouterContext).renderProps)
+  const locale = props.locale ?? page?.lang
+  if (locale === undefined) {
+    throw new Error(
+      "[nifra/web-react] <I18nProvider> needs a `locale`, or an app that registers its locale routing (export `i18n` from backend/framework.ts)",
+    )
+  }
   const formatter = useMemo(
     () => createFormatter(locale, messages, { fallback, onMissing, timeZone, numberingSystem }),
     [locale, messages, fallback, onMissing, timeZone, numberingSystem],
@@ -45,6 +57,23 @@ export function useT(): Formatter {
     throw new Error("[nifra/web-react] useT() must be used within an <I18nProvider>")
   }
   return formatter
+}
+
+/**
+ * The page's locale key (`ur`, the URL segment), in an app that registers its locale routing (`i18n`
+ * in `backend/framework.ts`): from the request on the server, from the URL after each navigation.
+ * Without one, the nearest `<I18nProvider>`'s locale; with neither, it throws.
+ */
+export function useLocale(): string {
+  const page = localeOfProps(useContext(RouterContext).renderProps)
+  const formatter = useContext(I18nContext)
+  const locale = page?.key ?? formatter?.locale
+  if (locale === undefined) {
+    throw new Error(
+      "[nifra/web-react] useLocale() needs an app that registers its locale routing (export `i18n` from backend/framework.ts), or an <I18nProvider> above it",
+    )
+  }
+  return locale
 }
 
 /** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */

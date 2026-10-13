@@ -277,3 +277,247 @@ describe("tablesToCatalogs", () => {
     ])
   })
 })
+
+describe("partly translated text", () => {
+  const scripts = defineLocales({
+    default: "en",
+    locales: { en: {}, ru: {}, ja: {}, "zh-Hans": {}, fr: {} },
+  })
+  const run = (
+    catalogs: Record<string, MessageTree | undefined>,
+    options: Omit<Parameters<typeof checkCatalogs>[0], "locales" | "catalogs"> = {},
+  ) =>
+    checkCatalogs({
+      locales: scripts,
+      catalogs: { en: {}, ru: {}, ja: {}, "zh-Hans": {}, fr: {}, ...catalogs },
+      ignore: { "missing-key": ["*"], "unused-key": ["*"] },
+      ...options,
+    })
+  const messageFindings = (findings: readonly CatalogFinding[], code: CatalogCheckCode) =>
+    only(findings, code).filter((finding) => finding.key !== undefined)
+  const shareOf = (result: ReturnType<typeof run>, locale: string) =>
+    result.coverage.find((row) => row.locale === locale)?.latinShare
+
+  test("an English sentence with two words swapped in is a latin-share error", () => {
+    const result = run({
+      en: { ride: "Check the saddle and the brakes before every ride" },
+      ru: { ride: "Please check the седло and the тормоза before every ride" },
+    })
+    expect(messageFindings(result.findings, "latin-share")).toEqual([
+      {
+        severity: "error",
+        code: "latin-share",
+        locale: "ru",
+        key: "ride",
+        message:
+          "ride is 80% Latin-script words (8 of 10): text left in another language, not a translation",
+      },
+    ])
+    expect(shareOf(result, "ru")).toBe(0.8)
+    expect(only(result.findings, "latin-share").at(-1)).toMatchObject({
+      severity: "warning",
+      locale: "ru",
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  test("a translation passes, and a Latin locale is never counted", () => {
+    const result = run({
+      en: { ride: "Check the saddle and the brakes before every ride" },
+      ru: { ride: "Перед каждой поездкой проверьте седло и тормоза" },
+      fr: { ride: "Check the saddle and the brakes before every ride" },
+    })
+    expect(only(result.findings, "latin-share")).toEqual([])
+    expect(shareOf(result, "ru")).toBe(0)
+    expect(shareOf(result, "fr")).toBeUndefined()
+    expect(shareOf(result, "en")).toBeUndefined()
+  })
+
+  test("a message of fewer than minWords words is skipped", () => {
+    const result = run({ en: { get: "Download the PDF" }, ru: { get: "Download the PDF" } })
+    expect(messageFindings(result.findings, "latin-share")).toEqual([])
+    const fewer = run(
+      { en: { get: "Download the PDF" }, ru: { get: "Download the PDF" } },
+      { minWords: 3 },
+    )
+    expect(messageFindings(fewer.findings, "latin-share")).toHaveLength(1)
+  })
+
+  test("latinWords are not counted, an entry with spaces allows each word", () => {
+    const catalogs = {
+      en: { shop: "Velora Cycle Works repairs brakes and gears" },
+      ru: { shop: "Velora Cycle Works чинит тормоза и передачи" },
+    }
+    const counted = run(catalogs)
+    expect(shareOf(counted, "ru")).toBe(0.5)
+    expect(only(counted.findings, "latin-share")).toEqual([
+      {
+        severity: "warning",
+        code: "latin-share",
+        locale: "ru",
+        message:
+          "50% of ru's words are Latin-script (3 of 6), where a translation keeps names and units at most; list those in latinWords",
+      },
+    ])
+    const allowed = run(catalogs, { latinWords: ["Velora Cycle Works"] })
+    expect(shareOf(allowed, "ru")).toBe(0)
+    expect(only(allowed.findings, "latin-share")).toEqual([])
+  })
+
+  test("an ignored key is left out of the locale's share", () => {
+    const result = run(
+      {
+        en: { shop: "Velora Cycle Works repairs brakes and gears" },
+        ru: { shop: "Velora Cycle Works чинит тормоза и передачи" },
+      },
+      { ignore: { "latin-share": ["shop"], "missing-key": ["*"] } },
+    )
+    expect(shareOf(result, "ru")).toBe(0)
+    expect(only(result.findings, "latin-share")).toEqual([])
+  })
+
+  test("Japanese, written without spaces, splits into its words", () => {
+    const result = run({
+      en: {
+        parts: "Pedals, saddle, brakes, gears and pump: check them",
+        ride: "Check the saddle and the brakes before every ride",
+      },
+      ja: {
+        parts: "Pedals、Saddle、Brakes、Gears、Pumpを確認",
+        ride: "毎回の走行前にサドルとブレーキを点検してください",
+      },
+    })
+    expect(messageFindings(result.findings, "latin-share").map((finding) => finding.key)).toEqual([
+      "parts",
+    ])
+  })
+
+  const paragraph =
+    "Bring your bicycle to the workshop before noon. We adjust the brakes and the gears, true both wheels, pump the tyres, oil the chain and send you a message as soon as it is ready to ride again."
+
+  test("a long message translated to a fraction of its length is a volume error", () => {
+    const result = run({
+      en: { service: paragraph, short: "Bring your bicycle before noon" },
+      ru: {
+        service: "Привезите велосипед до полудня.",
+        short: "До полудня",
+      },
+    })
+    expect(only(result.findings, "volume")).toEqual([
+      {
+        severity: "error",
+        code: "volume",
+        locale: "ru",
+        key: "service",
+        message: `service is 16% of en's length (31 of ${[...new Intl.Segmenter().segment(paragraph)].length} graphemes): a summary, not a translation`,
+      },
+    ])
+  })
+
+  test("a faithful translation, and a Han script's shorter one, pass volume", () => {
+    const result = run({
+      en: { service: paragraph },
+      ru: {
+        service:
+          "Привезите велосипед в мастерскую до полудня. Мы отрегулируем тормоза и передачи, выправим оба колеса, накачаем шины, смажем цепь и напишем вам, как только он будет готов к поездке.",
+      },
+      "zh-Hans": {
+        service:
+          "中午前把自行车送到车间。我们调整刹车和变速，校正车轮，给轮胎打气，给链条上油，好了就通知你。",
+      },
+    })
+    expect(only(result.findings, "volume")).toEqual([])
+    expect(
+      only(
+        run(
+          { en: { service: paragraph }, ru: { service: "Привезите велосипед." } },
+          {
+            minVolumeRatio: 0.05,
+          },
+        ).findings,
+        "volume",
+      ),
+    ).toEqual([])
+  })
+
+  const dash = String.fromCharCode(0x2014)
+  const noDash = ({ message }: { readonly message: string }) =>
+    message.includes(dash) ? { code: "no-dash", message: "contains an em dash" } : undefined
+
+  test("custom rules run on every locale's messages as custom:<code>, and ignore applies", () => {
+    const seen: string[] = []
+    const result = run(
+      {
+        en: { ride: `Ride ${dash} then rest`, legal: `Terms ${dash} read them` },
+        ru: { ride: `Едем ${dash} потом отдых`, legal: "Условия" },
+      },
+      {
+        ignore: { "custom:no-dash": ["legal"], "missing-key": ["*"] },
+        rules: [
+          noDash,
+          (context) => {
+            seen.push(`${context.info.tag} ${context.key} ${context.defaultMessage ?? "-"}`)
+            return context.locale === "ru" && context.key === "legal"
+              ? [
+                  { code: "short", message: "is one word", severity: "warning" },
+                  { code: "short", message: "is still one word", severity: "info" },
+                ]
+              : undefined
+          },
+        ],
+      },
+    )
+    expect(only(result.findings, "custom:no-dash")).toEqual([
+      {
+        severity: "error",
+        code: "custom:no-dash",
+        locale: "en",
+        key: "ride",
+        message: "ride: contains an em dash",
+      },
+      {
+        severity: "error",
+        code: "custom:no-dash",
+        locale: "ru",
+        key: "ride",
+        message: "ride: contains an em dash",
+      },
+    ])
+    expect(only(result.findings, "custom:short").map((finding) => finding.severity)).toEqual([
+      "warning",
+      "info",
+    ])
+    expect(seen).toContain(`ru legal Terms ${dash} read them`)
+    expect(seen).toContain(`en ride Ride ${dash} then rest`)
+  })
+
+  test("a rule that throws, or names no code, fails the check loudly", () => {
+    expect(() =>
+      run(
+        { en: { ride: "Ride" } },
+        {
+          rules: [
+            () => {
+              throw new Error("bad rule")
+            },
+          ],
+        },
+      ),
+    ).toThrow("checkCatalogs: rules[0] threw on en ride: bad rule")
+    expect(() =>
+      run({ en: { ride: "Ride" } }, { rules: [() => ({ code: "", message: "?" })] }),
+    ).toThrow("rules[0] returned a finding with no code on en ride")
+    expect(() =>
+      run(
+        { en: { ride: "Ride" } },
+        {
+          rules: [
+            () => {
+              throw "not an error"
+            },
+          ],
+        },
+      ),
+    ).toThrow("threw on en ride: not an error")
+  })
+})

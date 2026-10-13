@@ -13,7 +13,11 @@
  *   a Cyrillic `а` in English), from `Intl.Locale(tag).maximize().script` and Unicode script
  *   properties, and, as a warning, words that mix Latin with the locale's script. Latin words stay
  *   allowed (brands, units, URLs);
- * - untranslated messages: identical to the default's in another language (a warning only).
+ * - untranslated messages: identical to the default's in another language (a warning only);
+ * - partly translated text: in a locale that does not write in Latin, a message whose words are mostly
+ *   Latin (`latin-share`), and a long message translated to a fraction of the default's length
+ *   (`volume`), which is a summary rather than a translation;
+ * - the app's own rules (`rules`), reported as `custom:<code>`.
  *
  * Pure: it reads the catalogs it is given and runs no app code. Draft locales report missing keys and
  * catalogs as info, since they are not served yet.
@@ -25,7 +29,7 @@ import {
   type Part,
   parseRootMessage,
 } from "./format.ts"
-import type { Locales } from "./locales.ts"
+import type { LocaleInfo, Locales } from "./locales.ts"
 import { TAG_SOURCE } from "./tags.ts"
 
 export type CatalogCheckCode =
@@ -46,6 +50,12 @@ export type CatalogCheckCode =
   | "copy-table"
   /** Two copy tables, or a table and a catalog key, under one id. */
   | "copy-id"
+  /** Mostly Latin words in a locale that does not write in Latin: English left in a translation. */
+  | "latin-share"
+  /** A translation far shorter than the default's message: a summary, not a translation. */
+  | "volume"
+  /** A finding of one of the app's {@link CatalogCheckOptions.rules}. */
+  | `custom:${string}`
 
 export type CatalogCheckSeverity = "error" | "warning" | "info"
 
@@ -71,7 +81,36 @@ export interface LocaleCoverage {
   readonly translated: number
   /** `translated / total`, from 0 to 1; 1 for the default locale. */
   readonly coverage: number
+  /** For a locale that does not write in Latin: the share of the words in its messages of at least
+   * `minWords` words that are Latin-script and not in `latinWords`, from 0 to 1. */
+  readonly latinShare?: number
 }
+
+/** What a {@link CatalogRule} is given: one message of one locale. */
+export interface CatalogRuleContext {
+  readonly locale: string
+  /** The dotted key. */
+  readonly key: string
+  readonly message: string
+  /** The default locale's message under the key, the same as `message` in the default locale;
+   * `undefined` when the default catalog has none. */
+  readonly defaultMessage: string | undefined
+  readonly info: LocaleInfo
+}
+
+/** A finding a {@link CatalogRule} returns. */
+export interface CatalogRuleFinding {
+  /** Reported as `custom:<code>`, which `ignore` takes. */
+  readonly code: string
+  readonly message: string
+  /** Default `"error"`. */
+  readonly severity?: CatalogCheckSeverity | undefined
+}
+
+/** An app's own check, run on every message of every locale. */
+export type CatalogRule = (
+  context: CatalogRuleContext,
+) => CatalogRuleFinding | readonly CatalogRuleFinding[] | undefined
 
 export interface CatalogCheckOptions<K extends string = string> {
   readonly locales: Locales<K>
@@ -80,6 +119,22 @@ export interface CatalogCheckOptions<K extends string = string> {
   /** Keys a check skips, by finding code: an exact key, a prefix ending in `.*` (`"languages.*"`), or
    * `"*"` for every key. */
   readonly ignore?: { readonly [C in CatalogCheckCode]?: readonly string[] | undefined } | undefined
+  /** Latin-script words a locale that does not write in Latin may keep (brand names, `PDF`, `OK`):
+   * `latin-share` does not count them. An entry with spaces allows each of its words. */
+  readonly latinWords?: readonly string[] | undefined
+  /** `latin-share` skips a message of fewer words, and leaves it out of the locale's share. Default 6. */
+  readonly minWords?: number | undefined
+  /** `latin-share` reports a message whose share of Latin words is above this. Default 0.6. */
+  readonly maxLatinShare?: number | undefined
+  /** `latin-share` warns about a locale whose {@link LocaleCoverage.latinShare} is above this.
+   * Default 0.1. */
+  readonly maxLocaleLatinShare?: number | undefined
+  /** `volume` reads default messages at least this many graphemes long. Default 80. */
+  readonly minVolumeGraphemes?: number | undefined
+  /** `volume` reports a translation shorter than this share of the default's graphemes. Default 0.32. */
+  readonly minVolumeRatio?: number | undefined
+  /** The app's own checks, run on every message of every locale after the built-in ones. */
+  readonly rules?: readonly CatalogRule[] | undefined
 }
 
 export interface CatalogCheckResult {
@@ -291,6 +346,52 @@ function shapeOf(parts: readonly Part[]): Shape {
 const describeSet = (values: Iterable<string>, wrap: (value: string) => string): string =>
   [...values].map(wrap).join(", ")
 
+const percentOf = (part: number, whole: number): string => `${Math.round((part / whole) * 100)}%`
+
+const localeScript = (tag: string): string | undefined => {
+  try {
+    return new Intl.Locale(tag).maximize().script
+  } catch {
+    return undefined
+  }
+}
+
+// Han alone writes a sentence in about a quarter of the graphemes an alphabet takes, below any ratio
+// `volume` holds other scripts to.
+const HAN_SCRIPTS: ReadonlySet<string> = new Set(["Hans", "Hant", "Hanb"])
+
+const LATIN_WORD = /^\p{sc=Latn}[\p{sc=Latn}\p{M}]*$/u
+
+/** The words of a text by the locale's own word breaks (Japanese has no spaces): each word-like
+ * segment's letters and marks, when there is more than one. */
+function wordsOf(segmenter: Intl.Segmenter, text: string): string[] {
+  const words: string[] = []
+  for (const { segment, isWordLike } of segmenter.segment(text)) {
+    if (isWordLike !== true) continue
+    const word = segment.replace(/[^\p{L}\p{M}]/gu, "")
+    // Code points, not letters: `है` is one letter and one combining mark.
+    if ([...word].length > 1) words.push(word)
+  }
+  return words
+}
+
+let graphemeSegmenter: Intl.Segmenter | undefined
+/** The visible length of a message's own text, in graphemes: what a reader counts as one character,
+ * which a script with combining marks writes as several code points. */
+function visibleLength(shape: Shape): number {
+  graphemeSegmenter ??= new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  let length = 0
+  for (const _ of graphemeSegmenter.segment(shape.literal.replace(/\s+/g, " ").trim())) length++
+  return length
+}
+
+const asFindings = (
+  out: CatalogRuleFinding | readonly CatalogRuleFinding[],
+): readonly CatalogRuleFinding[] => ("code" in out ? [out] : out)
+
+const withLatinShare = (row: LocaleCoverage, share: number | undefined): LocaleCoverage =>
+  share === undefined ? row : { ...row, latinShare: share }
+
 /** Check every locale's catalog in `locales` against the default locale's. */
 export function checkCatalogs<K extends string>(
   options: CatalogCheckOptions<K>,
@@ -298,6 +399,13 @@ export function checkCatalogs<K extends string>(
   const { locales, catalogs } = options
   const findings: CatalogFinding[] = []
   const ignore = options.ignore ?? {}
+  const latinWords = new Set((options.latinWords ?? []).flatMap((entry) => entry.split(/\s+/)))
+  const minWords = options.minWords ?? 6
+  const maxLatinShare = options.maxLatinShare ?? 0.6
+  const maxLocaleLatinShare = options.maxLocaleLatinShare ?? 0.1
+  const minVolumeGraphemes = options.minVolumeGraphemes ?? 80
+  const minVolumeRatio = options.minVolumeRatio ?? 0.32
+  const rules = options.rules ?? []
   const skipped = (code: CatalogCheckCode, key: string): boolean => {
     const patterns = ignore[code]
     if (patterns === undefined) return false
@@ -438,6 +546,78 @@ export function checkCatalogs<K extends string>(
     }
   }
 
+  /** Counts the Latin words of a locale that does not write in Latin, reporting each message made
+   * mostly of them; `undefined` for a Latin locale, or one whose script the runtime cannot name. */
+  const latinCounter = (locale: string, tag: string) => {
+    const script = localeScript(tag)
+    if (script === undefined || script === "Latn") return undefined
+    const segmenter = new Intl.Segmenter(tag, { granularity: "word" })
+    let words = 0
+    let latin = 0
+    return {
+      count(key: string, shape: Shape): void {
+        if (skipped("latin-share", key)) return
+        const all = wordsOf(segmenter, shape.literal)
+        // Labels are where Latin belongs (a brand, `PDF`): short messages count toward nothing.
+        if (all.length < minWords) return
+        const found = all.filter((word) => LATIN_WORD.test(word) && !latinWords.has(word)).length
+        words += all.length
+        latin += found
+        if (found / all.length <= maxLatinShare) return
+        report(
+          "error",
+          "latin-share",
+          locale,
+          key,
+          `${key} is ${percentOf(found, all.length)} Latin-script words (${found} of ${all.length}): text left in another language, not a translation`,
+        )
+      },
+      /** The locale's share, warning when it is above `maxLocaleLatinShare`. */
+      share(): number {
+        const share = words === 0 ? 0 : latin / words
+        if (share > maxLocaleLatinShare) {
+          report(
+            "warning",
+            "latin-share",
+            locale,
+            undefined,
+            `${percentOf(latin, words)} of ${locale}'s words are Latin-script (${latin} of ${words}), where a translation keeps names and units at most; list those in latinWords`,
+          )
+        }
+        return share
+      },
+    }
+  }
+
+  const runRules = (locale: string, info: LocaleInfo, key: string, message: string): void => {
+    for (const [index, rule] of rules.entries()) {
+      let out: ReturnType<CatalogRule>
+      try {
+        out = rule({ locale, key, message, defaultMessage: defaultMessages.get(key), info })
+      } catch (error) {
+        throw new Error(
+          `[nifra/i18n] checkCatalogs: rules[${index}] threw on ${locale} ${key}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        )
+      }
+      if (out === undefined) continue
+      for (const finding of asFindings(out)) {
+        if (finding.code === "") {
+          throw new Error(
+            `[nifra/i18n] checkCatalogs: rules[${index}] returned a finding with no code on ${locale} ${key}`,
+          )
+        }
+        report(
+          finding.severity ?? "error",
+          `custom:${finding.code}`,
+          locale,
+          key,
+          `${key}: ${finding.message}`,
+        )
+      }
+    }
+  }
+
   const declared = new Set<string>(locales.all)
   for (const key of Object.keys(catalogs)) {
     if (!declared.has(key) && catalogs[key as K] !== undefined) {
@@ -479,46 +659,60 @@ export function checkCatalogs<K extends string>(
       : messagesOf(defaultKey, defaultCatalog)
   const defaultShapes = new Map<string, Shape>()
   const defaultScript = scriptChecker(defaultInfo.tag)
+  const defaultLatin = latinCounter(defaultKey, defaultInfo.tag)
   for (const [key, text] of defaultMessages) {
     const shape = parsed(defaultKey, key, text)
     if (shape !== undefined) {
       defaultShapes.set(key, shape)
       checkChoices(defaultKey, defaultInfo.tag, key, shape)
+      defaultLatin?.count(key, shape)
     }
     const script = defaultScript?.(shape?.literal ?? text)
     if (script !== undefined) {
       report(script.severity, "script", defaultKey, key, `${key} ${script.message}`)
     }
+    runRules(defaultKey, defaultInfo, key, text)
   }
   const total = defaultMessages.size
   const coverage: LocaleCoverage[] = []
   if (defaultCatalog !== undefined) {
-    coverage.push({
-      locale: defaultKey,
-      default: true,
-      draft: false,
-      total,
-      own: total,
-      translated: total,
-      coverage: 1,
-    })
+    coverage.push(
+      withLatinShare(
+        {
+          locale: defaultKey,
+          default: true,
+          draft: false,
+          total,
+          own: total,
+          translated: total,
+          coverage: 1,
+        },
+        defaultLatin?.share(),
+      ),
+    )
   }
   const defaultLanguage = new Intl.Locale(defaultInfo.tag).language
+  const defaultHan = HAN_SCRIPTS.has(localeScript(defaultInfo.tag) ?? "")
+  const defaultLengths = new Map<string, number>()
 
   for (const locale of locales.all) {
     if (locale === defaultKey) continue
     const catalog = catalogOf.get(locale)
     if (catalog === undefined || defaultCatalog === undefined) continue
-    const { tag, draft } = locales.get(locale)
+    const info = locales.get(locale)
+    const { tag, draft } = info
     const own = messagesOf(locale, catalog)
     const script = scriptChecker(tag)
+    const latin = latinCounter(locale, tag)
     const sameLanguage = new Intl.Locale(tag).language === defaultLanguage
+    const volume = defaultHan || !HAN_SCRIPTS.has(localeScript(tag) ?? "")
     for (const [key, text] of own) {
       const shape = parsed(locale, key, text)
       const scriptProblem = script?.(shape?.literal ?? text)
       if (scriptProblem !== undefined) {
         report(scriptProblem.severity, "script", locale, key, `${key} ${scriptProblem.message}`)
       }
+      runRules(locale, info, key, text)
       const base = defaultMessages.get(key)
       if (base === undefined) {
         const at = lookup(defaultCatalog, key)
@@ -543,8 +737,25 @@ export function checkCatalogs<K extends string>(
       }
       if (shape === undefined) continue
       checkChoices(locale, tag, key, shape)
+      latin?.count(key, shape)
       const baseShape = defaultShapes.get(key)
       if (baseShape !== undefined) {
+        let baseLength = defaultLengths.get(key)
+        if (baseLength === undefined) {
+          baseLength = visibleLength(baseShape)
+          defaultLengths.set(key, baseLength)
+        }
+        const length =
+          volume && baseLength >= minVolumeGraphemes ? visibleLength(shape) : baseLength
+        if (length / baseLength < minVolumeRatio) {
+          report(
+            "error",
+            "volume",
+            locale,
+            key,
+            `${key} is ${percentOf(length, baseLength)} of ${defaultKey}'s length (${length} of ${baseLength} graphemes): a summary, not a translation`,
+          )
+        }
         const dropped = [...baseShape.args].filter((arg) => !shape.args.has(arg))
         const added = [...shape.args].filter((arg) => !baseShape.args.has(arg))
         if (dropped.length > 0) {
@@ -636,15 +847,20 @@ export function checkCatalogs<K extends string>(
           `${key} is missing, so it renders ${defaultKey}'s message`,
         )
     }
-    coverage.push({
-      locale,
-      default: false,
-      draft,
-      total,
-      own: ownCount,
-      translated,
-      coverage: total === 0 ? 1 : translated / total,
-    })
+    coverage.push(
+      withLatinShare(
+        {
+          locale,
+          default: false,
+          draft,
+          total,
+          own: ownCount,
+          translated,
+          coverage: total === 0 ? 1 : translated / total,
+        },
+        latin?.share(),
+      ),
+    )
   }
 
   return {

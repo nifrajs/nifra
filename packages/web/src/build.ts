@@ -1255,7 +1255,14 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
 // ===================================================================================================
 
 /** The `createWebApp` options a generated server entry can import from the app's framework module. */
-export const SERVER_ENTRY_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export const SERVER_ENTRY_OPTIONS = [
+  "apiPrefix",
+  "apiStrip",
+  "mounts",
+  "csp",
+  "nonce",
+  "i18n",
+] as const
 export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
 /** Each importable option mapped to the specifier of the module that exports it. */
 export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>
