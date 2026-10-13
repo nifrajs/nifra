@@ -275,7 +275,8 @@ Usage:
   nifra upgrade <version>                Upgrade to <version>, running every release recipe between the
                 [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
-                [--exact]                ^/~, or exact with --exact), then verify with nifra check.
+                [--exact]                ^/~, or exact with --exact; a peer range only when it
+                                         excludes the target), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies, then verifies (--no-verify
                 [--allow-linked-skew]    to skip) and prints how hook scope changed (--no-hooks to skip)
                 [--no-hooks]             once the target is installed, else prints the install command

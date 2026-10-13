@@ -165,6 +165,7 @@ const DEP_FIELDS = [
   "peerDependencies",
   "optionalDependencies",
 ] as const
+const PEER_FIELD = "peerDependencies"
 
 // Only a bare semver spec is rewritten. Anything else - workspace:*, link:/file:, npm: aliases, git
 // urls, "*", "latest", or a multi-part range - is intentionally left untouched (skipped, not guessed).
@@ -255,6 +256,48 @@ export function compareSemverSpec(a: string, b: string): number {
   return 0
 }
 
+/**
+ * Whether a plain semver spec's range admits `version`, as npm reads it: `^` and `~` stop before the
+ * next breaking release, and a prerelease satisfies only a spec naming a prerelease of its own core.
+ * False for any other spec.
+ */
+export function specIncludes(spec: string, version: string): boolean {
+  const match = SEMVER_SPEC.exec(spec.trim())
+  const target = parseSpecVersion(version)
+  const floor = specVersion(spec)
+  if (match === null || target === null || floor === null) return false
+  const core: readonly [number, number, number] = [
+    Number(match[2]),
+    Number(match[3]),
+    Number(match[4]),
+  ]
+  if (
+    target.prerelease.length > 0 &&
+    (match[5] === undefined || compareSemverCore(core, target.core) !== 0)
+  )
+    return false
+  const order = compareSemverSpec(version, floor)
+  switch (match[1]) {
+    case ">=":
+      return order >= 0
+    case ">":
+      return order > 0
+    case "<=":
+      return order <= 0
+    case "<":
+      return order < 0
+    case "^": {
+      const below: readonly [number, number, number] =
+        core[0] > 0 ? [core[0] + 1, 0, 0] : core[1] > 0 ? [0, core[1] + 1, 0] : [0, 0, core[2] + 1]
+      return order >= 0 && compareSemverCore(target.core, below) < 0
+    }
+    case "~":
+      return order >= 0 && compareSemverCore(target.core, [core[0], core[1] + 1, 0]) < 0
+    default:
+      return order === 0
+  }
+}
+
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
@@ -287,7 +330,12 @@ export function pinSweepText(
       (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
     )
     if (!rule) continue
-    const next = rewriteVersionSpec(rawSpec, rule.to, exact)
+    // A peer range states what a library accepts, not what installs: widening a floor that already
+    // admits the target would drop every consumer still on an older release, and an exact peer pin
+    // would admit one release only.
+    const peer = field === PEER_FIELD
+    if (peer && specIncludes(rawSpec, rule.to)) continue
+    const next = rewriteVersionSpec(rawSpec, rule.to, exact && !peer)
     if (next === null) continue
     // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
     // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
@@ -601,10 +649,15 @@ export function groupDeclaredNames(cwd: string): ReadonlySet<string> {
 
 /**
  * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
- * with the files that declare it. An override counts: it decides what installs. `workspace:`, `link:`
- * and other non-semver specs are not versions.
+ * with the files that declare it. An override counts: it decides what installs. A peer range does
+ * not (`>=3.1.0` names a floor a library accepts, not a version anything loads), and `workspace:`,
+ * `link:` and other non-semver specs are not versions.
  */
 export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly string[]> {
+  return groupSpecVersions(cwd, false)
+}
+
+function groupSpecVersions(cwd: string, peers: boolean): Map<string, string[]> {
   const versions = new Map<string, string[]>()
   for (const rel of scan(cwd, "**/package.json")) {
     let parsed: Record<string, unknown>
@@ -613,8 +666,8 @@ export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly stri
     } catch {
       continue
     }
-    for (const { target, spec } of pinEntries(parsed)) {
-      if (!isFixedGroup(target)) continue
+    for (const { path, target, spec } of pinEntries(parsed)) {
+      if (!isFixedGroup(target) || (path[0] === PEER_FIELD) !== peers) continue
       const version = specVersion(spec)
       if (version === null) continue
       const files = versions.get(version) ?? []
@@ -863,15 +916,27 @@ export function installedGroupPackages(
 }
 
 /**
- * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
- * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ * The version the workspace upgrades from: the lowest fixed-group version any package.json under
+ * `cwd` pins ({@link groupPinVersions}), since recipes newer than it still have edits to make
+ * somewhere. Without a pin, the lowest one installed inside the root, then the lowest peer floor;
+ * null when none names one.
  */
 export function installedGroupVersion(cwd: string): string | null {
-  let lowest: string | null = null
-  for (const version of groupPinVersions(cwd).keys()) {
-    if (lowest === null || compareSemverSpec(version, lowest) < 0) lowest = version
+  const lowest = (versions: Iterable<string>): string | null => {
+    let found: string | null = null
+    for (const version of versions)
+      if (found === null || compareSemverSpec(version, found) < 0) found = version
+    return found
   }
-  return lowest
+  return (
+    lowest(groupPinVersions(cwd).keys()) ??
+    lowest(
+      installedGroupPackages(cwd)
+        .filter((entry) => entry.inside)
+        .map((entry) => entry.version),
+    ) ??
+    lowest(groupSpecVersions(cwd, true).keys())
+  )
 }
 
 /** One recipe that applies every release recipe after `installed` up to `target`, oldest first. */

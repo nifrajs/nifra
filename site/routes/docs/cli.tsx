@@ -159,7 +159,11 @@ nifra migrate --from tailwind --to stylex --dir src`}
         moved, lists comments a release stopped honoring, and pins each group dependency to the
         target, keeping its <code>^</code> or <code>~</code> unless you pass <code>--exact</code>.
         The pins in <code>overrides</code>, <code>resolutions</code> and{" "}
-        <code>pnpm.overrides</code> move with them, since an override decides what installs.
+        <code>pnpm.overrides</code> move with them, since an override decides what installs. A{" "}
+        <code>peerDependencies</code> range is what a library accepts, not a pin: it is raised only
+        when it excludes the target (keeping its operator, even with <code>--exact</code>), and a
+        library&apos;s <code>&quot;&gt;=3.1.0&quot;</code> floor never sets the version the upgrade
+        starts from unless nothing else, installed or declared, names one.
       </p>
       <CodeBlock code={UPGRADE} lang="bash" />
       <p>

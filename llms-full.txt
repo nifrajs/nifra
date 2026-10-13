@@ -6645,7 +6645,11 @@ oldest first. A recipe moves a removed package to its replacement, rewrites impo
 moved, lists comments a release stopped honoring, and pins each group dependency to the
 target, keeping its `^` or `~` unless you pass `--exact`.
 The pins in `overrides`, `resolutions` and
-`pnpm.overrides` move with them, since an override decides what installs.
+`pnpm.overrides` move with them, since an override decides what installs. A
+`peerDependencies` range is what a library accepts, not a pin: it is raised only
+when it excludes the target (keeping its operator, even with `--exact`), and a
+library&apos;s `">=3.1.0"` floor never sets the version the upgrade
+starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list          # the release targets this CLI knows

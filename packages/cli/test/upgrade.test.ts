@@ -14,6 +14,7 @@ import {
   pinSweepText,
   rewriteVersionSpec,
   runUpgrade,
+  specIncludes,
   specVersion,
   upgradeTargets,
 } from "../src/upgrade.ts"
@@ -211,6 +212,103 @@ describe("pinSweepText", () => {
     const { downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }])
     expect(downgrades).toEqual([
       { field: "overrides", name: "@nifrajs/core", from: "2.3.0", to: "2.0.0" },
+    ])
+  })
+})
+
+describe("peer ranges", () => {
+  test("specIncludes reads a single-comparator range as npm does", () => {
+    expect(specIncludes(">=3.1.0", "5.2.0")).toBe(true)
+    expect(specIncludes(">5.2.0", "5.2.0")).toBe(false)
+    expect(specIncludes("<6.0.0", "5.2.0")).toBe(true)
+    expect(specIncludes("<=5.1.0", "5.2.0")).toBe(false)
+    expect(specIncludes("^5.0.0", "5.2.0")).toBe(true)
+    expect(specIncludes("^4.0.0", "5.2.0")).toBe(false)
+    expect(specIncludes("^0.3.0", "0.3.9")).toBe(true)
+    expect(specIncludes("^0.3.0", "0.4.0")).toBe(false)
+    expect(specIncludes("^0.0.3", "0.0.4")).toBe(false)
+    expect(specIncludes("~5.1.0", "5.1.9")).toBe(true)
+    expect(specIncludes("~5.1.0", "5.2.0")).toBe(false)
+    expect(specIncludes("5.2.0", "5.2.0")).toBe(true)
+    expect(specIncludes("=5.1.0", "5.2.0")).toBe(false)
+    // A prerelease satisfies only a spec naming a prerelease of the same core.
+    expect(specIncludes(">=5.0.0", "6.0.0-beta.1")).toBe(false)
+    expect(specIncludes("^6.0.0-beta.0", "6.0.0-beta.1")).toBe(true)
+    expect(specIncludes(">=3.1.0 <6", "5.2.0")).toBe(false)
+    expect(specIncludes("workspace:*", "5.2.0")).toBe(false)
+  })
+
+  test("a peer range that admits the target is left; one that excludes it keeps its operator", () => {
+    const pkg = JSON.stringify(
+      {
+        peerDependencies: {
+          "@nifrajs/core": ">=3.1.0",
+          "@nifrajs/web": "^5.0.0",
+          "@nifrajs/client": "^4.0.0",
+          "@nifrajs/schema": "~5.1.0",
+        },
+        devDependencies: { "@nifrajs/core": "5.1.0", "@nifrajs/web": "5.1.0" },
+      },
+      null,
+      2,
+    )
+    const pins = [{ match: "@nifrajs/", to: "5.2.0" }]
+    for (const exact of [false, true]) {
+      const { changes, downgrades } = pinSweepText(pkg, pins, false, exact)
+      expect(downgrades).toHaveLength(0)
+      expect(changes).toEqual([
+        { field: "devDependencies", name: "@nifrajs/core", from: "5.1.0", to: "5.2.0" },
+        { field: "devDependencies", name: "@nifrajs/web", from: "5.1.0", to: "5.2.0" },
+        { field: "peerDependencies", name: "@nifrajs/client", from: "^4.0.0", to: "^5.2.0" },
+        { field: "peerDependencies", name: "@nifrajs/schema", from: "~5.1.0", to: "~5.2.0" },
+      ])
+    }
+  })
+
+  test("a peer floor is not the version a workspace upgrades from", async () => {
+    const root = join(FIXTURES, "peer-floor")
+    await mkdir(join(root, "packages", "lib"), { recursive: true })
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "libs", private: true }))
+    const lib = (dev: Record<string, string>) =>
+      writeFile(
+        join(root, "packages", "lib", "package.json"),
+        JSON.stringify(
+          { name: "lib", peerDependencies: { "@nifrajs/core": ">=3.1.0" }, devDependencies: dev },
+          null,
+          2,
+        ),
+      )
+    await lib({})
+    expect(installedGroupVersion(root)).toBe("3.1.0")
+    await mkdir(join(root, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await writeFile(
+      join(root, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "5.0.0" }),
+    )
+    expect(installedGroupVersion(root)).toBe("5.0.0")
+    await lib({ "@nifrajs/core": "5.1.0" })
+    expect(installedGroupVersion(root)).toBe("5.1.0")
+
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      expect(await runUpgrade(root, { version: "5.2.0", json: true, cliVersion: "5.2.0" })).toBe(
+        true,
+      )
+    } finally {
+      log.mockRestore()
+    }
+    const report = Object(JSON.parse(lines.join("\n")))
+    expect(Reflect.get(report, "from")).toBe("5.1.0")
+    expect(Reflect.get(report, "steps")).toEqual(["5.2.0"])
+    expect(Reflect.get(report, "pins")).toEqual([
+      {
+        file: join("packages", "lib", "package.json"),
+        field: "devDependencies",
+        name: "@nifrajs/core",
+        from: "5.1.0",
+        to: "5.2.0",
+      },
     ])
   })
 })

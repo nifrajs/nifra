@@ -100,6 +100,22 @@ describe("version drift", () => {
     expect(collectVersionDrift(root, "4.0.2")?.highest).toBe("5.0.0")
   })
 
+  test("a peer range is not a version: a library's floor below its dev pin is not drift", () => {
+    const root = scratch("nifra-drift-")
+    writeAppFile(root, "package.json", json({ name: "libs", private: true }))
+    writeAppFile(
+      root,
+      "packages/lib/package.json",
+      json({
+        name: "lib",
+        peerDependencies: { "@nifrajs/core": ">=3.1.0", "@nifrajs/web": "^5.0.0" },
+        devDependencies: { "@nifrajs/core": "5.2.0", "@nifrajs/web": "5.2.0" },
+      }),
+    )
+    writeAppFile(root, "node_modules/@nifrajs/core/package.json", json({ version: "5.2.0" }))
+    expect(collectVersionDrift(root, "5.2.0")).toBeUndefined()
+  })
+
   test("doctor carries it as an advisory that never fails ok; check reports NF-D002", async () => {
     const { root } = linkedWorkspace()
     const result = await collectDoctorResult(root, { cliVersion: "5.0.0" })
