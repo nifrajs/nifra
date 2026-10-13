@@ -10187,9 +10187,11 @@ its own.
 
 ### Silencing a nifra check finding
 
-`nifra check` names each finding with an `NF-` code. Where a finding is
-reviewed and intended, a comment on the flagged line, or anywhere in the comment block directly
-above it, says so and why:
+`nifra check` names each finding with an `NF-` code;
+`nifra explain NF-C007` (or `nifra_explain` with the code as its
+`error`) says what the rule reports, why it matters, how to fix it and where it is
+documented. Where a finding is reviewed and intended, a comment on the flagged line, or anywhere
+in the comment block directly above it, says so and why:
 
 The comment answers only the code it names. A finding that fails the check, and every security
 finding, is silenced only with a reason after the colon; an advisory also accepts the comment

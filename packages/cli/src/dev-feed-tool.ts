@@ -18,6 +18,13 @@ import type {
 import type { Diagnostic } from "@nifrajs/web/diagnostic"
 import type { CommandCtx, CommandSpec } from "./command-catalog.ts"
 import type { DevServerLookup, LiveDevServer } from "./dev-server-client.ts"
+import {
+  isRuleExplanation,
+  RULE_CODE_SHAPE,
+  type RuleExplainOutput,
+  renderRuleExplanation,
+  type UnknownRuleOutput,
+} from "./rule-explain.ts"
 
 const CATEGORIES: readonly DevErrorCategory[] = [
   "ssr",
@@ -802,22 +809,30 @@ export interface ExplainInput {
   readonly json?: boolean | undefined
 }
 
-/** A diagnostic, or `NIFRA_NONE` with why there was nothing to explain. */
+/** A diagnostic, a rule code's catalog entry, or why there was nothing to explain. */
 export type ExplainOutput =
   | (Diagnostic & { readonly entry?: object; readonly note?: string })
+  | RuleExplainOutput
+  | UnknownRuleOutput
   | { code: "NIFRA_NONE"; message: string }
 
-const explained = (out: ExplainOutput): out is Diagnostic => out.code !== "NIFRA_NONE"
+const isRuleOutput = (out: ExplainOutput): out is RuleExplainOutput =>
+  "kind" in out && out.kind === "rule"
+const explained = (out: ExplainOutput): out is Diagnostic =>
+  out.code !== "NIFRA_NONE" && out.code !== "NIFRA_UNKNOWN_RULE" && !isRuleOutput(out)
 
 export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
   name: "explain",
   summary:
-    "Turn an error into a structured diagnostic: its code, the frame in your source with a codeframe, and the cause and fix when nifra recognises it. With no message, the running dev server's latest error.",
+    "Turn an error into a structured diagnostic: its code, the frame in your source with a codeframe, and the cause and fix when nifra recognises it. With no message, the running dev server's latest error. A rule code such as NF-C007 explains that rule.",
   input: {
     jsonSchema: {
       type: "object",
       properties: {
-        error: { type: "string", description: "The error message to explain." },
+        error: {
+          type: "string",
+          description: "The error message to explain, or a rule code such as NF-C007.",
+        },
         stack: {
           type: "string",
           description: "Its stack trace, for the codeframe and source frame.",
@@ -849,7 +864,17 @@ export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
       required: ["code", "message"],
     },
     parse: (value) => {
+      if (isRuleExplanation(value)) return value
       if (isDiagnostic(value)) return value
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "code" in value &&
+        value.code === "NIFRA_UNKNOWN_RULE" &&
+        "message" in value &&
+        typeof value.message === "string"
+      )
+        return { code: "NIFRA_UNKNOWN_RULE", message: value.message }
       if (
         typeof value === "object" &&
         value !== null &&
@@ -859,7 +884,9 @@ export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
         typeof value.message === "string"
       )
         return { code: "NIFRA_NONE", message: value.message }
-      throw new TypeError("explain output must be a diagnostic or NIFRA_NONE")
+      throw new TypeError(
+        "explain output must be a diagnostic, a rule explanation, NIFRA_UNKNOWN_RULE or NIFRA_NONE",
+      )
     },
   },
   transports: ["cli"],
@@ -875,6 +902,11 @@ export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
     ],
   },
   async run(input, ctx) {
+    const code = input.error?.trim()
+    if (input.stack === undefined && code !== undefined && RULE_CODE_SHAPE.test(code)) {
+      const { explainRule } = await import("./rule-explain.ts")
+      return explainRule(code)
+    }
     const root = resolve(ctx.cwd, input.dir ?? ".")
     if (input.error === undefined && input.stack === undefined) {
       return explainLatest(root, input.port, ctx.signal)
@@ -888,6 +920,7 @@ export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
     return buildDiagnostic(error, { root, showSource: explainSourceGate(root) })
   },
   render: (out) => {
+    if (isRuleOutput(out)) return renderRuleExplanation(out)
     if (!explained(out)) return [out.message]
     const at = topFrame(out)
     return [
@@ -900,7 +933,8 @@ export const explainSpec: CommandSpec<ExplainInput, ExplainOutput> = {
       ...(out.fix === undefined ? [] : [`  fix: ${out.fix}`]),
     ]
   },
-  exitCode: (out) => (explained(out) ? 0 : 2),
+  exitCode: (out) =>
+    explained(out) || isRuleOutput(out) ? 0 : out.code === "NIFRA_UNKNOWN_RULE" ? 1 : 2,
   json: (out) => out,
 }
 

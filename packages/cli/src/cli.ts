@@ -129,6 +129,8 @@ Usage:
   nifra explain [<message>] [--stack <s>] [--name <n>]  A structured diagnostic for an error: its
                                          code, the frame in your source, and the cause and fix when
                                          nifra knows them. No message: the dev server's latest error.
+                                         A rule code (NF-C007): what that check rule reports and how
+                                         to fix it.
   nifra cdn-check <url>                  Check a deployed page behind a CDN: served from cache, no
                                          internal or CDN-only headers reaching the visitor, and soft
                                          navigations get page data, not the cached document. Exits 1
