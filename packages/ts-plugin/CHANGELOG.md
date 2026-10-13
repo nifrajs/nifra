@@ -16,6 +16,9 @@
 - Updated dependencies [fd58beb]
 - Updated dependencies [ea25a61]
 - Updated dependencies [ed13e36]
+- Updated dependencies [281a48e]
+- Updated dependencies [746ada9]
+- Updated dependencies [1d20d1f]
   - @nifrajs/core@5.2.0
   - @nifrajs/web@5.2.0
 

@@ -22,6 +22,10 @@
   `reflectHooks` (and so `nifra routes --hooks`, and the hook-scope diff `nifra upgrade` saves) lists the runtimes a route resolved at registration beside its hooks: `responseContract` named by its mode, `effectLedger` and `idempotency`, each with the site `route`. A merged route that gains a parent's contract on upgrade now shows up in `nifra routes --hooks --since`.
   
   The release gate fails a minor or major release that has no upgrade recipe of its own.
+- 7ad66f5: NF-C035 also reads app modules that call `createWebApp` from `@nifrajs/web` themselves. A call that mounts a backend (`api`) with no `apiPrefix`, or with a string different from the `apiPrefix` `nifra dev` reads from the framework config, is reported at the call with both values: production then serves the backend somewhere `nifra dev`, end-to-end runs under it and the rest of `nifra check` never exercised. An `apiPrefix` imported from `backend/framework.ts` or `nifra.config.ts` matches by construction; options built from a spread or a variable, or a value the scan cannot read, are not reported.
+- 281a48e: `nifra i18n check` checks copy tables: when the entry exports a `copy` from `defineCopy()` (with or without `catalogs`), it finds that definition's tables across the project's source, turns them into a catalog per locale and runs every catalog check on them, reporting each table at its `file:line`. Two tables with one id, an id that nests under another, and a table key that a catalog also uses are errors; a table or registry it cannot read statically is a warning that says why.
+- 1d20d1f: `checkCatalogs()` catches partly translated text. In a locale that does not write in Latin, `latin-share` reports a message of at least `minWords` (6) words whose share of Latin-script words is above `maxLatinShare` (0.6), with words split by `Intl.Segmenter` so Japanese and Thai count too; `latinWords` lists the brands and units a translation keeps. Each such locale's coverage row carries its `latinShare`, with a warning above `maxLocaleLatinShare` (0.1). `volume` reports a default message of at least `minVolumeGraphemes` (80) graphemes translated to under `minVolumeRatio` (0.32) of its length, a summary rather than a translation; Han scripts are left out of it. `rules` adds an app's own checks, run on every message of every locale and reported as `custom:<code>`, which `ignore` takes. `nifra i18n check` reads these options from the entry's `check` export and shows each locale's Latin share.
+- 1d20d1f: An app registers its locale routing once: `export const i18n = urls` (the router `defineI18nRouting()` returns) from `backend/framework.ts`, which `nifra dev`, `nifra build` and the generated server entry pass to `createWebApp({ i18n })`. Every document then takes `<html lang dir>` from the registry's `documentMeta(localeOf(path))` unless the route's meta sets `lang`, on a hard load and after each client navigation, and carries `Content-Language`. Each adapter's new `useLocale()` returns the page's locale key, and `<I18nProvider>` formats in the page's locale when no `locale` is passed, with no loader handing either over. A route under a `[lang]` or `[[lang]]` directory runs `matchSegment()` before any middleware: an unserved locale, or a page missing from it, is a 404 through the app's `_404`, and a non-canonical prefix such as `/en/x` with an unprefixed default is a 308 to `/x`.
 
 ### Patch Changes
 
@@ -41,6 +45,12 @@
 - Updated dependencies [fd58beb]
 - Updated dependencies [ea25a61]
 - Updated dependencies [ed13e36]
+- Updated dependencies [281a48e]
+- Updated dependencies [281a48e]
+- Updated dependencies [1d20d1f]
+- Updated dependencies [1d20d1f]
+- Updated dependencies [746ada9]
+- Updated dependencies [1d20d1f]
   - @nifrajs/agent-review@5.2.0
   - @nifrajs/client@5.2.0
   - @nifrajs/core@5.2.0
