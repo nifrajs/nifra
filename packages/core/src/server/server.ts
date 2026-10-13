@@ -1369,6 +1369,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Unlike `derive`, this stage receives a body-blind authentication capsule and is compiled before
    * route validation. Keeping it separate prevents an unrelated derive from accidentally becoming a
    * security gate and lets the route compiler retain a protected fast lane.
+   *
+   * A stage that throws, or returns anything but `authenticated(principal)` or `rejected(...)`, fails
+   * closed with 503 `{ ok: false, error: "auth_unavailable" }`. The cause goes where a handler's error
+   * goes: to `onError`, whose response replaces the 503, and when no hook answers, to the logger. A
+   * thrown `Response` or `status(...)` is sent as thrown, as it is from a handler.
    */
   authenticate<Principal>(
     stage: AuthenticationStage<Principal, EnvOf<Ctx>>,
@@ -1505,9 +1510,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
-  /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500).
-   * Order-scoped: captured by routes declared *after* this call, none before; one added after the last
-   * route reaches nothing (see {@link ServerOptions.unusedScopedHooks}). */
+  /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500, or 503
+   * `auth_unavailable` for a failed {@link authenticate} stage). Order-scoped: captured by routes
+   * declared *after* this call, none before; one added after the last route reaches nothing (see
+   * {@link ServerOptions.unusedScopedHooks}). */
   onError<H extends (error: unknown, context: Context & Ctx) => MaybePromise<unknown>>(
     fn: H,
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
@@ -5669,8 +5675,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    fallback?: () => T,
   ): MaybePromise<T> {
-    return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse)
+    return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse, fallback)
   }
 
   /** Finish a successful program result through response-contract enforcement and finalization. */
@@ -6140,6 +6147,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    // The answer when no hook does; the default 500 unless a stage owns a different fail-closed status.
+    fallback?: () => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
     // an action throws an error page. Send it as the same Response returned would be sent (Remix/
@@ -6155,9 +6164,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
       // (redacting) logger. Body-read failures and around-hook failures land here too.
       this.logRequestError(err, ctx)
-      return wrapResponse(plainError(500, "internal_error"))
+      return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
     }
-    return this.runErrorHooks(entry, err, ctx, finalize, wrapResponse)
+    return this.runErrorHooks(entry, err, ctx, finalize, wrapResponse, fallback)
   }
 
   /** The `onError` chain, split off {@link handleLifecycleError} so its `await` costs only the routes
@@ -6168,6 +6177,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    fallback?: () => T,
   ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
     // the `await` and stay heap-allocated on both engines.
@@ -6188,7 +6198,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
     this.logRequestError(err, ctx)
-    return wrapResponse(plainError(500, "internal_error"))
+    return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
   }
 
   /** Log an unhandled request error to the (redacting) logger - shared by the compiled route program and the
