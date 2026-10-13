@@ -30,6 +30,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server().get(\n  \"/dashboard\",\n  { cookies: t.cookies({ session: t.string(), page: t.optional(t.integer()) }) },\n  (c) => ({\n    session: c.cookies.session, // string - a request without it is a 422 before this runs\n    page: c.cookies.page ?? 1, // number | undefined - coerced from the cookie's text\n  }),\n)"
   },
   {
+    "name": "HEADERS",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  // Closed: validates only the names it declares, whatever else the client sends.\n  .get(\"/reports\", { headers: t.object({ \"x-tenant\": t.string() }) }, (c) => ({\n    tenant: c.headers[\"x-tenant\"], // string - a request without it is a 422\n  }))\n  // Open: every header arrives, names lower-cased, declared values coerced from text.\n  .get(\"/jobs\", { headers: t.headers({ \"x-retry\": t.optional(t.integer()) }) }, (c) => ({\n    retry: c.headers[\"x-retry\"] ?? 0, // number\n  }))"
+  },
+  {
     "name": "METHOD_ROUTES",
     "topic": "Nifra - API & typed client",
     "slug": "api",

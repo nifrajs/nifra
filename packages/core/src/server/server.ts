@@ -80,7 +80,7 @@ import {
   headerKeysAllLowercase,
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
-import { headerObjectOf } from "./headers.ts"
+import { declaredHeaders, headerObjectOf } from "./headers.ts"
 import {
   isRoutableMethod,
   jsonError,
@@ -5640,7 +5640,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
     const input =
       stage.kind === "headers"
-        ? headerObjectOf(source.headers)
+        ? stage.names === undefined
+          ? headerObjectOf(source.headers)
+          : declaredHeaders(source.headers, stage.names)
         : stage.kind === "query"
           ? queryObjectOf(ctx[CONTEXT_SEARCH])
           : ctx[stage.kind]

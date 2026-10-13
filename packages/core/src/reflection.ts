@@ -33,6 +33,8 @@ import { NIFRA_BACKEND_EVIDENCE } from "./mount.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
 
+export { declaredHeaderNames } from "./server/headers.ts"
+
 /** JSON Schema permits either a schema object or the boolean schemas `true` and `false`. */
 export type JsonSchema = boolean | Readonly<Record<string, unknown>>
 

@@ -21,6 +21,7 @@ import {
   type RoutePatternSegment,
 } from "@nifrajs/core/pattern"
 import {
+  declaredHeaderNames,
   type JsonSchema,
   type ReflectedRoute,
   reflectMounts,
@@ -39,6 +40,15 @@ const DEFAULT_MAX_MUTATIONS = 32
 const DEFAULT_MAX_SHRINK_ATTEMPTS = 12
 const DEFAULT_MAX_WITNESS_BYTES = 256 * 1024
 const NO_BODY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"])
+
+/** Sent with every request, as any real client sends them, so a header schema that refuses
+ * undeclared headers fails here and not first in production. A witness header of the same name wins. */
+const CLIENT_HEADERS: readonly (readonly [string, string])[] = [
+  ["accept", "*/*"],
+  ["accept-encoding", "gzip, deflate, br"],
+  ["accept-language", "*"],
+  ["user-agent", "nifra-adversarial/1"],
+]
 
 type InputTarget = "headers" | "params" | "body" | "query"
 
@@ -484,11 +494,46 @@ function candidateMutations(
   return candidates
 }
 
-async function rejectedByValidator(reflection: SchemaReflection, value: unknown): Promise<boolean> {
+/** The validator's issues for `value`, as the route's slot would feed it, or `undefined` when it passes. */
+async function validatorIssues(
+  reflection: SchemaReflection,
+  target: InputTarget,
+  value: unknown,
+): Promise<readonly unknown[] | undefined> {
   const validator = reflection.standard
-  if (validator === undefined) return false
-  const result = await validator["~standard"].validate(value)
-  return result.issues !== undefined
+  if (validator === undefined) return undefined
+  const names = target === "headers" ? declaredHeaderNames(validator) : undefined
+  const result = await validator["~standard"].validate(
+    names === undefined ? value : declaredOnly(value, names),
+  )
+  return result.issues
+}
+
+const rejectedByValidator = async (
+  reflection: SchemaReflection,
+  target: InputTarget,
+  value: unknown,
+): Promise<boolean> => (await validatorIssues(reflection, target, value)) !== undefined
+
+/** A closed header schema sees only the names it declares; header records here are lower-cased. */
+function declaredOnly(value: unknown, names: readonly string[]): Record<string, unknown> {
+  const record = recordOf(value) ?? {}
+  const out: Record<string, unknown> = {}
+  for (const name of names) {
+    const lower = name.toLowerCase()
+    if (own(record, lower)) out[name] = record[lower]
+  }
+  return out
+}
+
+/** `: name - message; ...` for up to five issues. */
+function issueList(issues: readonly unknown[]): string {
+  const listed = issues.slice(0, 5).map((issue: unknown) => {
+    const path: unknown = Reflect.get(Object(issue), "path")
+    const where = Array.isArray(path) && path.length > 0 ? path.join(".") : "(root)"
+    return `${where} - ${String(Reflect.get(Object(issue), "message"))}`
+  })
+  return `: ${listed.join("; ")}${issues.length > 5 ? "; ..." : ""}`
 }
 
 /**
@@ -526,7 +571,7 @@ async function provenMutations(
     seen.add(serialized)
     if (!candidate.reason.startsWith("wrong-type-")) constrained = true
     try {
-      if (await rejectedByValidator(input.reflection, value))
+      if (await rejectedByValidator(input.reflection, target, value))
         mutations.push({ ...candidate, value })
     } catch {
       // A validator that throws for one hostile value violates Standard Schema, but do not let it
@@ -773,14 +818,19 @@ async function resolveInput(
         },
       }
     }
-    if (await rejectedByValidator(reflection, value)) {
+    const issues = await validatorIssues(reflection, target, value)
+    if (issues !== undefined) {
+      const open =
+        target === "headers"
+          ? ". Every client sends headers a route does not declare, so a header schema must accept them"
+          : ""
       return {
         ok: false,
         gap: {
           route: routeKey,
           target,
           code: "INVALID_WITNESS",
-          message: `${target} witness is rejected by its Standard Schema validator`,
+          message: `${target} witness is rejected by its Standard Schema validator${issueList(issues)}${open}`,
         },
       }
     }
@@ -867,7 +917,9 @@ function requestFor(
   const path = materializePath(laboratory.route.path, params ?? laboratory.witness.params)
   const url = new URL(path, origin)
   for (const [key, value] of queryPairs(values.query) ?? []) url.searchParams.append(key, value)
-  const headers = new Headers(laboratory.witness.headers)
+  const headers = new Headers()
+  for (const [name, value] of CLIENT_HEADERS) headers.set(name, value)
+  for (const [name, value] of new Headers(laboratory.witness.headers)) headers.set(name, value)
   const headerValues = recordOf(values.headers)
   if (headerValues !== undefined) {
     // The resolved record holds the witness's headers too, so a mutation that drops one drops it here.
@@ -917,6 +969,17 @@ async function preparedRequest(
   prepare: AdversarialContractOptions["prepareRequest"],
 ): Promise<Request> {
   return prepare === undefined ? request : await prepare(request, context)
+}
+
+/** The issues of a validation 422 body, so a refused witness says what was refused. */
+async function refusedFields(response: Response): Promise<string> {
+  let issues: unknown
+  try {
+    issues = Reflect.get(Object(await response.json()), "issues")
+  } catch {
+    return ""
+  }
+  return Array.isArray(issues) && issues.length > 0 ? issueList(issues) : ""
 }
 
 async function discardResponse(response: Response): Promise<void> {
@@ -993,7 +1056,7 @@ async function shrinkFailure(
       if (carried === undefined) continue
       if (reflection === undefined) continue
       try {
-        if (!(await rejectedByValidator(reflection, carried))) continue
+        if (!(await rejectedByValidator(reflection, target, carried))) continue
       } catch {
         continue
       }
@@ -1126,6 +1189,9 @@ async function buildLaboratories(
                 given: witness.headers === undefined ? undefined : witnessHeaders,
                 merge: (synthesized) => {
                   const merged: Record<string, unknown> = {
+                    ...Object.fromEntries(
+                      CLIENT_HEADERS.filter(([name]) => !own(witnessHeaders, name)),
+                    ),
                     ...Object.fromEntries(
                       Object.entries(recordOf(synthesized) ?? {}).filter(
                         ([name]) =>
@@ -1378,14 +1444,15 @@ export async function runAdversarialContract(
         const response = await runtime.fetch(request)
         const status = response.status
         if (expected === undefined ? !response.ok : response.status !== expected.status) {
+          const refused = status === 422 ? await refusedFields(response) : ""
           await discardResponse(response)
           results.push(
             resultForFailure(
               { ...base, status },
               seed,
               expected === undefined
-                ? `valid witness returned non-success status ${status}`
-                : `expected status ${expected.status}, received ${status}`,
+                ? `valid witness returned non-success status ${status}${refused}`
+                : `expected status ${expected.status}, received ${status}${refused}`,
             ),
           )
           continue

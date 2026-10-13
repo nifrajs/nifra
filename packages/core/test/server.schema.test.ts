@@ -776,6 +776,113 @@ describe("header validation", () => {
     expect(res.status).toBe(422)
     expect(ran).toBe(false)
   })
+
+  // What Bun's fetch, Node's fetch and curl send on their own, besides `host`.
+  const CLIENT = {
+    accept: "*/*",
+    "accept-encoding": "gzip, deflate, br",
+    "accept-language": "*",
+    connection: "keep-alive",
+    "sec-fetch-mode": "cors",
+    "user-agent": "client/1.0",
+  }
+  const call = (app: { fetch: (r: Request) => Response | Promise<Response> }, headers: object) =>
+    app.fetch(new Request("http://localhost/h", { headers: { ...CLIENT, ...headers } }))
+
+  test("a closed t.object validates only the names it declares", async () => {
+    const app = server().get(
+      "/h",
+      { headers: t.object({ "x-tenant": t.string() }) },
+      (c) => c.headers,
+    )
+    const res = await call(app, { "x-tenant": "2" })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ "x-tenant": "2" })
+  })
+
+  test("a declared name is read whatever case the client sent", async () => {
+    const app = server().get(
+      "/h",
+      { headers: t.object({ "X-Tenant": t.string() }) },
+      (c) => c.headers["X-Tenant"],
+    )
+    expect(await (await call(app, { "x-tenant": "2" })).json()).toBe("2")
+  })
+
+  test("a closed t.object still refuses a missing or invalid declared header", async () => {
+    const app = server().get(
+      "/h",
+      { headers: t.object({ "x-tenant": t.string({ pattern: "^t-[0-9]+$" }) }) },
+      () => "ran",
+    )
+    expect((await call(app, {})).status).toBe(422)
+    expect((await call(app, { "x-tenant": "acme" })).status).toBe(422)
+    expect((await call(app, { "x-tenant": "t-2" })).status).toBe(200)
+  })
+
+  test("t.headers receives every header, lower-cased, and coerces its fields", async () => {
+    const app = server().get("/h", { headers: t.headers({ "x-retry": t.integer() }) }, (c) => ({
+      retry: c.headers["x-retry"],
+      agent: Reflect.get(c.headers, "user-agent"),
+    }))
+    expect(await (await call(app, { "X-Retry": "3" })).json()).toEqual({
+      retry: 3,
+      agent: "client/1.0",
+    })
+  })
+
+  test("an open object and a schema without JSON Schema receive the whole record", async () => {
+    const seen: unknown[] = []
+    const echo = schema<unknown>((value) => {
+      seen.push(value)
+      return { value }
+    })
+    await call(
+      server().get("/h", { headers: t.looseObject({ "x-a": t.string() }) }, (c) => {
+        seen.push({ ...c.headers })
+        return "ok"
+      }),
+      { "x-a": "1" },
+    )
+    await call(
+      server().get("/h", { headers: echo }, () => "ok"),
+      { "x-a": "1" },
+    )
+    expect(seen).toHaveLength(2)
+    for (const record of seen)
+      expect(record).toMatchObject({ "x-a": "1", "user-agent": "client/1.0" })
+  })
+
+  test("a closed schema with patternProperties keeps receiving the whole record", async () => {
+    let received: unknown
+    const patterned: StandardSchemaV1<unknown, unknown> = Object.assign(
+      schema<unknown>((value) => {
+        received = value
+        return { value }
+      }),
+      {
+        jsonSchema: {
+          type: "object",
+          additionalProperties: false,
+          patternProperties: { "^x-": { type: "string" } },
+        },
+      },
+    )
+    await call(
+      server().get("/h", { headers: patterned }, () => "ok"),
+      { "x-a": "1" },
+    )
+    expect(received).toMatchObject({ "x-a": "1", accept: "*/*" })
+  })
+
+  test("a declared name that is not a header token is never read", async () => {
+    const app = server().get(
+      "/h",
+      { headers: t.object({ "not a header": t.optional(t.string()) }) },
+      () => "ok",
+    )
+    expect((await call(app, {})).status).toBe(200)
+  })
 })
 
 describe("cookie validation", () => {

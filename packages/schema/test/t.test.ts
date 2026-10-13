@@ -147,6 +147,20 @@ describe("t.query (coercing query-slot schema)", () => {
   })
 })
 
+describe("t.headers (open, coercing header-slot schema)", () => {
+  test("coerces declared header values and keeps every other header", async () => {
+    const h = t.headers({ "x-retry": t.integer(), "x-dry-run": t.optional(t.boolean()) })
+    const ok = await validateStandard(h, { "x-retry": "3", "user-agent": "client/1.0" })
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect<unknown>(ok.value).toEqual({ "x-retry": 3, "user-agent": "client/1.0" })
+    expect((await validateStandard(h, { "x-retry": "soon" })).ok).toBe(false)
+  })
+
+  test("refuses an upper-case name, which an open schema would never receive", () => {
+    expect(() => t.headers({ "X-Retry": t.integer() })).toThrow(/declare "x-retry"/)
+  })
+})
+
 describe("t.json", () => {
   test("accepts any JSON value at any depth", async () => {
     for (const value of [null, "s", 0, -1.5, true, [], {}, { a: [1, { b: null }], c: "x" }]) {

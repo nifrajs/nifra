@@ -2702,6 +2702,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The hooks a path under `prefix` that no route matches still runs - its 404s and 405s.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **declaredHeaderNames** _(function)_ - `declaredHeaderNames: (schema: object) => readonly string[] | undefined`
+  The names a closed header schema declares, or `undefined` when it is open or lists no names. Every client sends headers no route declares (`host`, `user-agent`, `accept`), so a closed schema fed the whole record would refuse all real traffic; it is fed the names it declares instead, which is also h…
 - **reflectHooks** _(function)_ - `reflectHooks: (source: unknown) => ReflectedHookReport`
   Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server'…
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`

@@ -9,6 +9,7 @@
 
 import type { StandardSchemaV1 } from "../schema/standard.ts"
 import { markAuthenticatedRequest } from "../server/auth.ts"
+import { declaredHeaderNames } from "../server/headers.ts"
 import { pathnameOf } from "../server/http.ts"
 import { queryObjectOf } from "../server/query.ts"
 import type { Registry } from "../server/registry.ts"
@@ -35,7 +36,12 @@ import type {
 export type ProgramValidationKind = "headers" | "cookies" | "params" | "body" | "query"
 
 export type RouteProgramStage =
-  | { readonly kind: ProgramValidationKind; readonly schema: StandardSchemaV1 }
+  | {
+      readonly kind: ProgramValidationKind
+      readonly schema: StandardSchemaV1
+      /** Headers only: the names a closed schema validates, read case-insensitively. */
+      readonly names?: readonly string[] | undefined
+    }
   | { readonly kind: "derive"; readonly run: RawDerive }
   | { readonly kind: "before"; readonly run: RawBeforeHandle }
   | { readonly kind: "handler"; readonly run: InternalHandler }
@@ -90,7 +96,8 @@ export function compileRouteProgram(input: RouteProgramInput): RouteProgram {
   for (const kind of ["headers", "cookies", "params", "body", "query"] as const) {
     const validator = schema?.[kind]
     if (validator !== undefined) {
-      const stage = { kind, schema: validator }
+      const names = kind === "headers" ? declaredHeaderNames(validator) : undefined
+      const stage = { kind, schema: validator, names }
       stages.push(stage)
       validationStages.push(stage)
     }
