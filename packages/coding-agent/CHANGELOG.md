@@ -1,5 +1,17 @@
 # @nifrajs/coding-agent
 
+## 5.2.0
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- Updated dependencies [9498cf8]
+  - @nifrajs/agent@5.2.0
+  - @nifrajs/agent-protocol@5.2.0
+  - @nifrajs/agent-review@5.2.0
+  - @nifrajs/jobs@5.2.0
+  - @nifrajs/pi@5.2.0
+
 ## 5.1.0
 
 ### Minor Changes
