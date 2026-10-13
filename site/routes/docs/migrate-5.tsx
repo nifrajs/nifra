@@ -207,6 +207,16 @@ export default function Migrate5() {
         <code>nifra upgrade</code> prints the full list with the finding or the one-line change that
         keeps the 4.x behavior for each.
       </p>
+      <p>
+        Past 5.0, 5.1 adds one change a frontend on another origin sees. A route with a{" "}
+        <code>body</code> schema answers a urlencoded, multipart or <code>text/plain</code> body whose{" "}
+        <code>Origin</code> names another site with <code>403 forbidden_origin</code>, before reading
+        it. List that frontend&rsquo;s origin, or an identity provider&rsquo;s for a{" "}
+        <code>form_post</code> callback, in the <code>formOrigins</code> server option (an array of
+        exact origins or a function; <code>@nifrajs/edge</code> takes it too). JSON bodies are
+        unchanged. <a href="/docs/security">Security</a> covers what the check leaves to{" "}
+        <code>csrf()</code>.
+      </p>
 
       <h2>6. Run the release gates</h2>
       <ol>

@@ -11217,6 +11217,15 @@ that read a page's TTL from them on an unwrapped app reads nothing.
 `nifra upgrade` prints the full list with the finding or the one-line change that
 keeps the 4.x behavior for each.
 
+Past 5.0, 5.1 adds one change a frontend on another origin sees. A route with a
+`body` schema answers a urlencoded, multipart or `text/plain` body whose
+`Origin` names another site with `403 forbidden_origin`, before reading
+it. List that frontend&rsquo;s origin, or an identity provider&rsquo;s for a
+`form_post` callback, in the `formOrigins` server option (an array of
+exact origins or a function; `@nifrajs/edge` takes it too). JSON bodies are
+unchanged. [Security](/docs/security) covers what the check leaves to
+`csrf()`.
+
 ### 6. Run the release gates
 
 -
