@@ -1050,7 +1050,7 @@ function renderPlan(
       )
     if (plan.lockPruned)
       lines.push(
-        "  Run `bun install` before committing bun.lock: without them, `bun install --frozen-lockfile` fails.",
+        "  Run `bun install` before committing bun.lock: until it records these packages again, `bun install --frozen-lockfile` fails.",
       )
     lines.push("")
   }
