@@ -28,6 +28,7 @@ import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
 import { islandRules } from "./rules/islands.ts"
 import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
+import { mergeAuthGapRule } from "./rules/merge-auth.ts"
 import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
 import { routeRules } from "./rules/routes.ts"
@@ -492,6 +493,7 @@ export async function collectCheckDiagnostics(
     ...routeRules,
     contractVisibilityRule,
     ...pageRules,
+    mergeAuthGapRule,
     ...zoneRules,
     ...dataGuardRules,
     ...secretRules,

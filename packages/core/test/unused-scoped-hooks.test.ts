@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { t } from "../../schema/src/index.ts"
 import { effectLedger } from "../src/effect-ledger.ts"
 import type { Logger } from "../src/index.ts"
-import { FrameworkError, server } from "../src/index.ts"
+import { type AuthenticationStage, authenticated, FrameworkError, server } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 import { responseContract } from "../src/server/response-contract-lane.ts"
 import { websocket } from "../src/ws.ts"
@@ -199,6 +199,11 @@ describe("unused order-scoped hooks", () => {
   })
 })
 
+const session: AuthenticationStage<{ readonly id: string }> = {
+  id: "session",
+  run: () => authenticated({ id: "u1" }),
+}
+
 describe("hooks followed only by merged routes", () => {
   test("a derive followed only by merges is dead, and the message says merge is why", async () => {
     const child = server().get("/c", () => "ok")
@@ -234,7 +239,7 @@ describe("hooks followed only by merged routes", () => {
 
   test("authenticate() after the last route is reported", async () => {
     const app = server().get("/a", () => "ok")
-    app.authenticate({ id: "session", run: () => ({ ok: true, principal: { id: "u1" } }) } as never)
+    app.authenticate(session)
     const warnings = await withWarnSpy(() => app.fetch(GET("/a")))
     expect(warnings.length).toBe(1)
     expect(warnings[0]).toContain("authenticate()")
@@ -242,9 +247,7 @@ describe("hooks followed only by merged routes", () => {
 
   test("authenticate() followed only by merges is reported in error mode", () => {
     const child = server().get("/c", () => "ok")
-    const app = server({ unusedScopedHooks: "error" })
-      .authenticate({ id: "session", run: () => ({ ok: true, principal: { id: "u1" } }) } as never)
-      .merge(child)
+    const app = server({ unusedScopedHooks: "error" }).authenticate(session).merge(child)
     expect(() => app.fetch(GET("/c"))).toThrow("(only merge()d routes follow it)")
   })
 })
@@ -298,8 +301,8 @@ describe("registration-time plugins installed after the routes they cover", () =
   })
 
   test("the route list is capped at five with a count of the rest", async () => {
-    let app = server()
-    for (let i = 0; i < 7; i++) app = app.get(`/r${i}`, typed, () => ({ id: "1" })) as never
+    const app = server()
+    for (let i = 0; i < 7; i++) app.get(`/r${i}`, typed, () => ({ id: "1" }))
     app.use(responseContract("enforce"))
     const warnings = await withWarnSpy(() => app.fetch(GET("/r0")))
     expect(warnings[0]).toContain("7 route(s)")

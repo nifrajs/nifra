@@ -2689,6 +2689,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ReflectedHook** _(interface)_ - `interface ReflectedHook`
   One hook that runs for a route or an unmatched path: what it is, who added it, and where.
 - **ReflectedHookReport** _(interface)_ - `interface ReflectedHookReport`
+- **ReflectedMergeAuthGap** _(type)_ - `type ReflectedMergeAuthGap = MergeAuthGapTag`
+  A `merge()` that authenticates none of its routes under a parent that authenticates its own.
 - **ReflectedMount** _(interface)_ - `interface ReflectedMount`
   A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
 - **ReflectedMountRoute** _(interface)_ - `interface ReflectedMountRoute`
@@ -2706,6 +2708,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The names a closed header schema declares, or `undefined` when it is open or lists no names. Every client sends headers no route declares (`host`, `user-agent`, `accept`), so a closed schema fed the whole record would refuse all real traffic; it is fed the names it declares instead, which is also h…
 - **reflectHooks** _(function)_ - `reflectHooks: (source: unknown) => ReflectedHookReport`
   Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server'…
+- **reflectMergeAuthGaps** _(function)_ - `reflectMergeAuthGaps: (source: unknown) => readonly ReflectedMergeAuthGap[]`
+  Every `merge()` in the app, its merged servers included, whose server authenticates none of its routes while the parent's order-scoped auth - an `authenticate()` stage, or `authenticated` evidence scoped to subsequent routes - covers the parent's own: that auth never runs for a merged route. Record…
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`

@@ -48,11 +48,23 @@ export interface AdoptionTag {
   readonly prefix: string | undefined
 }
 
+/** A `merge()` whose routes carry no authentication of their own while the parent authenticates the
+ * routes it declares: the parent's order-scoped auth never runs for merged routes. */
+export interface MergeAuthGapTag {
+  /** The `merge()` call's `file:line:col`, when a frame outside core was found. */
+  readonly site: string | undefined
+  /** The parent's auth in effect at the merge: `authenticate(<id>)` stages and evidence sources. */
+  readonly auth: readonly string[]
+  /** `METHOD /path` of each merged route the parent's auth would have covered. */
+  readonly routes: readonly string[]
+}
+
 const origins = new WeakMap<object, HookOrigin>()
 const scopes = new WeakMap<object, HookScopeTag>()
 const sources = new WeakMap<object, unknown>()
 const statics = new WeakMap<object, StaticHeadersTag[]>()
 const adoptions = new WeakMap<object, AdoptionTag[]>()
+const mergeAuthGaps = new WeakMap<object, MergeAuthGapTag[]>()
 let applying: string | undefined
 // A merged server whose static headers are about to become one of the target's response hooks.
 let staticsOwner: object | undefined
@@ -130,6 +142,12 @@ export function tagAdoption(target: object, source: object, prefix: string | und
   else list.push(tag)
 }
 
+export function tagMergeAuthGap(target: object, gap: MergeAuthGapTag): void {
+  const list = mergeAuthGaps.get(target)
+  if (list === undefined) mergeAuthGaps.set(target, [gap])
+  else list.push(gap)
+}
+
 const outer: (string | undefined)[] = []
 
 /** Mark the plugin a `use()` is applying, until the matching {@link leavePlugin}. */
@@ -151,3 +169,5 @@ export const hookSourceOf = (hook: unknown): unknown =>
 export const staticHeadersOf = (server: object): readonly StaticHeadersTag[] =>
   statics.get(server) ?? []
 export const adoptionsOf = (server: object): readonly AdoptionTag[] => adoptions.get(server) ?? []
+export const mergeAuthGapsOf = (server: object): readonly MergeAuthGapTag[] =>
+  mergeAuthGaps.get(server) ?? []

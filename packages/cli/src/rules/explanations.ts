@@ -233,6 +233,11 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Export `gate = true` from the layout, or move the check into its middleware.",
     docs: "/docs/data",
   },
+  "NF-C043": {
+    why: "A merged route keeps the hooks of the server that declared it, so the authenticate() or auth plugin applied on this server before merge() never runs for it, and the merged server authenticates none of its routes.",
+    fix: "Apply the auth plugin on the merged server, or declare its routes in a group() of this server. A module that is public on purpose takes `// nifra-expect NF-C043: <reason>` on the merge line.",
+    docs: "/docs/plugins",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

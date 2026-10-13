@@ -3107,6 +3107,14 @@ yes
 the merged server&rsquo;s own - a route declaring `idempotency` without one is
 refused at registration
 
+Two checks catch the silent cases. In development and tests, `unusedScopedHooks`
+reports a hook followed only by `merge()` calls, and a `responseContract()`
+or `effectLedger()` installed after routes it would have covered.
+`nifra check` reports a `merge()` whose server authenticates none of its
+routes while this server&rsquo;s `authenticate()` or auth plugin covers its own
+(NF-C043); a module that is public on purpose takes
+`// nifra-expect NF-C043: <reason>` on the merge line.
+
 ### Route/hook plugins: keep types with defineRouterPlugin
 
 A plugin that registers routes or hooks but adds **no context type** - e.g. mounting an auth

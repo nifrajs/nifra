@@ -23,6 +23,7 @@ import {
   leavePlugin,
   tagAdoption,
   tagHook,
+  tagMergeAuthGap,
   tagScoped,
   tagStatic,
 } from "../internal/hook-origins.ts"
@@ -30,6 +31,7 @@ import {
   type AssuranceDeclaration,
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
+  NIFRA_ASSURANCE_IDS,
 } from "../internal/route-assurance.ts"
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
 import { adoptRouteRuntimes, compileRouteOptions } from "../internal/route-compiler.ts"
@@ -907,6 +909,41 @@ const recordScopedHook = (key: object, routesAtPush: number, kind: string): void
 const noteMergedRoutes = (key: object, count: number): void => {
   const state = hookAudit.get(key)
   if (state !== undefined) state.merged += count
+}
+
+/** Record a `merge()` whose server authenticates none of its routes while this server's order-scoped
+ * auth - `authenticate()` stages, or `authenticated` evidence scoped to subsequent routes - would
+ * cover some of them. A server that authenticates any of its own routes chose its own auth, so its
+ * unauthenticated routes are taken as public on purpose. `nifra check` reports what this records. */
+const noteMergeAuthGap = (
+  target: object,
+  authStages: readonly RawAuthStage[],
+  active: readonly AssuranceDeclaration[],
+  routes: readonly CatalogRoute[],
+  sourceGlobal: readonly AssuranceDeclaration[],
+): void => {
+  const parentAuth = active.filter((item) => item.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED)
+  if (authStages.length === 0 && parentAuth.length === 0) return
+  const authenticates = (route: CatalogRoute): boolean =>
+    route.assurance.some((item) => item.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED) ||
+    assuranceEvidenceFor(sourceGlobal, route.method, route.path).some(
+      (item) => item.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED,
+    )
+  if (routes.some(authenticates)) return
+  const covered = routes.filter(
+    (route) =>
+      authStages.length > 0 ||
+      assuranceEvidenceFor(parentAuth, route.method, route.path).length > 0,
+  )
+  if (covered.length === 0) return
+  tagMergeAuthGap(target, {
+    site: captureCallerSite(),
+    auth: [
+      ...authStages.map((stage) => `authenticate(${stage.id})`),
+      ...new Set(parentAuth.map((item) => item.source)),
+    ],
+    routes: covered.map((route) => `${route.method} ${route.path}`),
+  })
 }
 
 /** Record a registration-time plugin (`responseContract()`, `effectLedger()`) installed after routes
@@ -2692,6 +2729,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *
    * The response contract and the ledger can only add a check or a record, so a merged route is
    * recompiled under them. A runtime installed AFTER the merge covers neither kind of route.
+   *
+   * In development, {@link ServerOptions.unusedScopedHooks} reports a hook followed only by merges and
+   * a contract or ledger installed after the routes it would cover; `nifra check` reports a merge whose
+   * server authenticates none of its routes under this server's `authenticate()` (NF-C043).
    */
   merge<R2 extends Registry, Ctx2, HookOutput2>(
     other: Server<R2, Ctx2, HookOutput2>,
@@ -2717,6 +2758,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         "merge() does not carry WebSocket routes or mounts - register them on the parent server",
       )
     }
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      noteMergeAuthGap(
+        this,
+        this.authStages,
+        this.activeAssurance,
+        source.catalog.entries(),
+        source.globalAssurance,
+      )
     this.adopt(source, undefined, 0)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       noteMergedRoutes(this, source.catalog.size)

@@ -20,6 +20,8 @@ import {
   hookOriginOf,
   hookScopeOf,
   hookSourceOf,
+  type MergeAuthGapTag,
+  mergeAuthGapsOf,
   staticHeadersOf,
 } from "./internal/hook-origins.ts"
 import {
@@ -560,6 +562,30 @@ const catalogOf = (
 
 const joinPath = (base: string, path: string): string =>
   base === "" ? path : path === "/" ? base : `${base}${path}`
+
+/** A `merge()` that authenticates none of its routes under a parent that authenticates its own. */
+export type ReflectedMergeAuthGap = MergeAuthGapTag
+
+/**
+ * Every `merge()` in the app, its merged servers included, whose server authenticates none of its
+ * routes while the parent's order-scoped auth - an `authenticate()` stage, or `authenticated` evidence
+ * scoped to subsequent routes - covers the parent's own: that auth never runs for a merged route.
+ * Recorded by a development load only (the same provenance {@link reflectHooks} reads), so reflect the
+ * app outside production. `nifra check` reports each one (NF-C043).
+ */
+export function reflectMergeAuthGaps(source: unknown): readonly ReflectedMergeAuthGap[] {
+  if (!isServerRecord(source)) return []
+  const gaps: ReflectedMergeAuthGap[] = []
+  const seen = new Set<object>()
+  const visit = (server: object): void => {
+    if (seen.has(server)) return
+    seen.add(server)
+    gaps.push(...mergeAuthGapsOf(server))
+    for (const adoption of adoptionsOf(server)) visit(adoption.source)
+  }
+  visit(source)
+  return gaps
+}
 
 /**
  * Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin
