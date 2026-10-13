@@ -12738,8 +12738,11 @@ and says which.
 The count does not fail a level on its own. To make L1 require enforcement, add a
 `baseline` rule selecting `hasResponse: true`: unlike
 `rules`, where the first match owns a route, a baseline rule is checked on every
-route it matches, so one entry covers every class. `nifra assure --strict` also fails
-while any declared route is typed-only or warn-only.
+route it matches, so one entry covers every class. A new app from `create-nifra`
+ships this baseline in its `nifra.assurance.ts`, beside the
+`responseContract("enforce")` its backend installs.
+`nifra assure --strict` also fails while any declared route is typed-only or
+warn-only.
 
 ```ts
 // nifra.assurance.ts
