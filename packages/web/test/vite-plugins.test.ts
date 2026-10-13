@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { importVite } from "../src/internal/vite-import.ts"
 import { normalizeRolldownPlugins } from "../src/vite.ts"
 
 // Mirrors `@vitejs/plugin-react@4.x`'s `config` hook output under rolldown-vite: it injects the stale
@@ -18,11 +19,9 @@ const cfgOf = (plugin: unknown): unknown => {
 
 test("normalizeRolldownPlugins strips optimizeDeps.rollupOptions.jsx under rolldown", () => {
   const [wrapped] = normalizeRolldownPlugins([reactBabelPlugin()], true)
-  const cfg = cfgOf(wrapped) as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
-  // The dead `jsx` key is gone - no more "Invalid key" warning.
-  expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false)
-  // optimizeDeps.rollupOptions itself survives (now empty here), and the plugin's other props are kept.
-  expect(cfg.optimizeDeps.rollupOptions).toEqual({})
+  const cfg = cfgOf(wrapped) as { optimizeDeps: Record<string, unknown> }
+  // Nothing is left once jsx goes, and Vite 8 warns about even an empty `rollupOptions`, so the key goes too.
+  expect(cfg.optimizeDeps).toEqual({})
   expect((wrapped as { name: string }).name).toBe("vite:react-babel")
   expect(typeof (wrapped as { transform: unknown }).transform).toBe("function")
 })
@@ -43,11 +42,11 @@ test("normalizeRolldownPlugins flattens a nested plugin array - react() returns 
     "vite:react-refresh",
   ])
   // …and the babel plugin's jsx key is actually stripped now.
-  const babelCfg = cfgOf(out[0]) as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
-  expect("jsx" in babelCfg.optimizeDeps.rollupOptions).toBe(false)
+  const babelCfg = cfgOf(out[0]) as { optimizeDeps: Record<string, unknown> }
+  expect(babelCfg.optimizeDeps).toEqual({})
 })
 
-test("normalizeRolldownPlugins preserves a real optimizeDeps include alongside the dropped jsx", () => {
+test("normalizeRolldownPlugins moves the rest of rollupOptions to rolldownOptions", () => {
   const plugin = {
     name: "p",
     config: () => ({
@@ -57,11 +56,61 @@ test("normalizeRolldownPlugins preserves a real optimizeDeps include alongside t
       },
     }),
   }
-  const cfg = cfgOf(normalizeRolldownPlugins([plugin], true)[0]) as {
-    optimizeDeps: { include: string[]; rollupOptions: Record<string, unknown> }
+  expect(cfgOf(normalizeRolldownPlugins([plugin], true)[0])).toEqual({
+    optimizeDeps: { include: ["react", "react-dom"], rolldownOptions: { treeshake: true } },
+  })
+})
+
+test("normalizeRolldownPlugins drops rollupOptions beside rolldownOptions, as Vite ignores it there", () => {
+  const plugin = {
+    name: "both",
+    config: () => ({
+      optimizeDeps: { rollupOptions: { treeshake: false }, rolldownOptions: { treeshake: true } },
+    }),
   }
-  expect(cfg.optimizeDeps.include).toEqual(["react", "react-dom"]) // unrelated keys untouched
-  expect(cfg.optimizeDeps.rollupOptions).toEqual({ treeshake: true }) // only jsx dropped
+  expect(cfgOf(normalizeRolldownPlugins([plugin], true)[0])).toEqual({
+    optimizeDeps: { rolldownOptions: { treeshake: true } },
+  })
+})
+
+test("normalizeRolldownPlugins migrates ssr.optimizeDeps and returns other configs as they came", () => {
+  const ssr = {
+    name: "ssr",
+    config: () => ({ ssr: { noExternal: ["x"], optimizeDeps: { rollupOptions: { jsx: {} } } } }),
+  }
+  expect(cfgOf(normalizeRolldownPlugins([ssr], true)[0])).toEqual({
+    ssr: { noExternal: ["x"], optimizeDeps: {} },
+  })
+  const returned = { optimizeDeps: { include: ["react"] } }
+  const plain = { name: "plain", config: () => returned }
+  expect(cfgOf(normalizeRolldownPlugins([plain], true)[0])).toBe(returned)
+})
+
+test("Vite 8 resolves a normalized plugin-react config hook without the rollupOptions warning", async () => {
+  type Resolve = (config: Record<string, unknown>, command: string) => Promise<unknown>
+  const vite = await importVite<{ resolveConfig: Resolve; rolldownVersion?: string }>()
+  const warnings: string[] = []
+  const warn = console.warn
+  console.warn = (...args: unknown[]) => void warnings.push(String(args[0]))
+  const count = async (plugins: readonly unknown[], command: string): Promise<number> => {
+    warnings.length = 0
+    await vite.resolveConfig({ configFile: false, logLevel: "silent", plugins }, command)
+    return warnings.filter((w) => w.includes("rollupOptions")).length
+  }
+  try {
+    const isRolldown = vite.rolldownVersion !== undefined
+    expect(isRolldown).toBe(true)
+    for (const command of ["serve", "build"]) {
+      const raw = [
+        reactBabelPlugin(),
+        { name: "empty", config: () => ({ optimizeDeps: { rollupOptions: {} } }) },
+      ]
+      expect(await count(raw, command)).toBeGreaterThan(0)
+      expect(await count(normalizeRolldownPlugins(raw, isRolldown), command)).toBe(0)
+    }
+  } finally {
+    console.warn = warn
+  }
 })
 
 test("normalizeRolldownPlugins is a no-op on non-rolldown Vite", () => {
@@ -95,10 +144,7 @@ test("normalizeRolldownPlugins wraps an object-form config hook and preserves it
   ]
   expect(wrapped.config.order).toBe("pre") // ordering preserved
   expect(typeof wrapped.config.handler).toBe("function")
-  const cfg = wrapped.config.handler() as {
-    optimizeDeps: { rollupOptions: Record<string, unknown> }
-  }
-  expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false) // jsx still stripped
+  expect(wrapped.config.handler()).toEqual({ optimizeDeps: {} })
 })
 
 test("normalizeRolldownPlugins handles a promise-returning config hook", async () => {
@@ -107,8 +153,5 @@ test("normalizeRolldownPlugins handles a promise-returning config hook", async (
     config: async () => ({ optimizeDeps: { rollupOptions: { jsx: { mode: "automatic" } } } }),
   }
   const wrapped = normalizeRolldownPlugins([plugin], true)[0] as { config: () => Promise<unknown> }
-  const cfg = (await wrapped.config()) as {
-    optimizeDeps: { rollupOptions: Record<string, unknown> }
-  }
-  expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false)
+  expect(await wrapped.config()).toEqual({ optimizeDeps: {} })
 })

@@ -48,6 +48,7 @@ import {
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { unsupportedBuiltin } from "./internal/target-compat.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
+import { normalizeRolldownPlugins } from "./internal/vite-plugin-compat.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
 import {
@@ -73,6 +74,7 @@ interface ViteManifestEntry {
 type ViteBuildManifest = Readonly<Record<string, ViteManifestEntry>>
 
 interface ViteModule {
+  readonly rolldownVersion?: string
   build(config: Record<string, unknown>): Promise<unknown>
   loadEnv(mode: string, envDir: string, prefixes: string): Record<string, string>
 }
@@ -274,7 +276,14 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
         },
         // First, so a bare built-in is named before Vite turns it into an anonymous stub.
         // The asset URL guard last, so it reads each module after any framework plugin made it JavaScript.
-        plugins: [viteBareBuiltinExternal(), ...(options.vitePlugins ?? []), assetUrlGuard],
+        plugins: [
+          viteBareBuiltinExternal(),
+          ...normalizeRolldownPlugins(
+            options.vitePlugins ?? [],
+            vite.rolldownVersion !== undefined,
+          ),
+          assetUrlGuard,
+        ],
         worker: {
           plugins: () => {
             const guard = viteLeakGuard(guardOptions)
@@ -599,7 +608,10 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
           dedupe: ["react", "react-dom", ...singleCopyPackageNames(root)],
           conditions: [...conditions],
         },
-        plugins: [...(options.vitePlugins ?? [])],
+        plugins: normalizeRolldownPlugins(
+          options.vitePlugins ?? [],
+          vite.rolldownVersion !== undefined,
+        ),
         build: {
           outDir,
           emptyOutDir: false,

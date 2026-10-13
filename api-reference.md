@@ -6304,7 +6304,7 @@ _No named exports (side-effect entrypoint)._
 - **createViteDevServer** _(function)_ - `createViteDevServer: (options: ViteDevServerOptions) => Promise<ViteDevServer>`
   Start the Vite-backed dev server: Vite serves/HMRs the client; nifra SSRs each request and Vite injects its HMR client + the framework refresh preamble via `transformIndexHtml`.
 - **normalizeRolldownPlugins** _(function)_ - `normalizeRolldownPlugins: (plugins: readonly unknown[], isRolldown: boolean) => readonly unknown[]`
-  Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under rolldown-vite - the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid key: Expected never but received "jsx"` on `nifra dev`.
+  Move a plugin's `optimizeDeps.rollupOptions` to `optimizeDeps.rolldownOptions` under rolldown-vite and drop its `jsx` key, so Vite 8 warns about neither on `nifra dev` or a Vite build.
 - **pipeWebBodyToNode** _(function)_ - `pipeWebBodyToNode: (body: ReadableStream<Uint8Array> | null, res: NodeResLike) => Promise<void>`
   Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g. `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk a…
 

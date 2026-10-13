@@ -35,6 +35,7 @@ import {
 } from "./internal/parity.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
+import { normalizeRolldownPlugins } from "./internal/vite-plugin-compat.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import {
   DEV_ROOT_ENV,
@@ -168,6 +169,7 @@ export interface ViteDevServer {
 
 export type { DevAppHooks } from "./dev-session.ts"
 export { LAST_ERROR_PATH } from "./diagnostic.ts"
+export { normalizeRolldownPlugins } from "./internal/vite-plugin-compat.ts"
 
 // The codegen'd client entry is written here (at the Vite root) so Vite serves + HMRs it.
 const DEV_ENTRY = ".nifra-vite-entry.tsx"
@@ -247,19 +249,6 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   return new Request(url, init as unknown as ConstructorParameters<typeof Request>[1])
 }
 
-// A Vite `config` hook: a plain function, OR the object form `{ handler, order }` Vite accepts for hook
-// ordering (`order: "pre" | "post"`). We wrap the handler in either shape - see normalizeRolldownPlugins.
-type ConfigFn = (config: unknown, env: unknown) => unknown
-type ConfigHook = ConfigFn | { readonly handler: ConfigFn; readonly order?: unknown }
-
-// A Vite plugin - the only hook we wrap is `config`. Typed structurally (no `vite` type dep). Everything
-// else on the plugin object is preserved by spread, so wrapping is transparent to Vite.
-interface VitePluginLike {
-  readonly name?: string
-  config?: ConfigHook
-  readonly [key: string]: unknown
-}
-
 /** The bits of a Node ServerResponse `pipeWebBodyToNode` touches - structural, to avoid a node:http dep here. */
 interface NodeResLike {
   flushHeaders?(): void
@@ -315,72 +304,6 @@ export async function pipeWebBodyToNode(
     // client disconnected mid-stream - the `close` handler already cancelled the reader
   }
   res.end()
-}
-
-/**
- * Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under
- * rolldown-vite - the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid
- * key: Expected never but received "jsx"` on `nifra dev`.
- *
- * Why it happens: `@vitejs/plugin-react@4.x` (and peers) target an *older* rolldown-vite optimizeDeps
- * API - they inject `optimizeDeps.rollupOptions.jsx` to tell the dep pre-bundler to transform JSX. Vite
- * 8's rolldown dep-optimizer renamed that surface to `optimizeDeps.rolldownOptions` (and moved jsx under
- * `transform.jsx`), so the stale `rollupOptions.jsx` is an unrecognized input option → the warning. It's
- * a version-skew artifact, not a real misconfig: the route source JSX transform runs through the
- * plugin's own `transform` hook (untouched here), and node_modules deps that get pre-bundled almost
- * never contain raw JSX - so dropping the dead key changes no behavior and keeps HMR/Fast Refresh
- * intact. We *strip* (rather than translate to `rolldownOptions`) so the fix is version-agnostic: a
- * plugin already emitting the correct `rolldownOptions` is left untouched, and a future plugin bump that
- * stops emitting `rollupOptions.jsx` makes this a no-op.
- *
- * Scoped narrowly: only the `optimizeDeps.rollupOptions.jsx` key is removed, only under rolldown-vite,
- * and only from the value a plugin's `config` hook returns. Non-rolldown Vite is passed through verbatim.
- *
- * FLATTEN FIRST: a Vite plugin factory may return an ARRAY of plugins - `@vitejs/plugin-react`'s `react()`
- * returns `[vite:react-babel, vite:react-refresh]`, and it's `react:react-babel`'s `config` hook that emits
- * the offending `optimizeDeps.rollupOptions.jsx`. `nifra.config.ts` writes `vitePlugins = [react()]`, so the
- * plugin list arrives NESTED (`[[babel, refresh]]`). Without flattening, `.map` sees the inner array (which
- * has no `config`), leaves it untouched, and Vite - which flattens plugin arrays itself before running them
- * - then executes the un-stripped babel hook, so the warning survives. Flattening here (Vite accepts a flat
- * list identically) is what lets the strip reach every real plugin.
- */
-export function normalizeRolldownPlugins(
-  plugins: readonly unknown[],
-  isRolldown: boolean,
-): readonly unknown[] {
-  if (!isRolldown) return plugins
-  const stripJsxKey = (returned: unknown): unknown => {
-    // Only touch a plain-object config carrying optimizeDeps.rollupOptions.jsx; leave anything else as-is.
-    if (returned === null || typeof returned !== "object") return returned
-    const cfg = returned as { optimizeDeps?: { rollupOptions?: Record<string, unknown> } }
-    const rollupOptions = cfg.optimizeDeps?.rollupOptions
-    if (rollupOptions === undefined || !("jsx" in rollupOptions)) return returned
-    // Clone the affected branch (never mutate the plugin's own return value) and drop the dead key.
-    const { jsx: _dropped, ...restRollup } = rollupOptions
-    return {
-      ...cfg,
-      optimizeDeps: { ...cfg.optimizeDeps, rollupOptions: restRollup },
-    }
-  }
-  return plugins.flat(Number.POSITIVE_INFINITY).map((plugin) => {
-    if (plugin === null || typeof plugin !== "object") return plugin
-    const p = plugin as VitePluginLike
-    // `config` may be a plain function or the object form `{ handler, order }`. Wrap the handler either way.
-    const hook = p.config
-    const handler = typeof hook === "function" ? hook : hook?.handler
-    if (typeof handler !== "function") return plugin
-    const wrappedHandler: ConfigFn = (config, env) => {
-      const returned = handler(config, env)
-      // The hook may return a promise - normalize both shapes.
-      return returned instanceof Promise ? returned.then(stripJsxKey) : stripJsxKey(returned)
-    }
-    // Preserve the ORIGINAL shape: a function stays a function; the object form keeps its `order`
-    // (collapsing `{ handler, order }` to a bare function would silently drop the hook ordering).
-    return {
-      ...p,
-      config: typeof hook === "function" ? wrappedHandler : { ...hook, handler: wrappedHandler },
-    }
-  })
 }
 
 /**
@@ -614,8 +537,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // server importing vite unguarded is precisely what poisoned the module for the whole process.
   const viteModule = await importVite<ViteModule>()
   const { createServer } = viteModule
-  // Under rolldown-vite (Vite 8+), strip the stale `optimizeDeps.rollupOptions.jsx` some framework
-  // plugins still emit - it triggers a noisy "Invalid key … jsx" warning but does nothing useful here.
+  // Under rolldown-vite (Vite 8+), framework plugins' stale `optimizeDeps.rollupOptions` warns on every start.
   const plugins = normalizeRolldownPlugins(
     options.plugins ?? [],
     viteModule.rolldownVersion !== undefined,
