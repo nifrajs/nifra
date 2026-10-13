@@ -244,14 +244,113 @@ interface WalkResult {
 
 const MAX_PROVENANCE_MODULES = 500
 const MAX_PROVENANCE_CHAIN = 16
+/** The budget for one installed package's closure, walked once per run whatever reaches it. */
+const MAX_INSTALLED_MODULES = 5000
+
+/** An effect import one module makes, and the policy rules it matches. */
+interface EffectHit {
+  readonly specifier: string
+  readonly module: string
+  /** Specifiers from the walk's entry to this import, the import last. */
+  readonly chain: readonly string[]
+  readonly approved: readonly CapabilityPolicy["provenance"]["imports"][number][]
+  readonly forbidden: readonly CapabilityPolicy["provenance"]["forbiddenImports"][number][]
+}
+
+/** What a walk reads, shared by every route of one run: sources, and installed closures by entry. */
+interface WalkContext {
+  readonly cwd: string
+  readonly policy: CapabilityPolicy
+  readonly sources: Map<string, string>
+  readonly installed: Map<string, Promise<InstalledWalk>>
+}
+
+interface InstalledWalk {
+  readonly hits: readonly EffectHit[]
+  readonly truncated: boolean
+}
+
+/** A module under a `node_modules` folder: installed code, the same for every route that reaches it. */
+const isInstalled = (module: string): boolean => module.split("/").includes("node_modules")
+
+async function moduleSource(context: WalkContext, module: string): Promise<string | undefined> {
+  const cached = context.sources.get(module)
+  if (cached !== undefined) return cached
+  try {
+    const content = await Bun.file(join(context.cwd, module)).text()
+    context.sources.set(module, content)
+    return content
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The effect imports one module makes, each with the rules it matches, and the modules its other
+ * imports load. An approved import is the owned effect seam: its implementation may legitimately
+ * import the raw provider, so the walk does not follow it.
+ */
+function scanModule(
+  context: WalkContext,
+  module: string,
+  content: string,
+  chain: readonly string[],
+): { readonly hits: EffectHit[]; readonly next: Array<{ module: string; specifier: string }> } {
+  const hits: EffectHit[] = []
+  const next: Array<{ module: string; specifier: string }> = []
+  for (const specifier of scanEffectImports(content)) {
+    const approved = context.policy.provenance.imports.filter((rule) =>
+      specifierMatches(rule.specifier, specifier),
+    )
+    const forbidden = context.policy.provenance.forbiddenImports.filter((rule) =>
+      specifierMatches(rule.specifier, specifier),
+    )
+    if (approved.length > 0 || forbidden.length > 0)
+      hits.push({ specifier, module, chain: [...chain, specifier], approved, forbidden })
+    if (approved.length > 0) continue
+    const local = resolveLocalModule(context.cwd, module, specifier, context.sources)
+    if (local !== undefined) next.push({ module: local, specifier })
+  }
+  return { hits, next }
+}
+
+/**
+ * Every effect import in the closure of the installed module `entry`, walked once per run however many
+ * routes reach it. Its chains start after `entry`. A package's own module count stays out of each
+ * route's budget: one locale-heavy dependency would otherwise truncate every route that imports it.
+ */
+function walkInstalled(context: WalkContext, entry: string): Promise<InstalledWalk> {
+  const cached = context.installed.get(entry)
+  if (cached !== undefined) return cached
+  const walk = (async (): Promise<InstalledWalk> => {
+    const hits: EffectHit[] = []
+    const visited = new Set<string>()
+    const queue: Array<{ module: string; chain: readonly string[] }> = [
+      { module: entry, chain: [] },
+    ]
+    while (queue.length > 0) {
+      if (visited.size >= MAX_INSTALLED_MODULES) return { hits, truncated: true }
+      const current = queue.shift()
+      if (current === undefined || visited.has(current.module)) continue
+      visited.add(current.module)
+      const content = await moduleSource(context, current.module)
+      if (content === undefined) continue
+      const scanned = scanModule(context, current.module, content, current.chain)
+      hits.push(...scanned.hits)
+      for (const { module, specifier } of scanned.next)
+        if (!visited.has(module)) queue.push({ module, chain: [...current.chain, specifier] })
+    }
+    return { hits, truncated: false }
+  })()
+  context.installed.set(entry, walk)
+  return walk
+}
 
 async function walkRouteModules(
-  cwd: string,
+  context: WalkContext,
   modules: readonly string[],
   method: string,
   path: string,
-  policy: CapabilityPolicy,
-  sources: Map<string, string>,
 ): Promise<WalkResult> {
   const queue = modules.map((module) => ({ module, chain: [module] as string[] }))
   const visited = new Set<string>()
@@ -259,6 +358,25 @@ async function walkRouteModules(
   const violations: CapabilityImportViolation[] = []
   const truncations: CapabilityProvenanceTruncation[] = []
   let covered = false
+  const record = (hit: EffectHit, chain: readonly string[]): void => {
+    for (const rule of hit.approved) {
+      for (const id of rule.capabilities) {
+        if (!evidence.some((item) => item.id === id && item.source === hit.specifier)) {
+          evidence.push({ id, kind: "static", source: hit.specifier })
+        }
+      }
+    }
+    for (const rule of hit.forbidden) {
+      violations.push({
+        method,
+        path,
+        module: hit.module,
+        specifier: hit.specifier,
+        reason: rule.reason,
+        chain: Object.freeze([...chain, ...hit.chain]),
+      })
+    }
+  }
 
   while (queue.length > 0) {
     if (visited.size >= MAX_PROVENANCE_MODULES) {
@@ -286,45 +404,30 @@ async function walkRouteModules(
       continue
     }
     visited.add(current.module)
-    let content = sources.get(current.module)
-    if (content === undefined) {
-      try {
-        content = await Bun.file(join(cwd, current.module)).text()
-        sources.set(current.module, content)
-      } catch {
-        continue
-      }
-    }
-    covered = true
-    for (const specifier of scanEffectImports(content)) {
-      let approvedEffectBoundary = false
-      for (const rule of policy.provenance.imports) {
-        if (!specifierMatches(rule.specifier, specifier)) continue
-        approvedEffectBoundary = true
-        for (const id of rule.capabilities) {
-          if (!evidence.some((item) => item.id === id && item.source === specifier)) {
-            evidence.push({ id, kind: "static", source: specifier })
-          }
-        }
-      }
-      for (const rule of policy.provenance.forbiddenImports) {
-        if (!specifierMatches(rule.specifier, specifier)) continue
-        violations.push({
+    if (isInstalled(current.module)) {
+      const installed = await walkInstalled(context, current.module)
+      covered = true
+      for (const hit of installed.hits) record(hit, current.chain)
+      if (installed.truncated) {
+        truncations.push({
           method,
           path,
-          module: current.module,
-          specifier,
-          reason: rule.reason,
-          chain: Object.freeze([...current.chain, specifier]),
+          reason: "module-limit",
+          chain: Object.freeze([
+            ...current.chain,
+            `<${MAX_INSTALLED_MODULES}-module limit in ${current.module}>`,
+          ]),
         })
       }
-      // An explicitly mapped import is the owned effect seam. Its implementation may legitimately
-      // import the raw provider; assurance governs whether routes can reach the seam, not its internals.
-      if (approvedEffectBoundary) continue
-      const local = resolveLocalModule(cwd, current.module, specifier, sources)
-      if (local !== undefined && !visited.has(local)) {
-        queue.push({ module: local, chain: [...current.chain, specifier] })
-      }
+      continue
+    }
+    const content = await moduleSource(context, current.module)
+    if (content === undefined) continue
+    covered = true
+    const scanned = scanModule(context, current.module, content, [])
+    for (const hit of scanned.hits) record(hit, current.chain)
+    for (const { module, specifier } of scanned.next) {
+      if (!visited.has(module)) queue.push({ module, chain: [...current.chain, specifier] })
     }
   }
   return { covered, evidence, violations, truncations }
@@ -351,6 +454,7 @@ export async function collectCapabilityProjectReport(
 ): Promise<CapabilityProjectReport> {
   const policy = defineCapabilityPolicy(policyInput)
   const sources = await readSources(cwd)
+  const context: WalkContext = { cwd, policy, sources, installed: new Map() }
   const automatic = new Map<string, Set<string>>()
   const skipped = new Map<string, string>()
   for (const [file, content] of sources) {
@@ -396,14 +500,7 @@ export async function collectCapabilityProjectReport(
         for (const module of association.modules) modules.add(module)
       }
     }
-    const walked = await walkRouteModules(
-      cwd,
-      [...modules],
-      route.method,
-      route.path,
-      policy,
-      sources,
-    )
+    const walked = await walkRouteModules(context, [...modules], route.method, route.path)
     const skippedAt =
       modules.size === 0 ? skipped.get(routeKey(route.method, route.path)) : undefined
     const uncoveredReason =
