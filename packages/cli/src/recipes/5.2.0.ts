@@ -3,7 +3,7 @@ import type { UpgradeRecipe } from "./index.ts"
 /**
  * Upgrade recipe for Nifra 5.2.
  *
- * No import or dependency moves. Three changes alter what a 5.1 app serves, and the development audit,
+ * No import or dependency moves. Four changes alter what a 5.1 app serves, and the development audit,
  * `nifra check`, `nifra i18n check` and the upgrade itself report more; each note says what changes and
  * what keeps the old answer.
  */
@@ -18,6 +18,7 @@ export const recipe: UpgradeRecipe = {
   notes: [
     "A closed request-header schema (`headers: t.object({...})`) validates only the header names it declares, read case-insensitively. It used to see every header a client sends (`host`, `user-agent`), so such a route answered real requests with 422; those requests are now served. Use `t.headers({...})` for an open header slot.",
     '`responseContract("enforce", { extra: "strip" })` projects a union whose object branches all require one key holding literals no two branches share (`ok: true` / `ok: false`). When those branches are closed `t.object`s, a payload that carried undeclared fields used to answer 500; it is now sent without them.',
+    "An `authenticate()` stage that throws, or returns a malformed decision, still answers 503 `auth_unavailable`, but its cause now goes to `onError` (a response it returns replaces the 503) and, when no hook answers, to the logger as `unhandled request error`. A stage that throws a `Response` or `status(...)`, such as `requirePrincipal`'s 401 or redirect, now has it sent as thrown instead of a 503, and `authed()` from `@nifrajs/better-auth` no longer catches provider failures itself. An `onError` hook that answers every error now answers these too; return nothing for them to keep the 503.",
     'The development `unusedScopedHooks` audit also reports a hook only `merge()`d routes follow (a merged route keeps its own server\'s chain), an `authenticate()` after the last route, and a `responseContract()` or `effectLedger()` installed after routes it would have covered. With `unusedScopedHooks: "error"` each now throws at startup outside production: move the call before the routes, or wire the hook on the merged server.',
     "`nifra check` adds NF-C043 (warning): a parent's `authenticate()` or authenticated scope precedes a `merge()` of a server that authenticates none of its routes. Wire the auth on that server, or mark the merge `// nifra-expect NF-C043: <reason>`.",
     "`nifra check`'s capability walk also starts from the module that registered each route, recorded while `nifra.assurance.ts` loads the app, so a route it could not see before (a computed path, a helper-built server) is now checked and may report an undeclared capability.",
