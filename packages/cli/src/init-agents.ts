@@ -30,8 +30,8 @@
  */
 
 import type { Stats } from "node:fs"
-import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
-import { isAbsolute, relative, resolve, sep } from "node:path"
+import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   AGENT_POINTERS,
   AGENTS_MD_PATH,
@@ -353,6 +353,121 @@ async function readPin(
   return { kind: "stale", abs, mode: stat.mode & 0o777, scan }
 }
 
+/** A pinned file above the project whose every nifra launch serves the project. */
+export interface AncestorPinSite {
+  /** The directory that holds it. */
+  readonly dir: string
+  /** Where the file is, from the project directory, as reports name it (`../.mcp.json`). */
+  readonly path: string
+  /** The site it is, its `path` relative to `dir`. */
+  readonly site: (typeof PIN_SITES)[number]
+  /** The member a bare registry launch is given, as `init-agents` at that root would. */
+  readonly member: string
+}
+
+/** Pinned files above the project, split by whether a member's re-pin may rewrite them. */
+export interface AncestorPins {
+  readonly owned: readonly AncestorPinSite[]
+  /** Pinned files that also launch something else, or that the scan could not attribute. */
+  readonly foreign: readonly { readonly path: string; readonly note: string }[]
+}
+
+const REGISTRY_PATHS: ReadonlySet<string> = new Set([MCP_JSON_PATH, CURSOR_MCP_JSON_PATH])
+const LAUNCH_ARG = new RegExp(`^@nifrajs/cli@${PIN_VERSION}$`)
+
+/** The directories above `dir`, nearest first, up to the repository root; none outside a repository. */
+async function ancestorsToRepoRoot(dir: string): Promise<string[]> {
+  const out: string[] = []
+  for (let at = dir; (await lstatOrMissing(join(at, ".git"))) === undefined; ) {
+    const parent = dirname(at)
+    if (parent === at) return []
+    out.push(parent)
+    at = parent
+  }
+  return out
+}
+
+/** Whether a launch from `dir` that names no directory serves `project`, as `nifra mcp` resolves it. */
+async function bareLaunchServes(dir: string, project: string): Promise<boolean> {
+  const state = await resolveRootState(dir, false)
+  return state.isProject && (await realpath(state.root).catch(() => state.root)) === project
+}
+
+/** Each pinned launch in an MCP registry: the directory it names, `null` for none, `undefined` for
+ * a pin not followed by `mcp`. The whole result is `undefined` when a pin sits outside any launch. */
+function registryLaunches(text: string): (string | null | undefined)[] | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  const servers: unknown = Reflect.get(Object(parsed), "mcpServers")
+  const launches: (string | null | undefined)[] = []
+  for (const entry of Object.values(Object(servers))) {
+    const args: unknown = Reflect.get(Object(entry), "args")
+    if (!Array.isArray(args)) continue
+    args.forEach((arg, i) => {
+      if (typeof arg !== "string" || !LAUNCH_ARG.test(arg)) return
+      const named: unknown = args[i + 2]
+      if (args[i + 1] !== "mcp") launches.push(undefined)
+      else launches.push(typeof named === "string" && !named.startsWith("-") ? named : null)
+    })
+  }
+  return [...text.matchAll(JSON_PIN)].length === launches.length ? launches : undefined
+}
+
+/**
+ * The pinned files above `cwd`, up to the repository root. A workspace root's registry launches
+ * `mcp <member>`, which is what `init-agents` writes there, so a member's re-pin has to reach it. A
+ * file is the member's to rewrite only when every nifra launch in it serves the member, resolved the
+ * way `nifra mcp` resolves it; a file that also serves another project is reported and left alone.
+ */
+export async function ancestorPins(cwd: string): Promise<AncestorPins> {
+  const project = await realpath(cwd).catch(() => resolve(cwd))
+  const owned: AncestorPinSite[] = []
+  const foreign: { path: string; note: string }[] = []
+  for (const dir of await ancestorsToRepoRoot(project)) {
+    let bare: Promise<boolean> | undefined
+    const servesBare = () => (bare ??= bareLaunchServes(dir, project))
+    const launchServes = async (named: string | null | undefined): Promise<boolean> =>
+      named === undefined
+        ? false
+        : named === null
+          ? servesBare()
+          : (await realpath(resolve(dir, named)).catch(() => "")) === project
+    for (const site of PIN_SITES) {
+      const abs = join(dir, site.path)
+      const path = relative(project, abs).split(sep).join("/")
+      const stat = await lstatOrMissing(abs)
+      if (stat === undefined || stat.isDirectory()) continue
+      if (!stat.isFile()) {
+        foreign.push({ path, note: "not a regular file - left alone" })
+        continue
+      }
+      const text = await readFile(abs, "latin1")
+      let serves: boolean
+      if (REGISTRY_PATHS.has(site.path)) {
+        const launches = registryLaunches(text)
+        if (launches === undefined) {
+          foreign.push({ path, note: "holds a pin no launch accounts for - left alone" })
+          continue
+        }
+        if (launches.length === 0) continue
+        serves = true
+        for (const named of launches) if (!(await launchServes(named))) serves = false
+      } else {
+        if (site.repin(text, MCP_CLI_VERSION).pins === 0) continue
+        serves = await servesBare()
+      }
+      if (serves)
+        owned.push({ dir, path, site, member: relative(dir, project).split(sep).join("/") })
+      else foreign.push({ path, note: "its launch is not this project's alone - left alone" })
+    }
+  }
+  return { owned, foreign }
+}
+
 /**
  * The version --sync-mcp pins to: the nifra the project installs, so the server an agent launches
  * describes the surface the code builds with. The running CLI's own version when nothing is
@@ -385,6 +500,10 @@ export async function collectStaleMcpPins(
     const state = await readPin(cwd, site, target)
     if (state.kind === "stale") files.push({ path: site.path, pinned: state.scan.stale })
   }
+  for (const above of (await ancestorPins(cwd)).owned) {
+    const state = await readPin(above.dir, above.site, target)
+    if (state.kind === "stale") files.push({ path: above.path, pinned: state.scan.stale })
+  }
   return { target, files }
 }
 
@@ -394,21 +513,25 @@ async function syncMcpPins(cwd: string): Promise<InitAgentsResult> {
   const target = await mcpPinTarget(cwd)
   const member = await workspaceMember(cwd)
   const files: InitAgentsFileResult[] = []
-  for (const site of PIN_SITES) {
-    const state = await readPin(cwd, site, target, member)
+  const sync = async (path: string, state: PinState): Promise<void> => {
     if (state.kind === "skip") {
-      files.push({ path: site.path, action: "skipped", note: state.note })
+      files.push({ path, action: "skipped", note: state.note })
     } else if (state.kind === "current") {
-      files.push({ path: site.path, action: "present", note: `already pinned to ${target}` })
+      files.push({ path, action: "present", note: `already pinned to ${target}` })
     } else {
       await atomicWrite(state.abs, Buffer.from(state.scan.text, "latin1"), state.mode)
       const notes = [
         ...(state.scan.stale.length > 0 ? [`${state.scan.stale.join(", ")} -> ${target}`] : []),
         ...(state.scan.named !== undefined ? [`launches \`mcp ${state.scan.named}\``] : []),
       ]
-      files.push({ path: site.path, action: "synced", note: notes.join("; ") })
+      files.push({ path, action: "synced", note: notes.join("; ") })
     }
   }
+  for (const site of PIN_SITES) await sync(site.path, await readPin(cwd, site, target, member))
+  const above = await ancestorPins(cwd)
+  for (const site of above.owned)
+    await sync(site.path, await readPin(site.dir, site.site, target, site.member))
+  for (const { path, note } of above.foreign) files.push({ path, action: "skipped", note })
   return { cwd, files, syncedTo: target }
 }
 

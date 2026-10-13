@@ -185,7 +185,9 @@ Usage:
                                          .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
                                          section - every other byte stays as it is. Creates nothing.
                                          At a workspace root with one nifra member, the two registries'
-                                         launch also names that member (\`mcp app\`).
+                                         launch also names that member (\`mcp app\`). Run in a member,
+                                         it also re-pins the files above it, up to the repository
+                                         root, whose every nifra launch serves that member.
   nifra mcp [dir]                        Start an MCP server (stdio) exposing this project to a coding
                                          agent. The project root is [dir] when given, else resolved from
                                          cwd (marker walk-up + the client's MCP roots); tools refuse

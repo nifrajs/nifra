@@ -48,7 +48,7 @@ import {
   parseHookReport,
   renderHookDiff,
 } from "./hooks-report.ts"
-import { PIN_SITES } from "./init-agents.ts"
+import { type AncestorPinSite, ancestorPins, PIN_SITES } from "./init-agents.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
 
@@ -688,20 +688,27 @@ function plainFileAt(cwd: string, rel: string): boolean {
 }
 
 /**
- * The MCP launch pin in each agent file at `cwd`, moved to `version`: the files and the edit of
- * `nifra init-agents --sync-mcp`, so an agent launches the nifra the project installs once it does.
+ * The MCP launch pin in each agent file at `cwd`, and in each file above it whose launches all serve
+ * it ({@link ancestorPins}), moved to `version`: the files and the edit of `nifra init-agents
+ * --sync-mcp`, so an agent launches the nifra the project installs once it does.
  */
 function agentPinEdits(
   cwd: string,
   version: string,
-): Array<{ readonly change: AgentPinChange; readonly text: string }> {
-  const edits: Array<{ change: AgentPinChange; text: string }> = []
-  for (const site of PIN_SITES) {
-    if (!plainFileAt(cwd, site.path)) continue
+  above: readonly AncestorPinSite[],
+): Array<{ readonly change: AgentPinChange; readonly text: string; readonly abs: string }> {
+  const edits: Array<{ change: AgentPinChange; text: string; abs: string }> = []
+  const sites = [
+    ...PIN_SITES.map((site) => ({ dir: cwd, file: site.path, path: site.path, site })),
+    ...above.map((entry) => ({ ...entry, file: entry.site.path })),
+  ]
+  for (const { dir, file, path, site } of sites) {
+    if (!plainFileAt(dir, file)) continue
+    const abs = join(dir, file)
     // latin1 is one char per byte, so every byte outside a pin is written back as it was.
-    const scan = site.repin(readFileSync(join(cwd, site.path), "latin1"), version)
+    const scan = site.repin(readFileSync(abs, "latin1"), version)
     if (scan.stale.length === 0) continue
-    edits.push({ change: { file: site.path, from: scan.stale, to: version }, text: scan.text })
+    edits.push({ change: { file: path, from: scan.stale, to: version }, text: scan.text, abs })
   }
   return edits
 }
@@ -821,6 +828,7 @@ export function computeUpgrade(
   write: boolean,
   allowDowngrade = false,
   exact = false,
+  above: readonly AncestorPinSite[] = [],
 ): UpgradePlan {
   const pins: PinChange[] = []
   const agentPins: AgentPinChange[] = []
@@ -846,10 +854,10 @@ export function computeUpgrade(
     }
   }
 
-  for (const { change, text } of agentPinEdits(cwd, recipe.version)) {
+  for (const { change, text, abs } of agentPinEdits(cwd, recipe.version, above)) {
     agentPins.push(change)
     planned.set(change.file, text)
-    if (write) writeFileSync(join(cwd, change.file), Buffer.from(text, "latin1"))
+    if (write) writeFileSync(abs, Buffer.from(text, "latin1"))
   }
 
   if (recipe.importMoves.length > 0) {
@@ -1170,7 +1178,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const recipe = chainRecipes(version, from)
 
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
-  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact)
+  const above = (await ancestorPins(cwd)).owned
+  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact, above)
   if (preview.downgrades.length > 0) {
     if (options.json) {
       console.log(
@@ -1188,7 +1197,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
 
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
-  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact) : preview
+  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
   const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
 
   // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.

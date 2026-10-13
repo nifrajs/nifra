@@ -6534,6 +6534,7 @@ nifra init-agents
 # The server is pinned to an exact @nifrajs/cli. After upgrading nifra, re-pin it to the version the
 # project installs. Only that version string changes; every other byte of every file is kept.
 # At a workspace root whose one nifra app is a member, the launch also names it: `mcp app`.
+# Run in that member, it also re-pins the root's files whose every nifra launch serves it.
 nifra init-agents --sync-mcp
 ```
 

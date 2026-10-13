@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { ancestorPins } from "../src/init-agents.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
   applyImportMoves,
@@ -15,7 +16,6 @@ import {
   specVersion,
   upgradeTargets,
 } from "../src/upgrade.ts"
-
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("tmp-nifra-upgrade-fixtures")
@@ -420,6 +420,27 @@ describe("computeUpgrade / runUpgrade", () => {
     for (const [path, text] of Object.entries(expected))
       expect(await readFile(join(root, path), "utf8")).toBe(text)
     expect(computeUpgrade(root, RECIPE, true).agentPins).toEqual([])
+  })
+
+  test("a workspace root's launch that serves the project moves with it", async () => {
+    const root = join(FIXTURES, "member-repo")
+    const app = join(root, "app")
+    await mkdir(join(root, ".git"), { recursive: true })
+    await mkdir(app, { recursive: true })
+    await writeFile(join(root, "package.json"), JSON.stringify({ workspaces: ["app"] }))
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.7.0" } }),
+    )
+    const launch = (version: string) =>
+      `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["@nifrajs/cli@${version}", "mcp", "app"] } } }\n`
+    await writeFile(join(root, ".mcp.json"), launch("1.7.0"))
+    const above = (await ancestorPins(app)).owned
+    const moved = [{ file: "../.mcp.json", from: ["1.7.0"], to: "1.8.0" }]
+    expect(computeUpgrade(app, RECIPE, false, false, false, above).agentPins).toEqual(moved)
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("1.7.0"))
+    expect(computeUpgrade(app, RECIPE, true, false, false, above).agentPins).toEqual(moved)
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("1.8.0"))
   })
 
   test("a symlinked agent file or folder is never written through", async () => {
