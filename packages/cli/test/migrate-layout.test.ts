@@ -881,6 +881,39 @@ describe("migrateLayout", () => {
     })
   })
 
+  test("a shell script moving with its folder keeps the paths it builds from its own folder", async () => {
+    const dir = app({
+      "backend.ts": 'import { env } from "./tools/env.ts"\nexport const all = env\n',
+      "tools/env.ts": "export const env = 1\n",
+      "tools/lint.sh": [
+        "#!/usr/bin/env bash",
+        'cd "$(dirname "$0")/.."',
+        'REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)',
+        'bash "${0%/*}/sweep.sh" "$REPO"',
+        "",
+      ].join("\n"),
+      "tools/sweep.sh": ['HERE=$(cd "$(dirname "$0")" && pwd)', 'ls "$HERE"', ""].join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toContainEqual({ from: "tools/lint.sh", to: "backend/tools/lint.sh" })
+    expect(read(dir, "backend/tools/lint.sh")).toBe(
+      [
+        "#!/usr/bin/env bash",
+        'cd "$(dirname "$0")/../.."',
+        'REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)',
+        'bash "${0%/*}/sweep.sh" "$REPO"',
+        "",
+      ].join("\n"),
+    )
+    expect(result.issues).toContainEqual({
+      file: "backend/tools/sweep.sh",
+      reason:
+        'builds a path from its own location ($(dirname "$0")) that the migration could not re-point, and it moved from "tools/sweep.sh"; check that path by hand',
+    })
+    expect(result.issues.map((issue) => issue.file)).not.toContain("backend/tools/lint.sh")
+  })
+
   test("a moved module's import that leaves the app is re-based", async () => {
     const dir = app({
       "routes/index.tsx": 'import { Card } from "../ui/card.tsx"\nexport default () => <Card />\n',

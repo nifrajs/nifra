@@ -1215,6 +1215,58 @@ function triviaCommentRanges(
 
 const OWN_DIR = new Set(["import.meta.dir", "import.meta.dirname", "__dirname"])
 
+/**
+ * The path `relative` names from the folder of `from`, named from the folder of `to`; `undefined` when
+ * neither the file nor the target moved, so a file that stays keeps its spelling.
+ */
+function rebaseRelative(
+  from: string,
+  to: string,
+  relative: string,
+  locate: (target: string) => string,
+): string | undefined {
+  const before = posix.normalize(posix.join(posix.dirname(from), relative))
+  const target = locate(before)
+  if (from === to && target === before) return undefined
+  const next = posix.relative(posix.dirname(to), target) || "."
+  return relative.endsWith("/") && next !== "." ? `${next}/` : next
+}
+
+/** A shell script's own folder: `$(dirname "$0")`, `$(dirname "${BASH_SOURCE[0]}")`, `${0%/*}`. */
+const SHELL_OWN_DIR =
+  /\$\(\s*dirname\s+("?)\$(?:0|\{BASH_SOURCE(?:\[0\])?\}|BASH_SOURCE)\1\s*\)|`dirname\s+("?)\$0\2`|\$\{(?:0|BASH_SOURCE(?:\[0\])?)%\/\*\}/g
+const SHELL_FILE = /\.(?:sh|bash|zsh)$/
+
+/**
+ * Re-point the paths a shell script moving from `from` to `to` builds from its own folder
+ * (`cd "$(dirname "$0")/.."`), as `rebaseOwnPaths` does for a module. Returns the new text and the
+ * first use of the script's folder with no literal path after it, which the migration cannot follow.
+ */
+function rebaseShellPaths(
+  from: string,
+  to: string,
+  text: string,
+  locate: (target: string) => string,
+): { readonly text: string; readonly unfollowed: string | undefined } {
+  let unfollowed: string | undefined
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  for (const match of text.matchAll(SHELL_OWN_DIR)) {
+    const start = match.index + match[0].length
+    const trailing = /^\/([\w.@-]+(?:\/[\w.@-]+)*\/?)/.exec(text.slice(start))?.[1]
+    if (trailing === undefined) {
+      unfollowed ??= match[0]
+      continue
+    }
+    const rebased = rebaseRelative(from, to, trailing, locate)
+    if (rebased !== undefined)
+      edits.push({ start, end: start + 1 + trailing.length, text: `/${rebased}` })
+  }
+  let next = text
+  for (const edit of edits.reverse())
+    next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
+  return { text: next, unfollowed }
+}
+
 interface OwnDirAlias {
   readonly name: TS.Identifier
   readonly initializer: TS.Expression
@@ -1294,15 +1346,8 @@ function rebaseOwnPaths(
     const quote = node.getText(sf)[0] ?? '"'
     return `${quote}${value}${quote}`
   }
-  // The path `relative` names from the module's old folder, named from its new folder; `undefined`
-  // when neither moved, so a module that stays keeps its spelling.
-  const rebased = (relative: string): string | undefined => {
-    const before = posix.normalize(posix.join(posix.dirname(from), relative))
-    const target = locate(before)
-    if (from === to && target === before) return undefined
-    const next = posix.relative(posix.dirname(to), target) || "."
-    return relative.endsWith("/") && next !== "." ? `${next}/` : next
-  }
+  const rebased = (relative: string): string | undefined =>
+    rebaseRelative(from, to, relative, locate)
   const follow = (
     anchor: TS.Node,
     start: number,
@@ -2657,7 +2702,18 @@ export async function migrateLayout(
   // A moved module's paths from its own location now start from its new folder: re-point the ones it
   // spells out, and report the first one it cannot follow.
   const unfollowed = new Map<string, string>()
+  /** Moved shell scripts whose own-folder paths were re-pointed: new path -> text. */
+  const scriptWrites = new Map<string, string>()
   for (const { from, to } of moves) {
+    if (SHELL_FILE.test(to) && !original.has(from)) {
+      const script = readFileSync(join(root, from), "utf8")
+      const result = rebaseShellPaths(from, to, script, (target) =>
+        known.has(target) ? newPath(target) : target,
+      )
+      if (result.text !== script) scriptWrites.set(to, result.text)
+      if (result.unfollowed !== undefined) unfollowed.set(to, result.unfollowed)
+      continue
+    }
     const text = final.get(to)
     if (text === undefined || !SELF_LOCATION.test(text)) continue
     if (!/\.[cm]?[jt]sx?$/.test(to)) {
@@ -2968,6 +3024,7 @@ export async function migrateLayout(
       renameSync(join(root, from), join(root, to))
       vacated.push(from)
     }
+    for (const [file, text] of scriptWrites) writeFileSync(join(root, file), text)
     pruneVacatedDirs(root, vacated)
   }
   return {
