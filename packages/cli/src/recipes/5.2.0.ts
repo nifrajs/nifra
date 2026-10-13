@@ -3,7 +3,7 @@ import type { UpgradeRecipe } from "./index.ts"
 /**
  * Upgrade recipe for Nifra 5.2.
  *
- * No import or dependency moves. Four changes alter what a 5.1 app serves, and the development audit,
+ * No import or dependency moves. Six changes alter what a 5.1 app serves or builds, and the development audit,
  * `nifra check`, `nifra i18n check` and the upgrade itself report more; each note says what changes and
  * what keeps the old answer.
  */
@@ -25,6 +25,9 @@ export const recipe: UpgradeRecipe = {
     "`nifra check`'s NF-C035 also reads app modules that call `createWebApp` themselves: a call that mounts `api` with no `apiPrefix`, or with one other than the framework config's, is reported. Import the `apiPrefix` from `backend/framework.ts` so both read one value.",
     '`nifra i18n check` and `checkCatalogs()` report two new errors: `latin-share`, a message in a locale that does not write in Latin whose words are mostly Latin script, and `volume`, a long default message translated to under a third of its length. List kept brand names in `latinWords`, raise `maxLatinShare` or lower `minVolumeRatio`, or list the keys under `ignore` (`"*"` for every key) to keep the old answer.',
     "`alternates()` from `@nifrajs/i18n/routing` given `locales` of a single locale returns no links, where it returned one self-reference.",
+    '`nifra check` typechecks every project `tsconfig.json` references, each as its own program, where it ran `tsc -p tsconfig.json` alone: a solution-style tsconfig (`"files": []` plus `references`) used to pass having read nothing, and its projects\' errors now fail the check. Name other configs to typecheck in `nifra.check.json` as `"tsconfigs": [...]`.',
+    "The Bun build (`nifra build` without `--vite`, `buildClient`, `buildServer`, `nifra dev --bun`) expands `import.meta.glob` as Vite does. A glob it used to bundle as a call that loads nothing now ships its files, and one it cannot read (a computed pattern, an alias, the `query` option) fails the build naming the file and line: write it as a literal, or build with `--vite`.",
+    "With both `nifra.config.ts` and `backend/framework.ts`, `nifra dev` and `nifra build` take `publicEnvPrefix` from `backend/framework.ts` when `nifra.config.ts` leaves it unset, so browser code reads the variables under that prefix there too, and `nifra check` (NF-C029) reads `nifra.config.ts` first. Set the prefix in one file to keep a single value.",
     "In a project that declares `@nifrajs/cli`, `nifra upgrade --write` drops the version pin from the MCP launch (`bunx @nifrajs/cli mcp`) so it runs the installed CLI from then on; restart the agent afterwards. `nifra upgrade --write` now refuses while a `link:` or `file:` dependency installs another nifra version, naming the commands for that repository; `--allow-linked-skew` proceeds anyway.",
   ],
 }

@@ -580,6 +580,7 @@ describe("computeUpgrade / runUpgrade", () => {
       at("5.1.0: "),
       at("5.2.0: A closed request-header schema"),
       at("5.2.0: The development `unusedScopedHooks` audit"),
+      at("5.2.0: The Bun build"),
     ]
     expect(order.every((index) => index >= 0)).toBe(true)
     expect(order.toSorted((a, b) => a - b)).toEqual(order)
