@@ -177,7 +177,11 @@ nifra migrate --from tailwind --to stylex --dir src`}
         prints how hook scope changed across the
         upgrade (<code>--no-hooks</code> skips that). <code>nifra doctor</code> and{" "}
         <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;
-        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>.
+        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>. A{" "}
+        <code>file:</code> package whose dependencies this upgrade moves keeps its old ones in{" "}
+        <code>bun.lock</code>, where Bun never refreshes them; the plan lists each, and{" "}
+        <code>--write</code> drops those entries so the next <code>bun install</code> records them
+        again (see <a href="/docs/troubleshooting#stale-file-links">stale file: links</a>).
       </p>
 
       <h2>Scope</h2>

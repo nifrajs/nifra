@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { join, sep } from "node:path"
+import { bunLockDir, staleLinkLocks } from "./lock-links.ts"
 import {
   compareSemverSpec,
   groupDeclaredNames,
@@ -7,6 +8,7 @@ import {
   installedGroupPackages,
   isFixedGroup,
   type LinkedGroupInstall,
+  specVersion,
 } from "./upgrade.ts"
 
 /** The fixed-group packages the package installed at `dir` depends on. */
@@ -64,6 +66,19 @@ export function collectVersionDrift(cwd: string, cliVersion?: string): VersionDr
     if (!inside) linkedOutside.push({ package: name, path, version })
   }
   if (cliVersion !== undefined) add(cliVersion, "the running nifra CLI")
+  // A linked package's stale recorded pin is installed under that package, where the scan of
+  // node_modules above never looks; only an exact pin names the version that copy has.
+  const lockDir = bunLockDir(cwd)
+  for (const entry of lockDir === undefined ? [] : staleLinkLocks(lockDir)) {
+    for (const { name, recorded } of entry.changes) {
+      if (recorded === undefined || !isFixedGroup(name) || specVersion(recorded) !== recorded)
+        continue
+      add(
+        recorded,
+        `recorded for ${entry.package} in bun.lock, which Bun never refreshes (NF-D003)`,
+      )
+    }
+  }
   if (sources.size < 2) return undefined
   const versions = [...sources]
     .sort(([a], [b]) => compareSemverSpec(a, b))

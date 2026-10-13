@@ -6453,7 +6453,11 @@ installing. With `--write` it also
 prints how hook scope changed across the
 upgrade (`--no-hooks` skips that). `nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
-see [mixed nifra versions](/docs/troubleshooting#mixed-versions).
+see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A
+`file:` package whose dependencies this upgrade moves keeps its old ones in
+`bun.lock`, where Bun never refreshes them; the plan lists each, and
+`--write` drops those entries so the next `bun install` records them
+again (see [stale file: links](/docs/troubleshooting#stale-file-links)).
 
 ### Scope
 
@@ -8158,6 +8162,21 @@ without `--write` first to see each planned edit. It edits files under the
 workspace root only. A symlinked package directory or `package.json` is never
 followed, and a group package installed by a link from outside the root is listed under
 "Left alone" - upgrade that repository on its own.
+
+### "records dependencies its file: packages no longer declare"
+
+A `file:` dependency's own dependencies are recorded in `bun.lock` when
+Bun first installs it, and Bun does not read that package's `package.json` again:
+after the linked package moves to a new version of a dependency, `bun install`
+(even with `--force`) keeps installing the recorded one beside it, so the app can
+load two copies of the same package. `nifra doctor` (and `nifra check`,
+as the `NF-D003` warning) compares each recorded entry with the linked
+`package.json` and names every dependency that moved.
+
+Run `bun update <package>` for each named package. `nifra upgrade`
+reads the lock against the manifests it is about to write, and with `--write` drops
+those entries so the next `bun install` records them again; run that install
+before committing `bun.lock`, or `bun install --frozen-lockfile` fails.
 
 ### Still stuck?
 

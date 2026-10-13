@@ -78,6 +78,14 @@ const IMPORT_EMIT_OPTIONS = [
   "preserveValueImports",
 ]
 
+/** Whether the next character after whitespace closes an object or array: a scan, not a slice, so a
+ * large file with many commas stays linear. */
+function closesNext(code: string, from: number): boolean {
+  let at = from
+  while (at < code.length && /\s/.test(code.charAt(at))) at += 1
+  return code[at] === "}" || code[at] === "]"
+}
+
 /** JSON with comments and trailing commas, as tsconfig files are written. Throws on anything else. */
 export function parseJsonc(text: string): unknown {
   let code = ""
@@ -107,7 +115,7 @@ export function parseJsonc(text: string): unknown {
       while (end < code.length && code[end] !== '"') end += code[end] === "\\" ? 2 : 1
       json += code.slice(i, end + 1)
       i = end
-    } else if (ch === "," && /^\s*[}\]]/.test(code.slice(i + 1))) {
+    } else if (ch === "," && closesNext(code, i + 1)) {
     } else json += ch
   }
   return JSON.parse(json.replace(/^\uFEFF/, ""))

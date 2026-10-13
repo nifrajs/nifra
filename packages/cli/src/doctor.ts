@@ -39,6 +39,12 @@ import {
 import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
+import {
+  bunLockDir,
+  type StaleLinkLock,
+  staleLinkLockMessage,
+  staleLinkLocks,
+} from "./lock-links.ts"
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
@@ -204,6 +210,12 @@ export interface DoctorResult {
    * into `ok`). Present only when at least one file is stale. Computed by {@link collectStaleMcpPins}.
    */
   readonly staleMcpPins?: { readonly target: string; readonly files: readonly StaleMcpPin[] }
+  /**
+   * `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json no
+   * longer declares: Bun never refreshes them, so it installs a second copy under the linked package.
+   * Advisory (never folded into `ok`). `lock` is the lockfile, relative to the project.
+   */
+  readonly staleLinkLocks?: { readonly lock: string; readonly entries: readonly StaleLinkLock[] }
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /** The explicit source boundary used by the dependency scan. */
@@ -842,6 +854,8 @@ export async function collectDoctorResult(
     opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
   const staleMcpPins = await collectStaleMcpPins(cwd).catch(() => undefined)
   const versionDrift = collectVersionDrift(cwd, opts.cliVersion)
+  const lockDir = bunLockDir(cwd)
+  const linkLocks = lockDir === undefined ? [] : staleLinkLocks(lockDir)
   const handBuilt = handBuiltManifests(cwd, manifestLists)
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
@@ -863,6 +877,14 @@ export async function collectDoctorResult(
     ...(versionDrift !== undefined ? { versionDrift } : {}),
     ...(handBuilt.length > 0 ? { handBuiltManifests: handBuilt } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
+    ...(lockDir !== undefined && linkLocks.length > 0
+      ? {
+          staleLinkLocks: {
+            lock: relative(cwd, join(lockDir, "bun.lock")).split(sep).join("/"),
+            entries: linkLocks,
+          },
+        }
+      : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
 }
@@ -1049,6 +1071,9 @@ export async function runDoctor(
   }
   if (result.versionDrift !== undefined) {
     console.log(`⚠ ${versionDriftMessage(result.versionDrift)}\n`)
+  }
+  if (result.staleLinkLocks !== undefined) {
+    console.log(`⚠ ${staleLinkLockMessage(result.staleLinkLocks)}\n`)
   }
   for (const finding of result.handBuiltManifests ?? []) {
     console.log(`⚠ ${handBuiltManifestMessage(finding)}\n`)

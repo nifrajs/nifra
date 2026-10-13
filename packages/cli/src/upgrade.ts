@@ -36,7 +36,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, join, relative, sep } from "node:path"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
@@ -49,6 +49,14 @@ import {
   renderHookDiff,
 } from "./hooks-report.ts"
 import { type AncestorPinSite, ancestorPins, PIN_SITES } from "./init-agents.ts"
+import {
+  BUN_LOCK,
+  describeChange,
+  linkLockUpdate,
+  pruneLinkLocks,
+  type StaleLinkLock,
+  staleLinkLocks,
+} from "./lock-links.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
 
@@ -133,6 +141,11 @@ export interface UpgradePlan {
   readonly linkedOutside: readonly LinkedGroupInstall[]
   /** Other versions pinned outside package.json. Never edited. */
   readonly strayPins: readonly StrayPin[]
+  /** `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json
+   * (as this upgrade leaves it) no longer declares. Bun never refreshes them on its own. */
+  readonly linkLocks: readonly StaleLinkLock[]
+  /** Whether `--write` dropped {@link linkLocks} from bun.lock, so `bun install` re-reads them. */
+  readonly lockPruned: boolean
   readonly notes: readonly string[]
 }
 
@@ -841,6 +854,7 @@ export function computeUpgrade(
     .filter((entry) => !entry.inside && entry.version !== recipe.version)
     .map(({ package: name, path, version }) => ({ package: name, path, version }))
 
+  const manifests = new Map<string, string>()
   if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
       const abs = join(cwd, rel)
@@ -850,7 +864,23 @@ export function computeUpgrade(
       const pinned = pinSweepText(moved.text, recipe.pins, allowDowngrade, exact)
       for (const change of pinned.changes) pins.push({ file: rel, ...change })
       for (const d of pinned.downgrades) downgrades.push({ file: rel, ...d })
+      if (pinned.text !== original) manifests.set(resolve(abs), pinned.text)
       if (write && pinned.text !== original) writeFileSync(abs, pinned.text)
+    }
+  }
+
+  // Read against the manifests as this upgrade leaves them, so a dry run lists what --write drops.
+  const linkLocks = plainFileAt(cwd, BUN_LOCK) ? staleLinkLocks(resolve(cwd), manifests) : []
+  let lockPruned = false
+  if (write && linkLocks.length > 0) {
+    const lockPath = join(cwd, BUN_LOCK)
+    const pruned = pruneLinkLocks(
+      readFileSync(lockPath, "utf8"),
+      linkLocks.map((entry) => entry.package),
+    )
+    if (pruned !== undefined) {
+      writeFileSync(lockPath, pruned)
+      lockPruned = true
     }
   }
 
@@ -902,6 +932,8 @@ export function computeUpgrade(
     retiredMarkers,
     linkedOutside,
     strayPins: strayPins(cwd, recipe.version, planned),
+    linkLocks,
+    lockPruned,
     notes: recipe.notes ?? [],
   }
 }
@@ -930,7 +962,8 @@ function renderPlan(
     plan.importMoves.length === 0 &&
     plan.retiredMarkers.length === 0 &&
     plan.linkedOutside.length === 0 &&
-    plan.strayPins.length === 0
+    plan.strayPins.length === 0 &&
+    plan.linkLocks.length === 0
   ) {
     lines.push("Already up to date - no changes.")
     return lines.join("\n")
@@ -1001,6 +1034,24 @@ function renderPlan(
       const more = site.more === 0 ? "" : ` and ${site.more} more`
       lines.push(`  ${site.file}:${site.line}  ${site.pin}${more}`)
     }
+    lines.push("")
+  }
+  if (plan.linkLocks.length > 0) {
+    lines.push(
+      plan.lockPruned
+        ? `Dropped ${plan.linkLocks.length} file: package(s) from bun.lock, whose recorded dependencies Bun never refreshes; \`bun install\` reads each linked package.json again:`
+        : write
+          ? `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; run \`${linkLockUpdate(plan.linkLocks)}\`:`
+          : `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; --write drops them so \`bun install\` reads each linked package.json again:`,
+    )
+    for (const entry of plan.linkLocks)
+      lines.push(
+        `  ${entry.package} (file:${entry.path})  ${entry.changes.map(describeChange).join(", ")}`,
+      )
+    if (plan.lockPruned)
+      lines.push(
+        "  Run `bun install` before committing bun.lock: without them, `bun install --frozen-lockfile` fails.",
+      )
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)
