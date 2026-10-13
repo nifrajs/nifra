@@ -4978,6 +4978,15 @@ unauthenticated caller gets the 401 (or the refusal `run` returns), never a 413 
 `apiKey` and `jwt` from `@nifrajs/middleware` run there. With
 `optional: true` they never refuse, so validation answers as usual.
 
+A stage that throws, or returns anything but `authenticated(principal)` or
+`rejected(...)`, fails closed with 503
+`{ ok: false, error: "auth_unavailable" }`, keeping 401 and 403 for the two
+real decisions and the cause out of the response. The cause goes where a handler's error
+goes: to `onError`, whose response replaces the 503, and when no hook answers, to
+the logger as `unhandled request error`. A database outage inside
+`authed()` is reported the same way. A thrown `Response` or
+`status(...)` is sent as thrown, as it is from a handler.
+
 `run` receives the method, pathname, headers, path params, the raw
 `search` and the parsed `query` (frozen, read by the parser
 `c.query` uses; a repeated key is an array), the `request` (never read

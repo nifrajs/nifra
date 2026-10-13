@@ -390,21 +390,17 @@ export function authed<A extends BetterAuthLike, const RequireTenant extends boo
     app.authenticate({
       id: "better-auth",
       mode: "async",
+      // Provider failures, malformed rows, and malformed tenant resolvers throw on purpose: the core
+      // answers a throw with 503 `auth_unavailable` and reports the cause to onError or the logger.
+      // Catching here would keep the 503 and lose the cause.
       run: async (input: AuthenticationInput<unknown>) => {
-        try {
-          const session = await getSession(auth, input.headers)
-          if (session === null) {
-            return rejected("unauthenticated", rejection(options ?? {}))
-          }
-          const mapped = principalFromSession(session, options)
-          if (mapped.kind === "forbidden") return rejected("forbidden")
-          return authenticated(mapped.principal)
-        } catch {
-          // Provider failures, malformed rows, and malformed custom tenant resolvers all fail closed
-          // without leaking database/auth detail to the client. The core stage turns this into a
-          // stable 503, while 401/403 remain reserved for the two intentional policy decisions.
-          return rejected("unavailable")
+        const session = await getSession(auth, input.headers)
+        if (session === null) {
+          return rejected("unauthenticated", rejection(options ?? {}))
         }
+        const mapped = principalFromSession(session, options)
+        if (mapped.kind === "forbidden") return rejected("forbidden")
+        return authenticated(mapped.principal)
       },
     }) as unknown as WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>>
   return withRouteAssurance(plugin, {

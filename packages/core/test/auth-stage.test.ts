@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { NIFRA_ASSURANCE } from "../src/assurance.ts"
 import {
+  type AuthenticationStage,
   authenticated,
   isAuthenticatedRequest,
+  type Logger,
   markAuthenticatedRequest,
   rejected,
   server,
@@ -511,6 +513,115 @@ describe("errors after an async authentication", () => {
       outcomes.push(`${where} ${response.status} ${mapped}`)
     }
     expect(outcomes).toEqual(["derive 409 1", "handler 409 1"])
+  })
+})
+
+describe("a failed authentication stage", () => {
+  const invalid = 'authenticate() stage "failing" returned an invalid decision'
+  // [case, run, the cause onError and the logger receive]
+  const failures: ReadonlyArray<readonly [string, () => unknown, string]> = [
+    [
+      "sync throw",
+      () => {
+        throw new Error("db down (sync)")
+      },
+      "db down (sync)",
+    ],
+    ["async rejection", () => Promise.reject(new Error("db down (async)")), "db down (async)"],
+    ["no decision", () => undefined, invalid],
+    ["unknown reason", () => ({ kind: "rejected", reason: "expired" }), invalid],
+    [
+      "non-response refusal",
+      () => ({ kind: "rejected", reason: "unauthenticated", response: { invalid: true } }),
+      invalid,
+    ],
+    ["no principal", () => ({ kind: "authenticated", principal: null }), invalid],
+  ]
+  const failing = (run: () => unknown) =>
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed decisions, to prove the runtime refuses what the type already would.
+    ({ id: "failing", run }) as AuthenticationStage<{ readonly id: string }>
+  const loggerInto = (sink: Array<{ message: string; detail: unknown }>): Logger => ({
+    debug() {},
+    info() {},
+    warn() {},
+    error(message, fields) {
+      sink.push({ message, detail: fields?.detail })
+    },
+  })
+
+  for (const [kind, run, cause] of failures) {
+    test(`${kind}: answers 503 and logs the cause when no onError hook answers`, async () => {
+      const logged: Array<{ message: string; detail: unknown }> = []
+      const app = server({ logger: loggerInto(logged) })
+        .authenticate(failing(run))
+        .get("/private", () => ({ ok: true }))
+      const response = await app.fetch(new Request("http://x/private"))
+      expect(response.status).toBe(503)
+      expect(await response.json()).toEqual({ ok: false, error: "auth_unavailable" })
+      expect(logged).toEqual([{ message: "unhandled request error", detail: cause }])
+    })
+
+    test(`${kind}: reaches onError, whose response replaces the 503`, async () => {
+      const logged: Array<{ message: string; detail: unknown }> = []
+      const seen: string[] = []
+      const app = server({ logger: loggerInto(logged) })
+        .onError((error) => {
+          seen.push(error instanceof Error ? error.message : String(error))
+          return status(502, { ok: false, error: "upstream" })
+        })
+        .authenticate(failing(run))
+        .get("/private", () => ({ ok: true }))
+      const response = await app.fetch(new Request("http://x/private"))
+      expect(response.status).toBe(502)
+      expect(seen).toEqual([cause])
+      expect(logged).toEqual([])
+    })
+  }
+
+  test("a thrown Response or status() is sent as thrown, not reported", async () => {
+    const logged: Array<{ message: string; detail: unknown }> = []
+    const app = server({ logger: loggerInto(logged) })
+      .authenticate({
+        id: "throws-control-flow",
+        run: (input) => {
+          if (input.pathname === "/redirect") {
+            throw new Response(null, { status: 302, headers: { location: "/login" } })
+          }
+          throw status(401, { ok: false, error: "login_required" })
+        },
+      })
+      .get("/redirect", () => ({ ok: true }))
+      .get("/status", () => ({ ok: true }))
+    const redirect = await app.fetch(new Request("http://x/redirect"))
+    expect(redirect.status).toBe(302)
+    expect(redirect.headers.get("location")).toBe("/login")
+    const refused = await app.fetch(new Request("http://x/status"))
+    expect(refused.status).toBe(401)
+    expect(await refused.json()).toEqual({ ok: false, error: "login_required" })
+    expect(logged).toEqual([])
+  })
+
+  test("an onError hook that only observes keeps the 503 and the log", async () => {
+    const logged: Array<{ message: string; detail: unknown }> = []
+    const seen: unknown[] = []
+    const cause = new Error("db down")
+    const app = server({ logger: loggerInto(logged) })
+      .onError((error) => {
+        seen.push(error)
+      })
+      .authenticate({ id: "failing", mode: "async", run: () => Promise.reject(cause) })
+      .post("/private", { body: t.object({ name: t.string() }) }, () => ({ ok: true }))
+    const response = await app.fetch(
+      new Request("http://x/private", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Ada" }),
+      }),
+    )
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ ok: false, error: "auth_unavailable" })
+    expect(seen).toEqual([cause])
+    expect(logged).toEqual([{ message: "unhandled request error", detail: "db down" }])
   })
 })
 

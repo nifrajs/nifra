@@ -269,6 +269,16 @@ export default function Auth() {
         <code>optional: true</code> they never refuse, so validation answers as usual.
       </p>
       <p>
+        A stage that throws, or returns anything but <code>authenticated(principal)</code> or{" "}
+        <code>rejected(...)</code>, fails closed with 503{" "}
+        <code>{`{ ok: false, error: "auth_unavailable" }`}</code>, keeping 401 and 403 for the two
+        real decisions and the cause out of the response. The cause goes where a handler's error
+        goes: to <code>onError</code>, whose response replaces the 503, and when no hook answers, to
+        the logger as <code>unhandled request error</code>. A database outage inside{" "}
+        <code>authed()</code> is reported the same way. A thrown <code>Response</code> or{" "}
+        <code>status(...)</code> is sent as thrown, as it is from a handler.
+      </p>
+      <p>
         <code>run</code> receives the method, pathname, headers, path params, the raw{" "}
         <code>search</code> and the parsed <code>query</code> (frozen, read by the parser{" "}
         <code>c.query</code> uses; a repeated key is an array), the <code>request</code> (never read

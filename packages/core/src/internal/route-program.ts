@@ -149,6 +149,7 @@ interface RouteProgramRuntime {
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    fallback?: () => T,
   ): MaybePromise<T>
   finishProgramResult<T>(
     entry: RouteEntry,
@@ -250,6 +251,21 @@ function validAuthenticationFailureReason(
   )
 }
 
+/** A failed stage still answers 503, but its cause takes the handler-error path (onError, else the
+ * logger) instead of vanishing. */
+function failAuthentication<T>(
+  host: RouteProgramRuntime,
+  entry: RouteEntry,
+  ctx: RawContext,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
+  error: unknown,
+): ProgramResult<T> {
+  return host.handleProgramError(entry, error, ctx, finalize, wrapResponse, () =>
+    finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx),
+  )
+}
+
 function runAuthenticationStages<T>(
   host: RouteProgramRuntime,
   entry: RouteEntry,
@@ -294,8 +310,8 @@ function runAuthenticationStages<T>(
   let outcome: MaybePromise<import("../server/auth.ts").AuthenticationResult<unknown>>
   try {
     outcome = stage.run(input)
-  } catch {
-    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
+  } catch (error) {
+    return failAuthentication(host, entry, ctx, finalize, wrapResponse, error)
   }
   if (outcome instanceof Promise) {
     return outcome.then(
@@ -319,7 +335,7 @@ function runAuthenticationStages<T>(
           return host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
         }
       },
-      () => finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx),
+      (error) => failAuthentication(host, entry, ctx, finalize, wrapResponse, error),
     )
   }
   return finishAuthentication(
@@ -351,26 +367,22 @@ function finishAuthentication<T>(
   if (
     result === null ||
     typeof result !== "object" ||
-    (result.kind !== "authenticated" && result.kind !== "rejected")
+    (result.kind === "rejected"
+      ? !validAuthenticationFailureReason(result.reason) ||
+        (result.response !== undefined &&
+          !(result.response instanceof Response) &&
+          !isResponseResult(result.response))
+      : result.kind !== "authenticated" ||
+        result.principal === null ||
+        result.principal === undefined)
   ) {
-    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
+    const id = program.authStages[next - 1]!.id
+    const error = new TypeError(`authenticate() stage "${id}" returned an invalid decision`)
+    return failAuthentication(host, entry, ctx, finalize, wrapResponse, error)
   }
   if (result.kind === "rejected") {
-    if (!validAuthenticationFailureReason(result.reason)) {
-      return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
-    }
-    if (
-      result.response !== undefined &&
-      !(result.response instanceof Response) &&
-      !isResponseResult(result.response)
-    ) {
-      return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
-    }
     const response = result.response ?? defaultAuthenticationResponse(result.reason)
     return finalize(response, responseSet(ctx), ctx)
-  }
-  if (result.principal === null || result.principal === undefined) {
-    return finalize(defaultAuthenticationResponse("unavailable"), responseSet(ctx), ctx)
   }
   Object.defineProperty(ctx, "principal", {
     value: result.principal,
