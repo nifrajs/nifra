@@ -914,6 +914,61 @@ describe("migrateLayout", () => {
     expect(result.issues.map((issue) => issue.file)).not.toContain("backend/tools/lint.sh")
   })
 
+  test("the app's package.json names moved files at their new paths in scripts and entry fields", async () => {
+    const manifest = [
+      "{",
+      '  "name": "@ws/hub",',
+      '  "main": "./backend.ts",',
+      '  "exports": { ".": { "types": "./backend.ts", "default": "./backend.ts" }, "./parts/*": "./tools/*.ts" },',
+      '  "files": ["tools/**", "backend.ts"],',
+      '  "scripts": {',
+      '    "//lint": "runs tools/lint.sh",',
+      '    "lint": "bash tools/lint.sh && bun test tools/env.test.ts"',
+      "  },",
+      '  "nifra": { "zones": {} }',
+      "}",
+      "",
+    ].join("\n")
+    const files = {
+      "package.json": manifest,
+      "backend.ts": 'import { env } from "./tools/env.ts"\nexport const backend = env\n',
+      "tools/env.ts": "export const env = 1\n",
+      "tools/env.test.ts": 'import { env } from "./env.ts"\nenv\n',
+      "tools/lint.sh": "echo lint\n",
+      "routes/index.tsx": "export default () => null\n",
+    }
+    const dry = await migrateLayout(app(files), { typescript: ts })
+    expect(dry.tooling).toContainEqual({
+      file: "package.json",
+      change: "6 file path(s) in scripts and entry fields follow their moved files",
+    })
+    // A `//` key is a note, left as written; the path scan still names it.
+    expect(dry.issues.filter((issue) => issue.file === "package.json")).toEqual([
+      {
+        file: "package.json",
+        reason: 'mentions "tools/lint.sh" by path; it moved to "backend/tools/lint.sh"',
+      },
+    ])
+    const dir = app(files)
+    await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "package.json")).toBe(
+      [
+        "{",
+        '  "name": "@ws/hub",',
+        '  "main": "./backend/app.ts",',
+        '  "exports": { ".": { "types": "./backend/app.ts", "default": "./backend/app.ts" }, "./parts/*": "./tools/*.ts" },',
+        '  "files": ["tools/**", "backend/app.ts"],',
+        '  "scripts": {',
+        '    "//lint": "runs tools/lint.sh",',
+        '    "lint": "bash backend/tools/lint.sh && bun test backend/tools/env.test.ts"',
+        "  },",
+        '  "nifra": { "zones": {} }',
+        "}",
+        "",
+      ].join("\n"),
+    )
+  })
+
   test("a moved module's import that leaves the app is re-based", async () => {
     const dir = app({
       "routes/index.tsx": 'import { Card } from "../ui/card.tsx"\nexport default () => <Card />\n',
@@ -1493,12 +1548,11 @@ describe("migrateLayout on an API-only app", () => {
       file: "package.json",
       change: '"nifra": { "kind": "api" }',
     })
-    expect(result.issues).toEqual([
-      {
-        file: "package.json",
-        reason: 'mentions "backend.ts" by path; it moved to "backend/app.ts"',
-      },
-    ])
+    expect(result.tooling).toContainEqual({
+      file: "package.json",
+      change: "1 file path(s) in scripts and entry fields follow their moved files",
+    })
+    expect(result.issues).toEqual([])
     expect(read(dir, "package.json")).toBe(PACKAGE)
   })
 
@@ -1510,7 +1564,7 @@ describe("migrateLayout on an API-only app", () => {
     expect(read(dir, "lib/db.ts")).toBe("export const db = { all: () => [] }\n")
     expect(read(dir, "scripts/seed.ts")).toContain('from "../backend/app"')
     expect(read(dir, "package.json")).toBe(
-      '{\n  "name": "orders-api",\n  "scripts": { "start": "bun backend.ts" },\n  "nifra": { "kind": "api" }\n}\n',
+      '{\n  "name": "orders-api",\n  "scripts": { "start": "bun backend/app.ts" },\n  "nifra": { "kind": "api" }\n}\n',
     )
     expect(read(dir, "tsconfig.json")).toBe('{ "include": ["*.ts", "lib", "backend"] }\n')
   })

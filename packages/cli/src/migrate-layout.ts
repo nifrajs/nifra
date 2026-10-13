@@ -74,7 +74,8 @@ const LEGACY_SERVER = /\.server(\.(?:[cm]?[jt]sx?|svelte|vue|mdx))$/
 const RETIRED_SPECIFIERS: Readonly<Record<string, string>> = {
   "@nifrajs/web/server-only": "@nifrajs/web/backend-only",
 }
-/** Scripts and config that name app files by path: scanned for paths that moved, never rewritten. */
+/** Scripts and config that name app files by path: scanned for paths that moved. Only the app's own
+ * package.json is rewritten, in the fields `rewritePackagePaths` reads. */
 const TOOLING_FILE =
   /(?:\.(?:json|jsonc|ya?ml|toml|sh|bash|zsh|ps1)|(?:^|\/)(?:Dockerfile|Makefile|Procfile))$/
 const SELF_LOCATION = /\bimport\.meta\.(?:dirname|dir|filename|url)\b|\b__(?:dirname|filename)\b/
@@ -2753,6 +2754,11 @@ export async function migrateLayout(
     .filter((file) => next.has(file) || !original.has(file))
     .map((file) => ({ from: splitFrom.get(file) ?? file, to: newPath(file) }))
   const tsconfigs = followTsconfigs(ts, root, moveMap, layout)
+  // The app's own package.json names files from the app root: its scripts and entry fields follow.
+  const manifestPath = join(root, "package.json")
+  const manifest = existsSync(manifestPath)
+    ? rewritePackagePaths(ts, readFileSync(manifestPath, "utf8"), moveMap)
+    : undefined
   const scanned: Array<readonly [string, string]> = [...final]
   for (const file of everyFile) {
     if (
@@ -2762,7 +2768,9 @@ export async function migrateLayout(
     )
       scanned.push([
         newPath(file),
-        tsconfigs.files.get(file)?.text ?? readFileSync(join(root, file), "utf8"),
+        (file === "package.json" ? manifest?.text : undefined) ??
+          tsconfigs.files.get(file)?.text ??
+          readFileSync(join(root, file), "utf8"),
       ])
   }
   // A mention only in comments is worth updating, not a decision: it never changes what runs.
@@ -3002,6 +3010,14 @@ export async function migrateLayout(
   if (kind.text !== undefined) {
     toolingWrites.set("package.json", kind.text)
     tooling.push({ file: "package.json", change: '"nifra": { "kind": "api" }' })
+  }
+  if (manifest !== undefined && manifest.count > 0) {
+    const current = toolingWrites.get("package.json") ?? readFileSync(manifestPath, "utf8")
+    toolingWrites.set("package.json", rewritePackagePaths(ts, current, moveMap).text)
+    tooling.push({
+      file: "package.json",
+      change: `${manifest.count} file path(s) in scripts and entry fields follow their moved files`,
+    })
   }
 
   if (options.write === true) {
@@ -3544,6 +3560,80 @@ function declareApiKind(ts: typeof TS, root: string): { text?: string; issue?: s
   if (!ts.isObjectLiteralExpression(nifra.initializer))
     return { issue: '"nifra" is not an object; add "kind": "api" to it by hand' }
   return { text: insertProperty(source, text, nifra.initializer, '"kind": "api"') }
+}
+
+/** package.json fields whose string values name files from the package folder. */
+const PACKAGE_PATH_FIELDS = new Set([
+  "main",
+  "module",
+  "types",
+  "typings",
+  "browser",
+  "source",
+  "bin",
+  "exports",
+  "imports",
+  "files",
+  "scripts",
+])
+
+/**
+ * `text` (a package.json at the app root) with each moved file it names by its exact path, in the
+ * fields above, named at its new path; `./` kept as written. A value with a `*` outside `scripts` is a
+ * pattern over a folder, which no single move settles, so it stays and the path scan reports it.
+ */
+function rewritePackagePaths(
+  ts: typeof TS,
+  text: string,
+  moves: ReadonlyMap<string, string>,
+): { readonly text: string; readonly count: number } {
+  const source = ts.parseJsonText("package.json", text)
+  const top = source.statements[0]?.expression
+  if (top === undefined || !ts.isObjectLiteralExpression(top) || moves.size === 0)
+    return { text, count: 0 }
+  // Longest first, so `lib/a.test.ts` is not read as `lib/a.ts` with a tail.
+  const ordered = [...moves].sort(([a], [b]) => b.length - a.length)
+  const pattern = new RegExp(
+    `(?<![\\w.@/-])(\\./)?(${ordered.map(([from]) => escapeRegExp(from)).join("|")})(?![\\w/-]|\\.\\w)`,
+    "g",
+  )
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  let count = 0
+  const visit = (node: TS.Node, field: string): void => {
+    if (ts.isStringLiteral(node)) {
+      if (field !== "scripts" && node.text.includes("*")) return
+      const value = node.text.replace(pattern, (_match, dot: string | undefined, from: string) => {
+        count += 1
+        return `${dot ?? ""}${moves.get(from) ?? from}`
+      })
+      if (value !== node.text)
+        edits.push({
+          start: node.getStart(source),
+          end: node.getEnd(),
+          text: JSON.stringify(value),
+        })
+      return
+    }
+    if (ts.isArrayLiteralExpression(node)) {
+      for (const element of node.elements) visit(element, field)
+      return
+    }
+    if (!ts.isObjectLiteralExpression(node)) return
+    for (const property of node.properties) {
+      if (!ts.isPropertyAssignment(property)) continue
+      // `"//x"` keys are comments by npm convention.
+      if (ts.isStringLiteral(property.name) && property.name.text.startsWith("//")) continue
+      visit(property.initializer, field)
+    }
+  }
+  for (const property of top.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name)) continue
+    if (PACKAGE_PATH_FIELDS.has(property.name.text)) visit(property.initializer, property.name.text)
+  }
+  let next = text
+  for (const edit of edits.sort((a, b) => b.start - a.start))
+    next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
+  return { text: next, count }
 }
 
 /** Tailwind `content` globs that matched a moved file at its old path and match nothing at its new one. */
