@@ -902,8 +902,10 @@ export function tablesToCatalogs(
   tables: Iterable<CopyTableEntry>,
   locales?: Locales,
 ): TableCatalogs {
-  const catalogs: Record<string, MessageTree> = {}
-  for (const locale of locales?.all ?? []) catalogs[locale] = {}
+  // Null prototypes throughout: an id segment or locale key `__proto__` stays an own entry instead of
+  // reaching Object.prototype.
+  const catalogs: Record<string, MessageTree> = Object.create(null)
+  for (const locale of locales?.all ?? []) catalogs[locale] = Object.create(null)
   const placed = new Set<string>()
   // Every proper prefix of a placed id, so a table above another is found without a scan.
   const above = new Set<string>()
@@ -922,15 +924,16 @@ export function tablesToCatalogs(
     for (const [locale, value] of Object.entries(values)) {
       let node = catalogs[locale]
       if (node === undefined) {
-        node = {}
-        catalogs[locale] = node
+        const fresh: MessageTree = Object.create(null)
+        node = fresh
+        catalogs[locale] = fresh
       }
       for (const segment of path.slice(0, -1)) {
         const next: MessageValue | undefined = node[segment]
         if (isBlock(next)) {
           node = next
         } else {
-          const block: MessageTree = {}
+          const block: MessageTree = Object.create(null)
           node[segment] = block
           node = block
         }

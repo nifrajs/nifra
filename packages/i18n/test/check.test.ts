@@ -276,6 +276,17 @@ describe("tablesToCatalogs", () => {
       "ta missing-key shop.faq.0",
     ])
   })
+  test("an id segment or locale key named __proto__ stays an own entry, off Object.prototype", () => {
+    const proto = "__proto__"
+    const { catalogs } = tablesToCatalogs([
+      { id: `${proto}.polluted`, values: { en: "x" } },
+      { id: "title", values: JSON.parse(`{ "${proto}": "y" }`) },
+    ])
+    expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false)
+    expect(Object.keys(catalogs)).toEqual(["en", proto])
+    expect(Object.entries(catalogs.en?.[proto] ?? {})).toEqual([["polluted", "x"]])
+    expect(catalogs[proto]?.title).toBe("y")
+  })
 })
 
 describe("partly translated text", () => {

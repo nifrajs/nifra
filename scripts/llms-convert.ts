@@ -37,8 +37,10 @@ function isJsxResidue(line: string): boolean {
   return false
 }
 
+// A braced value is a run of template literals and other non-brace characters. The two never start
+// with the same character, so a tag that fails to match backtracks linearly.
 const CODE_BLOCK_TAG =
-  /<CodeBlock\s+((?:[\w-]+=(?:\{`(?:[^`\\]|\\.)*`\}|\{[^{}]*\}|"[^"]*")\s*)*)\/>/g
+  /<CodeBlock\s+((?:[\w-]+=(?:\{(?:`(?:[^`\\]|\\.)*`|[^{}`])*\}|"[^"]*")\s*)*)\/>/g
 
 /** The code a `<CodeBlock>`'s attributes name, or why it names none the page can show. */
 function codeBlockSource(
@@ -48,7 +50,7 @@ function codeBlockSource(
   consts: DocConsts,
 ): { readonly code: string; readonly lang: string } {
   const lang = /\blang="([\w-]+)"/.exec(attributes)?.[1] ?? "ts"
-  const expression = /\bcode=\{(`(?:[^`\\]|\\.)*`|[^{}]*)\}/.exec(attributes)?.[1]?.trim()
+  const expression = /\bcode=\{((?:`(?:[^`\\]|\\.)*`|[^{}`])*)\}/.exec(attributes)?.[1]?.trim()
   if (expression === undefined)
     throw new Error(`${file}: <CodeBlock ${attributes.trim()}/> has no code attribute`)
   if (/^\w+$/.test(expression)) {

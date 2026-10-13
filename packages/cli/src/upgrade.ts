@@ -1149,7 +1149,7 @@ function renderLinkedSkew(
     `${allowed ? "Allowed by --allow-linked-skew" : "Blocked"}: ${skew.length} linked repositor${skew.length === 1 ? "y loads" : "ies load"} its own nifra at another version. Its imports resolve from its own node_modules, so after this upgrade a server() it builds cannot be merge()d here ("merge() requires a server() from this copy of @nifrajs/core").`,
   ]
   for (const entry of skew) {
-    const at = relative(cwd, entry.path) || "."
+    const at = relative(cwd, entry.path).split(sep).join("/") || "."
     lines.push(
       `  ${entry.package} (${entry.declaredIn}) at ${at}: ${entry.installs.map((install) => `${install.package} ${install.version}`).join(", ")}`,
       `    cd ${at} && nifra upgrade ${version} --write && bun install`,

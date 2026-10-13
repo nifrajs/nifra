@@ -59,6 +59,11 @@ describe("jsxToMarkdown", () => {
     )
   })
 
+  test("a braced value may mix template literals, braces inside them, and other code", () => {
+    const md = convert(page('const B = "b"', '<CodeBlock code={`{a}` + B} lang="ts" />'))
+    expect(md).toBe("```ts\n{a}b\n```")
+  })
+
   test("angle brackets inside inline code survive the leftover-tag pass", () => {
     const md = convert(
       page(

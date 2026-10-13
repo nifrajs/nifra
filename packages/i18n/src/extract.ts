@@ -239,7 +239,11 @@ export function createCopyScanner(ts: typeof TS, host: CopySourceHost): CopyScan
             : undefined
       if (matched === undefined) continue
       for (const target of targets) {
-        const found = probe(target.replace("*", matched))
+        // Sliced, not replace(): a `$&` or `$1` in the matched text is literal.
+        const at = target.indexOf("*")
+        const found = probe(
+          at === -1 ? target : target.slice(0, at) + matched + target.slice(at + 1),
+        )
         if (found !== undefined) return found
       }
     }

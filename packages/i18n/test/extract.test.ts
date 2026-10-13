@@ -78,6 +78,17 @@ describe("createCopyScanner", () => {
     expect(definition?.locales?.get("ur").tag).toBe("ur-PK")
   })
 
+  test("a tsconfig paths target takes the matched text literally, `$&` included", () => {
+    const { root, scanner } = project({
+      "tsconfig.json": '{ "compilerOptions": { "paths": { "~/*": ["./*"] } } }',
+      "$&lib/i18n.ts": I18N,
+      "routes/index.tsx": 'import { copy } from "~/$&lib/i18n"\nexport const A = copy({ en: "x" })',
+    })
+    expect(scanner.tables(`${root}/routes/index.tsx`).map((t) => t.definition)).toEqual([
+      { file: "$&lib/i18n.ts", name: "copy" },
+    ])
+  })
+
   test("a table it cannot read statically says why", () => {
     const { root, scanner } = project({
       "i18n.ts": I18N,
