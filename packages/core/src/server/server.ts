@@ -1232,6 +1232,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Mount a legacy fetch handler under a literal path prefix. Mounted handlers sit behind typed
    * routes, so routes can move one at a time while the remaining legacy surface stays live.
    * Mounted responses are outside Nifra's typed route and response-contract checks.
+   *
+   * It carries HTTP only: a WebSocket upgrade under the prefix reaches the handler as an ordinary
+   * request and never becomes a socket. Serve that path's sockets with `app.ws()` routes or a
+   * mounted child app, or keep the legacy server running beside this one for them.
    */
   mountFetch(
     path: string,
