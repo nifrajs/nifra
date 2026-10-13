@@ -687,6 +687,64 @@ describe("NF-C035", () => {
       ])
     })
 
+    test("a nifra-expect comment on the call or its apiPrefix line accepts the difference", async () => {
+      const accepted = [
+        [
+          "// nifra-expect NF-C035: the outer server mounts the backend at /api",
+          "export const app = createWebApp({ api: inProcessClient(backend) })",
+        ],
+        [
+          "export const app = createWebApp({",
+          "  api: inProcessClient(backend),",
+          "  // The outer server mounts the backend at /api, behind its own middleware.",
+          "  // nifra-expect NF-C035: a second mount here would skip that middleware",
+          '  apiPrefix: "",',
+          "})",
+        ],
+        ["export const app = createWebApp({ api: backend }) // nifra-expect NF-C035"],
+      ]
+      for (const lines of accepted) {
+        expect(
+          await scanEntry({
+            "backend/framework.ts": framework('"/api"'),
+            "server.ts": entry(...lines),
+          }),
+        ).toEqual([])
+      }
+      const otherCode = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry(
+          "// nifra-expect NF-C027: unrelated",
+          "export const app = createWebApp({ api: backend })",
+        ),
+      })
+      expect(otherCode.map((f) => f.line)).toEqual([5])
+    })
+
+    test("the advice names the hatch, and warns that a second mount skips the other server's middleware", async () => {
+      const [none] = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "" })'),
+      })
+      expect(none?.message).toContain(
+        "If another server already serves this backend at /api, mark the call with `// nifra-expect NF-C035: <reason>` instead: an apiPrefix here would add a second path to it that skips that server's middleware.",
+      )
+      const [other] = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "/v1" })'),
+      })
+      expect(other?.message).toEndWith(
+        "If another server already serves this backend at /api, mark the call with `// nifra-expect NF-C035: <reason>` instead.",
+      )
+      const [, devNowhere] = await scanEntry({
+        "backend/framework.ts": adapterSource.join("\n"),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "/api" })'),
+      })
+      expect(devNowhere?.message).toEndWith(
+        "Mark a deliberate difference with `// nifra-expect NF-C035: <reason>` above the call.",
+      )
+    })
+
     test("a different literal or same-module const is reported; the import path is relative to the entry", async () => {
       const findings = await scanEntry({
         "backend/framework.ts": framework('"/api"'),

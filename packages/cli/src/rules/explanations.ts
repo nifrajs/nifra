@@ -191,8 +191,8 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     docs: "/docs/routing",
   },
   "NF-C035": {
-    why: "backend/framework.ts sets no apiPrefix, so the backend is reachable from loaders only and a browser call to /api reaches page routing.",
-    fix: 'Export `apiPrefix = "/api"` to serve it over HTTP, or `apiPrefix = ""` to keep it loader-only.',
+    why: "backend/framework.ts sets no apiPrefix, so the backend is reachable from loaders only and a browser call to /api reaches page routing; or an app module's own createWebApp call mounts the backend at another apiPrefix than `nifra dev` serves it at.",
+    fix: 'Export `apiPrefix = "/api"` to serve it over HTTP, or `apiPrefix = ""` to keep it loader-only. At a createWebApp call, import `apiPrefix` from backend/framework.ts, or, when another server already serves the backend there, mark the call `// nifra-expect NF-C035: <reason>`.',
     command: "nifra fix --code NF-C035",
     docs: "/docs/backends",
   },

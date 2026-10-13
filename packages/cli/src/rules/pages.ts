@@ -22,6 +22,7 @@ import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { hasWebConfig } from "../internal/nifra-project.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
+import { commentBlockExpectation } from "./comment-markers.ts"
 import type { CheckRule } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -206,6 +207,8 @@ const unwrapExpression = (ts: typeof TSApi, node: TSApi.Expression): TSApi.Expre
 export interface EntryApiMount {
   readonly line: number
   readonly apiPrefix: EntryApiPrefix
+  /** The line of the `apiPrefix` property that decides it, when one does. */
+  readonly prefixLine: number | undefined
 }
 
 /**
@@ -306,21 +309,30 @@ export function entryApiMounts(
     ) {
       // The last of an `apiPrefix` property and a spread decides, as it does at runtime.
       let apiPrefix: EntryApiPrefix = { kind: "literal", value: "", unset: true }
+      let prefixNode: TSApi.Node | undefined
       for (const property of options.properties) {
         if (ts.isSpreadAssignment(property)) apiPrefix = { kind: "unreadable" }
         else if (propertyName(property) !== "apiPrefix") continue
         else if (ts.isPropertyAssignment(property)) apiPrefix = readPrefix(property.initializer)
         else if (ts.isShorthandPropertyAssignment(property)) apiPrefix = readPrefix(property.name)
         else apiPrefix = { kind: "unreadable" }
+        prefixNode = ts.isSpreadAssignment(property) ? undefined : property
       }
-      const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-      mounts.push({ line, apiPrefix })
+      const lineOf = (at: TSApi.Node): number =>
+        tree.getLineAndCharacterOfPosition(at.getStart(tree)).line + 1
+      mounts.push({
+        line: lineOf(node),
+        apiPrefix,
+        prefixLine: prefixNode === undefined ? undefined : lineOf(prefixNode),
+      })
     }
     ts.forEachChild(node, visit)
   }
   visit(tree)
   return mounts
 }
+
+const ENTRY_PREFIX_EXPECTATION = ["NF-C035"]
 
 const servedAt = (prefix: string): string => (prefix === "" ? "nowhere" : `at ${prefix}`)
 
@@ -350,19 +362,30 @@ async function entryApiPrefixFindings(
       true,
       scriptKindOf(ts, file),
     )
-    for (const { line, apiPrefix } of entryApiMounts(ts, tree, file)) {
+    const lines = text.split("\n")
+    for (const { line, apiPrefix, prefixLine } of entryApiMounts(ts, tree, file)) {
       if (apiPrefix.kind !== "literal" || apiPrefix.value === expected) continue
+      if (
+        [line, prefixLine].some(
+          (at) => at !== undefined && commentBlockExpectation(lines, at, ENTRY_PREFIX_EXPECTATION),
+        )
+      )
+        continue
       const specifier = posix.relative(posix.dirname(file), origin.replace(SCRIPT_SOURCE, ""))
       const passed = apiPrefix.unset
         ? "no apiPrefix"
         : `apiPrefix ${JSON.stringify(apiPrefix.value)}`
+      const hatch =
+        expected === ""
+          ? "Mark a deliberate difference with `// nifra-expect NF-C035: <reason>` above the call."
+          : `If another server already serves this backend at ${expected}, mark the call with \`// nifra-expect NF-C035: <reason>\` instead${apiPrefix.value === "" ? ": an apiPrefix here would add a second path to it that skips that server's middleware" : ""}.`
       findings.push(
         diagnostic({
           code: "NF-C035",
           severity: "warn",
           file,
           line,
-          message: `${file} calls createWebApp with a backend and ${passed}, so the server it starts serves the backend ${servedAt(apiPrefix.value)}, while \`nifra dev\` serves it ${servedAt(expected)} (${origin}). Pass the framework config's value: \`import { apiPrefix } from "${specifier.startsWith(".") ? specifier : `./${specifier}`}"\` and \`createWebApp({ ..., apiPrefix })\`.`,
+          message: `${file} calls createWebApp with a backend and ${passed}, so the server it starts serves the backend ${servedAt(apiPrefix.value)}, while \`nifra dev\` serves it ${servedAt(expected)} (${origin}). Pass the framework config's value: \`import { apiPrefix } from "${specifier.startsWith(".") ? specifier : `./${specifier}`}"\` and \`createWebApp({ ..., apiPrefix })\`. ${hatch}`,
           evidence: [
             `createWebApp apiPrefix: ${apiPrefix.unset ? "unset" : JSON.stringify(apiPrefix.value)}`,
             `${origin} apiPrefix: ${JSON.stringify(expected)}`,
@@ -382,7 +405,8 @@ async function entryApiPrefixFindings(
  *
  * An app module that calls `createWebApp` itself is checked against the same value, since only the
  * framework config reaches `nifra dev`: a backend it mounts at another `apiPrefix`, or with none, is
- * served in production where dev never served it.
+ * served in production where dev never served it. No static read sees a mount another server makes,
+ * so `// nifra-expect NF-C035: <reason>` on the call or its `apiPrefix` line accepts the difference.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",

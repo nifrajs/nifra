@@ -8512,7 +8512,10 @@ server entry and the dev server read one value without a re-export. A hand-writt
 `createWebApp` call passes `apiPrefix` itself; import it from
 `backend/framework.ts` so production serves the backend where
 `nifra dev` does. `nifra check` reports `NF-C035` at a call
-that mounts a backend with no `apiPrefix`, or with a different one.
+that mounts a backend with no `apiPrefix`, or with a different one. When another
+server already serves the backend there, behind middleware of its own, an
+`apiPrefix` on the call would add a second path to it that skips that middleware: mark the call
+`// nifra-expect NF-C035: <reason>` instead.
 
 Because the backend answers first and its 404 is final, a page file under the prefix (
 `routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
