@@ -62,15 +62,28 @@ export function publishedTarballFailures(
   }
 }
 
-async function fetchPublished(
+/** The registry calls `fetchPublished` makes, so a test can stand in for npm and the clock. */
+export interface RegistryAccess {
+  readonly fetch: (url: string) => Promise<Response>
+  readonly sleep: (ms: number) => Promise<unknown>
+  readonly now: () => number
+}
+
+const liveRegistry: RegistryAccess = { fetch: (url) => fetch(url), sleep: Bun.sleep, now: Date.now }
+
+/** A published tarball and its integrity hash, or why it could not be read. A 404 is retried until
+ * `waitMs` passes, on the tarball as on the metadata: npm can serve a new version's metadata before
+ * its tarball. */
+export async function fetchPublished(
   registry: string,
   name: string,
   version: string,
   waitMs: number,
+  access: RegistryAccess = liveRegistry,
 ): Promise<{ bytes: Uint8Array; integrity: string } | string> {
-  const deadline = Date.now() + waitMs
+  const deadline = access.now() + waitMs
   for (;;) {
-    const response = await fetch(`${registry}/${name.replaceAll("/", "%2f")}/${version}`)
+    const response = await access.fetch(`${registry}/${name.replaceAll("/", "%2f")}/${version}`)
     if (response.ok) {
       const meta: unknown = await response.json()
       const dist: unknown =
@@ -81,13 +94,14 @@ async function fetchPublished(
       const integrity = field("integrity")
       if (typeof tarball !== "string" || typeof integrity !== "string")
         return `${name}@${version}: registry metadata has no dist.tarball or dist.integrity`
-      const download = await fetch(tarball)
-      if (!download.ok) return `${name}@${version}: tarball download failed (${download.status})`
-      return { bytes: new Uint8Array(await download.arrayBuffer()), integrity }
-    }
-    if (response.status !== 404 || Date.now() >= deadline)
+      const download = await access.fetch(tarball)
+      if (download.ok) return { bytes: new Uint8Array(await download.arrayBuffer()), integrity }
+      if (download.status !== 404 || access.now() >= deadline)
+        return `${name}@${version}: tarball download failed (${download.status})`
+    } else if (response.status !== 404 || access.now() >= deadline) {
       return `${name}@${version}: registry answered ${response.status}`
-    await Bun.sleep(RETRY_MS)
+    }
+    await access.sleep(RETRY_MS)
   }
 }
 

@@ -3,7 +3,12 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { integrityMatches, publishedTarballFailures } from "./verify-published.ts"
+import {
+  fetchPublished,
+  integrityMatches,
+  publishedTarballFailures,
+  type RegistryAccess,
+} from "./verify-published.ts"
 
 let dir: string
 let bytes: Uint8Array
@@ -51,4 +56,47 @@ test("a matching tarball is read and held to the never-ship and marker rules", (
     ],
     paths: ["dist/index.js", "dist/index.test.js", "package.json"],
   })
+})
+
+/** npm answering from a script of statuses per URL, on a clock that only sleeping moves. */
+function scriptedRegistry(statuses: Record<string, number[]>): RegistryAccess & { slept: number } {
+  let clock = 0
+  const access = {
+    slept: 0,
+    now: () => clock,
+    sleep: async (ms: number) => {
+      clock += ms
+      access.slept += 1
+    },
+    fetch: async (url: string) => {
+      const status = statuses[url]?.shift() ?? 200
+      if (status !== 200) return new Response(null, { status })
+      if (url.endsWith(".tgz")) return new Response(bytes)
+      return Response.json({ dist: { tarball: "https://r.test/p.tgz", integrity } })
+    },
+  }
+  return access
+}
+
+test("a tarball npm does not serve yet is retried while the wait lasts", async () => {
+  const registry = scriptedRegistry({ "https://r.test/p.tgz": [404, 404] })
+  const fetched = await fetchPublished("https://r.test", "p", "1.0.0", 60_000, registry)
+  expect(typeof fetched === "string" ? fetched : fetched.integrity).toBe(integrity)
+  expect(registry.slept).toBe(2)
+})
+
+test("a tarball still missing when the wait runs out fails with its status", async () => {
+  const registry = scriptedRegistry({ "https://r.test/p.tgz": [404, 404, 404] })
+  expect(await fetchPublished("https://r.test", "p", "1.0.0", 20_000, registry)).toBe(
+    "p@1.0.0: tarball download failed (404)",
+  )
+  expect(registry.slept).toBe(2)
+})
+
+test("a tarball error other than 404 is not retried", async () => {
+  const registry = scriptedRegistry({ "https://r.test/p.tgz": [500] })
+  expect(await fetchPublished("https://r.test", "p", "1.0.0", 60_000, registry)).toBe(
+    "p@1.0.0: tarball download failed (500)",
+  )
+  expect(registry.slept).toBe(0)
 })
