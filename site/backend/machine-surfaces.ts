@@ -5,8 +5,9 @@
  * documentation MCP server, not a hosted customer-data API.
  */
 
-// The registry manifest scripts/version.ts bumps each release, so discovery cannot trail it.
-import registryManifest from "../../server.json" with { type: "json" }
+// scripts/version.ts bumps core's VERSION with the root server.json each release, so discovery cannot
+// trail the registry manifest. server.json itself sits outside the site's zones.
+import { VERSION } from "@nifrajs/core"
 export const AGENTS_MD = [
   "# Nifra",
   "",
@@ -69,7 +70,7 @@ export const MCP_DISCOVERY = {
   title: "Nifra docs",
   description:
     "Nifra docs, runnable examples, and API types as an MCP server for any AI assistant.",
-  version: registryManifest.version,
+  version: VERSION,
   repository: {
     url: "https://github.com/nifrajs/nifra",
     source: "github",
