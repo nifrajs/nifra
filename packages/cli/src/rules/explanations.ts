@@ -238,6 +238,11 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Apply the auth plugin on the merged server, or declare its routes in a group() of this server. A module that is public on purpose takes `// nifra-expect NF-C043: <reason>` on the merge line.",
     docs: "/docs/plugins",
   },
+  "NF-C044": {
+    why: "A production client build moves the app's copy tables into one chunk per locale, and a page loads its locale's chunk from the `copyChunks` its server lists. A createWebApp call with a clientEntry and no copyChunks lists none, so the first page that renders copy fails in production, while `nifra dev`, which never splits, passes.",
+    fix: 'Pass the client build\'s `copyChunks` to createWebApp: the generated server manifest exports it (`import { copyChunks } from "./server-manifest"`), and `buildClient()` returns it. A server that never serves those pages takes `// nifra-expect NF-C044: <reason>` on the call.',
+    docs: "/docs/i18n",
+  },
   "NF-C045": {
     why: "A route registration returns a new type that records the route. Called as a statement of its own, the route runs, but the exported server's type never includes it, so the typed client has no such call.",
     fix: "Chain the registration onto the server's declaration, or declare the routes on their own server() and merge() it. A route kept off the type on purpose takes `// nifra-expect NF-C045: <reason>` above the statement.",

@@ -426,6 +426,12 @@ export default function I18n() {
         <li>The build reads the source with the app's TypeScript (5.9 or 6). Without its compiler API
           (TypeScript 7 ships none) the build warns and keeps tables whole. It adds about 1 ms per
           module to a production build.</li>
+        <li>A server entry that calls <code>createWebApp</code> with a <code>clientEntry</code> and
+          no <code>copyChunks</code> passes <code>nifra dev</code>, which never splits, and fails on the
+          first production page that renders copy. <code>nifra check</code> reports that call as{" "}
+          <code>NF-C044</code>; the generated server manifest exports <code>copyChunks</code> for it
+          to import, and <code>{"// nifra-expect NF-C044: <reason>"}</code> on the call accepts a
+          server that never serves those pages.</li>
       </ul>
 
       <h2>Rich text</h2>

@@ -5703,6 +5703,13 @@ the same module declares. A table built any other way, or written in a `.svelte`
 (TypeScript 7 ships none) the build warns and keeps tables whole. It adds about 1 ms per
 module to a production build.
 
+- A server entry that calls `createWebApp` with a `clientEntry` and
+no `copyChunks` passes `nifra dev`, which never splits, and fails on the
+first production page that renders copy. `nifra check` reports that call as
+`NF-C044`; the generated server manifest exports `copyChunks` for it
+to import, and `// nifra-expect NF-C044: <reason>` on the call accepts a
+server that never serves those pages.
+
 ### Rich text
 
 `rich(t, key, tags, vars)` renders a message's tags with your components, never
