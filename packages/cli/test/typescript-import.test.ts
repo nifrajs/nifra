@@ -254,7 +254,7 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
   }
 })
 
-test("checks JSX and Svelte routes on a project TypeScript 7 install", async () => {
+test("checks JSX and Svelte routes and app entries on a project TypeScript 7 install", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-ts7-components-"))
   try {
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "app" }))
@@ -274,6 +274,13 @@ test("checks JSX and Svelte routes on a project TypeScript 7 install", async () 
       join(root, "routes", "notes.tsx"),
       "export async function loader() {\n  return {}\n}\nexport default () => <p />\n",
     )
+    await mkdir(join(root, "backend"), { recursive: true })
+    await writeFile(join(root, "backend", "app.ts"), "export const backend = server()\n")
+    await writeFile(join(root, "backend", "framework.ts"), 'export const apiPrefix = "/api"\n')
+    await writeFile(
+      join(root, "server.ts"),
+      'import { createWebApp } from "@nifrajs/web"\nexport const app = createWebApp({ api: client })\n',
+    )
 
     const result = await collectCheckResult(root, { lintsOnly: true })
     const found = new Set(
@@ -281,10 +288,11 @@ test("checks JSX and Svelte routes on a project TypeScript 7 install", async () 
         (finding) => `${finding.code} ${finding.file}:${finding.line}`,
       ),
     )
-    expect([...found].filter((entry) => /NF-C0(04|17|32|41)/.test(entry)).sort()).toEqual([
+    expect([...found].filter((entry) => /NF-C0(04|17|32|35|41)/.test(entry)).sort()).toEqual([
       "NF-C004 routes/index.svelte:2",
       "NF-C032 routes/about.jsx:1",
       "NF-C032 routes/index.svelte:3",
+      "NF-C035 server.ts:2",
       "NF-C041 routes/notes.tsx:1",
     ])
   } finally {

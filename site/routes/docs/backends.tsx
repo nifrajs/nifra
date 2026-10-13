@@ -186,7 +186,10 @@ export default function Backends() {
         <code>nonce</code>, <code>serverComponents</code> and <code>use</code> from{" "}
         <code>backend/framework.ts</code> when <code>nifra.config.ts</code> does not set them, so the
         server entry and the dev server read one value without a re-export. A hand-written{" "}
-        <code>createWebApp</code> call passes <code>apiPrefix</code> itself.
+        <code>createWebApp</code> call passes <code>apiPrefix</code> itself; import it from{" "}
+        <code>backend/framework.ts</code> so production serves the backend where{" "}
+        <code>nifra dev</code> does. <code>nifra check</code> reports <code>NF-C035</code> at a call
+        that mounts a backend with no <code>apiPrefix</code>, or with a different one.
       </p>
       <p>
         Because the backend answers first and its 404 is final, a page file under the prefix (
