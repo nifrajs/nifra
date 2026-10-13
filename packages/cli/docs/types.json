@@ -19714,6 +19714,13 @@
     "doc": "/** Whether a module in `from` may import (with a value import) a module in `to`. */"
   },
   {
+    "name": "importGlobPlugin",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function importGlobPlugin(options: {\n    readonly root: string;\n}): BunPlugin;",
+    "doc": "/**\n * Expand `import.meta.glob` in the app's own modules, for `Bun.build`. `root` is the app root, which a\n * pattern starting with `/` is read from. Installed packages are left as published. Register it after\n * every plugin that loads app modules itself (a server-function stub must win over it); a module such\n * a plugin loads keeps its call, which {@link assertNoImportGlob} then refuses in the output. Register\n * it before a plugin that rewrites source through `addSourceTransform`: it reads through that rewrite.\n */"
+  },
+  {
     "name": "importOpenAPI",
     "kind": "function",
     "package": "@nifrajs/schema",

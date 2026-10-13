@@ -166,6 +166,10 @@ test("the generated plugin module composes the PRODUCTION boundary plugins, not 
   expect(source.indexOf("zones.setup(guarded)")).toBeLessThan(source.indexOf("fn.setup(guarded)"))
   expect(source).toContain('cssModulesBunPlugin("dom")')
   expect(source).toContain("cssModules.setup(guarded)")
+  expect(source).toContain("importGlobPlugin({ root: appRoot })")
+  expect(source.indexOf("globs.setup(guarded)")).toBeGreaterThan(
+    source.indexOf("cssModules.setup(guarded)"),
+  )
 })
 
 test("every plugin the generated module composes registers through the reserved-specifier view", () => {

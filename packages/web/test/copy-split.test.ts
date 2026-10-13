@@ -143,6 +143,43 @@ describe("a production client build with copy tables", () => {
     expect(scriptsFound(code)).toEqual([])
   })
 
+  test("a module with tables and an import.meta.glob is split and expanded both", async () => {
+    const app = join(root, "globbed")
+    const put = (file: string, text: string): void => {
+      mkdirSync(dirname(join(app, file)), { recursive: true })
+      writeFileSync(join(app, file), text)
+    }
+    put("shared/i18n.ts", readFileSync(join(root, "shared/i18n.ts"), "utf8"))
+    put(
+      "shared/parts.ts",
+      [
+        'import { copy } from "./i18n"',
+        'export const PEDAL = copy({ en: "Pedal", hi: "पैडल", ta: "மிதி", ar: "دواسة" })',
+        'export const kinds = import.meta.glob("./kinds/*.ts", { eager: true, import: "default" })',
+      ].join("\n"),
+    )
+    put("shared/kinds/road.ts", 'export default "kind-road"\n')
+    put(
+      "routes/index.tsx",
+      'import { PEDAL, kinds } from "../shared/parts"\nexport default function Index() { return String(PEDAL) + Object.values(kinds).join() }\n',
+    )
+    put("frontend/client-stub.ts", "export function mountRouter() {}\n")
+    const globbedDir = join(app, "dist")
+    const built = await buildClient({
+      routesDir: join(app, "routes"),
+      outDir: globbedDir,
+      clientModule: join(app, "frontend/client-stub.ts"),
+      publicDir: false,
+    })
+    expect(Object.keys(built.copyChunks ?? {}).sort()).toEqual(["ar", "en", "hi", "ta"])
+    const code = readdirSync(globbedDir)
+      .filter((name) => name.endsWith(".js") && !name.startsWith("copy-"))
+      .map((name) => readFileSync(join(globbedDir, name), "utf8"))
+      .join("\n")
+    expect(code).toContain("kind-road")
+    expect(scriptsFound(code)).toEqual([])
+  }, 60_000)
+
   test("with the split off, every locale's copy is in the route's code", async () => {
     const unsplitDir = join(root, "dist-unsplit")
     const unsplit = await buildClient({

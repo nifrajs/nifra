@@ -91,6 +91,7 @@ import {
   verifyServerGraph,
 } from "./internal/zone-graph.ts"
 import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
+import { assertNoImportGlob, importGlobPlugin } from "./plugins/import-glob.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { prerenderRoutes } from "./prerender.ts"
@@ -514,6 +515,8 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
           svelteDedupePlugin(routesDir),
           serverFnStubPlugin(),
           ...(options.plugins ?? []),
+          // Before the copy split: it claims a module that calls the glob and reads it through the split.
+          importGlobPlugin({ root }),
           // Last: it rewrites a module no other plugin claims, and the ones that do read through it.
           ...(copySplit === undefined ? [] : [copySplit.plugin]),
         ],
@@ -569,6 +572,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       }
       return { name: out.path, kind: "code", text: await out.text() }
     }),
+  )
+  assertNoImportGlob(
+    emitted.flatMap((file) =>
+      file.kind === "code" ? [[relative(cwd, file.name), file.text ?? ""] as const] : [],
+    ),
   )
   const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath)
   const verdict = verifyClientGraph(clientGraph, {
@@ -1078,6 +1086,7 @@ function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string):
   return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
 }
 
+export { importGlobPlugin } from "./plugins/import-glob.ts"
 export { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 
 /**
@@ -1189,6 +1198,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
       reactDedupePlugin(entryDir),
       preactDedupePlugin(entryDir),
       ...(options.plugins ?? []),
+      importGlobPlugin({ root: resolvePath(options.root ?? dirname(routesDir)) }),
     ],
   })
   if (!result.success) {

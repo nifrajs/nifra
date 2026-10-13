@@ -7768,6 +7768,13 @@ emits the _same_ error as the Bun build (one implementation, adapted to Rollup's
 so a refused import - a `node:` builtin, `backend/`, a route's
 `.backend.ts` half - fails the build either way.
 
+`import.meta.glob` is not one of them. The Bun build expands a literal pattern the
+way Vite does: a string or an array of strings starting with `./`,
+`../` or `/` (the app root), `!` excluding, with the
+`eager` and `import` options, keyed as Vite keys it. Any other form
+(a computed pattern, an alias, `query`) fails the build with the file and line, and
+so does a bundle that still calls the glob because another plugin loaded that module first.
+
 ```ts
 // vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
 // Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
