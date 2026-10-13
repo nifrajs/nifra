@@ -118,12 +118,28 @@ test("whichever copy loads second is the one that warns", async () => {
   // Another install got here first, so this file, evaluated again, is the second copy.
   registry.splice(0, registry.length, "file:///elsewhere/@nifrajs/core/src/server/core-copies.ts")
   const warn = spyOn(console, "warn").mockImplementation(() => {})
+  const VERSIONS = Symbol.for("nifra.core.copy-versions")
+  const versions: unknown = Reflect.get(globalThis, VERSIONS)
   try {
-    await import(`${fileURLToPath(here)}?loaded-second`)
+    const second = await import(`${fileURLToPath(here)}?loaded-second`)
     expect(warn).toHaveBeenCalledTimes(1)
     expect(String(warn.mock.calls[0]?.[0])).toContain("@nifrajs/core is loaded 2 times")
+    // The copy that loaded second names both: itself with the version it records (into a fresh
+    // process-wide map here), the earlier one by URL alone, as a copy that recorded none.
+    Reflect.deleteProperty(globalThis, VERSIONS)
+    second.recordCopyVersion()
+    const refusal = second.mergeRefusal()
+    expect(refusal).toContain(`this copy:  ${here} (${VERSION})`)
+    expect(refusal).toContain(
+      "other copy: file:///elsewhere/@nifrajs/core/src/server/core-copies.ts\n",
+    )
+    registry.splice(0, registry.length, here)
+    expect(second.mergeRefusal()).toBe(
+      "merge() requires a server() from this copy of @nifrajs/core",
+    )
   } finally {
     warn.mockRestore()
     registry.splice(0, registry.length, ...saved)
+    Reflect.set(globalThis, VERSIONS, versions)
   }
 })
