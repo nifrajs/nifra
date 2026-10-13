@@ -826,6 +826,61 @@ describe("migrateLayout", () => {
     ])
   })
 
+  test("a const naming the module's own folder is followed like the folder itself", async () => {
+    const dir = app({
+      "backend.ts": 'import { feeds } from "./lib/feeds.ts"\nexport const all = feeds\n',
+      "lib/feeds.ts": [
+        'import { join } from "node:path"',
+        "const here = import.meta.dir",
+        'export const feeds = [join(here, "..", "content"), `${here}/feeds.ts`]',
+        "",
+      ].join("\n"),
+      "lib/shadow.ts": [
+        'import { join } from "node:path"',
+        "const base = import.meta.dir",
+        'export const own = join(base, "feeds.ts")',
+        'export const pick = (base: string) => join(base, "feeds.ts")',
+        "",
+      ].join("\n"),
+      "build.ts": [
+        'import { resolve } from "node:path"',
+        "const root = import.meta.dir",
+        'export const entry = resolve(root, "src/start.tsx")',
+        "export const sheet = `${root}/src/look.css`",
+        "",
+      ].join("\n"),
+      "src/start.tsx": 'import "./look.css"\nexport const start = 1\n',
+      "src/look.css": "body {}\n",
+      "routes/index.tsx":
+        'import { start } from "../src/start.tsx"\nimport { own } from "../lib/shadow.ts"\nexport default () => [start, own]\n',
+      "content/a.md": "a\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(read(dir, "backend/lib/feeds.ts")).toContain(
+      'export const feeds = [join(here, "..", "..", "content"), `${here}/feeds.ts`]',
+    )
+    // A file that stays keeps its own spelling but follows what moved.
+    expect(read(dir, "build.ts")).toBe(
+      [
+        'import { resolve } from "node:path"',
+        "const root = import.meta.dir",
+        'export const entry = resolve(root, "frontend/src/start.tsx")',
+        "export const sheet = `${root}/frontend/src/look.css`",
+        "",
+      ].join("\n"),
+    )
+    // `base` is also a parameter name, so no use of it is taken for the module's folder.
+    expect(read(dir, "frontend/lib/shadow.ts")).toContain(
+      'export const own = join(base, "feeds.ts")',
+    )
+    expect(result.issues.map((issue) => issue.file)).not.toContain("build.ts")
+    expect(result.issues).toContainEqual({
+      file: "frontend/lib/shadow.ts",
+      reason:
+        'builds a path from its own location (import.meta.dir) that the migration could not re-point, and it moved from "lib/shadow.ts"; check that path by hand',
+    })
+  })
+
   test("a moved module's import that leaves the app is re-based", async () => {
     const dir = app({
       "routes/index.tsx": 'import { Card } from "../ui/card.tsx"\nexport default () => <Card />\n',

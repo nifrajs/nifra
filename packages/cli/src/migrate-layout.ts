@@ -1215,6 +1215,50 @@ function triviaCommentRanges(
 
 const OWN_DIR = new Set(["import.meta.dir", "import.meta.dirname", "__dirname"])
 
+interface OwnDirAlias {
+  readonly name: TS.Identifier
+  readonly initializer: TS.Expression
+}
+
+/**
+ * Top-level `const dir = import.meta.dir` (or `.dirname`, `__dirname`) bindings, by name. A name the
+ * file declares anywhere else (a parameter, an inner `let`) is left out: a use could be that binding.
+ */
+function ownDirAliases(ts: typeof TS, sf: TS.SourceFile): Map<string, OwnDirAlias> {
+  const aliases = new Map<string, OwnDirAlias>()
+  for (const statement of sf.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue
+    for (const declaration of statement.declarationList.declarations) {
+      const { name, initializer } = declaration
+      if (
+        ts.isIdentifier(name) &&
+        initializer !== undefined &&
+        OWN_DIR.has(initializer.getText(sf))
+      )
+        aliases.set(name.text, { name, initializer })
+    }
+  }
+  if (aliases.size === 0) return aliases
+  const declared = new Map<string, number>()
+  const count = (node: TS.Node): void => {
+    const name =
+      ts.isVariableDeclaration(node) ||
+      ts.isParameter(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isBindingElement(node)
+        ? node.name
+        : undefined
+    if (name !== undefined && ts.isIdentifier(name))
+      declared.set(name.text, (declared.get(name.text) ?? 0) + 1)
+    ts.forEachChild(node, count)
+  }
+  count(sf)
+  for (const name of [...aliases.keys()]) if (declared.get(name) !== 1) aliases.delete(name)
+  return aliases
+}
+
 /**
  * Re-point the paths a module moving from `from` to `to` builds from its own location, so each still
  * reaches what it did: `join(import.meta.dir, "..", "x")` (or `resolve`), `import.meta.dir + "/../x"`,
@@ -1238,8 +1282,10 @@ function rebaseOwnPaths(
   )
   const edits: Array<{ start: number; end: number; text: string }> = []
   const followed: Array<readonly [number, number]> = []
+  const aliases = ownDirAliases(ts, sf)
   const isOwnDir = (node: TS.Node | undefined): node is TS.Expression =>
-    node !== undefined && OWN_DIR.has(node.getText(sf))
+    node !== undefined &&
+    (OWN_DIR.has(node.getText(sf)) || (ts.isIdentifier(node) && aliases.has(node.text)))
   const isLiteral = (
     node: TS.Node | undefined,
   ): node is TS.StringLiteral | TS.NoSubstitutionTemplateLiteral =>
@@ -1337,6 +1383,20 @@ function rebaseOwnPaths(
     ts.forEachChild(node, visit)
   }
   visit(sf)
+  // An alias whose every use was re-pointed is followed too; one left in a call the migration cannot
+  // read keeps its `import.meta.dir` unfollowed.
+  for (const [name, declaration] of aliases) {
+    const isFollowed = (node: TS.Node): boolean =>
+      followed.some(([start, end]) => start <= node.getStart(sf) && node.getEnd() <= end)
+    const uses: TS.Identifier[] = []
+    const collect = (node: TS.Node): void => {
+      if (ts.isIdentifier(node) && node.text === name && node !== declaration.name) uses.push(node)
+      ts.forEachChild(node, collect)
+    }
+    collect(sf)
+    if (uses.every(isFollowed))
+      followed.push([declaration.initializer.getStart(sf), declaration.initializer.getEnd()])
+  }
 
   const unfollowed = [...text.matchAll(new RegExp(SELF_LOCATION.source, "g"))].find(
     (match) => !followed.some(([start, end]) => start <= match.index && match.index < end),
