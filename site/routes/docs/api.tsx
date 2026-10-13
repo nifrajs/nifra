@@ -394,8 +394,11 @@ export default function Api() {
       <p className="caveat">
         Prefer <code>c.set</code> over returning a raw <code>Response</code>. A <code>Response</code>{" "}
         return makes the typed client infer <code>data: never</code>, so you silently lose drift
-        detection for that route (<code>nifra check</code> flags it). <code>c.set</code> keeps your
-        plain-object return fully typed.
+        detection for that route (<code>nifra check</code> flags it, NF-C007). <code>c.set</code>{" "}
+        keeps your plain-object return fully typed. The check reads the functions a route
+        registration or an <code>implement()</code> map passes, and a local function one returns a
+        call to; a helper that answers an auth stage, or a handler registered from a list of route
+        objects, is not read.
       </p>
       <p>
         A <code>Response</code> a handler or hook returns or throws still gets the{" "}

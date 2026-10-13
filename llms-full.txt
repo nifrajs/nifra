@@ -1052,8 +1052,11 @@ export const app = server()
 
 Prefer `c.set` over returning a raw `Response`. A `Response`
 return makes the typed client infer `data: never`, so you silently lose drift
-detection for that route (`nifra check` flags it). `c.set` keeps your
-plain-object return fully typed.
+detection for that route (`nifra check` flags it, NF-C007). `c.set`
+keeps your plain-object return fully typed. The check reads the functions a route
+registration or an `implement()` map passes, and a local function one returns a
+call to; a helper that answers an auth stage, or a handler registered from a list of route
+objects, is not read.
 
 A `Response` a handler or hook returns or throws still gets the
 `c.set.headers` it lacks and the queued cookies, so a guard's
