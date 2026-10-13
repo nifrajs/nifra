@@ -1,5 +1,6 @@
 {
   "@nifrajs/a2a": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -10,6 +11,7 @@
     "src/index.ts"
   ],
   "@nifrajs/acp": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -20,6 +22,7 @@
     "src/index.ts"
   ],
   "@nifrajs/ag-ui": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -30,6 +33,7 @@
     "src/index.ts"
   ],
   "@nifrajs/agent": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/context.d.ts",
@@ -75,6 +79,7 @@
     "src/registry.ts"
   ],
   "@nifrajs/agent-app": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/client.d.ts",
@@ -100,6 +105,7 @@
     "src/view-models.ts"
   ],
   "@nifrajs/agent-protocol": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/conformance.d.ts",
@@ -130,6 +136,7 @@
     "src/transport-policy.ts"
   ],
   "@nifrajs/agent-review": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/canonical.d.ts",
@@ -160,6 +167,7 @@
     "src/types.ts"
   ],
   "@nifrajs/agent-telemetry": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -175,6 +183,7 @@
     "src/run.ts"
   ],
   "@nifrajs/auth": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/authorization.d.ts",
@@ -210,6 +219,7 @@
     "src/store.ts"
   ],
   "@nifrajs/authjs": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/client.d.ts",
@@ -225,6 +235,7 @@
     "src/index.ts"
   ],
   "@nifrajs/aws-lambda": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -235,6 +246,7 @@
     "src/index.ts"
   ],
   "@nifrajs/better-auth": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -245,6 +257,7 @@
     "src/index.ts"
   ],
   "@nifrajs/cache": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/cache.d.ts",
@@ -270,6 +283,7 @@
     "src/types.ts"
   ],
   "@nifrajs/cli": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/agent-files.d.ts",
@@ -863,6 +877,7 @@
     "src/workspace-link.ts"
   ],
   "@nifrajs/client": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/client.d.ts",
@@ -923,6 +938,7 @@
     "src/ws.ts"
   ],
   "@nifrajs/coding-agent": [
+    "CHANGELOG.md",
     "EXTENSIONS.md",
     "LICENSE",
     "PERFORMANCE.md",
@@ -1142,6 +1158,7 @@
     "src/workflows.ts"
   ],
   "@nifrajs/content": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "package.json",
@@ -1150,6 +1167,7 @@
     "src/mdx.ts"
   ],
   "@nifrajs/core": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/assurance.d.ts",
@@ -1750,6 +1768,7 @@
     "src/ws.ts"
   ],
   "@nifrajs/cron": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -1770,6 +1789,7 @@
     "src/scheduler.ts"
   ],
   "@nifrajs/deno": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -1780,6 +1800,7 @@
     "src/index.ts"
   ],
   "@nifrajs/devtools": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/client.d.ts",
@@ -1795,6 +1816,7 @@
     "src/index.ts"
   ],
   "@nifrajs/edge": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -1805,6 +1827,7 @@
     "src/index.ts"
   ],
   "@nifrajs/env": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/define.d.ts",
@@ -1830,6 +1853,7 @@
     "src/schema.ts"
   ],
   "@nifrajs/events": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/contract.d.ts",
@@ -1850,6 +1874,7 @@
     "src/registry.ts"
   ],
   "@nifrajs/graphql": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/context.d.ts",
@@ -1885,6 +1910,7 @@
     "src/ws.ts"
   ],
   "@nifrajs/i18n": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/check.d.ts",
@@ -1940,6 +1966,7 @@
     "src/tags.ts"
   ],
   "@nifrajs/image": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/backend.d.ts",
@@ -1995,6 +2022,7 @@
     "src/sign.ts"
   ],
   "@nifrajs/island-trigger": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -2005,6 +2033,7 @@
     "src/index.ts"
   ],
   "@nifrajs/islets": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/bind.d.ts",
@@ -2030,6 +2059,7 @@
     "src/signals.ts"
   ],
   "@nifrajs/jobs": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/backoff.d.ts",
@@ -2065,6 +2095,7 @@
     "src/types.ts"
   ],
   "@nifrajs/mcp": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/agent-descriptor.d.ts",
@@ -2125,6 +2156,7 @@
     "src/widget.ts"
   ],
   "@nifrajs/mcp-db": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/engine.d.ts",
@@ -2165,6 +2197,7 @@
     "src/postgres.ts"
   ],
   "@nifrajs/middleware": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/_ip.d.ts",
@@ -2350,6 +2383,7 @@
     "src/trailing-slash.ts"
   ],
   "@nifrajs/mock": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -2365,6 +2399,7 @@
     "src/reflect-auto.ts"
   ],
   "@nifrajs/node": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/generated/bridge-markers.d.ts",
@@ -2400,6 +2435,7 @@
     "src/open-resolved.ts"
   ],
   "@nifrajs/otel": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/cache.d.ts",
@@ -2480,6 +2516,7 @@
     "src/tracing.ts"
   ],
   "@nifrajs/pi": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -2497,6 +2534,7 @@
     "src/rpc-write.ts"
   ],
   "@nifrajs/prompt": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -2507,6 +2545,7 @@
     "src/index.ts"
   ],
   "@nifrajs/proxy": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -2527,6 +2566,7 @@
     "src/undici.ts"
   ],
   "@nifrajs/runner": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -2537,6 +2577,7 @@
     "src/index.ts"
   ],
   "@nifrajs/schema": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/adapter.d.ts",
@@ -2588,6 +2629,7 @@
   ],
   "@nifrajs/skills": [
     ".claude-plugin/plugin.json",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "package.json",
@@ -2597,6 +2639,7 @@
     "skills/nifra/SKILL.md"
   ],
   "@nifrajs/storage": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/capabilities.d.ts",
@@ -2642,6 +2685,7 @@
     "src/types.ts"
   ],
   "@nifrajs/testing": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/adversarial.d.ts",
@@ -2737,6 +2781,7 @@
     "src/zod.ts"
   ],
   "@nifrajs/ts-plugin": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.cjs",
@@ -2757,6 +2802,7 @@
     "src/zones.ts"
   ],
   "@nifrajs/uploads": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/detect.d.ts",
@@ -2787,6 +2833,7 @@
     "src/validate.ts"
   ],
   "@nifrajs/web": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "css-modules.d.ts",
@@ -3539,6 +3586,7 @@
     "src/zones.ts"
   ],
   "@nifrajs/web-preact": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/await.d.ts",
@@ -3634,6 +3682,7 @@
     "src/server-components/server.ts"
   ],
   "@nifrajs/web-react": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/auth.d.ts",
@@ -3774,6 +3823,7 @@
     "src/server-components/server.ts"
   ],
   "@nifrajs/web-solid": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/await.d.ts",
@@ -3889,6 +3939,7 @@
     "src/svg.ts"
   ],
   "@nifrajs/web-svelte": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/Await.svelte",
@@ -3993,6 +4044,7 @@
     "src/svg.ts"
   ],
   "@nifrajs/web-vanilla": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/compose.d.ts",
@@ -4013,6 +4065,7 @@
     "src/index.ts"
   ],
   "@nifrajs/web-vue": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/await.d.ts",
@@ -4109,6 +4162,7 @@
     "src/vue-shim.d.ts"
   ],
   "@nifrajs/webmcp": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",
@@ -4119,12 +4173,14 @@
     "src/index.ts"
   ],
   "@nifrajs/workers": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "package.json",
     "src/index.ts"
   ],
   "create-nifra": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/agent-files.d.ts",
@@ -4238,6 +4294,7 @@
     "template/tsconfig.json"
   ],
   "nifra": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/index.d.ts",

@@ -17,7 +17,8 @@ let integrity: string
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "verify-published-"))
   mkdirSync(join(dir, "package", "dist"), { recursive: true })
-  writeFileSync(join(dir, "package", "package.json"), "{}")
+  writeFileSync(join(dir, "package", "package.json"), '{"version":"1.0.0"}')
+  writeFileSync(join(dir, "package", "CHANGELOG.md"), "# @x/a\n\n## 0.9.0\n")
   writeFileSync(join(dir, "package", "dist", "index.js"), "// zqx-hidden\nexport {}")
   writeFileSync(join(dir, "package", "dist", "index.test.js"), "test()")
   const tgz = join(dir, "p.tgz")
@@ -48,13 +49,14 @@ test("a tarball that fails its hash is refused before it is opened", () => {
   })
 })
 
-test("a matching tarball is read and held to the never-ship and marker rules", () => {
+test("a matching tarball is read and held to the changelog, never-ship and marker rules", () => {
   expect(publishedTarballFailures("@x/a@1.0.0", { bytes, integrity }, ["ZQX-HIDDEN"])).toEqual({
     failures: [
+      "@x/a@1.0.0: CHANGELOG.md's newest section is `## 0.9.0`, not `## 1.0.0`",
       "@x/a@1.0.0/dist/index.test.js: a test file",
       "@x/a@1.0.0/dist/index.js: private marker present",
     ],
-    paths: ["dist/index.js", "dist/index.test.js", "package.json"],
+    paths: ["CHANGELOG.md", "dist/index.js", "dist/index.test.js", "package.json"],
   })
 })
 

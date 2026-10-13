@@ -40,7 +40,8 @@
     "template-site-solid",
     "template-site-svelte",
     "template-isr",
-    "template-batteries"
+    "template-batteries",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "scripts": {

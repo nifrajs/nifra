@@ -27,7 +27,8 @@
   "files": [
     "dist",
     "src",
-    "extensions"
+    "extensions",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "scripts": {

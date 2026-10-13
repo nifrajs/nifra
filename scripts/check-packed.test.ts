@@ -12,8 +12,12 @@ const write = (path: string, text: string): void => {
 }
 
 const pkg = (dir: string, name: string, files: Readonly<Record<string, string>>): void => {
-  write(`${dir}/package.json`, JSON.stringify({ name, version: "1.0.0", files: ["dist"] }))
+  write(
+    `${dir}/package.json`,
+    JSON.stringify({ name, version: "1.0.0", files: ["dist", "CHANGELOG.md"] }),
+  )
   write(`${dir}/LICENSE`, "MIT")
+  write(`${dir}/CHANGELOG.md`, `# ${name}\n\n## 1.0.0\n`)
   for (const [path, text] of Object.entries(files)) write(`${dir}/${path}`, text)
 }
 
@@ -44,12 +48,12 @@ test("--update records what each package packs, and a clean release run then pas
   const updated = await run({ update: true })
   expect(updated.failures).toEqual([])
   expect(JSON.parse(readFileSync(join(root, "packed-files.json"), "utf8"))).toEqual({
-    "@x/a": ["LICENSE", "dist/index.js", "package.json"],
-    "@x/b": ["LICENSE", "dist/index.js", "package.json"],
+    "@x/a": ["CHANGELOG.md", "LICENSE", "dist/index.js", "package.json"],
+    "@x/b": ["CHANGELOG.md", "LICENSE", "dist/index.js", "package.json"],
   })
   const release = await run({ release: true, npm: true })
   expect(release.failures).toEqual([])
-  expect(release.fileCount).toBe(6)
+  expect(release.fileCount).toBe(8)
 }, 60_000)
 
 test("a file the record lacks is only reported outside a release, and fails a release", async () => {
@@ -93,7 +97,9 @@ test("a package that cannot be packed fails instead of dropping out", async () =
 
 test("npm selecting other files than bun packed fails, naming the difference", async () => {
   const npmFiles = async (dir: string) =>
-    basename(dir) === "b" ? ["LICENSE", "dist/index.js", "dist/stray.js", "package.json"] : "boom"
+    basename(dir) === "b"
+      ? ["CHANGELOG.md", "LICENSE", "dist/index.js", "dist/stray.js", "package.json"]
+      : "boom"
   const { failures } = await run({ npm: true, npmFiles })
   expect(failures).toEqual([
     "@x/a: boom",
@@ -104,4 +110,30 @@ test("npm selecting other files than bun packed fails, naming the difference", a
 test("a package without its LICENSE fails", async () => {
   rmSync(join(root, "packages/a/LICENSE"))
   expect((await run()).failures).toEqual(["@x/a: ships no LICENSE file"])
+}, 60_000)
+
+test("a CHANGELOG.md the package has but does not pack fails", async () => {
+  write(
+    "packages/a/package.json",
+    JSON.stringify({ name: "@x/a", version: "1.0.0", files: ["dist"] }),
+  )
+  expect((await run()).failures).toEqual(["@x/a: ships no CHANGELOG.md"])
+}, 60_000)
+
+test("a CHANGELOG.md without a section for the package's version fails", async () => {
+  write("packages/b/CHANGELOG.md", "# @x/b\n\n## 0.9.0\n")
+  expect((await run()).failures).toEqual([
+    "@x/b: CHANGELOG.md's newest section is `## 0.9.0`, not `## 1.0.0`",
+  ])
+}, 60_000)
+
+test("a package with no CHANGELOG.md yet is only reported outside a release, and fails a release", async () => {
+  rmSync(join(root, "packages/a/CHANGELOG.md"))
+  await run({ update: true })
+  const local = await run()
+  expect(local.failures).toEqual([])
+  expect(local.notes).toContain("@x/a: no CHANGELOG.md yet (enforced under RELEASE_MODE=1)")
+  expect((await run({ release: true, npm: true })).failures).toEqual([
+    "@x/a: ships no CHANGELOG.md",
+  ])
 }, 60_000)

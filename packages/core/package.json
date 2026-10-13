@@ -303,7 +303,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "sideEffects": [
     "./src/ws.ts",

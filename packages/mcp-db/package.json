@@ -37,7 +37,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "scripts": {

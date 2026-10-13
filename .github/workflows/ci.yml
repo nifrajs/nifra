@@ -82,6 +82,11 @@ jobs:
       - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora + sitemap fresh)
         run: bun run check:docs && bun run check:corpus && bun run check:sitemap
 
+      # The release deploys this build only after npm has the packages, so a build the zone rules refuse
+      # must fail here, before a release PR can merge.
+      - name: Site production build (what the release deploys)
+        run: bun run check:site
+
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
 

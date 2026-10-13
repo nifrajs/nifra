@@ -56,6 +56,7 @@ const GATES: Readonly<Record<string, Gate>> = {
   "check:llms": { redPath: "scripts/llms-corpus-check.test.ts" },
   "check:node-outcome": { redPath: "scripts/gen-node-outcome.test.ts" },
   "check:sitemap": { redPath: "scripts/gen-sitemap.test.ts" },
+  "check:site": { redPath: "packages/web/test/server-zone-guard.test.ts" },
   "check:corpus": { untested: COMPOSITE },
   "check:public-manifest": { redPath: "scripts/gen-public-product-manifest.test.ts" },
   "check:plugin": { redPath: "scripts/check-plugin-manifest.test.ts" },

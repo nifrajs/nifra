@@ -90,6 +90,7 @@
     "verify:release": "bun run check:release-tree && bun packages/cli/src/release-verification.ts --release",
     "check:release-tree": "bun scripts/check-release-tree.ts",
     "check:release": "bun run verify:release",
+    "check:site": "bun run site/build.ts",
     "site:build": "bun run build && bun run gen:llms && bun run gen:api && bun run site/build.ts",
     "site:build:node": "bun run site/build-node.ts",
     "site:build:deno": "bun run site/build-deno.ts",
