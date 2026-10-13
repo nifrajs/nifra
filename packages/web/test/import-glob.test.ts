@@ -59,6 +59,18 @@ describe("expandImportGlobs", () => {
     )
   })
 
+  test("a line or paragraph separator in an export name is escaped in the generated literal", () => {
+    const dir = app(GROVE)
+    const out = expandImportGlobs(
+      "export const barks = import.meta.glob('./grove/oak.ts', { import: 'bark\u2028\u2029' })\n",
+      join(dir, "src/load.ts"),
+      dir,
+    )
+    expect(out).toBe(
+      'export const barks = ({"./grove/oak.ts": () => import("./grove/oak.ts").then((m) => m["bark\\u2028\\u2029"])})\n',
+    )
+  })
+
   test("a typeof guard reads function, and prose or strings that name the glob are left alone", () => {
     const dir = app(GROVE)
     const source = [

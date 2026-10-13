@@ -231,6 +231,14 @@ function matchGlob(importer: string, root: string, patterns: readonly string[]):
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
+/** `value` as a JS string literal that stays on one line for every parser: before ES2019, U+2028 and
+ * U+2029 end a line even inside a string. */
+const stringLiteral = (value: string): string =>
+  JSON.stringify(value).replace(
+    /[\u2028\u2029]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16)}`,
+  )
+
 /** How a matched file is keyed, as Vite keys it: from the importer (`./x.ts`) or the root (`/x.ts`). */
 function keyOf(importer: string, root: string, file: string, rooted: boolean): string {
   if (rooted) return `/${relative(root, file).replaceAll("\\", "/")}`
@@ -320,15 +328,15 @@ export function expandImportGlobs(source: string, file: string, root: string): s
     }
     const rooted = patterns.some((pattern) => pattern.replace(/^!/, "").startsWith("/"))
     const entries = files.map((target, index) => {
-      const key = JSON.stringify(keyOf(file, root, target, rooted))
-      const specifier = JSON.stringify(keyOf(file, root, target, false))
+      const key = stringLiteral(keyOf(file, root, target, rooted))
+      const specifier = stringLiteral(keyOf(file, root, target, false))
       if (options.eager) {
         const name = `__nifra_glob_${call}_${index}`
         hoisted.push(`import * as ${name} from ${specifier}`)
-        return `${key}: ${options.pick === undefined ? name : `${name}[${JSON.stringify(options.pick)}]`}`
+        return `${key}: ${options.pick === undefined ? name : `${name}[${stringLiteral(options.pick)}]`}`
       }
       const load = `import(${specifier})`
-      return `${key}: () => ${options.pick === undefined ? load : `${load}.then((m) => m[${JSON.stringify(options.pick)}])`}`
+      return `${key}: () => ${options.pick === undefined ? load : `${load}.then((m) => m[${stringLiteral(options.pick)}])`}`
     })
     edits.push({ start, end: reader.at, text: `({${entries.join(", ")}})` })
     call += 1
