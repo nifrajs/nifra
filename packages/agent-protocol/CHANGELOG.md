@@ -1,5 +1,11 @@
 # @nifrajs/agent-protocol
 
+## 5.2.0
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+
 ## 5.1.0
 
 ### Patch Changes

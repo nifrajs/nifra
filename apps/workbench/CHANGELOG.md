@@ -1,5 +1,14 @@
 # @nifrajs/workbench
 
+## 5.2.0
+
+### Patch Changes
+
+- Updated dependencies [9498cf8]
+  - @nifrajs/agent-app@5.2.0
+  - @nifrajs/agent-protocol@5.2.0
+  - @nifrajs/coding-agent@5.2.0
+
 ## 5.1.0
 
 ### Patch Changes
