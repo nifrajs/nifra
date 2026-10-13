@@ -1,5 +1,22 @@
 # @nifrajs/cli
 
+## 5.2.1
+
+### Patch Changes
+
+- 604967f: `nifra check`'s NF-C035 accepts `// nifra-expect NF-C035: <reason>` on a `createWebApp` call, or on its `apiPrefix` line, for an app whose backend another server already serves where `nifra dev` does. The finding at the call says so, and for a call that passes no `apiPrefix` it adds that one there would give the backend a second path that skips that server's middleware.
+- ec8080c: `nifra upgrade --write` no longer runs `nifra check` against packages its edits have not installed: that check read the release being left, so it could fail on a mix of versions or pass on the old one. While package.json pins or bun.lock entries it changed are not installed, or `node_modules` holds a nifra package at another version, it prints the install command (`bun install`, or `pnpm`, `yarn` or `npm install` by lockfile) and `nifra check` to run after it, and exits 0, so `nifra upgrade <version> --write && bun install` chains. `--json` reports `install` in place of `check`. The hook-scope diff waits for the install too: the report from before the edits is saved for `nifra routes --hooks --since`.
+- @nifrajs/agent-review@5.2.1
+  - @nifrajs/client@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/i18n@5.2.1
+  - @nifrajs/mcp@5.2.1
+  - @nifrajs/mcp-db@5.2.1
+  - @nifrajs/runner@5.2.1
+  - @nifrajs/schema@5.2.1
+  - @nifrajs/testing@5.2.1
+  - @nifrajs/web@5.2.1
+
 ## 5.2.0
 
 ### Minor Changes

@@ -1,5 +1,9 @@
 # @nifrajs/island-trigger
 
+## 5.2.1
+
+No changes in this release.
+
 ## 5.2.0
 
 ### Patch Changes

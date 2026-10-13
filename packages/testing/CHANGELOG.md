@@ -1,5 +1,16 @@
 # @nifrajs/testing
 
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/agent@5.2.1
+  - @nifrajs/client@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/mcp@5.2.1
+  - @nifrajs/mock@5.2.1
+  - @nifrajs/webmcp@5.2.1
+
 ## 5.2.0
 
 ### Patch Changes

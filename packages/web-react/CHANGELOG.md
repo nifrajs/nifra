@@ -1,5 +1,16 @@
 # @nifrajs/web-react
 
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/authjs@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/i18n@5.2.1
+  - @nifrajs/image@5.2.1
+  - @nifrajs/schema@5.2.1
+  - @nifrajs/web@5.2.1
+
 ## 5.2.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/client",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "description": "Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style proxy).",
   "keywords": [
     "bun",

@@ -1,5 +1,11 @@
 # @nifrajs/agent-app
 
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.2.1
+
 ## 5.2.0
 
 ### Patch Changes
