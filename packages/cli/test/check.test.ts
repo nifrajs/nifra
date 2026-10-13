@@ -88,6 +88,7 @@ describe("release verification", () => {
       "cli-isolation",
       "corpus",
       "sitemap",
+      "site",
       "docs",
       "public-boundary",
       "public-manifest",

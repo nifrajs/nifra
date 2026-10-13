@@ -68,6 +68,11 @@ const GATES = Object.freeze([
     "Run `bun run gen:sitemap` and review the generated sitemap.",
   ),
   gate(
+    "site",
+    [["run", "check:site"]],
+    "Run `bun run check:site` and fix what the site's production build refuses; the release deploys that build after npm has the packages.",
+  ),
+  gate(
     "public-manifest",
     [["run", "check:public-manifest"]],
     "Run `bun run gen:public` and review the generated public product manifest.",
@@ -232,6 +237,7 @@ const RELEASE_PLAN = Object.freeze([
   "cli-isolation",
   "corpus",
   "sitemap",
+  "site",
   "docs",
   "public-boundary",
   "public-manifest",
