@@ -26,6 +26,7 @@
 - Updated dependencies [1d20d1f]
 - Updated dependencies [746ada9]
 - Updated dependencies [1d20d1f]
+- Updated dependencies [b9e7c6b]
   - @nifrajs/authjs@5.2.0
   - @nifrajs/core@5.2.0
   - @nifrajs/i18n@5.2.0
