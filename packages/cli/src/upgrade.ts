@@ -82,6 +82,8 @@ export interface UpgradeOptions {
    * change in which hooks run where is visible. Loads the backend. Default true; `--no-hooks` skips it.
    */
   readonly hooks?: boolean
+  /** Proceed although a linked repository loads its own nifra at another version. Default false. */
+  readonly allowLinkedSkew?: boolean
 }
 
 export interface PinChange {
@@ -139,6 +141,9 @@ export interface UpgradePlan {
   readonly retiredMarkers: readonly RetiredMarkerSite[]
   /** Installed group packages linked from outside the workspace root, at another version. Never edited. */
   readonly linkedOutside: readonly LinkedGroupInstall[]
+  /** Repositories a `link:`/`file:` dependency points outside the root, each loading its own nifra at
+   * another version. Never edited; the upgrade refuses while any is listed. */
+  readonly linkedSkew: readonly LinkedSkew[]
   /** Other versions pinned outside package.json. Never edited. */
   readonly strayPins: readonly StrayPin[]
   /** `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json
@@ -743,6 +748,68 @@ const packageVersionAt = (dir: string): string | undefined => {
   }
 }
 
+/** A repository linked into the project that resolves nifra from its own `node_modules`. */
+export interface LinkedSkew {
+  /** The dependency's name, as the manifest declares it. */
+  readonly package: string
+  /** The project-relative manifest that declares it. */
+  readonly declaredIn: string
+  /** The linked repository's real path. */
+  readonly path: string
+  /** Each fixed-group package it installs itself, at a version other than the target. */
+  readonly installs: readonly { readonly package: string; readonly version: string }[]
+}
+
+/**
+ * Every `link:` or `file:` dependency whose installed folder resolves outside `cwd` and installs a
+ * fixed-group package of its own at a version other than `target`. Its imports resolve from its real
+ * path, so it keeps loading that copy after this project upgrades: a `server()` it builds can no longer
+ * be merged here, and single-copy never redirects across versions. A copy that resolves back inside
+ * `cwd` follows this project's install and is not counted.
+ */
+export function linkedSkew(cwd: string, target: string): readonly LinkedSkew[] {
+  let root: string
+  try {
+    root = realpathSync(cwd)
+  } catch {
+    root = cwd
+  }
+  const inside = (path: string): boolean => path === root || path.startsWith(root + sep)
+  const seen = new Set<string>()
+  const found: LinkedSkew[] = []
+  for (const rel of scan(cwd, "**/package.json")) {
+    let manifest: unknown
+    try {
+      manifest = JSON.parse(readFileSync(join(cwd, rel), "utf8"))
+    } catch {
+      continue
+    }
+    for (const field of DEP_FIELDS) {
+      const block: unknown = Reflect.get(Object(manifest), field)
+      if (typeof block !== "object" || block === null) continue
+      for (const [name, spec] of Object.entries(block)) {
+        if (typeof spec !== "string" || !/^(?:link|file):/.test(spec)) continue
+        let path: string | undefined
+        for (const base of [join(cwd, dirname(rel)), cwd]) {
+          try {
+            path = realpathSync(join(base, "node_modules", name))
+            break
+          } catch {
+            // Not installed beside this manifest: try the root's node_modules.
+          }
+        }
+        if (path === undefined || inside(path) || seen.has(path)) continue
+        seen.add(path)
+        const installs = installedGroupPackages(path)
+          .filter((entry) => !inside(entry.path) && entry.version !== target)
+          .map((entry) => ({ package: entry.package, version: entry.version }))
+        if (installs.length > 0) found.push({ package: name, declaredIn: rel, path, installs })
+      }
+    }
+  }
+  return found
+}
+
 /**
  * Every fixed-group package installed in `cwd/node_modules`, realpath-resolved so a linked repository
  * reports its own version. `inside` is false for one that resolves outside the workspace root.
@@ -931,6 +998,7 @@ export function computeUpgrade(
     downgrades,
     retiredMarkers,
     linkedOutside,
+    linkedSkew: linkedSkew(cwd, recipe.version),
     strayPins: strayPins(cwd, recipe.version, planned),
     linkLocks,
     lockPruned,
@@ -962,6 +1030,7 @@ function renderPlan(
     plan.importMoves.length === 0 &&
     plan.retiredMarkers.length === 0 &&
     plan.linkedOutside.length === 0 &&
+    plan.linkedSkew.length === 0 &&
     plan.strayPins.length === 0 &&
     plan.linkLocks.length === 0
   ) {
@@ -1060,6 +1129,30 @@ function renderPlan(
 }
 
 /** Explain a refused rollback: which pins would roll back, why it's blocked, and the escape hatch. */
+/** The linked repositories to upgrade first, each with the commands that move it to `version`. */
+function renderLinkedSkew(
+  version: string,
+  skew: readonly LinkedSkew[],
+  cwd: string,
+  allowed: boolean,
+): string {
+  const lines = [
+    `${allowed ? "Allowed by --allow-linked-skew" : "Blocked"}: ${skew.length} linked repositor${skew.length === 1 ? "y loads" : "ies load"} its own nifra at another version. Its imports resolve from its own node_modules, so after this upgrade a server() it builds cannot be merge()d here ("merge() requires a server() from this copy of @nifrajs/core").`,
+  ]
+  for (const entry of skew) {
+    const at = relative(cwd, entry.path) || "."
+    lines.push(
+      `  ${entry.package} (${entry.declaredIn}) at ${at}: ${entry.installs.map((install) => `${install.package} ${install.version}`).join(", ")}`,
+      `    cd ${at} && nifra upgrade ${version} --write && bun install`,
+    )
+  }
+  if (!allowed)
+    lines.push(
+      "Upgrade each one first, then run this again. --allow-linked-skew upgrades this project anyway.",
+    )
+  return lines.join("\n")
+}
+
 function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[]): string {
   return [
     `nifra upgrade → ${version}: refusing to DOWNGRADE ${downgrades.length} pin(s) below what's installed.`,
@@ -1270,6 +1363,22 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     }
     return false
   }
+  // Refused before anything is written: the linked repository fails at the first merge(), not here.
+  if (preview.linkedSkew.length > 0 && options.allowLinkedSkew !== true) {
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          { ...preview, from, steps: recipe.steps, write: false, refused: "linked-skew" },
+          null,
+          2,
+        ),
+      )
+    } else {
+      if (!write) console.log(renderPlan(preview, false, from, recipe.steps))
+      console.error(renderLinkedSkew(recipe.version, preview.linkedSkew, cwd, false))
+    }
+    return false
+  }
 
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
@@ -1294,6 +1403,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     return ok
   }
   console.log(renderPlan(plan, write, from, recipe.steps))
+  if (plan.linkedSkew.length > 0)
+    console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
   if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
 
   if (verify) {

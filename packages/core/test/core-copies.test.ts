@@ -3,7 +3,7 @@ import { cp, mkdtemp, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { server } from "../src/index.ts"
+import { server, VERSION } from "../src/index.ts"
 
 /**
  * A second physical copy of this package, loaded into this process the way a linked sibling checkout
@@ -34,9 +34,31 @@ test("this copy registers itself once", () => {
 })
 
 test("merge() refuses a value that is not a server", () => {
-  expect(() => server().merge({} as never)).toThrow(
-    "merge() requires a server() from this copy of @nifrajs/core",
-  )
+  const saved = [...registry]
+  registry.splice(0, registry.length, ...(here === undefined ? [] : [here]))
+  try {
+    // With one copy loaded the message names no copies: the value is just not a server.
+    const app = server()
+    expect(() => Reflect.apply(app.merge, app, [{}])).toThrow(
+      /^merge\(\) requires a server\(\) from this copy of @nifrajs\/core$/,
+    )
+  } finally {
+    registry.splice(0, registry.length, ...saved)
+  }
+})
+
+test("a copy older than the version record is named by its URL alone", () => {
+  if (here === undefined) throw new Error("this copy did not register")
+  const saved = [...registry]
+  registry.splice(0, registry.length, here, "file:///old/@nifrajs/core/dist/server/core-copies.js")
+  try {
+    const app = server()
+    expect(() => Reflect.apply(app.merge, app, [{}])).toThrow(
+      "other copy: file:///old/@nifrajs/core/dist/server/core-copies.js\n",
+    )
+  } finally {
+    registry.splice(0, registry.length, ...saved)
+  }
 })
 
 test("a second copy warns once when it loads, and merge() refuses its servers by name", async () => {
@@ -70,6 +92,18 @@ test("a second copy warns once when it loads, and merge() refuses its servers by
     return { ok: true }
   })
   expect(() => server().merge(foreign)).toThrow("from this copy of @nifrajs/core")
+  let refusal = ""
+  try {
+    server().merge(foreign)
+  } catch (error) {
+    refusal = String(error)
+  }
+  expect(refusal).toContain("2 copies are loaded")
+  expect(refusal).toContain(`this copy:  ${here} (${VERSION})`)
+  expect(refusal).toContain(
+    `other copy: ${pathToFileURL(join(ground, "second", "src", "server", "core-copies.ts")).href} (${VERSION})`,
+  )
+  expect(refusal).toContain("nifra upgrade <version> --write")
 
   // A mount crosses only the fetch boundary, so the same route keeps working across copies.
   const mounted = server().mount({ path: "/m", app: foreign, stripPrefix: true })

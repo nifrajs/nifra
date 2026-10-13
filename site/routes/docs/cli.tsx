@@ -183,6 +183,16 @@ nifra migrate --from tailwind --to stylex --dir src`}
         <code>--write</code> drops those entries so the next <code>bun install</code> records them
         again (see <a href="/docs/troubleshooting#stale-file-links">stale file: links</a>).
       </p>
+      <p>
+        A <code>link:</code> or <code>file:</code> dependency outside the root that installs its own{" "}
+        <code>@nifrajs/*</code> at another version stops the upgrade before anything is written: its
+        imports resolve from its own <code>node_modules</code>, so after the upgrade a{" "}
+        <code>server()</code> it builds cannot be merged into yours. The refusal names each one with
+        the commands that move it to the target; upgrade those first, or pass{" "}
+        <code>--allow-linked-skew</code> to go ahead. <code>nifra upgrade --list</code> shows the
+        targets with the notes of every release after the one you declare: what an app can observe
+        changing on the way up.
+      </p>
 
       <h2>Scope</h2>
       <p>

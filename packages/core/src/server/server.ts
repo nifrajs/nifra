@@ -69,14 +69,14 @@ import {
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
+import type { FormOrigins } from "./body-lane.ts"
 import {
   type ClientIpTrust,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
   resolveClientIp,
 } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
-import "./core-copies.ts"
-import type { FormOrigins } from "./body-lane.ts"
+import { mergeRefusal, recordCopyVersion } from "./core-copies.ts"
 import {
   hasLowercaseHeaderKeysMark,
   headerKeysAllLowercase,
@@ -789,6 +789,7 @@ const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
 // node-compat `process`, so `typeof process` does NOT gate it out there, yet reading `process.env`
 // throws `NotCapable` without `--allow-env`. The flag short-circuits before the env read on Deno (audit
 // off) while a production define still folds `<flag> && false` to `false` on every other runtime.
+// It must live in this module: imported from another, Bun leaves `<flag>,` at every folded guard.
 const hookAuditRuntime = typeof (globalThis as { Deno?: unknown }).Deno === "undefined"
 
 // This module's own path, captured once from a sentinel stack. Every internal frame of an
@@ -1277,6 +1278,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // for the bundler to eliminate; a non-bundled production run skips it the same way.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       beginHookAudit(this, options.unusedScopedHooks ?? "warn", options.logger !== undefined)
+      recordCopyVersion()
     }
     this.derives = []
     this.authStages = []
@@ -2741,7 +2743,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!(other instanceof Server)) {
       // A server from another copy of this package reaches this copy's private request state through
       // symbols it does not share, and would fail per request. The boot warning names the copies.
-      throw new TypeError("merge() requires a server() from this copy of @nifrajs/core")
+      throw new TypeError(
+        hookAuditRuntime && process.env.NODE_ENV !== "production"
+          ? mergeRefusal()
+          : "merge() requires a server() from this copy of @nifrajs/core",
+      )
     }
     if (this.routePrefix !== "") {
       // The merged routes were compiled under their own paths; adopting them here would publish them

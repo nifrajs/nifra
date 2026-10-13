@@ -6488,6 +6488,15 @@ see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A
 `--write` drops those entries so the next `bun install` records them
 again (see [stale file: links](/docs/troubleshooting#stale-file-links)).
 
+A `link:` or `file:` dependency outside the root that installs its own
+`@nifrajs/*` at another version stops the upgrade before anything is written: its
+imports resolve from its own `node_modules`, so after the upgrade a
+`server()` it builds cannot be merged into yours. The refusal names each one with
+the commands that move it to the target; upgrade those first, or pass
+`--allow-linked-skew` to go ahead. `nifra upgrade --list` shows the
+targets with the notes of every release after the one you declare: what an app can observe
+changing on the way up.
+
 ### Scope
 
 `nifra build` defaults to a self-hosted Bun server. Use `--target node`,

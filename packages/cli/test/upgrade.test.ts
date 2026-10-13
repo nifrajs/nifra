@@ -791,3 +791,104 @@ describe("chained upgrades", () => {
     ])
   })
 })
+
+// ── linked repositories on another nifra ──────────────────────────────────────
+
+describe("a linked repository that loads its own nifra", () => {
+  async function linkedLayout(name: string, kitCore: string | "app-copy"): Promise<string> {
+    const base = join(FIXTURES, name)
+    const app = join(base, "app")
+    const kit = join(base, "kit")
+    await mkdir(join(app, "node_modules", "@team"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify(
+        { name: "app", dependencies: { "@nifrajs/core": "^5.0.0", "@team/kit": "link:../kit" } },
+        null,
+        2,
+      ),
+    )
+    await writeFile(
+      join(app, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "5.0.0" }),
+    )
+    await mkdir(join(kit, "node_modules", "@nifrajs"), { recursive: true })
+    await writeFile(
+      join(kit, "package.json"),
+      JSON.stringify({ name: "@team/kit", dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    )
+    if (kitCore === "app-copy") {
+      await symlink(
+        join(app, "node_modules", "@nifrajs", "core"),
+        join(kit, "node_modules", "@nifrajs", "core"),
+      )
+    } else {
+      await mkdir(join(kit, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await writeFile(
+        join(kit, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: kitCore }),
+      )
+    }
+    await symlink(kit, join(app, "node_modules", "@team", "kit"))
+    return app
+  }
+
+  const quiet = async <T>(act: () => Promise<T>): Promise<{ value: T; out: string }> => {
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    const error = spyOn(console, "error").mockImplementation((...args) =>
+      lines.push(args.join(" ")),
+    )
+    const warn = spyOn(console, "warn").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      return { value: await act(), out: lines.join("\n") }
+    } finally {
+      log.mockRestore()
+      error.mockRestore()
+      warn.mockRestore()
+    }
+  }
+  const options = { version: "5.1.0", cliVersion: "5.1.0", verify: false, hooks: false } as const
+
+  test("--write refuses before editing, naming the repository and its commands", async () => {
+    const app = await linkedLayout("skew-refused", "5.0.0")
+    const before = await readFile(join(app, "package.json"), "utf8")
+    const { value, out } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(false)
+    expect(await readFile(join(app, "package.json"), "utf8")).toBe(before)
+    expect(out).toContain("Blocked: 1 linked repository loads its own nifra at another version")
+    expect(out).toContain("@team/kit (package.json) at ../kit: @nifrajs/core 5.0.0")
+    expect(out).toContain("cd ../kit && nifra upgrade 5.1.0 --write && bun install")
+  })
+
+  test("a dry run prints the plan and the blocker, and fails", async () => {
+    const app = await linkedLayout("skew-dry", "5.0.0")
+    const { value, out } = await quiet(() => runUpgrade(app, options))
+    expect(value).toBe(false)
+    expect(out).toContain("Planned")
+    expect(out).toContain("Blocked:")
+  })
+
+  test("--allow-linked-skew writes and still names it", async () => {
+    const app = await linkedLayout("skew-allowed", "5.0.0")
+    const { value, out } = await quiet(() =>
+      runUpgrade(app, { ...options, write: true, allowLinkedSkew: true }),
+    )
+    expect(value).toBe(true)
+    expect(await readFile(join(app, "package.json"), "utf8")).toContain('"^5.1.0"')
+    expect(out).toContain("Allowed by --allow-linked-skew")
+  })
+
+  test("a linked repository already on the target does not block", async () => {
+    const app = await linkedLayout("skew-none", "5.1.0")
+    const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(true)
+  })
+
+  test("a linked repository resolving this project's copy follows its install", async () => {
+    const app = await linkedLayout("skew-follows", "app-copy")
+    const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(true)
+  })
+})

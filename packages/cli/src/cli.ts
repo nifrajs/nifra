@@ -275,11 +275,13 @@ Usage:
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                [--no-hooks]             to skip), then prints how hook scope changed (--no-hooks to
-                                         skip). --list shows available targets. A version newer than
-                                         this CLI prints the command for that release's CLI. Fail-closed
-                                         on an unknown version or a rollback (--allow-downgrade
-                                         overrides). Deterministic + idempotent.
+                [--allow-linked-skew]    to skip), then prints how hook scope changed (--no-hooks to
+                [--no-hooks]             skip). --list shows the targets with each newer release's
+                                         notes. A version newer than this CLI prints the command for
+                                         that release's CLI. Fail-closed on an unknown version, a
+                                         rollback (--allow-downgrade overrides), or a linked repository
+                                         that loads its own nifra at another version
+                                         (--allow-linked-skew overrides). Deterministic + idempotent.
   nifra migrate layout [--write] [--zones] [--json]
                                          Move an app onto the frontend/backend split: split each route
                                          into x.tsx + x.backend.ts, fold _middleware.ts into
@@ -1327,6 +1329,7 @@ async function main(): Promise<void> {
         verify: !argv.includes("--no-verify"),
         hooks: !argv.includes("--no-hooks"),
         allowDowngrade: argv.includes("--allow-downgrade"),
+        allowLinkedSkew: argv.includes("--allow-linked-skew"),
         exact: argv.includes("--exact"),
         cliVersion: CLI_VERSION,
       })

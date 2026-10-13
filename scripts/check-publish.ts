@@ -283,16 +283,30 @@ if ((await $`bun run check:packed`.nothrow()).exitCode !== 0) failures += 1
   {
     const coreVersion = JSON.parse(await Bun.file("packages/core/package.json").text())
       .version as string
-    const file = "packages/core/src/index.ts"
-    const found = (await Bun.file(file).text()).match(/export const VERSION\s*=\s*"([^"]+)"/)
-    if (found === null) {
-      failures += 1
-      console.error(`✗ ${file}: no exported VERSION constant`)
-    } else if (found[1] !== coreVersion) {
-      failures += 1
-      console.error(`✗ ${file}: VERSION "${found[1]}" ≠ @nifrajs/core ${coreVersion} - bump it`)
-    } else {
-      console.log(`✓ ${file}: VERSION matches @nifrajs/core ${coreVersion}`)
+    // core-copies.ts carries the same literal so a second copy loaded beside this one is named with
+    // its version.
+    for (const { file, re, name } of [
+      {
+        file: "packages/core/src/index.ts",
+        re: /export const VERSION\s*=\s*"([^"]+)"/,
+        name: "VERSION",
+      },
+      {
+        file: "packages/core/src/server/core-copies.ts",
+        re: /const COPY_VERSION\s*=\s*"([^"]+)"/,
+        name: "COPY_VERSION",
+      },
+    ]) {
+      const found = (await Bun.file(file).text()).match(re)
+      if (found === null) {
+        failures += 1
+        console.error(`✗ ${file}: no ${name} constant`)
+      } else if (found[1] !== coreVersion) {
+        failures += 1
+        console.error(`✗ ${file}: ${name} "${found[1]}" ≠ @nifrajs/core ${coreVersion} - bump it`)
+      } else {
+        console.log(`✓ ${file}: ${name} matches @nifrajs/core ${coreVersion}`)
+      }
     }
   }
 
