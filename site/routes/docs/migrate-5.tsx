@@ -108,9 +108,10 @@ export default function Migrate5() {
       <p>
         The command exits <code>0</code> when nothing needs a decision. A step with a known command,
         such as drafting an output schema for a backend half it did not write, is listed under{" "}
-        <code>next</code> and in <code>followUps</code> with <code>--json</code>, and does not fail it.
-        An issue (an import it could not place, a frontend that still uses a moved name at runtime)
-        exits <code>1</code>.
+        <code>next</code> and in <code>followUps</code> with <code>--json</code>, and does not fail it;
+        so is a moved path a module names only in comments, which is worth updating but changes
+        nothing that runs. An issue (an import it could not place, a frontend that still uses a moved
+        name at runtime, a moved path written in code or a string) exits <code>1</code>.
       </p>
       <p>
         5.0 refuses a route file that still exports a server name: <code>nifra build</code> and the
@@ -144,11 +145,21 @@ export default function Migrate5() {
       <p>
         With both <code>nifra.config.ts</code> and <code>backend/framework.ts</code>, every command
         takes <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>, <code>csp</code>,{" "}
-        <code>nonce</code>, <code>serverComponents</code> and <code>use</code> from{" "}
-        <code>backend/framework.ts</code> when <code>nifra.config.ts</code> leaves them unset. The
+        <code>nonce</code>, <code>serverComponents</code>, <code>use</code> and{" "}
+        <code>publicEnvPrefix</code> from <code>backend/framework.ts</code> when{" "}
+        <code>nifra.config.ts</code> leaves them unset. The
         backend sees each request's full path unless <code>apiStrip</code> is on, so its routes are
         registered under the prefix; <code>nifra routes</code> marks one outside it as in-process
         only, and <code>nifra dev</code> and <code>nifra build</code> warn about it.
+      </p>
+      <p>
+        An app that strips the prefix itself, with a <code>Proxy</code> or a wrapper around the
+        backend's <code>fetch</code> that cuts <code>/api</code> before routing, gets that warning
+        for every route: the check reads the registered paths, and a rewrite at run time is invisible
+        to it. Delete the wrapper and export <code>apiStrip = true</code> beside{" "}
+        <code>apiPrefix</code>, which does the same cut where the framework can see it. A second
+        prefix the wrapper served (a <code>/v1</code> alias, a webhook path) becomes an entry in{" "}
+        <code>mounts</code>.
       </p>
 
       <h2>5. Review the 5.0 defaults that changed</h2>
@@ -177,8 +188,34 @@ export default function Migrate5() {
         </li>
       </ul>
       <p>
+        From 3.x, two 4.0 changes also show up in tests and tooling rather than in pages:
+      </p>
+      <ul>
+        <li>
+          Page data is handed over in one{" "}
+          <code>{'<script type="application/json" id="__nifra-handover">'}</code>, not a script that
+          assigns <code>window.__NIFRA_DATA__</code>. A test that read the data out of the HTML
+          parses that element (<code>HANDOVER_ID</code> from <code>@nifrajs/web</code>).
+        </li>
+        <li>
+          <code>x-nifra-isr-revalidate</code> and <code>x-nifra-isr-tags</code> are set only under a
+          cache wrapper such as <code>withISR</code>, which removes them before responding. A test
+          that read a page's TTL from them on an unwrapped app reads nothing.
+        </li>
+      </ul>
+      <p>
         <code>nifra upgrade</code> prints the full list with the finding or the one-line change that
         keeps the 4.x behavior for each.
+      </p>
+      <p>
+        Past 5.0, 5.1 adds one change a frontend on another origin sees. A route with a{" "}
+        <code>body</code> schema answers a urlencoded, multipart or <code>text/plain</code> body whose{" "}
+        <code>Origin</code> names another site with <code>403 forbidden_origin</code>, before reading
+        it. List that frontend&rsquo;s origin, or an identity provider&rsquo;s for a{" "}
+        <code>form_post</code> callback, in the <code>formOrigins</code> server option (an array of
+        exact origins or a function; <code>@nifrajs/edge</code> takes it too). JSON bodies are
+        unchanged. <a href="/docs/security">Security</a> covers what the check leaves to{" "}
+        <code>csrf()</code>.
       </p>
 
       <h2>6. Run the release gates</h2>

@@ -245,9 +245,11 @@ export default function Errors() {
 
       <h2 id="nifra-expect">Silencing a nifra check finding</h2>
       <p>
-        <code>nifra check</code> names each finding with an <code>NF-</code> code. Where a finding is
-        reviewed and intended, a comment on the flagged line, or anywhere in the comment block directly
-        above it, says so and why:
+        <code>nifra check</code> names each finding with an <code>NF-</code> code;{" "}
+        <code>nifra explain NF-C007</code> (or <code>nifra_explain</code> with the code as its{" "}
+        <code>error</code>) says what the rule reports, why it matters, how to fix it and where it is
+        documented. Where a finding is reviewed and intended, a comment on the flagged line, or anywhere
+        in the comment block directly above it, says so and why:
       </p>
       <CodeBlock
         code={

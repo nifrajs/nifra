@@ -10,7 +10,7 @@ import type { Diagnostic } from "../src/diagnostics.ts"
 import { getFixRecipe } from "../src/fix-recipes.ts"
 import { buildRouteTable, unservedRoutesWarning } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
-import { runRuleRegistry } from "../src/rules/index.ts"
+import { runRuleRegistry, sourceIndex } from "../src/rules/index.ts"
 import { pageRules, readStaticApiPrefix } from "../src/rules/pages.ts"
 import {
   frameworkMountPaths,
@@ -100,6 +100,39 @@ describe("loadApp validates the forwarded fields", () => {
         apiStrip: join(dir, "backend/framework.ts"),
       },
     })
+  })
+
+  test("publicEnvPrefix set only in backend/framework.ts reaches every command beside nifra.config.ts", async () => {
+    const dir = project({
+      "backend/framework.ts": [...adapterSource, 'export const publicEnvPrefix = "SITE_"'].join(
+        "\n",
+      ),
+      "nifra.config.ts": 'export { adapter, clientModule } from "./backend/framework.ts"\n',
+      "routes/index.tsx": "export default () => null\n",
+    })
+    expect((await loadApp(dir)).framework.publicEnvPrefix).toBe("SITE_")
+    // It is not a server-entry option: the generated entry imports nothing new.
+    expect(
+      frameworkOptionImports((await loadApp(dir)).framework, join(dir, "backend/framework.ts")),
+    ).toEqual({})
+    writeFileSync(
+      join(dir, "nifra.config.ts"),
+      'export { adapter, clientModule } from "./backend/framework.ts"\nexport const publicEnvPrefix = "EDGE_"\n',
+    )
+    expect((await loadApp(dir, "dist", { importQuery: "v=2" })).framework.publicEnvPrefix).toBe(
+      "EDGE_",
+    )
+  })
+
+  test("a publicEnvPrefix that is not a string is refused", async () => {
+    const dir = project({
+      "backend/framework.ts": [...adapterSource, "export const publicEnvPrefix = 7"].join("\n"),
+      "nifra.config.ts": 'export { adapter, clientModule } from "./backend/framework.ts"\n',
+      "routes/index.tsx": "export default () => null\n",
+    })
+    await expect(loadApp(dir)).rejects.toThrow(
+      "backend/framework.ts: `publicEnvPrefix` must be a string",
+    )
   })
 
   test("an option taken from backend/framework.ts is validated there", async () => {
@@ -606,6 +639,134 @@ describe("NF-C035", () => {
         }),
       ),
     ).toEqual([])
+  })
+
+  describe("an app module that calls createWebApp itself", () => {
+    const framework = (prefix: string): string =>
+      [...adapterSource, `export const apiPrefix = ${prefix}`].join("\n")
+    // Every fixture file is in the source index, as the check's own walk would list them.
+    const scanEntry = async (files: Record<string, string>) => {
+      const dir = project({ "backend/app.ts": backendSource, ...files })
+      const facts = projectFacts("backend/app.ts", backendSource, [])
+      const sources = sourceIndex(
+        Object.entries(files).map(([file, content]) => ({ file, content })),
+      )
+      const findings = await runRuleRegistry(
+        { root: dir, sources, project: { ...facts, source: sources } },
+        pageRules,
+      )
+      return findings.filter((finding) => finding.code === "NF-C035")
+    }
+    const entry = (...lines: string[]): string =>
+      [
+        'import { createWebApp } from "@nifrajs/web"',
+        'import { inProcessClient } from "@nifrajs/client"',
+        'import { backend } from "./backend/app"',
+        ...lines,
+      ].join("\n")
+
+    test("a mount with no apiPrefix is reported at the call, naming both values", async () => {
+      const findings = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry(
+          "",
+          "export const app = createWebApp({",
+          "  api: inProcessClient(backend),",
+          "})",
+        ),
+      })
+      expect(findings.map((f) => [f.severity, f.file, f.line, f.fix])).toEqual([
+        ["warn", "server.ts", 5, undefined],
+      ])
+      expect(findings[0]?.message).toContain("serves the backend nowhere")
+      expect(findings[0]?.message).toContain("`nifra dev` serves it at /api (backend/framework.ts)")
+      expect(findings[0]?.message).toContain('import { apiPrefix } from "./backend/framework"')
+      expect(findings[0]?.evidence).toEqual([
+        "createWebApp apiPrefix: unset",
+        'backend/framework.ts apiPrefix: "/api"',
+      ])
+    })
+
+    test("a different literal or same-module const is reported; the import path is relative to the entry", async () => {
+      const findings = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "src/server/entry.ts": [
+          'import * as web from "@nifrajs/web"',
+          'const PREFIX = "/v1"',
+          "export const a = web.createWebApp({ api: client, apiPrefix: PREFIX })",
+          'export const b = web.createWebApp({ api: client, apiPrefix: "/rpc" as const })',
+        ].join("\n"),
+      })
+      expect(findings.map((f) => [f.file, f.line])).toEqual([
+        ["src/server/entry.ts", 3],
+        ["src/server/entry.ts", 4],
+      ])
+      expect(findings[0]?.message).toContain('apiPrefix "/v1"')
+      expect(findings[0]?.message).toContain('from "../../backend/framework"')
+    })
+
+    test("a mount where nifra dev serves nothing is reported, beside the framework finding", async () => {
+      const findings = await scanEntry({
+        "backend/framework.ts": adapterSource.join("\n"),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "/api" })'),
+      })
+      expect(findings.map((f) => [f.file, f.fix?.recipe])).toEqual([
+        ["backend/framework.ts", "framework.api-prefix"],
+        ["server.ts", undefined],
+      ])
+      expect(findings[1]?.message).toContain(
+        "serves the backend at /api, while `nifra dev` serves it nowhere",
+      )
+    })
+
+    test("the framework config's own value, a matching literal, or an unreadable one is not reported", async () => {
+      const unreported = [
+        'import { apiPrefix } from "./backend/framework"\nexport const app = createWebApp({ api: backend, apiPrefix })',
+        'import { apiPrefix as prefix } from "./backend/framework.ts"\nexport const app = createWebApp({ api: backend, apiPrefix: prefix })',
+        'import * as fw from "./backend/framework"\nexport const app = createWebApp({ api: backend, apiPrefix: fw.apiPrefix })',
+        'export const app = createWebApp({ api: backend, apiPrefix: "/api" })',
+        "export const app = createWebApp({ apiPrefix: '/x', ...options, api: backend })",
+        "export const app = createWebApp({ api: backend, apiPrefix: process.env.PREFIX })",
+        "export const app = createWebApp(options)",
+        "export const app = createWebApp({ adapter })",
+      ]
+      for (const line of unreported) {
+        expect(
+          await scanEntry({
+            "backend/framework.ts": framework('"/api"'),
+            "server.ts": entry(line),
+          }),
+        ).toEqual([])
+      }
+    })
+
+    test("a createWebApp that is not @nifrajs/web's, or an unreadable framework value, is not read", async () => {
+      expect(
+        await scanEntry({
+          "backend/framework.ts": framework('"/api"'),
+          "server.ts":
+            'import { createWebApp } from "./local"\nexport const app = createWebApp({ api: 1 })',
+        }),
+      ).toEqual([])
+      expect(
+        await scanEntry({
+          "backend/framework.ts": [...adapterSource, "export const apiPrefix = PREFIX"].join("\n"),
+          "server.ts": entry("export const app = createWebApp({ api: backend })"),
+        }),
+      ).toEqual([])
+    })
+
+    test("nifra.config.ts's own apiPrefix is the value compared, and named as its origin", async () => {
+      const findings = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "nifra.config.ts":
+          'export { adapter } from "./backend/framework"\nexport const apiPrefix = "/v2"\n',
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "/api" })'),
+      })
+      expect(findings.map((f) => f.evidence)).toEqual([
+        ['createWebApp apiPrefix: "/api"', 'nifra.config.ts apiPrefix: "/v2"'],
+      ])
+    })
   })
 
   test("an API-only app, with no web config or a nifra.config.ts with no adapter, is not reported", async () => {

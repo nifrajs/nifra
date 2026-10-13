@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import type { PluginBuilder } from "bun"
 import {
   matchesSingleCopyDeclaration,
@@ -929,6 +929,51 @@ test("the registrar reports each planned skip, warns once, and installs one plug
         "  2.0.0 there, 1.0.0 here - redirecting would serve a version that copy did not ask for",
         "  Fix: align the dependency ranges so both trees install one version, then reinstall. nifra never redirects across versions.",
       ])
+    })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a linked tree that skews several packages at once is one report, not one per package", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("inprocess-skew-group", {
+    declaration: ["state", "store", "cache"],
+    siblingVersion: "2.0.0",
+  })
+  try {
+    // Two more packages installed in both trees at the same two versions as `state`.
+    for (const name of ["store", "cache"]) {
+      for (const [dir, version] of [
+        [join(dirname(ours), name), "1.0.0"],
+        [join(dirname(theirs), name), "2.0.0"],
+      ] as const) {
+        await mkdir(dir, { recursive: true })
+        await writeFile(
+          join(dir, "package.json"),
+          JSON.stringify({ name, version, main: "index.js" }),
+        )
+        await writeFile(join(dir, "index.js"), "export const x = 1\n")
+      }
+    }
+    const manifest = JSON.parse(await readFile(join(app, "package.json"), "utf8"))
+    manifest.dependencies.store = "1.0.0"
+    manifest.dependencies.cache = "1.0.0"
+    await writeFile(join(app, "package.json"), JSON.stringify(manifest))
+    await withRegistrar(({ warnings }) => {
+      const plan = registerSingleCopy({ cwd: app })
+      expect(plan.skipped.map((skip) => skip.package).sort()).toEqual(["cache", "state", "store"])
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]?.split("\n")).toEqual([
+        "[nifra] single-copy: 3 packages are NOT deduplicated (version-skew) - a second copy of each loads, so their module state is not shared.",
+        `  app copies: ${dirname(ours)} (1.0.0)`,
+        `  linked copies: ${dirname(theirs)} (2.0.0)`,
+        "  packages: cache, state, store",
+        "  2.0.0 there, 1.0.0 here - redirecting would serve a version those copies did not ask for",
+        "  Fix: align the dependency ranges so both trees install one version, then reinstall. nifra never redirects across versions.",
+      ])
+      // A second registrar in the same process stays quiet.
+      registerSingleCopy({ cwd: app })
+      expect(warnings).toHaveLength(1)
     })
   } finally {
     await rm(ground, { recursive: true, force: true })

@@ -39,6 +39,7 @@ import {
   formatServerOnlyLeak,
   parseBuildTarget,
   parseManifestClientEntry,
+  parseManifestCopyChunks,
   parseManifestCssLoading,
   parseManifestRouteStyles,
   parseManifestStyles,
@@ -50,6 +51,7 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
@@ -89,6 +91,7 @@ import {
   verifyServerGraph,
 } from "./internal/zone-graph.ts"
 import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
+import { assertNoImportGlob, importGlobPlugin } from "./plugins/import-glob.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { prerenderRoutes } from "./prerender.ts"
@@ -186,6 +189,12 @@ export interface BuildClientOptions {
    * variable. Each names its rule, its file (or, for an environment value, its variable) and a reason.
    */
   readonly secretExemptions?: readonly SecretExemption[]
+  /**
+   * Move copy tables (`@nifrajs/i18n/copy`) into one chunk per locale, so a page's JavaScript carries
+   * only the copy of the locale it renders in (default: on when minifying). The server bundle keeps
+   * every table whole; the server entry passes the manifest's `copyChunks` to `createWebApp`.
+   */
+  readonly copySplit?: boolean
 }
 
 /**
@@ -374,12 +383,14 @@ export function resyncServerManifestSource(
   routesPrefix: string,
 ): string {
   const cssLoading = parseManifestCssLoading(source)
+  const copyChunks = parseManifestCopyChunks(source)
   return generateServerManifest(manifest, {
     resolve: (file) => `${routesPrefix}${file}`,
     clientEntry: parseManifestClientEntry(source) ?? "",
     styles: parseManifestStyles(source),
     routeStyles: parseManifestRouteStyles(source),
     ...(cssLoading !== undefined ? { cssLoading } : {}),
+    ...(copyChunks !== undefined ? { copyChunks } : {}),
     lazy: MANIFEST_IS_LAZY.test(source),
   })
 }
@@ -426,6 +437,10 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // The bootstrap's filename is `_nifra`-namespaced (not `entry.ts`) so its `[name]` can't collide with
   // a user route named `entry.tsx` when the CSS mapping below excludes the bootstrap's aggregate CSS.
   const mode = options.minify === false ? "development" : "production"
+  const copySplit =
+    (options.copySplit ?? mode === "production")
+      ? await loadCopySplit(root, { skip: [outDir] })
+      : undefined
   // PUBLIC_*-prefixed env → client define (Vite/Next convention). Sourced from the build env (`Bun.env`,
   // falling back to `process.env`). Only prefixed vars are baked in; unprefixed secrets stay undefined
   // in the client via the bare `process.env` → `({})` define below. Caller's `options.define` wins (it's
@@ -442,7 +457,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // an app module doesn't crash hydration (`process.env.*` reads are handled at compile time by `define`).
   writeFileSync(
     entryFile,
-    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, { clientModule, resolve })}`,
+    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, {
+      clientModule,
+      resolve,
+      copyChunks: copySplit !== undefined,
+    })}`,
   )
 
   // Every unique route/layout/`_404` file (sorted, stable), as ADDITIONAL entrypoints - Bun emits a
@@ -496,6 +515,10 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
           svelteDedupePlugin(routesDir),
           serverFnStubPlugin(),
           ...(options.plugins ?? []),
+          // Before the copy split: it claims a module that calls the glob and reads it through the split.
+          importGlobPlugin({ root }),
+          // Last: it rewrites a module no other plugin claims, and the ones that do read through it.
+          ...(copySplit === undefined ? [] : [copySplit.plugin]),
         ],
         ...(options.conditions ? { conditions: [...options.conditions] } : {}),
         // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
@@ -550,6 +573,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       return { name: out.path, kind: "code", text: await out.text() }
     }),
   )
+  assertNoImportGlob(
+    emitted.flatMap((file) =>
+      file.kind === "code" ? [[relative(cwd, file.name), file.text ?? ""] as const] : [],
+    ),
+  )
   const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath)
   const verdict = verifyClientGraph(clientGraph, {
     classifier,
@@ -596,6 +624,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   if (unaccounted !== undefined) throw new Error(unaccounted)
 
   const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const copy = copySplit?.chunks(publicPath)
   const { sources, originsOf } = graphScanInput(clientGraph, bunModuleSource(cwd), classifier)
   const secrets = formatSecretFindings(
     scanForSecrets({
@@ -606,6 +635,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
           const name = file.name.replace(/^\.\//, "")
           return emittedScanFiles(name, file.text, originsOf(name))
         }),
+        ...(copy?.files ?? []).flatMap((file) => emittedScanFiles(file.name, file.text)),
         ...(publicDir !== undefined && existsSync(publicDir)
           ? publicScanFiles(publicDir, originName(root, resolvePath(publicDir)))
           : []),
@@ -624,6 +654,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       return { kind: out.kind, path }
     }),
   )
+  for (const file of copy?.files ?? []) writeFileSync(join(outDir, file.name), file.text)
 
   // Rename any chunk whose basename isn't URL-safe (dynamic-route files become `[slug]-hash.js`) and
   // rewrite the references - otherwise the lazy import 404s and the route silently never hydrates.
@@ -750,13 +781,15 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
+  const copyChunks = copy?.urls ?? {}
   const manifest: BuildManifest = {
     entry: entryUrl,
-    assets: outputs.map((o) => toUrl(o.path)),
+    assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks)],
     routes,
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
     ...(css.length > 0 ? { css } : {}),
     ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
+    ...(Object.keys(copyChunks).length > 0 ? { copyChunks } : {}),
   }
   assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
   writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
@@ -780,6 +813,8 @@ export interface BuildServerOptions {
   readonly styles?: readonly string[] | undefined
   /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked alongside `styles`. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
+  /** Copy chunk URLs by locale (`buildClient`'s `BuildManifest.copyChunks`) - baked as `copyChunks`. */
+  readonly copyChunks?: Readonly<Record<string, string>> | undefined
   /** How framework-owned stylesheet links should activate before hydration (default `"blocking"`). */
   readonly cssLoading?: CssLoadingMode
   /** Route/layout file → import specifier in the generated manifest (default: a relative path from the
@@ -1051,6 +1086,7 @@ function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string):
   return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
 }
 
+export { importGlobPlugin } from "./plugins/import-glob.ts"
 export { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 
 /**
@@ -1130,6 +1166,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
       styles,
       routeStyles,
       ...(cssLoading !== undefined ? { cssLoading } : {}),
+      ...(options.copyChunks !== undefined ? { copyChunks: options.copyChunks } : {}),
       lazy,
     }),
   )
@@ -1161,6 +1198,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
       reactDedupePlugin(entryDir),
       preactDedupePlugin(entryDir),
       ...(options.plugins ?? []),
+      importGlobPlugin({ root: resolvePath(options.root ?? dirname(routesDir)) }),
     ],
   })
   if (!result.success) {
@@ -1227,7 +1265,14 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
 // ===================================================================================================
 
 /** The `createWebApp` options a generated server entry can import from the app's framework module. */
-export const SERVER_ENTRY_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export const SERVER_ENTRY_OPTIONS = [
+  "apiPrefix",
+  "apiStrip",
+  "mounts",
+  "csp",
+  "nonce",
+  "i18n",
+] as const
 export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
 /** Each importable option mapped to the specifier of the module that exports it. */
 export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>
@@ -1285,6 +1330,8 @@ export function generateServerEntry(options: {
   readonly hashedFiles?: readonly string[]
   /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
+  /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */
+  readonly copyChunks?: boolean
 }): string {
   const {
     target,
@@ -1327,7 +1374,9 @@ export function generateServerEntry(options: {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
   lines.push(
-    'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
+    options.copyChunks === true
+      ? 'import { clientEntry, copyChunks, cssLoading, manifest, styles, routeStyles } from "./server-manifest"'
+      : 'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
   )
   // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
@@ -1343,6 +1392,7 @@ export function generateServerEntry(options: {
     "  styles,",
     "  routeStyles,",
     "  cssLoading,",
+    ...(options.copyChunks === true ? ["  copyChunks,"] : []),
     ...(backendImport !== undefined ? ["  api: inProcessClient(backend),"] : []),
     `  title: ${JSON.stringify(title)},`,
     // Core's own `{ header }` trust, so the mounted backend and every loader see the derived caller.
@@ -1630,6 +1680,7 @@ export const bunBundler: Bundler = {
       target: input.target,
       ...(input.styles !== undefined ? { styles: input.styles } : {}),
       ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
+      ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
@@ -1813,6 +1864,7 @@ export async function buildTargetWith(
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
       hashedFiles: client.assets,
       ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
+      ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
     }),
   )
   const { worker } = await bundler.buildServer({
@@ -1823,6 +1875,7 @@ export async function buildTargetWith(
     target: targetPlan.serverTarget,
     ...(client.css !== undefined ? { styles: client.css } : {}),
     ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
+    ...(client.copyChunks !== undefined ? { copyChunks: client.copyChunks } : {}),
     ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
     ...(client.cssLoading !== undefined

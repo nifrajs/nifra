@@ -164,10 +164,13 @@ export interface ServerOptions {
    */
   readonly onValidationError?: RouteSchema["onValidationError"]
   /**
-   * What to do when an order-scoped hook (`derive`/`beforeHandle`/`around`/`aroundCapability`/
-   * `afterHandle`/`onError`/`decorate`) covers no route because it was added after the last route was
-   * registered. `register()` snapshots the current chain into each route as it is declared, so a hook
-   * appended after every route reaches nothing and is silently dead. `"warn"` (default) logs once at
+   * What to do when an order-scoped hook (`derive`/`authenticate`/`beforeHandle`/`around`/
+   * `aroundCapability`/`afterHandle`/`onError`/`decorate`) covers no route because it was added after
+   * the last route was registered. `register()` snapshots the current chain into each route as it is
+   * declared, so a hook appended after every route reaches nothing and is silently dead. A `merge()`d
+   * route keeps the chain of the server that declared it, so a hook followed only by merges is dead
+   * too. The same report covers `responseContract()` and `effectLedger()` installed after routes they
+   * would have covered (a declared response, declared capabilities). `"warn"` (default) logs once at
    * seal (first `listen()`/`fetch`/`resolveNode`); `"error"` throws a `FrameworkError`
    * (`UNUSED_SCOPED_HOOKS`); `"off"` skips the bookkeeping entirely, including the one-frame stack
    * capture. App-global hooks (`onRequest`/`onResponse`/...) are unaffected in every mode.

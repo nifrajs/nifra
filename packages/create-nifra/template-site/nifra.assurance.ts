@@ -83,5 +83,16 @@ export default defineAssuranceConfig({
       // an authenticated one rather than weakening the whole class.
       { name: "read", match: { methods: ["GET"] }, require: [] },
     ],
+    // Checked on every route it matches, whichever rule above owns the route: a route that declares a
+    // `response` schema must enforce it at runtime. `backend/app.ts` installs `responseContract("enforce")`
+    // before its routes, so a route the contract does not cover fails here instead of sending fields
+    // its schema never declared.
+    baseline: [
+      {
+        name: "response-contract",
+        match: { hasResponse: true },
+        require: [NIFRA_ASSURANCE.RESPONSE_CONTRACT],
+      },
+    ],
   },
 })

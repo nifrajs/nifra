@@ -283,16 +283,30 @@ if ((await $`bun run check:packed`.nothrow()).exitCode !== 0) failures += 1
   {
     const coreVersion = JSON.parse(await Bun.file("packages/core/package.json").text())
       .version as string
-    const file = "packages/core/src/index.ts"
-    const found = (await Bun.file(file).text()).match(/export const VERSION\s*=\s*"([^"]+)"/)
-    if (found === null) {
-      failures += 1
-      console.error(`✗ ${file}: no exported VERSION constant`)
-    } else if (found[1] !== coreVersion) {
-      failures += 1
-      console.error(`✗ ${file}: VERSION "${found[1]}" ≠ @nifrajs/core ${coreVersion} - bump it`)
-    } else {
-      console.log(`✓ ${file}: VERSION matches @nifrajs/core ${coreVersion}`)
+    // core-copies.ts carries the same literal so a second copy loaded beside this one is named with
+    // its version.
+    for (const { file, re, name } of [
+      {
+        file: "packages/core/src/index.ts",
+        re: /export const VERSION\s*=\s*"([^"]+)"/,
+        name: "VERSION",
+      },
+      {
+        file: "packages/core/src/server/core-copies.ts",
+        re: /const COPY_VERSION\s*=\s*"([^"]+)"/,
+        name: "COPY_VERSION",
+      },
+    ]) {
+      const found = (await Bun.file(file).text()).match(re)
+      if (found === null) {
+        failures += 1
+        console.error(`✗ ${file}: no ${name} constant`)
+      } else if (found[1] !== coreVersion) {
+        failures += 1
+        console.error(`✗ ${file}: ${name} "${found[1]}" ≠ @nifrajs/core ${coreVersion} - bump it`)
+      } else {
+        console.log(`✓ ${file}: ${name} matches @nifrajs/core ${coreVersion}`)
+      }
     }
   }
 
@@ -340,6 +354,21 @@ if ((await $`bun run check:packed`.nothrow()).exitCode !== 0) failures += 1
       console.error(`✗ ${file}: internal dep(s) ≠ ${expected} → ${bad.join(", ")}`)
     } else {
       console.log(`✓ ${file}: internal deps pinned to ${expected}`)
+    }
+  }
+
+  // (d) A minor or major release announces what an app can observe through its upgrade recipe: its
+  // notes are what `nifra upgrade` prints across it and `--list` shows. A release without one would
+  // upgrade apps silently, so its absence fails here, before the version reaches npm.
+  if (/^\d+\.\d+\.0$/.test(cliVersion)) {
+    const { getRecipe } = await import("../packages/cli/src/recipes/index.ts")
+    if (getRecipe(cliVersion) === undefined) {
+      failures += 1
+      console.error(
+        `✗ no upgrade recipe for ${cliVersion}: add packages/cli/src/recipes/${cliVersion}.ts (notes for every change an app can observe, or an empty list) and register it in recipes/index.ts`,
+      )
+    } else {
+      console.log(`✓ upgrade recipe for ${cliVersion} is registered`)
     }
   }
 

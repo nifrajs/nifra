@@ -19,6 +19,7 @@ import {
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
+import { handoverLocale } from "./render-seam.ts"
 import { type ClientRouter, redirectOf } from "./router.ts"
 
 /** Read the nonce carried by the current server-rendered document, if any. */
@@ -49,6 +50,7 @@ export {
   resolveNavigate,
 } from "./navigation.ts"
 export { createMutation, createQueryClient } from "./query.ts"
+export { localeOfProps } from "./render-seam.ts"
 export { createClientRouter, createMatcher } from "./router.ts"
 // Same reason, for the ADAPTER packages (`@nifrajs/web-react` and friends). Every one of them reaches
 // for these from the root - `searchOfChain` in its `/client` entry, the navigation and query values in
@@ -617,17 +619,23 @@ export function installHistory(
  * content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so
  * the first navigation cleanly takes over from the server-rendered head.
  */
-export function applyHead(head: Meta): void {
+export function applyHead(head: Meta, path?: string): void {
   const documentNonce = currentDocumentNonce()
   if (head.title !== undefined) document.title = head.title
   // `<html lang>`/`<html dir>` - applied AUTHORITATIVELY (unlike `title`, which is left alone when the
-  // route omits it), mirroring the SSR shell's defaulting exactly: `lang` falls back to `"en"`, `dir` is
-  // removed when unset. Anything laxer drifts on a multilingual site - navigating /ur → /en would leave
-  // `dir="rtl"` behind and lay the English page out right-to-left, a bug a hard reload would not show.
+  // route omits it), mirroring the SSR shell's defaulting exactly: a meta `lang` wins, then the page's
+  // registered locale, then `"en"`; `dir` is removed when unset. Anything laxer drifts on a
+  // multilingual site - navigating /ur → /en would leave `dir="rtl"` behind and lay the English page
+  // out right-to-left, a bug a hard reload would not show.
+  const locale =
+    head.lang === undefined
+      ? handoverLocale(path ?? (typeof location === "undefined" ? "" : location.pathname))
+      : undefined
+  const dir = head.dir ?? locale?.dir
   const root = document.documentElement
-  root.setAttribute("lang", head.lang ?? "en")
-  if (head.dir === undefined) root.removeAttribute("dir")
-  else root.setAttribute("dir", head.dir)
+  root.setAttribute("lang", head.lang ?? locale?.lang ?? "en")
+  if (dir === undefined) root.removeAttribute("dir")
+  else root.setAttribute("dir", dir)
   for (const el of document.head.querySelectorAll("[data-nifra]")) el.remove()
   // Values follow the same HTML attribute conventions as the SSR `tagAttrs`: a string sets the value,
   // `true` sets the bare boolean attribute, `false`/`undefined` skip it - so a soft-nav head matches

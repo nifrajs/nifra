@@ -666,6 +666,36 @@ const describeSkips = (name: string, skips: readonly SingleCopySkip[]): string =
   return lines.join("\n")
 }
 
+/** The `node_modules` folder a copy was installed into: `/kit/node_modules/@scope/pkg` -> `/kit/node_modules`. */
+const modulesDirOf = (copy: string): string => {
+  const marker = `${sep}node_modules${sep}`
+  const at = copy.lastIndexOf(marker)
+  return at === -1 ? dirname(copy) : copy.slice(0, at + marker.length - 1)
+}
+
+/**
+ * Version skews that share both trees and both versions, as one report: a linked repository on
+ * another release skews every declared package at once, and a block per package said the same thing
+ * eighteen times. One package keeps the per-package report.
+ */
+const describeSkewGroup = (skips: readonly SingleCopySkip[]): string => {
+  const [first] = skips
+  if (first === undefined || skips.length === 1) return describeSkips(first?.package ?? "", skips)
+  const names = skips.map((skip) => skip.package).sort(codeUnitOrder)
+  return [
+    `[nifra] single-copy: ${names.length} packages are NOT deduplicated (version-skew) - a second copy of each loads, so their module state is not shared.`,
+    copyLine(
+      "app copies",
+      first.to === undefined ? undefined : modulesDirOf(first.to),
+      first.toVersion,
+    ),
+    copyLine("linked copies", modulesDirOf(first.from), first.fromVersion),
+    `  packages: ${names.join(", ")}`,
+    `  ${first.fromVersion ?? "another version"} there, ${first.toVersion ?? "another version"} here - redirecting would serve a version those copies did not ask for`,
+    "  Fix: align the dependency ranges so both trees install one version, then reinstall. nifra never redirects across versions.",
+  ].join("\n")
+}
+
 const strictFromEnv = (): boolean => {
   const value = typeof process === "undefined" ? undefined : process.env[SINGLE_COPY_STRICT_ENV]
   return value === "1" || value === "true"
@@ -685,15 +715,15 @@ export function registerSingleCopy(options: SingleCopyOptions = {}): SingleCopyP
   const root = realpathOrSelf(resolve(options.cwd ?? process.cwd()))
   const strict = options.strict ?? (readSingleCopyStrict(root) || strictFromEnv())
   const warned = processSet(WARNED)
-  const report = (name: string, skips: readonly SingleCopySkip[]): void => {
-    const message = describeSkips(name, skips)
+  const emit = (key: string, message: string): void => {
     if (strict)
       throw new Error(`${message}\n  Strict mode is on, so this process refuses to start.`)
-    const key = `${skips[0]?.reason ?? ""}\0${name}`
     if (warned.has(key)) return
     warned.add(key)
     console.warn(message)
   }
+  const report = (name: string, skips: readonly SingleCopySkip[]): void =>
+    emit(`${skips[0]?.reason ?? ""}\0${name}`, describeSkips(name, skips))
   const plugin = singleCopyPlugin({
     ...options,
     cwd: root,
@@ -703,13 +733,33 @@ export function registerSingleCopy(options: SingleCopyOptions = {}): SingleCopyP
     },
   })
   const byPackage = new Map<string, SingleCopySkip[]>()
+  const bySkew = new Map<string, SingleCopySkip[]>()
   for (const skip of plugin.plan.skipped) {
     options.onSkip?.(skip)
-    const group = byPackage.get(skip.package) ?? []
+    const skew =
+      skip.reason === "version-skew"
+        ? [
+            modulesDirOf(skip.from),
+            skip.to === undefined ? "" : modulesDirOf(skip.to),
+            skip.fromVersion ?? "",
+            skip.toVersion ?? "",
+          ].join("\0")
+        : undefined
+    const groups = skew === undefined ? byPackage : bySkew
+    const key = skew ?? skip.package
+    const group = groups.get(key) ?? []
     group.push(skip)
-    byPackage.set(skip.package, group)
+    groups.set(key, group)
   }
   for (const [name, skips] of byPackage) report(name, skips)
+  for (const skips of bySkew.values()) {
+    if (skips.length === 1) report(skips[0]?.package ?? "", skips)
+    else
+      emit(
+        `version-skew\0${skips.map((skip) => skip.package).join("\0")}`,
+        describeSkewGroup(skips),
+      )
+  }
   // Installing twice (a preload listed twice, or an explicit call on top of the preload) would register
   // two `onLoad` hooks for the same foreign files, and two hooks both answering one file stall the
   // runtime loader. One install per root and declaration is the whole effect anyway.

@@ -1,5 +1,12 @@
 # @nifrajs/better-auth
 
+## 5.2.0
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- 4ba2cf2: An `authenticate()` stage that throws, or returns anything but `authenticated(principal)` or `rejected(...)`, still answers 503 `{ ok: false, error: "auth_unavailable" }`, and its cause now goes where a handler's error goes: to `onError`, whose response replaces the 503, and when no hook answers, to the logger as `unhandled request error`. Before, the cause was dropped, so a database outage during authentication left only a 503 in the access log. A malformed decision is reported as a `TypeError` naming the stage. A stage that throws a `Response` or `status(...)`, such as `requirePrincipal`'s 401 or redirect, now has it sent as thrown, as from a handler, instead of a 503. `authed()` from `@nifrajs/better-auth` no longer catches provider failures itself, so they are reported the same way.
+
 ## 5.1.0
 
 No changes in this release.

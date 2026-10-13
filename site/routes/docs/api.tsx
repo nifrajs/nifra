@@ -111,6 +111,19 @@ export const app = server().get(
   }),
 )`
 
+const HEADERS = `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+export const app = server()
+  // Closed: validates only the names it declares, whatever else the client sends.
+  .get("/reports", { headers: t.object({ "x-tenant": t.string() }) }, (c) => ({
+    tenant: c.headers["x-tenant"], // string - a request without it is a 422
+  }))
+  // Open: every header arrives, names lower-cased, declared values coerced from text.
+  .get("/jobs", { headers: t.headers({ "x-retry": t.optional(t.integer()) }) }, (c) => ({
+    retry: c.headers["x-retry"] ?? 0, // number
+  }))`
+
 const NOT_FOUND = `import { notFound } from "@nifrajs/core/not-found"
 import { server } from "@nifrajs/core/server"
 
@@ -381,8 +394,11 @@ export default function Api() {
       <p className="caveat">
         Prefer <code>c.set</code> over returning a raw <code>Response</code>. A <code>Response</code>{" "}
         return makes the typed client infer <code>data: never</code>, so you silently lose drift
-        detection for that route (<code>nifra check</code> flags it). <code>c.set</code> keeps your
-        plain-object return fully typed.
+        detection for that route (<code>nifra check</code> flags it, NF-C007). <code>c.set</code>{" "}
+        keeps your plain-object return fully typed. The check reads the functions a route
+        registration or an <code>implement()</code> map passes, and a local function one returns a
+        call to; a helper that answers an auth stage, or a handler registered from a list of route
+        objects, is not read.
       </p>
       <p>
         A <code>Response</code> a handler or hook returns or throws still gets the{" "}
@@ -446,6 +462,25 @@ export default function Api() {
         <code>unsignValue</code>; when a session must not be ambiguous, reject a repeated name with{" "}
         <code>hasDuplicateCookie</code>. The OpenAPI document lists each declared field as an{" "}
         <code>in: cookie</code> parameter.
+      </p>
+
+      <h2>Typed request headers (schema.headers)</h2>
+      <p>
+        A <code>headers</code> schema is validated before the handler like the other slots: a missing
+        or malformed header is a <code>422</code> (<code>onValidationError</code> receives the kind{" "}
+        <code>"headers"</code>), and <code>c.headers</code> becomes the schema&rsquo;s typed output.
+        Every client sends headers no route declares - <code>host</code>, <code>user-agent</code>,{" "}
+        <code>accept</code> - so a closed <code>t.object</code> validates only the names it declares,
+        each read case-insensitively, which is also how the OpenAPI document lists them: one{" "}
+        <code>in: header</code> parameter per declared name.
+      </p>
+      <CodeBlock code={HEADERS} lang="ts" />
+      <p>
+        <code>t.headers</code> is the open form: it receives every header with its name lower-cased,
+        so it takes lower-case names only, and like <code>t.query</code> it coerces declared{" "}
+        <code>t.integer()</code> / <code>t.number()</code> / <code>t.boolean()</code> fields from text.
+        A schema nifra cannot read the names of - a Zod <code>.strict()</code> object or a Valibot{" "}
+        <code>strictObject</code> - receives every header, so declare it open.
       </p>
 
       <h2>Requests no route matched (notFound)</h2>

@@ -11,6 +11,7 @@ import {
   devServerCompile,
   hash8,
   normalizeFilePath,
+  readSource,
   reproduciblePath,
   requirePeer,
 } from "./kit.ts"
@@ -236,7 +237,7 @@ export function stylexBunPlugin(
       const dependencies = dependenciesFor(options)
       build.onLoad({ filter: JS_FILTER }, async (args) => {
         const path = normalizeFilePath(args.path)
-        const source = await Bun.file(path).text()
+        const source = await readSource(build, path)
         const transformed = await transformModule(source, path, options, dependencies())
         if (transformed === undefined) return
         const contents =

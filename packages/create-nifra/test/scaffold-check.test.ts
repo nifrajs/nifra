@@ -3,10 +3,11 @@ import { existsSync } from "node:fs"
 import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { server } from "@nifrajs/core"
-import type { AssuranceConfig } from "@nifrajs/core/assurance"
+import { type StandardSchemaV1, server } from "@nifrajs/core"
+import { type AssuranceConfig, evaluateRouteAssurance } from "@nifrajs/core/assurance"
 import ts from "typescript"
 import { packCurrentSource, pinToPacked } from "../../../scripts/packed-tree.ts"
+import { loadAssuranceConfig } from "../../cli/src/assure.ts"
 import { collectCapabilityProjectReport } from "../../cli/src/capabilities-tool.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
 
@@ -244,6 +245,31 @@ describe("templates: declared responses are enforced at runtime", () => {
       const mod = (await import(join(TEMPLATES_DIR, file))) as Record<string, unknown>
       const app = (mod.app ?? mod.backend) as { fetch?: unknown } | undefined
       expect(typeof app?.fetch).toBe("function")
+    })
+  }
+})
+
+describe("templates: the assurance baseline holds every declared response to the contract", () => {
+  const anything: StandardSchemaV1 = {
+    "~standard": { version: 1, vendor: "probe", validate: (value: unknown) => ({ value }) },
+  }
+  for (const { label, dir } of scaffolds) {
+    test(`${label} passes the response-contract baseline, and the baseline bites`, async () => {
+      const config = await loadAssuranceConfig(dir)
+      const options =
+        config.capabilities === undefined ? {} : { definitions: config.capabilities.definitions }
+      const report = evaluateRouteAssurance(config.source, config.policy, options)
+      expect(report.findings.filter(({ rule }) => rule === "response-contract")).toEqual([])
+      expect(report.routes.some(({ responseContract }) => responseContract === "enforce")).toBe(
+        true,
+      )
+      // The same policy over a route that declares a response on a server with no contract.
+      const uncovered = server().get("/probe", { response: anything }, () => ({ ok: true }))
+      const failing = evaluateRouteAssurance(uncovered, config.policy, options)
+      expect(failing.findings.map(({ rule, path }) => [rule, path])).toContainEqual([
+        "response-contract",
+        "/probe",
+      ])
     })
   }
 })

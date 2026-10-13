@@ -29,7 +29,7 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/plugin`
 - **solidComponentClient** _(function)_ - `solidComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compone…` · from `@nifrajs/web-solid/server-components/client`
 
-_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 29 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

@@ -20,10 +20,21 @@ export const locales = defineLocales({
     gu: { draft: true }, // catalogs in progress: never routed, never an alternate
   },
 })
-export const urls = defineI18nRouting(locales)
+export const urls = defineI18nRouting(locales, {
+  // The pages that exist in some locales only, declared once; undefined = every served locale.
+  pageLocales: (pathname) => (pathname.startsWith("/guides/") ? ["en", "hi"] : undefined),
+})
 
 urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+urls.localizePathname("/guides/setup", "ur", { fallback: "default" }) // "/guides/setup"
+urls.localesOf("/hi/guides/setup") // ["en", "hi"]
 locales.chain("hi") // ["hi", "en"] - the catalog fallback order`
+
+const REGISTER_ROUTING = `// doc-check: skip - imports the app's own routing module.
+// backend/framework.ts - nifra dev, nifra build and the generated server entry read it from here.
+import { urls } from "../shared/i18n"
+
+export const i18n = urls`
 
 const GUARD = `// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
 import { defineLocales } from "@nifrajs/i18n"
@@ -155,7 +166,15 @@ export const catalogs = {
   gu: () => import("./messages/gu.json"),
 }
 // Keys a check skips: exact, a prefix ending in ".*", or "*".
-export const ignore = { script: ["languages.*"], untranslated: ["brand"] }`
+export const ignore = { script: ["languages.*"], untranslated: ["brand"] }
+// The rest of checkCatalogs()'s options: Latin words a translation keeps, and your own rules.
+export const check = {
+  latinWords: ["PDF", "OK"],
+  rules: [
+    ({ message }: { readonly message: string }) =>
+      message === message.trim() ? undefined : { code: "spacing", message: "starts or ends with a space" },
+  ],
+}`
 
 const CHECK_TEST = `// Or as a test, with no CLI: the same checks, pure.
 import { expect, test } from "bun:test"
@@ -196,6 +215,32 @@ t.t("cart", { count: 1200 }) // "1 200 articles"
 t.t("home.title", { name: "Ada" }) // "Welcome back, Ada", from en
 const questions = t.get("faq")?.map((item) => item.q)
 console.log(questions)`
+
+const COPY = `// shared/copy.ts - copy tables: the text and its translations beside the code that shows it.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineCopy } from "@nifrajs/i18n/copy"
+
+export const locales = defineLocales({ default: "en", locales: { en: {}, hi: {}, ta: {} } })
+export const copy = defineCopy(locales, {
+  onMissing: ({ id, locale, fallback }) => console.warn(\`\${id ?? "a table"}: no \${locale}, showing \${fallback}\`),
+})
+
+// The default locale's value is required; every other locale is optional and shaped like it.
+export const TITLE = copy({ en: "Bicycle", hi: "साइकिल", ta: "மிதிவண்டி" })
+export const FAQ = copy.id("shop.faq", { en: ["Brakes?", "Gears?"], hi: ["ब्रेक?", "गियर?"] })
+export const PEDALS = copy({ en: "{n, plural, one {# pedal} other {# pedals}}", hi: "{n} पैडल" })
+
+copy.pick(TITLE, "ta") // "மிதிவண்டி"
+copy.pick(FAQ, "ta") // ["Brakes?", "Gears?"] - the en value; onMissing fires once for ta
+copy.format(PEDALS, "en", { n: 3 }) // "3 pedals"`
+
+const COPY_ENTRY = `// doc-check: skip - continues a hand-written server.ts (adapter, manifest).
+// nifra build wires this itself; a server entry you write passes the client build's copyChunks.
+const assets = JSON.parse(await Bun.file("dist/manifest.json").text())
+export const app = createWebApp({
+  adapter, manifest, clientEntry: assets.entry,
+  copyChunks: assets.copyChunks, // locale -> chunk URL; each page preloads its own
+})`
 
 const REGISTER = `// doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
 // shared/register.ts - once per app: every t() key, useT() included, and every other catalog is checked.
@@ -250,6 +295,38 @@ export default function I18n() {
         builds can never start with <code>//</code>.
       </p>
       <CodeBlock code={ALTERNATES} lang="ts" />
+      <p>
+        A page that exists in some languages only is declared once, with <code>pageLocales</code>{" "}
+        (given the path without its locale prefix; it must be pure). Then{" "}
+        <code>matchSegment</code> answers not-found for the other locales, <code>alternates</code>{" "}
+        lists only the page's own (none for a page in one locale), <code>localesOf(path)</code> names
+        them for a prerender's static paths, and <code>localizePathname(path, locale, {`{ fallback: "default" }`})</code>{" "}
+        links a menu entry to the default locale's page where the page is missing. A{" "}
+        <code>pageLocales</code> that throws, or names a locale the registry does not declare, throws
+        rather than serving every locale.
+      </p>
+
+      <h2>Register the routing once</h2>
+      <p>
+        Export the router as <code>i18n</code> from <code>backend/framework.ts</code> (re-export it from{" "}
+        <code>nifra.config.ts</code> when both exist), or pass it to a hand-written{" "}
+        <code>createWebApp({`{ i18n }`})</code>. Every document then takes its locale from the URL:
+      </p>
+      <ul>
+        <li><code>&lt;html lang dir&gt;</code> come from <code>documentMeta(localeOf(path))</code>,
+          unless the route's meta sets <code>lang</code>, on a hard load and after each client
+          navigation alike.</li>
+        <li>The response carries <code>Content-Language</code>.</li>
+        <li>Each adapter's <code>useLocale()</code> names the page's locale key, and{" "}
+          <code>&lt;I18nProvider&gt;</code> formats in its tag when no <code>locale</code> is passed;
+          no loader has to hand either over.</li>
+        <li>A route under a <code>[lang]</code> or <code>[[lang]]</code> directory runs{" "}
+          <code>matchSegment</code> before any middleware: an unserved locale, or a page missing from
+          it, is a 404 through your <code>_404</code>, and a non-canonical prefix (<code>/en/x</code>{" "}
+          when the default is unprefixed) is a 308 to the canonical URL. The guard middleware above is
+          then only needed for checks of your own.</li>
+      </ul>
+      <CodeBlock code={REGISTER_ROUTING} lang="ts" />
 
       <h2>Negotiate the locale</h2>
       <p>
@@ -305,6 +382,9 @@ export default function I18n() {
       <p>In React, provide it once and read it with <code>useT()</code>:</p>
       <CodeBlock code={PROVIDER} />
       <p>
+        In an app that registers its routing, <code>locale</code> may be left out: the provider formats
+        in the page's locale, and <code>useLocale()</code> reads the page's locale key anywhere below
+        the route.{" "}
         <code>locale</code>, <code>messages</code> and <code>fallback</code> are serializable, so SSR
         renders the negotiated catalogs and the client rebuilds the same formatter on hydrate - no
         mismatch. Switching language re-navigates (a cookie or <code>?lang=</code>); the loader returns
@@ -312,6 +392,41 @@ export default function I18n() {
         detector's own cookie for a switcher, so a choice made in the page and one made through{" "}
         <code>?lang=</code> are the same cookie.
       </p>
+
+      <h2>Copy tables</h2>
+      <p>
+        A catalog keys every message; a <b>copy table</b> keeps a page's text and its translations
+        beside the code that shows it, with no key to name. <code>defineCopy(locales)</code> from{" "}
+        <code>@nifrajs/i18n/copy</code> binds tables to the registry: the default locale's value is
+        required, a locale the registry does not declare is a type error, and every other value has the
+        default's shape - a list its length, a block its keys. Values are data (messages, lists, blocks);
+        a message that takes values is ICU, read with <code>copy.format()</code>.
+      </p>
+      <CodeBlock code={COPY} lang="ts" />
+      <p>
+        <code>copy.pick(table, locale)</code> walks <code>locales.chain(locale)</code>, and{" "}
+        <code>onMissing</code> fires once per table and locale that falls back. A table's id is its{" "}
+        <code>file:line</code>, or the one <code>copy.id()</code> names.
+      </p>
+      <p>
+        In a <b>production client build</b>, each table's values move out of the bundle into one chunk
+        per locale, so a page's JavaScript carries the copy of the locale it renders in and none of the
+        others; a chunk holds the fallback's value wherever its locale has none. The server bundle keeps
+        every table whole. A page loads the chunk of its URL's locale (the first path segment when it is a
+        served locale, or what <code>defineCopy(locales, {"{ localeOf }"})</code> returns) and of the
+        locale its <code>&lt;html lang&gt;</code> names, both preloaded; a client navigation loads the next
+        URL's chunk with the route's code.
+      </p>
+      <CodeBlock code={COPY_ENTRY} lang="ts" />
+      <ul>
+        <li>The build reads tables statically: string literals, lists and blocks of them, and constants
+          the same module declares. A table built any other way, or written in a <code>.svelte</code> or{" "}
+          <code>.vue</code> file, keeps every locale in the bundle and still works;{" "}
+          <code>nifra i18n check</code> says which tables those are.</li>
+        <li>The build reads the source with the app's TypeScript (5.9 or 6). Without its compiler API
+          (TypeScript 7 ships none) the build warns and keeps tables whole. It adds about 1 ms per
+          module to a production build.</li>
+      </ul>
 
       <h2>Rich text</h2>
       <p>
@@ -358,8 +473,24 @@ export default function I18n() {
           <code>Intl.Locale(tag).maximize().script</code>, and, as a warning, words mixing Latin with
           the locale's script. Latin words (brands, units) stay allowed.</li>
         <li><b>Untranslated</b> messages identical to the default in another language, as a warning.</li>
+        <li><b>Partly translated</b> text in a locale that does not write in Latin: a message of 6 words
+          or more that is over 60% Latin-script words (<code>latin-share</code>; words split by{" "}
+          <code>Intl.Segmenter</code>, so Japanese counts), with each locale's share in the coverage
+          table and a warning above 10%; and a message of 80 graphemes or more translated to under 32%
+          of its length (<code>volume</code>), a summary rather than a translation. Han scripts, which
+          write a sentence in far fewer graphemes, are left out of <code>volume</code>. Every threshold
+          is an option.</li>
+        <li><b>Your rules</b>: each of <code>rules</code> runs on every message of every locale, and
+          its findings read <code>custom:&lt;code&gt;</code>, which <code>ignore</code> takes.</li>
       </ul>
       <CodeBlock code={CHECK_ENTRY} lang="ts" />
+      <p>
+        When the module also exports a <code>copy</code> from <code>defineCopy()</code> (or only
+        that), the check finds its tables across the project's source, turns them into a catalog per
+        locale and runs the same checks on them, reporting each at its <code>file:line</code>. Two tables
+        with one id are an error (a production build refuses them too); a table it cannot read is a
+        warning that says why.
+      </p>
       <p>
         It exits 1 on an error, and with <code>--strict</code> on a warning too; <code>--json</code>{" "}
         prints the result. Draft locales report missing keys as info. The checks themselves are{" "}

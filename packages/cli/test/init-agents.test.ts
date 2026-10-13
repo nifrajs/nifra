@@ -22,6 +22,7 @@ import {
   renderInitAgents,
   runInitAgents,
   safeJoin,
+  UNPINNED,
 } from "../src/init-agents.ts"
 
 const roots: string[] = []
@@ -504,6 +505,88 @@ describe("initAgents --sync-mcp - re-pins the MCP launch and nothing else", () =
   })
 })
 
+describe("initAgents in a project that declares @nifrajs/cli - the launch follows the install", () => {
+  const registry = (args: readonly string[]) =>
+    `${JSON.stringify({ mcpServers: { nifra: { command: "bunx", args } } }, null, 2)}\n`
+  const claude = (spec: string) =>
+    `# Rules\n\nOur agent launches \`bunx ${spec} mcp\`.\n\n@AGENTS.md\n`
+
+  async function declaring(): Promise<string> {
+    const dir = await freshDir()
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", devDependencies: { "@nifrajs/cli": "^5.1.0" } }),
+    )
+    return dir
+  }
+
+  test("a plain run writes the unpinned launch to both registries and AGENTS.md", async () => {
+    const dir = await declaring()
+    await initAgents(dir)
+    for (const path of [".mcp.json", ".cursor/mcp.json"])
+      expect(await read(dir, path)).toBe(registry(["@nifrajs/cli", "mcp"]))
+    expect(await read(dir, "AGENTS.md")).toContain("`bunx @nifrajs/cli mcp`")
+  })
+
+  test("--sync-mcp drops an old pin, every other byte kept, and a second run finds it current", async () => {
+    const dir = await declaring()
+    await writeFile(join(dir, ".mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp"]))
+    await writeFile(join(dir, "CLAUDE.md"), claude("@nifrajs/cli@3.1.0"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe(UNPINNED)
+    expect(result.files.find((f) => f.path === ".mcp.json")).toEqual({
+      path: ".mcp.json",
+      action: "synced",
+      note: "3.1.0 -> the installed CLI (unpinned)",
+    })
+    expect(await read(dir, ".mcp.json")).toBe(registry(["@nifrajs/cli", "mcp"]))
+    expect(await read(dir, "CLAUDE.md")).toBe(claude("@nifrajs/cli"))
+    const again = await initAgents(dir, { syncMcp: true })
+    expect(again.files.find((f) => f.path === "CLAUDE.md")).toEqual({
+      path: "CLAUDE.md",
+      action: "present",
+      note: "already follows the installed CLI",
+    })
+    expect(await collectStaleMcpPins(dir)).toEqual({ target: null, files: [] })
+    expect(renderInitAgents(again)).toContain("Nothing to re-pin")
+  })
+
+  test("without the declaration a pinned launch stays pinned and an unpinned one is left as written", async () => {
+    const dir = await freshDir()
+    await writeFile(join(dir, ".mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp"]))
+    await writeFile(join(dir, "CLAUDE.md"), claude("@nifrajs/cli"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe(MCP_CLI_VERSION)
+    expect(await read(dir, ".mcp.json")).toBe(registry([`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"]))
+    expect(actionFor(result, "CLAUDE.md")).toBe("present")
+    expect(await read(dir, "CLAUDE.md")).toBe(claude("@nifrajs/cli"))
+  })
+
+  test("a member's sync unpins its own files but keeps the root's launch pinned", async () => {
+    const dir = await freshDir()
+    await mkdir(join(dir, ".git"))
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "root", private: true, workspaces: ["app"] }),
+    )
+    await mkdir(join(dir, "app/node_modules/@nifrajs/cli"), { recursive: true })
+    await writeFile(
+      join(dir, "app/package.json"),
+      JSON.stringify({ name: "app", devDependencies: { "@nifrajs/cli": "3.4.2" } }),
+    )
+    await writeFile(
+      join(dir, "app/node_modules/@nifrajs/cli/package.json"),
+      JSON.stringify({ name: "@nifrajs/cli", version: "3.4.2" }),
+    )
+    await writeFile(join(dir, ".mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp", "app"]))
+    await writeFile(join(dir, "app/.mcp.json"), registry(["@nifrajs/cli@3.1.0", "mcp"]))
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    expect(result.files.find((f) => f.path === "../.mcp.json")?.note).toBe("3.1.0 -> 3.4.2")
+    expect(await read(dir, ".mcp.json")).toBe(registry(["@nifrajs/cli@3.4.2", "mcp", "app"]))
+    expect(await read(dir, "app/.mcp.json")).toBe(registry(["@nifrajs/cli", "mcp"]))
+  })
+})
+
 describe("initAgents at a workspace root - the launch names the one nifra member", () => {
   const pin = (version: string) => `@nifrajs/cli@${version}`
   const cursorJson = (version: string, member?: string) =>
@@ -594,6 +677,122 @@ describe("initAgents at a workspace root - the launch names the one nifra member
       `3.1.0 -> ${MCP_CLI_VERSION}`,
     )
     expect(await read(dir, ".mcp.json")).toBe(cursorJson(MCP_CLI_VERSION))
+  })
+})
+
+describe("initAgents --sync-mcp in a workspace member - the root's launches are reached", () => {
+  const pin = (version: string) => `@nifrajs/cli@${version}`
+  const registry = (servers: Record<string, readonly string[]>) =>
+    `${JSON.stringify({ mcpServers: Object.fromEntries(Object.entries(servers).map(([name, args]) => [name, { command: "bunx", args }])) }, null, 2)}\n`
+
+  /** A repository root that declares `workspaces`, with nifra members installed at 3.4.2. */
+  async function repo(members: readonly string[] = ["app"], git = true): Promise<string> {
+    const dir = await freshDir()
+    if (git) await mkdir(join(dir, ".git"))
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "root", private: true, workspaces: [...members] }),
+    )
+    for (const member of members) {
+      await mkdir(join(dir, member, "node_modules/@nifrajs/cli"), { recursive: true })
+      await writeFile(
+        join(dir, member, "package.json"),
+        JSON.stringify({ name: member, dependencies: { "@nifrajs/core": "3.4.2" } }),
+      )
+      await writeFile(
+        join(dir, member, "node_modules/@nifrajs/cli/package.json"),
+        JSON.stringify({ name: "@nifrajs/cli", version: "3.4.2" }),
+      )
+    }
+    return dir
+  }
+  const noteFor = (r: InitAgentsResult, path: string) => r.files.find((f) => f.path === path)
+
+  test("a root registry launching `mcp app` is re-pinned from the member, nothing else changed", async () => {
+    const dir = await repo()
+    const before = registry({ nifra: [pin("3.1.0"), "mcp", "app"] })
+    await writeFile(join(dir, ".mcp.json"), before)
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    expect(noteFor(result, "../.mcp.json")).toEqual({
+      path: "../.mcp.json",
+      action: "synced",
+      note: "3.1.0 -> 3.4.2",
+    })
+    expect(await read(dir, ".mcp.json")).toBe(before.replace(pin("3.1.0"), pin("3.4.2")))
+    expect(await collectStaleMcpPins(join(dir, "app"))).toEqual({ target: "3.4.2", files: [] })
+  })
+
+  test("the directory may be written ./app/ or absolute", async () => {
+    const dir = await repo()
+    await mkdir(join(dir, ".cursor"))
+    await writeFile(join(dir, ".mcp.json"), registry({ nifra: [pin("3.1.0"), "mcp", "./app/"] }))
+    await writeFile(
+      join(dir, ".cursor/mcp.json"),
+      registry({ nifra: [pin("3.1.0"), "mcp", join(dir, "app")] }),
+    )
+    const stale = await collectStaleMcpPins(join(dir, "app"))
+    expect(stale.files.map((f) => f.path)).toEqual(["../.mcp.json", "../.cursor/mcp.json"])
+  })
+
+  test("a bare root launch with one nifra member is re-pinned and named, its markdown too", async () => {
+    const dir = await repo()
+    await writeFile(join(dir, ".mcp.json"), registry({ nifra: [pin("3.1.0"), "mcp"] }))
+    await writeFile(join(dir, "CLAUDE.md"), `Launch with \`bunx ${pin("3.1.0")} mcp\`.\n`)
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    expect(noteFor(result, "../.mcp.json")?.note).toBe("3.1.0 -> 3.4.2; launches `mcp app`")
+    expect(await read(dir, ".mcp.json")).toBe(registry({ nifra: [pin("3.4.2"), "mcp", "app"] }))
+    expect(await read(dir, "CLAUDE.md")).toBe(`Launch with \`bunx ${pin("3.4.2")} mcp\`.\n`)
+  })
+
+  test("a root that also launches another member is reported and left alone", async () => {
+    const dir = await repo(["app", "admin"])
+    const both = registry({
+      app: [pin("3.1.0"), "mcp", "app"],
+      admin: [pin("3.0.0"), "mcp", "admin"],
+    })
+    const other = registry({ admin: [pin("3.0.0"), "mcp", "admin"] })
+    await mkdir(join(dir, ".cursor"))
+    await writeFile(join(dir, ".mcp.json"), both)
+    await writeFile(join(dir, ".cursor/mcp.json"), other)
+    await writeFile(join(dir, "CLAUDE.md"), `Launch with \`bunx ${pin("3.1.0")} mcp\`.\n`)
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    for (const path of ["../.mcp.json", "../.cursor/mcp.json", "../CLAUDE.md"])
+      expect(noteFor(result, path)).toEqual({
+        path,
+        action: "skipped",
+        note: "its launch is not this project's alone - left alone",
+      })
+    expect(await read(dir, ".mcp.json")).toBe(both)
+    expect(await read(dir, ".cursor/mcp.json")).toBe(other)
+  })
+
+  test("a pin outside any launch, or a symlinked registry, is left alone", async () => {
+    const dir = await repo()
+    await mkdir(join(dir, ".cursor"))
+    const odd = `${JSON.stringify({ mcpServers: { nifra: { command: "bunx", args: [pin("3.1.0"), "mcp", "app"], env: { PINNED_TOOL: pin("3.1.0") } } } })}\n`
+    await writeFile(join(dir, ".mcp.json"), odd)
+    await writeFile(join(dir, "shared.json"), registry({ nifra: [pin("3.1.0"), "mcp", "app"] }))
+    await symlink(join(dir, "shared.json"), join(dir, ".cursor/mcp.json"))
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    expect(noteFor(result, "../.mcp.json")?.note).toBe(
+      "holds a pin no launch accounts for - left alone",
+    )
+    expect(noteFor(result, "../.cursor/mcp.json")?.note).toBe("not a regular file - left alone")
+    expect(await read(dir, ".mcp.json")).toBe(odd)
+    expect(await read(dir, "shared.json")).toContain(pin("3.1.0"))
+  })
+
+  test("outside a repository nothing above the project is read", async () => {
+    const dir = await repo(["app"], false)
+    await writeFile(join(dir, ".mcp.json"), registry({ nifra: [pin("3.1.0"), "mcp", "app"] }))
+    const result = await initAgents(join(dir, "app"), { syncMcp: true })
+    expect(result.files.map((f) => f.path)).toEqual([
+      ".mcp.json",
+      ".cursor/mcp.json",
+      "CLAUDE.md",
+      "AGENTS.md",
+    ])
+    expect(await read(dir, ".mcp.json")).toContain(pin("3.1.0"))
   })
 })
 

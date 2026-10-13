@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { LOCALES_GLOBAL, type RenderProps } from "@nifrajs/web"
 import { createComponent, type JSX } from "solid-js"
 import { Dynamic, renderToString } from "solid-js/web"
-import { I18nProvider, rich, useT } from "../src/i18n.ts"
+import { I18nProvider, rich, useLocale, useT } from "../src/i18n.ts"
+import { RenderPropsContext } from "../src/router.ts"
 
 const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
@@ -108,4 +110,77 @@ test("rich() renders tags as elements and values as text", () => {
   expect(visible).toBe(
     '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br/>&lt;b>Ada&lt;/b>! x</p>',
   )
+})
+
+describe("the page's locale", () => {
+  const ur = { key: "ur", lang: "ur-PK", dir: "rtl" } as const
+  const Locale = (): JSX.Element => {
+    const key = useLocale()
+    const f = useT()
+    return createComponent(Dynamic, {
+      component: "p",
+      get children() {
+        return `${key()}|${f.locale}`
+      },
+    })
+  }
+  const page = (renderProps: RenderProps | undefined, locale?: string): string =>
+    renderToString(() => {
+      const child = () => createComponent(Locale, {})
+      const provider = () =>
+        locale === undefined
+          ? createComponent(I18nProvider, {
+              messages,
+              get children() {
+                return child()
+              },
+            })
+          : createComponent(I18nProvider, {
+              locale,
+              messages,
+              get children() {
+                return child()
+              },
+            })
+      return renderProps === undefined
+        ? provider()
+        : createComponent(RenderPropsContext.Provider, {
+            value: renderProps,
+            get children() {
+              return provider()
+            },
+          })
+    })
+
+  test("on the server, useLocale and <I18nProvider> read the request's locale", () => {
+    expect(page({ data: null, path: "/ur/x", locale: ur })).toContain("ur|ur-PK")
+  })
+
+  test("in the browser, the handed-over locales name it from the path", () => {
+    Reflect.set(globalThis, LOCALES_GLOBAL, {
+      default: "en",
+      locales: [ur, { key: "en", lang: "en", dir: "ltr" }],
+    })
+    try {
+      expect(page({ data: null, path: "/ur/x" })).toContain("ur|ur-PK")
+    } finally {
+      Reflect.deleteProperty(globalThis, LOCALES_GLOBAL)
+    }
+  })
+
+  test("an explicit locale wins; without routing useLocale reads the provider; with neither, both throw", () => {
+    expect(page({ data: null, path: "/ur/x", locale: ur }, "fr")).toContain("ur|fr")
+    expect(page(undefined, "fr")).toContain("fr|fr")
+    expect(() => page(undefined)).toThrow("<I18nProvider> needs a `locale`")
+    expect(() =>
+      renderToString(() =>
+        createComponent(Dynamic, {
+          component: "p",
+          get children() {
+            return useLocale()()
+          },
+        }),
+      ),
+    ).toThrow("useLocale() needs an app that registers its locale routing")
+  })
 })

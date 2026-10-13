@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { ancestorPins } from "../src/init-agents.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
   applyImportMoves,
@@ -15,7 +16,6 @@ import {
   specVersion,
   upgradeTargets,
 } from "../src/upgrade.ts"
-
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("tmp-nifra-upgrade-fixtures")
@@ -422,6 +422,59 @@ describe("computeUpgrade / runUpgrade", () => {
     expect(computeUpgrade(root, RECIPE, true).agentPins).toEqual([])
   })
 
+  test("a workspace root's launch that serves the project moves with it", async () => {
+    const root = join(FIXTURES, "member-repo")
+    const app = join(root, "app")
+    await mkdir(join(root, ".git"), { recursive: true })
+    await mkdir(app, { recursive: true })
+    await writeFile(join(root, "package.json"), JSON.stringify({ workspaces: ["app"] }))
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.7.0" } }),
+    )
+    const launch = (version: string) =>
+      `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["@nifrajs/cli@${version}", "mcp", "app"] } } }\n`
+    await writeFile(join(root, ".mcp.json"), launch("1.7.0"))
+    const above = (await ancestorPins(app)).owned
+    const moved = [{ file: "../.mcp.json", from: ["1.7.0"], to: "1.8.0" }]
+    expect(computeUpgrade(app, RECIPE, false, false, false, above).agentPins).toEqual(moved)
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("1.7.0"))
+    expect(computeUpgrade(app, RECIPE, true, false, false, above).agentPins).toEqual(moved)
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("1.8.0"))
+  })
+
+  test("a project that declares @nifrajs/cli drops the launch pin; a root launch above it stays pinned", async () => {
+    const root = join(FIXTURES, "declaring-repo")
+    const app = join(root, "app")
+    await mkdir(join(root, ".git"), { recursive: true })
+    await mkdir(app, { recursive: true })
+    await writeFile(join(root, "package.json"), JSON.stringify({ workspaces: ["app"] }))
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", devDependencies: { "@nifrajs/cli": "1.7.0" } }),
+    )
+    await writeAll(app, agentFiles("1.7.0"))
+    const launch = (spec: string) =>
+      `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["${spec}", "mcp", "app"] } } }\n`
+    await writeFile(join(root, ".mcp.json"), launch("@nifrajs/cli@1.7.0"))
+    const above = (await ancestorPins(app)).owned
+    const plan = computeUpgrade(app, RECIPE, true, false, false, above)
+    expect(plan.agentPins).toEqual([
+      ...[".mcp.json", ".cursor/mcp.json", "CLAUDE.md", "AGENTS.md"].map((file) => ({
+        file,
+        from: ["1.7.0"],
+        to: "unpinned",
+      })),
+      { file: "../.mcp.json", from: ["1.7.0"], to: "1.8.0" },
+    ])
+    expect(await readFile(join(app, ".mcp.json"), "utf8")).toBe(
+      registry("1.7.0").replace("@nifrajs/cli@1.7.0", "@nifrajs/cli"),
+    )
+    expect(await readFile(join(app, "CLAUDE.md"), "utf8")).toContain("`bunx @nifrajs/cli mcp`")
+    expect(await readFile(join(root, ".mcp.json"), "utf8")).toBe(launch("@nifrajs/cli@1.8.0"))
+    expect(computeUpgrade(app, RECIPE, true, false, false, above).agentPins).toEqual([])
+  })
+
   test("a symlinked agent file or folder is never written through", async () => {
     const root = await scaffold()
     const outside = join(root, "..", "outside-agent-files")
@@ -479,6 +532,58 @@ describe("computeUpgrade / runUpgrade", () => {
   test("--list returns available targets", async () => {
     const ok = await runUpgrade(process.cwd(), { list: true, json: true })
     expect(ok).toBe(true)
+  })
+
+  test("--list shows the notes of every release after the declared one", async () => {
+    const root = join(FIXTURES, "list-notes")
+    await mkdir(root, { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    )
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      expect(await runUpgrade(root, { list: true, cliVersion: "5.1.0" })).toBe(true)
+      expect(await runUpgrade(root, { list: true, json: true, cliVersion: "5.1.0" })).toBe(true)
+    } finally {
+      log.mockRestore()
+    }
+    const [text, json] = lines
+    expect(text).toContain("this project declares 5.0.0")
+    expect(text).toContain("  5.0.0  (declared)\n  5.1.0\n    - `merge()` now recompiles")
+    // A release at or below the declared one is listed by version only.
+    expect(text).not.toContain("@nifra-gate-reviewed")
+    const parsed: unknown = JSON.parse(json ?? "{}")
+    expect(Reflect.get(Object(parsed), "installed")).toBe("5.0.0")
+    const notes = Reflect.get(Object(parsed), "notes")
+    expect(Reflect.get(notes, "5.1.0")).toEqual(getRecipe("5.1.0")?.notes ?? ["missing"])
+    expect(Reflect.get(notes, "5.0.0")).toEqual(getRecipe("5.0.0")?.notes ?? ["missing"])
+  })
+
+  test("every minor and major release this CLI offers has its own recipe", () => {
+    for (const version of upgradeTargets("5.1.0").filter((v) => /^\d+\.\d+\.0$/.test(v)))
+      if (compareSemverSpec(version, "5.0.0") >= 0) expect(getRecipe(version)).toBeDefined()
+  })
+
+  test("an upgrade across 5.1.0 carries its notes", () => {
+    const chained = chainRecipes("5.1.0", "5.0.0")
+    expect(
+      (chained.notes ?? []).some((note) => note.startsWith("5.1.0: `merge()` now recompiles")),
+    ).toBe(true)
+  })
+
+  test("an upgrade from 5.0 to 5.2 carries the notes of every minor, in order", () => {
+    const notes = chainRecipes("5.2.0", "5.0.0").notes ?? []
+    const at = (prefix: string) => notes.findIndex((note) => note.startsWith(prefix))
+    const order = [
+      at("5.1.0: "),
+      at("5.2.0: A closed request-header schema"),
+      at("5.2.0: The development `unusedScopedHooks` audit"),
+      at("5.2.0: The Bun build"),
+    ]
+    expect(order.every((index) => index >= 0)).toBe(true)
+    expect(order.toSorted((a, b) => a - b)).toEqual(order)
   })
 })
 
@@ -581,6 +686,11 @@ describe("chained upgrades", () => {
       to: "@nifrajs/web/backend-only",
     })
     expect(chain.notes?.[0]).toStartWith("4.0.0: Run `nifra migrate layout`")
+    // What a test suite or tool reads off the wire changed too: the handover and the ISR headers.
+    const notes = chain.notes?.join("\n") ?? ""
+    expect(notes).toContain('id="__nifra-handover"')
+    expect(notes).toContain("window.__NIFRA_DATA__")
+    expect(notes).toContain("`x-nifra-isr-revalidate` and `x-nifra-isr-tags`")
   })
 
   test("a target without a recipe pins the fixed group; an unknown install runs only the target's", () => {
@@ -729,5 +839,106 @@ describe("chained upgrades", () => {
       [4, 4],
       [5, undefined],
     ])
+  })
+})
+
+// ── linked repositories on another nifra ──────────────────────────────────────
+
+describe("a linked repository that loads its own nifra", () => {
+  async function linkedLayout(name: string, kitCore: string | "app-copy"): Promise<string> {
+    const base = join(FIXTURES, name)
+    const app = join(base, "app")
+    const kit = join(base, "kit")
+    await mkdir(join(app, "node_modules", "@team"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify(
+        { name: "app", dependencies: { "@nifrajs/core": "^5.0.0", "@team/kit": "link:../kit" } },
+        null,
+        2,
+      ),
+    )
+    await writeFile(
+      join(app, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "5.0.0" }),
+    )
+    await mkdir(join(kit, "node_modules", "@nifrajs"), { recursive: true })
+    await writeFile(
+      join(kit, "package.json"),
+      JSON.stringify({ name: "@team/kit", dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    )
+    if (kitCore === "app-copy") {
+      await symlink(
+        join(app, "node_modules", "@nifrajs", "core"),
+        join(kit, "node_modules", "@nifrajs", "core"),
+      )
+    } else {
+      await mkdir(join(kit, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await writeFile(
+        join(kit, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: kitCore }),
+      )
+    }
+    await symlink(kit, join(app, "node_modules", "@team", "kit"))
+    return app
+  }
+
+  const quiet = async <T>(act: () => Promise<T>): Promise<{ value: T; out: string }> => {
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    const error = spyOn(console, "error").mockImplementation((...args) =>
+      lines.push(args.join(" ")),
+    )
+    const warn = spyOn(console, "warn").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      return { value: await act(), out: lines.join("\n") }
+    } finally {
+      log.mockRestore()
+      error.mockRestore()
+      warn.mockRestore()
+    }
+  }
+  const options = { version: "5.1.0", cliVersion: "5.1.0", verify: false, hooks: false } as const
+
+  test("--write refuses before editing, naming the repository and its commands", async () => {
+    const app = await linkedLayout("skew-refused", "5.0.0")
+    const before = await readFile(join(app, "package.json"), "utf8")
+    const { value, out } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(false)
+    expect(await readFile(join(app, "package.json"), "utf8")).toBe(before)
+    expect(out).toContain("Blocked: 1 linked repository loads its own nifra at another version")
+    expect(out).toContain("@team/kit (package.json) at ../kit: @nifrajs/core 5.0.0")
+    expect(out).toContain("cd ../kit && nifra upgrade 5.1.0 --write && bun install")
+  })
+
+  test("a dry run prints the plan and the blocker, and fails", async () => {
+    const app = await linkedLayout("skew-dry", "5.0.0")
+    const { value, out } = await quiet(() => runUpgrade(app, options))
+    expect(value).toBe(false)
+    expect(out).toContain("Planned")
+    expect(out).toContain("Blocked:")
+  })
+
+  test("--allow-linked-skew writes and still names it", async () => {
+    const app = await linkedLayout("skew-allowed", "5.0.0")
+    const { value, out } = await quiet(() =>
+      runUpgrade(app, { ...options, write: true, allowLinkedSkew: true }),
+    )
+    expect(value).toBe(true)
+    expect(await readFile(join(app, "package.json"), "utf8")).toContain('"^5.1.0"')
+    expect(out).toContain("Allowed by --allow-linked-skew")
+  })
+
+  test("a linked repository already on the target does not block", async () => {
+    const app = await linkedLayout("skew-none", "5.1.0")
+    const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(true)
+  })
+
+  test("a linked repository resolving this project's copy follows its install", async () => {
+    const app = await linkedLayout("skew-follows", "app-copy")
+    const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(true)
   })
 })

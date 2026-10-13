@@ -85,7 +85,8 @@ export interface NifraFramework {
   readonly dev?: { readonly indicator?: boolean; readonly allowedHosts?: readonly string[] }
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
-  /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
+  /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). With both
+   * configs, `nifra.config.ts` wins and `backend/framework.ts` fills it in when left unset. */
   readonly publicEnvPrefix?: string
   /** Reviewed false positives of `nifra build`'s secret scan, each `{ rule, file, reason }` (or
    * `{ rule: "private-env-value", env, reason }`). There is no exemption by value. */
@@ -111,6 +112,10 @@ export interface NifraFramework {
   readonly csp?: CreateWebAppOptions["csp"]
   /** A per-request CSP nonce resolver. Exclusive with {@link csp}. */
   readonly nonce?: CreateWebAppOptions["nonce"]
+  /** The app's locale routing, `defineI18nRouting()` from `@nifrajs/i18n/routing`: every document
+   * takes its `<html lang dir>`, `Content-Language` and adapter locale from it. See `createWebApp`'s
+   * `i18n`. */
+  readonly i18n?: CreateWebAppOptions["i18n"]
 }
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
@@ -122,6 +127,7 @@ export const FRAMEWORK_WEB_OPTIONS = [
   "csp",
   "nonce",
   "serverComponents",
+  "i18n",
 ] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
@@ -161,6 +167,15 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.nonce !== undefined && typeof fw.nonce !== "function") {
     wrong("nonce", "a nonce resolver function, such as createNonceResolver() returns")
+  }
+  if (
+    fw.i18n !== undefined &&
+    (typeof fw.i18n !== "object" || fw.i18n === null || typeof fw.i18n.localeOf !== "function")
+  ) {
+    wrong("i18n", "the router defineI18nRouting() from @nifrajs/i18n/routing returns")
+  }
+  if (fw.publicEnvPrefix !== undefined && typeof fw.publicEnvPrefix !== "string") {
+    wrong("publicEnvPrefix", 'a string such as "PUBLIC_", or "" to expose no environment variable')
   }
   if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
     wrong("secretExemptions", "an array of { rule, file, reason } entries")
@@ -342,8 +357,9 @@ export async function loadBackendApp(
   return { cwd, backend }
 }
 
-/** The fields the generated server entry imports from backend/framework.ts. */
-const SERVER_OPTIONS = [...FRAMEWORK_WEB_OPTIONS, "use"] as const
+/** The fields the generated server entry imports from backend/framework.ts, and `publicEnvPrefix`,
+ * which `nifra check` reads there too: each command must draw the browser-env line in one place. */
+const SERVER_OPTIONS = [...FRAMEWORK_WEB_OPTIONS, "use", "publicEnvPrefix"] as const
 
 /**
  * `config` with each server option it leaves unset taken from backend/framework.ts, so `nifra dev` and

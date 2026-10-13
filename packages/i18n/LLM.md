@@ -10,26 +10,26 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 
 ## Public entrypoints
 
-`@nifrajs/i18n` · `@nifrajs/i18n/check` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/rich` · `@nifrajs/i18n/routing`
+`@nifrajs/i18n` · `@nifrajs/i18n/check` · `@nifrajs/i18n/copy` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/extract` · `@nifrajs/i18n/rich` · `@nifrajs/i18n/routing`
 
 ## Key exports
 
 - **checkCatalogs** _(function)_ - `checkCatalogs: <K extends string>(options: CatalogCheckOptions<K>) => CatalogCheckResult` · from `@nifrajs/i18n/check`
+- **copyChunkId** _(function)_ - `copyChunkId: (id: string) => string` · from `@nifrajs/i18n/extract`
+- **copyChunks** _(function)_ - `copyChunks: (tables: Iterable<SplitTable>) => Map<string, CopyChunk>` · from `@nifrajs/i18n/extract`
+- **copyRef** _(function)_ - `copyRef: (id: string) => CopyTable` · from `@nifrajs/i18n/copy`
+- **createCopyScanner** _(function)_ - `createCopyScanner: (ts: typeof TS, host: CopySourceHost) => CopyScanner` · from `@nifrajs/i18n/extract`
 - **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>)…` · from `@nifrajs/i18n`
-- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>` · from `@nifrajs/i18n/routing`
-- **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>` · from `@nifrajs/i18n`
+- **defineCopy** _(function)_ - `defineCopy: <K extends string, D extends K>(locales: Locales<K, D>, options?: CopyOptions<K>) => Copy<K, D>` · from `@nifrajs/i18n/copy`
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions<K>) => LocalizedRouter<K>` · from `@nifrajs/i18n/routing`
+- **defineLocales** _(function)_ - `defineLocales: <const K extends string, const D extends K>(config: LocalesConfig<K, D>) => Locales<K, D>` · from `@nifrajs/i18n`
 - **localeCookie** _(function)_ - `localeCookie: (name: string, locale: string, options?: LocaleCookieOptions) => string` · from `@nifrajs/i18n`
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>` · from `@nifrajs/i18n/detector`
 - **localeDirection** _(function)_ - `localeDirection: (tag: string) => "ltr" | "rtl"` · from `@nifrajs/i18n`
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale` · from `@nifrajs/i18n`
 - **renderRich** _(function)_ - `renderRich: <N, M extends object = import("./format.ts").MessageTree>(renderer: RichRenderer<N>, formatter: Formatter<M>, key: MessageKey<M…` · from `@nifrajs/i18n/rich`
-- **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale` · from `@nifrajs/i18n`
-- **rich** _(function)_ - `rich: <R, M extends object = import("./format.ts").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/i18n/rich`
-- **Alternates** _(interface)_ - `interface Alternates` · from `@nifrajs/i18n/routing`
-- **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>` · from `@nifrajs/i18n/routing`
-- **CatalogCheckOptions** _(interface)_ - `interface CatalogCheckOptions<K extends string = string>` · from `@nifrajs/i18n/check`
 
-_…and 37 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
+_…and 64 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
 
 ## Footguns
 
@@ -39,3 +39,4 @@ _…and 37 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) f
 - `get(key)` returns the first catalog's value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.
 - Gate catalogs with `nifra i18n check` (or `checkCatalogs()` from `@nifrajs/i18n/check` in a test): it catches dropped `{placeholders}`, missing plural categories and lookalike letters from another script that review misses.
 - Rich text is `rich()` (`@nifrajs/i18n/rich`, or the adapter's `/i18n` `rich()` / Svelte `<Rich>`), **never** `t()` + innerHTML/`{@html}`/`v-html`: tags are bare names mapped to handlers, `t()` returns the markers verbatim.
+- Copy tables (`defineCopy` from `@nifrajs/i18n/copy`) split into one chunk per locale only when written statically - literals, lists and blocks of them, same-module constants; anything else ships every locale (`nifra i18n check` names it). A hand-written server entry passes the build manifest's `copyChunks` to `createWebApp`.

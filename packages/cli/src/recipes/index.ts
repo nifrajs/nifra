@@ -2,6 +2,9 @@
  * Per-release upgrade recipes, as data. Each recipe declares the mechanical edits a target version
  * needs - dependency pins and exact import-specifier moves - so `nifra upgrade <version>` can apply
  * them deterministically. Recipes are static imports (they bundle) and keyed by target version.
+ *
+ * Every minor and major release has one, even with no edits: its notes are where a change an app can
+ * observe is announced to `nifra upgrade` and `--list`. `check:publish` fails a release without it.
  */
 
 import { recipe as v1_8_0 } from "./1.8.0.ts"
@@ -9,6 +12,8 @@ import { recipe as v2_0_0 } from "./2.0.0.ts"
 import { recipe as v3_0_0 } from "./3.0.0.ts"
 import { recipe as v4_0_0 } from "./4.0.0.ts"
 import { recipe as v5_0_0 } from "./5.0.0.ts"
+import { recipe as v5_1_0 } from "./5.1.0.ts"
+import { recipe as v5_2_0 } from "./5.2.0.ts"
 
 /** A pin rule: every dependency whose name starts with `match` is set to version `to`. */
 export interface PinRule {
@@ -54,6 +59,8 @@ const RECIPES: Record<string, UpgradeRecipe> = {
   [v3_0_0.version]: v3_0_0,
   [v4_0_0.version]: v4_0_0,
   [v5_0_0.version]: v5_0_0,
+  [v5_1_0.version]: v5_1_0,
+  [v5_2_0.version]: v5_2_0,
 }
 
 export function getRecipe(version: string): UpgradeRecipe | undefined {

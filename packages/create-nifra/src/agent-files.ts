@@ -40,14 +40,17 @@ export const MCP_SERVER_COMMAND = "bunx" as const
  * (`../package.json` → the same root, since `dist/` sits beside the manifest). npm always ships a
  * package's own `package.json`, so the read can't miss at install time.
  *
- * Why pin at all instead of `bunx @nifrajs/cli mcp`: `bunx` keys its cache on the exact version spec.
- * An UNPINNED spec resolves to the `latest` tag once, then `bunx` reuses that cached copy on every
- * later spawn WITHOUT re-checking the registry - so an editor that once launched an older `@nifrajs/cli`
- * keeps respawning the stale binary even after a newer one is published (the MCP server silently runs
- * old code). Pinning the exact version makes the version part of the cache key, so each release fetches
- * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes
- * at its scaffold-time version until `nifra init-agents --sync-mcp` re-pins it to the nifra the project
- * installs - an acceptable, deterministic trade.
+ * Two launch forms. A project that declares `@nifrajs/cli` gets the unpinned
+ * `bunx @nifrajs/cli mcp` ({@link MCP_SERVER_ARGS_INSTALLED}): `bunx` runs the copy the project installs
+ * (its `node_modules`, or an ancestor's) whenever there is one, so an upgrade moves the server with it
+ * and nothing needs re-pinning. A pinned spec never does that, not even at the installed version: it
+ * always runs a registry copy. Every scaffold declares the CLI, so every scaffold is unpinned.
+ *
+ * A project that does not declare it keeps the pin ({@link MCP_SERVER_ARGS}): with no local install an
+ * unpinned spec resolves `latest` once and `bunx` reuses that cached copy on every later spawn without
+ * re-checking the registry, so the server would silently run old code. The exact version is part of the
+ * cache key, so each release fetches fresh; `nifra init-agents --sync-mcp` moves it to the installed
+ * nifra, or unpins it once the project declares the CLI.
  */
 export const MCP_CLI_VERSION: string = ownVersion()
 
@@ -66,6 +69,9 @@ function ownVersion(): string {
 }
 export const MCP_SERVER_ARGS = [`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"] as const
 
+/** The launch args for a project that declares `@nifrajs/cli`: unpinned, so `bunx` runs its install. */
+export const MCP_SERVER_ARGS_INSTALLED = ["@nifrajs/cli", "mcp"] as const
+
 /** The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config. */
 export interface McpServerConfig {
   readonly command: string
@@ -77,17 +83,20 @@ export interface McpConfig {
   readonly mcpServers: Readonly<Record<string, McpServerConfig>>
 }
 
-/** The one canonical MCP config object both registries serialize - the anti-drift seam. */
-export const MCP_CONFIG: McpConfig = {
-  mcpServers: {
-    nifra: { command: MCP_SERVER_COMMAND, args: [...MCP_SERVER_ARGS] },
-  },
+/** The one canonical MCP config both registries serialize - the anti-drift seam. `pin` is the
+ * `@nifrajs/cli` version to pin; without one the launch follows the project's install. */
+export function mcpConfig(pin?: string): McpConfig {
+  const args = pin === undefined ? MCP_SERVER_ARGS_INSTALLED : [`@nifrajs/cli@${pin}`, "mcp"]
+  return { mcpServers: { nifra: { command: MCP_SERVER_COMMAND, args: [...args] } } }
 }
+
+/** The config a scaffold writes: every scaffold declares the CLI, so its launch is unpinned. */
+export const MCP_CONFIG: McpConfig = mcpConfig()
 
 /** Serialize the canonical MCP config as the JSON written to `.mcp.json` and `.cursor/mcp.json`.
  * Trailing newline so the file is POSIX-clean and diffs don't flag a missing EOL. */
-export function mcpJson(): string {
-  return `${JSON.stringify(MCP_CONFIG, null, 2)}\n`
+export function mcpJson(pin?: string): string {
+  return `${JSON.stringify(mcpConfig(pin), null, 2)}\n`
 }
 
 const POINTER_INTRO =
@@ -118,10 +127,11 @@ export function copilotInstructions(): string {
  * agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer.
  * Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.
  */
-export function agentsMcpSection(): string {
+export function agentsMcpSection(pin?: string): string {
+  const args = pin === undefined ? MCP_SERVER_ARGS_INSTALLED : [`@nifrajs/cli@${pin}`, "mcp"]
   return `## MCP server
 
-This project ships a **nifra MCP server** - launch it with \`${MCP_SERVER_COMMAND} ${MCP_SERVER_ARGS.join(" ")}\`. It's registered for
+This project ships a **nifra MCP server** - launch it with \`${MCP_SERVER_COMMAND} ${args.join(" ")}\`. It's registered for
 Claude Code in \`.mcp.json\` and for Cursor in \`.cursor/mcp.json\`; other agents can point their MCP client
 at that command. **Prefer its tools** over writing nifra from memory - they're typechecked against this
 project + the installed version, so they beat training-data recall:

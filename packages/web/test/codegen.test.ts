@@ -107,8 +107,10 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
   // A layout's function meta reads its own loader data; the page's (last) reads the page's.
   expect(code).toContain(
-    "applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)))",
+    "applyHead(mergeHeads(resolveChainMeta(metas[s.routeId] ?? [undefined], s.layoutData, args)), s.path)",
   )
+  // The served locales are lifted once, so a navigation names each page's locale from its path.
+  expect(code.split('"__NIFRA_LOCALES__"')).toHaveLength(2)
   // Item 1: the client passes `origin: location.origin` into MetaArgs. It equals the SSR-side
   // `URL(req.url).origin`, so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
   expect(code).toContain("const nonce = currentDocumentNonce()")

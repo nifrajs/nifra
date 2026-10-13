@@ -12,7 +12,7 @@
  * startup and build checks.
  */
 import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, posix } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { BACKEND_ROUTE_EXPORTS, shadowedPages } from "@nifrajs/web/route-manifest"
 import type * as TSApi from "typescript"
@@ -173,10 +173,216 @@ function effectiveApiPrefix({ framework, config }: ApiPrefixSources): StaticApiP
   return own.kind !== "default" || framework === undefined ? own : readStaticApiPrefix(framework)
 }
 
+/** What a `createWebApp` call passes as `apiPrefix`: a value, the framework config's own, or neither. */
+type EntryApiPrefix =
+  | { readonly kind: "literal"; readonly value: string; readonly unset: boolean }
+  | { readonly kind: "config" }
+  | { readonly kind: "unreadable" }
+
+const SCRIPT_SOURCE = /\.[cm]?[jt]sx?$/
+const WEB_PACKAGE = "@nifrajs/web"
+const CONFIG_MODULES: ReadonlySet<string> = new Set(
+  [FRAMEWORK_FILE, CONFIG_FILE].map((file) => file.replace(SCRIPT_SOURCE, "")),
+)
+
+/** Whether a relative specifier in `file` names backend/framework.ts or nifra.config.ts. */
+const namesFrameworkConfig = (file: string, specifier: string): boolean =>
+  specifier.startsWith(".") &&
+  CONFIG_MODULES.has(posix.join(posix.dirname(file), specifier).replace(SCRIPT_SOURCE, ""))
+
+const unwrapExpression = (ts: typeof TSApi, node: TSApi.Expression): TSApi.Expression => {
+  let expr = node
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isSatisfiesExpression(expr)
+  ) {
+    expr = expr.expression
+  }
+  return expr
+}
+
+/** A `createWebApp` call that mounts a backend (`api`), with the `apiPrefix` it passes. */
+export interface EntryApiMount {
+  readonly line: number
+  readonly apiPrefix: EntryApiPrefix
+}
+
+/**
+ * Every `createWebApp({ api, ... })` call in a module, `createWebApp` imported from `@nifrajs/web`.
+ * `apiPrefix` reads as a string literal, a same-module string `const`, or the framework config's own
+ * export (`import { apiPrefix } from "./backend/framework"`); a call whose options come from a spread
+ * or a variable is unreadable. A call with no `api` mounts nothing and is left out. Pure.
+ */
+export function entryApiMounts(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+  file: string,
+): EntryApiMount[] {
+  const webNames = new Set<string>()
+  const webNamespaces = new Set<string>()
+  const configNames = new Set<string>()
+  const configNamespaces = new Set<string>()
+  const strings = new Map<string, string>()
+  for (const statement of tree.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const from = statement.moduleSpecifier.text
+      const bindings = statement.importClause?.namedBindings
+      const isWeb = from === WEB_PACKAGE
+      const isConfig = namesFrameworkConfig(file, from)
+      if (bindings === undefined || (!isWeb && !isConfig)) continue
+      if (ts.isNamespaceImport(bindings)) {
+        ;(isWeb ? webNamespaces : configNamespaces).add(bindings.name.text)
+        continue
+      }
+      for (const element of bindings.elements) {
+        const imported = (element.propertyName ?? element.name).text
+        if (isWeb && imported === "createWebApp") webNames.add(element.name.text)
+        if (isConfig && imported === "apiPrefix") configNames.add(element.name.text)
+      }
+      continue
+    }
+    if (
+      !ts.isVariableStatement(statement) ||
+      (statement.declarationList.flags & ts.NodeFlags.Const) === 0
+    )
+      continue
+    for (const declaration of statement.declarationList.declarations) {
+      const init =
+        declaration.initializer === undefined
+          ? undefined
+          : unwrapExpression(ts, declaration.initializer)
+      if (
+        ts.isIdentifier(declaration.name) &&
+        init !== undefined &&
+        (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))
+      )
+        strings.set(declaration.name.text, init.text)
+    }
+  }
+  if (webNames.size === 0 && webNamespaces.size === 0) return []
+
+  const readPrefix = (node: TSApi.Expression): EntryApiPrefix => {
+    const expr = unwrapExpression(ts, node)
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr))
+      return { kind: "literal", value: expr.text, unset: false }
+    if (ts.isIdentifier(expr)) {
+      if (configNames.has(expr.text)) return { kind: "config" }
+      const value = strings.get(expr.text)
+      return value === undefined ? { kind: "unreadable" } : { kind: "literal", value, unset: false }
+    }
+    if (
+      ts.isPropertyAccessExpression(expr) &&
+      ts.isIdentifier(expr.expression) &&
+      configNamespaces.has(expr.expression.text) &&
+      expr.name.text === "apiPrefix"
+    )
+      return { kind: "config" }
+    return { kind: "unreadable" }
+  }
+  const isCreateWebApp = (callee: TSApi.Expression): boolean =>
+    ts.isIdentifier(callee)
+      ? webNames.has(callee.text)
+      : ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        webNamespaces.has(callee.expression.text) &&
+        callee.name.text === "createWebApp"
+  const propertyName = (property: TSApi.ObjectLiteralElementLike): string | undefined =>
+    property.name !== undefined &&
+    (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+      ? property.name.text
+      : undefined
+
+  const mounts: EntryApiMount[] = []
+  const visit = (node: TSApi.Node): void => {
+    const arg = ts.isCallExpression(node) ? node.arguments[0] : undefined
+    const options = arg === undefined ? undefined : unwrapExpression(ts, arg)
+    if (
+      ts.isCallExpression(node) &&
+      isCreateWebApp(node.expression) &&
+      options !== undefined &&
+      ts.isObjectLiteralExpression(options) &&
+      options.properties.some((property) => propertyName(property) === "api")
+    ) {
+      // The last of an `apiPrefix` property and a spread decides, as it does at runtime.
+      let apiPrefix: EntryApiPrefix = { kind: "literal", value: "", unset: true }
+      for (const property of options.properties) {
+        if (ts.isSpreadAssignment(property)) apiPrefix = { kind: "unreadable" }
+        else if (propertyName(property) !== "apiPrefix") continue
+        else if (ts.isPropertyAssignment(property)) apiPrefix = readPrefix(property.initializer)
+        else if (ts.isShorthandPropertyAssignment(property)) apiPrefix = readPrefix(property.name)
+        else apiPrefix = { kind: "unreadable" }
+      }
+      const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+      mounts.push({ line, apiPrefix })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  return mounts
+}
+
+const servedAt = (prefix: string): string => (prefix === "" ? "nowhere" : `at ${prefix}`)
+
+/**
+ * The NF-C035 findings for app modules that start their own server: a `createWebApp` call that
+ * mounts a backend at a different `apiPrefix` than the one `nifra dev` reads, or with none, so
+ * production serves the backend somewhere dev and e2e never exercised.
+ */
+async function entryApiPrefixFindings(
+  ctx: Parameters<CheckRule["scan"]>[0],
+  expected: string,
+  origin: string,
+): Promise<Diagnostic[]> {
+  const candidates = ctx.sources.files.filter(
+    (file) => SCRIPT_SOURCE.test(file) && ctx.sources.read(file)?.includes("createWebApp") === true,
+  )
+  if (candidates.length === 0) return []
+  const ts = (await loadRuleTypeScript(ctx)).compiler
+  if (ts === undefined) return []
+  const findings: Diagnostic[] = []
+  for (const file of [...candidates].sort(codeUnitOrder)) {
+    const text = ctx.sources.read(file) ?? ""
+    const tree = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKindOf(ts, file),
+    )
+    for (const { line, apiPrefix } of entryApiMounts(ts, tree, file)) {
+      if (apiPrefix.kind !== "literal" || apiPrefix.value === expected) continue
+      const specifier = posix.relative(posix.dirname(file), origin.replace(SCRIPT_SOURCE, ""))
+      const passed = apiPrefix.unset
+        ? "no apiPrefix"
+        : `apiPrefix ${JSON.stringify(apiPrefix.value)}`
+      findings.push(
+        diagnostic({
+          code: "NF-C035",
+          severity: "warn",
+          file,
+          line,
+          message: `${file} calls createWebApp with a backend and ${passed}, so the server it starts serves the backend ${servedAt(apiPrefix.value)}, while \`nifra dev\` serves it ${servedAt(expected)} (${origin}). Pass the framework config's value: \`import { apiPrefix } from "${specifier.startsWith(".") ? specifier : `./${specifier}`}"\` and \`createWebApp({ ..., apiPrefix })\`.`,
+          evidence: [
+            `createWebApp apiPrefix: ${apiPrefix.unset ? "unset" : JSON.stringify(apiPrefix.value)}`,
+            `${origin} apiPrefix: ${JSON.stringify(expected)}`,
+          ],
+          verify: "nifra check",
+        }),
+      )
+    }
+  }
+  return findings
+}
+
 /**
  * NF-C035: `backend/app.ts` exports a backend that is not served over HTTP, so a browser call to `/api`
  * reaches page routing. The framework config sets no `apiPrefix`; loader-only is a valid choice, and
  * the finding asks for it to be stated. An unreadable `apiPrefix` is NF-C027's.
+ *
+ * An app module that calls `createWebApp` itself is checked against the same value, since only the
+ * framework config reaches `nifra dev`: a backend it mounts at another `apiPrefix`, or with none, is
+ * served in production where dev never served it.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",
@@ -190,7 +396,19 @@ export const implicitApiMountRule: CheckRule = {
       existsSync(join(ctx.root, file)) ? readFileSync(join(ctx.root, file), "utf8") : undefined
     const sources = { framework: read(FRAMEWORK_FILE), config: read(CONFIG_FILE) }
     if (sources.framework === undefined && sources.config === undefined) return []
-    if (effectiveApiPrefix(sources).kind !== "default") return []
+    const effective = effectiveApiPrefix(sources)
+    if (effective.kind === "unreadable") return []
+    const configOwn = sources.config === undefined ? undefined : readStaticApiPrefix(sources.config)
+    const origin =
+      configOwn !== undefined && (configOwn.kind !== "default" || sources.framework === undefined)
+        ? CONFIG_FILE
+        : FRAMEWORK_FILE
+    const entries = await entryApiPrefixFindings(
+      ctx,
+      effective.kind === "literal" ? effective.value : "",
+      origin,
+    )
+    if (effective.kind === "literal") return entries
     const file = sources.framework === undefined ? CONFIG_FILE : FRAMEWORK_FILE
     return [
       diagnostic({
@@ -201,6 +419,7 @@ export const implicitApiMountRule: CheckRule = {
         fix: { recipe: "framework.api-prefix", command: "nifra fix --code NF-C035" },
         verify: "nifra check",
       }),
+      ...entries,
     ]
   },
 }

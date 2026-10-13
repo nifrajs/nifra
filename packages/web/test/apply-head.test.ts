@@ -1,5 +1,11 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
 import { applyHead, currentDocumentNonce } from "../src/client.ts"
+import {
+  LOCALES_GLOBAL,
+  localeOfProps,
+  type PageLocales,
+  pageLocaleIn,
+} from "../src/render-seam.ts"
 
 // `applyHead` applies `<html lang>`/`<html dir>` AUTHORITATIVELY, unlike `title` which it leaves alone
 // when a route omits it. That asymmetry is the whole point and the reason these tests exist: the SSR
@@ -222,4 +228,61 @@ test("soft navigation reads the document nonce and rejects a mismatched executab
       unsafeScript: [{ unsafe: true, type: "module", nonce: "route-nonce", content: "boot()" }],
     }),
   ).toThrow(/same CSP nonce/)
+})
+
+const LOCALES: PageLocales = {
+  default: "en",
+  locales: [
+    { key: "en", lang: "en", dir: "ltr" },
+    { key: "ur", lang: "ur-PK", dir: "rtl" },
+  ],
+}
+
+test("with the served locales handed over, a route without lang takes the path's locale", () => {
+  Reflect.set(globalThis, LOCALES_GLOBAL, LOCALES)
+  try {
+    applyHead({}, "/ur/x?y=1")
+    expect(document.documentElement.getAttribute("lang")).toBe("ur-PK")
+    expect(document.documentElement.getAttribute("dir")).toBe("rtl")
+    applyHead({}, "/x")
+    expect(document.documentElement.getAttribute("lang")).toBe("en")
+    expect(document.documentElement.getAttribute("dir")).toBe("ltr")
+    applyHead({ lang: "fr" }, "/ur/x")
+    expect(document.documentElement.getAttribute("lang")).toBe("fr")
+    expect(document.documentElement.hasAttribute("dir")).toBe(false)
+    applyHead({ dir: "ltr" }, "/ur/x")
+    expect(document.documentElement.getAttribute("lang")).toBe("ur-PK")
+    expect(document.documentElement.getAttribute("dir")).toBe("ltr")
+    applyHead({})
+    expect(document.documentElement.getAttribute("lang")).toBe("en")
+  } finally {
+    Reflect.deleteProperty(globalThis, LOCALES_GLOBAL)
+  }
+})
+
+test("a path's locale is its first segment naming a served key, any case, else the default", () => {
+  expect(pageLocaleIn(LOCALES, "/UR/x")?.key).toBe("ur")
+  expect(pageLocaleIn(LOCALES, "//ur")?.key).toBe("ur")
+  expect(pageLocaleIn(LOCALES, "\\ur\\x")?.key).toBe("ur")
+  expect(pageLocaleIn(LOCALES, "/u\tr/x")?.key).toBe("ur")
+  expect(pageLocaleIn(LOCALES, "/urban/x")?.key).toBe("en")
+  expect(pageLocaleIn(LOCALES, "/?ur")?.key).toBe("en")
+  expect(pageLocaleIn(LOCALES, "")?.key).toBe("en")
+  expect(pageLocaleIn({ default: "de", locales: LOCALES.locales }, "/x")).toBeUndefined()
+})
+
+test("localeOfProps: the server's locale, else the handed-over locales by path, else none", () => {
+  const ur = { key: "ur", lang: "ur-PK", dir: "rtl" } as const
+  expect(localeOfProps(undefined)).toBeUndefined()
+  expect(localeOfProps({ data: null, locale: ur, path: "/x" })).toBe(ur)
+  expect(localeOfProps({ data: null, path: "/ur/x" })).toBeUndefined()
+  Reflect.set(globalThis, LOCALES_GLOBAL, LOCALES)
+  try {
+    expect(localeOfProps({ data: null, path: "/ur/x" })?.lang).toBe("ur-PK")
+    expect(localeOfProps({ data: null })).toBeUndefined()
+    Reflect.set(globalThis, LOCALES_GLOBAL, { default: "en" })
+    expect(localeOfProps({ data: null, path: "/ur/x" })).toBeUndefined()
+  } finally {
+    Reflect.deleteProperty(globalThis, LOCALES_GLOBAL)
+  }
 })

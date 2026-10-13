@@ -3381,9 +3381,15 @@ export function scanResponseRoutes(
   for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
     if (facts !== undefined) {
       const source = facts.parse(file, content)
-      // A parseable AST rejects `return new Response(` text that only lives in a normal string. On
-      // malformed source we keep the lexical candidate; the typecheck gate will report the syntax error.
-      if (source !== undefined && facts.isResponseSyntaxAt(source, m.index) !== true) continue
+      // A parseable AST rejects `return new Response(` text that only lives in a normal string, and
+      // one outside a route handler (an auth stage's `rejected` helper, say). On malformed source we
+      // keep the lexical candidate; the typecheck gate will report the syntax error.
+      if (
+        source !== undefined &&
+        (facts.isResponseSyntaxAt(source, m.index) !== true ||
+          !facts.isRouteHandlerAt(source, m.index))
+      )
+        continue
     }
     const line = lineAt(content, m.index)
     // A `// nifra-expect NF-C007` comment (or the `raw-response` slug) marks an intentional raw Response

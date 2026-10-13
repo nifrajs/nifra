@@ -337,6 +337,41 @@ describe("requirePrincipal() direct guard", () => {
     expect((await malformed.fetch(withCookie("/private"))).status).toBe(503)
   })
 
+  test("a provider failure reaches onError and the logger, not only the client's 503", async () => {
+    const cause = new Error("database unavailable")
+    const failingAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async (): Promise<never> => {
+          throw cause
+        },
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const seen: unknown[] = []
+    const logged: unknown[] = []
+    const app = server({
+      logger: {
+        debug() {},
+        info() {},
+        warn() {},
+        error(_message, fields) {
+          logged.push(fields?.detail)
+        },
+      },
+    })
+      .onError((error) => {
+        seen.push(error)
+      })
+      .use(authed(failingAuth))
+      .get("/private", () => ({ ok: true }))
+    const response = await app.fetch(withCookie("/private"))
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ ok: false, error: "auth_unavailable" })
+    expect(seen).toEqual([cause])
+    expect(logged).toEqual(["database unavailable"])
+  })
+
   test("whitespace-only identity fields fail closed as 503", async () => {
     const malformedAuth = {
       handler: async (): Promise<Response> => Response.json({ ok: true }),

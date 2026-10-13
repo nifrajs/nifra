@@ -24,6 +24,7 @@ import type { DuplicateInstallFinding } from "../doctor.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { createWebAppProbe, withApiKindHint } from "../internal/nifra-project.ts"
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
+import { linkLockUpdate, staleLinkLockMessage } from "../lock-links.ts"
 import { zoneFolderOf } from "../typecheck-coverage.ts"
 import { versionDriftMessage } from "../version-drift.ts"
 import { MISSING_EXPECTATION_REASON } from "./comment-markers.ts"
@@ -430,7 +431,7 @@ function outsideProgramFindings(files: readonly string[]): Diagnostic[] {
         kind: "manual",
         title: "Bring the folder into the TypeScript program",
         steps: [
-          `Add "${folder}" to the "include" array in tsconfig.json.`,
+          `Add "${folder}" to the "include" array in tsconfig.json, or in another tsconfig the typecheck runs: one tsconfig.json references, or one listed under "tsconfigs" in nifra.check.json.`,
           'Files kept out on purpose: name them in the tsconfig "exclude", or under "typecheck": { "ignore": [...] } in nifra.check.json.',
           "Run `nifra check` again; the newly checked files may report type errors.",
         ],
@@ -809,6 +810,27 @@ const versionDriftRule: CheckRule = {
   },
 }
 
+/** Read from the doctor result check already collected, like {@link versionDriftRule}. */
+const staleLinkLockRule: CheckRule = {
+  code: "NF-D003",
+  title: "Stale file: dependencies in bun.lock",
+  async scan(ctx) {
+    const stale = ctx.project.packages.doctor.staleLinkLocks
+    if (stale === undefined) return []
+    return [
+      diagnostic({
+        code: "NF-D003",
+        severity: "warn",
+        file: stale.lock,
+        message: staleLinkLockMessage(stale),
+        evidence: stale.entries.map((entry) => `${entry.package} (file:${entry.path})`),
+        fix: { recipe: "lock.refresh-file-links", command: linkLockUpdate(stale.entries) },
+        verify: "nifra doctor",
+      }),
+    ]
+  },
+}
+
 const pipelineRule: CheckRule = {
   code: LEGACY_RULE_CODES.pipeline!,
   title: TITLES.pipeline!,
@@ -1149,6 +1171,7 @@ export const legacyRules: readonly CheckRule[] = Object.freeze([
   responseRouteRule,
   ...doctorRules,
   versionDriftRule,
+  staleLinkLockRule,
   pipelineRule,
   serverManifestRule,
   manifestRule,

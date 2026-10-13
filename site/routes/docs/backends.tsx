@@ -183,10 +183,14 @@ export default function Backends() {
       <p>
         With both files, <code>nifra dev</code> and <code>nifra build</code> take{" "}
         <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>, <code>csp</code>,{" "}
-        <code>nonce</code>, <code>serverComponents</code> and <code>use</code> from{" "}
-        <code>backend/framework.ts</code> when <code>nifra.config.ts</code> does not set them, so the
+        <code>nonce</code>, <code>serverComponents</code>, <code>i18n</code>, <code>use</code> and{" "}
+        <code>publicEnvPrefix</code> from <code>backend/framework.ts</code> when{" "}
+        <code>nifra.config.ts</code> does not set them, so the
         server entry and the dev server read one value without a re-export. A hand-written{" "}
-        <code>createWebApp</code> call passes <code>apiPrefix</code> itself.
+        <code>createWebApp</code> call passes <code>apiPrefix</code> itself; import it from{" "}
+        <code>backend/framework.ts</code> so production serves the backend where{" "}
+        <code>nifra dev</code> does. <code>nifra check</code> reports <code>NF-C035</code> at a call
+        that mounts a backend with no <code>apiPrefix</code>, or with a different one.
       </p>
       <p>
         Because the backend answers first and its 404 is final, a page file under the prefix (
@@ -198,7 +202,7 @@ export default function Backends() {
       <p>
         An app run by <code>nifra dev</code> and <code>nifra build</code> sets these options from{" "}
         <code>backend/framework.ts</code>: <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>,{" "}
-        <code>csp</code> and <code>nonce</code>. The generated server entry imports them from there, so
+        <code>csp</code>, <code>nonce</code> and <code>i18n</code>. The generated server entry imports them from there, so
         export them from <code>framework.ts</code> (and re-export from <code>nifra.config.ts</code> when
         both exist). A <code>mounts</code> entry hands a path to another app; a single extra URL
         outside the prefix, such as a sitemap, is a plain route registered in <code>use</code>:

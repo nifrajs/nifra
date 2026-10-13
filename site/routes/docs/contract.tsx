@@ -306,7 +306,8 @@ const BUILD_OUTPUT = `// buildClient() writes a browser bundle + manifest.json f
   "assets": ["/assets/…"],                          // every emitted chunk URL
   "routes": { "users/[id]": ["/assets/_layout-H.js", "/assets/_slug_-H.js"] },
   "css": ["/assets/app-H.css"],                     // aggregate stylesheets (fallback)
-  "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }  // per-route CSS (chain only)
+  "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }, // per-route CSS (chain only)
+  "copyChunks": { "hi": "/assets/copy-hi-H.js" }  // copy tables by locale (@nifrajs/i18n/copy)
 }
 
 // Invariants worth knowing:
@@ -615,7 +616,7 @@ export default function Contract() {
         The programmatic <code>buildClient()</code> API emits a content-hashed directory plus a{" "}
         <code>manifest.json</code> you can hand to <code>createWebApp</code> (<code>entry</code>,{" "}
         <code>routes</code> for per-route preload, <code>css</code> + <code>routeStyles</code> for{" "}
-        <code>&lt;link&gt;</code> injection).
+        <code>&lt;link&gt;</code> injection, <code>copyChunks</code> when the app has copy tables).
       </p>
       <CodeBlock code={BUILD_OUTPUT} />
 

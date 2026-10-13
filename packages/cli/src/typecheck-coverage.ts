@@ -13,6 +13,56 @@ const TS_SOURCE = /\.(?:[cm]?ts|tsx)$/
 const NOT_PROGRAM_CODE = /\.d\.[cm]?ts$|\.(?:test|spec)\.[cm]?tsx?$/
 const TSC_DIAGNOSTIC = /\(\d+,\d+\):\s*(?:error|warning)\s+TS\d+:/
 
+const readTsconfig = (path: string): unknown => {
+  try {
+    return JSON.parse(stripComments(readFileSync(path, "utf8")).replace(/,(\s*[}\]])/g, "$1"))
+  } catch {
+    return undefined
+  }
+}
+
+/** A `references[].path`, which names a tsconfig or the folder holding one, as a file. */
+const referencedConfig = (from: string, path: string): string => {
+  const target = resolve(dirname(from), path)
+  return target.endsWith(".json") ? target : join(target, "tsconfig.json")
+}
+
+/**
+ * The tsconfigs `nifra check` typechecks, each as its own program: `configured` (nifra.check.json
+ * `tsconfigs`) when given, else `tsconfig.json` and every project it references, transitively. A
+ * solution-style tsconfig (`"files": []` plus `references`) holds no files itself, so without its
+ * references the typecheck would pass having read nothing. `missing` lists configured paths that do not
+ * exist; references that do not exist are tsc's to report.
+ */
+export function typecheckProjects(
+  cwd: string,
+  configured?: readonly string[],
+): { readonly paths: readonly string[]; readonly missing: readonly string[] } {
+  if (configured !== undefined) {
+    const paths = configured.map((path) => resolve(cwd, path))
+    return {
+      paths: paths.filter((path) => existsSync(path)),
+      missing: configured.filter((_, index) => !existsSync(paths[index] ?? "")),
+    }
+  }
+  const root = join(cwd, "tsconfig.json")
+  if (!existsSync(root)) return { paths: [], missing: [] }
+  const paths: string[] = []
+  const queue = [root]
+  while (queue.length > 0 && paths.length < 64) {
+    const path = queue.shift()
+    if (path === undefined || paths.includes(path) || !existsSync(path)) continue
+    paths.push(path)
+    const references: unknown = Reflect.get(Object(readTsconfig(path)), "references")
+    if (!Array.isArray(references)) continue
+    for (const reference of references) {
+      const target: unknown = Reflect.get(Object(reference), "path")
+      if (typeof target === "string") queue.push(referencedConfig(path, target))
+    }
+  }
+  return { paths, missing: [] }
+}
+
 /** Split `tsc --listFiles` output into the program's files and the compiler's own output. */
 export function splitListedFiles(output: string): {
   readonly programFiles: readonly string[]
@@ -68,12 +118,7 @@ function hasOwnProgram(cwd: string, app: string): boolean {
 export function tsconfigExcludes(cwd: string): string[] {
   let path = join(cwd, "tsconfig.json")
   for (let depth = 0; depth < 8 && existsSync(path); depth++) {
-    let config: unknown
-    try {
-      config = JSON.parse(stripComments(readFileSync(path, "utf8")).replace(/,(\s*[}\]])/g, "$1"))
-    } catch {
-      return []
-    }
+    const config = readTsconfig(path)
     if (typeof config !== "object" || config === null) return []
     const exclude: unknown = Reflect.get(config, "exclude")
     if (Array.isArray(exclude)) {

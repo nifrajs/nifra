@@ -21,10 +21,54 @@ import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
-import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
+import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
 import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
+
+/** An app's locale routing as `createWebApp` reads it: what `defineI18nRouting()` from
+ * `@nifrajs/i18n/routing` returns. */
+export interface WebAppI18n {
+  readonly locales: {
+    readonly default: string
+    /** Served locale keys, in registry order. */
+    readonly served: readonly string[]
+    documentMeta(key: string): { readonly lang: string; readonly dir: "ltr" | "rtl" }
+  }
+  localeOf(path: string): string
+  matchSegment(
+    value: string | undefined,
+    pathname: string,
+  ):
+    | { readonly kind: "ok" | "not-found" }
+    | { readonly kind: "redirect"; readonly location: string }
+}
+
+function pageI18n(routing: WebAppI18n): PageI18n {
+  const { locales } = routing
+  if (
+    typeof routing.localeOf !== "function" ||
+    typeof routing.matchSegment !== "function" ||
+    typeof locales?.documentMeta !== "function" ||
+    !Array.isArray(locales.served)
+  ) {
+    throw new TypeError(
+      "[nifra/web] createWebApp `i18n` must be the router defineI18nRouting() from @nifrajs/i18n/routing returns",
+    )
+  }
+  return {
+    locales: {
+      default: locales.default,
+      locales: locales.served.map((key) => {
+        const { lang, dir } = locales.documentMeta(key)
+        return { key, lang, dir }
+      }),
+    },
+    localeOf: (path) => routing.localeOf(path),
+    matchSegment: (value, pathname) => routing.matchSegment(value, pathname),
+  }
+}
+
 export interface CreateWebAppOptions<Env = unknown> {
   readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
   readonly adapter: RenderAdapter
@@ -181,6 +225,20 @@ export interface CreateWebAppOptions<Env = unknown> {
    * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the
    * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+  /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`, the server manifest's
+   * `copyChunks`). A production client build moves copy tables (`@nifrajs/i18n/copy`) into one chunk per
+   * locale; each page lists them for the browser and preloads its own. Omit ⇒ tables keep their values. */
+  readonly copyChunks?: Readonly<Record<string, string>>
+  /**
+   * The app's locale routing, `defineI18nRouting()` from `@nifrajs/i18n/routing`, registered once:
+   * export it as `i18n` from `backend/framework.ts`. Every document then takes its locale from the
+   * URL: `<html lang dir>` from the registry unless the route's meta sets `lang`, a `Content-Language`
+   * header, and the locale each adapter's `useLocale()` and `<I18nProvider>` read. A route under a
+   * `[lang]` or `[[lang]]` directory is checked with its `matchSegment()` before any middleware: an
+   * unserved locale, or a page missing from it, is a 404, and a non-canonical prefix (`/en/x` when the
+   * default is unprefixed) redirects with a 308.
+   */
+  readonly i18n?: WebAppI18n
   /**
    * Activation policy for framework-owned stylesheet links (default `"blocking"`). `"deferred"`
    * emits `media="print"` links; the generated client waits for them and switches them to `all` before
@@ -442,6 +500,8 @@ export function createWebApp<Env = unknown>(
     ...(options.routePreload === undefined ? {} : { routePreload: options.routePreload }),
     ...(options.styles === undefined ? {} : { styles: options.styles }),
     ...(options.routeStyles === undefined ? {} : { routeStyles: options.routeStyles }),
+    ...(options.copyChunks === undefined ? {} : { copyChunks: options.copyChunks }),
+    ...(options.i18n === undefined ? {} : { i18n: pageI18n(options.i18n) }),
     ...(options.cssLoading === undefined ? {} : { cssLoading: options.cssLoading }),
     ...(options.prerenderedPaths === undefined
       ? {}

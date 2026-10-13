@@ -482,6 +482,14 @@ export default function Dev() {
         so a refused import - a <code>node:</code> builtin, <code>backend/</code>, a route's{" "}
         <code>.backend.ts</code> half - fails the build either way.
       </p>
+      <p>
+        <code>import.meta.glob</code> is not one of them. The Bun build expands a literal pattern the
+        way Vite does: a string or an array of strings starting with <code>./</code>,{" "}
+        <code>../</code> or <code>/</code> (the app root), <code>!</code> excluding, with the{" "}
+        <code>eager</code> and <code>import</code> options, keyed as Vite keys it. Any other form
+        (a computed pattern, an alias, <code>query</code>) fails the build with the file and line, and
+        so does a bundle that still calls the glob because another plugin loaded that module first.
+      </p>
       <CodeBlock code={VITE_PROD} />
       <p>
         For the full deploy, <code>nifra build --vite --target &lt;t&gt;</code> builds{" "}

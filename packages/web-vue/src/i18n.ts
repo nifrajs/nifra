@@ -3,7 +3,8 @@
  * `Formatter` (a `computed`, so switching locale rebuilds it) and `provide`s it; `useT()` `inject`s it.
  * Both `locale` + `messages` are serializable, so a loader returns them, the page renders with the
  * negotiated catalog on the server, and the client rebuilds the same formatter on hydrate (no
- * mismatch). Imports only `vue` + `@nifrajs/i18n`; no template.
+ * mismatch). In an app that registers its locale routing (`i18n` in `backend/framework.ts`), `locale`
+ * defaults to the page's and `useLocale()` names it. No template.
  */
 import {
   createFormatter,
@@ -14,6 +15,8 @@ import {
   type Translation,
 } from "@nifrajs/i18n"
 import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
+import type { RenderProps } from "@nifrajs/web"
+import { localeOfProps } from "@nifrajs/web/client"
 import {
   type ComputedRef,
   computed,
@@ -24,10 +27,16 @@ import {
   inject,
   type PropType,
   provide,
+  type Ref,
   type VNodeChild,
 } from "vue"
 
 const I18N_KEY: InjectionKey<ComputedRef<Formatter>> = Symbol("nifra-i18n")
+// The registry key `router.ts`'s `RenderPropsProvider` provides the render's props under.
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: InjectionKey only brands a symbol's type, and router.ts provides this registry key with exactly this value type.
+const PROPS_KEY = Symbol.for("nifra.web-vue.render-props") as InjectionKey<
+  Readonly<Ref<RenderProps>>
+>
 
 /** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,
  * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes
@@ -35,7 +44,9 @@ const I18N_KEY: InjectionKey<ComputedRef<Formatter>> = Symbol("nifra-i18n")
 export const I18nProvider = defineComponent({
   name: "I18nProvider",
   props: {
-    locale: { type: String, required: true },
+    /** The locale to format in. Default: the page's locale tag, in an app that registers its locale
+     * routing. */
+    locale: { type: String },
     messages: { type: Object as PropType<Translation>, required: true },
     fallback: { type: Array as PropType<NonNullable<FormatterOptions["fallback"]>> },
     onMissing: { type: Function as PropType<NonNullable<FormatterOptions["onMissing"]>> },
@@ -43,16 +54,23 @@ export const I18nProvider = defineComponent({
     numberingSystem: { type: String },
   },
   setup(props, { slots }) {
+    const renderProps = inject(PROPS_KEY, undefined)
     provide(
       I18N_KEY,
-      computed(() =>
-        createFormatter(props.locale, props.messages, {
+      computed(() => {
+        const locale = props.locale ?? localeOfProps(renderProps?.value)?.lang
+        if (locale === undefined) {
+          throw new Error(
+            "[nifra/web-vue] <I18nProvider> needs a `locale`, or an app that registers its locale routing (export `i18n` from backend/framework.ts)",
+          )
+        }
+        return createFormatter(locale, props.messages, {
           fallback: props.fallback,
           onMissing: props.onMissing,
           timeZone: props.timeZone,
           numberingSystem: props.numberingSystem,
-        }),
-      ),
+        })
+      }),
     )
     return () => slots.default?.()
   },
@@ -65,6 +83,25 @@ export function useT(): Formatter {
     throw new Error("[nifra/web-vue] useT() must be used within an <I18nProvider>")
   }
   return formatter.value
+}
+
+/**
+ * The page's locale key (`ur`, the URL segment) as a computed ref, in an app that registers its locale
+ * routing (`i18n` in `backend/framework.ts`): from the request on the server, from the URL after each
+ * navigation. Without one, the nearest `<I18nProvider>`'s locale; with neither, reading it throws.
+ */
+export function useLocale(): ComputedRef<string> {
+  const renderProps = inject(PROPS_KEY, undefined)
+  const formatter = inject(I18N_KEY, undefined)
+  return computed(() => {
+    const locale = localeOfProps(renderProps?.value)?.key ?? formatter?.value.locale
+    if (locale === undefined) {
+      throw new Error(
+        "[nifra/web-vue] useLocale() needs an app that registers its locale routing (export `i18n` from backend/framework.ts), or an <I18nProvider> above it",
+      )
+    }
+    return locale
+  })
 }
 
 /** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */

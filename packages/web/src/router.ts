@@ -310,8 +310,9 @@ export interface ClientRouterOptions {
   /** Override the loader-data fetch (tests inject a stub; defaults to a same-origin JSON GET). */
   readonly fetchData?: FetchRouteData
   /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel
-   * with the loader data, so `pending` covers both. Omit when the bundle isn't split. */
-  readonly loadModule?: (routeId: string) => Promise<void>
+   * with the loader data, so `pending` covers both. Omit when the bundle isn't split. `path` is the URL
+   * the route is about to render, for code loaded per URL (a production build's copy chunks). */
+  readonly loadModule?: (routeId: string, path?: string) => Promise<void>
   /** Terminal status → client route id. Generated entries populate this from `_404` and
    * `_<status>` files so soft navigation renders the same boundary as a hard request. */
   readonly statusRoutes?: Readonly<Record<number, string>>
@@ -667,7 +668,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     )
     if (mine !== generation) return
     if (loaded.terminalRouteId !== undefined) {
-      await loadModule?.(loaded.terminalRouteId)
+      await loadModule?.(loaded.terminalRouteId, state.path)
       state = { ...state, routeId: loaded.terminalRouteId, params: {}, data: null }
     } else {
       state = {
@@ -788,7 +789,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         state = { ...state, pendingPath: at }
         emit()
       }
-      await loadModule?.(route.routeId)
+      await loadModule?.(route.routeId, at)
       // Prefetched server data is one-shot; a clientLoader still runs over it without another request.
       const prefetchedData = usePrefetch ? freshPrefetch(at) : undefined
       if (usePrefetch) prefetched.delete(at)
@@ -801,7 +802,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           prefetchedData,
         )
         if (loaded.terminalRouteId !== undefined) {
-          await loadModule?.(loaded.terminalRouteId)
+          await loadModule?.(loaded.terminalRouteId, at)
           if (options.layoutStatusRoutes?.[loaded.terminalRouteId] === true) {
             throw new Error(
               `[nifra/web] ${loaded.terminalRouteId} renders inside layouts; loading ${at} as a document`,
@@ -1215,7 +1216,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
         // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
         const [, loaded] = await Promise.all([
-          loadModule?.(matched.routeId),
+          loadModule?.(matched.routeId, path),
           loadRouteData(path, matched),
         ])
         prefetched.delete(path) // a stale entry re-enters as the newest

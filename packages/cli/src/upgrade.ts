@@ -36,7 +36,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, join, relative, sep } from "node:path"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
@@ -48,7 +48,15 @@ import {
   parseHookReport,
   renderHookDiff,
 } from "./hooks-report.ts"
-import { PIN_SITES } from "./init-agents.ts"
+import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
+import {
+  BUN_LOCK,
+  describeChange,
+  linkLockUpdate,
+  pruneLinkLocks,
+  type StaleLinkLock,
+  staleLinkLocks,
+} from "./lock-links.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
 
@@ -74,6 +82,8 @@ export interface UpgradeOptions {
    * change in which hooks run where is visible. Loads the backend. Default true; `--no-hooks` skips it.
    */
   readonly hooks?: boolean
+  /** Proceed although a linked repository loads its own nifra at another version. Default false. */
+  readonly allowLinkedSkew?: boolean
 }
 
 export interface PinChange {
@@ -106,6 +116,8 @@ export interface AgentPinChange {
   readonly file: string
   /** The versions it pinned, in order of appearance. */
   readonly from: readonly string[]
+  /** The target version, or `unpinned` when the project declares `@nifrajs/cli`: the launch then runs
+   * that install and never needs re-pinning. */
   readonly to: string
 }
 
@@ -131,8 +143,16 @@ export interface UpgradePlan {
   readonly retiredMarkers: readonly RetiredMarkerSite[]
   /** Installed group packages linked from outside the workspace root, at another version. Never edited. */
   readonly linkedOutside: readonly LinkedGroupInstall[]
+  /** Repositories a `link:`/`file:` dependency points outside the root, each loading its own nifra at
+   * another version. Never edited; the upgrade refuses while any is listed. */
+  readonly linkedSkew: readonly LinkedSkew[]
   /** Other versions pinned outside package.json. Never edited. */
   readonly strayPins: readonly StrayPin[]
+  /** `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json
+   * (as this upgrade leaves it) no longer declares. Bun never refreshes them on its own. */
+  readonly linkLocks: readonly StaleLinkLock[]
+  /** Whether `--write` dropped {@link linkLocks} from bun.lock, so `bun install` re-reads them. */
+  readonly lockPruned: boolean
   readonly notes: readonly string[]
 }
 
@@ -688,20 +708,34 @@ function plainFileAt(cwd: string, rel: string): boolean {
 }
 
 /**
- * The MCP launch pin in each agent file at `cwd`, moved to `version`: the files and the edit of
- * `nifra init-agents --sync-mcp`, so an agent launches the nifra the project installs once it does.
+ * The MCP launch pin in each agent file at `cwd`, and in each file above it whose launches all serve
+ * it ({@link ancestorPins}), moved to `version`: the files and the edit of `nifra init-agents
+ * --sync-mcp`, so an agent launches the nifra the project installs once it does.
  */
 function agentPinEdits(
   cwd: string,
   version: string,
-): Array<{ readonly change: AgentPinChange; readonly text: string }> {
-  const edits: Array<{ change: AgentPinChange; text: string }> = []
-  for (const site of PIN_SITES) {
-    if (!plainFileAt(cwd, site.path)) continue
+  above: readonly AncestorPinSite[],
+): Array<{ readonly change: AgentPinChange; readonly text: string; readonly abs: string }> {
+  const target = declaresCli(cwd) ? null : version
+  const edits: Array<{ change: AgentPinChange; text: string; abs: string }> = []
+  const sites = [
+    ...PIN_SITES.map((site) => ({ dir: cwd, file: site.path, path: site.path, site })),
+    ...above.map((entry) => ({ ...entry, file: entry.site.path })),
+  ]
+  for (const { dir, file, path, site } of sites) {
+    if (!plainFileAt(dir, file)) continue
+    const abs = join(dir, file)
+    // A launch above the project runs from that directory, which need not see the install: it stays pinned.
+    const to = dir === cwd ? target : version
     // latin1 is one char per byte, so every byte outside a pin is written back as it was.
-    const scan = site.repin(readFileSync(join(cwd, site.path), "latin1"), version)
+    const scan = site.repin(readFileSync(abs, "latin1"), to)
     if (scan.stale.length === 0) continue
-    edits.push({ change: { file: site.path, from: scan.stale, to: version }, text: scan.text })
+    edits.push({
+      change: { file: path, from: scan.stale, to: to ?? "unpinned" },
+      text: scan.text,
+      abs,
+    })
   }
   return edits
 }
@@ -721,6 +755,68 @@ const packageVersionAt = (dir: string): string | undefined => {
   } catch {
     return undefined
   }
+}
+
+/** A repository linked into the project that resolves nifra from its own `node_modules`. */
+export interface LinkedSkew {
+  /** The dependency's name, as the manifest declares it. */
+  readonly package: string
+  /** The project-relative manifest that declares it. */
+  readonly declaredIn: string
+  /** The linked repository's real path. */
+  readonly path: string
+  /** Each fixed-group package it installs itself, at a version other than the target. */
+  readonly installs: readonly { readonly package: string; readonly version: string }[]
+}
+
+/**
+ * Every `link:` or `file:` dependency whose installed folder resolves outside `cwd` and installs a
+ * fixed-group package of its own at a version other than `target`. Its imports resolve from its real
+ * path, so it keeps loading that copy after this project upgrades: a `server()` it builds can no longer
+ * be merged here, and single-copy never redirects across versions. A copy that resolves back inside
+ * `cwd` follows this project's install and is not counted.
+ */
+export function linkedSkew(cwd: string, target: string): readonly LinkedSkew[] {
+  let root: string
+  try {
+    root = realpathSync(cwd)
+  } catch {
+    root = cwd
+  }
+  const inside = (path: string): boolean => path === root || path.startsWith(root + sep)
+  const seen = new Set<string>()
+  const found: LinkedSkew[] = []
+  for (const rel of scan(cwd, "**/package.json")) {
+    let manifest: unknown
+    try {
+      manifest = JSON.parse(readFileSync(join(cwd, rel), "utf8"))
+    } catch {
+      continue
+    }
+    for (const field of DEP_FIELDS) {
+      const block: unknown = Reflect.get(Object(manifest), field)
+      if (typeof block !== "object" || block === null) continue
+      for (const [name, spec] of Object.entries(block)) {
+        if (typeof spec !== "string" || !/^(?:link|file):/.test(spec)) continue
+        let path: string | undefined
+        for (const base of [join(cwd, dirname(rel)), cwd]) {
+          try {
+            path = realpathSync(join(base, "node_modules", name))
+            break
+          } catch {
+            // Not installed beside this manifest: try the root's node_modules.
+          }
+        }
+        if (path === undefined || inside(path) || seen.has(path)) continue
+        seen.add(path)
+        const installs = installedGroupPackages(path)
+          .filter((entry) => !inside(entry.path) && entry.version !== target)
+          .map((entry) => ({ package: entry.package, version: entry.version }))
+        if (installs.length > 0) found.push({ package: name, declaredIn: rel, path, installs })
+      }
+    }
+  }
+  return found
 }
 
 /**
@@ -821,6 +917,7 @@ export function computeUpgrade(
   write: boolean,
   allowDowngrade = false,
   exact = false,
+  above: readonly AncestorPinSite[] = [],
 ): UpgradePlan {
   const pins: PinChange[] = []
   const agentPins: AgentPinChange[] = []
@@ -833,6 +930,7 @@ export function computeUpgrade(
     .filter((entry) => !entry.inside && entry.version !== recipe.version)
     .map(({ package: name, path, version }) => ({ package: name, path, version }))
 
+  const manifests = new Map<string, string>()
   if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
       const abs = join(cwd, rel)
@@ -842,14 +940,30 @@ export function computeUpgrade(
       const pinned = pinSweepText(moved.text, recipe.pins, allowDowngrade, exact)
       for (const change of pinned.changes) pins.push({ file: rel, ...change })
       for (const d of pinned.downgrades) downgrades.push({ file: rel, ...d })
+      if (pinned.text !== original) manifests.set(resolve(abs), pinned.text)
       if (write && pinned.text !== original) writeFileSync(abs, pinned.text)
     }
   }
 
-  for (const { change, text } of agentPinEdits(cwd, recipe.version)) {
+  // Read against the manifests as this upgrade leaves them, so a dry run lists what --write drops.
+  const linkLocks = plainFileAt(cwd, BUN_LOCK) ? staleLinkLocks(resolve(cwd), manifests) : []
+  let lockPruned = false
+  if (write && linkLocks.length > 0) {
+    const lockPath = join(cwd, BUN_LOCK)
+    const pruned = pruneLinkLocks(
+      readFileSync(lockPath, "utf8"),
+      linkLocks.map((entry) => entry.package),
+    )
+    if (pruned !== undefined) {
+      writeFileSync(lockPath, pruned)
+      lockPruned = true
+    }
+  }
+
+  for (const { change, text, abs } of agentPinEdits(cwd, recipe.version, above)) {
     agentPins.push(change)
     planned.set(change.file, text)
-    if (write) writeFileSync(join(cwd, change.file), Buffer.from(text, "latin1"))
+    if (write) writeFileSync(abs, Buffer.from(text, "latin1"))
   }
 
   if (recipe.importMoves.length > 0) {
@@ -893,7 +1007,10 @@ export function computeUpgrade(
     downgrades,
     retiredMarkers,
     linkedOutside,
+    linkedSkew: linkedSkew(cwd, recipe.version),
     strayPins: strayPins(cwd, recipe.version, planned),
+    linkLocks,
+    lockPruned,
     notes: recipe.notes ?? [],
   }
 }
@@ -922,7 +1039,9 @@ function renderPlan(
     plan.importMoves.length === 0 &&
     plan.retiredMarkers.length === 0 &&
     plan.linkedOutside.length === 0 &&
-    plan.strayPins.length === 0
+    plan.linkedSkew.length === 0 &&
+    plan.strayPins.length === 0 &&
+    plan.linkLocks.length === 0
   ) {
     lines.push("Already up to date - no changes.")
     return lines.join("\n")
@@ -995,12 +1114,54 @@ function renderPlan(
     }
     lines.push("")
   }
+  if (plan.linkLocks.length > 0) {
+    lines.push(
+      plan.lockPruned
+        ? `Dropped ${plan.linkLocks.length} file: package(s) from bun.lock, whose recorded dependencies Bun never refreshes; \`bun install\` reads each linked package.json again:`
+        : write
+          ? `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; run \`${linkLockUpdate(plan.linkLocks)}\`:`
+          : `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; --write drops them so \`bun install\` reads each linked package.json again:`,
+    )
+    for (const entry of plan.linkLocks)
+      lines.push(
+        `  ${entry.package} (file:${entry.path})  ${entry.changes.map(describeChange).join(", ")}`,
+      )
+    if (plan.lockPruned)
+      lines.push(
+        "  Run `bun install` before committing bun.lock: until it records these packages again, `bun install --frozen-lockfile` fails.",
+      )
+    lines.push("")
+  }
   for (const note of plan.notes) lines.push(`note: ${note}`)
   if (!write) lines.push("\nRe-run with --write to apply, then nifra check verifies.")
   return lines.join("\n").trimEnd()
 }
 
 /** Explain a refused rollback: which pins would roll back, why it's blocked, and the escape hatch. */
+/** The linked repositories to upgrade first, each with the commands that move it to `version`. */
+function renderLinkedSkew(
+  version: string,
+  skew: readonly LinkedSkew[],
+  cwd: string,
+  allowed: boolean,
+): string {
+  const lines = [
+    `${allowed ? "Allowed by --allow-linked-skew" : "Blocked"}: ${skew.length} linked repositor${skew.length === 1 ? "y loads" : "ies load"} its own nifra at another version. Its imports resolve from its own node_modules, so after this upgrade a server() it builds cannot be merge()d here ("merge() requires a server() from this copy of @nifrajs/core").`,
+  ]
+  for (const entry of skew) {
+    const at = relative(cwd, entry.path).split(sep).join("/") || "."
+    lines.push(
+      `  ${entry.package} (${entry.declaredIn}) at ${at}: ${entry.installs.map((install) => `${install.package} ${install.version}`).join(", ")}`,
+      `    cd ${at} && nifra upgrade ${version} --write && bun install`,
+    )
+  }
+  if (!allowed)
+    lines.push(
+      "Upgrade each one first, then run this again. --allow-linked-skew upgrades this project anyway.",
+    )
+  return lines.join("\n")
+}
+
 function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[]): string {
   return [
     `nifra upgrade → ${version}: refusing to DOWNGRADE ${downgrades.length} pin(s) below what's installed.`,
@@ -1090,6 +1251,33 @@ export function upgradeTargets(cliVersion: string): string[] {
   return versions.sort(compareSemverSpec)
 }
 
+/** Each target with the notes of every release after the installed one: what an app can observe
+ * changing on the way up. Older releases are listed by version only. */
+function renderUpgradeList(
+  targets: readonly string[],
+  installed: string | null,
+  notes: Readonly<Record<string, readonly string[]>>,
+): string {
+  const lines = [
+    installed === null
+      ? "available upgrade targets:"
+      : `available upgrade targets (this project declares ${installed}):`,
+  ]
+  for (const version of targets) {
+    const ahead = installed === null || compareSemverSpec(version, installed) > 0
+    lines.push(`  ${version}${version === installed ? "  (declared)" : ""}`)
+    if (!ahead) continue
+    const list = notes[version] ?? []
+    if (list.length === 0) lines.push("    no change an app can observe")
+    for (const note of list) lines.push(`    - ${note}`)
+  }
+  lines.push(
+    "",
+    "A newer release upgrades with its own CLI: bunx @nifrajs/cli@<version> upgrade <version>",
+  )
+  return lines.join("\n")
+}
+
 /** The command that runs `version`'s own CLI with the same flags. `version` is a validated release. */
 function newerCliCommand(version: string, options: UpgradeOptions): string {
   const flags = [
@@ -1108,13 +1296,11 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const cliVersion = options.cliVersion ?? listRecipeVersions().at(-1) ?? "0.0.0"
   const targets = upgradeTargets(cliVersion)
   if (options.list) {
-    if (options.json) console.log(JSON.stringify({ versions: targets, cliVersion }, null, 2))
-    else {
-      console.log(
-        `available upgrade targets:\n${targets.map((v) => `  ${v}`).join("\n")}\n\n` +
-          `A newer release upgrades with its own CLI: bunx @nifrajs/cli@<version> upgrade <version>`,
-      )
-    }
+    const installed = installedGroupVersion(cwd)
+    const notes = Object.fromEntries(targets.map((v) => [v, getRecipe(v)?.notes ?? []]))
+    if (options.json)
+      console.log(JSON.stringify({ versions: targets, cliVersion, installed, notes }, null, 2))
+    else console.log(renderUpgradeList(targets, installed, notes))
     return true
   }
 
@@ -1170,7 +1356,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const recipe = chainRecipes(version, from)
 
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
-  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact)
+  const above = (await ancestorPins(cwd)).owned
+  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact, above)
   if (preview.downgrades.length > 0) {
     if (options.json) {
       console.log(
@@ -1185,10 +1372,26 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     }
     return false
   }
+  // Refused before anything is written: the linked repository fails at the first merge(), not here.
+  if (preview.linkedSkew.length > 0 && options.allowLinkedSkew !== true) {
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          { ...preview, from, steps: recipe.steps, write: false, refused: "linked-skew" },
+          null,
+          2,
+        ),
+      )
+    } else {
+      if (!write) console.log(renderPlan(preview, false, from, recipe.steps))
+      console.error(renderLinkedSkew(recipe.version, preview.linkedSkew, cwd, false))
+    }
+    return false
+  }
 
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
-  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact) : preview
+  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
   const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
 
   // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.
@@ -1209,6 +1412,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     return ok
   }
   console.log(renderPlan(plan, write, from, recipe.steps))
+  if (plan.linkedSkew.length > 0)
+    console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
   if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
 
   if (verify) {

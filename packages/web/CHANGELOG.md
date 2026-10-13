@@ -1,5 +1,33 @@
 # @nifrajs/web
 
+## 5.2.0
+
+### Minor Changes
+
+- 281a48e: A production client build (Bun or Vite) moves copy tables (`@nifrajs/i18n/copy`) into one chunk per locale, so a page's JavaScript carries the copy of the locale it renders in and none of the others; the server bundle keeps every table whole. The client manifest lists the chunks as `copyChunks`, the generated server entry passes them to the new `createWebApp({ copyChunks })` option (a hand-written entry passes the manifest's), and each page hands the map to the browser and preloads the chunks it reads: its URL's locale and the one its `<html lang>` names. A client navigation loads the next URL's chunk with the route's code; the router passes the target path to `loadModule` for that. The build reads tables with the app's TypeScript (5.9 or 6) and warns and leaves them whole without one; `buildClient({ copySplit: false })` turns it off. `readSource()` and `addSourceTransform()` in `@nifrajs/web/plugins/kit` let a plugin that claims a file still compile the rewritten source; the Solid and StyleX plugins read through it.
+- 1d20d1f: An app registers its locale routing once: `export const i18n = urls` (the router `defineI18nRouting()` returns) from `backend/framework.ts`, which `nifra dev`, `nifra build` and the generated server entry pass to `createWebApp({ i18n })`. Every document then takes `<html lang dir>` from the registry's `documentMeta(localeOf(path))` unless the route's meta sets `lang`, on a hard load and after each client navigation, and carries `Content-Language`. Each adapter's new `useLocale()` returns the page's locale key, and `<I18nProvider>` formats in the page's locale when no `locale` is passed, with no loader handing either over. A route under a `[lang]` or `[[lang]]` directory runs `matchSegment()` before any middleware: an unserved locale, or a page missing from it, is a 404 through the app's `_404`, and a non-canonical prefix such as `/en/x` with an unprefixed default is a 308 to `/x`.
+- b9e7c6b: The Bun production build (`buildClient`, `buildServer`, `nifra build`) and the `nifra dev --bun` client expand `import.meta.glob` the way Vite does, through the new `importGlobPlugin` in `@nifrajs/web/build`. A literal pattern, or an array of them, starting with `./`, `../` or `/` (the app root) with `!` exclusions becomes an object keyed as Vite keys it, of lazy `() => import(...)` loaders or, with `eager: true`, the modules themselves; `import: "default"` (or a name) picks one export, and `typeof import.meta.glob` reads `"function"`. A mention in a comment, a string or JSX text is left as written. A computed pattern, an alias or another option fails the build naming the file and line, and a client bundle that still calls `import.meta.glob` (a module another plugin loaded first) is refused instead of shipping a glob that loads nothing.
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- 746ada9: Under Vite 8, a framework plugin's `optimizeDeps.rollupOptions` no longer prints Vite's "`optimizeDeps.rollupOptions` ... is deprecated" warning on every `nifra dev` start and Vite build. `@vitejs/plugin-react@4.x` sets `optimizeDeps.rollupOptions.jsx`; nifra already dropped the `jsx` key, but left the empty `rollupOptions` behind, which Vite still warns about. The key is now removed when nothing is left in it, and any remaining options move to `optimizeDeps.rolldownOptions`, where Vite reads them anyway. `ssr.optimizeDeps` is handled the same way, and the Vite production build now applies this to `vitePlugins` too.
+- f9a19f3: The Bun build's `import.meta.glob` expansion writes each key, import path and `import` export name as a string literal with U+2028 and U+2029 escaped, so the generated code stays on one line for every JavaScript parser.
+- c8d33eb: On Windows, the Bun build's `import.meta.glob` applies its `!` exclusions and its `node_modules` skip, and leaves the importing module out of its own matches: it matches every path with forward slashes, since a glob reads `\` as an escape.
+- Updated dependencies [9498cf8]
+- Updated dependencies [1f3ff32]
+- Updated dependencies [4bb8e52]
+- Updated dependencies [cdff19d]
+- Updated dependencies [5edd0ba]
+- Updated dependencies [000b4cb]
+- Updated dependencies [c5455fb]
+- Updated dependencies [6082ba5]
+- Updated dependencies [fd58beb]
+- Updated dependencies [ea25a61]
+- Updated dependencies [ed13e36]
+  - @nifrajs/core@5.2.0
+  - @nifrajs/island-trigger@5.2.0
+
 ## 5.1.0
 
 ### Minor Changes

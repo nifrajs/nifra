@@ -166,6 +166,10 @@ test("the generated plugin module composes the PRODUCTION boundary plugins, not 
   expect(source.indexOf("zones.setup(guarded)")).toBeLessThan(source.indexOf("fn.setup(guarded)"))
   expect(source).toContain('cssModulesBunPlugin("dom")')
   expect(source).toContain("cssModules.setup(guarded)")
+  expect(source).toContain("importGlobPlugin({ root: appRoot })")
+  expect(source.indexOf("globs.setup(guarded)")).toBeGreaterThan(
+    source.indexOf("cssModules.setup(guarded)"),
+  )
 })
 
 test("every plugin the generated module composes registers through the reserved-specifier view", () => {
@@ -194,6 +198,21 @@ test("the generated plugin module composes the app's own clientPlugins, by relat
   expect(source).toContain("appConfig.clientPlugins")
   // Without a config path there is nothing to compose in, and the module must not reference one.
   expect(renderBoundaryPluginModule()).not.toContain("appConfig")
+})
+
+test("the zone guard takes the public-env prefix the loader resolved, as a literal", () => {
+  const source = renderBoundaryPluginModule(
+    "/app/nifra.config.ts",
+    "/app/.nifra/dev-bun",
+    [],
+    false,
+    "SITE_",
+  )
+  expect(source).toContain('publicEnvPrefix: "SITE_",')
+  expect(source).not.toContain("appConfig.publicEnvPrefix")
+  expect(renderBoundaryPluginModule("/app/nifra.config.ts", "/app/.nifra/dev-bun")).not.toContain(
+    "publicEnvPrefix",
+  )
 })
 
 test("launch token: only the fresh parent-minted value verifies, exactly once", async () => {

@@ -300,6 +300,55 @@ export const backend = server()
     )
   })
 
+  test("covers a route by the module that registered it when the scan cannot read its path", async () => {
+    const cwd = join(FIXTURES, "registration-site")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/db-read.ts"), "export const read = () => []\n")
+    const local = defineCapabilityPolicy({
+      definitions: [{ id: "db.read", zone: "domain", access: "read" }],
+      provenance: {
+        imports: [{ specifier: "./db-read.ts", capabilities: ["db.read"] }],
+        forbiddenImports: [],
+      },
+    })
+    // The path is computed and the server comes from the caller: no text scan reads either.
+    await writeFile(
+      join(cwd, "src/orders.ts"),
+      `import "./db-read.ts"
+const under = (name: string) => "/api/" + name
+export const ordersOn = <S extends { get: Function }>(app: S): S =>
+  app.get(under("orders"), { capabilities: ["db.read"] }, () => [])
+`,
+    )
+    await writeFile(
+      join(cwd, "src/app.ts"),
+      'import { server } from "@nifrajs/core"\nimport { ordersOn } from "./orders.ts"\nexport const backend = ordersOn(server())\n',
+    )
+    await writeFile(
+      join(cwd, "nifra.assurance.ts"),
+      `import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+import { backend } from "./src/app.ts"
+export default defineAssuranceConfig({ source: backend, policy: { rules: [] } })
+`,
+    )
+    const { loadAssuranceConfig } = await import("../src/assure.ts")
+    const config = await loadAssuranceConfig(cwd)
+    expect(process.env.NIFRA_ROUTE_SITES).toBeUndefined()
+    const project = await collectCapabilityProjectReport(cwd, config.source, local)
+    expect(project.report.routes).toEqual([
+      expect.objectContaining({
+        path: "/api/orders",
+        covered: true,
+        evidence: [{ id: "db.read", kind: "static", source: "./db-read.ts" }],
+      }),
+    ])
+
+    // Loaded without the flag, nothing is recorded and the route is uncovered, as before.
+    const { backend } = await import(`${join(cwd, "src/app.ts")}?unrecorded`)
+    const unrecorded = await collectCapabilityProjectReport(cwd, backend, local)
+    expect(unrecorded.report.routes.map((route) => route.covered)).toEqual([false])
+  })
+
   test("an uncovered route nothing registers says so", async () => {
     const cwd = join(FIXTURES, "unregistered")
     await mkdir(join(cwd, "src"), { recursive: true })
@@ -539,6 +588,78 @@ export const backend = server().ws(CHAT, { capabilities: ["db.read"] })`,
     expect(project.report.ok).toBe(false)
     expect(project.truncations[0]?.reason).toBe("module-limit")
   })
+
+  // An installed package with hundreds of data modules (a validation library's message tables, say)
+  // re-exported from its entry.
+  const tables = async (dir: string, count: number, deep?: string): Promise<void> => {
+    await mkdir(join(dir, "tables"), { recursive: true })
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "@example/forms", version: "1.0.0", main: "index.js" }),
+    )
+    const lines: string[] = []
+    const writes: Array<Promise<void>> = []
+    for (let index = 0; index < count; index++) {
+      lines.push(`export * as t${index} from "./tables/t${index}.js"`)
+      const body = index === count - 1 && deep !== undefined ? deep : "export const label = 'x'\n"
+      writes.push(writeFile(join(dir, "tables", `t${index}.js`), body))
+    }
+    await Promise.all(writes)
+    await writeFile(join(dir, "index.js"), `${lines.join("\n")}\n`)
+  }
+
+  test("an installed package's modules stay out of each route's module budget, and are still read", async () => {
+    const cwd = join(FIXTURES, "installed-wide")
+    await tables(join(cwd, "node_modules", "@example", "forms"), 600, 'import "postgres"\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import "@example/forms"
+       import "app-db/read"
+       import "app-db/write"
+       export const backend = server()
+         .get("/a", { capabilities: ["db.read"] }, () => [])
+         .get("/b", { capabilities: ["db.read"] }, () => [])`,
+    )
+    const app = server()
+      .get("/a", { capabilities: ["db.read"] }, () => [])
+      .get("/b", { capabilities: ["db.read"] }, () => [])
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.truncations).toEqual([])
+    // The forbidden import 600 modules into the package is found for each route that reaches it.
+    expect(project.violations.map((violation) => [violation.path, violation.chain])).toEqual([
+      ["/a", ["backend.ts", "@example/forms", "./tables/t599.js", "postgres"]],
+      ["/b", ["backend.ts", "@example/forms", "./tables/t599.js", "postgres"]],
+    ])
+  })
+
+  test("an installed package past its own module budget fails closed", async () => {
+    const cwd = join(FIXTURES, "installed-huge")
+    await tables(join(cwd, "node_modules", "@example", "forms"), 5001)
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import "@example/forms"
+       import "app-db/read"
+       import "app-db/write"
+       export const backend = server().get("/a", { capabilities: ["db.read"] }, () => [])`,
+    )
+    const app = server().get("/a", { capabilities: ["db.read"] }, () => [])
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    expect(project.report.ok).toBe(false)
+    expect(project.truncations).toEqual([
+      {
+        method: "GET",
+        path: "/a",
+        reason: "module-limit",
+        chain: [
+          "backend.ts",
+          "@example/forms",
+          "<5000-module limit in node_modules/@example/forms/index.js>",
+        ],
+      },
+    ])
+  }, 30_000)
 })
 
 describe("capability route explanation", () => {

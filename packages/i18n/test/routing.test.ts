@@ -207,3 +207,155 @@ describe("matchSegment", () => {
     expect(urls().matchSegment("fr", "/%E0%A4/x")).toEqual({ kind: "not-found" })
   })
 })
+
+describe("pageLocales", () => {
+  type Key = "en" | "fr" | "pt-BR" | "hi" | "gu"
+  const pages = (pathname: string): readonly Key[] | undefined => {
+    if (pathname.startsWith("/repairs/")) return ["fr", "en", "gu"]
+    if (pathname === "/rentals") return ["en"]
+    if (pathname === "/salon") return ["fr"]
+    return undefined
+  }
+  const r = () => defineI18nRouting(registry(), { pageLocales: pages })
+
+  test("localesOf: the page's served locales in registry order, every one by default", () => {
+    expect(r().localesOf("/fr/repairs/brakes?x=1")).toEqual(["en", "fr"])
+    expect(r().localesOf("/repairs/brakes")).toEqual(["en", "fr"])
+    expect(r().localesOf("/hi/about")).toEqual(["en", "fr", "pt-BR", "hi"])
+    expect(urls().localesOf("/repairs/brakes")).toEqual(["en", "fr", "pt-BR", "hi"])
+  })
+
+  test("pageLocales reads the path without its prefix, query, hash or trailing slash", () => {
+    const seen: string[] = []
+    const router = defineI18nRouting(registry(), {
+      pageLocales: (pathname) => {
+        seen.push(pathname)
+        return undefined
+      },
+    })
+    router.localesOf("/fr/repairs/brakes/?x=1#top")
+    router.localesOf("/")
+    router.localesOf("/hi")
+    expect(seen).toEqual(["/repairs/brakes", "/", "/"])
+  })
+
+  test("matchSegment: a page missing from the locale is not found", () => {
+    expect(r().matchSegment("fr", "/fr/repairs/brakes")).toEqual({ kind: "ok", locale: "fr" })
+    expect(r().matchSegment("hi", "/hi/repairs/brakes")).toEqual({ kind: "not-found" })
+    expect(r().matchSegment("en", "/en/repairs/brakes?x=1")).toEqual({
+      kind: "redirect",
+      location: "/repairs/brakes?x=1",
+    })
+    expect(r().matchSegment("en", "/en/salon")).toEqual({ kind: "not-found" })
+    expect(r().matchSegment(undefined, "/salon")).toEqual({ kind: "not-found" })
+    expect(r().matchSegment(undefined, "/rentals")).toEqual({ kind: "ok", locale: "en" })
+    expect(r().matchSegment("hi", "/hi/about")).toEqual({ kind: "ok", locale: "hi" })
+  })
+
+  test("alternates: the page's own locales; one locale, or a page missing its own, has none", () => {
+    expect(r().alternates("/fr/repairs/brakes", { origin: "https://example.com" })).toEqual({
+      canonical: "https://example.com/fr/repairs/brakes",
+      links: [
+        { hreflang: "en", href: "https://example.com/repairs/brakes" },
+        { hreflang: "fr", href: "https://example.com/fr/repairs/brakes" },
+        { hreflang: "x-default", href: "https://example.com/repairs/brakes" },
+      ],
+    })
+    expect(r().alternates("/rentals")).toEqual({ canonical: "/rentals", links: [] })
+    expect(r().alternates("/hi/repairs/brakes")).toEqual({
+      canonical: "/hi/repairs/brakes",
+      links: [],
+    })
+    expect(
+      r()
+        .alternates("/repairs/brakes", { locales: ["en", "hi"] })
+        .links.map((link) => link.hreflang),
+    ).toEqual(["en", "hi-IN", "x-default"])
+  })
+
+  test("localizePathname falls back to the default's page only when asked", () => {
+    expect(r().localizePathname("/repairs/brakes", "hi")).toBe("/hi/repairs/brakes")
+    expect(r().localizePathname("/fr/repairs/brakes#top", "hi", { fallback: "default" })).toBe(
+      "/repairs/brakes#top",
+    )
+    expect(r().localizePathname("/repairs/brakes", "fr", { fallback: "default" })).toBe(
+      "/fr/repairs/brakes",
+    )
+    expect(() => r().localizePathname("/repairs/brakes", "gu", { fallback: "default" })).toThrow(
+      /not a served locale/,
+    )
+  })
+
+  test("a pageLocales that throws, or answers what the registry lacks, fails loudly", () => {
+    const throwing = defineI18nRouting(registry(), {
+      pageLocales: () => {
+        throw new Error("no such page table")
+      },
+    })
+    const message = 'pageLocales threw for "/x": no such page table'
+    expect(() => throwing.localesOf("/fr/x")).toThrow(message)
+    expect(() => throwing.alternates("/x")).toThrow(message)
+    expect(() => throwing.matchSegment("fr", "/fr/x")).toThrow(message)
+    expect(() => throwing.localizePathname("/x", "fr", { fallback: "default" })).toThrow(message)
+    expect(throwing.localizePathname("/x", "fr")).toBe("/fr/x")
+    expect(() =>
+      defineI18nRouting(registry(), {
+        pageLocales: () => {
+          throw "a string"
+        },
+      }).localesOf("/x"),
+    ).toThrow('pageLocales threw for "/x": a string')
+    expect(() =>
+      defineI18nRouting<string>(registry(), { pageLocales: () => ["en", "de"] }).localesOf("/x"),
+    ).toThrow('pageLocales returned "de" for "/x", which the locale registry does not declare')
+    expect(() =>
+      defineI18nRouting(registry(), {
+        // What untyped code can hand back.
+        pageLocales: () => JSON.parse('"en"'),
+      }).localesOf("/x"),
+    ).toThrow('pageLocales returned string for "/x"')
+  })
+
+  test("property: every page of a cluster lists the same alternates, and only its own locales", () => {
+    // mulberry32: a fixed seed, so a failure reproduces.
+    let seed = 0x5eed
+    const random = (): number => {
+      seed = (seed + 0x6d2b79f5) | 0
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+    const all: readonly Key[] = ["en", "fr", "pt-BR", "hi", "gu"]
+    const served: readonly Key[] = ["en", "fr", "pt-BR", "hi"]
+    for (let round = 0; round < 25; round++) {
+      const table = new Map<string, readonly Key[] | undefined>()
+      for (let page = 0; page < 12; page++) {
+        const picked = all.filter(() => random() < 0.5)
+        table.set(`/p${page}`, random() < 0.2 ? undefined : picked)
+      }
+      const router = defineI18nRouting(registry(), {
+        pageLocales: (pathname) => table.get(pathname),
+      })
+      for (const [page, listed] of table) {
+        const cluster = listed === undefined ? served : served.filter((k) => listed.includes(k))
+        expect(router.localesOf(page)).toEqual(cluster)
+        const seen = new Set<string>()
+        let links: readonly { readonly hreflang: string }[] = []
+        for (const locale of cluster) {
+          const path = router.localizePathname(page, locale)
+          links = router.alternates(path, { origin: "https://example.com" }).links
+          seen.add(JSON.stringify(links))
+          expect(router.matchSegment(locale, `/${locale}${page}`).kind).not.toBe("not-found")
+        }
+        expect(seen.size).toBeLessThanOrEqual(1)
+        const expected: string[] =
+          cluster.length < 2 ? [] : cluster.map((k) => (k === "hi" ? "hi-IN" : k))
+        if (cluster.length >= 2 && cluster.includes("en")) expected.push("x-default")
+        expect(links.map((link) => link.hreflang)).toEqual(expected)
+        for (const locale of served.filter((k) => !cluster.includes(k))) {
+          expect(router.matchSegment(locale, `/${locale}${page}`)).toEqual({ kind: "not-found" })
+        }
+      }
+    }
+  })
+})

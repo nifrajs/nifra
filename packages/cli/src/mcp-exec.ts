@@ -292,14 +292,14 @@ export function projectTools(
     {
       name: "nifra_explain",
       description:
-        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure. With no `error`, returns the running dev server's most recent error of any kind (SSR, loader, API, build, browser, hydration) with its request id - the server is found automatically; `port`/`dir` pick one when several run. nifra_errors lists them all. Returns the same JSON the dev overlay renders.",
+        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure. With no `error`, returns the running dev server's most recent error of any kind (SSR, loader, API, build, browser, hydration) with its request id - the server is found automatically; `port`/`dir` pick one when several run. nifra_errors lists them all. Returns the same JSON the dev overlay renders. Pass a rule code such as `NF-C007` as `error` (no `stack`) to get that `nifra check` rule's title, why it matters, its fix and its docs page.",
       inputSchema: {
         type: "object",
         properties: {
           error: {
             type: "string",
             description:
-              "The error message to explain (copy it from nifra_run/nifra_test output or a failing build).",
+              "The error message to explain (copy it from nifra_run/nifra_test output or a failing build), or a rule code such as NF-C007.",
           },
           stack: {
             type: "string",
@@ -331,6 +331,9 @@ export function projectTools(
           port?: number
           dir?: string
         }
+        const { explainRule, RULE_CODE_SHAPE } = await import("./rule-explain.ts")
+        if (stack === undefined && error !== undefined && RULE_CODE_SHAPE.test(error.trim()))
+          return JSON.stringify(await explainRule(error.trim()), null, 2)
         if (error !== undefined || stack !== undefined) {
           const { buildDiagnostic } = await import("@nifrajs/web/diagnostic")
           const e = new Error(error ?? "")

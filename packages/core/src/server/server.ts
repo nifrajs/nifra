@@ -23,6 +23,8 @@ import {
   leavePlugin,
   tagAdoption,
   tagHook,
+  tagMergeAuthGap,
+  tagRouteSite,
   tagScoped,
   tagStatic,
 } from "../internal/hook-origins.ts"
@@ -30,6 +32,7 @@ import {
   type AssuranceDeclaration,
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
+  NIFRA_ASSURANCE_IDS,
 } from "../internal/route-assurance.ts"
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
 import { adoptRouteRuntimes, compileRouteOptions } from "../internal/route-compiler.ts"
@@ -67,20 +70,20 @@ import {
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
+import type { FormOrigins } from "./body-lane.ts"
 import {
   type ClientIpTrust,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
   resolveClientIp,
 } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
-import "./core-copies.ts"
-import type { FormOrigins } from "./body-lane.ts"
+import { mergeRefusal, recordCopyVersion } from "./core-copies.ts"
 import {
   hasLowercaseHeaderKeysMark,
   headerKeysAllLowercase,
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
-import { headerObjectOf } from "./headers.ts"
+import { declaredHeaders, headerObjectOf } from "./headers.ts"
 import {
   isRoutableMethod,
   jsonError,
@@ -787,6 +790,7 @@ const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
 // node-compat `process`, so `typeof process` does NOT gate it out there, yet reading `process.env`
 // throws `NotCapable` without `--allow-env`. The flag short-circuits before the env read on Deno (audit
 // off) while a production define still folds `<flag> && false` to `false` on every other runtime.
+// It must live in this module: imported from another, Bun leaves `<flag>,` at every folded guard.
 const hookAuditRuntime = typeof (globalThis as { Deno?: unknown }).Deno === "undefined"
 
 // This module's own path, captured once from a sentinel stack. Every internal frame of an
@@ -797,9 +801,10 @@ const SERVER_MODULE_PATH = /* @__PURE__ */ ((): string | undefined => {
   return frame?.match(/\(?([^()\s]+):\d+:\d+\)?\s*$/)?.[1]
 })()
 
-/** One `file:line:col` frame for the caller of an order-scoped hook method, for the unused-hook
- * report. Only ever called behind the `unusedScopedHooks !== "off"` guard, so the `Error` (the sole
- * non-trivial cost) is never constructed when the check is disabled. */
+/** One `file:line:col` frame for the caller of an order-scoped hook method or a route registration,
+ * for the unused-hook report and route provenance. Only ever called behind a development guard that
+ * also requires the feature to be on, so the `Error` (the sole non-trivial cost) is never constructed
+ * otherwise. */
 const captureCallerSite = (): string | undefined => {
   const stack = new Error().stack
   if (stack === undefined) return undefined
@@ -823,9 +828,19 @@ interface HookAuditState {
   readonly hasCustomLogger: boolean
   readonly sites: {
     readonly kind: string
+    /** Routes that captured the chain so far: merged routes excluded, they keep their own. */
     readonly routesAtPush: number
+    readonly mergedAtPush: number
     readonly site: string | undefined
   }[]
+  /** Registration-time plugins installed after routes they would have covered. */
+  readonly lateInstalls: {
+    readonly plugin: string
+    readonly site: string | undefined
+    readonly routes: readonly string[]
+  }[]
+  /** Routes adopted by `merge()`, which keep the chain of the server that declared them. */
+  merged: number
   checked: boolean
 }
 const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
@@ -860,7 +875,14 @@ const beginHookAudit = (
   policy: "warn" | "error" | "off",
   hasCustomLogger: boolean,
 ): void => {
-  hookAudit.set(key, { policy, hasCustomLogger, sites: [], checked: false })
+  hookAudit.set(key, {
+    policy,
+    hasCustomLogger,
+    sites: [],
+    lateInstalls: [],
+    merged: 0,
+    checked: false,
+  })
 }
 
 /** Record one order-scoped hook push: the route count at that moment (so `routesAtPush === total` at
@@ -877,7 +899,62 @@ const recordScopedHook = (key: object, routesAtPush: number, kind: string): void
   }
   const state = hookAudit.get(key)
   if (state === undefined || state.policy === "off") return
-  state.sites.push({ kind, routesAtPush, site: captureCallerSite() })
+  state.sites.push({
+    kind,
+    routesAtPush: routesAtPush - state.merged,
+    mergedAtPush: state.merged,
+    site: captureCallerSite(),
+  })
+}
+
+/** Count routes a `merge()` adopted: they never run this server's order-scoped hooks, so a hook
+ * followed only by merges covers nothing. */
+const noteMergedRoutes = (key: object, count: number): void => {
+  const state = hookAudit.get(key)
+  if (state !== undefined) state.merged += count
+}
+
+/** Record a `merge()` whose server authenticates none of its routes while this server's order-scoped
+ * auth - `authenticate()` stages, or `authenticated` evidence scoped to subsequent routes - would
+ * cover some of them. A server that authenticates any of its own routes chose its own auth, so its
+ * unauthenticated routes are taken as public on purpose. `nifra check` reports what this records. */
+const noteMergeAuthGap = (
+  target: object,
+  authStages: readonly RawAuthStage[],
+  active: readonly AssuranceDeclaration[],
+  routes: readonly CatalogRoute[],
+  sourceGlobal: readonly AssuranceDeclaration[],
+): void => {
+  const parentAuth = active.filter((item) => item.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED)
+  if (authStages.length === 0 && parentAuth.length === 0) return
+  const authenticates = (route: CatalogRoute): boolean =>
+    route.assurance.some((item) => item.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED) ||
+    assuranceEvidenceFor(sourceGlobal, route.method, route.path).some(
+      (item) => item.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED,
+    )
+  if (routes.some(authenticates)) return
+  const covered = routes.filter(
+    (route) =>
+      authStages.length > 0 ||
+      assuranceEvidenceFor(parentAuth, route.method, route.path).length > 0,
+  )
+  if (covered.length === 0) return
+  tagMergeAuthGap(target, {
+    site: captureCallerSite(),
+    auth: [
+      ...authStages.map((stage) => `authenticate(${stage.id})`),
+      ...new Set(parentAuth.map((item) => item.source)),
+    ],
+    routes: covered.map((route) => `${route.method} ${route.path}`),
+  })
+}
+
+/** Record a registration-time plugin (`responseContract()`, `effectLedger()`) installed after routes
+ * it would have covered, named as `METHOD /path`. Reported with the dead hooks at seal. */
+const recordLateInstall = (key: object, plugin: string, routes: readonly string[]): void => {
+  const state = hookAudit.get(key)
+  if (state === undefined || state.policy === "off" || routes.length === 0) return
+  state.lateInstalls.push({ plugin, site: captureCallerSite(), routes })
 }
 
 /** Hook provenance for an adoption (dev only, see `internal/hook-origins.ts`): which scope each
@@ -914,20 +991,46 @@ const sealHookAudit = (
   if (state === undefined || state.checked) return
   state.checked = true
   if (state.policy === "off" || total + sockets === 0) return
+  const own = total - state.merged
   const dead = state.sites.filter(
     (hook) =>
       hook.routesAtPush ===
       (hook.kind === "around" || hook.kind === "aroundCapability" || hook.kind === "afterHandle"
-        ? total
-        : total + sockets),
+        ? own
+        : own + sockets),
   )
-  if (dead.length === 0) return
-  const detail = dead.map((hook) => `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}`).join("\n")
-  const message =
-    `[nifra] ${dead.length} order-scoped hook(s) apply to no route - they were added after the ` +
-    `last route was registered, and register() snapshots the chain into each route as it is ` +
-    `declared:\n${detail}\nMove them before the routes they should cover. App-global hooks ` +
-    `(onRequest/onResponse) are not order-scoped and can be added at any time.`
+  const parts: string[] = []
+  if (dead.length > 0) {
+    const mergedAfter = (hook: (typeof dead)[number]): boolean => state.merged > hook.mergedAtPush
+    const detail = dead
+      .map(
+        (hook) =>
+          `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}${mergedAfter(hook) ? "  (only merge()d routes follow it)" : ""}`,
+      )
+      .join("\n")
+    parts.push(
+      `[nifra] ${dead.length} order-scoped hook(s) apply to no route - they were added after the ` +
+        `last route was registered, and register() snapshots the chain into each route as it is ` +
+        `declared:\n${detail}\nMove them before the routes they should cover. App-global hooks ` +
+        `(onRequest/onResponse) are not order-scoped and can be added at any time.` +
+        (dead.some(mergedAfter)
+          ? " A merge()d route keeps the hooks of the server that declared it and never runs this " +
+            "server's: wire the hook on the merged server, or declare those routes in a group()."
+          : ""),
+    )
+  }
+  for (const late of state.lateInstalls) {
+    const shown = late.routes.slice(0, 5).join(", ")
+    const more = late.routes.length > 5 ? ` and ${late.routes.length - 5} more` : ""
+    parts.push(
+      `[nifra] ${late.plugin}() at ${late.site ?? "<unknown>"} was installed after ` +
+        `${late.routes.length} route(s) it would have covered: ${shown}${more}. It is decided per ` +
+        `route at registration and merge(), so those routes run without it. Install it before the ` +
+        `routes and merge() calls it should cover.`,
+    )
+  }
+  if (parts.length === 0) return
+  const message = parts.join("\n")
   if (state.policy === "error") throw new FrameworkError("UNUSED_SCOPED_HOOKS", message)
   if (state.hasCustomLogger) logger.warn(message)
   else console.warn(message)
@@ -1177,6 +1280,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // for the bundler to eliminate; a non-bundled production run skips it the same way.
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       beginHookAudit(this, options.unusedScopedHooks ?? "warn", options.logger !== undefined)
+      recordCopyVersion()
     }
     this.derives = []
     this.authStages = []
@@ -1232,6 +1336,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Mount a legacy fetch handler under a literal path prefix. Mounted handlers sit behind typed
    * routes, so routes can move one at a time while the remaining legacy surface stays live.
    * Mounted responses are outside Nifra's typed route and response-contract checks.
+   *
+   * It carries HTTP only: a WebSocket upgrade under the prefix reaches the handler as an ordinary
+   * request and never becomes a socket. Serve that path's sockets with `app.ws()` routes or a
+   * mounted child app, or keep the legacy server running beside this one for them.
    */
   mountFetch(
     path: string,
@@ -1369,6 +1477,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Unlike `derive`, this stage receives a body-blind authentication capsule and is compiled before
    * route validation. Keeping it separate prevents an unrelated derive from accidentally becoming a
    * security gate and lets the route compiler retain a protected fast lane.
+   *
+   * A stage that throws, or returns anything but `authenticated(principal)` or `rejected(...)`, fails
+   * closed with 503 `{ ok: false, error: "auth_unavailable" }`. The cause goes where a handler's error
+   * goes: to `onError`, whose response replaces the 503, and when no hook answers, to the logger. A
+   * thrown `Response` or `status(...)` is sent as thrown, as it is from a handler.
    */
   authenticate<Principal>(
     stage: AuthenticationStage<Principal, EnvOf<Ctx>>,
@@ -1387,8 +1500,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError('authenticate() stage mode must be "sync" or "async"')
     }
     this.authStages.push(stage as unknown as RawAuthStage)
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
+      recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "authenticate")
       tagHook(stage, "authenticate", this)
+    }
     return this as unknown as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
   }
 
@@ -1505,9 +1620,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
-  /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500).
-   * Order-scoped: captured by routes declared *after* this call, none before; one added after the last
-   * route reaches nothing (see {@link ServerOptions.unusedScopedHooks}). */
+  /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500, or 503
+   * `auth_unavailable` for a failed {@link authenticate} stage). Order-scoped: captured by routes
+   * declared *after* this call, none before; one added after the last route reaches nothing (see
+   * {@link ServerOptions.unusedScopedHooks}). */
   onError<H extends (error: unknown, context: Context & Ctx) => MaybePromise<unknown>>(
     fn: H,
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
@@ -2261,6 +2377,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): CatalogRoute {
+    // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
+    // app: the module that registered the route, read where a static scan cannot see the path.
+    if (
+      hookAuditRuntime &&
+      process.env.NODE_ENV !== "production" &&
+      process.env.NIFRA_ROUTE_SITES === "1"
+    ) {
+      const site = captureCallerSite()
+      if (site !== undefined) tagRouteSite(this, `${method.toUpperCase()} ${path}`, site)
+    }
     const compiled = compileRouteOptions(
       {
         maxBodyBytes: this.maxBodyBytes,
@@ -2461,6 +2587,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void {
     this.assertConfigurable("responseContract()")
     this.responseContractRuntime = runtime
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordLateInstall(
+        this,
+        "responseContract",
+        this.catalog
+          .entries()
+          .filter(
+            ({ entry }) =>
+              entry.responseContract === undefined &&
+              (entry.schema?.response !== undefined || entry.schema?.errors !== undefined),
+          )
+          .map((route) => `${route.method} ${route.path}`),
+      )
   }
 
   /** @internal Symbol-keyed install seam for the response observer plugin. */
@@ -2610,6 +2749,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *
    * The response contract and the ledger can only add a check or a record, so a merged route is
    * recompiled under them. A runtime installed AFTER the merge covers neither kind of route.
+   *
+   * In development, {@link ServerOptions.unusedScopedHooks} reports a hook followed only by merges and
+   * a contract or ledger installed after the routes it would cover; `nifra check` reports a merge whose
+   * server authenticates none of its routes under this server's `authenticate()` (NF-C043).
    */
   merge<R2 extends Registry, Ctx2, HookOutput2>(
     other: Server<R2, Ctx2, HookOutput2>,
@@ -2618,7 +2761,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!(other instanceof Server)) {
       // A server from another copy of this package reaches this copy's private request state through
       // symbols it does not share, and would fail per request. The boot warning names the copies.
-      throw new TypeError("merge() requires a server() from this copy of @nifrajs/core")
+      throw new TypeError(
+        hookAuditRuntime && process.env.NODE_ENV !== "production"
+          ? mergeRefusal()
+          : "merge() requires a server() from this copy of @nifrajs/core",
+      )
     }
     if (this.routePrefix !== "") {
       // The merged routes were compiled under their own paths; adopting them here would publish them
@@ -2635,7 +2782,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         "merge() does not carry WebSocket routes or mounts - register them on the parent server",
       )
     }
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      noteMergeAuthGap(
+        this,
+        this.authStages,
+        this.activeAssurance,
+        source.catalog.entries(),
+        source.globalAssurance,
+      )
     this.adopt(source, undefined, 0)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      noteMergedRoutes(this, source.catalog.size)
     return this as unknown as Server<R & R2, Ctx, HookOutput>
   }
 
@@ -4318,6 +4475,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_EFFECT_LEDGER](runtime: EffectLedgerRuntime): void {
     this.assertConfigurable("effectLedger()")
     this.effectLedgerRuntime = runtime
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordLateInstall(
+        this,
+        "effectLedger",
+        this.catalog
+          .entries()
+          .filter(
+            ({ entry, descriptor }) =>
+              entry.ledgered === undefined && (descriptor.capabilities?.length ?? 0) > 0,
+          )
+          .map((route) => `${route.method} ${route.path}`),
+      )
   }
 
   /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so
@@ -5640,7 +5809,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
     const input =
       stage.kind === "headers"
-        ? headerObjectOf(source.headers)
+        ? stage.names === undefined
+          ? headerObjectOf(source.headers)
+          : declaredHeaders(source.headers, stage.names)
         : stage.kind === "query"
           ? queryObjectOf(ctx[CONTEXT_SEARCH])
           : ctx[stage.kind]
@@ -5669,8 +5840,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    fallback?: () => T,
   ): MaybePromise<T> {
-    return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse)
+    return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse, fallback)
   }
 
   /** Finish a successful program result through response-contract enforcement and finalization. */
@@ -6140,6 +6312,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    // The answer when no hook does; the default 500 unless a stage owns a different fail-closed status.
+    fallback?: () => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
     // an action throws an error page. Send it as the same Response returned would be sent (Remix/
@@ -6155,9 +6329,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
       // (redacting) logger. Body-read failures and around-hook failures land here too.
       this.logRequestError(err, ctx)
-      return wrapResponse(plainError(500, "internal_error"))
+      return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
     }
-    return this.runErrorHooks(entry, err, ctx, finalize, wrapResponse)
+    return this.runErrorHooks(entry, err, ctx, finalize, wrapResponse, fallback)
   }
 
   /** The `onError` chain, split off {@link handleLifecycleError} so its `await` costs only the routes
@@ -6168,6 +6342,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
+    fallback?: () => T,
   ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
     // the `await` and stay heap-allocated on both engines.
@@ -6188,7 +6363,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
     this.logRequestError(err, ctx)
-    return wrapResponse(plainError(500, "internal_error"))
+    return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
   }
 
   /** Log an unhandled request error to the (redacting) logger - shared by the compiled route program and the

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "../../schema/src/index.ts"
+import { effectLedger } from "../src/effect-ledger.ts"
+import { idempotency } from "../src/idempotency-plugin.ts"
 import { authenticated, definePlugin, server } from "../src/index.ts"
 import { type ReflectedHook, reflectHooks } from "../src/reflection.ts"
+import { responseContract } from "../src/server/response-contract-lane.ts"
 import { websocket } from "../src/ws.ts"
 import { HOOK_MATRIX_REQUESTS, hookMatrixApp } from "./fixtures/hook-matrix-app.ts"
 
@@ -341,5 +345,38 @@ describe("reflectHooks for a WebSocket route", () => {
     expect((await handshake("/chat")).kind).toBe("upgrade")
     expect((await handshake("/m/live")).kind).toBe("upgrade")
     expect(fired).toEqual(["requestLog", "session", "requireUser", "requestLog", "childLog"])
+  })
+})
+
+describe("reflectHooks lists the runtimes a route resolved at registration", () => {
+  const typed = { response: t.object({ id: t.string() }) }
+  const pinned = (hooks: readonly ReflectedHook[]) => hooks.filter((hook) => hook.site === "route")
+
+  test("a merged route recompiled under the parent's contract shows it, named by mode", () => {
+    const before = server().merge(server().get("/users", typed, () => ({ id: "1" })))
+    const after = server()
+      .use(responseContract("enforce"))
+      .merge(server().get("/users", typed, () => ({ id: "1" })))
+    expect(pinned(reflectHooks(before).routes[0]?.hooks ?? [])).toEqual([])
+    expect(pinned(reflectHooks(after).routes[0]?.hooks ?? [])).toEqual([
+      { kind: "responseContract", name: "enforce", site: "route" },
+    ])
+  })
+
+  test("the ledger and idempotency show where the route runs them", () => {
+    const app = server()
+      .use(effectLedger({ sink() {} }))
+      .use(idempotency())
+      .beforeHandle(function guard() {})
+      .post(
+        "/pay",
+        {
+          capabilities: ["payments.charge"],
+          idempotency: { scope: "request", namespace: "public:pay" },
+        },
+        () => "ok",
+      )
+    const kinds = (reflectHooks(app).routes[0]?.hooks ?? []).map((hook) => hook.kind)
+    expect(kinds).toEqual(["effectLedger", "beforeHandle", "idempotency"])
   })
 })

@@ -74,7 +74,8 @@ const LEGACY_SERVER = /\.server(\.(?:[cm]?[jt]sx?|svelte|vue|mdx))$/
 const RETIRED_SPECIFIERS: Readonly<Record<string, string>> = {
   "@nifrajs/web/server-only": "@nifrajs/web/backend-only",
 }
-/** Scripts and config that name app files by path: scanned for paths that moved, never rewritten. */
+/** Scripts and config that name app files by path: scanned for paths that moved. Only the app's own
+ * package.json is rewritten, in the fields `rewritePackagePaths` reads. */
 const TOOLING_FILE =
   /(?:\.(?:json|jsonc|ya?ml|toml|sh|bash|zsh|ps1)|(?:^|\/)(?:Dockerfile|Makefile|Procfile))$/
 const SELF_LOCATION = /\bimport\.meta\.(?:dirname|dir|filename|url)\b|\b__(?:dirname|filename)\b/
@@ -121,7 +122,8 @@ export interface LayoutMigrationIssue {
 export interface LayoutMigrationFollowUp {
   readonly file: string
   readonly reason: string
-  readonly command: string
+  /** The command that settles it; absent when the step is an edit, such as a comment to update. */
+  readonly command?: string
 }
 
 export interface LayoutMigrationResult {
@@ -1134,6 +1136,129 @@ function importsOf(ts: typeof TS, file: string, text: string): ImportRef[] {
   return refs
 }
 
+/** One `import.meta.glob(...)` call and the spans of its pattern literals, quotes excluded. */
+interface GlobCall {
+  readonly patterns: ReadonlyArray<{
+    readonly text: string
+    readonly start: number
+    readonly end: number
+  }>
+  /** `false` when a pattern is computed, so what the call loads cannot be read. */
+  readonly literal: boolean
+  readonly line: number
+}
+
+/** The `import.meta.glob` calls of a JS/TS module. */
+function globCalls(ts: typeof TS, file: string, text: string): GlobCall[] {
+  if (!/\.[cm]?[jt]sx?$/.test(file) || !text.includes("import.meta.glob")) return []
+  const sf = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  const calls: GlobCall[] = []
+  const visit = (node: TS.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "glob" &&
+      ts.isMetaProperty(node.expression.expression) &&
+      node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+    ) {
+      const arg = node.arguments[0]
+      const elements =
+        arg === undefined ? [] : ts.isArrayLiteralExpression(arg) ? [...arg.elements] : [arg]
+      const literals = elements.filter(ts.isStringLiteralLike)
+      const literal = literals.length > 0 && literals.length === elements.length
+      calls.push({
+        patterns: literal
+          ? literals.map((element) => ({
+              text: element.text,
+              start: element.getStart(sf) + 1,
+              end: element.getEnd() - 1,
+            }))
+          : [],
+        literal,
+        line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+      })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return calls
+}
+
+/** A glob pattern written in `file` as an app-relative glob, by Vite's rules: `./` and `../` from the
+ * file's folder, `/` from the app root. `undefined` for any other shape, such as an alias. */
+function appGlob(file: string, pattern: string): string | undefined {
+  if (pattern.startsWith("/")) return pattern.slice(1)
+  if (!pattern.startsWith("./") && !pattern.startsWith("../")) return undefined
+  const at = posix.normalize(posix.join(posix.dirname(file), pattern))
+  return at.startsWith("../") ? undefined : at
+}
+
+/** The files among `files` a glob call in `file` loads, a `!` pattern excluding; `undefined` when a
+ * pattern cannot be read from the app. */
+function globTargets(
+  file: string,
+  patterns: readonly string[],
+  files: Iterable<string>,
+): string[] | undefined {
+  const include: Bun.Glob[] = []
+  const exclude: Bun.Glob[] = []
+  for (const raw of patterns) {
+    const at = appGlob(file, raw.startsWith("!") ? raw.slice(1) : raw)
+    if (at === undefined) return undefined
+    ;(raw.startsWith("!") ? exclude : include).push(new Bun.Glob(at))
+  }
+  return [...files].filter(
+    (candidate) =>
+      candidate !== file &&
+      include.some((glob) => glob.match(candidate)) &&
+      !exclude.some((glob) => glob.match(candidate)),
+  )
+}
+
+/**
+ * `pattern`, written in `from` (now `to`), re-pointed at the folder its matches `before` moved to: the
+ * part before the first wildcard is the folder, and every match must keep its path below it.
+ * `undefined` when the matches did not move as one folder.
+ */
+function repointGlob(
+  from: string,
+  to: string,
+  pattern: string,
+  before: readonly string[],
+  newPath: (file: string) => string,
+): string | undefined {
+  const negated = pattern.startsWith("!")
+  const written = negated ? pattern.slice(1) : pattern
+  const at = appGlob(from, written)
+  if (at === undefined) return undefined
+  const segments = at.split("/")
+  const wild = segments.findIndex((segment) => /[*?[\]{}]/.test(segment))
+  const base = (wild === -1 ? segments.slice(0, -1) : segments.slice(0, wild)).join("/")
+  const rest = segments.slice(base === "" ? 0 : base.split("/").length).join("/")
+  let moved: string | undefined
+  for (const file of before) {
+    if (base !== "" && !file.startsWith(`${base}/`)) continue
+    const tail = base === "" ? file : file.slice(base.length + 1)
+    const now = newPath(file)
+    if (!now.endsWith(`/${tail}`) && now !== tail) return undefined
+    const folder = now === tail ? "" : now.slice(0, now.length - tail.length - 1)
+    if (moved !== undefined && folder !== moved) return undefined
+    moved = folder
+  }
+  if (moved === undefined) return pattern
+  const folder = posix.relative(posix.dirname(to), moved)
+  const next = written.startsWith("/")
+    ? `/${moved === "" ? "" : `${moved}/`}${rest}`
+    : `${folder === "" ? "." : folder.startsWith("..") ? folder : `./${folder}`}/${rest}`
+  return negated ? `!${next}` : next
+}
+
 /** Resolve a relative specifier against the file map, the way a bundler would. */
 function resolveIn(
   files: ReadonlySet<string>,
@@ -1176,7 +1301,139 @@ function liveSpecifierSpans(
   return spans
 }
 
+/**
+ * The comment spans of a JS/TS module: the leading and trailing trivia of each token. Empty when the
+ * compiler cannot walk the tokens, so every mention in the file stays an issue.
+ */
+function triviaCommentRanges(
+  ts: typeof TS,
+  file: string,
+  text: string,
+): Array<readonly [number, number]> {
+  const spans = new Map<number, number>()
+  const add = (ranges: readonly TS.CommentRange[] | undefined): void => {
+    for (const range of ranges ?? []) spans.set(range.pos, range.end)
+  }
+  try {
+    const kind = /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind)
+    const visit = (node: TS.Node): void => {
+      // A JSDoc block is itself one of the comments its token's trivia holds; JSX text is not trivia.
+      if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode)
+        return
+      if (ts.isJsxText(node)) return
+      const children = node.getChildren(source)
+      if (children.length > 0) {
+        for (const child of children) visit(child)
+        return
+      }
+      add(ts.getLeadingCommentRanges(text, node.pos))
+      add(ts.getTrailingCommentRanges(text, node.end))
+    }
+    visit(source)
+  } catch {
+    return []
+  }
+  return [...spans]
+}
+
 const OWN_DIR = new Set(["import.meta.dir", "import.meta.dirname", "__dirname"])
+
+/**
+ * The path `relative` names from the folder of `from`, named from the folder of `to`; `undefined` when
+ * neither the file nor the target moved, so a file that stays keeps its spelling.
+ */
+function rebaseRelative(
+  from: string,
+  to: string,
+  relative: string,
+  locate: (target: string) => string,
+): string | undefined {
+  const before = posix.normalize(posix.join(posix.dirname(from), relative))
+  const target = locate(before)
+  if (from === to && target === before) return undefined
+  const next = posix.relative(posix.dirname(to), target) || "."
+  return relative.endsWith("/") && next !== "." ? `${next}/` : next
+}
+
+/** A shell script's own folder: `$(dirname "$0")`, `$(dirname "${BASH_SOURCE[0]}")`, `${0%/*}`. */
+const SHELL_OWN_DIR =
+  /\$\(\s*dirname\s+("?)\$(?:0|\{BASH_SOURCE(?:\[0\])?\}|BASH_SOURCE)\1\s*\)|`dirname\s+("?)\$0\2`|\$\{(?:0|BASH_SOURCE(?:\[0\])?)%\/\*\}/g
+const SHELL_FILE = /\.(?:sh|bash|zsh)$/
+
+/**
+ * Re-point the paths a shell script moving from `from` to `to` builds from its own folder
+ * (`cd "$(dirname "$0")/.."`), as `rebaseOwnPaths` does for a module. Returns the new text and the
+ * first use of the script's folder with no literal path after it, which the migration cannot follow.
+ */
+function rebaseShellPaths(
+  from: string,
+  to: string,
+  text: string,
+  locate: (target: string) => string,
+): { readonly text: string; readonly unfollowed: string | undefined } {
+  let unfollowed: string | undefined
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  for (const match of text.matchAll(SHELL_OWN_DIR)) {
+    const start = match.index + match[0].length
+    const trailing = /^\/([\w.@-]+(?:\/[\w.@-]+)*\/?)/.exec(text.slice(start))?.[1]
+    if (trailing === undefined) {
+      unfollowed ??= match[0]
+      continue
+    }
+    const rebased = rebaseRelative(from, to, trailing, locate)
+    if (rebased !== undefined)
+      edits.push({ start, end: start + 1 + trailing.length, text: `/${rebased}` })
+  }
+  let next = text
+  for (const edit of edits.reverse())
+    next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
+  return { text: next, unfollowed }
+}
+
+interface OwnDirAlias {
+  readonly name: TS.Identifier
+  readonly initializer: TS.Expression
+}
+
+/**
+ * Top-level `const dir = import.meta.dir` (or `.dirname`, `__dirname`) bindings, by name. A name the
+ * file declares anywhere else (a parameter, an inner `let`) is left out: a use could be that binding.
+ */
+function ownDirAliases(ts: typeof TS, sf: TS.SourceFile): Map<string, OwnDirAlias> {
+  const aliases = new Map<string, OwnDirAlias>()
+  for (const statement of sf.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue
+    for (const declaration of statement.declarationList.declarations) {
+      const { name, initializer } = declaration
+      if (
+        ts.isIdentifier(name) &&
+        initializer !== undefined &&
+        OWN_DIR.has(initializer.getText(sf))
+      )
+        aliases.set(name.text, { name, initializer })
+    }
+  }
+  if (aliases.size === 0) return aliases
+  const declared = new Map<string, number>()
+  const count = (node: TS.Node): void => {
+    const name =
+      ts.isVariableDeclaration(node) ||
+      ts.isParameter(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isBindingElement(node)
+        ? node.name
+        : undefined
+    if (name !== undefined && ts.isIdentifier(name))
+      declared.set(name.text, (declared.get(name.text) ?? 0) + 1)
+    ts.forEachChild(node, count)
+  }
+  count(sf)
+  for (const name of [...aliases.keys()]) if (declared.get(name) !== 1) aliases.delete(name)
+  return aliases
+}
 
 /**
  * Re-point the paths a module moving from `from` to `to` builds from its own location, so each still
@@ -1201,8 +1458,10 @@ function rebaseOwnPaths(
   )
   const edits: Array<{ start: number; end: number; text: string }> = []
   const followed: Array<readonly [number, number]> = []
+  const aliases = ownDirAliases(ts, sf)
   const isOwnDir = (node: TS.Node | undefined): node is TS.Expression =>
-    node !== undefined && OWN_DIR.has(node.getText(sf))
+    node !== undefined &&
+    (OWN_DIR.has(node.getText(sf)) || (ts.isIdentifier(node) && aliases.has(node.text)))
   const isLiteral = (
     node: TS.Node | undefined,
   ): node is TS.StringLiteral | TS.NoSubstitutionTemplateLiteral =>
@@ -1211,15 +1470,8 @@ function rebaseOwnPaths(
     const quote = node.getText(sf)[0] ?? '"'
     return `${quote}${value}${quote}`
   }
-  // The path `relative` names from the module's old folder, named from its new folder; `undefined`
-  // when neither moved, so a module that stays keeps its spelling.
-  const rebased = (relative: string): string | undefined => {
-    const before = posix.normalize(posix.join(posix.dirname(from), relative))
-    const target = locate(before)
-    if (from === to && target === before) return undefined
-    const next = posix.relative(posix.dirname(to), target) || "."
-    return relative.endsWith("/") && next !== "." ? `${next}/` : next
-  }
+  const rebased = (relative: string): string | undefined =>
+    rebaseRelative(from, to, relative, locate)
   const follow = (
     anchor: TS.Node,
     start: number,
@@ -1300,6 +1552,20 @@ function rebaseOwnPaths(
     ts.forEachChild(node, visit)
   }
   visit(sf)
+  // An alias whose every use was re-pointed is followed too; one left in a call the migration cannot
+  // read keeps its `import.meta.dir` unfollowed.
+  for (const [name, declaration] of aliases) {
+    const isFollowed = (node: TS.Node): boolean =>
+      followed.some(([start, end]) => start <= node.getStart(sf) && node.getEnd() <= end)
+    const uses: TS.Identifier[] = []
+    const collect = (node: TS.Node): void => {
+      if (ts.isIdentifier(node) && node.text === name && node !== declaration.name) uses.push(node)
+      ts.forEachChild(node, collect)
+    }
+    collect(sf)
+    if (uses.every(isFollowed))
+      followed.push([declaration.initializer.getStart(sf), declaration.initializer.getEnd()])
+  }
 
   const unfollowed = [...text.matchAll(new RegExp(SELF_LOCATION.source, "g"))].find(
     (match) => !followed.some(([start, end]) => start <= match.index && match.index < end),
@@ -1623,7 +1889,8 @@ function workspaceSiblings(root: string): readonly string[] | undefined {
  * Where code in a workspace sibling names an app file that moves: a relative import into the app, or
  * the file's path in a string or command (`bun -e 'import("./src/x.ts")'` with the app as its working
  * directory). Only files that mention the app's folder or package name are read further, and a path
- * the sibling's own package holds is its own file. Report-only: the migration never edits a sibling.
+ * the sibling's own package holds is its own file. Every line that names a path is listed, each marked
+ * when it lies only in a comment. Report-only: the migration never edits a sibling.
  */
 function siblingReferences(
   ts: typeof TS,
@@ -1634,17 +1901,27 @@ function siblingReferences(
   moves: ReadonlyMap<string, string>,
   known: ReadonlySet<string>,
   ownName: string | undefined,
-): Array<{ readonly from: string; readonly to: string; readonly line: number }> {
+): Array<{
+  readonly from: string
+  readonly to: string
+  readonly lines: readonly number[]
+  readonly commentLines: readonly number[]
+}> {
   const abs = join(pkg, file)
   // A process started in the app (`cwd: \`${repo}apps/web\``) reads its paths from the app root.
   const runsInApp = new RegExp(
     `\\bcwd\\s*:[^,\\n]*\\b${escapeRegExp(posix.basename(toPosix(root)))}\\b`,
   ).test(text)
-  const found = new Map<string, { from: string; to: string; line: number }>()
-  const report = (from: string, index: number): void => {
+  const comments = /\.[cm]?[jt]sx?$/.test(file) ? triviaCommentRanges(ts, file, text) : []
+  const found = new Map<string, { to: string; lines: Set<number>; commentLines: Set<number> }>()
+  const report = (from: string, index: number, length: number): void => {
     const to = moves.get(from)
-    if (to === undefined || found.has(from)) return
-    found.set(from, { from, to, line: text.slice(0, index).split("\n").length })
+    if (to === undefined) return
+    const entry = found.get(from) ?? { to, lines: new Set(), commentLines: new Set() }
+    found.set(from, entry)
+    const line = text.slice(0, index).split("\n").length
+    const inComment = comments.some(([start, end]) => start <= index && index + length <= end)
+    ;(inComment ? entry.commentLines : entry.lines).add(line)
   }
   if (/\.(?:[cm]?[jt]sx?)$/.test(file)) {
     for (const { specifier } of importsOf(ts, file, text)) {
@@ -1656,7 +1933,7 @@ function siblingReferences(
           : undefined
       if (inApp === undefined || inApp.startsWith("../") || isAbsolute(inApp)) continue
       const target = resolveIn(known, "index.ts", `./${inApp}`)
-      if (target !== undefined) report(target, text.indexOf(specifier))
+      if (target !== undefined) report(target, text.indexOf(specifier), specifier.length)
     }
   }
   for (const from of moves.keys()) {
@@ -1675,11 +1952,16 @@ function siblingReferences(
       if (prefix !== "" && !bases.some((base) => resolve(base, prefix) === root)) continue
       const own = existsSync(join(pkg, from)) || existsSync(join(dirname(abs), from))
       if (prefix === "" && own && !runsInApp) continue
-      report(from, match.index)
-      break
+      report(from, match.index, match[0].length)
     }
   }
-  return [...found.values()]
+  const byNumber = (a: number, b: number): number => a - b
+  return [...found].map(([from, { to, lines, commentLines }]) => ({
+    from,
+    to,
+    lines: [...lines].sort(byNumber),
+    commentLines: [...commentLines].filter((line) => !lines.has(line)).sort(byNumber),
+  }))
 }
 
 /** The package folder an app without its own package.json sits in (`--dir src`), at most two levels
@@ -2201,6 +2483,24 @@ export async function migrateLayout(
         })
       }
     }
+    // What a glob loads is imported too: the files it matches go where the module that loads them goes.
+    for (const call of globCalls(ts, file, text)) {
+      const targets = call.literal
+        ? globTargets(
+            file,
+            call.patterns.map((pattern) => pattern.text),
+            known,
+          )
+        : undefined
+      if (targets === undefined) {
+        issues.push({
+          file,
+          reason: `the import.meta.glob on line ${call.line} takes a pattern the migration cannot read (computed, or not starting with ./, ../ or /), so the files it loads stay where they are; check it by hand`,
+        })
+        continue
+      }
+      for (const target of targets) refs.push({ target, typeOnly: false })
+    }
     edges.set(file, refs)
   }
   // The config's module paths are entries too: the browser loads `clientModule`.
@@ -2513,6 +2813,47 @@ export async function migrateLayout(
       rewritten.push(file)
   }
 
+  // A glob names its files by pattern, which no import rewrite reads: each one must still load, from
+  // the module's new folder, the files it loaded before. A pattern whose matches moved together
+  // into one folder is re-pointed at it; any other change is reported.
+  for (const file of next.keys()) {
+    const at = newPath(file)
+    const text = final.get(at)
+    if (text === undefined) continue
+    const edits: Array<{ start: number; end: number; text: string }> = []
+    for (const call of globCalls(ts, at, text)) {
+      if (!call.literal) continue
+      const written = call.patterns.map((pattern) => pattern.text)
+      const before = globTargets(file, written, known)
+      if (before === undefined || before.length === 0) continue
+      const expected = before.map(newPath).sort(codeUnitOrder)
+      const same = (patterns: readonly string[]): boolean => {
+        const after = globTargets(at, patterns, planned)?.sort(codeUnitOrder)
+        return after !== undefined && after.join("\n") === expected.join("\n")
+      }
+      if (same(written)) continue
+      const repointed = written.map((pattern) => repointGlob(file, at, pattern, before, newPath))
+      if (repointed.every((pattern) => pattern !== undefined) && same(repointed)) {
+        call.patterns.forEach((pattern, index) => {
+          const value = repointed[index]
+          if (value !== undefined && value !== pattern.text)
+            edits.push({ start: pattern.start, end: pattern.end, text: value })
+        })
+        continue
+      }
+      issues.push({
+        file: at,
+        reason: `the import.meta.glob on line ${call.line} loaded ${before.length} file(s) such as "${before[0]}", which do not stay together under one folder after the moves, so its pattern cannot follow them; move them together or point the pattern at them by hand`,
+      })
+    }
+    if (edits.length === 0) continue
+    let updated = text
+    for (const edit of edits.sort((a, b) => b.start - a.start))
+      updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
+    final.set(at, updated)
+    if (!moveMap.has(file) && !rewritten.includes(file)) rewritten.push(file)
+  }
+
   // A config string names its module from the app root, so it follows the module, never the config
   // file; a path joined onto the config's folder is re-pointed with the module's own paths below.
   for (const configFile of CONFIG_FILES) {
@@ -2544,7 +2885,18 @@ export async function migrateLayout(
   // A moved module's paths from its own location now start from its new folder: re-point the ones it
   // spells out, and report the first one it cannot follow.
   const unfollowed = new Map<string, string>()
+  /** Moved shell scripts whose own-folder paths were re-pointed: new path -> text. */
+  const scriptWrites = new Map<string, string>()
   for (const { from, to } of moves) {
+    if (SHELL_FILE.test(to) && !original.has(from)) {
+      const script = readFileSync(join(root, from), "utf8")
+      const result = rebaseShellPaths(from, to, script, (target) =>
+        known.has(target) ? newPath(target) : target,
+      )
+      if (result.text !== script) scriptWrites.set(to, result.text)
+      if (result.unfollowed !== undefined) unfollowed.set(to, result.unfollowed)
+      continue
+    }
     const text = final.get(to)
     if (text === undefined || !SELF_LOCATION.test(text)) continue
     if (!/\.[cm]?[jt]sx?$/.test(to)) {
@@ -2584,6 +2936,11 @@ export async function migrateLayout(
     .filter((file) => next.has(file) || !original.has(file))
     .map((file) => ({ from: splitFrom.get(file) ?? file, to: newPath(file) }))
   const tsconfigs = followTsconfigs(ts, root, moveMap, layout)
+  // The app's own package.json names files from the app root: its scripts and entry fields follow.
+  const manifestPath = join(root, "package.json")
+  const manifest = existsSync(manifestPath)
+    ? rewritePackagePaths(ts, readFileSync(manifestPath, "utf8"), moveMap)
+    : undefined
   const scanned: Array<readonly [string, string]> = [...final]
   for (const file of everyFile) {
     if (
@@ -2593,17 +2950,22 @@ export async function migrateLayout(
     )
       scanned.push([
         newPath(file),
-        tsconfigs.files.get(file)?.text ?? readFileSync(join(root, file), "utf8"),
+        (file === "package.json" ? manifest?.text : undefined) ??
+          tsconfigs.files.get(file)?.text ??
+          readFileSync(join(root, file), "utf8"),
       ])
   }
+  // A mention only in comments is worth updating, not a decision: it never changes what runs.
+  const commentFollowUps: LayoutMigrationFollowUp[] = []
   for (const [file, text] of scanned) {
     let live: ReadonlyArray<readonly [number, number]> | undefined
+    let comments: ReadonlyArray<readonly [number, number]> | undefined
     for (const [from, to] of moveMap) {
       // `shared/lib/x.ts` contains `lib/x.ts`; that is the new path, not a stale one.
       const newPrefix = to.endsWith(from) ? to.slice(0, to.length - from.length) : undefined
       const stale = [
         ...text.matchAll(new RegExp(`(?<![\\w.-])${escapeRegExp(from)}(?![\\w])`, "g")),
-      ].some((match) => {
+      ].filter((match) => {
         if (newPrefix !== undefined && text.slice(0, match.index).endsWith(newPrefix)) return false
         // An import that resolves after the moves is current, even when it still reads like the old
         // path: `./x.json` from a module that moved together with `x.json`.
@@ -2611,7 +2973,16 @@ export async function migrateLayout(
         const end = match.index + from.length
         return !live.some(([start, stop]) => start <= match.index && end <= stop)
       })
-      if (stale) issues.push({ file, reason: `mentions "${from}" by path; it moved to "${to}"` })
+      if (stale.length === 0) continue
+      comments ??= /\.[cm]?[jt]sx?$/.test(file) ? triviaCommentRanges(ts, file, text) : []
+      const inComments = stale.every((match) =>
+        comments?.some(
+          ([start, stop]) => start <= match.index && match.index + from.length <= stop,
+        ),
+      )
+      if (inComments)
+        commentFollowUps.push({ file, reason: `a comment names "${from}", which moved to "${to}"` })
+      else issues.push({ file, reason: `mentions "${from}" by path; it moved to "${to}"` })
     }
   }
 
@@ -2665,7 +3036,9 @@ export async function migrateLayout(
       if (!mentionsApp.test(text) && (ownName === undefined || !text.includes(`${ownName}/`)))
         continue
       const at = toPosix(relative(root, join(sibling, file)))
-      for (const { from, to, line } of siblingReferences(
+      const onLines = (lines: readonly number[]): string =>
+        `on line${lines.length === 1 ? "" : "s"} ${lines.join(", ")}`
+      for (const { from, to, lines, commentLines } of siblingReferences(
         ts,
         root,
         sibling,
@@ -2675,10 +3048,18 @@ export async function migrateLayout(
         known,
         ownName,
       )) {
-        issues.push({
-          file: at,
-          reason: `names "${from}" on line ${line}, and it moves to "${to}" - it is outside the app, so the migration does not rewrite it`,
-        })
+        const comments =
+          commentLines.length === 0 ? "" : ` (and in a comment ${onLines(commentLines)})`
+        if (lines.length > 0)
+          issues.push({
+            file: at,
+            reason: `names "${from}" ${onLines(lines)}${comments}, and it moves to "${to}" - it is outside the app, so the migration does not rewrite it`,
+          })
+        else
+          commentFollowUps.push({
+            file: at,
+            reason: `a comment ${onLines(commentLines)} names "${from}", which moved to "${to}"`,
+          })
       }
     }
   }
@@ -2735,7 +3116,7 @@ export async function migrateLayout(
         })
   for (const [file, text] of schemaPlan?.edits ?? []) final.set(file, text)
   const schemas = (schemaPlan?.entries ?? []).filter((entry) => entry.status === "missing")
-  const followUps: LayoutMigrationFollowUp[] = []
+  const followUps: LayoutMigrationFollowUp[] = [...commentFollowUps]
   for (const [file, text] of final) {
     if (!file.startsWith("routes/") || !/\.backend\.[cm]?[jt]s$/.test(file)) continue
     for (const { name, schema } of missingOutputSchemas(text)) {
@@ -2812,6 +3193,14 @@ export async function migrateLayout(
     toolingWrites.set("package.json", kind.text)
     tooling.push({ file: "package.json", change: '"nifra": { "kind": "api" }' })
   }
+  if (manifest !== undefined && manifest.count > 0) {
+    const current = toolingWrites.get("package.json") ?? readFileSync(manifestPath, "utf8")
+    toolingWrites.set("package.json", rewritePackagePaths(ts, current, moveMap).text)
+    tooling.push({
+      file: "package.json",
+      change: `${manifest.count} file path(s) in scripts and entry fields follow their moved files`,
+    })
+  }
 
   if (options.write === true) {
     for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
@@ -2833,6 +3222,7 @@ export async function migrateLayout(
       renameSync(join(root, from), join(root, to))
       vacated.push(from)
     }
+    for (const [file, text] of scriptWrites) writeFileSync(join(root, file), text)
     pruneVacatedDirs(root, vacated)
   }
   return {
@@ -3352,6 +3742,80 @@ function declareApiKind(ts: typeof TS, root: string): { text?: string; issue?: s
   if (!ts.isObjectLiteralExpression(nifra.initializer))
     return { issue: '"nifra" is not an object; add "kind": "api" to it by hand' }
   return { text: insertProperty(source, text, nifra.initializer, '"kind": "api"') }
+}
+
+/** package.json fields whose string values name files from the package folder. */
+const PACKAGE_PATH_FIELDS = new Set([
+  "main",
+  "module",
+  "types",
+  "typings",
+  "browser",
+  "source",
+  "bin",
+  "exports",
+  "imports",
+  "files",
+  "scripts",
+])
+
+/**
+ * `text` (a package.json at the app root) with each moved file it names by its exact path, in the
+ * fields above, named at its new path; `./` kept as written. A value with a `*` outside `scripts` is a
+ * pattern over a folder, which no single move settles, so it stays and the path scan reports it.
+ */
+function rewritePackagePaths(
+  ts: typeof TS,
+  text: string,
+  moves: ReadonlyMap<string, string>,
+): { readonly text: string; readonly count: number } {
+  const source = ts.parseJsonText("package.json", text)
+  const top = source.statements[0]?.expression
+  if (top === undefined || !ts.isObjectLiteralExpression(top) || moves.size === 0)
+    return { text, count: 0 }
+  // Longest first, so `lib/a.test.ts` is not read as `lib/a.ts` with a tail.
+  const ordered = [...moves].sort(([a], [b]) => b.length - a.length)
+  const pattern = new RegExp(
+    `(?<![\\w.@/-])(\\./)?(${ordered.map(([from]) => escapeRegExp(from)).join("|")})(?![\\w/-]|\\.\\w)`,
+    "g",
+  )
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  let count = 0
+  const visit = (node: TS.Node, field: string): void => {
+    if (ts.isStringLiteral(node)) {
+      if (field !== "scripts" && node.text.includes("*")) return
+      const value = node.text.replace(pattern, (_match, dot: string | undefined, from: string) => {
+        count += 1
+        return `${dot ?? ""}${moves.get(from) ?? from}`
+      })
+      if (value !== node.text)
+        edits.push({
+          start: node.getStart(source),
+          end: node.getEnd(),
+          text: JSON.stringify(value),
+        })
+      return
+    }
+    if (ts.isArrayLiteralExpression(node)) {
+      for (const element of node.elements) visit(element, field)
+      return
+    }
+    if (!ts.isObjectLiteralExpression(node)) return
+    for (const property of node.properties) {
+      if (!ts.isPropertyAssignment(property)) continue
+      // `"//x"` keys are comments by npm convention.
+      if (ts.isStringLiteral(property.name) && property.name.text.startsWith("//")) continue
+      visit(property.initializer, field)
+    }
+  }
+  for (const property of top.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name)) continue
+    if (PACKAGE_PATH_FIELDS.has(property.name.text)) visit(property.initializer, property.name.text)
+  }
+  let next = text
+  for (const edit of edits.sort((a, b) => b.start - a.start))
+    next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
+  return { text: next, count }
 }
 
 /** Tailwind `content` globs that matched a moved file at its old path and match nothing at its new one. */

@@ -179,17 +179,18 @@ describe("createClientRouter", () => {
   })
 
   test("navigate awaits loadModule (code-split chunk) alongside the data fetch", async () => {
-    const loaded: string[] = []
+    const loaded: [string, string | undefined][] = []
     const r = createClientRouter({
       patterns,
       initial,
       fetchData: async (_p, m) => ({ id: m.params.id }),
-      loadModule: async (id) => {
-        loaded.push(id)
+      loadModule: async (id, path) => {
+        loaded.push([id, path])
       },
     })
     await r.navigate("/users/7")
-    expect(loaded).toEqual(["user"]) // the route's chunk was requested before rendering
+    // The route's chunk was requested before rendering, with the URL it renders (for per-URL code).
+    expect(loaded).toEqual([["user", "/users/7"]])
     expect(r.snapshot().routeId).toBe("user")
   })
 

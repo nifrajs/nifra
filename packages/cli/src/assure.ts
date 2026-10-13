@@ -84,7 +84,17 @@ export async function loadAssuranceConfig(
   }
   const specifier = pathToFileURL(path)
   specifier.searchParams.set("nifra-assurance", String(Date.now()))
-  const loaded = (await import(specifier.href)) as { default?: unknown }
+  // Core records each route's registering module while this is set, for the capability walk. Scoped to
+  // the load: a module already imported in this process keeps what it recorded then.
+  const priorSites = process.env.NIFRA_ROUTE_SITES
+  process.env.NIFRA_ROUTE_SITES = "1"
+  let loaded: { default?: unknown }
+  try {
+    loaded = (await import(specifier.href)) as { default?: unknown }
+  } finally {
+    if (priorSites === undefined) delete process.env.NIFRA_ROUTE_SITES
+    else process.env.NIFRA_ROUTE_SITES = priorSites
+  }
   if (!isConfig(loaded.default)) {
     throw new Error(
       `[nifra] ${displayPath(path)} must default-export defineAssuranceConfig({ source, policy }).`,
