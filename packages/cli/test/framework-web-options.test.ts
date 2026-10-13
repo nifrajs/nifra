@@ -102,6 +102,39 @@ describe("loadApp validates the forwarded fields", () => {
     })
   })
 
+  test("publicEnvPrefix set only in backend/framework.ts reaches every command beside nifra.config.ts", async () => {
+    const dir = project({
+      "backend/framework.ts": [...adapterSource, 'export const publicEnvPrefix = "SITE_"'].join(
+        "\n",
+      ),
+      "nifra.config.ts": 'export { adapter, clientModule } from "./backend/framework.ts"\n',
+      "routes/index.tsx": "export default () => null\n",
+    })
+    expect((await loadApp(dir)).framework.publicEnvPrefix).toBe("SITE_")
+    // It is not a server-entry option: the generated entry imports nothing new.
+    expect(
+      frameworkOptionImports((await loadApp(dir)).framework, join(dir, "backend/framework.ts")),
+    ).toEqual({})
+    writeFileSync(
+      join(dir, "nifra.config.ts"),
+      'export { adapter, clientModule } from "./backend/framework.ts"\nexport const publicEnvPrefix = "EDGE_"\n',
+    )
+    expect((await loadApp(dir, "dist", { importQuery: "v=2" })).framework.publicEnvPrefix).toBe(
+      "EDGE_",
+    )
+  })
+
+  test("a publicEnvPrefix that is not a string is refused", async () => {
+    const dir = project({
+      "backend/framework.ts": [...adapterSource, "export const publicEnvPrefix = 7"].join("\n"),
+      "nifra.config.ts": 'export { adapter, clientModule } from "./backend/framework.ts"\n',
+      "routes/index.tsx": "export default () => null\n",
+    })
+    await expect(loadApp(dir)).rejects.toThrow(
+      "backend/framework.ts: `publicEnvPrefix` must be a string",
+    )
+  })
+
   test("an option taken from backend/framework.ts is validated there", async () => {
     const dir = project({
       "backend/framework.ts": [...adapterSource, "export const apiPrefix = 42"].join("\n"),

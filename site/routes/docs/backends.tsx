@@ -183,8 +183,9 @@ export default function Backends() {
       <p>
         With both files, <code>nifra dev</code> and <code>nifra build</code> take{" "}
         <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>, <code>csp</code>,{" "}
-        <code>nonce</code>, <code>serverComponents</code>, <code>i18n</code> and <code>use</code> from{" "}
-        <code>backend/framework.ts</code> when <code>nifra.config.ts</code> does not set them, so the
+        <code>nonce</code>, <code>serverComponents</code>, <code>i18n</code>, <code>use</code> and{" "}
+        <code>publicEnvPrefix</code> from <code>backend/framework.ts</code> when{" "}
+        <code>nifra.config.ts</code> does not set them, so the
         server entry and the dev server read one value without a re-export. A hand-written{" "}
         <code>createWebApp</code> call passes <code>apiPrefix</code> itself; import it from{" "}
         <code>backend/framework.ts</code> so production serves the backend where{" "}

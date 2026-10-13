@@ -196,6 +196,21 @@ test("the generated plugin module composes the app's own clientPlugins, by relat
   expect(renderBoundaryPluginModule()).not.toContain("appConfig")
 })
 
+test("the zone guard takes the public-env prefix the loader resolved, as a literal", () => {
+  const source = renderBoundaryPluginModule(
+    "/app/nifra.config.ts",
+    "/app/.nifra/dev-bun",
+    [],
+    false,
+    "SITE_",
+  )
+  expect(source).toContain('publicEnvPrefix: "SITE_",')
+  expect(source).not.toContain("appConfig.publicEnvPrefix")
+  expect(renderBoundaryPluginModule("/app/nifra.config.ts", "/app/.nifra/dev-bun")).not.toContain(
+    "publicEnvPrefix",
+  )
+})
+
 test("launch token: only the fresh parent-minted value verifies, exactly once", async () => {
   const root = createFixtureRoot("tmp-nifra-devbun-token-")
   try {

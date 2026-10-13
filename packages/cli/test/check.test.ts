@@ -3604,6 +3604,19 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     ])
     await rm(dir, { recursive: true, force: true })
   })
+
+  test("with both configs, the prefix nifra.config.ts declares is the one the loader uses", async () => {
+    const dir = await project({
+      "backend/framework.ts": 'export const publicEnvPrefix = "APP_PUBLIC_"\n',
+      "nifra.config.ts": 'export const publicEnvPrefix = "SITE_"\n',
+      "routes/index.tsx":
+        "export default () => [process.env.SITE_URL, process.env.APP_PUBLIC_URL]\n",
+    })
+    expect(await findings(dir, "NF-C029")).toEqual([
+      "routes/index.tsx:1 routes/index.tsx it reads private environment variable process.env.APP_PUBLIC_URL. Browser code may read only NODE_ENV and variables named SITE_*; read the rest in a loader, an action or under backend/",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
 })
 
 describe("data guard from source (NF-C030, NF-C031)", () => {

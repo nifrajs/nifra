@@ -453,6 +453,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         app.cwd,
         app.configPath,
         app.framework.define,
+        app.framework.publicEnvPrefix,
       )
       // Bun 1.4 on Windows may discard the script-relative portion of argv when `--config` is
       // present. Keep a second, authenticated copy of the user vector in the child's environment so

@@ -8498,8 +8498,9 @@ written down: `nifra fix --code NF-C035` adds
 
 With both files, `nifra dev` and `nifra build` take
 `apiPrefix`, `apiStrip`, `mounts`, `csp`,
-`nonce`, `serverComponents`, `i18n` and `use` from
-`backend/framework.ts` when `nifra.config.ts` does not set them, so the
+`nonce`, `serverComponents`, `i18n`, `use` and
+`publicEnvPrefix` from `backend/framework.ts` when
+`nifra.config.ts` does not set them, so the
 server entry and the dev server read one value without a re-export. A hand-written
 `createWebApp` call passes `apiPrefix` itself; import it from
 `backend/framework.ts` so production serves the backend where
@@ -11154,8 +11155,9 @@ export const apiPrefix = "/api"
 
 With both `nifra.config.ts` and `backend/framework.ts`, every command
 takes `apiPrefix`, `apiStrip`, `mounts`, `csp`,
-`nonce`, `serverComponents` and `use` from
-`backend/framework.ts` when `nifra.config.ts` leaves them unset. The
+`nonce`, `serverComponents`, `use` and
+`publicEnvPrefix` from `backend/framework.ts` when
+`nifra.config.ts` leaves them unset. The
 backend sees each request's full path unless `apiStrip` is on, so its routes are
 registered under the prefix; `nifra routes` marks one outside it as in-process
 only, and `nifra dev` and `nifra build` warn about it.

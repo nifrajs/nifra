@@ -221,12 +221,16 @@ function relativeSpecifier(fromDir: string, target: string): string {
  * `singleCopy` is whether `package.json` declares `"nifra": { "singleCopy": [...] }`. The declared
  * resolver then runs where `buildClient` runs it, after the zone guard; an app that also lists
  * `singleCopyPlugin()` in `clientPlugins` gets its own instance in that place, once.
+ *
+ * `publicEnvPrefix` is the value `loadApp` resolved across both configs, written in as a literal:
+ * importing it from `configPath` would miss one set only in `backend/framework.ts`.
  */
 export function renderBoundaryPluginModule(
   configPath?: string,
   pluginDir?: string,
   servePlugins: readonly string[] = [],
   singleCopy = false,
+  publicEnvPrefix?: string,
 ): string {
   const appImport =
     configPath !== undefined && pluginDir !== undefined
@@ -271,12 +275,7 @@ ${singleCopy ? 'import { singleCopyPlugin } from "@nifrajs/core/single-copy"\n' 
 // This module lives at <app>/.nifra/dev-bun/, so the app root is two directories up.
 const appRoot = Bun.fileURLToPath(new URL("../../", import.meta.url))
 const zones = zoneGuardPlugin({
-  appRoot,${
-    appImport === ""
-      ? ""
-      : `
-  ...(typeof appConfig.publicEnvPrefix === "string" ? { publicEnvPrefix: appConfig.publicEnvPrefix } : {}),`
-  }
+  appRoot,${publicEnvPrefix === undefined ? "" : `\n  publicEnvPrefix: ${JSON.stringify(publicEnvPrefix)},`}
 })
 const fn = serverFnStubPlugin()
 const cssModules = cssModulesBunPlugin("dom")
@@ -308,11 +307,12 @@ const TOKEN_FILE = "launch-token"
 /** Write the generated config for an app; returns the bunfig path to re-exec with and the fresh
  * launch token to pass in the child's environment. `configPath` (the app's `nifra.config.ts` /
  * `backend/framework.ts`) is what lets the app's own `clientPlugins` reach Bun's dev-server
- * bundler; `define` is the config's own. */
+ * bundler; `define` and `publicEnvPrefix` are the loaded config's own. */
 export async function writeBunDevConfig(
   appRoot: string,
   configPath?: string,
   define?: Readonly<Record<string, string>>,
+  publicEnvPrefix?: string,
 ): Promise<BunDevConfig> {
   const dir = resolve(appRoot, ".nifra", "dev-bun")
   mkdirSync(dir, { recursive: true })
@@ -328,6 +328,7 @@ export async function writeBunDevConfig(
       dir,
       userServePlugins(user, appRoot),
       readSingleCopyDeclaration(appRoot) !== undefined,
+      publicEnvPrefix,
     ),
   )
   const bunfigPath = resolve(dir, "bunfig.toml")

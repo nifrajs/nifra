@@ -145,8 +145,9 @@ export default function Migrate5() {
       <p>
         With both <code>nifra.config.ts</code> and <code>backend/framework.ts</code>, every command
         takes <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>, <code>csp</code>,{" "}
-        <code>nonce</code>, <code>serverComponents</code> and <code>use</code> from{" "}
-        <code>backend/framework.ts</code> when <code>nifra.config.ts</code> leaves them unset. The
+        <code>nonce</code>, <code>serverComponents</code>, <code>use</code> and{" "}
+        <code>publicEnvPrefix</code> from <code>backend/framework.ts</code> when{" "}
+        <code>nifra.config.ts</code> leaves them unset. The
         backend sees each request's full path unless <code>apiStrip</code> is on, so its routes are
         registered under the prefix; <code>nifra routes</code> marks one outside it as in-process
         only, and <code>nifra dev</code> and <code>nifra build</code> warn about it.

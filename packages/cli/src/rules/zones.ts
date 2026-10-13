@@ -334,9 +334,10 @@ export const apiKindRule: CheckRule = {
 const PREFIX_EXPORT =
   /\bexport\s+const\s+publicEnvPrefix\s*(?::\s*string\s*)?=\s*(?:"([^"\\\r\n]*)"|'([^'\\\r\n]*)')/
 
-/** The app's public-env prefix when its config declares it as a string literal, else the default. */
+/** The app's public-env prefix when its config declares it as a string literal, else the default.
+ * nifra.config.ts is read first, as `loadApp` does. */
 function publicPrefix(root: string, app: string): string {
-  for (const config of [FRAMEWORK_FILE, CONFIG_FILE]) {
+  for (const config of [CONFIG_FILE, FRAMEWORK_FILE]) {
     const path = join(root, app, config)
     if (!existsSync(path)) continue
     const match = PREFIX_EXPORT.exec(stripComments(readFileSync(path, "utf8")))
