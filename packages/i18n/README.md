@@ -65,6 +65,31 @@ entry exports a `rich()` that returns framework nodes (Svelte: `<Rich>` with one
 `localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
 `document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
 
+## Copy tables
+
+`defineCopy(locales)` from `@nifrajs/i18n/copy` keeps a page's text and its translations beside the
+code that shows it, with no key to name. The default locale's value is required, an undeclared locale
+is a type error, and every other value has the default's shape. `copy.pick(table, locale)` falls back
+along `locales.chain()` and fires `onMissing` once per table and locale; `copy.format()` reads an ICU
+message.
+
+```ts
+import { defineCopy } from "@nifrajs/i18n/copy"
+
+export const copy = defineCopy(locales, { onMissing: reportMissingCopy })
+export const TITLE = copy({ en: "Bicycle", hi: "साइकिल", ta: "மிதிவண்டி" })
+export const FAQ = copy.id("shop.faq", { en: ["Brakes?", "Gears?"], hi: ["ब्रेक?", "गियर?"] })
+
+copy.pick(FAQ, "ta") // ["Brakes?", "Gears?"], from en
+```
+
+A production `@nifrajs/web` client build moves each table's values into one chunk per locale, so a
+page's JavaScript carries only the copy of the locale it renders in; the server keeps every table. It
+reads tables statically (literals, lists and blocks of them, same-module constants) with the app's
+TypeScript; a table written any other way keeps every locale in the bundle. `nifra i18n check` checks
+the tables of a `copy` export like catalogs, at each table's `file:line`; `tablesToCatalogs()` from
+`@nifrajs/i18n/check` is the pure transpose.
+
 ## Checking catalogs
 
 `checkCatalogs({ locales, catalogs, ignore })` from `@nifrajs/i18n/check` reports coverage, missing

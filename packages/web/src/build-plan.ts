@@ -34,6 +34,9 @@ export interface BuildManifest {
    * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS - correctness
    * over minimality. Absent entirely when the app imports no CSS. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+  /** Locale key -> URL of the chunk holding that locale's copy (`@nifrajs/i18n/copy`), when the build
+   * moved copy tables out of the bundle. The server entry passes it to `createWebApp`. */
+  readonly copyChunks?: Readonly<Record<string, string>>
 }
 
 /** The built worker bundle - point your `wrangler.toml`'s `main` at `worker`. */
@@ -196,6 +199,8 @@ export interface Bundler {
     readonly styles?: readonly string[]
     /** The client build's per-route stylesheet map to bake into the server manifest. */
     readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+    /** The client build's copy chunk URLs by locale to bake into the server manifest. */
+    readonly copyChunks?: Readonly<Record<string, string>>
     readonly plugins?: readonly unknown[]
     readonly define?: Readonly<Record<string, string>>
     /** CSS activation policy to bake into the generated server manifest. */
@@ -763,6 +768,22 @@ export function parseManifestRouteStyles(source: string): Record<string, string[
       : {}
   } catch {
     return {}
+  }
+}
+
+/** The baked `copyChunks` map in a committed server-manifest, or `undefined` when it has none. Pure. */
+export function parseManifestCopyChunks(source: string): Record<string, string> | undefined {
+  const raw = bakedManifestLiteral(source, "copyChunks")
+  if (raw === undefined) return undefined
+  try {
+    const value: unknown = parseManifestLiteral(raw)
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+    const urls: Record<string, string> = {}
+    for (const [locale, url] of Object.entries(value))
+      if (typeof url === "string") urls[locale] = url
+    return urls
+  } catch {
+    return undefined
   }
 }
 

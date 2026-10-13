@@ -45,6 +45,16 @@
       "bun": "./src/check.ts",
       "types": "./dist/check.d.ts",
       "default": "./dist/check.js"
+    },
+    "./copy": {
+      "bun": "./src/copy.ts",
+      "types": "./dist/copy.d.ts",
+      "default": "./dist/copy.js"
+    },
+    "./extract": {
+      "bun": "./src/extract.ts",
+      "types": "./dist/extract.d.ts",
+      "default": "./dist/extract.js"
     }
   },
   "files": [
@@ -57,10 +67,14 @@
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
   "peerDependencies": {
-    "@nifrajs/core": "workspace:^"
+    "@nifrajs/core": "workspace:^",
+    "typescript": "^5.9.0 || ^6.0.0"
   },
   "peerDependenciesMeta": {
     "@nifrajs/core": {
+      "optional": true
+    },
+    "typescript": {
       "optional": true
     }
   },

@@ -5477,6 +5477,66 @@ the new catalog and the page re-renders. `localeCookie(name, locale)` builds the
 detector's own cookie for a switcher, so a choice made in the page and one made through
 `?lang=` are the same cookie.
 
+### Copy tables
+
+A catalog keys every message; a **copy table** keeps a page's text and its translations
+beside the code that shows it, with no key to name. `defineCopy(locales)` from
+`@nifrajs/i18n/copy` binds tables to the registry: the default locale's value is
+required, a locale the registry does not declare is a type error, and every other value has the
+default's shape - a list its length, a block its keys. Values are data (messages, lists, blocks);
+a message that takes values is ICU, read with `copy.format()`.
+
+```ts
+// shared/copy.ts - copy tables: the text and its translations beside the code that shows it.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineCopy } from "@nifrajs/i18n/copy"
+
+export const locales = defineLocales({ default: "en", locales: { en: {}, hi: {}, ta: {} } })
+export const copy = defineCopy(locales, {
+  onMissing: ({ id, locale, fallback }) => console.warn(`${id ?? "a table"}: no ${locale}, showing ${fallback}`),
+})
+
+// The default locale's value is required; every other locale is optional and shaped like it.
+export const TITLE = copy({ en: "Bicycle", hi: "साइकिल", ta: "மிதிவண்டி" })
+export const FAQ = copy.id("shop.faq", { en: ["Brakes?", "Gears?"], hi: ["ब्रेक?", "गियर?"] })
+export const PEDALS = copy({ en: "{n, plural, one {# pedal} other {# pedals}}", hi: "{n} पैडल" })
+
+copy.pick(TITLE, "ta") // "மிதிவண்டி"
+copy.pick(FAQ, "ta") // ["Brakes?", "Gears?"] - the en value; onMissing fires once for ta
+copy.format(PEDALS, "en", { n: 3 }) // "3 pedals"
+```
+
+`copy.pick(table, locale)` walks `locales.chain(locale)`, and
+`onMissing` fires once per table and locale that falls back. A table's id is its
+`file:line`, or the one `copy.id()` names.
+
+In a **production client build**, each table's values move out of the bundle into one chunk
+per locale, so a page's JavaScript carries the copy of the locale it renders in and none of the
+others; a chunk holds the fallback's value wherever its locale has none. The server bundle keeps
+every table whole. A page loads the chunk of its URL's locale (the first path segment when it is a
+served locale, or what `defineCopy(locales, { localeOf })` returns) and of the
+locale its `<html lang>` names, both preloaded; a client navigation loads the next
+URL's chunk with the route's code.
+
+```ts
+// doc-check: skip - continues a hand-written server.ts (adapter, manifest).
+// nifra build wires this itself; a server entry you write passes the client build's copyChunks.
+const assets = JSON.parse(await Bun.file("dist/manifest.json").text())
+export const app = createWebApp({
+  adapter, manifest, clientEntry: assets.entry,
+  copyChunks: assets.copyChunks, // locale -> chunk URL; each page preloads its own
+})
+```
+
+- The build reads tables statically: string literals, lists and blocks of them, and constants
+the same module declares. A table built any other way, or written in a `.svelte` or
+`.vue` file, keeps every locale in the bundle and still works;
+`nifra i18n check` says which tables those are.
+
+- The build reads the source with the app's TypeScript (5.9 or 6). Without its compiler API
+(TypeScript 7 ships none) the build warns and keeps tables whole. It adds about 1 ms per
+module to a production build.
+
 ### Rich text
 
 `rich(t, key, tags, vars)` renders a message's tags with your components, never
@@ -5564,6 +5624,12 @@ export const catalogs = {
 // Keys a check skips: exact, a prefix ending in ".*", or "*".
 export const ignore = { script: ["languages.*"], untranslated: ["brand"] }
 ```
+
+When the module also exports a `copy` from `defineCopy()` (or only
+that), the check finds its tables across the project's source, turns them into a catalog per
+locale and runs the same checks on them, reporting each at its `file:line`. Two tables
+with one id are an error (a production build refuses them too); a table it cannot read is a
+warning that says why.
 
 It exits 1 on an error, and with `--strict` on a warning too; `--json`
 prints the result. Draft locales report missing keys as info. The checks themselves are
@@ -9127,7 +9193,7 @@ router and await auth-scope invalidation on identity, tenant or permission chang
 The programmatic `buildClient()` API emits a content-hashed directory plus a
 `manifest.json` you can hand to `createWebApp` (`entry`,
 `routes` for per-route preload, `css` + `routeStyles` for
-`<link>` injection).
+`<link>` injection, `copyChunks` when the app has copy tables).
 
 ```ts
 // buildClient() writes a browser bundle + manifest.json for custom build pipelines:
@@ -9136,7 +9202,8 @@ The programmatic `buildClient()` API emits a content-hashed directory plus a
   "assets": ["/assets/…"],                          // every emitted chunk URL
   "routes": { "users/[id]": ["/assets/_layout-H.js", "/assets/_slug_-H.js"] },
   "css": ["/assets/app-H.css"],                     // aggregate stylesheets (fallback)
-  "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }  // per-route CSS (chain only)
+  "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }, // per-route CSS (chain only)
+  "copyChunks": { "hi": "/assets/copy-hi-H.js" }  // copy tables by locale (@nifrajs/i18n/copy)
 }
 
 // Invariants worth knowing:
@@ -14740,6 +14807,31 @@ entry exports a `rich()` that returns framework nodes (Svelte: `<Rich>` with one
 
 `localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
 `document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
+
+## Copy tables
+
+`defineCopy(locales)` from `@nifrajs/i18n/copy` keeps a page's text and its translations beside the
+code that shows it, with no key to name. The default locale's value is required, an undeclared locale
+is a type error, and every other value has the default's shape. `copy.pick(table, locale)` falls back
+along `locales.chain()` and fires `onMissing` once per table and locale; `copy.format()` reads an ICU
+message.
+
+```ts
+import { defineCopy } from "@nifrajs/i18n/copy"
+
+export const copy = defineCopy(locales, { onMissing: reportMissingCopy })
+export const TITLE = copy({ en: "Bicycle", hi: "साइकिल", ta: "மிதிவண்டி" })
+export const FAQ = copy.id("shop.faq", { en: ["Brakes?", "Gears?"], hi: ["ब्रेक?", "गियर?"] })
+
+copy.pick(FAQ, "ta") // ["Brakes?", "Gears?"], from en
+```
+
+A production `@nifrajs/web` client build moves each table's values into one chunk per locale, so a
+page's JavaScript carries only the copy of the locale it renders in; the server keeps every table. It
+reads tables statically (literals, lists and blocks of them, same-module constants) with the app's
+TypeScript; a table written any other way keeps every locale in the bundle. `nifra i18n check` checks
+the tables of a `copy` export like catalogs, at each table's `file:line`; `tablesToCatalogs()` from
+`@nifrajs/i18n/check` is the pure transpose.
 
 ## Checking catalogs
 

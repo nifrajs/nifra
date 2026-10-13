@@ -15,6 +15,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 ## Key exports
 
 - **createWebApp** _(function)_ - `createWebApp: <Env = unknown>(options: CreateWebAppOptions<Env>) => ReturnType<typeof server<Env>>` · from `@nifrajs/web`
+- **addSourceTransform** _(function)_ - `addSourceTransform: (build: PluginBuilder, transform: SourceTransform) => void` · from `@nifrajs/web/plugins/kit`
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport` · from `@nifrajs/web/build`
 - **applyHead** _(function)_ - `applyHead: (head: Meta) => void` · from `@nifrajs/web/client`
 - **applyResponseHeaders** _(function)_ - `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void` · from `@nifrajs/web/vite`
@@ -27,9 +28,8 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void` · from `@nifrajs/web/nano`
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
-- **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined` · from `@nifrajs/web/zones`
 
-_…and 677 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 681 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

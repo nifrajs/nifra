@@ -39,16 +39,16 @@ export interface LocaleInfo<K extends string = string> {
 }
 
 /** What {@link defineLocales} takes. */
-export interface LocalesConfig<K extends string> {
+export interface LocalesConfig<K extends string, D extends K = K> {
   /** The default locale: served, and the last step of every fallback chain. */
-  readonly default: NoInfer<K>
+  readonly default: D
   /** Every locale, keyed by URL segment, in the order alternates and switchers list them. */
   readonly locales: { readonly [P in K]: LocaleSpec }
 }
 
-/** The registry {@link defineLocales} returns. */
-export interface Locales<K extends string = string> {
-  readonly default: K
+/** The registry {@link defineLocales} returns. `D` is the default locale's key. */
+export interface Locales<K extends string = string, D extends K = K> {
+  readonly default: D
   /** Every declared locale, in declaration order. */
   readonly all: readonly K[]
   /** The non-draft locales, in declaration order. */
@@ -177,7 +177,9 @@ function nativeName(tag: string): string {
  * })
  * ```
  */
-export function defineLocales<const K extends string>(config: LocalesConfig<K>): Locales<K> {
+export function defineLocales<const K extends string, const D extends K>(
+  config: LocalesConfig<K, D>,
+): Locales<K, D> {
   const all = Object.keys(config.locales) as K[]
   if (all.length === 0) throw new Error("defineLocales: locales must not be empty")
   const specs = config.locales as Readonly<Record<string, LocaleSpec | undefined>>

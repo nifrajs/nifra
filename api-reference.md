@@ -3426,9 +3426,9 @@ _No named exports (side-effect entrypoint)._
   Which source produced the locale, in priority order.
 - **LocaleSpec** _(interface)_ - `interface LocaleSpec`
   How one locale is declared. Every field has a default derived from the URL segment.
-- **Locales** _(interface)_ - `interface Locales<K extends string = string>`
-  The registry {@link defineLocales} returns.
-- **LocalesConfig** _(interface)_ - `interface LocalesConfig<K extends string>`
+- **Locales** _(interface)_ - `interface Locales<K extends string = string, D extends K = K>`
+  The registry {@link defineLocales} returns. `D` is the default locale's key.
+- **LocalesConfig** _(interface)_ - `interface LocalesConfig<K extends string, D extends K = K>`
   What {@link defineLocales} takes.
 - **MessageAt** _(type)_ - `type MessageAt<M, P extends string>`
   The type of the value at dotted key `P` in `M`, resolved the way the formatter looks it up: the whole key first, then segment by segment.
@@ -3454,7 +3454,7 @@ _No named exports (side-effect entrypoint)._
   Any locale's catalog for the {@link Register}ed type ({@link MessageTree} when none is declared).
 - **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>) => Formatter<M>`
   Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale, options)`, and parsed ASTs + `Intl.*` are memoized. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLocale…
-- **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>`
+- **defineLocales** _(function)_ - `defineLocales: <const K extends string, const D extends K>(config: LocalesConfig<K, D>) => Locales<K, D>`
   Declare the app's locales once.
 - **localeCookie** _(function)_ - `localeCookie: (name: string, locale: string, options?: LocaleCookieOptions) => string`
   The `document.cookie` string that remembers `locale` under the detector's cookie `name`: `Path=/; SameSite=Lax`, a one-year `Max-Age` by default, and `Secure` for a `__Secure-`/`__Host-` name. Not `HttpOnly`, like the detector's, so the switcher can write it. The value only ever selects one of the …
@@ -3472,9 +3472,37 @@ _No named exports (side-effect entrypoint)._
 - **CatalogCheckResult** _(interface)_ - `interface CatalogCheckResult`
 - **CatalogCheckSeverity** _(type)_ - `type CatalogCheckSeverity = "error" | "warning" | "info"`
 - **CatalogFinding** _(interface)_ - `interface CatalogFinding`
+- **CopyTableEntry** _(interface)_ - `interface CopyTableEntry`
+  A copy table, as {@link tablesToCatalogs} takes it: its id and its values by locale key.
 - **LocaleCoverage** _(interface)_ - `interface LocaleCoverage`
+- **TableCatalogs** _(interface)_ - `interface TableCatalogs`
+  Copy tables as one catalog per locale, for {@link checkCatalogs}.
 - **checkCatalogs** _(function)_ - `checkCatalogs: <K extends string>(options: CatalogCheckOptions<K>) => CatalogCheckResult`
   Check every locale's catalog in `locales` against the default locale's.
+- **tablesToCatalogs** _(function)_ - `tablesToCatalogs: (tables: Iterable<CopyTableEntry>, locales?: Locales) => TableCatalogs`
+  Transpose copy tables (`@nifrajs/i18n/copy`) into per-locale catalogs, so every check here runs on copy written next to the code as it does on a catalog per locale. Pure.
+
+### `@nifrajs/i18n/copy`
+
+- **COPY_CHUNKS_GLOBAL** _(const)_ - `COPY_CHUNKS_GLOBAL: "__NIFRA_COPY__"`
+  Locale key -> chunk URL, from the server's page handover in a production client build.
+- **Copy** _(interface)_ - `interface Copy<K extends string = string, D extends K = K>`
+  The copy function {@link defineCopy} returns.
+- **CopyEntries** _(type)_ - `type CopyEntries<K extends string, D extends K, V> = { readonly [P in D]: V } & { readonly [P in Exclude<K, D>]?: NoInfer<CopyShape<V>> }`
+  What a table takes: the default locale's value, and the other declared locales' values, each optional and shaped like the default's. An undeclared locale key is a type error.
+- **CopyMissing** _(interface)_ - `interface CopyMissing<K extends string = string>`
+  A locale a table had no value for, reported to {@link CopyOptions.onMissing}.
+- **CopyOptions** _(interface)_ - `interface CopyOptions<K extends string = string>`
+- **CopyShape** _(type)_ - `type CopyShape<V> = V extends string ? string : V extends readonly unknown[] ? { readonly [I in keyof V]: CopyShape<V[I]> } : { readonly [P in keyof V]: CopyShape<V[P]> }`
+  The shape every locale's value must have, given the default locale's value `V`: the same lists (of the same length) and blocks (with the same keys), with any message where `V` has one.
+- **CopyTable** _(interface)_ - `interface CopyTable<V = CopyValue>`
+  A table {@link Copy} made. Opaque: read it with {@link Copy.pick} or {@link Copy.format}.
+- **CopyValue** _(type)_ - `type CopyValue = string | readonly CopyValue[] | { readonly [key: string]: CopyValue }`
+  A copy value: a message, a list, or a nested block of either. Never a function: a message that takes values is an ICU message read with {@link Copy.format}.
+- **copyRef** _(function)_ - `copyRef: (id: string) => CopyTable`
+  The table id a production client build emits in place of a table's values. Build output only: apps write {@link Copy} calls.
+- **defineCopy** _(function)_ - `defineCopy: <K extends string, D extends K>(locales: Locales<K, D>, options?: CopyOptions<K>) => Copy<K, D>`
+  Bind copy tables to a locale registry.
 
 ### `@nifrajs/i18n/detector`
 
@@ -3483,6 +3511,27 @@ _No named exports (side-effect entrypoint)._
 - **LocaleDetectorOptions** _(interface)_ - `interface LocaleDetectorOptions`
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>`
   Detect the request's locale and expose it as `c.locale` / `c.localeSource`.
+
+### `@nifrajs/i18n/extract`
+
+- **CopyChunk** _(interface)_ - `interface CopyChunk`
+  One locale's chunk of a client build: values by chunk id, and for each table that had no value of its own, its readable id and the locale whose value it carries.
+- **CopyDefinition** _(interface)_ - `interface CopyDefinition`
+- **CopyDefinitionRef** _(interface)_ - `interface CopyDefinitionRef`
+  A `defineCopy` definition: the module and binding it is declared with.
+- **CopyScanner** _(interface)_ - `interface CopyScanner`
+- **CopySourceHost** _(interface)_ - `interface CopySourceHost`
+  Where the scanner reads source. Paths are absolute, `/`-separated.
+- **CopyTableSite** _(interface)_ - `interface CopyTableSite`
+  One table: a call of a copy function.
+- **SplitTable** _(interface)_ - `interface SplitTable`
+  A table a client build split, with the registry its definition reads.
+- **copyChunkId** _(function)_ - `copyChunkId: (id: string) => string`
+  A short, stable id for a table in a client build's chunks: 40 bits of FNV-1a over its readable id, in base 36. The build and the chunks it writes must agree, so both call this.
+- **copyChunks** _(function)_ - `copyChunks: (tables: Iterable<SplitTable>) => Map<string, CopyChunk>`
+  The chunk each locale of a client build loads: every table's value in that locale, or, where it has none, the value `locales.chain()` falls back to, so a page needs no other locale's chunk.
+- **createCopyScanner** _(function)_ - `createCopyScanner: (ts: typeof TS, host: CopySourceHost) => CopyScanner`
+  Scan a project's copy tables. Modules are parsed once each, on first use.
 
 ### `@nifrajs/i18n/rich`
 
@@ -5511,6 +5560,8 @@ _No named exports (side-effect entrypoint)._
   `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`).
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
+- **parseManifestCopyChunks** _(function)_ - `parseManifestCopyChunks: (source: string) => Record<string, string> | undefined`
+  The baked `copyChunks` map in a committed server-manifest, or `undefined` when it has none. Pure.
 - **parseManifestCssLoading** _(function)_ - `parseManifestCssLoading: (source: string) => CssLoadingMode | undefined`
   The baked framework stylesheet activation mode, or `undefined` for an older manifest. Pure.
 - **parseManifestRouteFiles** _(function)_ - `parseManifestRouteFiles: (source: string, _routesPrefix?: string) => string[]`
@@ -5948,8 +5999,12 @@ _No named exports (side-effect entrypoint)._
   The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it.
 - **RawSourceMap** _(interface)_ - `interface RawSourceMap`
   A source map as its v3 JSON object.
+- **SourceTransform** _(type)_ - `type SourceTransform = (path: string, source: string) => string | undefined`
+  A rewrite of a source file's text before any plugin compiles it; `undefined` leaves the text as is.
 - **StylesheetEmitter** _(interface)_ - `interface StylesheetEmitter`
   Records compiled CSS and wires it into the client bundle through a virtual `?<namespace>` module - the idiom the Vue plugin established (`?vue-css`). Register one per plugin `setup`; call `emit` per file to stash its CSS and get back the `import` line to append to the JS module.
+- **addSourceTransform** _(function)_ - `addSourceTransform: (build: PluginBuilder, transform: SourceTransform) => void`
+  Register a source rewrite for one build. Bun runs only the first `onLoad` that returns contents, so a plugin that claims a file and reads it off disk would compile it without the rewrite: such a plugin reads through {@link readSource} instead. Stored on the build's config, which every plugin of one…
 - **concatSourceMaps** _(function)_ - `concatSourceMaps: (parts: readonly { readonly code: string; readonly map?: RawSourceMap | undefined; }[]) => RawSourceMap`
   One map over parts joined with no separator, each part either mapped by its own map or unmapped (generated glue). Sources are merged by name.
 - **createStylesheetEmitter** _(function)_ - `createStylesheetEmitter: (build: PluginBuilder, namespace: string) => StylesheetEmitter`
@@ -5964,6 +6019,8 @@ _No named exports (side-effect entrypoint)._
   Convert a plugin/runtime path into a path the host filesystem can open.
 - **portablePath** _(function)_ - `portablePath: (path: string) => string`
   A stable slash-separated path for generated imports, virtual module IDs, and diagnostics.
+- **readSource** _(function)_ - `readSource: (build: PluginBuilder, path: string) => Promise<string>`
+  A source file's text as this build compiles it: off disk, through each {@link addSourceTransform}.
 - **reproduciblePath** _(function)_ - `reproduciblePath: (absolutePath: string) => string`
   A **package-root-relative**, forward-slashed form of an absolute path - the input to {@link hash8} for any build-stable identifier (e.g. CSS-module scoped names). Anchoring on the file's nearest `package.json` (not the absolute path, not `process.cwd()`) makes the result independent of BOTH the mac…
 - **requirePeer** _(function)_ - `requirePeer: <T>(specifier: string, hint: { readonly feature: string; readonly install: string; }) => Promise<T>`

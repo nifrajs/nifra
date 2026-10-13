@@ -122,6 +122,42 @@ export function hash8(input: string): string {
   return h.toString(16).padStart(8, "0")
 }
 
+const SOURCE_TRANSFORMS = Symbol.for("nifra.build.source-transforms")
+
+/** A rewrite of a source file's text before any plugin compiles it; `undefined` leaves the text as is. */
+export type SourceTransform = (path: string, source: string) => string | undefined
+
+const isTransformList = (value: unknown): value is SourceTransform[] => Array.isArray(value)
+
+/**
+ * Register a source rewrite for one build. Bun runs only the first `onLoad` that returns contents, so
+ * a plugin that claims a file and reads it off disk would compile it without the rewrite: such a plugin
+ * reads through {@link readSource} instead. Stored on the build's config, which every plugin of one
+ * `Bun.build` shares.
+ */
+export function addSourceTransform(build: PluginBuilder, transform: SourceTransform): void {
+  const config: unknown = build.config
+  if (typeof config !== "object" || config === null) return
+  const existing: unknown = Reflect.get(config, SOURCE_TRANSFORMS)
+  if (isTransformList(existing)) existing.push(transform)
+  else Reflect.set(config, SOURCE_TRANSFORMS, [transform])
+}
+
+/** A source file's text as this build compiles it: off disk, through each {@link addSourceTransform}. */
+export async function readSource(build: PluginBuilder, path: string): Promise<string> {
+  let source = await Bun.file(path).text()
+  // A runtime plugin (`Bun.plugin`) has no build config.
+  const config: unknown = build.config
+  const transforms: unknown =
+    typeof config === "object" && config !== null
+      ? Reflect.get(config, SOURCE_TRANSFORMS)
+      : undefined
+  if (isTransformList(transforms)) {
+    for (const transform of transforms) source = transform(path, source) ?? source
+  }
+  return source
+}
+
 /**
  * Env flag a nifra dev server sets for its own lifetime, so a framework compiler plugin can tell a dev
  * compile from a `nifra build` one. Exported for the dev server that sets it; plugins ask

@@ -197,6 +197,32 @@ t.t("home.title", { name: "Ada" }) // "Welcome back, Ada", from en
 const questions = t.get("faq")?.map((item) => item.q)
 console.log(questions)`
 
+const COPY = `// shared/copy.ts - copy tables: the text and its translations beside the code that shows it.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineCopy } from "@nifrajs/i18n/copy"
+
+export const locales = defineLocales({ default: "en", locales: { en: {}, hi: {}, ta: {} } })
+export const copy = defineCopy(locales, {
+  onMissing: ({ id, locale, fallback }) => console.warn(\`\${id ?? "a table"}: no \${locale}, showing \${fallback}\`),
+})
+
+// The default locale's value is required; every other locale is optional and shaped like it.
+export const TITLE = copy({ en: "Bicycle", hi: "साइकिल", ta: "மிதிவண்டி" })
+export const FAQ = copy.id("shop.faq", { en: ["Brakes?", "Gears?"], hi: ["ब्रेक?", "गियर?"] })
+export const PEDALS = copy({ en: "{n, plural, one {# pedal} other {# pedals}}", hi: "{n} पैडल" })
+
+copy.pick(TITLE, "ta") // "மிதிவண்டி"
+copy.pick(FAQ, "ta") // ["Brakes?", "Gears?"] - the en value; onMissing fires once for ta
+copy.format(PEDALS, "en", { n: 3 }) // "3 pedals"`
+
+const COPY_ENTRY = `// doc-check: skip - continues a hand-written server.ts (adapter, manifest).
+// nifra build wires this itself; a server entry you write passes the client build's copyChunks.
+const assets = JSON.parse(await Bun.file("dist/manifest.json").text())
+export const app = createWebApp({
+  adapter, manifest, clientEntry: assets.entry,
+  copyChunks: assets.copyChunks, // locale -> chunk URL; each page preloads its own
+})`
+
 const REGISTER = `// doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
 // shared/register.ts - once per app: every t() key, useT() included, and every other catalog is checked.
 import type { en } from "./messages/en"
@@ -313,6 +339,41 @@ export default function I18n() {
         <code>?lang=</code> are the same cookie.
       </p>
 
+      <h2>Copy tables</h2>
+      <p>
+        A catalog keys every message; a <b>copy table</b> keeps a page's text and its translations
+        beside the code that shows it, with no key to name. <code>defineCopy(locales)</code> from{" "}
+        <code>@nifrajs/i18n/copy</code> binds tables to the registry: the default locale's value is
+        required, a locale the registry does not declare is a type error, and every other value has the
+        default's shape - a list its length, a block its keys. Values are data (messages, lists, blocks);
+        a message that takes values is ICU, read with <code>copy.format()</code>.
+      </p>
+      <CodeBlock code={COPY} lang="ts" />
+      <p>
+        <code>copy.pick(table, locale)</code> walks <code>locales.chain(locale)</code>, and{" "}
+        <code>onMissing</code> fires once per table and locale that falls back. A table's id is its{" "}
+        <code>file:line</code>, or the one <code>copy.id()</code> names.
+      </p>
+      <p>
+        In a <b>production client build</b>, each table's values move out of the bundle into one chunk
+        per locale, so a page's JavaScript carries the copy of the locale it renders in and none of the
+        others; a chunk holds the fallback's value wherever its locale has none. The server bundle keeps
+        every table whole. A page loads the chunk of its URL's locale (the first path segment when it is a
+        served locale, or what <code>defineCopy(locales, {"{ localeOf }"})</code> returns) and of the
+        locale its <code>&lt;html lang&gt;</code> names, both preloaded; a client navigation loads the next
+        URL's chunk with the route's code.
+      </p>
+      <CodeBlock code={COPY_ENTRY} lang="ts" />
+      <ul>
+        <li>The build reads tables statically: string literals, lists and blocks of them, and constants
+          the same module declares. A table built any other way, or written in a <code>.svelte</code> or{" "}
+          <code>.vue</code> file, keeps every locale in the bundle and still works;{" "}
+          <code>nifra i18n check</code> says which tables those are.</li>
+        <li>The build reads the source with the app's TypeScript (5.9 or 6). Without its compiler API
+          (TypeScript 7 ships none) the build warns and keeps tables whole. It adds about 1 ms per
+          module to a production build.</li>
+      </ul>
+
       <h2>Rich text</h2>
       <p>
         <code>rich(t, key, tags, vars)</code> renders a message's tags with your components, never
@@ -360,6 +421,13 @@ export default function I18n() {
         <li><b>Untranslated</b> messages identical to the default in another language, as a warning.</li>
       </ul>
       <CodeBlock code={CHECK_ENTRY} lang="ts" />
+      <p>
+        When the module also exports a <code>copy</code> from <code>defineCopy()</code> (or only
+        that), the check finds its tables across the project's source, turns them into a catalog per
+        locale and runs the same checks on them, reporting each at its <code>file:line</code>. Two tables
+        with one id are an error (a production build refuses them too); a table it cannot read is a
+        warning that says why.
+      </p>
       <p>
         It exits 1 on an error, and with <code>--strict</code> on a warning too; <code>--json</code>{" "}
         prints the result. Draft locales report missing keys as info. The checks themselves are{" "}

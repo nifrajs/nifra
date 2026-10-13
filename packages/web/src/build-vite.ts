@@ -39,12 +39,14 @@ import {
 } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
+import { emittedScanFiles, formatSecretFindings, scanForSecrets } from "./internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { unsupportedBuiltin } from "./internal/target-compat.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
@@ -168,13 +170,21 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   mkdirSync(outDir, { recursive: true })
 
   const routeManifest = discoverRoutes(routesDir)
+  const copySplit =
+    (options.copySplit ?? options.minify !== false)
+      ? await loadCopySplit(root, { skip: [outDir] })
+      : undefined
   // The generated bootstrap, written beside the project so its imports resolve the app's deps (same
   // reasoning as buildClient). A unique dir avoids clobbering a user file / colliding with parallel builds.
   const entryDir = mkdtempSync(resolvePath(dirname(routesDir), ".nifra-vite-client-"))
   const entryFile = `${entryDir}/_nifra-entry.ts`
   writeFileSync(
     entryFile,
-    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, { clientModule, resolve })}`,
+    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, {
+      clientModule,
+      resolve,
+      copyChunks: copySplit !== undefined,
+    })}`,
   )
 
   // Every unique route/layout/_404 file - each an additional entry so Vite emits a named chunk per file
@@ -278,6 +288,20 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
         // The asset URL guard last, so it reads each module after any framework plugin made it JavaScript.
         plugins: [
           viteBareBuiltinExternal(),
+          ...(copySplit === undefined
+            ? []
+            : [
+                {
+                  name: "nifra-copy-split",
+                  // Before a framework plugin compiles the module: the tables are read from its source.
+                  enforce: "pre" as const,
+                  transform(code: string, id: string) {
+                    const out = copySplit.rewrite(id, code)
+                    // Lines do not move, so the module's map stays the source's.
+                    return out === undefined ? undefined : { code: out, map: null }
+                  },
+                },
+              ]),
           ...normalizeRolldownPlugins(
             options.vitePlugins ?? [],
             vite.rolldownVersion !== undefined,
@@ -425,6 +449,23 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     for (const asset of entry.assets ?? []) assets.add(url(asset))
   }
 
+  // The leak guard scanned the bundle; the copy it no longer holds is scanned here.
+  const copy = copySplit?.chunks(publicPath)
+  if (copy !== undefined && copy.files.length > 0) {
+    const secrets = formatSecretFindings(
+      scanForSecrets({
+        artifacts: copy.files.flatMap((file) => emittedScanFiles(file.name, file.text)),
+        env: guardOptions.secrets.env,
+        publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+        exemptions: exemptions ?? [],
+      }),
+    )
+    if (secrets !== undefined) throw new Error(secrets)
+    for (const file of copy.files) writeFileSync(join(outDir, file.name), file.text)
+  }
+  const copyChunks = copy?.urls ?? {}
+  for (const chunk of Object.values(copyChunks)) assets.add(chunk)
+
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
@@ -437,6 +478,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
     ...(css.length > 0 ? { css } : {}),
     ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
+    ...(Object.keys(copyChunks).length > 0 ? { copyChunks } : {}),
   }
   assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
   writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
@@ -451,6 +493,7 @@ export interface BuildServerViteOptions {
   readonly clientEntry: string
   readonly styles?: readonly string[] | undefined
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
+  readonly copyChunks?: Readonly<Record<string, string>> | undefined
   /** How framework-owned stylesheet links should activate before hydration (default `"blocking"`). */
   readonly cssLoading?: CssLoadingMode
   readonly resolve?: (file: string) => string
@@ -572,6 +615,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
       styles,
       routeStyles,
       ...(cssLoading !== undefined ? { cssLoading } : {}),
+      ...(options.copyChunks !== undefined ? { copyChunks: options.copyChunks } : {}),
     }),
   )
 
@@ -687,6 +731,7 @@ export const viteBundler: Bundler = {
       target: input.target,
       ...(input.styles !== undefined ? { styles: input.styles } : {}),
       ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
+      ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
       ...(input.plugins ? { vitePlugins: input.plugins } : {}),
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),

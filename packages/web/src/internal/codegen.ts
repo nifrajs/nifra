@@ -5,6 +5,8 @@ import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   COMPONENT_GLOBAL,
+  COPY_CHUNKS_GLOBAL,
+  COPY_REALM,
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
@@ -39,6 +41,9 @@ export interface GenerateClientEntryOptions {
   /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */
   readonly resolve: (file: string) => string
   readonly serverComponents?: boolean
+  /** The build moved copy tables into per-locale chunks: the handover carries the chunk URLs, and a
+   * navigation loads the copy of the URL it goes to beside the route's code. */
+  readonly copyChunks?: boolean
 }
 
 /**
@@ -222,7 +227,7 @@ export function generateClientEntry(
     // routeId → the ids and `handle` exports `useMatches` reports (layouts, then the page).
     `const layoutIdsOf = ${jsValueLiteral(layoutIdsOf)}`,
     "const matchChains = {}",
-    "const loadModule = async (id) => {",
+    `const ${options.copyChunks === true ? "loadRoute" : "loadModule"} = async (id) => {`,
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
     // For an error route the `_error` module is appended LAST: wrap the page (now second-to-last) in
@@ -260,6 +265,17 @@ export function generateClientEntry(
     "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, boundaries }",
     "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
+    ...(options.copyChunks === true
+      ? [
+          `const copyRealm = () => globalThis[Symbol.for(${jsStringLiteral(COPY_REALM)})]`,
+          // A second prepare covers a copy definition the route's own code brought in.
+          "const loadModule = async (id, path) => {",
+          "  if (path === undefined) return loadRoute(id)",
+          "  await Promise.all([loadRoute(id), copyRealm()?.prepare(path)])",
+          "  await copyRealm()?.prepare(path)",
+          "}",
+        ]
+      : []),
     // The server hands page state over as one inert JSON script; lift it onto the globals the
     // router, the deferred mapper and the adapters read, before any of them runs. Only the LAST
     // matching <script> counts, and only known keys: page HTML (sanitized user content) can carry an
@@ -268,7 +284,7 @@ export function generateClientEntry(
     "const handover = handovers[handovers.length - 1]",
     "if (handover !== undefined) {",
     '  const state = JSON.parse(handover.textContent || "{}")',
-    `  for (const key of ${jsValueLiteral(HANDOVER_GLOBALS)}) {`,
+    `  for (const key of ${jsValueLiteral(options.copyChunks === true ? [...HANDOVER_GLOBALS, COPY_CHUNKS_GLOBAL] : HANDOVER_GLOBALS)}) {`,
     "    if (Object.prototype.hasOwnProperty.call(state, key)) Reflect.set(window, key, state[key])",
     "  }",
     "}",
@@ -453,6 +469,9 @@ export interface GenerateServerManifestOptions {
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
   /** How framework-owned stylesheet links should activate before the generated client mounts. */
   readonly cssLoading?: CssLoadingMode
+  /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`) - baked as
+   * `export const copyChunks` when the client build split copy tables, for `createWebApp`. */
+  readonly copyChunks?: Readonly<Record<string, string>> | undefined
   /** Emit **lazy** per-route loaders (`() => import("./routes/x")`, a static specifier) instead of
    * eager `import * as`, so a bundler with code-splitting emits one chunk per route - loaded on the
    * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both
@@ -500,6 +519,7 @@ export function generateServerManifest(
     styles,
     routeStyles,
     cssLoading: requestedCssLoading,
+    copyChunks,
     lazy = false,
   } = options
   // A missing entry would bake `clientEntry = undefined` and the build would still succeed, leaving
@@ -541,6 +561,11 @@ export function generateServerManifest(
   const stylesLine = `export const styles = ${jsValueLiteral(styles ?? [])}`
   const routeStylesLine = `export const routeStyles = ${jsValueLiteral(routeStyles ?? {})}`
   const cssLoadingLine = `export const cssLoading = ${jsStringLiteral(cssLoading)}`
+  // Only a build that split copy tables has the line; its server entry is the one that imports it.
+  const copyChunksLines =
+    copyChunks === undefined || Object.keys(copyChunks).length === 0
+      ? []
+      : [`export const copyChunks = ${jsValueLiteral(copyChunks)}`]
   if (lazy) {
     // Lazy: `() => import("./routes/x")` per route (static specifier → one chunk per route under a
     // code-splitting bundler, loaded on first request). The map keys are the route-relative paths
@@ -558,6 +583,7 @@ export function generateServerManifest(
       stylesLine,
       routeStylesLine,
       cssLoadingLine,
+      ...copyChunksLines,
       `export const manifest = buildManifest(Object.keys(loaders), ${LAZY_IMPORTER})`,
     ].join("\n")}\n`
   }
@@ -577,6 +603,7 @@ export function generateServerManifest(
     stylesLine,
     routeStylesLine,
     cssLoadingLine,
+    ...copyChunksLines,
     `export const manifest = buildManifest(Object.keys(modules), ${EAGER_IMPORTER})`,
   ].join("\n")}\n`
 }

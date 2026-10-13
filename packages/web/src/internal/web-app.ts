@@ -181,6 +181,10 @@ export interface CreateWebAppOptions<Env = unknown> {
    * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the
    * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+  /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`, the server manifest's
+   * `copyChunks`). A production client build moves copy tables (`@nifrajs/i18n/copy`) into one chunk per
+   * locale; each page lists them for the browser and preloads its own. Omit ⇒ tables keep their values. */
+  readonly copyChunks?: Readonly<Record<string, string>>
   /**
    * Activation policy for framework-owned stylesheet links (default `"blocking"`). `"deferred"`
    * emits `media="print"` links; the generated client waits for them and switches them to `all` before
@@ -442,6 +446,7 @@ export function createWebApp<Env = unknown>(
     ...(options.routePreload === undefined ? {} : { routePreload: options.routePreload }),
     ...(options.styles === undefined ? {} : { styles: options.styles }),
     ...(options.routeStyles === undefined ? {} : { routeStyles: options.routeStyles }),
+    ...(options.copyChunks === undefined ? {} : { copyChunks: options.copyChunks }),
     ...(options.cssLoading === undefined ? {} : { cssLoading: options.cssLoading }),
     ...(options.prerenderedPaths === undefined
       ? {}

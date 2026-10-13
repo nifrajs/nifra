@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { i18nCheckPassed, renderI18nCheck, runI18nCheck } from "../src/i18n-check.ts"
@@ -129,4 +129,77 @@ test("the report escapes control and bidi characters from catalog keys", () => {
   expect(text).toContain("a\\u001b[2Jb\\u202e drops {name}")
   expect(text).not.toContain("\u001b")
   expect(text).not.toContain("‮")
+})
+
+describe("nifra i18n check with copy tables", () => {
+  let app = ""
+  beforeAll(async () => {
+    app = await mkdtemp(join(tmpdir(), "nifra-i18n-copy-"))
+    // The scanner recognizes defineCopy by its package specifier, so the app resolves the real one.
+    await mkdir(join(app, "node_modules", "@nifrajs"), { recursive: true })
+    await symlink(
+      join(import.meta.dir, "../../i18n"),
+      join(app, "node_modules", "@nifrajs", "i18n"),
+    )
+    await mkdir(join(app, "shared"))
+    await mkdir(join(app, "routes", "blog"), { recursive: true })
+    await writeFile(
+      join(app, "shared", "i18n.ts"),
+      [
+        'import { defineLocales } from "@nifrajs/i18n"',
+        'import { defineCopy } from "@nifrajs/i18n/copy"',
+        'export const locales = defineLocales({ default: "en", locales: { en: {}, hi: {}, ta: {} } })',
+        "export const copy = defineCopy(locales)",
+      ].join("\n"),
+    )
+    await writeFile(
+      join(app, "routes", "index.tsx"),
+      [
+        'import { copy } from "../shared/i18n"',
+        'export const GREETING = copy({ en: "Saddle for {name}", hi: "काठी", ta: "{name} சேணம்" })',
+        'export const TITLE = copy.id("shop.title", { en: "Workshop", hi: "कार्यशाला", ta: "பட்டறை" })',
+      ].join("\n"),
+    )
+    await writeFile(
+      join(app, "routes", "blog", "post.tsx"),
+      [
+        'import { copy } from "../../shared/i18n"',
+        'import { NAME } from "./name"',
+        "export const BY = copy({ en: NAME })",
+        'export const AGAIN = copy.id("shop.title", { en: "Again" })',
+        'export const FAQ = copy({ en: ["Brakes?", "Gears?"], hi: ["ब्रेक?", "गियर?"] })',
+      ].join("\n"),
+    )
+    await writeFile(join(app, "routes", "blog", "name.ts"), 'export const NAME = "nifra"\n')
+  })
+  afterAll(() => rm(app, { recursive: true, force: true }))
+
+  test("finds tables across files and reports at file:line", async () => {
+    const out = await runI18nCheck(app)
+    expect(out.copy).toEqual({
+      definitions: ["shared/i18n.ts"],
+      tables: 5,
+      files: 2,
+      locations: {
+        "routes/index.tsx:2": "routes/index.tsx:2",
+        "shop.title": "routes/blog/post.tsx:4",
+        "routes/blog/post.tsx:3": "routes/blog/post.tsx:3",
+        "routes/blog/post.tsx:5": "routes/blog/post.tsx:5",
+      },
+    })
+    expect(out.result.findings.map((f) => `${f.severity} ${f.locale} ${f.code} ${f.key}`)).toEqual([
+      "warning en copy-table routes/blog/post.tsx:3",
+      "error en copy-id shop.title",
+      "error hi placeholder routes/index.tsx:2",
+      "warning hi missing-key shop.title",
+      "warning ta missing-key shop.title",
+      "warning ta missing-key routes/blog/post.tsx:5.0",
+      "warning ta missing-key routes/blog/post.tsx:5.1",
+    ])
+    expect(out.result.ok).toBe(false)
+    const text = renderI18nCheck(out).join("\n")
+    expect(text).toContain("5 copy tables in 2 files (shared/i18n.ts)")
+    expect(text).toContain("copy-id: routes/index.tsx:3 reuses the id of routes/blog/post.tsx:4")
+    expect(text).toContain("is not read statically (`NAME` is imported")
+  })
 })

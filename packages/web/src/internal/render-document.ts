@@ -15,6 +15,8 @@ import type { DocumentParts, MatchChain, RenderAdapter, RenderProps } from "../r
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
+  COPY_CHUNKS_GLOBAL,
+  COPY_REALM,
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
@@ -111,6 +113,9 @@ export interface RenderPageOptions {
   /** SSG: the URL of a JSON array of the prerendered paths, handed over in place of
    * {@link prerenderedPaths} so a large set is fetched once instead of riding in every page. */
   readonly prerenderedListUrl?: string
+  /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`), handed over to the
+   * client; the chunks this page reads its copy from are preloaded. Omit ⇒ none. */
+  readonly copyChunks?: Readonly<Record<string, string>>
   /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`
    * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */
   readonly revalidate?: number
@@ -248,6 +253,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     cssLoading: requestedCssLoading,
     prerenderedPaths = [],
     prerenderedListUrl,
+    copyChunks,
     revalidate,
     revalidateTags = [],
     routeId,
@@ -276,6 +282,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       : prerenderedPaths.length === 0
         ? ""
         : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
+  const copyHandover =
+    copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serializeData(copyChunks)}`
   // Split deferred values: the component sees markers (id + promise) to `<Await>`; the serialized
   // data carries `{__nifra_deferred: id}` placeholders (promises don't serialize). `actionData` may
   // also `defer()` - split it too, continuing the id space so a single registry settles both. The
@@ -432,7 +440,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     if (hydrate) {
       // Inert JSON, never executed: the page state needs no nonce and no hash under any CSP.
       slot.tailPre = `<script type="application/json" id="${HANDOVER_ID}">{"${DATA_GLOBAL}":`
-      slot.tailPost = `${route}${prerendered}}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
+      slot.tailPost = `${route}${prerendered}${copyHandover}}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
     } else {
       slot.tailPre = ""
       slot.tailPost = `${islandTags}</body></html>`
@@ -441,13 +449,18 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // The deferred runtime rides only on a hydrating page (a static page has no client takeover), and
   // only when something actually deferred - matching the pre-cache emission exactly.
   const runtimeSeam = hydrate && allDeferred.length > 0 ? deferredRuntime : ""
-  const shellHtml = `${slot.shellPre}${runtimeSeam}${slot.shellPost}${slot.rootOpen}`
+  // Per request, so outside the cached shell: one route serves every locale.
+  const copyPreloads =
+    hydrate && copyChunks !== undefined
+      ? copyPreloadLinks(copyChunks, options.path ?? "", head?.lang ?? "en")
+      : ""
+  const shellHtml = `${slot.shellPre}${copyPreloads}${runtimeSeam}${slot.shellPost}${slot.rootOpen}`
   const parts: DocumentParts | undefined =
     adapter.documentParts === true ? { head: "", body: "" } : undefined
   const shellOf = (): string =>
     parts === undefined || (parts.head === "" && parts.body === "")
       ? shellHtml
-      : `${slot.shellPre}${runtimeSeam}${parts.head}${slot.shellPost}${parts.body}${slot.rootOpen}`
+      : `${slot.shellPre}${copyPreloads}${runtimeSeam}${parts.head}${slot.shellPost}${parts.body}${slot.rootOpen}`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -1170,4 +1183,26 @@ export function unsafeInlineScript(
     nonce: options.nonce,
     content,
   }
+}
+
+/** The copy chunks a page loads first, as `@nifrajs/i18n/copy` picks them in the browser, so they
+ * download beside the route's code instead of after it. */
+function copyPreloadLinks(
+  chunks: Readonly<Record<string, string>>,
+  path: string,
+  lang: string,
+): string {
+  const realm: unknown = Reflect.get(globalThis, Symbol.for(COPY_REALM))
+  if (typeof realm !== "object" || realm === null) return ""
+  const pageLocales: unknown = Reflect.get(realm, "pageLocales")
+  if (typeof pageLocales !== "function") return ""
+  const locales: unknown = Reflect.apply(pageLocales, realm, [path, lang])
+  if (!Array.isArray(locales)) return ""
+  let links = ""
+  for (const locale of locales) {
+    const url =
+      typeof locale === "string" && Object.hasOwn(chunks, locale) ? chunks[locale] : undefined
+    if (url !== undefined) links += `<link rel="modulepreload" href="${escapeAttr(url)}">`
+  }
+  return links
 }

@@ -342,6 +342,12 @@
     "code": "// Or as a test, with no CLI: the same checks, pure.\nimport { expect, test } from \"bun:test\"\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { checkCatalogs } from \"@nifrajs/i18n/check\"\n\nconst locales = defineLocales({ default: \"en\", locales: { en: {}, gu: {} } })\n\ntest(\"catalogs are consistent\", () => {\n  const { findings } = checkCatalogs({\n    locales,\n    catalogs: { en: { hi: \"Hi {name}\" }, gu: { hi: \"નમસ્તે {name}\" } },\n  })\n  expect(findings.filter((finding) => finding.severity === \"error\")).toEqual([])\n})"
   },
   {
+    "name": "COPY",
+    "topic": "Nifra - i18n",
+    "slug": "i18n",
+    "code": "// shared/copy.ts - copy tables: the text and its translations beside the code that shows it.\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineCopy } from \"@nifrajs/i18n/copy\"\n\nexport const locales = defineLocales({ default: \"en\", locales: { en: {}, hi: {}, ta: {} } })\nexport const copy = defineCopy(locales, {\n  onMissing: ({ id, locale, fallback }) => console.warn(`${id ?? \"a table\"}: no ${locale}, showing ${fallback}`),\n})\n\n// The default locale's value is required; every other locale is optional and shaped like it.\nexport const TITLE = copy({ en: \"Bicycle\", hi: \"साइकिल\", ta: \"மிதிவண்டி\" })\nexport const FAQ = copy.id(\"shop.faq\", { en: [\"Brakes?\", \"Gears?\"], hi: [\"ब्रेक?\", \"गियर?\"] })\nexport const PEDALS = copy({ en: \"{n, plural, one {# pedal} other {# pedals}}\", hi: \"{n} पैडल\" })\n\ncopy.pick(TITLE, \"ta\") // \"மிதிவண்டி\"\ncopy.pick(FAQ, \"ta\") // [\"Brakes?\", \"Gears?\"] - the en value; onMissing fires once for ta\ncopy.format(PEDALS, \"en\", { n: 3 }) // \"3 pedals\""
+  },
+  {
     "name": "DETECTOR",
     "topic": "Nifra - i18n",
     "slug": "i18n",

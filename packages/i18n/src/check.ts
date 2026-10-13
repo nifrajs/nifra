@@ -18,7 +18,13 @@
  * Pure: it reads the catalogs it is given and runs no app code. Draft locales report missing keys and
  * catalogs as info, since they are not served yet.
  */
-import { lookup, type MessageTree, type Part, parseRootMessage } from "./format.ts"
+import {
+  lookup,
+  type MessageTree,
+  type MessageValue,
+  type Part,
+  parseRootMessage,
+} from "./format.ts"
 import type { Locales } from "./locales.ts"
 import { TAG_SOURCE } from "./tags.ts"
 
@@ -36,6 +42,10 @@ export type CatalogCheckCode =
   | "plural-categories"
   | "script"
   | "untranslated"
+  /** A copy table `nifra i18n check` cannot read statically, so it checks nothing in it. */
+  | "copy-table"
+  /** Two copy tables, or a table and a catalog key, under one id. */
+  | "copy-id"
 
 export type CatalogCheckSeverity = "error" | "warning" | "info"
 
@@ -642,4 +652,75 @@ export function checkCatalogs<K extends string>(
     findings,
     coverage,
   }
+}
+
+const isBlock = (value: MessageValue | undefined): value is MessageTree =>
+  value !== undefined && typeof value === "object" && !Array.isArray(value)
+
+/** A copy table, as {@link tablesToCatalogs} takes it: its id and its values by locale key. */
+export interface CopyTableEntry {
+  readonly id: string
+  readonly values: Readonly<Record<string, MessageValue>>
+}
+
+/** Copy tables as one catalog per locale, for {@link checkCatalogs}. */
+export interface TableCatalogs {
+  /** Each locale's catalog: every table under its id, whose dots nest, so a finding's key reads as the
+   * table's id (`routes/index.tsx:12`, or `shop.faq.0` for a list item). Every locale `locales`
+   * declares has one, empty when no table has a value for it. */
+  readonly catalogs: Readonly<Record<string, MessageTree>>
+  /** Ids that collide with another table's (`home` beside `home.title`); those tables are left out. */
+  readonly conflicts: readonly string[]
+}
+
+/**
+ * Transpose copy tables (`@nifrajs/i18n/copy`) into per-locale catalogs, so every check here runs on
+ * copy written next to the code as it does on a catalog per locale. Pure.
+ *
+ * ```ts
+ * const { catalogs } = tablesToCatalogs(tables, locales)
+ * checkCatalogs({ locales, catalogs })
+ * ```
+ */
+export function tablesToCatalogs(
+  tables: Iterable<CopyTableEntry>,
+  locales?: Locales,
+): TableCatalogs {
+  const catalogs: Record<string, MessageTree> = {}
+  for (const locale of locales?.all ?? []) catalogs[locale] = {}
+  const placed = new Set<string>()
+  // Every proper prefix of a placed id, so a table above another is found without a scan.
+  const above = new Set<string>()
+  const conflicts: string[] = []
+  for (const { id, values } of tables) {
+    const path = id.split(".")
+    const leaf = path[path.length - 1] ?? id
+    const prefixes = path.slice(0, -1).map((_, end) => path.slice(0, end + 1).join("."))
+    // A table may sit only where no other table does, at, above or below it.
+    if (placed.has(id) || above.has(id) || prefixes.some((prefix) => placed.has(prefix))) {
+      conflicts.push(id)
+      continue
+    }
+    placed.add(id)
+    for (const prefix of prefixes) above.add(prefix)
+    for (const [locale, value] of Object.entries(values)) {
+      let node = catalogs[locale]
+      if (node === undefined) {
+        node = {}
+        catalogs[locale] = node
+      }
+      for (const segment of path.slice(0, -1)) {
+        const next: MessageValue | undefined = node[segment]
+        if (isBlock(next)) {
+          node = next
+        } else {
+          const block: MessageTree = {}
+          node[segment] = block
+          node = block
+        }
+      }
+      node[leaf] = value
+    }
+  }
+  return { catalogs, conflicts }
 }

@@ -198,6 +198,8 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly prerenderedPaths?: readonly string[]
   /** Where pages fetch {@link prerenderedPaths} from when the list is too large to inline. */
   readonly prerenderedListUrl?: string
+  /** Locale key -> copy chunk URL, from a build that split copy tables by locale. */
+  readonly copyChunks?: Readonly<Record<string, string>>
   readonly staticFallbacks?: Readonly<Record<string, "ssr" | "404">>
   readonly staticBoundaryCache?: StaticBoundaryCache
   /** Per-request CSP nonce for framework-owned executable document scripts. */
@@ -301,6 +303,7 @@ export function createPageRequestExecutor<Env = unknown>(
     options.prerenderedListUrl === undefined
       ? { prerenderedPaths: options.prerenderedPaths ?? [] }
       : { prerenderedListUrl: options.prerenderedListUrl }
+  const copyOption = options.copyChunks === undefined ? {} : { copyChunks: options.copyChunks }
   const matchManifestRoute = createMatcher(
     manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
   )
@@ -939,6 +942,7 @@ export function createPageRequestExecutor<Env = unknown>(
       // The build keys stylesheets by route, so a page inside the root layout links the whole-app one.
       ...(chain === undefined ? stylesOf(routeId) : stylesFrom(options.styles)),
       ...prerenderedHandover,
+      ...copyOption,
       ...titleOption,
     }
     if (chain === undefined) return renderPageResult(statusPage)
@@ -1087,6 +1091,7 @@ export function createPageRequestExecutor<Env = unknown>(
         ...preloadOf(route.id),
         ...stylesOf(route.id),
         ...prerenderedHandover,
+        ...copyOption,
         ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
         // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
         ...(mod.revalidate !== undefined && !personalized && options.cacheChannel?.enabled === true
@@ -1758,6 +1763,7 @@ export function createPageRequestExecutor<Env = unknown>(
           ...preloadOf(route.id),
           ...stylesOf(route.id),
           ...prerenderedHandover,
+          ...copyOption,
           ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
           ...(nonce === undefined ? {} : { nonce }),
           ...cspOption,

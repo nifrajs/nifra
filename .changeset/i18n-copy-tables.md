@@ -1,0 +1,5 @@
+---
+"@nifrajs/i18n": minor
+---
+
+Copy tables: `defineCopy(locales)` from `@nifrajs/i18n/copy` keeps a page's text and its translations beside the code that shows it, as `copy({ en: "Bicycle", hi: "साइकिल" })` or `copy.id("shop.title", {...})`. The default locale's value is required, a locale the registry does not declare is a type error, and every other value has the default's shape (a list its length, a block its keys); values are data, never functions. `copy.pick(table, locale)` falls back along `locales.chain()` and fires `onMissing` once per table and locale; `copy.format(table, locale, vars)` runs the ICU engine `t()` uses. `@nifrajs/i18n/extract` reads tables out of source with the project's TypeScript (follows imports, re-exports and tsconfig `paths`; reads literals and same-module constants, and says why it cannot read anything else), and `tablesToCatalogs()` from `@nifrajs/i18n/check` turns tables into per-locale catalogs for `checkCatalogs`. `Locales` now carries the default locale's key as a second type parameter.

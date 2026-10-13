@@ -524,6 +524,35 @@ export function createFormatter<M extends object = RegisteredMessages>(
   return formatter as unknown as Formatter<M>
 }
 
+// Formatters for one-off messages, which have no catalog of their own: one per locale, shared.
+const NO_CATALOG: MessageTree = Object.freeze({})
+const ONE_OFF_PARSED = new Map<string, readonly Part[]>()
+const MAX_ONE_OFF = 4096
+
+/**
+ * Format one ICU message for `locale` with the engine `t()` runs, without a catalog. Internal: copy
+ * tables (`./copy.ts`) hold their messages inline. Parsed messages are kept, bounded; a malformed one
+ * renders as its raw text, like a catalog entry.
+ */
+export function formatMessage(
+  locale: string,
+  message: string,
+  vars: Readonly<Record<string, unknown>>,
+): string {
+  const internals = FORMATTER_INTERNALS.get(createFormatter<MessageTree>(locale, NO_CATALOG))
+  if (internals === undefined) return message
+  let ast = ONE_OFF_PARSED.get(message)
+  if (ast === undefined) {
+    try {
+      ast = parseRootMessage(message)
+    } catch {
+      ast = [message]
+    }
+    remember(ONE_OFF_PARSED, message, ast, MAX_ONE_OFF)
+  }
+  return evaluate(ast, vars, internals.runtime, undefined)
+}
+
 function buildFormatter(
   locale: string,
   messages: object,

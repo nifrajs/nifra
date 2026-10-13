@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { type CatalogCheckCode, type CatalogFinding, checkCatalogs } from "../src/check.ts"
+import {
+  type CatalogCheckCode,
+  type CatalogFinding,
+  checkCatalogs,
+  tablesToCatalogs,
+} from "../src/check.ts"
 import { defineLocales, type MessageTree } from "../src/index.ts"
 
 const locales = defineLocales({
@@ -246,6 +251,29 @@ describe("checkCatalogs", () => {
     const result = check({ en: { ...en, "a.b": "flat", a: { b: "nested" } } })
     expect(only(result.findings, "shape")).toMatchObject([
       { locale: "en", key: "a.b", severity: "warning" },
+    ])
+  })
+})
+
+describe("tablesToCatalogs", () => {
+  const registry = defineLocales({ default: "en", locales: { en: {}, hi: {}, ta: {} } })
+  test("nests each table under its id, so findings read as the id", () => {
+    const { catalogs, conflicts } = tablesToCatalogs(
+      [
+        { id: "routes/index.tsx:3", values: { en: "Saddle for {name}", hi: "काठी" } },
+        { id: "shop.faq", values: { en: ["Brakes?"], hi: ["ब्रेक?"] } },
+        { id: "shop", values: { en: "clashes with shop.faq" } },
+        { id: "shop.faq.more", values: { en: "clashes too" } },
+      ],
+      registry,
+    )
+    expect(conflicts).toEqual(["shop", "shop.faq.more"])
+    expect(catalogs.ta).toEqual({})
+    const result = checkCatalogs({ locales: registry, catalogs })
+    expect(result.findings.map((f) => `${f.locale} ${f.code} ${f.key}`)).toEqual([
+      "hi placeholder routes/index.tsx:3",
+      "ta missing-key routes/index.tsx:3",
+      "ta missing-key shop.faq.0",
     ])
   })
 })

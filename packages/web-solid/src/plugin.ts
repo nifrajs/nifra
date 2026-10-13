@@ -6,7 +6,12 @@
 import { transformAsync } from "@babel/core"
 // @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
-import { devServerCompile, normalizeFilePath, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import {
+  devServerCompile,
+  normalizeFilePath,
+  readSource,
+  rewriteSsrImports,
+} from "@nifrajs/web/plugins/kit"
 // @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
 import type { BunPlugin } from "bun"
@@ -31,7 +36,7 @@ export function solidBunPlugin(generate: "dom" | "ssr"): BunPlugin {
       // cache); strip it before reading the file off disk.
       build.onLoad({ filter: /\.tsx(\?|$)/ }, async (args) => {
         const path = normalizeFilePath(args.path)
-        const source = await Bun.file(path).text()
+        const source = await readSource(build, path)
         const result = await transformAsync(source, {
           filename: path,
           // babel applies presets last→first: strip TS first, then Solid transforms JSX.

@@ -303,8 +303,9 @@ Usage:
                 [--json] [--strict]      placeholder + tag parity, plural cases, script purity,
                                          untranslated messages. IMPORTS the entry (default: the first
                                          i18n.ts in ., lib/, src/, src/lib/, app/), which exports
-                                         \`locales\` + \`catalogs\` (+ optional \`ignore\`). Exits 1 on
-                                         errors; --strict also on warnings.
+                                         \`locales\` + \`catalogs\` (+ optional \`ignore\`), or a
+                                         \`copy\` from defineCopy(), whose tables it finds in the
+                                         source. Exits 1 on errors; --strict also on warnings.
 
 Reads nifra.config.ts (adapter + clientModule + plugins; or backend/framework.ts), backend/app.ts
 (optional), and routes/ from the current directory. Run from your project root.
@@ -936,6 +937,7 @@ async function buildPrerenderApp(
       ...(client.routes ? { routePreload: client.routes } : {}),
       ...(client.css ? { styles: client.css } : {}),
       ...(client.routeStyles ? { routeStyles: client.routeStyles } : {}),
+      ...(client.copyChunks ? { copyChunks: client.copyChunks } : {}),
       ...(client.cssLoading !== undefined ? { cssLoading: client.cssLoading } : {}),
     })
 }
@@ -945,6 +947,7 @@ interface BuiltManifest {
   readonly routes?: Readonly<Record<string, readonly string[]>>
   readonly css?: readonly string[]
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+  readonly copyChunks?: Readonly<Record<string, string>>
   readonly cssLoading?: CssLoadingMode
 }
 

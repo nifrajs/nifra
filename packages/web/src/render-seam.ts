@@ -151,5 +151,10 @@ export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 /** Dynamic-boundary states for hydration; absent when a route declares no boundaries. */
 export const BOUNDARY_GLOBAL = "__NIFRA_BOUNDARIES__"
 export const COMPONENT_GLOBAL = "__NIFRA_COMPONENTS__"
+/** Locale key -> copy chunk URL, in a production build that split copy tables by locale. The name
+ * `@nifrajs/i18n/copy` reads. */
+export const COPY_CHUNKS_GLOBAL = "__NIFRA_COPY__"
+/** The registry `@nifrajs/i18n/copy` keeps its loaded chunks and definitions in. */
+export const COPY_REALM = "nifra.copy"
 /** Marker attribute used to find a non-default hydration container. */
 export const ROOT_ATTRIBUTE = "data-nifra-root"

@@ -216,6 +216,7 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
       manifest: discoverRoutes(loaded.routesDir),
       clientEntry: client.entry,
       ...frameworkWebAppOptions(loaded.framework, loaded.backend),
+      ...(client.copyChunks === undefined ? {} : { copyChunks: client.copyChunks }),
     }) as unknown as AppLike
     return {
       app: webApp,

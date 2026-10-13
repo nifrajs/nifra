@@ -305,6 +305,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     '`get(key)` returns the first catalog\'s value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.',
     "Gate catalogs with `nifra i18n check` (or `checkCatalogs()` from `@nifrajs/i18n/check` in a test): it catches dropped `{placeholders}`, missing plural categories and lookalike letters from another script that review misses.",
     "Rich text is `rich()` (`@nifrajs/i18n/rich`, or the adapter's `/i18n` `rich()` / Svelte `<Rich>`), **never** `t()` + innerHTML/`{@html}`/`v-html`: tags are bare names mapped to handlers, `t()` returns the markers verbatim.",
+    "Copy tables (`defineCopy` from `@nifrajs/i18n/copy`) split into one chunk per locale only when written statically - literals, lists and blocks of them, same-module constants; anything else ships every locale (`nifra i18n check` names it). A hand-written server entry passes the build manifest's `copyChunks` to `createWebApp`.",
   ],
   "@nifrajs/middleware": [
     "Middleware is **fail-closed** by default - a throwing/denying middleware blocks the request rather than letting it through. Order matters: auth/CSRF before handlers.",
