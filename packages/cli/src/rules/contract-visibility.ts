@@ -6,6 +6,7 @@
  * The served routes come from the backend the contract-lock check already loaded; this rule runs no
  * project code of its own. Without a lock the backend is not loaded and the comparison is skipped.
  * A contract imported from a workspace package is read through that package's `exports`.
+ * Re-exports on the way to a contract, and `...operations` spreads inside one, are followed.
  */
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { join, relative } from "node:path"
@@ -128,14 +129,31 @@ function calls(
   )
 }
 
-/** The operations an object literal of a contract declares, and what could not be read. */
+interface OperationsRead {
+  readonly operations: readonly Operation[]
+  readonly unreadable: readonly string[]
+}
+
+/** The operations an object literal of a contract declares, and what could not be read. `spreadOf`
+ * reads a `...name` spread of another operations object. */
 function operationsOf(
   ts: typeof TSApi,
   literal: TSApi.ObjectLiteralExpression,
-): { operations: Operation[]; unreadable: string[] } {
-  const operations: Operation[] = []
+  spreadOf: (name: string) => OperationsRead | undefined,
+): OperationsRead {
+  // A later key replaces an earlier one, as in the object the page builds at runtime.
+  const operations = new Map<string, Operation>()
   const unreadable: string[] = []
   for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      const spread = unwrap(ts, property.expression)
+      const read = ts.isIdentifier(spread) ? spreadOf(spread.text) : undefined
+      if (read !== undefined) {
+        for (const op of read.operations) operations.set(op.name, op)
+        unreadable.push(...read.unreadable)
+        continue
+      }
+    }
     if (!ts.isPropertyAssignment(property)) {
       unreadable.push("an operation spread or written as a method")
       continue
@@ -158,14 +176,21 @@ function operationsOf(
     const path = field("path")
     if (method === undefined || path === undefined)
       unreadable.push(`operation "${name}" has a method or path that is not a string literal`)
-    else operations.push({ name, method: method.toUpperCase(), path })
+    else operations.set(name, { name, method: method.toUpperCase(), path })
   }
-  return { operations, unreadable }
+  return { operations: [...operations.values()], unreadable }
 }
 
 interface Parsed {
   readonly tree: TSApi.SourceFile
   readonly bound: Bindings
+}
+
+/** An operations object literal and the file it is written in, which its spreads resolve against. */
+interface Located {
+  readonly literal: TSApi.ObjectLiteralExpression
+  readonly file: string
+  readonly parsed: Parsed
 }
 
 export const contractVisibilityRule: CheckRule = {
@@ -231,20 +256,21 @@ export const contractVisibilityRule: CheckRule = {
       return parsed
     }
     /** The object literal `defineContract({...})` gives the const `name` in `file`, followed one hop
-     * into a project module it is imported from. */
+     * into a project module it is imported from, and through any re-exports on the way. */
     const contractLiteral = (
       file: string,
       parsed: Parsed,
       name: string,
       hops = 0,
-    ): TSApi.ObjectLiteralExpression | undefined => {
+      seen = new Set<string>(),
+    ): Located | undefined => {
       for (const statement of parsed.tree.statements) {
         if (!ts.isVariableStatement(statement)) continue
         for (const declaration of statement.declarationList.declarations) {
           if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue
           if (declaration.initializer === undefined) return undefined
           const init = unwrap(ts, declaration.initializer)
-          if (ts.isObjectLiteralExpression(init)) return init
+          if (ts.isObjectLiteralExpression(init)) return { literal: init, file, parsed }
           if (
             !ts.isCallExpression(init) ||
             !calls(ts, init.expression, parsed.bound, "defineContract")
@@ -253,18 +279,65 @@ export const contractVisibilityRule: CheckRule = {
           const arg = init.arguments[0]
           const literal = arg === undefined ? undefined : unwrap(ts, arg)
           return literal !== undefined && ts.isObjectLiteralExpression(literal)
-            ? literal
+            ? { literal, file, parsed }
             : undefined
         }
       }
       const from = parsed.bound.imported.get(name)
-      if (from === undefined || hops > 0) return undefined
-      const target = resolve(join(ctx.root, file), from.specifier)
+      if (from !== undefined)
+        return hops > 0 ? undefined : follow(file, from.specifier, from.name, hops + 1, seen)
+      // A re-export declares nothing, so passing through one does not spend the hop.
+      for (const statement of parsed.tree.statements) {
+        if (
+          !ts.isExportDeclaration(statement) ||
+          statement.isTypeOnly ||
+          statement.moduleSpecifier === undefined ||
+          !ts.isStringLiteral(statement.moduleSpecifier)
+        )
+          continue
+        const clause = statement.exportClause
+        if (clause === undefined) {
+          const found = follow(file, statement.moduleSpecifier.text, name, hops, seen)
+          if (found !== undefined) return found
+          continue
+        }
+        if (!ts.isNamedExports(clause)) continue
+        const element = clause.elements.find((e) => !e.isTypeOnly && e.name.text === name)
+        if (element !== undefined)
+          return follow(
+            file,
+            statement.moduleSpecifier.text,
+            (element.propertyName ?? element.name).text,
+            hops,
+            seen,
+          )
+      }
+      return undefined
+    }
+    const follow = (
+      file: string,
+      specifier: string,
+      name: string,
+      hops: number,
+      seen: Set<string>,
+    ): Located | undefined => {
+      const target = resolve(join(ctx.root, file), specifier)
       if (target === undefined) return undefined
       const rel = relative(realRoot, target).replaceAll("\\", "/")
+      const key = `${rel}\0${name}`
+      if (seen.has(key)) return undefined
+      seen.add(key)
       const next = parse(rel, readText(target))
-      return next === undefined ? undefined : contractLiteral(rel, next, from.name, hops + 1)
+      return next === undefined ? undefined : contractLiteral(rel, next, name, hops, seen)
     }
+
+    // Each spread is looked up afresh from the file it is written in; the depth only stops a cycle.
+    const readOperations = (found: Located, depth = 0): OperationsRead =>
+      operationsOf(ts, found.literal, (name) => {
+        if (depth >= 8) return undefined
+        const inner = contractLiteral(found.file, found.parsed, name)
+        return inner === undefined ? undefined : readOperations(inner, depth + 1)
+      })
 
     const implementations: Implementation[] = []
     for (const file of candidates) {
@@ -278,12 +351,12 @@ export const contractVisibilityRule: CheckRule = {
         if (ts.isCallExpression(node) && calls(ts, node.expression, parsed.bound, "implement")) {
           const line = parsed.tree.getLineAndCharacterOfPosition(node.getStart()).line + 1
           const arg = node.arguments[0] === undefined ? undefined : unwrap(ts, node.arguments[0])
-          let literal: TSApi.ObjectLiteralExpression | undefined
+          let located: Located | undefined
           let contract = arg?.getText() ?? "(none)"
           if (arg !== undefined && ts.isIdentifier(arg))
-            literal = contractLiteral(file, parsed, arg.text)
+            located = contractLiteral(file, parsed, arg.text)
           else if (arg !== undefined && ts.isObjectLiteralExpression(arg)) {
-            literal = arg
+            located = { literal: arg, file, parsed }
             contract = "an inline contract"
           } else if (
             arg !== undefined &&
@@ -291,10 +364,11 @@ export const contractVisibilityRule: CheckRule = {
             calls(ts, arg.expression, parsed.bound, "defineContract")
           ) {
             const inner = arg.arguments[0] === undefined ? undefined : unwrap(ts, arg.arguments[0])
-            if (inner !== undefined && ts.isObjectLiteralExpression(inner)) literal = inner
+            if (inner !== undefined && ts.isObjectLiteralExpression(inner))
+              located = { literal: inner, file, parsed }
             contract = "an inline contract"
           }
-          if (literal === undefined) {
+          if (located === undefined) {
             const from =
               arg !== undefined && ts.isIdentifier(arg)
                 ? parsed.bound.imported.get(arg.text)?.specifier
@@ -314,7 +388,7 @@ export const contractVisibilityRule: CheckRule = {
                   : `the contract ${contract} is imported from "${from}", which the scan cannot read: ${reason}`,
               ],
             })
-          } else implementations.push({ file, line, contract, ...operationsOf(ts, literal) })
+          } else implementations.push({ file, line, contract, ...readOperations(located) })
         }
         ts.forEachChild(node, visit)
       }
