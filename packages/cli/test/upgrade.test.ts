@@ -303,7 +303,7 @@ describe("peer ranges", () => {
     expect(Reflect.get(report, "steps")).toEqual(["5.2.0"])
     expect(Reflect.get(report, "pins")).toEqual([
       {
-        file: join("packages", "lib", "package.json"),
+        file: "packages/lib/package.json",
         field: "devDependencies",
         name: "@nifrajs/core",
         from: "5.1.0",
