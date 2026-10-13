@@ -1136,6 +1136,129 @@ function importsOf(ts: typeof TS, file: string, text: string): ImportRef[] {
   return refs
 }
 
+/** One `import.meta.glob(...)` call and the spans of its pattern literals, quotes excluded. */
+interface GlobCall {
+  readonly patterns: ReadonlyArray<{
+    readonly text: string
+    readonly start: number
+    readonly end: number
+  }>
+  /** `false` when a pattern is computed, so what the call loads cannot be read. */
+  readonly literal: boolean
+  readonly line: number
+}
+
+/** The `import.meta.glob` calls of a JS/TS module. */
+function globCalls(ts: typeof TS, file: string, text: string): GlobCall[] {
+  if (!/\.[cm]?[jt]sx?$/.test(file) || !text.includes("import.meta.glob")) return []
+  const sf = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  const calls: GlobCall[] = []
+  const visit = (node: TS.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "glob" &&
+      ts.isMetaProperty(node.expression.expression) &&
+      node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+    ) {
+      const arg = node.arguments[0]
+      const elements =
+        arg === undefined ? [] : ts.isArrayLiteralExpression(arg) ? [...arg.elements] : [arg]
+      const literals = elements.filter(ts.isStringLiteralLike)
+      const literal = literals.length > 0 && literals.length === elements.length
+      calls.push({
+        patterns: literal
+          ? literals.map((element) => ({
+              text: element.text,
+              start: element.getStart(sf) + 1,
+              end: element.getEnd() - 1,
+            }))
+          : [],
+        literal,
+        line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+      })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return calls
+}
+
+/** A glob pattern written in `file` as an app-relative glob, by Vite's rules: `./` and `../` from the
+ * file's folder, `/` from the app root. `undefined` for any other shape, such as an alias. */
+function appGlob(file: string, pattern: string): string | undefined {
+  if (pattern.startsWith("/")) return pattern.slice(1)
+  if (!pattern.startsWith("./") && !pattern.startsWith("../")) return undefined
+  const at = posix.normalize(posix.join(posix.dirname(file), pattern))
+  return at.startsWith("../") ? undefined : at
+}
+
+/** The files among `files` a glob call in `file` loads, a `!` pattern excluding; `undefined` when a
+ * pattern cannot be read from the app. */
+function globTargets(
+  file: string,
+  patterns: readonly string[],
+  files: Iterable<string>,
+): string[] | undefined {
+  const include: Bun.Glob[] = []
+  const exclude: Bun.Glob[] = []
+  for (const raw of patterns) {
+    const at = appGlob(file, raw.startsWith("!") ? raw.slice(1) : raw)
+    if (at === undefined) return undefined
+    ;(raw.startsWith("!") ? exclude : include).push(new Bun.Glob(at))
+  }
+  return [...files].filter(
+    (candidate) =>
+      candidate !== file &&
+      include.some((glob) => glob.match(candidate)) &&
+      !exclude.some((glob) => glob.match(candidate)),
+  )
+}
+
+/**
+ * `pattern`, written in `from` (now `to`), re-pointed at the folder its matches `before` moved to: the
+ * part before the first wildcard is the folder, and every match must keep its path below it.
+ * `undefined` when the matches did not move as one folder.
+ */
+function repointGlob(
+  from: string,
+  to: string,
+  pattern: string,
+  before: readonly string[],
+  newPath: (file: string) => string,
+): string | undefined {
+  const negated = pattern.startsWith("!")
+  const written = negated ? pattern.slice(1) : pattern
+  const at = appGlob(from, written)
+  if (at === undefined) return undefined
+  const segments = at.split("/")
+  const wild = segments.findIndex((segment) => /[*?[\]{}]/.test(segment))
+  const base = (wild === -1 ? segments.slice(0, -1) : segments.slice(0, wild)).join("/")
+  const rest = segments.slice(base === "" ? 0 : base.split("/").length).join("/")
+  let moved: string | undefined
+  for (const file of before) {
+    if (base !== "" && !file.startsWith(`${base}/`)) continue
+    const tail = base === "" ? file : file.slice(base.length + 1)
+    const now = newPath(file)
+    if (!now.endsWith(`/${tail}`) && now !== tail) return undefined
+    const folder = now === tail ? "" : now.slice(0, now.length - tail.length - 1)
+    if (moved !== undefined && folder !== moved) return undefined
+    moved = folder
+  }
+  if (moved === undefined) return pattern
+  const folder = posix.relative(posix.dirname(to), moved)
+  const next = written.startsWith("/")
+    ? `/${moved === "" ? "" : `${moved}/`}${rest}`
+    : `${folder === "" ? "." : folder.startsWith("..") ? folder : `./${folder}`}/${rest}`
+  return negated ? `!${next}` : next
+}
+
 /** Resolve a relative specifier against the file map, the way a bundler would. */
 function resolveIn(
   files: ReadonlySet<string>,
@@ -2360,6 +2483,24 @@ export async function migrateLayout(
         })
       }
     }
+    // What a glob loads is imported too: the files it matches go where the module that loads them goes.
+    for (const call of globCalls(ts, file, text)) {
+      const targets = call.literal
+        ? globTargets(
+            file,
+            call.patterns.map((pattern) => pattern.text),
+            known,
+          )
+        : undefined
+      if (targets === undefined) {
+        issues.push({
+          file,
+          reason: `the import.meta.glob on line ${call.line} takes a pattern the migration cannot read (computed, or not starting with ./, ../ or /), so the files it loads stay where they are; check it by hand`,
+        })
+        continue
+      }
+      for (const target of targets) refs.push({ target, typeOnly: false })
+    }
     edges.set(file, refs)
   }
   // The config's module paths are entries too: the browser loads `clientModule`.
@@ -2670,6 +2811,47 @@ export async function migrateLayout(
       (redirectedFiles.has(file) || (updated !== text && original.get(file) === text))
     )
       rewritten.push(file)
+  }
+
+  // A glob names its files by pattern, which no import rewrite reads: each one must still load, from
+  // the module's new folder, the files it loaded before. A pattern whose matches moved together
+  // into one folder is re-pointed at it; any other change is reported.
+  for (const file of next.keys()) {
+    const at = newPath(file)
+    const text = final.get(at)
+    if (text === undefined) continue
+    const edits: Array<{ start: number; end: number; text: string }> = []
+    for (const call of globCalls(ts, at, text)) {
+      if (!call.literal) continue
+      const written = call.patterns.map((pattern) => pattern.text)
+      const before = globTargets(file, written, known)
+      if (before === undefined || before.length === 0) continue
+      const expected = before.map(newPath).sort(codeUnitOrder)
+      const same = (patterns: readonly string[]): boolean => {
+        const after = globTargets(at, patterns, planned)?.sort(codeUnitOrder)
+        return after !== undefined && after.join("\n") === expected.join("\n")
+      }
+      if (same(written)) continue
+      const repointed = written.map((pattern) => repointGlob(file, at, pattern, before, newPath))
+      if (repointed.every((pattern) => pattern !== undefined) && same(repointed)) {
+        call.patterns.forEach((pattern, index) => {
+          const value = repointed[index]
+          if (value !== undefined && value !== pattern.text)
+            edits.push({ start: pattern.start, end: pattern.end, text: value })
+        })
+        continue
+      }
+      issues.push({
+        file: at,
+        reason: `the import.meta.glob on line ${call.line} loaded ${before.length} file(s) such as "${before[0]}", which do not stay together under one folder after the moves, so its pattern cannot follow them; move them together or point the pattern at them by hand`,
+      })
+    }
+    if (edits.length === 0) continue
+    let updated = text
+    for (const edit of edits.sort((a, b) => b.start - a.start))
+      updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
+    final.set(at, updated)
+    if (!moveMap.has(file) && !rewritten.includes(file)) rewritten.push(file)
   }
 
   // A config string names its module from the app root, so it follows the module, never the config

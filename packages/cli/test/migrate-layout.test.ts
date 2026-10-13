@@ -969,6 +969,44 @@ describe("migrateLayout", () => {
     )
   })
 
+  test("what import.meta.glob loads moves with the module, and a pattern follows files that moved apart from it", async () => {
+    const dir = app({
+      "src/lib/species.ts": [
+        "const loaders = import.meta.glob('./grove/*.ts')",
+        "export const species = Object.keys(loaders)",
+        "",
+      ].join("\n"),
+      "src/lib/grove/oak.ts": "export default { bark: 'ridged' }\n",
+      "src/lib/grove/birch.ts": "export default { bark: 'papery' }\n",
+      "routes/index.tsx":
+        'import { species } from "../src/lib/species"\nexport default () => species\n',
+      "build.ts": [
+        'const notes = import.meta.glob(["./src/notes/*.md", "!./src/notes/draft.md"], { eager: true })',
+        "export const count = Object.keys(notes).length",
+        "",
+      ].join("\n"),
+      "src/notes/one.md": "one\n",
+      "src/notes/draft.md": "draft\n",
+      "src/odd.ts": "const at = 'grove'\nexport const odd = import.meta.glob(`./${at}/*.ts`)\n",
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toContainEqual({
+      from: "src/lib/grove/oak.ts",
+      to: "frontend/src/lib/grove/oak.ts",
+    })
+    expect(read(dir, "frontend/src/lib/species.ts")).toContain("import.meta.glob('./grove/*.ts')")
+    // The root script stays and its notes moved to the backend: the pattern follows them.
+    expect(read(dir, "build.ts")).toContain(
+      'import.meta.glob(["./backend/src/notes/*.md", "!./backend/src/notes/draft.md"], { eager: true })',
+    )
+    expect(result.rewritten).toContain("build.ts")
+    expect(result.issues).toContainEqual({
+      file: "src/odd.ts",
+      reason:
+        "the import.meta.glob on line 2 takes a pattern the migration cannot read (computed, or not starting with ./, ../ or /), so the files it loads stay where they are; check it by hand",
+    })
+  })
+
   test("a moved module's import that leaves the app is re-based", async () => {
     const dir = app({
       "routes/index.tsx": 'import { Card } from "../ui/card.tsx"\nexport default () => <Card />\n',
