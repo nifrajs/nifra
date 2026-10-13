@@ -59,7 +59,8 @@
     "EXTENSIONS.md",
     "PERFORMANCE.md",
     "REGISTRY.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "scripts": {

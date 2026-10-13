@@ -308,7 +308,8 @@
     "dist",
     "src",
     "css-modules.d.ts",
-    "server-manifest.d.ts"
+    "server-manifest.d.ts",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "scripts": {

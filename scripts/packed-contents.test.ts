@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  changelogFinding,
   contentFindings,
   describeDrift,
   fileListDrift,
@@ -113,4 +114,19 @@ test("a tarball is read whole, its top directory dropped, dotfiles included", ()
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("a tarball carries the changelog only when its newest section is the package's version", () => {
+  const files = (changelog?: string) => [
+    ...(changelog === undefined ? [] : [{ path: "CHANGELOG.md", bytes: encode(changelog) }]),
+    { path: "package.json", bytes: encode('{"version":"2.0.0"}') },
+  ]
+  expect(changelogFinding(files("# @x/a\r\n\r\n## 2.0.0\r\n\r\n## 1.0.0\r\n"))).toBeUndefined()
+  expect(changelogFinding(files())).toBe("ships no CHANGELOG.md")
+  expect(changelogFinding(files("# @x/a\n\n## 1.0.0\n\n- a change\n"))).toBe(
+    "CHANGELOG.md's newest section is `## 1.0.0`, not `## 2.0.0`",
+  )
+  expect(changelogFinding(files("# @x/a\n"))).toBe(
+    "CHANGELOG.md's newest section is missing, not `## 2.0.0`",
+  )
 })

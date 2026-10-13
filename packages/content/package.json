@@ -36,7 +36,8 @@
     }
   },
   "files": [
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "license": "MIT",

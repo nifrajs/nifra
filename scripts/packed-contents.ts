@@ -32,6 +32,29 @@ export function readTarball(tgz: string): PackedFile[] {
   }
 }
 
+/** Why a tarball does not carry the changelog for the version its package.json names, or undefined when
+ * it does. The newest section must be that version: an older one on top means `changeset version`
+ * never wrote it. */
+export function changelogFinding(files: readonly PackedFile[]): string | undefined {
+  const text = (path: string): string | undefined => {
+    const file = files.find((entry) => entry.path === path)
+    return file === undefined ? undefined : new TextDecoder().decode(file.bytes)
+  }
+  const changelog = text("CHANGELOG.md")
+  if (changelog === undefined) return "ships no CHANGELOG.md"
+  const manifest: unknown = JSON.parse(text("package.json") ?? "{}")
+  const version =
+    typeof manifest === "object" && manifest !== null && "version" in manifest
+      ? String(manifest.version)
+      : "(no version)"
+  const newest = changelog
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .find((line) => line.startsWith("## "))
+  if (newest === `## ${version}`) return undefined
+  return `CHANGELOG.md's newest section is ${newest === undefined ? "missing" : `\`${newest}\``}, not \`## ${version}\``
+}
+
 /** Paths no published package may carry, whatever its `files` field says. */
 export const NEVER_SHIPPED: readonly { readonly pattern: RegExp; readonly why: string }[] = [
   {

@@ -2,6 +2,9 @@
  * Packs every public package and reads what the tarballs hold:
  *   - a LICENSE file, and no test file, key, environment file, log or private directory
  *     (`NEVER_SHIPPED`);
+ *   - a CHANGELOG.md whose newest section is the package's version. Outside release mode a package
+ *     with no CHANGELOG.md yet is only reported: `changeset version` writes its first one in the
+ *     release pull request;
  *   - no private marker (`PRIVATE_MARKERS`, required under `RELEASE_MODE=1`) and no home-directory path;
  *   - npm selects the same files bun packed, since npm is what publishes;
  *   - under `RELEASE_MODE=1`, the file lists match `packed-files.json`, the record the release pull
@@ -18,6 +21,7 @@ import { join, resolve } from "node:path"
 import { codeUnitOrder } from "./code-unit-order.ts"
 import { staleDeclarations } from "./llms-corpus-check.ts"
 import {
+  changelogFinding,
   contentFindings,
   describeDrift,
   fileListDrift,
@@ -140,6 +144,14 @@ export async function checkPacked(options: PackedCheckOptions): Promise<PackedCh
       // Every package is MIT, and the license asks for its text in every copy.
       if (!paths.some((path) => /^licen[cs]e(?:\.|$)/i.test(path)))
         failures.push(`${pkg.name}: ships no LICENSE file`)
+      const changelog = changelogFinding(files)
+      if (
+        changelog !== undefined &&
+        (options.release || existsSync(join(options.root, pkg.dir, "CHANGELOG.md")))
+      )
+        failures.push(`${pkg.name}: ${changelog}`)
+      else if (changelog !== undefined)
+        notes.push(`${pkg.name}: no CHANGELOG.md yet (enforced under RELEASE_MODE=1)`)
       for (const found of neverShipped(paths)) failures.push(`${pkg.name}/${found}`)
       for (const found of contentFindings(files, options.markers))
         failures.push(`${pkg.name}/${found}`)

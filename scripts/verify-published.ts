@@ -1,8 +1,8 @@
 /**
  * After a release, reads what npm actually serves. Each public package's tarball, at its manifest
  * version, is fetched from the registry, checked against the registry's own integrity hash, and held
- * to what the release verified: the file list in packed-files.json, nothing `NEVER_SHIPPED`, no
- * private marker (`PRIVATE_MARKERS`) and no home-directory path.
+ * to what the release verified: the file list in packed-files.json, a CHANGELOG.md with a section for
+ * the version, nothing `NEVER_SHIPPED`, no private marker (`PRIVATE_MARKERS`) and no home-directory path.
  *
  *   bun run verify:published                         the versions in the package manifests
  *   bun run verify:published --version 5.0.0         one version for every package
@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
+  changelogFinding,
   contentFindings,
   describeDrift,
   fileListDrift,
@@ -52,7 +53,9 @@ export function publishedTarballFailures(
     writeFileSync(file, tarball.bytes)
     const files = readTarball(file)
     const paths = files.map((entry) => entry.path)
+    const changelog = changelogFinding(files)
     const failures = [
+      ...(changelog === undefined ? [] : [`${name}: ${changelog}`]),
       ...neverShipped(paths).map((found) => `${name}/${found}`),
       ...contentFindings(files, markers).map((found) => `${name}/${found}`),
     ]

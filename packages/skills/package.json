@@ -22,7 +22,8 @@
   },
   "files": [
     "skills",
-    ".claude-plugin"
+    ".claude-plugin",
+    "CHANGELOG.md"
   ],
   "pi": {
     "skills": [
