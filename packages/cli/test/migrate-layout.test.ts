@@ -1350,6 +1350,49 @@ describe("migrateLayout on an API-only app", () => {
       ...extra,
     })
 
+  test("a path named only in comments is a follow-up; in code or a string it is an issue", async () => {
+    const quiet = '{\n  "name": "orders-api"\n}\n'
+    const dir = backendOnly({
+      "package.json": quiet,
+      "lib/notes.ts": [
+        "/** Mirrors the routes in backend.ts. */",
+        "export const notes = 1 // backend.ts registers them",
+        "/* see backend.ts */",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.ok).toBe(true)
+    expect(result.issues).toEqual([])
+    expect(result.followUps).toEqual([
+      {
+        file: "lib/notes.ts",
+        reason: 'a comment names "backend.ts", which moved to "backend/app.ts"',
+      },
+    ])
+    // The same run twice reads the same.
+    expect(await migrateLayout(dir, { typescript: ts })).toEqual(result)
+
+    const mixed = backendOnly({
+      "package.json": quiet,
+      "lib/build.ts": [
+        "// builds backend.ts",
+        'export const entry = "./backend.ts"',
+        "export const doc = `served by backend.ts`",
+        "",
+      ].join("\n"),
+    })
+    const both = await migrateLayout(mixed, { typescript: ts })
+    expect(both.ok).toBe(false)
+    expect(both.followUps).toEqual([])
+    expect(both.issues).toEqual([
+      {
+        file: "lib/build.ts",
+        reason: 'mentions "backend.ts" by path; it moved to "backend/app.ts"',
+      },
+    ])
+  })
+
   test("only the backend entry moves; nothing is split or zoned, and the dry run shows the kind it declares", async () => {
     const dir = backendOnly()
     const result = await migrateLayout(dir, { typescript: ts })

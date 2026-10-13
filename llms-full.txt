@@ -10783,9 +10783,10 @@ overrides it, so a backend file can sit in a frontend folder without moving.
 
 The command exits `0` when nothing needs a decision. A step with a known command,
 such as drafting an output schema for a backend half it did not write, is listed under
-`next` and in `followUps` with `--json`, and does not fail it.
-An issue (an import it could not place, a frontend that still uses a moved name at runtime)
-exits `1`.
+`next` and in `followUps` with `--json`, and does not fail it;
+so is a moved path a module names only in comments, which is worth updating but changes
+nothing that runs. An issue (an import it could not place, a frontend that still uses a moved
+name at runtime, a moved path written in code or a string) exits `1`.
 
 5.0 refuses a route file that still exports a server name: `nifra build` and the
 server stop on it, and `nifra check` reports it as NF-C041.

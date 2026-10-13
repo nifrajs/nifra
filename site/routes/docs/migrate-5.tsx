@@ -108,9 +108,10 @@ export default function Migrate5() {
       <p>
         The command exits <code>0</code> when nothing needs a decision. A step with a known command,
         such as drafting an output schema for a backend half it did not write, is listed under{" "}
-        <code>next</code> and in <code>followUps</code> with <code>--json</code>, and does not fail it.
-        An issue (an import it could not place, a frontend that still uses a moved name at runtime)
-        exits <code>1</code>.
+        <code>next</code> and in <code>followUps</code> with <code>--json</code>, and does not fail it;
+        so is a moved path a module names only in comments, which is worth updating but changes
+        nothing that runs. An issue (an import it could not place, a frontend that still uses a moved
+        name at runtime, a moved path written in code or a string) exits <code>1</code>.
       </p>
       <p>
         5.0 refuses a route file that still exports a server name: <code>nifra build</code> and the

@@ -1570,7 +1570,8 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
           ),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
         ...out.followUps.map(
-          (step) => `  next  ${step.file}: ${step.reason} - \`${step.command}\``,
+          (step) =>
+            `  next  ${step.file}: ${step.reason}${step.command === undefined ? "" : ` - \`${step.command}\``}`,
         ),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]
