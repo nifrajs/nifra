@@ -484,6 +484,134 @@ describe('responseContract: extra "strip"', () => {
     expect((await fetchJson(app, "/u")).status).toBe(500)
   })
 
+  describe("a union told apart by a required literal", () => {
+    const Result = t.union([
+      t.object({ ok: t.literal(true), data: STRICT }),
+      t.object({ ok: t.literal(false), error: t.object({ code: t.string() }) }),
+    ])
+
+    test("projects each value onto the branch its tag names", async () => {
+      const app = strip("enforce")
+        .get("/yes", { response: Result }, () => ({ ok: true, data: LEAK, trace: "SECRET" }))
+        .get("/no", { response: Result }, () => ({
+          ok: false,
+          error: { code: "gone", stack: "SECRET" },
+          data: LEAK,
+        }))
+      const yes = await fetchJson(app, "/yes")
+      const no = await fetchJson(app, "/no")
+      expect([yes.status, no.status]).toEqual([200, 200])
+      expect(JSON.parse(yes.body)).toEqual({ ok: true, data: { id: "u1", name: "Ada" } })
+      expect(JSON.parse(no.body)).toEqual({ ok: false, error: { code: "gone" } })
+    })
+
+    test("a string tag over three branches, one of them a union of literals", async () => {
+      const Job = t.union([
+        t.object({
+          state: t.union([t.literal("queued"), t.literal("running")]),
+          id: t.string(),
+        }),
+        t.object({ state: t.literal("done"), id: t.string(), output: t.string() }),
+        t.object({ state: t.literal("failed"), id: t.string(), reason: t.string() }),
+      ])
+      const app = strip("enforce").get("/jobs", { response: t.array(Job) }, () => [
+        { state: "running", id: "j1", worker: "SECRET" },
+        { state: "done", id: "j2", output: "ok", worker: "SECRET" },
+        { state: "failed", id: "j3", reason: "timeout", worker: "SECRET" },
+      ])
+      const res = await fetchJson(app, "/jobs")
+      expect(res.status).toBe(200)
+      expect(JSON.parse(res.body)).toEqual([
+        { state: "running", id: "j1" },
+        { state: "done", id: "j2", output: "ok" },
+        { state: "failed", id: "j3", reason: "timeout" },
+      ])
+    })
+
+    test("arrays and objects are routed to their own branches, null passes", async () => {
+      const shape = t.object({
+        one: t.union([STRICT, t.array(STRICT), t.null()]),
+        many: t.union([STRICT, t.array(STRICT), t.null()]),
+        none: t.union([STRICT, t.array(STRICT), t.null()]),
+      })
+      const app = strip("enforce").get("/m", { response: shape }, () => ({
+        one: LEAK,
+        many: [LEAK],
+        none: null,
+      }))
+      const clean = { id: "u1", name: "Ada" }
+      expect(JSON.parse((await fetchJson(app, "/m")).body)).toEqual({
+        one: clean,
+        many: [clean],
+        none: null,
+      })
+    })
+
+    test("a tag read through a row class getter selects the branch", async () => {
+      class Found {
+        data = LEAK
+        secret = "SECRET"
+        get ok(): true {
+          return true
+        }
+      }
+      const app = strip("enforce").get("/g", { response: Result }, () => new Found())
+      expect(JSON.parse((await fetchJson(app, "/g")).body)).toEqual({
+        ok: true,
+        data: { id: "u1", name: "Ada" },
+      })
+    })
+
+    test("tags two branches share leave the union to the validator", async () => {
+      const Shared = t.union([
+        t.object({ ok: t.literal(true), id: t.string() }),
+        t.object({ ok: t.literal(true), name: t.string() }),
+      ])
+      const app = strip("enforce").get("/s", { response: Shared }, () => ({ ...LEAK, ok: true }))
+      expect((await fetchJson(app, "/s")).status).toBe(500)
+    })
+
+    test("an optional tag leaves the union to the validator", async () => {
+      const Loose = t.union([
+        t.object({ ok: t.optional(t.literal(true)), data: STRICT }),
+        t.object({ ok: t.literal(false), error: t.string() }),
+      ])
+      const app = strip("enforce").get("/o", { response: Loose }, () => ({
+        ok: true,
+        data: LEAK,
+        extra: 1,
+      }))
+      expect((await fetchJson(app, "/o")).status).toBe(500)
+    })
+
+    test("a tag no branch names is refused, never projected onto another branch", async () => {
+      // Parsed, so the value can break the contract the handler's type would otherwise enforce.
+      const app = strip("enforce").get("/x", { response: Result }, () =>
+        JSON.parse('{"ok":"maybe","data":{"id":"u1","name":"Ada","resetToken":"tok"}}'),
+      )
+      expect((await fetchJson(app, "/x")).status).toBe(500)
+    })
+
+    test("a branch that could hold anything stops the projection", async () => {
+      const schema = passthrough({
+        anyOf: [
+          {
+            type: "object",
+            required: ["k"],
+            properties: { k: { const: "a" } },
+            additionalProperties: false,
+          },
+          {},
+        ],
+      })
+      const value = { k: "a", extra: "kept" }
+      expect(await checkResponseContract(schema, value, "enforce", { extra: "strip" })).toEqual({
+        kind: "ok",
+        value,
+      })
+    })
+  })
+
   test("a declared getter on a row class is read", async () => {
     class Row {
       id = "u1"
@@ -517,6 +645,144 @@ describe('responseContract: extra "strip"', () => {
 
   test("an unknown extra mode is refused when the plugin is built", () => {
     expect(() => responseContract("enforce", JSON.parse('{"extra":"drop"}'))).toThrow(TypeError)
+  })
+})
+
+describe("responseContract: logStripped", () => {
+  const logged = (records: LogFields[]) =>
+    records.filter((r) => r.message === "response contract").map((r) => String(r.detail))
+  const app = (logger: Logger, options: Parameters<typeof responseContract>[1]) =>
+    server({ logger }).use(responseContract("enforce", options))
+  const hit = async (target: AnyServer, path: string) =>
+    (await target.fetch(new Request(`http://t${path}`))).text()
+
+  test("names what was stripped, nested and per item, once per route and set", async () => {
+    const { logger, records } = recorder()
+    const shape = t.object({ user: STRICT, list: t.array(STRICT) })
+    const target = app(logger, { extra: "strip", logStripped: true }).get(
+      "/n",
+      { response: shape },
+      () => ({ user: LEAK, list: [LEAK, { id: "u2", name: "Bo", rank: 1 }], extra: true }),
+    )
+    const body = await hit(target, "/n")
+    await hit(target, "/n")
+    expect(JSON.parse(body).user).toEqual({ id: "u1", name: "Ada" })
+    expect(logged(records)).toEqual([
+      "response carried fields its contract does not declare: extra, list[].passwordHash, list[].rank, list[].resetToken, user.passwordHash, user.resetToken. They were not sent.",
+    ])
+  })
+
+  test("never logs a value", async () => {
+    const { logger, records } = recorder()
+    const target = app(logger, { extra: "strip", logStripped: true }).get(
+      "/me",
+      { response: STRICT },
+      () => LEAK,
+    )
+    await hit(target, "/me")
+    expect(JSON.stringify(records)).not.toContain("SECRET")
+  })
+
+  test("a new set on the same route is logged, and each route keeps its own", async () => {
+    const { logger, records } = recorder()
+    let extra: Record<string, string> = { a: "1" }
+    const target = app(logger, { extra: "strip", logStripped: true })
+      .get("/one", { response: STRICT }, () => ({ id: "u1", name: "Ada", ...extra }))
+      .get("/two", { response: STRICT }, () => ({ id: "u1", name: "Ada", a: "1" }))
+    await hit(target, "/one")
+    extra = { b: "2" }
+    await hit(target, "/one")
+    await hit(target, "/two")
+    expect(logged(records).map((line) => line.split(": ")[1])).toEqual([
+      "a. They were not sent.",
+      "b. They were not sent.",
+      "a. They were not sent.",
+    ])
+  })
+
+  test("a schema that strips on its own is reported too", async () => {
+    const { logger, records } = recorder()
+    const target = app(logger, { logStripped: true }).get("/z", { response: STRIPPING }, () => LEAK)
+    await hit(target, "/z")
+    expect(logged(records)[0]).toContain("passwordHash, resetToken")
+  })
+
+  test("is quiet without the option and when nothing was stripped", async () => {
+    const { logger, records } = recorder()
+    await hit(
+      app(logger, { extra: "strip" }).get("/a", { response: STRICT }, () => LEAK),
+      "/a",
+    )
+    await hit(
+      app(logger, { extra: "strip", logStripped: true }).get("/b", { response: STRICT }, () => ({
+        id: "u1",
+        name: "Ada",
+      })),
+      "/b",
+    )
+    expect(logged(records)).toEqual([])
+  })
+
+  test("lists at most twenty names, and long names are cut", async () => {
+    const { logger, records } = recorder()
+    const wide = Object.fromEntries(
+      Array.from({ length: 30 }, (_, i) => [`f${String(i).padStart(2, "0")}`, i]),
+    )
+    const long = "k".repeat(100)
+    const target = app(logger, { extra: "strip", logStripped: true })
+      .get("/wide", { response: STRICT }, () => ({ id: "u1", name: "Ada", ...wide }))
+      .get("/long", { response: STRICT }, () => ({ id: "u1", name: "Ada", [long]: 1 }))
+    await hit(target, "/wide")
+    await hit(target, "/long")
+    const [many, cut] = logged(records)
+    expect(many).toContain("f19, and more.")
+    expect(many).not.toContain("f20")
+    expect(cut).toContain(`${"k".repeat(64)}...`)
+    expect(cut).not.toContain("k".repeat(65))
+  })
+
+  test("stops after 32 sets on one route and says so", async () => {
+    const { logger, records } = recorder()
+    let n = 0
+    const target = app(logger, { extra: "strip", logStripped: true }).get(
+      "/many",
+      { response: STRICT },
+      () => ({ id: "u1", name: "Ada", [`x${n++}`]: 1 }),
+    )
+    for (let i = 0; i < 40; i++) await hit(target, "/many")
+    const lines = logged(records)
+    expect(lines).toHaveLength(32)
+    expect(lines[31]).toContain("Further sets of fields on this route are not logged.")
+  })
+
+  test("an asynchronous validator is reported the same way", async () => {
+    const { logger, records } = recorder()
+    const slow: StandardSchemaV1 = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: async (value: unknown) => ({ value: { id: Reflect.get(Object(value), "id") } }),
+      },
+    }
+    const target = app(logger, { logStripped: true }).get("/s", { response: slow }, () => LEAK)
+    expect(JSON.parse(await hit(target, "/s"))).toEqual({ id: "u1" })
+    expect(logged(records)[0]).toContain("name, passwordHash, resetToken")
+  })
+
+  test("warn mode keeps its own report and logStripped adds nothing", async () => {
+    const { logger, records } = recorder()
+    const target = server({ logger })
+      .use(responseContract("warn", { extra: "strip", logStripped: true }))
+      .get("/w", { response: STRICT }, () => LEAK)
+    await hit(target, "/w")
+    expect(logged(records)).toHaveLength(1)
+    expect(logged(records)[0]).toContain("They are being sent")
+  })
+
+  test("a non-boolean logStripped is refused when the plugin is built", () => {
+    expect(() => responseContract("enforce", JSON.parse('{"logStripped":"yes"}'))).toThrow(
+      TypeError,
+    )
   })
 })
 

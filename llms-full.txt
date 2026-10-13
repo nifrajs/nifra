@@ -3588,8 +3588,17 @@ exposes `validate` and no way to enumerate declared keys. A _stripping_ schema
 response becomes a 500 and the detail goes to the logger, never to the caller.
 `{ extra: "strip" }` changes that for `t` schemas: they carry their
 JSON Schema, which does list the declared keys, so the payload is projected onto them - nested
-objects, arrays and records included - before it is validated. In `"warn"`
+objects, arrays and records included - before it is validated. A union is projected when a
+value can meet only one of its branches: a single object branch, or object branches that all
+require one key holding literals no two of them share, such as `ok: true` and
+`ok: false`. Other unions are left to the validator. In `"warn"`
 mode the same option makes the log name the fields `"enforce"` would drop.
+
+Stripping is silent by design. To see a field the contract does not declare - a new column -
+before someone asks where it went, pass `logStripped: true` with
+`"enforce"`: the log names each stripped field, nested ones as
+`user.email` and array items as `items[].cost`, once per route for each
+distinct set of names. Values are never logged.
 
 A `merge()`d server&rsquo;s routes are covered by a contract the parent installed
 before the merge, as long as the route declares a response and its own server installed none.

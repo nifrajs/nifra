@@ -398,8 +398,18 @@ export default function Security() {
         response becomes a 500 and the detail goes to the logger, never to the caller.{" "}
         <code>{`{ extra: "strip" }`}</code> changes that for <code>t</code> schemas: they carry their
         JSON Schema, which does list the declared keys, so the payload is projected onto them - nested
-        objects, arrays and records included - before it is validated. In <code>&quot;warn&quot;</code>{" "}
+        objects, arrays and records included - before it is validated. A union is projected when a
+        value can meet only one of its branches: a single object branch, or object branches that all
+        require one key holding literals no two of them share, such as <code>ok: true</code> and{" "}
+        <code>ok: false</code>. Other unions are left to the validator. In <code>&quot;warn&quot;</code>{" "}
         mode the same option makes the log name the fields <code>&quot;enforce&quot;</code> would drop.
+      </p>
+      <p>
+        Stripping is silent by design. To see a field the contract does not declare - a new column -
+        before someone asks where it went, pass <code>{`logStripped: true`}</code> with{" "}
+        <code>&quot;enforce&quot;</code>: the log names each stripped field, nested ones as{" "}
+        <code>user.email</code> and array items as <code>items[].cost</code>, once per route for each
+        distinct set of names. Values are never logged.
       </p>
       <p>
         A <code>merge()</code>d server&rsquo;s routes are covered by a contract the parent installed
