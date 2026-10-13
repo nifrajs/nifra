@@ -84,6 +84,29 @@ export interface ResponseContractOptions {
    * never logged. Each response is compared with what was sent, so it costs a walk of the payload.
    */
   readonly logStripped?: boolean
+  /**
+   * Called for every response the contract has something to say about, for a metric or an alert, where
+   * the log speaks once per route. `violation`: enforce mode, the payload failed and a 500 went out in
+   * its place. `warn`: warn mode, the payload failed or carried undeclared top-level keys (`fields`)
+   * and was sent anyway. `stripped`: enforce mode, the payload was sent without `fields`. The message is
+   * the text the log line carries; values are never passed. Called before the response is sent; a hook
+   * that throws, rejects or is not a function is logged once and changes nothing. In enforce mode it costs the payload walk
+   * `logStripped` does.
+   */
+  readonly onReport?: (report: ResponseContractReport) => void
+}
+
+/** One response the contract reported on, passed to {@link ResponseContractOptions.onReport}. */
+export interface ResponseContractReport {
+  readonly kind: "violation" | "warn" | "stripped"
+  /** The route's method as registered, e.g. `GET`. */
+  readonly method: string
+  /** The route's path as registered, e.g. `/users/:id`, so a metric keyed by it stays bounded. */
+  readonly route: string
+  /** `stripped`: each field that never reached the wire (`user.passwordHash`, `items[].cost`), sorted.
+   * `warn`: the undeclared top-level keys that were sent, when they are the reason. */
+  readonly fields?: readonly string[] | undefined
+  readonly message: string
 }
 
 /** Success and status-specific error schemas captured by one route at registration time. */
@@ -97,8 +120,13 @@ export type ResponseContractOutcome =
   /** Nothing to report. `value` is what should be serialized (the original result, or the cleaned one). */
   | { readonly kind: "ok"; readonly value: unknown }
   /** Logged, then `value` is served: in `warn` the ORIGINAL result, in `enforce` (with
-   * `logStripped`) the cleaned one. */
-  | { readonly kind: "warn"; readonly value: unknown; readonly message: string }
+   * `logStripped`) the cleaned one. `fields`: in `warn`, the undeclared keys when they are the reason. */
+  | {
+      readonly kind: "warn"
+      readonly value: unknown
+      readonly message: string
+      readonly fields?: readonly string[]
+    }
   /** `enforce` only: the payload cannot be reconciled with the contract, so it must not be sent. */
   | { readonly kind: "violation"; readonly message: string }
 
@@ -365,13 +393,17 @@ function firstReport(
   const key = fields.join("\n")
   if (seen.size >= MAX_REPORTED_SETS || seen.has(key)) return undefined
   seen.add(key)
+  const last =
+    seen.size === MAX_REPORTED_SETS ? " Further sets of fields on this route are not logged." : ""
+  return `${strippedMessage(fields)}${last}`
+}
+
+function strippedMessage(fields: readonly string[]): string {
   const listed =
     fields.length > MAX_STRIPPED_NAMES
       ? `${fields.slice(0, MAX_STRIPPED_NAMES).join(", ")}, and more`
       : fields.join(", ")
-  const last =
-    seen.size === MAX_REPORTED_SETS ? " Further sets of fields on this route are not logged." : ""
-  return `response carried fields its contract does not declare: ${listed}. They were not sent.${last}`
+  return `response carried fields its contract does not declare: ${listed}. They were not sent.`
 }
 
 /** Top-level keys present in the handler's result but absent from the validated value. */
@@ -528,6 +560,7 @@ function interpret(
         kind: "warn",
         value: served,
         message: `response carries fields its contract does not declare: ${dropped.join(", ")}. They are being sent; \`responseContract("enforce")\` would strip them.`,
+        fields: dropped,
       }
 }
 
@@ -540,12 +573,28 @@ export interface ResponseContractRuntime {
   check(
     definition: ResponseContractDefinition,
     result: unknown,
-    context?: { readonly jsonReply?: Response | undefined; readonly jsonBody?: unknown },
+    context?: {
+      readonly req?: Request
+      readonly jsonReply?: Response | undefined
+      readonly jsonBody?: unknown
+    },
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
 }
 
 interface ResponseContractInstallable {
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void
+}
+
+/** What the plugin reads off a server it was applied to, to name a route and to log a failing hook. */
+interface ContractHost {
+  readonly catalog: {
+    entries(): readonly {
+      readonly method: string
+      readonly path: string
+      readonly entry: { readonly responseContract?: { readonly definition: object } }
+    }[]
+  }
+  readonly logger: { error(message: string, fields: { detail: string }): void }
 }
 
 /**
@@ -579,29 +628,91 @@ export function responseContract(
       `responseContract(): logStripped must be a boolean, got ${JSON.stringify(options.logStripped)}`,
     )
   }
+  const onReport = options.onReport
   const strip = options.extra === "strip"
   const quiet = strip ? STRIP : KEEP
   const reported =
     options.logStripped === true && mode === "enforce"
       ? new WeakMap<ResponseContractDefinition, Set<string>>()
       : undefined
+  const hosts: ContractHost[] = []
+  // A definition is compiled per route into the catalog of a server this plugin was applied to (a
+  // `group()`'s and a `merge()`d server's routes are adopted into it), so the route is found there
+  // and naming it costs the kernel nothing.
+  const routes = new WeakMap<object, { readonly method: string; readonly path: string }>()
+  let failed = false
+  // A hook that throws or rejects (or is not a function) is logged once and never reaches a response.
+  const fail = (error: unknown): void => {
+    if (!failed)
+      hosts[0]?.logger.error("response contract onReport threw", { detail: String(error) })
+    failed = true
+  }
   const runtime: ResponseContractRuntime = {
     mode,
-    check: (definition, result, context) =>
-      checkContract(
-        definition,
-        result,
-        mode,
+    check: (definition, result, context) => {
+      const jsonReply =
         result instanceof Response && result === context?.jsonReply
           ? { body: context.jsonBody }
-          : undefined,
+          : undefined
+      const logged =
         reported === undefined
-          ? quiet
-          : { strip, report: (fields) => firstReport(reported, definition, fields) },
-      ),
+          ? undefined
+          : (fields: readonly string[]) => firstReport(reported, definition, fields)
+      if (onReport === undefined)
+        return checkContract(
+          definition,
+          result,
+          mode,
+          jsonReply,
+          logged === undefined ? quiet : { strip, report: logged },
+        )
+      const send = (
+        kind: ResponseContractReport["kind"],
+        message: string,
+        fields?: readonly string[],
+      ) => {
+        if (!routes.has(definition))
+          for (const host of hosts)
+            for (const route of host.catalog.entries()) {
+              const owned = route.entry.responseContract?.definition
+              if (owned !== undefined) routes.set(owned, route)
+            }
+        const route = routes.get(definition)
+        try {
+          const returned: unknown = onReport({
+            kind,
+            method: route?.method ?? "",
+            route: route?.path ?? "",
+            fields,
+            message,
+          })
+          if (returned instanceof Promise) returned.catch(fail)
+        } catch (error) {
+          fail(error)
+        }
+      }
+      const outcome = checkContract(definition, result, mode, jsonReply, {
+        strip,
+        report: (fields) => {
+          if (fields.length > 0) send("stripped", strippedMessage(fields), fields)
+          return logged?.(fields)
+        },
+      })
+      const observe = (settled: ResponseContractOutcome): ResponseContractOutcome => {
+        // An enforce-mode warn is the stripped-field log line, already reported as `stripped`.
+        if (settled.kind === "violation") send("violation", settled.message)
+        else if (settled.kind === "warn" && mode === "warn")
+          send("warn", settled.message, settled.fields)
+        return settled
+      }
+      return outcome instanceof Promise ? outcome.then(observe) : observe(outcome)
+    },
   }
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as ResponseContractInstallable)[INSTALL_RESPONSE_CONTRACT](runtime)
+    // A server also holds the route catalog and the logger ContractHost reads.
+    const host = app as unknown as ResponseContractInstallable & ContractHost
+    host[INSTALL_RESPONSE_CONTRACT](runtime)
+    if (!hosts.includes(host)) hosts.push(host)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:response-contract" }) as IdentityPlugin

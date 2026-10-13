@@ -3644,6 +3644,32 @@ before someone asks where it went, pass `logStripped: true` with
 `user.email` and array items as `items[].cost`, once per route for each
 distinct set of names. Values are never logged.
 
+For a metric or an alert, pass `onReport`. It receives every response the
+contract has something to say about: `violation` (enforce mode, a 500 went out
+instead), `warn` (warn mode, sent anyway, with the undeclared keys in
+`fields` when they are the reason) and `stripped` (enforce mode, sent
+without `fields`). Each report carries the route&rsquo;s method and pattern and
+the log line&rsquo;s message, never a value. A hook that throws or rejects is logged once and
+changes no response.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { responseContract } from "@nifrajs/core/response-contract"
+
+const counts = new Map<string, number>()
+
+export const app = server().use(
+  responseContract("enforce", {
+    extra: "strip",
+    // Every report, where the log speaks once per route. `route` is the pattern, so the keys stay bounded.
+    onReport: ({ kind, method, route }) => {
+      const key = `${kind} ${method} ${route}`
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    },
+  }),
+)
+```
+
 A `merge()`d server&rsquo;s routes are covered by a contract the parent installed
 before the merge, as long as the route declares a response and its own server installed none.
 See [what a parent&rsquo;s use() covers](/docs/plugins#parent-use).

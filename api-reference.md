@@ -2742,6 +2742,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ResponseContractOptions** _(interface)_ - `interface ResponseContractOptions`
 - **ResponseContractOutcome** _(type)_ - `type ResponseContractOutcome`
   The outcome of checking one handler result against its declared response schema.
+- **ResponseContractReport** _(interface)_ - `interface ResponseContractReport`
+  One response the contract reported on, passed to {@link ResponseContractOptions.onReport}.
 - **ResponseContractRuntime** _(interface)_ - `interface ResponseContractRuntime`
   What the server holds when the plugin is installed. The kernel calls `check` through this object and never imports the implementation, so an app that does not install the plugin does not carry it.
 - **checkResponseContract** _(function)_ - `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce", options?: ResponseContractOptions) => ResponseContractOutcome | Promise<ResponseContractOutcome>`

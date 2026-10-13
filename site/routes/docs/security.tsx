@@ -30,6 +30,22 @@ export const app = server().use(responseContract("enforce", { extra: "strip" }))
 //                                 (t.object is closed; the log names email and passwordHash)
 // enforce, { extra: "strip" }  -> 200 {"id":"u1","name":"Ada"}`
 
+const CONTRACT_REPORTS = `import { server } from "@nifrajs/core/server"
+import { responseContract } from "@nifrajs/core/response-contract"
+
+const counts = new Map<string, number>()
+
+export const app = server().use(
+  responseContract("enforce", {
+    extra: "strip",
+    // Every report, where the log speaks once per route. \`route\` is the pattern, so the keys stay bounded.
+    onReport: ({ kind, method, route }) => {
+      const key = \`\${kind} \${method} \${route}\`
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    },
+  }),
+)`
+
 const BOUNDED = `import { server } from "@nifrajs/core/server"
 
 const app = server()
@@ -411,6 +427,16 @@ export default function Security() {
         <code>user.email</code> and array items as <code>items[].cost</code>, once per route for each
         distinct set of names. Values are never logged.
       </p>
+      <p>
+        For a metric or an alert, pass <code>onReport</code>. It receives every response the
+        contract has something to say about: <code>violation</code> (enforce mode, a 500 went out
+        instead), <code>warn</code> (warn mode, sent anyway, with the undeclared keys in{" "}
+        <code>fields</code> when they are the reason) and <code>stripped</code> (enforce mode, sent
+        without <code>fields</code>). Each report carries the route&rsquo;s method and pattern and
+        the log line&rsquo;s message, never a value. A hook that throws or rejects is logged once and
+        changes no response.
+      </p>
+      <CodeBlock code={CONTRACT_REPORTS} lang="ts" />
       <p>
         A <code>merge()</code>d server&rsquo;s routes are covered by a contract the parent installed
         before the merge, as long as the route declares a response and its own server installed none.

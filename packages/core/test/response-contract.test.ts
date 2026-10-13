@@ -10,7 +10,11 @@ import {
   silentLogger,
   status,
 } from "../src/index.ts"
-import { checkResponseContract, responseContract } from "../src/server/response-contract-lane.ts"
+import {
+  checkResponseContract,
+  type ResponseContractReport,
+  responseContract,
+} from "../src/server/response-contract-lane.ts"
 
 /**
  * A `response` schema was declared everywhere and enforced nowhere: a lower bound the compiler could
@@ -783,6 +787,150 @@ describe("responseContract: logStripped", () => {
     expect(() => responseContract("enforce", JSON.parse('{"logStripped":"yes"}'))).toThrow(
       TypeError,
     )
+  })
+})
+
+describe("responseContract: onReport", () => {
+  const collect = () => {
+    const reports: ResponseContractReport[] = []
+    return { reports, onReport: (report: ResponseContractReport) => void reports.push(report) }
+  }
+  const hit = async (target: AnyServer, path: string) => {
+    const res = await target.fetch(new Request(`http://t${path}`))
+    return { status: res.status, body: await res.text() }
+  }
+
+  test("reports every stripped response with its route pattern, never a value, and logs nothing", async () => {
+    const { logger, records } = recorder()
+    const { reports, onReport } = collect()
+    const target = server({ logger })
+      .use(responseContract("enforce", { extra: "strip", onReport }))
+      .get("/users/:id", { response: STRICT }, () => LEAK)
+    await hit(target, "/users/7")
+    await hit(target, "/users/8")
+    const stripped: ResponseContractReport = {
+      kind: "stripped",
+      method: "GET",
+      route: "/users/:id",
+      fields: ["passwordHash", "resetToken"],
+      message:
+        "response carried fields its contract does not declare: passwordHash, resetToken. They were not sent.",
+    }
+    expect(reports).toEqual([stripped, stripped])
+    expect(JSON.stringify(reports)).not.toContain("SECRET")
+    expect(records).toEqual([])
+  })
+
+  test("a violation is reported and the 500 still goes out", async () => {
+    const { reports, onReport } = collect()
+    const target = server({ logger: silentLogger })
+      .use(responseContract("enforce", { onReport }))
+      .get("/me", { response: STRICT }, () => LEAK)
+    expect((await hit(target, "/me")).status).toBe(500)
+    expect(reports.map(({ kind, route }) => [kind, route])).toEqual([["violation", "/me"]])
+    expect(reports[0]?.message).toStartWith("response does not satisfy its declared contract")
+  })
+
+  test("warn mode reports what it sent anyway, naming undeclared keys when they are the reason", async () => {
+    const { reports, onReport } = collect()
+    const target = server({ logger: silentLogger })
+      .use(responseContract("warn", { onReport }))
+      .get("/strict", { response: STRICT }, () => LEAK)
+      .get("/loose", { response: STRIPPING }, () => LEAK)
+    expect(JSON.parse((await hit(target, "/loose")).body)).toEqual(LEAK)
+    await hit(target, "/strict")
+    expect(reports.map(({ kind, route, fields }) => [kind, route, fields])).toEqual([
+      ["warn", "/loose", ["passwordHash", "resetToken"]],
+      ["warn", "/strict", undefined],
+    ])
+  })
+
+  test("names a group's route and a merged server's route by their own pattern", async () => {
+    const { reports, onReport } = collect()
+    const users = server().get("/users/:id", { response: STRIPPING }, () => LEAK)
+    const target = server({ logger: silentLogger })
+      .use(responseContract("enforce", { onReport }))
+      .group("/v1", (v1) => v1.get("/orders/:id", { response: STRIPPING }, () => LEAK))
+      .merge(users)
+    await hit(target, "/v1/orders/1")
+    await hit(target, "/users/2")
+    expect(reports.map(({ method, route }) => `${method} ${route}`)).toEqual([
+      "GET /v1/orders/:id",
+      "GET /users/:id",
+    ])
+  })
+
+  test("an asynchronous validator is reported the same way", async () => {
+    const { reports, onReport } = collect()
+    const slow: StandardSchemaV1 = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: async (value: unknown) => ({ value: { id: Reflect.get(Object(value), "id") } }),
+      },
+    }
+    const target = server({ logger: silentLogger })
+      .use(responseContract("enforce", { onReport }))
+      .get("/s", { response: slow }, () => LEAK)
+    expect(JSON.parse((await hit(target, "/s")).body)).toEqual({ id: "u1" })
+    expect(reports[0]?.fields).toEqual(["name", "passwordHash", "resetToken"])
+  })
+
+  test("a hook that throws or rejects is logged once and changes no response", async () => {
+    for (const onReport of [
+      () => {
+        throw new Error("metrics down")
+      },
+      () => Promise.reject(new Error("metrics down")),
+    ]) {
+      const { logger, records } = recorder()
+      const target = server({ logger })
+        .use(responseContract("enforce", { extra: "strip", onReport }))
+        .get("/me", { response: STRICT }, () => LEAK)
+      for (let i = 0; i < 2; i++) {
+        const res = await hit(target, "/me")
+        expect([res.status, JSON.parse(res.body)]).toEqual([200, { id: "u1", name: "Ada" }])
+      }
+      await Promise.resolve()
+      expect(records).toEqual([
+        { message: "response contract onReport threw", detail: "Error: metrics down" },
+      ])
+    }
+  })
+
+  test("without a hook or logStripped, the payload is not walked", async () => {
+    let walked = 0
+    const payload = () =>
+      new Proxy(
+        { ...LEAK },
+        {
+          ownKeys: (target) => {
+            walked++
+            return Reflect.ownKeys(target)
+          },
+        },
+      )
+    const plain = server({ logger: silentLogger })
+      .use(responseContract("enforce", { extra: "strip" }))
+      .get("/me", { response: STRICT }, payload)
+    await hit(plain, "/me")
+    expect(walked).toBe(0)
+    const { onReport } = collect()
+    const reported = server({ logger: silentLogger })
+      .use(responseContract("enforce", { extra: "strip", onReport }))
+      .get("/me", { response: STRICT }, payload)
+    await hit(reported, "/me")
+    expect(walked).toBeGreaterThan(0)
+  })
+
+  test("a hook that is not a function is logged once, like one that throws", async () => {
+    const { logger, records } = recorder()
+    const target = server({ logger })
+      .use(responseContract("enforce", JSON.parse('{"extra":"strip","onReport":"count"}')))
+      .get("/me", { response: STRICT }, () => LEAK)
+    expect((await hit(target, "/me")).status).toBe(200)
+    await hit(target, "/me")
+    expect(records.map((record) => record.message)).toEqual(["response contract onReport threw"])
   })
 })
 
