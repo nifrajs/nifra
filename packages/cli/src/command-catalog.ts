@@ -1382,6 +1382,9 @@ const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
   json: (out) => (out.format === "json" ? JSON.parse(out.text) : out.text),
 }
 
+// `render` cannot load doctor.ts, so each run's report is built beside its result.
+const doctorReports = new WeakMap<DoctorResult, readonly string[]>()
+
 const doctorSpec: CommandSpec<DoctorInput, DoctorResult> = {
   name: "doctor",
   summary: "Find undeclared imports, duplicate identity installs, and pipeline readiness drift.",
@@ -1409,14 +1412,18 @@ const doctorSpec: CommandSpec<DoctorInput, DoctorResult> = {
       ...(value.strict === undefined ? {} : { strict: value.strict }),
       ...(ctx.cliVersion === undefined ? {} : { cliVersion: ctx.cliVersion }),
     }
-    return value.autoFix === true
-      ? mod.applyDoctorAutoFix(ctx.cwd, options)
-      : mod.collectDoctorResult(ctx.cwd, options)
+    const result =
+      value.autoFix === true
+        ? await mod.applyDoctorAutoFix(ctx.cwd, options)
+        : await mod.collectDoctorResult(ctx.cwd, options)
+    doctorReports.set(result, mod.doctorReport(result, ctx.cliVersion))
+    return result
   },
-  render: (out) => [
-    out.ok ? "✓ doctor passed" : "✖ doctor found issues",
-    ...out.findings.map((f) => `  ${f.file}:${f.line} ${f.package}`),
-  ],
+  render: (out) =>
+    doctorReports.get(out) ?? [
+      out.ok ? "✓ doctor passed" : "✖ doctor found issues",
+      ...out.findings.map((f) => `  ${f.file}:${f.line} ${f.package}`),
+    ],
   success: (out) => out.ok,
 }
 
@@ -1570,7 +1577,8 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
           ),
         ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
         ...out.followUps.map(
-          (step) => `  next  ${step.file}: ${step.reason} - \`${step.command}\``,
+          (step) =>
+            `  next  ${step.file}: ${step.reason}${step.command === undefined ? "" : ` - \`${step.command}\``}`,
         ),
         ...(out.write ? [] : ["  dry run: pass --write to apply"]),
       ]

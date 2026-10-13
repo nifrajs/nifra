@@ -1,5 +1,57 @@
 # @nifrajs/cli
 
+## 5.2.0
+
+### Minor Changes
+
+- 3860e98: `nifra check` (NF-C039) reads a contract imported from a workspace package, such as `@team/contracts/contract`, through that package's `exports`: subpaths, `*` patterns, and the `bun`, `import` and `default` conditions, plus `types` when it names a TypeScript source. A package linked from outside every `node_modules` counts as the workspace's; one installed from a registry is never read. The scan also follows `export * from` and `export { x } from` re-exports on the way to the contract, and reads a `...operations` spread of another operations object where that object is written. When the contract still cannot be read, the warning names the package and why.
+- 0082cc0: `nifra explain NF-C007` (and `nifra_explain` given a code as its `error`) answers a `nifra check` rule code from the catalog: its title, the review check it reports under, what it reports and why it matters, the fix, the command that applies or starts it when there is one, and its docs page. An unknown or retired code is refused with exit 1 instead of being explained as an unhandled error.
+- 744d3ba: `nifra migrate layout` lists a moved path that a JS or TS module names only in comments as a follow-up, not an issue, so it no longer fails the run. A mention in code or a string, or in a non-JS tooling file, is still an issue. `followUps[].command` is now optional: a comment to update has no command.
+- a040478: `nifra doctor` and `nifra check` (NF-D003) report a `file:` dependency whose recorded dependencies in `bun.lock` differ from what its `package.json` declares now. Bun records them once and never reads that `package.json` again, even under `bun install --force`, so it keeps installing the recorded versions beside the declared ones. The fix is `bun update <package>`. `nifra upgrade` reads the lock against the manifests it is about to write: a dry run lists the entries it would leave stale, and `--write` drops them so the next `bun install` records them again. A lock not laid out one entry per line is left alone and the `bun update` is named instead. The mixed-versions advisory (NF-D002) also counts an exact nifra pin such an entry records.
+- d66ba12: `nifra init-agents --sync-mcp` and `nifra upgrade --write`, run in a workspace member, also re-pin the MCP launch in the directories above it, up to the repository root: a root `.mcp.json` that launches `mcp app` is the member's to re-pin. A file is rewritten only when every nifra launch in it serves that member, resolved the way `nifra mcp` resolves it; a file that also launches another project, holds a pin no launch accounts for, or is a symlink is reported and left alone. Outside a repository nothing above the project is read.
+- 5edd0ba: `nifra upgrade` stops before writing anything when a `link:` or `file:` dependency outside the project installs its own `@nifrajs/*` at a version other than the target. Its imports resolve from its own `node_modules`, so after the upgrade a `server()` it builds could no longer be merged into the app, and that only failed at the first `merge()`. The refusal names each linked repository, its versions and the commands that upgrade it; `--allow-linked-skew` upgrades the project anyway. A dry run prints the plan with the same blocker and exits non-zero. A linked copy that resolves back into the project follows its install and does not count.
+  
+  `merge()` given a server from another loaded copy of `@nifrajs/core` names every copy in its error, this one first, with the version of each copy that has built a `server()`, and says how to collapse them. With one copy loaded the message is unchanged. Copies older than this release are named by path alone, and a production build keeps the short message.
+- df0fbb3: A project that declares `@nifrajs/cli` now launches its MCP server as `bunx @nifrajs/cli mcp`, with no version pin. `bunx` runs the CLI the project installs, so the server moves with every upgrade and the launch never goes stale. New scaffolds and `nifra init-agents` write this form. `nifra init-agents --sync-mcp` and `nifra upgrade --write` drop an existing pin in such a project, and `nifra doctor` points out a pin that is left. A project that does not declare the CLI keeps the exact-version pin, since an unpinned `bunx` there would run a cached `latest`. A launch in a workspace root's files stays pinned too, because the root need not hold the CLI's bin. `create-nifra/agent-files`: `mcpConfig(pin?)`, `mcpJson(pin?)` and `agentsMcpSection(pin?)` take an optional pin. `MCP_CONFIG` is now the unpinned config a scaffold writes.
+- 000b4cb: `nifra check` reports NF-C043, a warning, for a `merge()` whose server authenticates none of its routes while the server it is merged into authenticates its own with `authenticate()` or an auth plugin that records `authenticated` for the routes after it. A merged route keeps the hooks of the server that declared it, so that authentication never runs for it. A merged server that authenticates any route of its own is not reported. `// nifra-expect NF-C043: <reason>` on the merge line accepts a module that is public on purpose. The rule reads the app `nifra.assurance.ts` loads.
+  
+  `@nifrajs/core/reflection` exports `reflectMergeAuthGaps(app)`, the record behind the rule, collected by a development load.
+- 6082ba5: Capability provenance now also starts from the module that registered each route. While the CLI loads `nifra.assurance.ts`, a development load records the `file:line:col` of each route registration through every `group()` and `merge()`, and `reflectRouteSites()` from `@nifrajs/core/reflection` returns it. The walk adds that module to the ones the static text scan finds, so a route with a computed path, or on a server a helper builds, is covered without `provenance.routeModules`. Recording happens only with `NIFRA_ROUTE_SITES=1` outside production, and a production build carries none of it. The sites stay out of `reflectRoutes()`, so no absolute path reaches a written artifact.
+- ed13e36: `nifra upgrade` carries a 5.1.0 recipe, so an upgrade across 5.1.0 prints what can change for an app: merged routes recompiled under the parent's response contract and effect ledger, cross-site form posts refused with `403`, and `clientIp.trustedHops` with no socket peer. `nifra upgrade --list` prints the notes of every release after the version the project declares, and `--json` carries `installed` and every version's `notes`.
+  
+  `reflectHooks` (and so `nifra routes --hooks`, and the hook-scope diff `nifra upgrade` saves) lists the runtimes a route resolved at registration beside its hooks: `responseContract` named by its mode, `effectLedger` and `idempotency`, each with the site `route`. A merged route that gains a parent's contract on upgrade now shows up in `nifra routes --hooks --since`.
+  
+  The release gate fails a minor or major release that has no upgrade recipe of its own.
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- ac65b5c: `nifra doctor` prints its full report again: the bundler, the dependency scan scope, production readiness, each undeclared import and duplicate install with its fix, and the advisories (a CLI that differs from the project's nifra, mixed nifra versions, stale `file:` entries in `bun.lock`, stale MCP pins). It had printed only whether it passed, while `--json` and the MCP tool carried the detail.
+- 426cbcd: `nifra check` reports a raw `Response` return (NF-C007) only inside a route handler: a function passed to `.get("/path", …)` and the other method registrations, a function value of an `implement(contract, {...})` map, a local function either one names, and a local function a handler returns a call to. A helper that returns a `Response` for an auth stage's `rejected`, or any other function no route registers, is no longer flagged. A handler registered from data, such as a loop over route objects, is not followed.
+- 3edee08: `nifra verify --release` runs a `site` gate, `bun run check:site`, after `sitemap`. A project without that script reports the gate as undeclared, as it does for the other repository gates.
+- a3e6c9f: `nifra upgrade 5.2.0` prints what changes for a 5.1 app: closed header schemas read only declared names, `extra: "strip"` projects tagged unions, the development hook audit reports more ordering mistakes (and throws on them under `unusedScopedHooks: "error"`), NF-C043, the wider capability walk, the unpinned MCP launch and the linked-repository refusal.
+- Updated dependencies [9498cf8]
+- Updated dependencies [1f3ff32]
+- Updated dependencies [4bb8e52]
+- Updated dependencies [cdff19d]
+- Updated dependencies [5edd0ba]
+- Updated dependencies [000b4cb]
+- Updated dependencies [c5455fb]
+- Updated dependencies [6082ba5]
+- Updated dependencies [fd58beb]
+- Updated dependencies [ea25a61]
+- Updated dependencies [ed13e36]
+  - @nifrajs/agent-review@5.2.0
+  - @nifrajs/client@5.2.0
+  - @nifrajs/core@5.2.0
+  - @nifrajs/i18n@5.2.0
+  - @nifrajs/mcp@5.2.0
+  - @nifrajs/mcp-db@5.2.0
+  - @nifrajs/runner@5.2.0
+  - @nifrajs/schema@5.2.0
+  - @nifrajs/testing@5.2.0
+  - @nifrajs/web@5.2.0
+
 ## 5.1.0
 
 ### Minor Changes

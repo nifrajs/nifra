@@ -312,9 +312,12 @@ export interface RouteSchema {
    * The schema must cover every path param; with the strict default an undeclared path param is rejected.
    * When omitted, `c.params` stays the path-inferred `Record<name, string>`. */
   readonly params?: StandardSchemaV1
-  /** Optional request-header schema. Header names are normalized to lower-case and the validated
-   * output is exposed as `c.headers`; use lower-case keys because HTTP header names are
-   * case-insensitive. */
+  /** Optional request-header schema; the validated output is `c.headers` and a failure is a `422`.
+   * Every client sends headers a route never declares (`host`, `user-agent`, `accept`), so a closed
+   * object schema (`t.object`) validates only the names it declares, each read case-insensitively and
+   * keyed as declared. `t.headers` is the open form: it receives every header, names lower-cased,
+   * and coerces values like `t.query`. A schema that does not expose its JSON Schema (a zod
+   * `.strict()` or valibot `strictObject`) receives every header, so declare it open. */
   readonly headers?: StandardSchemaV1
   /** Optional request-cookie schema. It validates the cookies parsed from the `Cookie` header -
    * names as sent, values URL-decoded strings, the first of a repeated name - before the handler
@@ -446,7 +449,7 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
   /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */
   readonly header: (name: string) => string | null
   readonly params: ParamsOf<S, Path>
-  /** Lower-case request headers, validated/coerced when `schema.headers` is declared. */
+  /** Request headers, names lower-cased; when `schema.headers` is declared, its validated output. */
   readonly headers: HeadersOf<S>
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>

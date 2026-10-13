@@ -39,6 +39,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import { Glob } from "bun"
 import ts from "typescript"
+import { evaluateDocConsts } from "./doc-code-consts.ts"
 
 // `resolve` collapses the `scripts/..` segment: TypeScript normalizes `SourceFile.fileName`, so an
 // un-normalized WORK made the `startsWith(WORK)` diagnostic filter below match NOTHING - silently
@@ -63,20 +64,10 @@ interface Sample {
   readonly code: string
 }
 
-/** Mirrors gen-llms.ts's `extractCodeConsts` - kept local because importing that script would run its
- * top-level file generation as a side effect. Both read the same `const NAME = `...`` doc-snippet shape. */
-export function extractConsts(src: string): Map<string, string> {
-  const out = new Map<string, string>()
-  for (const m of src.matchAll(/\bconst\s+(\w+)\s*=\s*`((?:[^`\\]|\\.)*)`/g)) {
-    out.set(
-      m[1] as string,
-      (m[2] as string)
-        .replace(/\\`/g, "`")
-        .replace(/\\\$\{/g, "${")
-        .replace(/\\\\/g, "\\"),
-    )
-  }
-  return out
+/** Each doc-page const the page can show as code, evaluated the way gen-llms.ts reads it for the
+ * corpus (doc-code-consts.ts), so the samples checked here are the examples it ships. */
+export function extractConsts(src: string, file = "page.tsx"): Map<string, string> {
+  return new Map(evaluateDocConsts(file, src).values)
 }
 
 /** A snippet that references `@nifrajs/*` - the universe this gate cares about. The two gates below
@@ -108,7 +99,7 @@ function countSkipped(): number {
   let skipped = 0
   for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
     const src = readFileSync(`${ROOT}/${file}`, "utf8")
-    for (const [, code] of extractConsts(src)) if (isSkippedFragment(code)) skipped++
+    for (const [, code] of extractConsts(src, file)) if (isSkippedFragment(code)) skipped++
   }
   return skipped
 }
@@ -117,7 +108,7 @@ function collectSamples(root: string): Sample[] {
   const samples: Sample[] = []
   for (const file of new Glob("site/routes/docs/*.tsx").scanSync(root)) {
     const src = readFileSync(`${root}/${file}`, "utf8")
-    for (const [name, code] of extractConsts(src)) {
+    for (const [name, code] of extractConsts(src, file)) {
       if (isCheckable(code)) samples.push({ page: basename(file), name, code })
     }
   }

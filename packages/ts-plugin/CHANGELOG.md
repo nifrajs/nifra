@@ -1,5 +1,24 @@
 # @nifrajs/ts-plugin
 
+## 5.2.0
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- Updated dependencies [9498cf8]
+- Updated dependencies [1f3ff32]
+- Updated dependencies [4bb8e52]
+- Updated dependencies [cdff19d]
+- Updated dependencies [5edd0ba]
+- Updated dependencies [000b4cb]
+- Updated dependencies [c5455fb]
+- Updated dependencies [6082ba5]
+- Updated dependencies [fd58beb]
+- Updated dependencies [ea25a61]
+- Updated dependencies [ed13e36]
+  - @nifrajs/core@5.2.0
+  - @nifrajs/web@5.2.0
+
 ## 5.1.0
 
 ### Patch Changes

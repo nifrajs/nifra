@@ -121,7 +121,8 @@ export interface LayoutMigrationIssue {
 export interface LayoutMigrationFollowUp {
   readonly file: string
   readonly reason: string
-  readonly command: string
+  /** The command that settles it; absent when the step is an edit, such as a comment to update. */
+  readonly command?: string
 }
 
 export interface LayoutMigrationResult {
@@ -1174,6 +1175,42 @@ function liveSpecifierSpans(
     }
   }
   return spans
+}
+
+/**
+ * The comment spans of a JS/TS module: the leading and trailing trivia of each token. Empty when the
+ * compiler cannot walk the tokens, so every mention in the file stays an issue.
+ */
+function triviaCommentRanges(
+  ts: typeof TS,
+  file: string,
+  text: string,
+): Array<readonly [number, number]> {
+  const spans = new Map<number, number>()
+  const add = (ranges: readonly TS.CommentRange[] | undefined): void => {
+    for (const range of ranges ?? []) spans.set(range.pos, range.end)
+  }
+  try {
+    const kind = /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind)
+    const visit = (node: TS.Node): void => {
+      // A JSDoc block is itself one of the comments its token's trivia holds; JSX text is not trivia.
+      if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode)
+        return
+      if (ts.isJsxText(node)) return
+      const children = node.getChildren(source)
+      if (children.length > 0) {
+        for (const child of children) visit(child)
+        return
+      }
+      add(ts.getLeadingCommentRanges(text, node.pos))
+      add(ts.getTrailingCommentRanges(text, node.end))
+    }
+    visit(source)
+  } catch {
+    return []
+  }
+  return [...spans]
 }
 
 const OWN_DIR = new Set(["import.meta.dir", "import.meta.dirname", "__dirname"])
@@ -2596,14 +2633,17 @@ export async function migrateLayout(
         tsconfigs.files.get(file)?.text ?? readFileSync(join(root, file), "utf8"),
       ])
   }
+  // A mention only in comments is worth updating, not a decision: it never changes what runs.
+  const commentFollowUps: LayoutMigrationFollowUp[] = []
   for (const [file, text] of scanned) {
     let live: ReadonlyArray<readonly [number, number]> | undefined
+    let comments: ReadonlyArray<readonly [number, number]> | undefined
     for (const [from, to] of moveMap) {
       // `shared/lib/x.ts` contains `lib/x.ts`; that is the new path, not a stale one.
       const newPrefix = to.endsWith(from) ? to.slice(0, to.length - from.length) : undefined
       const stale = [
         ...text.matchAll(new RegExp(`(?<![\\w.-])${escapeRegExp(from)}(?![\\w])`, "g")),
-      ].some((match) => {
+      ].filter((match) => {
         if (newPrefix !== undefined && text.slice(0, match.index).endsWith(newPrefix)) return false
         // An import that resolves after the moves is current, even when it still reads like the old
         // path: `./x.json` from a module that moved together with `x.json`.
@@ -2611,7 +2651,16 @@ export async function migrateLayout(
         const end = match.index + from.length
         return !live.some(([start, stop]) => start <= match.index && end <= stop)
       })
-      if (stale) issues.push({ file, reason: `mentions "${from}" by path; it moved to "${to}"` })
+      if (stale.length === 0) continue
+      comments ??= /\.[cm]?[jt]sx?$/.test(file) ? triviaCommentRanges(ts, file, text) : []
+      const inComments = stale.every((match) =>
+        comments?.some(
+          ([start, stop]) => start <= match.index && match.index + from.length <= stop,
+        ),
+      )
+      if (inComments)
+        commentFollowUps.push({ file, reason: `a comment names "${from}", which moved to "${to}"` })
+      else issues.push({ file, reason: `mentions "${from}" by path; it moved to "${to}"` })
     }
   }
 
@@ -2735,7 +2784,7 @@ export async function migrateLayout(
         })
   for (const [file, text] of schemaPlan?.edits ?? []) final.set(file, text)
   const schemas = (schemaPlan?.entries ?? []).filter((entry) => entry.status === "missing")
-  const followUps: LayoutMigrationFollowUp[] = []
+  const followUps: LayoutMigrationFollowUp[] = [...commentFollowUps]
   for (const [file, text] of final) {
     if (!file.startsWith("routes/") || !/\.backend\.[cm]?[jt]s$/.test(file)) continue
     for (const { name, schema } of missingOutputSchemas(text)) {

@@ -1,5 +1,33 @@
 # @nifrajs/testing
 
+## 5.2.0
+
+### Patch Changes
+
+- 9498cf8: The package ships its `CHANGELOG.md`, so the installed package has the notes for every version, as the GitHub release does. Before, the tarball held only the code, `README.md`, `LICENSE` and `package.json`.
+- 1f3ff32: A closed request-header schema (`headers: t.object({...})`) validates only the header names it declares, each read case-insensitively and keyed as declared. Every client sends headers a route never declares (`host`, `user-agent`, `accept`), so such a schema used to answer every over-the-wire request with a 422; it now matches the OpenAPI document, which lists one `in: header` parameter per declared name. Open schemas, and schemas that do not expose their JSON Schema, still receive every header. `declaredHeaderNames` is exported from `@nifrajs/core/reflection`.
+  
+  `t.headers({...})` is the open header-slot schema: every header arrives with its name lower-cased, and declared `t.integer()` / `t.number()` / `t.boolean()` fields are coerced from text. It refuses an upper-case name.
+  
+  `runAdversarialContract` sends the headers real clients send (`accept`, `accept-encoding`, `accept-language`, `user-agent`), validates a header witness the way the route's slot does, and names the refused fields when a witness is rejected or a valid witness is answered with a validation 422.
+- Updated dependencies [9498cf8]
+- Updated dependencies [1f3ff32]
+- Updated dependencies [4bb8e52]
+- Updated dependencies [cdff19d]
+- Updated dependencies [5edd0ba]
+- Updated dependencies [000b4cb]
+- Updated dependencies [c5455fb]
+- Updated dependencies [6082ba5]
+- Updated dependencies [fd58beb]
+- Updated dependencies [ea25a61]
+- Updated dependencies [ed13e36]
+  - @nifrajs/agent@5.2.0
+  - @nifrajs/client@5.2.0
+  - @nifrajs/core@5.2.0
+  - @nifrajs/mcp@5.2.0
+  - @nifrajs/mock@5.2.0
+  - @nifrajs/webmcp@5.2.0
+
 ## 5.1.0
 
 ### Patch Changes

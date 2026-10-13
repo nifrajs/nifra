@@ -1171,7 +1171,7 @@ describe("collectDoctorResult - CLI-vs-project version drift", () => {
     return lines.join("\n")
   }
 
-  test("the drift fix names the command that re-pins the project's MCP launch", async () => {
+  test("the drift fix names the command that points the project's MCP launch at its install", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-drift-"))
     try {
       await writeFile(
@@ -1180,7 +1180,7 @@ describe("collectDoctorResult - CLI-vs-project version drift", () => {
       )
       await installCore(dir, "2.11.3")
       expect(await printed(dir, "2.10.0")).toContain(
-        "`bunx @nifrajs/cli@2.10.0 init-agents --sync-mcp` re-pins the project's MCP launch",
+        "`bunx @nifrajs/cli@2.10.0 init-agents --sync-mcp` points the project's MCP launch",
       )
     } finally {
       await rm(dir, { recursive: true, force: true })
@@ -1219,6 +1219,38 @@ describe("collectDoctorResult - CLI-vs-project version drift", () => {
           mcpServers: { nifra: { command: "bunx", args: ["@nifrajs/cli@2.11.3", "mcp"] } },
         }),
       )
+      expect((await collectDoctorResult(dir)).staleMcpPins).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a project that declares @nifrajs/cli is told to drop the pin, even one at its own version", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-unpin-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "@nifrajs/core": "^2.11.0" },
+          devDependencies: { "@nifrajs/cli": "^2.11.0" },
+        }),
+      )
+      await installCore(dir, "2.11.3")
+      const launch = (spec: string) =>
+        JSON.stringify({ mcpServers: { nifra: { command: "bunx", args: [spec, "mcp"] } } })
+      await writeFile(join(dir, ".mcp.json"), launch("@nifrajs/cli@2.11.3"))
+      const result = await collectDoctorResult(dir, { cliVersion: "2.11.3" })
+      expect(result.staleMcpPins).toEqual({
+        target: null,
+        files: [{ path: ".mcp.json", pinned: ["2.11.3"] }],
+      })
+      expect(result.ok).toBe(true)
+      const out = await printed(dir, "2.11.3")
+      expect(out).toContain("while the project installs its own CLI")
+      expect(out).toContain("drops the pin so the launch runs the installed CLI")
+
+      await writeFile(join(dir, ".mcp.json"), launch("@nifrajs/cli"))
       expect((await collectDoctorResult(dir)).staleMcpPins).toBeUndefined()
     } finally {
       await rm(dir, { recursive: true, force: true })

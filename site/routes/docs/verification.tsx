@@ -176,8 +176,11 @@ export default function Verification() {
         The count does not fail a level on its own. To make L1 require enforcement, add a{" "}
         <code>baseline</code> rule selecting <code>hasResponse: true</code>: unlike{" "}
         <code>rules</code>, where the first match owns a route, a baseline rule is checked on every
-        route it matches, so one entry covers every class. <code>nifra assure --strict</code> also fails
-        while any declared route is typed-only or warn-only.
+        route it matches, so one entry covers every class. A new app from <code>create-nifra</code>{" "}
+        ships this baseline in its <code>nifra.assurance.ts</code>, beside the{" "}
+        <code>responseContract(&quot;enforce&quot;)</code> its backend installs.{" "}
+        <code>nifra assure --strict</code> also fails while any declared route is typed-only or
+        warn-only.
       </p>
       <CodeBlock code={CONTRACTS} lang="ts" />
 

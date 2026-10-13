@@ -19,9 +19,14 @@ nifra init-agents
 
 # Then restart the agent so it picks the server up.
 
-# The server is pinned to an exact @nifrajs/cli. After upgrading nifra, re-pin it to the version the
-# project installs. Only that version string changes; every other byte of every file is kept.
+# A project that declares @nifrajs/cli launches \`bunx @nifrajs/cli mcp\`, unpinned: bunx runs the
+# installed CLI, so the server moves with every upgrade. Elsewhere the launch is pinned to an exact
+# version, since an unpinned bunx would fetch the latest release.
+# This moves an old pinned launch to that form: unpinned when the project declares the CLI, else the
+# version it installs. Only the version string changes; every other byte of every file is kept.
 # At a workspace root whose one nifra app is a member, the launch also names it: \`mcp app\`.
+# Run in that member, it also re-pins the root's files whose every nifra launch serves it (they stay
+# pinned: the root's own node_modules need not hold the CLI).
 nifra init-agents --sync-mcp`
 
 const LOOP = `# 1. What is here?

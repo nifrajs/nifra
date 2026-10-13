@@ -17,7 +17,12 @@ import {
   validCapabilityId,
 } from "@nifrajs/core/capabilities"
 import { expandOptionalParams } from "@nifrajs/core/pattern"
-import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
+import {
+  type ReflectedMount,
+  type ReflectedRoute,
+  reflectRouteSites,
+  reflectRoutes,
+} from "@nifrajs/core/reflection"
 import {
   scanSkippedRouteText,
   scanStaticRouteText,
@@ -25,6 +30,7 @@ import {
   stripComments,
   walkSource,
 } from "./check.ts"
+import { projectSite } from "./project-site.ts"
 
 // Import and re-export clauses are spelled out (a default binding, then `* as ns` or a `{ … }` list)
 // rather than scanned lazily, which is quadratic on a long semicolon-free module.
@@ -371,8 +377,13 @@ export async function collectCapabilityProjectReport(
   const violations: CapabilityImportViolation[] = []
   const truncations: CapabilityProvenanceTruncation[] = []
   const reflectedRoutes = options.routes ?? reflectRoutes(source)
+  // The module that registered each route, recorded while the app loaded: it covers the paths the
+  // text scan cannot read (a template literal, a server a helper builds).
+  const registered = reflectRouteSites(source)
   for (const route of reflectedRoutes) {
     const modules = new Set(automatic.get(routeKey(route.method, route.path)) ?? [])
+    const site = projectSite(cwd, registered.get(`${route.method} ${route.path}`))?.file
+    if (site !== undefined && sources.has(site)) modules.add(site)
     for (const association of policy.provenance.routeModules ?? []) {
       if (
         matchesAssuranceSelector(route, {
@@ -393,13 +404,14 @@ export async function collectCapabilityProjectReport(
       policy,
       sources,
     )
-    const site = modules.size === 0 ? skipped.get(routeKey(route.method, route.path)) : undefined
+    const skippedAt =
+      modules.size === 0 ? skipped.get(routeKey(route.method, route.path)) : undefined
     const uncoveredReason =
       modules.size > 0
         ? undefined
-        : site === undefined
+        : skippedAt === undefined
           ? "no source file registers it with a path the static scan can read; map it with capabilities.provenance.routeModules"
-          : `${site} appears to register it on a server the static scan cannot identify (built by a helper that is neither \`server()\` nor imported from a module that calls it); call server() there, or map the route with capabilities.provenance.routeModules`
+          : `${skippedAt} appears to register it on a server the static scan cannot identify (built by a helper that is neither \`server()\` nor imported from a module that calls it); call server() there, or map the route with capabilities.provenance.routeModules`
     const covered = modules.size > 0 && walked.covered
     evidenceRoutes.push(
       uncoveredReason === undefined

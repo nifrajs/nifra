@@ -32,6 +32,7 @@ const constants: Array<{ file: string; re: RegExp }> = [
   { file: "packages/cli/src/cli.ts", re: /(CLI_VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/cli/src/mcp-http.ts", re: /(const VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/core/src/index.ts", re: /(export const VERSION\s*=\s*)"[^"]+"/ },
+  { file: "packages/core/src/server/core-copies.ts", re: /(const COPY_VERSION\s*=\s*)"[^"]+"/ },
 ]
 
 for (const { file, re } of constants) {

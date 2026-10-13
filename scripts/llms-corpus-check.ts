@@ -41,3 +41,19 @@ export function staleDeclarations(pkgs: readonly DeclaredPackage[]): string[] {
 export function outputIsStale(path: string, contents: string): boolean {
   return (existsSync(path) ? readFileSync(path, "utf8") : undefined) !== contents
 }
+
+/** Each fenced code block in `markdown` with nothing but blank lines inside, by its opening line. */
+export function emptyFences(markdown: string): string[] {
+  const lines = markdown.split("\n")
+  const empty: string[] = []
+  for (let at = 0; at < lines.length; at++) {
+    const open = /^```([\w-]*)\s*$/.exec(lines[at] ?? "")
+    if (open === null) continue
+    let close = at + 1
+    while (close < lines.length && !/^```\s*$/.test(lines[close] ?? "")) close++
+    if (lines.slice(at + 1, close).every((line) => line.trim() === ""))
+      empty.push(`line ${at + 1}: \`\`\`${open[1] ?? ""} with no code`)
+    at = close
+  }
+  return empty
+}

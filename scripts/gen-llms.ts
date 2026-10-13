@@ -18,7 +18,9 @@ import { basename } from "node:path"
 import { Glob } from "bun"
 import ts from "typescript"
 import { codeUnitOrder } from "./code-unit-order.ts"
-import { outputIsStale, staleDeclarations } from "./llms-corpus-check.ts"
+import { evaluateDocConsts } from "./doc-code-consts.ts"
+import { jsxToMarkdown } from "./llms-convert.ts"
+import { emptyFences, outputIsStale, staleDeclarations } from "./llms-corpus-check.ts"
 
 const ROOT = `${import.meta.dir}/..`
 
@@ -97,108 +99,6 @@ function extractMeta(src: string): { title: string; description: string } {
   return { title: m ? unesc(m[1]!) : "", description: m ? unesc(m[2]!) : "" }
 }
 
-/** `const NAME = \`…code…\`` → map of name → code (template literals; unescape \\\` and \\${). */
-function extractCodeConsts(src: string): Map<string, string> {
-  const out = new Map<string, string>()
-  const re = /\bconst\s+(\w+)\s*=\s*`((?:[^`\\]|\\.)*)`/g
-  for (const m of src.matchAll(re)) {
-    const code = m[2]!
-      .replace(/\\`/g, "`")
-      .replace(/\\\$\{/g, "${")
-      .replace(/\\\\/g, "\\")
-    out.set(m[1]!, code)
-  }
-  return out
-}
-
-function decodeEntities(s: string): string {
-  // `&amp;` decodes LAST: decoding it first turns `&amp;lt;` into `&lt;` which the next pass then
-  // wrongly decodes again (double-unescaping) - the text meant a literal "&lt;".
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-}
-
-/** Resolve simple JSX expression containers in prose: {" "} → space, {"text"} → text, {`x`} → x. */
-function resolveExpressions(s: string): string {
-  return s
-    .replace(/\{"\s*"\}/g, " ")
-    .replace(/\{"((?:[^"\\]|\\.)*)"\}/g, (_, t) => t.replace(/\\"/g, '"'))
-    .replace(/\{`((?:[^`\\]|\\.)*)`\}/g, (_, t) => t)
-}
-
-/** A line that's leftover JSX-expression residue (e.g. a `{ARRAY.map((x) => (` data table that the
- * converter can't evaluate) rather than prose. Dropped during conversion - runs while code blocks are
- * still placeholders, so real code is never matched. Keeps blank lines + fence placeholders. */
-function isJsxResidue(line: string): boolean {
-  if (line === "" || /^@@FENCE\d+@@$/.test(line)) return false
-  if (/^\{[\w$]+(?:\.[\w$]+)*(?:\.map\b|\()/.test(line)) return true // {FRAMEWORKS.map((f) => (  {fn(
-  if (/^`?\{[\w$]+(?:\.[\w$]+)+\}`?$/.test(line)) return true // {f.name}  `{f.pkg}`
-  if (/^[)\]}]+[);,]*$/.test(line)) return true // ))}  )}  )  };
-  return false
-}
-
-/** Convert a doc page's JSX component body to markdown. Code blocks are pulled out as placeholders
- * BEFORE prose transforms so their raw `<`/`>`/`&`/`{}` survive untouched, then restored as fences. */
-function jsxToMarkdown(src: string, consts: Map<string, string>): string {
-  // Strip the code-block consts (template literals) FIRST - their example snippets contain
-  // `export default function` / `return (` that would otherwise be mistaken for the real component.
-  const stripped = src.replace(/\bconst\s+\w+\s*=\s*`(?:[^`\\]|\\.)*`/g, "")
-  const compStart = stripped.search(/export\s+default/)
-  const start = stripped.indexOf("return (", compStart < 0 ? 0 : compStart)
-  if (start < 0) return ""
-  let body = stripped.slice(start + "return (".length, stripped.lastIndexOf(")"))
-
-  // 1. Protect code: <CodeBlock code={NAME} /> → placeholder.
-  const fences: string[] = []
-  body = body.replace(/<CodeBlock\s+code=\{(\w+)\}[^>]*\/>/g, (_, name) => {
-    const code = consts.get(name) ?? ""
-    fences.push(`\`\`\`ts\n${code.trim()}\n\`\`\``)
-    return `\n\n@@FENCE${fences.length - 1}@@\n\n`
-  })
-
-  // 2. Headings (drop the page <h1>, which duplicates the meta title we emit above).
-  body = body
-    .replace(/<h1[^>]*>[\s\S]*?<\/h1>/g, "")
-    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/g, "\n\n### $1\n\n")
-    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/g, "\n\n#### $1\n\n")
-  // 3. Links, lists, paragraphs.
-  body = body
-    .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g, "[$2]($1)")
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/g, "\n- $1")
-    .replace(/<\/?(?:ul|ol)[^>]*>/g, "\n")
-    .replace(/<p[^>]*>([\s\S]*?)<\/p>/g, "\n\n$1\n\n")
-  // 4. Inline emphasis + code → markdown.
-  body = body
-    .replace(/<\/?(?:b|strong)>/g, "**")
-    .replace(/<\/?(?:i|em)>/g, "_")
-    .replace(/<code>([\s\S]*?)<\/code>/g, (_, t) => `\`${resolveExpressions(t)}\``)
-  // 5. Resolve remaining JSX expressions, strip leftover tags, decode entities.
-  body = resolveExpressions(body).replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
-  // Strip leftover tags to a fixpoint: a single pass can splice removed delimiters into a new tag
-  // (`<<b>i>` survives one pass as `<i>`).
-  for (let prev = ""; prev !== body; ) {
-    prev = body
-    body = body.replace(/<[^>]+>/g, "")
-  }
-  body = decodeEntities(body)
-  // 6. Normalize whitespace WHILE fences are still placeholders, so trimming the JSX indentation off
-  // prose lines (4-space lead would otherwise read as a markdown code block) never touches the code.
-  body = body
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => !isJsxResidue(line))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-  // Then restore the fenced code blocks verbatim (their own indentation preserved).
-  body = body.replace(/@@FENCE(\d+)@@/g, (_, i) => fences[Number(i)] ?? "")
-  return body.trim()
-}
-
 /** Identifiers a package's `src/index.ts` re-exports (values + types), sorted + de-duped. */
 function exportsOf(indexSrc: string): string[] {
   const names = new Set<string>()
@@ -249,8 +149,8 @@ for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
   if (slug.startsWith("_")) continue // _layout etc.
   const src = read(`${ROOT}/${file}`)
   const { title, description } = extractMeta(src)
-  const consts = extractCodeConsts(src)
-  for (const [name, code] of consts) {
+  const consts = evaluateDocConsts(file, src)
+  for (const [name, code] of consts.values) {
     if (isCheckableExample(code)) examples.push({ name, topic: title, slug, code: code.trim() })
   }
   docs.push({
@@ -258,9 +158,15 @@ for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
     route: slug === "index" ? "/docs" : `/docs/${slug}`,
     title,
     description,
-    markdown: jsxToMarkdown(src, consts),
+    markdown: jsxToMarkdown(file, src, consts),
   })
 }
+// An empty fence is a code block the converter lost; the corpus must never ship one.
+const emptied = docs.flatMap((doc) =>
+  emptyFences(doc.markdown).map((line) => `site/routes/docs/${doc.slug}.tsx: ${line}`),
+)
+if (emptied.length > 0)
+  throw new Error(`LLM corpus has empty code blocks:\n  ${emptied.join("\n  ")}`)
 docs.sort((a, b) => {
   const ia = DOC_ORDER.indexOf(a.slug)
   const ib = DOC_ORDER.indexOf(b.slug)

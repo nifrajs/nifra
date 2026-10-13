@@ -156,13 +156,13 @@ const isFile = (path: string): Promise<boolean> =>
     .catch(() => false)
 
 /**
- * The nifra projects among `dir`'s package-manager workspace members, in declaration order. Empty when
- * `dir` declares no `workspaces`. A member is a directory a pattern matches that holds a `package.json`;
- * `node_modules` is never a member.
+ * `dir`'s package-manager workspace members, in declaration order; `null` when `dir` declares no
+ * `workspaces`. A member is a directory a pattern matches that holds a `package.json`; `node_modules`
+ * is never a member.
  */
-export async function workspaceProjects(dir: string): Promise<string[]> {
+export async function workspaceMemberDirs(dir: string): Promise<string[] | null> {
   const patterns = await workspacePatterns(dir)
-  if (patterns === null) return []
+  if (patterns === null) return null
   const members = new Set<string>()
   const budget = { directories: MAX_WORKSPACE_DIRECTORIES }
   for (const pattern of patterns) {
@@ -171,8 +171,14 @@ export async function workspaceProjects(dir: string): Promise<string[]> {
       members.add(join(dir, member))
     }
   }
+  return [...members]
+}
+
+/** The nifra projects among `dir`'s workspace members, in declaration order. */
+export async function workspaceProjects(dir: string): Promise<string[]> {
   const projects: string[] = []
-  for (const member of members) if (await isNifraProjectDir(member)) projects.push(member)
+  for (const member of (await workspaceMemberDirs(dir)) ?? [])
+    if (await isNifraProjectDir(member)) projects.push(member)
   return projects
 }
 
@@ -376,7 +382,7 @@ export interface ToolingDrift {
 export const driftNote = (drift: ToolingDrift): string =>
   `WARNING: this server runs nifra CLI ${drift.cli}, but the project installs ${drift.package} ${drift.project}. ` +
   "Types, checks, and docs may describe a different version than your code builds with. " +
-  `Fix: re-pin the project's MCP launch to the nifra it installs with \`${syncMcpCommand(drift.cli)}\` (run in the project directory), then restart the agent. ` +
+  `Fix: point the project's MCP launch at the nifra it installs with \`${syncMcpCommand(drift.cli)}\` (run in the project directory), then restart the agent. ` +
   "If this server is not launched from the project's .mcp.json, run the project's own CLI instead (`bunx --bun nifra mcp` from the project directory, or point the client at ./node_modules/.bin/nifra)."
 
 /** Feature-level agreement. Patch drift is not reported: it never changes the surface being described. */
@@ -434,7 +440,7 @@ export async function installedNifraVersion(
   return undefined
 }
 
-/** The command that re-pins a project's MCP launch to the nifra it installs. Named with the running
+/** The command that points a project's MCP launch at the nifra it installs. Named with the running
  * CLI's own exact version: the binary printing this is the one known to have `--sync-mcp`, and it pins
  * to the project's version, not its own. */
 export const syncMcpCommand = (cliVersion: string): string =>

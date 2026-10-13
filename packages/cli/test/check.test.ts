@@ -1302,6 +1302,50 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     expect(found[0]?.snippet).toContain('"/real"')
   })
 
+  test("with an AST, only a Response a route handler returns is flagged", () => {
+    const lines = [
+      'import { server } from "@nifrajs/core"',
+      'import { implement } from "@nifrajs/core/contract"',
+      'const refuse = () => new Response("no", { status: 401 }) // not a handler',
+      'const passedByName = () => new Response("ref")',
+      "function render(body: string) {",
+      "  return new Response(body)",
+      "}",
+      "function list() {",
+      "  return Response.json([])",
+      "}",
+      "const app = server()",
+      "  .use(guard({ rejected: refuse }))",
+      '  .get("/inline", () => new Response("x"))',
+      '  .get("/ref", passedByName)',
+      '  .get(`/helper`, (c) => render("y"))',
+      '  .post("/then", (c) => fetch(c.req.url).then(() => new Response("z")))',
+      "export const impl = implement(users, {",
+      "  list,",
+      '  create: () => new Response("c"),',
+      "  update() {",
+      '    return new Response("u")',
+      "  },",
+      "})",
+      "",
+    ]
+    const found = scanResponseRoutes("backend.ts", lines.join("\n"), createSourceFacts(ts))
+    expect(found.map((f) => f.line)).toEqual([4, 6, 9, 13, 16, 19, 21])
+    // Without the AST every lexical match stays, the helper included.
+    expect(scanResponseRoutes("backend.ts", lines.join("\n")).map((f) => f.line)).toContain(3)
+  })
+
+  test("a handler registered from data is not followed", () => {
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'const routes = [{ path: "/a", handler: () => new Response("x") }]',
+      "const app = server()",
+      "for (const route of routes) app.get(route.path, route.handler)",
+      "",
+    ].join("\n")
+    expect(scanResponseRoutes("backend.ts", src, createSourceFacts(ts))).toEqual([])
+  })
+
   test("AST refinement ignores raw-Response text inside ordinary strings", () => {
     const facts = createSourceFacts(ts)
     const src = backend(

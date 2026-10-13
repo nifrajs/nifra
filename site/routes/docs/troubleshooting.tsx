@@ -437,6 +437,23 @@ export default function Troubleshooting() {
         "Left alone" - upgrade that repository on its own.
       </p>
 
+      <h2 id="stale-file-links">"records dependencies its file: packages no longer declare"</h2>
+      <p>
+        A <code>file:</code> dependency's own dependencies are recorded in <code>bun.lock</code> when
+        Bun first installs it, and Bun does not read that package's <code>package.json</code> again:
+        after the linked package moves to a new version of a dependency, <code>bun install</code>{" "}
+        (even with <code>--force</code>) keeps installing the recorded one beside it, so the app can
+        load two copies of the same package. <code>nifra doctor</code> (and <code>nifra check</code>,
+        as the <code>NF-D003</code> warning) compares each recorded entry with the linked{" "}
+        <code>package.json</code> and names every dependency that moved.
+      </p>
+      <p>
+        Run <code>bun update &lt;package&gt;</code> for each named package. <code>nifra upgrade</code>{" "}
+        reads the lock against the manifests it is about to write, and with <code>--write</code> drops
+        those entries so the next <code>bun install</code> records them again; run that install
+        before committing <code>bun.lock</code>, or <code>bun install --frozen-lockfile</code> fails.
+      </p>
+
       <h2>Still stuck?</h2>
       <p>
         Run <code>nifra check --json</code> as the done-gate - it surfaces the import-chain leaks,

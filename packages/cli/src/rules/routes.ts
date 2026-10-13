@@ -388,8 +388,9 @@ export const paramModifierRule: CheckRule = {
 
 /**
  * NF-C036: a registration whose path the static scan cannot read. The route still serves; what it
- * loses is every source-level analysis keyed by path - automatic capability provenance and the route
- * lints above - so it is reported as information, naming the expression.
+ * loses is every source-level analysis keyed by path - the route lints above, and the scan's half of
+ * capability provenance (the other half is the registering module recorded when the app loads) - so
+ * it is reported as information, naming the expression.
  */
 export const unresolvedRoutePathRule: CheckRule = {
   code: "NF-C036",
@@ -411,7 +412,7 @@ export const unresolvedRoutePathRule: CheckRule = {
           severity: "info",
           file: route.file,
           line: route.line,
-          message: `${route.method} ${route.expression} - the static scan cannot read this route path, so automatic capability provenance and the route lints do not see the route. Write the path as a string literal, or as a module-level \`const\` (optionally \`as const\`) in this file or exported from a project file it imports; mark a deliberately computed path with a \`// nifra-expect NF-C036: <reason>\` comment above the registration`,
+          message: `${route.method} ${route.expression} - the static scan cannot read this route path, so the route lints do not see the route, and capability provenance finds its module only from the app \`nifra.assurance.ts\` loads. Write the path as a string literal, or as a module-level \`const\` (optionally \`as const\`) in this file or exported from a project file it imports; mark a deliberately computed path with a \`// nifra-expect NF-C036: <reason>\` comment above the registration`,
           evidence: [`${route.method} ${route.expression}`],
           verify: "nifra check --lints-only",
         }),

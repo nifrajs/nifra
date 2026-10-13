@@ -168,8 +168,9 @@ nifra migrate --from tailwind --to stylex --dir src`}
         directory or <code>package.json</code> is never followed, and a group package installed by a
         link from outside the root is listed under &quot;Left alone&quot; for you to upgrade in its
         own repository. The MCP launch pin in <code>.mcp.json</code>, <code>.cursor/mcp.json</code>,{" "}
-        <code>CLAUDE.md</code> and <code>AGENTS.md</code> moves to the target, the edit{" "}
-        <code>nifra init-agents --sync-mcp</code> makes. Another version pinned outside{" "}
+        <code>CLAUDE.md</code> and <code>AGENTS.md</code> moves to the target, or is dropped when
+        the project declares <code>@nifrajs/cli</code> so the launch runs that install from then on:
+        the edit <code>nifra init-agents --sync-mcp</code> makes. Another version pinned outside{" "}
         <code>package.json</code> is listed with its line: the rest of an agent file, an MCP config
         elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
         workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
@@ -177,7 +178,21 @@ nifra migrate --from tailwind --to stylex --dir src`}
         prints how hook scope changed across the
         upgrade (<code>--no-hooks</code> skips that). <code>nifra doctor</code> and{" "}
         <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;
-        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>.
+        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>. A{" "}
+        <code>file:</code> package whose dependencies this upgrade moves keeps its old ones in{" "}
+        <code>bun.lock</code>, where Bun never refreshes them; the plan lists each, and{" "}
+        <code>--write</code> drops those entries so the next <code>bun install</code> records them
+        again (see <a href="/docs/troubleshooting#stale-file-links">stale file: links</a>).
+      </p>
+      <p>
+        A <code>link:</code> or <code>file:</code> dependency outside the root that installs its own{" "}
+        <code>@nifrajs/*</code> at another version stops the upgrade before anything is written: its
+        imports resolve from its own <code>node_modules</code>, so after the upgrade a{" "}
+        <code>server()</code> it builds cannot be merged into yours. The refusal names each one with
+        the commands that move it to the target; upgrade those first, or pass{" "}
+        <code>--allow-linked-skew</code> to go ahead. <code>nifra upgrade --list</code> shows the
+        targets with the notes of every release after the one you declare: what an app can observe
+        changing on the way up.
       </p>
 
       <h2>Scope</h2>

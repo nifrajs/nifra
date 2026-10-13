@@ -20,6 +20,9 @@ import {
   hookOriginOf,
   hookScopeOf,
   hookSourceOf,
+  type MergeAuthGapTag,
+  mergeAuthGapsOf,
+  routeSitesOf,
   staticHeadersOf,
 } from "./internal/hook-origins.ts"
 import {
@@ -32,6 +35,8 @@ import {
 import { NIFRA_BACKEND_EVIDENCE } from "./mount.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
+
+export { declaredHeaderNames } from "./server/headers.ts"
 
 /** JSON Schema permits either a schema object or the boolean schemas `true` and `false`. */
 export type JsonSchema = boolean | Readonly<Record<string, unknown>>
@@ -460,7 +465,9 @@ export interface ReflectedHook {
   readonly kind: HookKind
   /** The plugin that registered it, else the function's own name, else `(anonymous)`. */
   readonly name: string
-  /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`. */
+  /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`; `route`
+   * for a runtime the route resolved at registration (`responseContract`, `effectLedger`,
+   * `idempotency`), whose `name` is the contract mode or the runtime. */
   readonly site: string
   /** The header names a static `responseHeaders()` declaration sets. */
   readonly headers?: readonly string[]
@@ -558,6 +565,51 @@ const catalogOf = (
 
 const joinPath = (base: string, path: string): string =>
   base === "" ? path : path === "/" ? base : `${base}${path}`
+
+/** A `merge()` that authenticates none of its routes under a parent that authenticates its own. */
+export type ReflectedMergeAuthGap = MergeAuthGapTag
+
+/**
+ * Every `merge()` in the app, its merged servers included, whose server authenticates none of its
+ * routes while the parent's order-scoped auth - an `authenticate()` stage, or `authenticated` evidence
+ * scoped to subsequent routes - covers the parent's own: that auth never runs for a merged route.
+ * Recorded by a development load only (the same provenance {@link reflectHooks} reads), so reflect the
+ * app outside production. `nifra check` reports each one (NF-C043).
+ */
+export function reflectMergeAuthGaps(source: unknown): readonly ReflectedMergeAuthGap[] {
+  if (!isServerRecord(source)) return []
+  const gaps: ReflectedMergeAuthGap[] = []
+  const seen = new Set<object>()
+  const visit = (server: object): void => {
+    if (seen.has(server)) return
+    seen.add(server)
+    gaps.push(...mergeAuthGapsOf(server))
+    for (const adoption of adoptionsOf(server)) visit(adoption.source)
+  }
+  visit(source)
+  return gaps
+}
+
+/**
+ * Where each route was registered: `METHOD /path` (`WS` for a socket) mapped to the `file:line:col` of
+ * the call outside nifra's core that registered it, through every `group()` and `merge()`. Recorded only
+ * by a development load with `NIFRA_ROUTE_SITES=1` (the CLI sets it while it loads `nifra.assurance.ts`),
+ * so the map is empty otherwise. The paths are absolute, which is why they stay out of
+ * {@link reflectRoutes}, whose output is written into artifacts.
+ */
+export function reflectRouteSites(source: unknown): ReadonlyMap<string, string> {
+  const sites = new Map<string, string>()
+  if (!isServerRecord(source)) return sites
+  const seen = new Set<object>()
+  const visit = (server: object): void => {
+    if (seen.has(server)) return
+    seen.add(server)
+    for (const [key, site] of routeSitesOf(server)) if (!sites.has(key)) sites.set(key, site)
+    for (const adoption of adoptionsOf(server)) visit(adoption.source)
+  }
+  visit(source)
+  return sites
+}
 
 /**
  * Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin
@@ -698,16 +750,24 @@ export function reflectHooks(source: unknown): ReflectedHookReport {
       const entry = recordOf(route.entry)
       const chain = (field: string, kind: HookKind) =>
         entry === undefined ? [] : listOf(entry, field).flatMap((hook) => entriesOf(hook, kind))
+      // A runtime is pinned into the route when it registers (or is merged), so it is listed with the
+      // route's site rather than a hook's; the mode is the name so a warn -> enforce change shows.
+      const mode = recordOf(recordOf(entry?.responseContract)?.runtime)?.mode
+      const pinned = (present: boolean, kind: HookKind, name: string): ReflectedHook[] =>
+        present ? [{ kind, name, site: "route" }] : []
       routes.push({
         method: route.method,
         path: reportPath(route.path),
         hooks: [
           ...requestPhase(probes),
           ...chain("around", "around"),
+          ...pinned(entry?.ledgered !== undefined, "effectLedger", "effectLedger"),
           ...chain("authStages", "authenticate"),
           ...chain("derives", "derive"),
           ...chain("beforeHandle", "beforeHandle"),
+          ...pinned(entry?.idempotent !== undefined, "idempotency", "idempotency"),
           ...chain("afterHandle", "afterHandle"),
+          ...pinned(typeof mode === "string", "responseContract", String(mode)),
           ...chain("onError", "onError"),
           ...responsePhase(probes),
         ],

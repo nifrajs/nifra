@@ -233,9 +233,13 @@ export default function Capabilities() {
         a module-level <code>const</code> string, with or without <code>as const</code>. The{" "}
         <code>const</code> can live in the same file or be exported from a project file it imports.
         The same holds for a WebSocket route's <code>app.ws(path, ...)</code>. A path built at runtime, such as a template with <code>{"${...}"}</code> in it, cannot be read
-        this way. <code>nifra check</code> names that expression in an NF-C036 finding, because the
-        route then has no module to start from. List the module in{" "}
-        <code>provenance.routeModules</code> to give it one.
+        this way. So when <code>nifra.assurance.ts</code> loads the app, Nifra also records, in
+        development, the module whose call registered each route, and the walk starts there too: a
+        computed path, or a route on a server a helper builds, is still covered.{" "}
+        <code>nifra check</code> still names such an expression in an NF-C036 finding, since the
+        route lints read the source alone. When the registering module is not where the route&apos;s
+        code lives, such as a shared helper that registers other modules&apos; handlers, list the
+        right module in <code>provenance.routeModules</code>.
       </p>
 
       <h2>Runtime beacons</h2>

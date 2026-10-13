@@ -209,6 +209,19 @@ export const t = {
    * cookie the site has set - analytics, consent, other routes' sessions - so a strict allowlist
    * would 422 real traffic. Declare the cookies the route reads; the rest pass through. */
   cookies: textFields("t.cookies"),
+  /** A request-header schema for the `headers` route slot, with the same string->scalar COERCION as
+   * `t.query` (header values always arrive as strings). **Open**: it receives every header the client
+   * sent, names lower-cased, so the declared names must be lower-case too. A closed `t.object` in the
+   * slot also works, but validates only the names it declares and does not coerce. */
+  headers: <P extends Props>(props: P, options?: ObjectOptions) => {
+    for (const name of Object.keys(props)) {
+      if (name !== name.toLowerCase())
+        throw new TypeError(
+          `t.headers: declare "${name.toLowerCase()}", not "${name}" - header names arrive lower-cased`,
+        )
+    }
+    return textFields("t.headers")(props, options)
+  },
 
   /**
    * A loader value marked with `defer()`, streamed in after the shell. `inner` describes what the

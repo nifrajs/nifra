@@ -264,6 +264,15 @@ export default function Plugins() {
           </tr>
         </tbody>
       </table>
+      <p>
+        Two checks catch the silent cases. In development and tests, <code>unusedScopedHooks</code>{" "}
+        reports a hook followed only by <code>merge()</code> calls, and a <code>responseContract()</code>{" "}
+        or <code>effectLedger()</code> installed after routes it would have covered.{" "}
+        <code>nifra check</code> reports a <code>merge()</code> whose server authenticates none of its
+        routes while this server&rsquo;s <code>authenticate()</code> or auth plugin covers its own
+        (NF-C043); a module that is public on purpose takes{" "}
+        <code>{"// nifra-expect NF-C043: <reason>"}</code> on the merge line.
+      </p>
 
       <h2>Route/hook plugins: keep types with defineRouterPlugin</h2>
       <p>

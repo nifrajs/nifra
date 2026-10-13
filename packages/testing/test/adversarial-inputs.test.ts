@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test"
-import { server } from "@nifrajs/core"
+import { server, status } from "@nifrajs/core"
 import { explainAutoReflectJsonSchema } from "@nifrajs/mock"
 import { t } from "@nifrajs/schema"
 import { runAdversarialContract } from "../src/index.ts"
@@ -129,5 +129,67 @@ describe("the zod bridge says why a schema stayed opaque", () => {
     const app = server().post("/z", { body: fake }, () => ({ ok: true }))
     const report = await runAdversarialContract(app)
     expect(report.gaps[0]?.message).toContain("(zod's toJSONSchema threw")
+  })
+})
+
+describe("requests carry what real clients send", () => {
+  test("a closed header schema passes on a route with a body", async () => {
+    const app = server().post(
+      "/notes",
+      {
+        headers: t.object({ "x-tenant": t.string({ minLength: 1 }) }),
+        body: t.object({ text: t.string({ minLength: 1 }) }),
+        response: t.object({ saved: t.boolean() }),
+      },
+      () => ({ saved: true }),
+    )
+    const report = await runAdversarialContract(app)
+    expect(report.gaps).toEqual([])
+    expect(report.results.filter((result) => !result.ok)).toEqual([])
+  })
+
+  test("a header schema that refuses undeclared names is a gap naming what it refused", async () => {
+    const strict = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => {
+          const extra = Object.keys(Object(value)).filter((name) => name !== "x-tenant")
+          return extra.length === 0
+            ? { value }
+            : { issues: extra.map((name) => ({ message: "Unexpected property", path: [name] })) }
+        },
+      },
+    }
+    const app = server().get(
+      "/notes",
+      { headers: strict, response: t.object({ count: t.integer() }) },
+      () => ({ count: 1 }),
+    )
+    const report = await runAdversarialContract(app, {
+      witnesses: { "GET /notes": { headers: { "x-tenant": "1" } } },
+    })
+    expect(report.gaps.map((gap) => [gap.target, gap.code])).toEqual([
+      ["headers", "INVALID_WITNESS"],
+    ])
+    expect(report.gaps[0]?.message).toContain("user-agent - Unexpected property")
+    expect(report.gaps[0]?.message).toContain("a header schema must accept them")
+  })
+
+  test("a valid witness answered with a validation 422 names the refused fields", async () => {
+    const app = server()
+      .beforeHandle(() =>
+        status(422, {
+          ok: false,
+          error: "validation",
+          issues: [{ message: "Unexpected property", path: ["x-trace"] }],
+        }),
+      )
+      .get("/count", { response: t.object({ count: t.integer() }) }, () => ({ count: 1 }))
+    const report = await runAdversarialContract(app)
+    const failed = report.results.find((result) => result.kind === "response-conformance")
+    expect(failed?.message).toBe(
+      "valid witness returned non-success status 422: x-trace - Unexpected property",
+    )
   })
 })

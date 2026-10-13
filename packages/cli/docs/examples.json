@@ -30,6 +30,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server().get(\n  \"/dashboard\",\n  { cookies: t.cookies({ session: t.string(), page: t.optional(t.integer()) }) },\n  (c) => ({\n    session: c.cookies.session, // string - a request without it is a 422 before this runs\n    page: c.cookies.page ?? 1, // number | undefined - coerced from the cookie's text\n  }),\n)"
   },
   {
+    "name": "HEADERS",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  // Closed: validates only the names it declares, whatever else the client sends.\n  .get(\"/reports\", { headers: t.object({ \"x-tenant\": t.string() }) }, (c) => ({\n    tenant: c.headers[\"x-tenant\"], // string - a request without it is a 422\n  }))\n  // Open: every header arrives, names lower-cased, declared values coerced from text.\n  .get(\"/jobs\", { headers: t.headers({ \"x-retry\": t.optional(t.integer()) }) }, (c) => ({\n    retry: c.headers[\"x-retry\"] ?? 0, // number\n  }))"
+  },
+  {
     "name": "METHOD_ROUTES",
     "topic": "Nifra - API & typed client",
     "slug": "api",
@@ -550,6 +556,12 @@
     "topic": "Nifra - security & hardening",
     "slug": "security",
     "code": "import { server } from \"@nifrajs/core/server\"\n\nconst app = server()\n\n// A schema route is ALREADY bounded - the validated read enforces `maxBodyBytes`.\n// But a raw-body / file / BYO-validation route reads the body directly, which\n// `maxBodyBytes` does not cover. `c.boundedBody` caps that read:\napp.post(\"/import\", async (c) => {\n  const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB\n  // Over-cap throws a flat 413; a malformed Content-Length a 400 - as control-flow\n  // Responses (caught by the lifecycle like `throw redirect()`), so a handler can't\n  // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;\n  // a chunked / length-less body is aborted mid-stream once it crosses the cap.\n  return { received: bytes.byteLength } // a returned object is serialized as JSON 200\n})\n\napp.post(\"/rpc\", async (c) => {\n  const body = await c.boundedJson<{ method: string }>() // default: the server's maxBodyBytes\n  // …bad JSON → 400. Then validate `body` with your schema before trusting it.\n  return { method: body.method }\n})"
+  },
+  {
+    "name": "CONTRACT_REPORTS",
+    "topic": "Nifra - security & hardening",
+    "slug": "security",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { responseContract } from \"@nifrajs/core/response-contract\"\n\nconst counts = new Map<string, number>()\n\nexport const app = server().use(\n  responseContract(\"enforce\", {\n    extra: \"strip\",\n    // Every report, where the log speaks once per route. `route` is the pattern, so the keys stay bounded.\n    onReport: ({ kind, method, route }) => {\n      const key = `${kind} ${method} ${route}`\n      counts.set(key, (counts.get(key) ?? 0) + 1)\n    },\n  }),\n)"
   },
   {
     "name": "FORM",

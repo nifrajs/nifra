@@ -70,10 +70,43 @@ export interface ResponseContractOptions {
    * closed `t.object` reports them, so an enforced response becomes a 500 and the log names them.
    * `"strip"` drops them first, for any schema exposing its JSON Schema as `jsonSchema` (every
    * `@nifrajs/schema` `t` schema) - nested objects, arrays and records included. A union is projected
-   * only when exactly one branch can hold an object. Schemas without `jsonSchema` (zod, valibot) are
+   * when an object value can meet only one of its branches: a single object branch, or object
+   * branches that all require one key holding literals no two branches share (`ok: true` /
+   * `ok: false`, `kind: "a"` / `kind: "b"`). Schemas without `jsonSchema` (zod, valibot) are
    * unaffected: they already strip or reject by their own rules.
    */
   readonly extra?: "reject" | "strip"
+  /**
+   * `enforce` only: log the names of the fields that never reached the wire - dropped by `extra:
+   * "strip"` or by a validator that strips on its own - so a field the contract does not declare
+   * (a new column) shows up in the log instead of vanishing. Logged as a `warn` named "response
+   * contract", once per route for each distinct set of names, at most 32 sets per route. Values are
+   * never logged. Each response is compared with what was sent, so it costs a walk of the payload.
+   */
+  readonly logStripped?: boolean
+  /**
+   * Called for every response the contract has something to say about, for a metric or an alert, where
+   * the log speaks once per route. `violation`: enforce mode, the payload failed and a 500 went out in
+   * its place. `warn`: warn mode, the payload failed or carried undeclared top-level keys (`fields`)
+   * and was sent anyway. `stripped`: enforce mode, the payload was sent without `fields`. The message is
+   * the text the log line carries; values are never passed. Called before the response is sent; a hook
+   * that throws, rejects or is not a function is logged once and changes nothing. In enforce mode it costs the payload walk
+   * `logStripped` does.
+   */
+  readonly onReport?: (report: ResponseContractReport) => void
+}
+
+/** One response the contract reported on, passed to {@link ResponseContractOptions.onReport}. */
+export interface ResponseContractReport {
+  readonly kind: "violation" | "warn" | "stripped"
+  /** The route's method as registered, e.g. `GET`. */
+  readonly method: string
+  /** The route's path as registered, e.g. `/users/:id`, so a metric keyed by it stays bounded. */
+  readonly route: string
+  /** `stripped`: each field that never reached the wire (`user.passwordHash`, `items[].cost`), sorted.
+   * `warn`: the undeclared top-level keys that were sent, when they are the reason. */
+  readonly fields?: readonly string[] | undefined
+  readonly message: string
 }
 
 /** Success and status-specific error schemas captured by one route at registration time. */
@@ -86,8 +119,14 @@ export interface ResponseContractDefinition {
 export type ResponseContractOutcome =
   /** Nothing to report. `value` is what should be serialized (the original result, or the cleaned one). */
   | { readonly kind: "ok"; readonly value: unknown }
-  /** `warn` only: the payload differed from the contract. The ORIGINAL result is still served. */
-  | { readonly kind: "warn"; readonly value: unknown; readonly message: string }
+  /** Logged, then `value` is served: in `warn` the ORIGINAL result, in `enforce` (with
+   * `logStripped`) the cleaned one. `fields`: in `warn`, the undeclared keys when they are the reason. */
+  | {
+      readonly kind: "warn"
+      readonly value: unknown
+      readonly message: string
+      readonly fields?: readonly string[]
+    }
   /** `enforce` only: the payload cannot be reconciled with the contract, so it must not be sent. */
   | { readonly kind: "violation"; readonly message: string }
 
@@ -111,11 +150,6 @@ function projectorOf(schema: StandardSchemaV1): Projector | undefined {
   return found ?? undefined
 }
 
-const canHoldObject = (node: object): boolean => {
-  const type: unknown = Reflect.get(node, "type")
-  return type === undefined || type === "object" || type === "array"
-}
-
 const objectField = (node: object, key: string): object | undefined => {
   const value: unknown = Reflect.get(node, key)
   return typeof value === "object" && value !== null ? value : undefined
@@ -126,18 +160,7 @@ function compileProjector(node: unknown): Projector | undefined {
   const schema: object = node
   const type: unknown = Reflect.get(schema, "type")
   const branches: unknown = Reflect.get(schema, "anyOf") ?? Reflect.get(schema, "oneOf")
-  if (Array.isArray(branches)) {
-    // Which branch a value meets is the validator's call; projecting onto one of two object branches
-    // could strip the fields that make the other match.
-    const holders = branches.filter(
-      (branch): branch is object =>
-        typeof branch === "object" && branch !== null && canHoldObject(branch),
-    )
-    const only = holders.length === 1 ? compileProjector(holders[0]) : undefined
-    return only === undefined
-      ? undefined
-      : (value) => (typeof value === "object" && value !== null ? only(value) : value)
-  }
+  if (Array.isArray(branches)) return compileUnion(branches)
   if (type === "array") {
     const items: unknown = Reflect.get(schema, "items")
     const item = Array.isArray(items) ? undefined : compileProjector(items)
@@ -171,14 +194,128 @@ function compileProjector(node: unknown): Projector | undefined {
     if (!isPlainObject(value)) return value
     const out: Record<string, unknown> = closed ? {} : { ...value }
     for (const key of closed ? keys : nested.keys()) {
-      // A getter on a row class's prototype is a declared field; `Object.prototype`'s members are not.
-      if (!Object.hasOwn(value, key) && (!(key in value) || key in Object.prototype)) continue
+      if (!hasField(value, key)) continue
       const projector = nested.get(key)
       define(out, key, projector === undefined ? value[key] : projector(value[key]))
     }
     if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed)
     return out
   }
+}
+
+/** A getter on a row class's prototype is a declared field; `Object.prototype`'s members are not. */
+const hasField = (value: Record<string, unknown>, key: string): boolean =>
+  Object.hasOwn(value, key) || (key in value && !(key in Object.prototype))
+
+/**
+ * A union projects a value onto the one branch able to accept it, and leaves anything less certain to
+ * the validator. JSON Schema's `object` never matches an array nor `array` an object, so the two are
+ * routed apart; two object branches are told apart only by a discriminator (see
+ * {@link compileDiscriminated}). A branch that could hold anything (`{}`, `$ref`, `allOf`) stops it.
+ */
+function compileUnion(branches: readonly unknown[]): Projector | undefined {
+  const objects: object[] = []
+  const arrays: object[] = []
+  if (!sortBranches(branches, objects, arrays)) return undefined
+  const forArray = arrays.length === 1 ? compileProjector(arrays[0]) : undefined
+  const forObject =
+    objects.length === 1
+      ? compileProjector(objects[0])
+      : objects.length > 1
+        ? compileDiscriminated(objects)
+        : undefined
+  if (forArray === undefined && forObject === undefined) return undefined
+  return (value) => {
+    if (Array.isArray(value)) return forArray === undefined ? value : forArray(value)
+    return forObject !== undefined && isPlainObject(value) ? forObject(value) : value
+  }
+}
+
+/** Sort a union's branches, nested unions flattened; `false` when one could hold anything. */
+function sortBranches(branches: readonly unknown[], objects: object[], arrays: object[]): boolean {
+  for (const branch of branches) {
+    if (branch === false) continue
+    if (typeof branch !== "object" || branch === null) return false
+    const nested: unknown = Reflect.get(branch, "anyOf") ?? Reflect.get(branch, "oneOf")
+    if (Array.isArray(nested)) {
+      if (!sortBranches(nested, objects, arrays)) return false
+      continue
+    }
+    const type: unknown = Reflect.get(branch, "type")
+    if (type === "object") objects.push(branch)
+    else if (type === "array") arrays.push(branch)
+    else if (typeof type === "string") continue
+    else if (type !== undefined || literalsOf(branch) === undefined) return false
+  }
+  return true
+}
+
+/**
+ * Object branches that all require one key, each holding literals no other branch holds: at most one
+ * branch can accept a value, so projecting onto the branch its tag names cannot strip a field another
+ * branch needed. The first such key in the first branch's declared order is used. A value whose tag
+ * names no branch is left to the validator, which rejects it.
+ */
+function compileDiscriminated(branches: readonly object[]): Projector | undefined {
+  const projectors = branches.map((branch) => compileProjector(branch))
+  const first = branches[0]
+  if (first === undefined || projectors.every((projector) => projector === undefined))
+    return undefined
+  for (const key of Object.keys(objectField(first, "properties") ?? {})) {
+    const byTag = new Map<unknown, Projector | undefined>()
+    const disjoint = branches.every((branch, index) => {
+      const tags = requiredLiterals(branch, key)
+      if (tags === undefined) return false
+      for (const tag of tags) {
+        if (byTag.has(tag)) return false
+        byTag.set(tag, projectors[index])
+      }
+      return true
+    })
+    if (!disjoint) continue
+    return (value) => {
+      if (!isPlainObject(value) || !hasField(value, key)) return value
+      const projector = byTag.get(value[key])
+      return projector === undefined ? value : projector(value)
+    }
+  }
+  return undefined
+}
+
+/** The distinct literals `key` may hold in an object branch that requires it. */
+function requiredLiterals(branch: object, key: string): ReadonlySet<unknown> | undefined {
+  const required: unknown = Reflect.get(branch, "required")
+  const properties = objectField(branch, "properties")
+  if (!Array.isArray(required) || !required.includes(key)) return undefined
+  if (properties === undefined || !Object.hasOwn(properties, key)) return undefined
+  const literals = literalsOf(Reflect.get(properties, key))
+  return literals === undefined ? undefined : new Set(literals)
+}
+
+const isLiteral = (value: unknown): boolean =>
+  value === null || ["string", "number", "boolean"].includes(typeof value)
+
+/** The finite set of primitives a schema admits (`const`, `enum`, `null`, a union of those), else `undefined`. */
+function literalsOf(node: unknown): readonly unknown[] | undefined {
+  if (typeof node !== "object" || node === null) return undefined
+  if (Object.hasOwn(node, "const")) {
+    const value: unknown = Reflect.get(node, "const")
+    return isLiteral(value) ? [value] : undefined
+  }
+  const listed: unknown = Reflect.get(node, "enum")
+  if (Array.isArray(listed))
+    return listed.length > 0 && listed.every(isLiteral) ? listed : undefined
+  const branches: unknown = Reflect.get(node, "anyOf") ?? Reflect.get(node, "oneOf")
+  if (Array.isArray(branches)) {
+    const all: unknown[] = []
+    for (const branch of branches) {
+      const literals = literalsOf(branch)
+      if (literals === undefined) return undefined
+      all.push(...literals)
+    }
+    return all.length > 0 ? all : undefined
+  }
+  return Reflect.get(node, "type") === "null" ? [null] : undefined
 }
 
 /**
@@ -213,6 +350,60 @@ function define(out: Record<string, unknown>, key: string, value: unknown): void
   if (key === "__proto__")
     Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
   else out[key] = value
+}
+
+const MAX_STRIPPED_NAMES = 20
+const MAX_NAME_LENGTH = 64
+const MAX_REPORTED_SETS = 32
+
+/** Paths in what the handler returned that are absent from what was sent, array items as `name[]`.
+ * Stops one past {@link MAX_STRIPPED_NAMES}, so the log can say there were more. */
+function collectStripped(sent: unknown, kept: unknown, path: string, out: Set<string>): void {
+  if (Array.isArray(sent)) {
+    if (!Array.isArray(kept)) return
+    const items = `${path}[]`
+    for (let i = 0; i < sent.length && i < kept.length; i++) {
+      collectStripped(sent[i], kept[i], items, out)
+      if (out.size > MAX_STRIPPED_NAMES) return
+    }
+    return
+  }
+  if (!isPlainObject(sent) || !isPlainObject(kept)) return
+  for (const key of Object.keys(sent)) {
+    const short = key.length > MAX_NAME_LENGTH ? `${key.slice(0, MAX_NAME_LENGTH)}...` : key
+    const name = path === "" ? short : `${path}.${short}`
+    if (!Object.hasOwn(kept, key)) out.add(name)
+    else collectStripped(sent[key], kept[key], name, out)
+    if (out.size > MAX_STRIPPED_NAMES) return
+  }
+}
+
+/** The log line for a route's stripped names the first time it sends that set, else `undefined`. */
+function firstReport(
+  reported: WeakMap<ResponseContractDefinition, Set<string>>,
+  definition: ResponseContractDefinition,
+  fields: readonly string[],
+): string | undefined {
+  if (fields.length === 0) return undefined
+  let seen = reported.get(definition)
+  if (seen === undefined) {
+    seen = new Set()
+    reported.set(definition, seen)
+  }
+  const key = fields.join("\n")
+  if (seen.size >= MAX_REPORTED_SETS || seen.has(key)) return undefined
+  seen.add(key)
+  const last =
+    seen.size === MAX_REPORTED_SETS ? " Further sets of fields on this route are not logged." : ""
+  return `${strippedMessage(fields)}${last}`
+}
+
+function strippedMessage(fields: readonly string[]): string {
+  const listed =
+    fields.length > MAX_STRIPPED_NAMES
+      ? `${fields.slice(0, MAX_STRIPPED_NAMES).join(", ")}, and more`
+      : fields.join(", ")
+  return `response carried fields its contract does not declare: ${listed}. They were not sent.`
 }
 
 /** Top-level keys present in the handler's result but absent from the validated value. */
@@ -265,12 +456,37 @@ export function checkRouteResponseContract(
   jsonReply?: { readonly body: unknown },
   options?: ResponseContractOptions,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
-  const strip = options?.extra === "strip"
+  return checkContract(
+    definition,
+    result,
+    mode,
+    jsonReply,
+    options?.extra === "strip" ? STRIP : KEEP,
+  )
+}
+
+/** How the plugin holds a payload: projected first or not, and the stripped-field reporter. */
+interface ContractPolicy {
+  readonly strip: boolean
+  /** The message to log for these stripped names, or `undefined` to stay quiet. */
+  readonly report: ((fields: readonly string[]) => string | undefined) | undefined
+}
+
+const STRIP: ContractPolicy = { strip: true, report: undefined }
+const KEEP: ContractPolicy = { strip: false, report: undefined }
+
+function checkContract(
+  definition: ResponseContractDefinition,
+  result: unknown,
+  mode: "warn" | "enforce",
+  jsonReply: { readonly body: unknown } | undefined,
+  policy: ContractPolicy,
+): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   const plain = isResponseResult(result) ? result.plain : undefined
   if (plain !== undefined) {
     const schema = schemaFor(definition, plain.status)
     if (schema === undefined) return { kind: "ok", value: result }
-    return validateContract(schema, plain.body, result, mode, strip, (value) =>
+    return validateContract(schema, plain.body, result, mode, policy, (value) =>
       status(
         plain.status,
         value,
@@ -281,7 +497,7 @@ export function checkRouteResponseContract(
   if (jsonReply !== undefined && result instanceof Response) {
     const schema = schemaFor(definition, result.status)
     if (schema === undefined) return { kind: "ok", value: result }
-    return validateContract(schema, jsonReply.body, result, mode, strip, (value) =>
+    return validateContract(schema, jsonReply.body, result, mode, policy, (value) =>
       reserialize(result, value),
     )
   }
@@ -293,7 +509,7 @@ export function checkRouteResponseContract(
   if (result instanceof Response || result === undefined) return { kind: "ok", value: result }
   const schema = definition.response
   if (schema === undefined) return { kind: "ok", value: result }
-  return validateContract(schema, result, result, mode, strip, (value) => value)
+  return validateContract(schema, result, result, mode, policy, (value) => value)
 }
 
 /** Validate `payload`; `served` is what goes out unchanged when nothing is enforced - the whole
@@ -303,14 +519,14 @@ function validateContract(
   payload: unknown,
   served: unknown,
   mode: "warn" | "enforce",
-  strip: boolean,
+  policy: ContractPolicy,
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
-  const project = strip ? projectorOf(schema) : undefined
+  const project = policy.strip ? projectorOf(schema) : undefined
   const settled = schema["~standard"].validate(project === undefined ? payload : project(payload))
   return settled instanceof Promise
-    ? settled.then((r) => interpret(r, payload, served, mode, replace))
-    : interpret(settled, payload, served, mode, replace)
+    ? settled.then((r) => interpret(r, payload, served, mode, replace, policy.report))
+    : interpret(settled, payload, served, mode, replace, policy.report)
 }
 
 function interpret(
@@ -319,6 +535,7 @@ function interpret(
   served: unknown,
   mode: "warn" | "enforce",
   replace: (value: unknown) => unknown,
+  report: ContractPolicy["report"],
 ): ResponseContractOutcome {
   if (settled.issues !== undefined) {
     const message = `response does not satisfy its declared contract: ${formatStandardIssues(settled.issues)}`
@@ -328,14 +545,22 @@ function interpret(
       ? { kind: "warn", value: served, message }
       : { kind: "violation", message }
   }
+  if (mode === "enforce") {
+    const value = replace(settled.value)
+    if (report === undefined) return { kind: "ok", value }
+    const stripped = new Set<string>()
+    collectStripped(payload, settled.value, "", stripped)
+    const message = report([...stripped].sort())
+    return message === undefined ? { kind: "ok", value } : { kind: "warn", value, message }
+  }
   const dropped = droppedKeys(payload, settled.value)
-  if (mode === "enforce") return { kind: "ok", value: replace(settled.value) }
   return dropped.length === 0
     ? { kind: "ok", value: served }
     : {
         kind: "warn",
         value: served,
         message: `response carries fields its contract does not declare: ${dropped.join(", ")}. They are being sent; \`responseContract("enforce")\` would strip them.`,
+        fields: dropped,
       }
 }
 
@@ -348,12 +573,28 @@ export interface ResponseContractRuntime {
   check(
     definition: ResponseContractDefinition,
     result: unknown,
-    context?: { readonly jsonReply?: Response | undefined; readonly jsonBody?: unknown },
+    context?: {
+      readonly req?: Request
+      readonly jsonReply?: Response | undefined
+      readonly jsonBody?: unknown
+    },
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
 }
 
 interface ResponseContractInstallable {
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void
+}
+
+/** What the plugin reads off a server it was applied to, to name a route and to log a failing hook. */
+interface ContractHost {
+  readonly catalog: {
+    entries(): readonly {
+      readonly method: string
+      readonly path: string
+      readonly entry: { readonly responseContract?: { readonly definition: object } }
+    }[]
+  }
+  readonly logger: { error(message: string, fields: { detail: string }): void }
 }
 
 /**
@@ -382,22 +623,96 @@ export function responseContract(
       `responseContract(): extra must be "reject" or "strip", got ${JSON.stringify(options.extra)}`,
     )
   }
-  const contractOptions = options.extra === "strip" ? options : undefined
+  if (options.logStripped !== undefined && typeof options.logStripped !== "boolean") {
+    throw new TypeError(
+      `responseContract(): logStripped must be a boolean, got ${JSON.stringify(options.logStripped)}`,
+    )
+  }
+  const onReport = options.onReport
+  const strip = options.extra === "strip"
+  const quiet = strip ? STRIP : KEEP
+  const reported =
+    options.logStripped === true && mode === "enforce"
+      ? new WeakMap<ResponseContractDefinition, Set<string>>()
+      : undefined
+  const hosts: ContractHost[] = []
+  // A definition is compiled per route into the catalog of a server this plugin was applied to (a
+  // `group()`'s and a `merge()`d server's routes are adopted into it), so the route is found there
+  // and naming it costs the kernel nothing.
+  const routes = new WeakMap<object, { readonly method: string; readonly path: string }>()
+  let failed = false
+  // A hook that throws or rejects (or is not a function) is logged once and never reaches a response.
+  const fail = (error: unknown): void => {
+    if (!failed)
+      hosts[0]?.logger.error("response contract onReport threw", { detail: String(error) })
+    failed = true
+  }
   const runtime: ResponseContractRuntime = {
     mode,
-    check: (definition, result, context) =>
-      checkRouteResponseContract(
-        definition,
-        result,
-        mode,
+    check: (definition, result, context) => {
+      const jsonReply =
         result instanceof Response && result === context?.jsonReply
           ? { body: context.jsonBody }
-          : undefined,
-        contractOptions,
-      ),
+          : undefined
+      const logged =
+        reported === undefined
+          ? undefined
+          : (fields: readonly string[]) => firstReport(reported, definition, fields)
+      if (onReport === undefined)
+        return checkContract(
+          definition,
+          result,
+          mode,
+          jsonReply,
+          logged === undefined ? quiet : { strip, report: logged },
+        )
+      const send = (
+        kind: ResponseContractReport["kind"],
+        message: string,
+        fields?: readonly string[],
+      ) => {
+        if (!routes.has(definition))
+          for (const host of hosts)
+            for (const route of host.catalog.entries()) {
+              const owned = route.entry.responseContract?.definition
+              if (owned !== undefined) routes.set(owned, route)
+            }
+        const route = routes.get(definition)
+        try {
+          const returned: unknown = onReport({
+            kind,
+            method: route?.method ?? "",
+            route: route?.path ?? "",
+            fields,
+            message,
+          })
+          if (returned instanceof Promise) returned.catch(fail)
+        } catch (error) {
+          fail(error)
+        }
+      }
+      const outcome = checkContract(definition, result, mode, jsonReply, {
+        strip,
+        report: (fields) => {
+          if (fields.length > 0) send("stripped", strippedMessage(fields), fields)
+          return logged?.(fields)
+        },
+      })
+      const observe = (settled: ResponseContractOutcome): ResponseContractOutcome => {
+        // An enforce-mode warn is the stripped-field log line, already reported as `stripped`.
+        if (settled.kind === "violation") send("violation", settled.message)
+        else if (settled.kind === "warn" && mode === "warn")
+          send("warn", settled.message, settled.fields)
+        return settled
+      }
+      return outcome instanceof Promise ? outcome.then(observe) : observe(outcome)
+    },
   }
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as ResponseContractInstallable)[INSTALL_RESPONSE_CONTRACT](runtime)
+    // A server also holds the route catalog and the logger ContractHost reads.
+    const host = app as unknown as ResponseContractInstallable & ContractHost
+    host[INSTALL_RESPONSE_CONTRACT](runtime)
+    if (!hosts.includes(host)) hosts.push(host)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:response-contract" }) as IdentityPlugin

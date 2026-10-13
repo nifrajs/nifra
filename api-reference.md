@@ -1736,7 +1736,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.1.0"`
+- **VERSION** _(const)_ - `VERSION: "5.2.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -2682,13 +2682,15 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/reflection`
 
-- **HookKind** _(type)_ - `type HookKind = | "onRequest" | "around" | "authenticate" | "derive" | "beforeHandle" | "afterHandle" | "onError" | "onResponse" | "responseHeaders" | "onResponseFinalized"`
+- **HookKind** _(type)_ - `type HookKind`
   Where each registered hook came from, for `reflectHooks` (`nifra routes --hooks`). Development-only: every write sits behind the inline `process.env.NODE_ENV !== "production"` guard at its call site in `server.ts`, so a production define folds the writes away and this module drops out of the bundle…
 - **JsonSchema** _(type)_ - `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
 - **ReflectedHook** _(interface)_ - `interface ReflectedHook`
   One hook that runs for a route or an unmatched path: what it is, who added it, and where.
 - **ReflectedHookReport** _(interface)_ - `interface ReflectedHookReport`
+- **ReflectedMergeAuthGap** _(type)_ - `type ReflectedMergeAuthGap = MergeAuthGapTag`
+  A `merge()` that authenticates none of its routes under a parent that authenticates its own.
 - **ReflectedMount** _(interface)_ - `interface ReflectedMount`
   A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
 - **ReflectedMountRoute** _(interface)_ - `interface ReflectedMountRoute`
@@ -2702,10 +2704,16 @@ Every public export of every package and documented subpath - name, kind, signat
   The hooks a path under `prefix` that no route matches still runs - its 404s and 405s.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **declaredHeaderNames** _(function)_ - `declaredHeaderNames: (schema: object) => readonly string[] | undefined`
+  The names a closed header schema declares, or `undefined` when it is open or lists no names. Every client sends headers no route declares (`host`, `user-agent`, `accept`), so a closed schema fed the whole record would refuse all real traffic; it is fed the names it declares instead, which is also h…
 - **reflectHooks** _(function)_ - `reflectHooks: (source: unknown) => ReflectedHookReport`
   Every hook that actually runs for each route, and for each prefix's unmatched paths, with the plugin that registered it and where: the app, a `group()`, a `merge()`d server, or a `mount()`ed one. It follows the same scope rules the server applies - a group's hooks cover its prefix, a merged server'…
+- **reflectMergeAuthGaps** _(function)_ - `reflectMergeAuthGaps: (source: unknown) => readonly ReflectedMergeAuthGap[]`
+  Every `merge()` in the app, its merged servers included, whose server authenticates none of its routes while the parent's order-scoped auth - an `authenticate()` stage, or `authenticated` evidence scoped to subsequent routes - covers the parent's own: that auth never runs for a merged route. Record…
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
+- **reflectRouteSites** _(function)_ - `reflectRouteSites: (source: unknown) => ReadonlyMap<string, string>`
+  Where each route was registered: `METHOD /path` (`WS` for a socket) mapped to the `file:line:col` of the call outside nifra's core that registered it, through every `group()` and `merge()`. Recorded only by a development load with `NIFRA_ROUTE_SITES=1` (the CLI sets it while it loads `nifra.assuran…
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing `routes()` method yields only the sockets.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
@@ -2734,6 +2742,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ResponseContractOptions** _(interface)_ - `interface ResponseContractOptions`
 - **ResponseContractOutcome** _(type)_ - `type ResponseContractOutcome`
   The outcome of checking one handler result against its declared response schema.
+- **ResponseContractReport** _(interface)_ - `interface ResponseContractReport`
+  One response the contract reported on, passed to {@link ResponseContractOptions.onReport}.
 - **ResponseContractRuntime** _(interface)_ - `interface ResponseContractRuntime`
   What the server holds when the plugin is installed. The kernel calls `check` through this object and never imports the implementation, so an app that does not install the plugin does not carry it.
 - **checkResponseContract** _(function)_ - `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce", options?: ResponseContractOptions) => ResponseContractOutcome | Promise<ResponseContractOutcome>`
@@ -7242,10 +7252,12 @@ _No named exports (side-effect entrypoint)._
 - **MCP_CLI_VERSION** _(const)_ - `MCP_CLI_VERSION: string`
   The `@nifrajs/cli` version the launch command pins to - DERIVED at load time from this package's own `version`, never hardcoded. `fixed` changeset versioning ([["@nifrajs/*", "create-nifra", "nifra"]] in `.changeset/config.json`) bumps `create-nifra` and `@nifrajs/cli` in lockstep, so `create-nifra…
 - **MCP_CONFIG** _(const)_ - `MCP_CONFIG: McpConfig`
-  The one canonical MCP config object both registries serialize - the anti-drift seam.
+  The config a scaffold writes: every scaffold declares the CLI, so its launch is unpinned.
 - **MCP_JSON_PATH** _(const)_ - `MCP_JSON_PATH: ".mcp.json"`
   The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it.
 - **MCP_SERVER_ARGS** _(const)_ - `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
+- **MCP_SERVER_ARGS_INSTALLED** _(const)_ - `MCP_SERVER_ARGS_INSTALLED: readonly ["@nifrajs/cli", "mcp"]`
+  The launch args for a project that declares `@nifrajs/cli`: unpinned, so `bunx` runs its install.
 - **MCP_SERVER_COMMAND** _(const)_ - `MCP_SERVER_COMMAND: "bunx"`
   The MCP launch command, shared by `.mcp.json` and `.cursor/mcp.json`. See the module header for why the package is named explicitly rather than relying on the bare `nifra` bin.
 - **McpConfig** _(interface)_ - `interface McpConfig`
@@ -7254,7 +7266,7 @@ _No named exports (side-effect entrypoint)._
   The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config.
 - **STRUCTURE_HEADING** _(const)_ - `STRUCTURE_HEADING: "## Project structure"`
   The heading `nifra init-agents` looks for before appending {@link agentsStructureSection}.
-- **agentsMcpSection** _(function)_ - `agentsMcpSection: () => string`
+- **agentsMcpSection** _(function)_ - `agentsMcpSection: (pin?: string) => string`
   The "## MCP server" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer. Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.
 - **agentsStructureSection** _(function)_ - `agentsStructureSection: () => string`
   The "## Project structure" section of a web app's `AGENTS.md`: the zones the build enforces. Shared so a scaffolded app and one `nifra init-agents` retrofits teach the same rules.
@@ -7266,7 +7278,9 @@ _No named exports (side-effect entrypoint)._
   `.cursor/rules/nifra.mdc`: an always-applied Cursor rule; `@AGENTS.md` attaches the file.
 - **geminiMd** _(function)_ - `geminiMd: () => string`
   `GEMINI.md`: Gemini CLI expands `@./AGENTS.md` imports in its context files.
-- **mcpJson** _(function)_ - `mcpJson: () => string`
+- **mcpConfig** _(function)_ - `mcpConfig: (pin?: string) => McpConfig`
+  The one canonical MCP config both registries serialize - the anti-drift seam. `pin` is the `@nifrajs/cli` version to pin; without one the launch follows the project's install.
+- **mcpJson** _(function)_ - `mcpJson: (pin?: string) => string`
   Serialize the canonical MCP config as the JSON written to `.mcp.json` and `.cursor/mcp.json`. Trailing newline so the file is POSIX-clean and diffs don't flag a missing EOL.
 
 ## nifra
@@ -7455,7 +7469,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.1.0"`
+- **VERSION** _(const)_ - `VERSION: "5.2.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`

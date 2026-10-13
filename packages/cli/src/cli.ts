@@ -129,6 +129,8 @@ Usage:
   nifra explain [<message>] [--stack <s>] [--name <n>]  A structured diagnostic for an error: its
                                          code, the frame in your source, and the cause and fix when
                                          nifra knows them. No message: the dev server's latest error.
+                                         A rule code (NF-C007): what that check rule reports and how
+                                         to fix it.
   nifra cdn-check <url>                  Check a deployed page behind a CDN: served from cache, no
                                          internal or CDN-only headers reaching the visitor, and soft
                                          navigations get page data, not the cached document. Exits 1
@@ -180,12 +182,16 @@ Usage:
                                          structure" sections. No-clobber by default (skips a file you've
                                          customized); --force overwrites the owned files. AGENTS.md is
                                          only appended to, never overwritten.
-  nifra init-agents --sync-mcp [--json]  Re-pin an existing app's MCP launch to the nifra the project
+  nifra init-agents --sync-mcp [--json]  Move an existing app's MCP launch to the nifra the project
                                          installs: rewrites only the @nifrajs/cli@x.y.z version in
                                          .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
-                                         section - every other byte stays as it is. Creates nothing.
+                                         section - every other byte stays as it is - and drops it
+                                         when the project declares @nifrajs/cli, so the launch runs
+                                         that install from then on. Creates nothing.
                                          At a workspace root with one nifra member, the two registries'
-                                         launch also names that member (\`mcp app\`).
+                                         launch also names that member (\`mcp app\`). Run in a member,
+                                         it also re-pins the files above it, up to the repository
+                                         root, whose every nifra launch serves that member.
   nifra mcp [dir]                        Start an MCP server (stdio) exposing this project to a coding
                                          agent. The project root is [dir] when given, else resolved from
                                          cwd (marker walk-up + the client's MCP roots); tools refuse
@@ -271,11 +277,13 @@ Usage:
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                [--no-hooks]             to skip), then prints how hook scope changed (--no-hooks to
-                                         skip). --list shows available targets. A version newer than
-                                         this CLI prints the command for that release's CLI. Fail-closed
-                                         on an unknown version or a rollback (--allow-downgrade
-                                         overrides). Deterministic + idempotent.
+                [--allow-linked-skew]    to skip), then prints how hook scope changed (--no-hooks to
+                [--no-hooks]             skip). --list shows the targets with each newer release's
+                                         notes. A version newer than this CLI prints the command for
+                                         that release's CLI. Fail-closed on an unknown version, a
+                                         rollback (--allow-downgrade overrides), or a linked repository
+                                         that loads its own nifra at another version
+                                         (--allow-linked-skew overrides). Deterministic + idempotent.
   nifra migrate layout [--write] [--zones] [--json]
                                          Move an app onto the frontend/backend split: split each route
                                          into x.tsx + x.backend.ts, fold _middleware.ts into
@@ -322,7 +330,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.1.0"
+const CLI_VERSION = "5.2.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
@@ -1326,6 +1334,7 @@ async function main(): Promise<void> {
         verify: !argv.includes("--no-verify"),
         hooks: !argv.includes("--no-hooks"),
         allowDowngrade: argv.includes("--allow-downgrade"),
+        allowLinkedSkew: argv.includes("--allow-linked-skew"),
         exact: argv.includes("--exact"),
         cliVersion: CLI_VERSION,
       })
