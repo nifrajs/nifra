@@ -24,6 +24,7 @@ import {
   tagAdoption,
   tagHook,
   tagMergeAuthGap,
+  tagRouteSite,
   tagScoped,
   tagStatic,
 } from "../internal/hook-origins.ts"
@@ -800,9 +801,10 @@ const SERVER_MODULE_PATH = /* @__PURE__ */ ((): string | undefined => {
   return frame?.match(/\(?([^()\s]+):\d+:\d+\)?\s*$/)?.[1]
 })()
 
-/** One `file:line:col` frame for the caller of an order-scoped hook method, for the unused-hook
- * report. Only ever called behind the `unusedScopedHooks !== "off"` guard, so the `Error` (the sole
- * non-trivial cost) is never constructed when the check is disabled. */
+/** One `file:line:col` frame for the caller of an order-scoped hook method or a route registration,
+ * for the unused-hook report and route provenance. Only ever called behind a development guard that
+ * also requires the feature to be on, so the `Error` (the sole non-trivial cost) is never constructed
+ * otherwise. */
 const captureCallerSite = (): string | undefined => {
   const stack = new Error().stack
   if (stack === undefined) return undefined
@@ -2369,6 +2371,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): CatalogRoute {
+    // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
+    // app: the module that registered the route, read where a static scan cannot see the path.
+    if (
+      hookAuditRuntime &&
+      process.env.NODE_ENV !== "production" &&
+      process.env.NIFRA_ROUTE_SITES === "1"
+    ) {
+      const site = captureCallerSite()
+      if (site !== undefined) tagRouteSite(this, `${method.toUpperCase()} ${path}`, site)
+    }
     const compiled = compileRouteOptions(
       {
         maxBodyBytes: this.maxBodyBytes,

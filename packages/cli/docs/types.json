@@ -21505,6 +21505,13 @@
     "doc": "/**\n * The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app\n * publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach\n * reflection through that evidence. Anything that is not a nifra server yields an empty list.\n */"
   },
   {
+    "name": "reflectRouteSites",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reflectRouteSites(source: unknown): ReadonlyMap<string, string>;",
+    "doc": "/**\n * Where each route was registered: `METHOD /path` (`WS` for a socket) mapped to the `file:line:col` of\n * the call outside nifra's core that registered it, through every `group()` and `merge()`. Recorded only\n * by a development load with `NIFRA_ROUTE_SITES=1` (the CLI sets it while it loads `nifra.assurance.ts`),\n * so the map is empty otherwise. The paths are absolute, which is why they stay out of\n * {@link reflectRoutes}, whose output is written into artifacts.\n */"
+  },
+  {
     "name": "reflectRoutes",
     "kind": "function",
     "package": "@nifrajs/core",

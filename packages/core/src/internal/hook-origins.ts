@@ -69,6 +69,7 @@ const sources = new WeakMap<object, unknown>()
 const statics = new WeakMap<object, StaticHeadersTag[]>()
 const adoptions = new WeakMap<object, AdoptionTag[]>()
 const mergeAuthGaps = new WeakMap<object, MergeAuthGapTag[]>()
+const routeSites = new WeakMap<object, Map<string, string>>()
 let applying: string | undefined
 // A merged server whose static headers are about to become one of the target's response hooks.
 let staticsOwner: object | undefined
@@ -152,6 +153,14 @@ export function tagMergeAuthGap(target: object, gap: MergeAuthGapTag): void {
   else list.push(gap)
 }
 
+/** Where `server` registered the route `key` (`METHOD /path`): a `file:line:col` frame. The first
+ * registration of a key wins, as it does for the router. */
+export function tagRouteSite(server: object, key: string, site: string): void {
+  const sites = routeSites.get(server)
+  if (sites === undefined) routeSites.set(server, new Map([[key, site]]))
+  else if (!sites.has(key)) sites.set(key, site)
+}
+
 const outer: (string | undefined)[] = []
 
 /** Mark the plugin a `use()` is applying, until the matching {@link leavePlugin}. */
@@ -175,3 +184,5 @@ export const staticHeadersOf = (server: object): readonly StaticHeadersTag[] =>
 export const adoptionsOf = (server: object): readonly AdoptionTag[] => adoptions.get(server) ?? []
 export const mergeAuthGapsOf = (server: object): readonly MergeAuthGapTag[] =>
   mergeAuthGaps.get(server) ?? []
+export const routeSitesOf = (server: object): ReadonlyMap<string, string> =>
+  routeSites.get(server) ?? new Map()

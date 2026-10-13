@@ -22,6 +22,7 @@ import {
   hookSourceOf,
   type MergeAuthGapTag,
   mergeAuthGapsOf,
+  routeSitesOf,
   staticHeadersOf,
 } from "./internal/hook-origins.ts"
 import {
@@ -587,6 +588,27 @@ export function reflectMergeAuthGaps(source: unknown): readonly ReflectedMergeAu
   }
   visit(source)
   return gaps
+}
+
+/**
+ * Where each route was registered: `METHOD /path` (`WS` for a socket) mapped to the `file:line:col` of
+ * the call outside nifra's core that registered it, through every `group()` and `merge()`. Recorded only
+ * by a development load with `NIFRA_ROUTE_SITES=1` (the CLI sets it while it loads `nifra.assurance.ts`),
+ * so the map is empty otherwise. The paths are absolute, which is why they stay out of
+ * {@link reflectRoutes}, whose output is written into artifacts.
+ */
+export function reflectRouteSites(source: unknown): ReadonlyMap<string, string> {
+  const sites = new Map<string, string>()
+  if (!isServerRecord(source)) return sites
+  const seen = new Set<object>()
+  const visit = (server: object): void => {
+    if (seen.has(server)) return
+    seen.add(server)
+    for (const [key, site] of routeSitesOf(server)) if (!sites.has(key)) sites.set(key, site)
+    for (const adoption of adoptionsOf(server)) visit(adoption.source)
+  }
+  visit(source)
+  return sites
 }
 
 /**

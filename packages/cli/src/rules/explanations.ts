@@ -197,7 +197,7 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     docs: "/docs/backends",
   },
   "NF-C036": {
-    why: "A route's path is computed in a way the static scan cannot read, so capability provenance and the route lints do not see that route.",
+    why: "A route's path is computed in a way the static scan cannot read, so the route lints do not see that route, and capability provenance finds its module only from the app `nifra.assurance.ts` loads.",
     fix: "Write the path as a string literal or a module-level const, or mark a deliberately computed path with `// nifra-expect NF-C036: <reason>`.",
     docs: "/docs/capabilities",
   },

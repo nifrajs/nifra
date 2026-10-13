@@ -1,26 +1,10 @@
-import { isAbsolute, relative, sep } from "node:path"
-import { fileURLToPath } from "node:url"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { projectSite } from "../project-site.ts"
 import { commentBlockExpectation } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 const MERGE_AUTH_EXPECTATION = ["NF-C043", "merge-auth"]
 const SHOWN_ROUTES = 5
-
-/** A recorded `file:line:col` as a project-relative POSIX path and line, when it is inside the project. */
-function projectSite(
-  root: string,
-  site: string | undefined,
-): { readonly file: string; readonly line: number } | undefined {
-  const [, raw, line] = site?.match(/^(.*):(\d+):\d+$/) ?? []
-  if (raw === undefined || line === undefined) return undefined
-  const path = raw.startsWith("file://") ? fileURLToPath(raw) : raw
-  if (!isAbsolute(path)) return undefined
-  const rel = relative(root, path)
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined
-  if (rel.split(sep).includes("node_modules")) return undefined
-  return { file: rel.split(sep).join("/"), line: Number(line) }
-}
 
 /**
  * NF-C043: a `merge()` under a parent whose order-scoped auth - an `authenticate()` stage, or

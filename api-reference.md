@@ -2712,6 +2712,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Every `merge()` in the app, its merged servers included, whose server authenticates none of its routes while the parent's order-scoped auth - an `authenticate()` stage, or `authenticated` evidence scoped to subsequent routes - covers the parent's own: that auth never runs for a merged route. Record…
 - **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
   The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
+- **reflectRouteSites** _(function)_ - `reflectRouteSites: (source: unknown) => ReadonlyMap<string, string>`
+  Where each route was registered: `METHOD /path` (`WS` for a socket) mapped to the `file:line:col` of the call outside nifra's core that registered it, through every `group()` and `merge()`. Recorded only by a development load with `NIFRA_ROUTE_SITES=1` (the CLI sets it while it loads `nifra.assuran…
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing `routes()` method yields only the sockets.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`

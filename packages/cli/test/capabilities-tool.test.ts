@@ -300,6 +300,55 @@ export const backend = server()
     )
   })
 
+  test("covers a route by the module that registered it when the scan cannot read its path", async () => {
+    const cwd = join(FIXTURES, "registration-site")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/db-read.ts"), "export const read = () => []\n")
+    const local = defineCapabilityPolicy({
+      definitions: [{ id: "db.read", zone: "domain", access: "read" }],
+      provenance: {
+        imports: [{ specifier: "./db-read.ts", capabilities: ["db.read"] }],
+        forbiddenImports: [],
+      },
+    })
+    // The path is computed and the server comes from the caller: no text scan reads either.
+    await writeFile(
+      join(cwd, "src/orders.ts"),
+      `import "./db-read.ts"
+const under = (name: string) => "/api/" + name
+export const ordersOn = <S extends { get: Function }>(app: S): S =>
+  app.get(under("orders"), { capabilities: ["db.read"] }, () => [])
+`,
+    )
+    await writeFile(
+      join(cwd, "src/app.ts"),
+      'import { server } from "@nifrajs/core"\nimport { ordersOn } from "./orders.ts"\nexport const backend = ordersOn(server())\n',
+    )
+    await writeFile(
+      join(cwd, "nifra.assurance.ts"),
+      `import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+import { backend } from "./src/app.ts"
+export default defineAssuranceConfig({ source: backend, policy: { rules: [] } })
+`,
+    )
+    const { loadAssuranceConfig } = await import("../src/assure.ts")
+    const config = await loadAssuranceConfig(cwd)
+    expect(process.env.NIFRA_ROUTE_SITES).toBeUndefined()
+    const project = await collectCapabilityProjectReport(cwd, config.source, local)
+    expect(project.report.routes).toEqual([
+      expect.objectContaining({
+        path: "/api/orders",
+        covered: true,
+        evidence: [{ id: "db.read", kind: "static", source: "./db-read.ts" }],
+      }),
+    ])
+
+    // Loaded without the flag, nothing is recorded and the route is uncovered, as before.
+    const { backend } = await import(`${join(cwd, "src/app.ts")}?unrecorded`)
+    const unrecorded = await collectCapabilityProjectReport(cwd, backend, local)
+    expect(unrecorded.report.routes.map((route) => route.covered)).toEqual([false])
+  })
+
   test("an uncovered route nothing registers says so", async () => {
     const cwd = join(FIXTURES, "unregistered")
     await mkdir(join(cwd, "src"), { recursive: true })
