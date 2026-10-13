@@ -396,9 +396,12 @@ export default function Api() {
         return makes the typed client infer <code>data: never</code>, so you silently lose drift
         detection for that route (<code>nifra check</code> flags it, NF-C007). <code>c.set</code>{" "}
         keeps your plain-object return fully typed. The check reads the functions a route
-        registration or an <code>implement()</code> map passes, and a local function one returns a
-        call to; a helper that answers an auth stage, or a handler registered from a list of route
-        objects, is not read.
+        registration (on <code>server()</code> or <code>createWebApp()</code>) or an{" "}
+        <code>implement()</code> map passes, and a local function one returns a call to. It counts a{" "}
+        <code>Response</code> held in a local before it is returned, a handler's{" "}
+        <code>c.json()</code>/<code>c.text()</code>, and a call to a function imported from a
+        relative module that returns one, reported at each route that returns it. A helper that
+        answers an auth stage, or a handler registered from a list of route objects, is not read.
       </p>
       <p>
         A <code>Response</code> a handler or hook returns or throws still gets the{" "}
@@ -434,6 +437,11 @@ export default function Api() {
         and queued cookies still apply. On the typed client, checking <code>res.status === 409</code>{" "}
         narrows <code>res.data</code> to the declared 409 body; a status the route does not declare
         falls into one arm whose <code>data</code> is <code>unknown</code>.
+      </p>
+      <p>
+        The code may be a runtime value. Typed as a literal union (<code>200 | 409</code>), it splits
+        into one arm per code. Typed as plain <code>number</code>, it cannot be sorted into success
+        or error, so its body types <code>res.data</code>: a 2xx from that return can only carry it.
       </p>
       <CodeBlock code={TYPED_ERRORS} lang="ts" />
       <p>
@@ -545,13 +553,24 @@ export default function Api() {
       </p>
       <CodeBlock code={CONTRACT} />
 
-      <h2>The end-to-end-typed client</h2>
+      <h2 id="typed-client">The end-to-end-typed client</h2>
       <p>
         <code>@nifrajs/client</code> takes the server's type (<code>client&lt;typeof app&gt;</code>) and
         exposes a fluent, fully-typed proxy - no generated SDK. Path params are call arguments; the body
         and query are typed from the route's schema.
       </p>
       <CodeBlock code={CLIENT} />
+      <p className="caveat">
+        <b>Chain the routes the client calls.</b> Each registration returns a new type that records
+        its route, so <code>typeof app</code> holds only the routes chained onto the expression{" "}
+        <code>app</code> is assigned from. <code>{'app.get("/x", handler)'}</code> written as a
+        statement of its own still serves <code>/x</code>, but the client has no call for it. Chain
+        the registration, or declare the routes on their own <code>server()</code> and{" "}
+        <code>merge()</code> it. <code>nifra check</code> reports such a statement on a server whose
+        type is exported or read by <code>typeof</code> (NF-C045, advisory). The same holds for{" "}
+        <code>createWebApp</code>: its type holds the routes chained onto it, and the routes of the{" "}
+        <code>api</code> it mounts keep their type on that backend server.
+      </p>
       <p>
         A segment that is part literal, part param - <code>/files/:name.json</code>,{" "}
         <code>/post-:id</code>, <code>/v:major.:minor</code> - has no single param to name, so it is

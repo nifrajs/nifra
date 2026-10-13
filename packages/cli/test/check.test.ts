@@ -1335,6 +1335,105 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     expect(scanResponseRoutes("backend.ts", lines.join("\n")).map((f) => f.line)).toContain(3)
   })
 
+  test("routes chained onto createWebApp are scanned like server() routes", () => {
+    const src = [
+      'import { createWebApp } from "@nifrajs/web"',
+      "export const app = createWebApp(options)",
+      '  .get("/shelves", () => new Response("x"))',
+      "",
+    ].join("\n")
+    expect(scanResponseRoutes("server.ts", src).map((f) => f.line)).toEqual([3])
+    expect(scanResponseRoutes("server.ts", src, createSourceFacts(ts)).map((f) => f.line)).toEqual([
+      3,
+    ])
+  })
+
+  test("with an AST, a Response held in a local, from c.json/c.text, or from an imported helper is flagged", () => {
+    const wire = [
+      "export function answer(payload: unknown, code = 200) {",
+      "  const out = new Response(JSON.stringify(payload), { status: code })",
+      '  out.headers.set("x-shelf", "1")',
+      "  return out",
+      "}",
+      "export const plain = (payload: unknown) => ({ payload })",
+      "const shaped = (payload: unknown) => Response.json(payload)",
+      "export { shaped as wrapped }",
+      "",
+    ].join("\n")
+    const app = [
+      'import { server } from "@nifrajs/core"',
+      'import { answer as send, plain, wrapped } from "./wire"',
+      "async function decode(res: Response) {",
+      "  return res.json()",
+      "}",
+      "const app = server()",
+      '  .get("/a", () => send({ shelf: 1 }))',
+      '  .get("/b", (c) => c.json({ loan: 1 }))',
+      '  .get("/c", (ctx) => {\n    return ctx.text("due")\n  })',
+      '  .get("/d", () => plain({ ok: true }))',
+      '  .get("/e", () => wrapped([]))',
+      '  .get("/f", async () => decode(await fetch("https://example.test")))',
+      '  .get("/g", () => {\n    const held = new Response("x")\n    return held\n  })',
+      "",
+    ].join("\n")
+    const project = new Map([
+      ["src/app.ts", app],
+      ["src/wire.ts", wire],
+    ])
+    const found = scanResponseRoutes("src/app.ts", app, createSourceFacts(ts), project)
+    expect(found.map((f) => f.line)).toEqual([7, 8, 10, 13, 17])
+    // The import hop needs the project; the in-file shapes do not.
+    expect(scanResponseRoutes("src/app.ts", app, createSourceFacts(ts)).map((f) => f.line)).toEqual(
+      [8, 10, 17],
+    )
+  })
+
+  test("an imported helper's advisory honours NF-C007 at the route's return", () => {
+    const wire = 'export const send = () => new Response("x")\n'
+    const app = [
+      'import { server } from "@nifrajs/core"',
+      'import { send } from "./wire"',
+      "const app = server()",
+      "  // nifra-expect NF-C007: a file download",
+      '  .get("/file", () => send())',
+      '  .get("/real", () => send())',
+      "",
+    ].join("\n")
+    const project = new Map([
+      ["app.ts", app],
+      ["wire.ts", wire],
+    ])
+    const found = scanResponseRoutes("app.ts", app, createSourceFacts(ts), project)
+    expect(found.map((f) => f.snippet)).toEqual(['.get("/real", () => send())'])
+  })
+
+  test("collectCheckResult follows an imported helper to each route that returns it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    try {
+      await mkdir(join(dir, "src"), { recursive: true })
+      await writeFile(
+        join(dir, "src", "wire.ts"),
+        "export const send = (payload: unknown) => Response.json(payload)\n",
+      )
+      await writeFile(
+        join(dir, "src", "app.ts"),
+        [
+          'import { server } from "@nifrajs/core"',
+          'import { send } from "./wire"',
+          "export const app = server()",
+          '  .get("/shelves", () => send([]))',
+          '  .get("/loans", () => send([]))',
+          "",
+        ].join("\n"),
+      )
+      const result = await collectCheckResult(dir, { lintsOnly: true })
+      const warns = result.diagnostics.filter((d) => d.rule === "response-route")
+      expect(warns.map((d) => `${d.file}:${d.line}`)).toEqual(["src/app.ts:4", "src/app.ts:5"])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("a handler registered from data is not followed", () => {
     const src = [
       'import { server } from "@nifrajs/core"',

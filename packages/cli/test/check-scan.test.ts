@@ -158,4 +158,11 @@ describe("check-scan", () => {
     ])
     expect(scanResponseRoutes("backend.ts", source)).toMatchObject([{ line: 1 }])
   })
+
+  test("routes chained onto createWebApp are backend routes", () => {
+    const source = 'export const site = createWebApp(options).get("/health", () => "ok")'
+    expect(scanStaticRouteText("server.ts", source)).toEqual([
+      expect.objectContaining({ method: "GET", path: "/health", line: 1 }),
+    ])
+  })
 })

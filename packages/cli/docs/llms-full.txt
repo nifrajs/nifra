@@ -1054,9 +1054,12 @@ Prefer `c.set` over returning a raw `Response`. A `Response`
 return makes the typed client infer `data: never`, so you silently lose drift
 detection for that route (`nifra check` flags it, NF-C007). `c.set`
 keeps your plain-object return fully typed. The check reads the functions a route
-registration or an `implement()` map passes, and a local function one returns a
-call to; a helper that answers an auth stage, or a handler registered from a list of route
-objects, is not read.
+registration (on `server()` or `createWebApp()`) or an
+`implement()` map passes, and a local function one returns a call to. It counts a
+`Response` held in a local before it is returned, a handler's
+`c.json()`/`c.text()`, and a call to a function imported from a
+relative module that returns one, reported at each route that returns it. A helper that
+answers an auth stage, or a handler registered from a list of route objects, is not read.
 
 A `Response` a handler or hook returns or throws still gets the
 `c.set.headers` it lacks and the queued cookies, so a guard's
@@ -1088,6 +1091,10 @@ ends the request from a handler or any hook, returned or thrown, without buildin
 and queued cookies still apply. On the typed client, checking `res.status === 409`
 narrows `res.data` to the declared 409 body; a status the route does not declare
 falls into one arm whose `data` is `unknown`.
+
+The code may be a runtime value. Typed as a literal union (`200 | 409`), it splits
+into one arm per code. Typed as plain `number`, it cannot be sorted into success
+or error, so its body types `res.data`: a 2xx from that return can only carry it.
 
 ```ts
 import { client } from "@nifrajs/client"
@@ -1302,6 +1309,16 @@ await api.search.get({ query: { page: "3" } })              // query string
 await api.users({ id: "1" }).posts({ postId: "2" }).get()   // nested params
 await api.files("report.json").get()                        // /files/:name.json → the segment as sent
 ```
+
+**Chain the routes the client calls.** Each registration returns a new type that records
+its route, so `typeof app` holds only the routes chained onto the expression
+`app` is assigned from. `app.get("/x", handler)` written as a
+statement of its own still serves `/x`, but the client has no call for it. Chain
+the registration, or declare the routes on their own `server()` and
+`merge()` it. `nifra check` reports such a statement on a server whose
+type is exported or read by `typeof` (NF-C045, advisory). The same holds for
+`createWebApp`: its type holds the routes chained onto it, and the routes of the
+`api` it mounts keep their type on that backend server.
 
 A segment that is part literal, part param - `/files/:name.json`,
 `/post-:id`, `/v:major.:minor` - has no single param to name, so it is

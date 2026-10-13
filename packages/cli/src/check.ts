@@ -479,7 +479,7 @@ async function buildProjectScan(
     for (const { file, content } of sourceFiles) {
       staticRoutes.push(...scanStaticRouteText(file, content, sourceFacts, project))
       routePaths.push(...scanUnresolvedRoutePaths(file, content, project, sourceFacts))
-      responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts))
+      responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts, project))
       if (sqlCompiler !== undefined)
         interpolatedSql.push(...scanSqlSites(file, content, sqlCompiler, sqlImports))
     }

@@ -31,6 +31,7 @@ import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legac
 import { mergeAuthGapRule } from "./rules/merge-auth.ts"
 import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
+import { routeStatementRule } from "./rules/route-statement.ts"
 import { routeRules } from "./rules/routes.ts"
 import { secretRules } from "./rules/secrets.ts"
 import { securityRules } from "./rules/security.ts"
@@ -499,6 +500,7 @@ export async function collectCheckDiagnostics(
     contractVisibilityRule,
     ...pageRules,
     mergeAuthGapRule,
+    routeStatementRule,
     ...zoneRules,
     ...dataGuardRules,
     ...secretRules,

@@ -65,27 +65,26 @@ type IsSuccessCode<Code extends number> = `${Code}` extends `2${string}` ? true 
 
 type EmptyResponseMap = NonNullable<unknown>
 
-type StatusBodies<Output, Codes extends number = StatusCodeOf<Output>> = [Codes] extends [never]
-  ? EmptyResponseMap
-  : { [Code in Codes]: StatusBodyAt<Output, Code> }
+type PlainOutput<Output> = Exclude<Output, StatusResponse<number, unknown> | Response>
 
-/** A dynamic status code cannot be classified as success or failure; expose an opaque success arm
- * rather than guessing a status or body schema. Explicit route schemas still override this fallback. */
-type DynamicStatusResponses<Output> =
-  Output extends StatusResponse<infer Code, unknown>
-    ? number extends Code
-      ? { 200: unknown }
-      : EmptyResponseMap
-    : EmptyResponseMap
+type HasDynamicStatus<Output> =
+  Output extends StatusResponse<infer Code, unknown> ? (number extends Code ? true : never) : never
 
-type InferredResponses<Output> = (Exclude<
+/** A dynamic code may be an error at runtime, but whenever it is a 2xx its body is the one passed to
+ * `status()`, so it joins the 200 arm (`StatusBodyAt` matches it there) instead of reading `unknown`. */
+type UnnamedSuccessCode<Output> = [PlainOutput<Output> | HasDynamicStatus<Output>] extends [never]
+  ? never
+  : 200
+
+/** One map, so a plain return and a `status(200, …)` union on the 200 arm rather than intersect. */
+type InferredResponses<
   Output,
-  StatusResponse<number, unknown> | Response
-> extends never
+  Codes extends number = StatusCodeOf<Output> | UnnamedSuccessCode<Output>,
+> = [Codes] extends [never]
   ? EmptyResponseMap
-  : { 200: Exclude<Output, StatusResponse<number, unknown> | Response> }) &
-  StatusBodies<Output> &
-  DynamicStatusResponses<Output>
+  : {
+      [Code in Codes]: StatusBodyAt<Output, Code> | (Code extends 200 ? PlainOutput<Output> : never)
+    }
 
 type ExplicitResponses<S extends RouteSchema> = (S extends {
   response: infer R extends StandardSchemaV1

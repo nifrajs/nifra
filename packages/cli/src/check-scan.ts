@@ -352,7 +352,9 @@ export function parseSimpleFetchCall(snippet: string): SimpleFetchCall | undefin
   return { path, method, start: match.index, end: close + 1 }
 }
 
-const SERVER_CONSTRUCTION = /(?<![.\w])server\s*\(|new\s+Hono(?:<[^>]+>)?\s*\(/
+// `createWebApp(...)` returns the same `Server`, so a route chained onto it is a backend route.
+const NIFRA_SERVER_CONSTRUCTION = /(?<![.\w])(?:server|createWebApp)\s*\(/
+const SERVER_CONSTRUCTION = /(?<![.\w])(?:server|createWebApp)\s*\(|new\s+Hono(?:<[^>]+>)?\s*\(/
 
 function isPotentialBackendSource(
   code: string,
@@ -3364,43 +3366,75 @@ function serverOnlyChains(
 // (redirects, files, streams). Fix is to return a plain object, or declare `{ response: t.… }` to type it.
 const RESPONSE_RETURN = /(?:=>\s*|return\s+)(?:new\s+Response|Response\s*\.\s*json)\s*\(/g
 
-/** Scan a backend module (one that calls `server(`) for handlers returning a raw `Response`, which collapses
- * the typed client's `data` to `never`. Pure + line-accurate; returns `[]` for files with no `server(` call. */
+/**
+ * Scan a backend module (one that calls `server(` or `createWebApp(`) for handlers returning a raw
+ * `Response`, which collapses the typed client's `data` to `never`. Pure + line-accurate; returns `[]`
+ * for any other file. With an AST it also follows what the lexical pattern cannot see: a local holding
+ * the Response, the context's `json()`/`text()`, and - given `project` - a helper imported from a
+ * relative module whose export returns one, reported at each route's return.
+ */
 export function scanResponseRoutes(
   file: string,
   content: string,
   facts?: SourceFacts,
+  project?: ReadonlyMap<string, string>,
 ): SourceFinding[] {
   // Strip comments + template literals first: a commented-out or doc-example `return new Response(`
   // must not raise a spurious advisory. Lengths are preserved, so lineAt + the raw-line snippet align.
   const code = stripComments(content)
-  if (!/(?<![.\w])server\s*\(/.test(code)) return []
+  if (!NIFRA_SERVER_CONSTRUCTION.test(code)) return []
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  RESPONSE_RETURN.lastIndex = 0
-  for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
-    if (facts !== undefined) {
-      const source = facts.parse(file, content)
-      // A parseable AST rejects `return new Response(` text that only lives in a normal string, and
-      // one outside a route handler (an auth stage's `rejected` helper, say). On malformed source we
-      // keep the lexical candidate; the typecheck gate will report the syntax error.
-      if (
-        source !== undefined &&
-        (facts.isResponseSyntaxAt(source, m.index) !== true ||
-          !facts.isRouteHandlerAt(source, m.index))
-      )
-        continue
-    }
-    const line = lineAt(content, m.index)
-    // A `// nifra-expect NF-C007` comment (or the `raw-response` slug) marks an intentional raw Response
-    // (a file/redirect that can't be a typed route), silencing this advisory with or without a reason.
-    // It counts on the return line or in the comment block directly above, so a TRAILING comment on one
-    // route's return line can't leak down onto the next route. `stripComments` blanks it in `code` (so it
-    // never affects the match); the raw `lines` still carry it.
-    if (commentBlockExpectation(lines, line, RAW_RESPONSE_EXPECTATION) !== undefined) continue
+  // A `// nifra-expect NF-C007` comment (or the `raw-response` slug) marks an intentional raw Response
+  // (a file/redirect that can't be a typed route), silencing this advisory with or without a reason.
+  // It counts on the return line or in the comment block directly above, so a TRAILING comment on one
+  // route's return line can't leak down onto the next route. `stripComments` blanks it in `code` (so it
+  // never affects the match); the raw `lines` still carry it.
+  const report = (line: number): void => {
+    if (commentBlockExpectation(lines, line, RAW_RESPONSE_EXPECTATION) !== undefined) return
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
-  return out
+  const source = facts?.parse(file, content)
+  RESPONSE_RETURN.lastIndex = 0
+  for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
+    // A parseable AST rejects `return new Response(` text that only lives in a normal string, and
+    // one outside a route handler (an auth stage's `rejected` helper, say). On malformed source we
+    // keep the lexical candidate; the typecheck gate will report the syntax error.
+    if (
+      facts !== undefined &&
+      source !== undefined &&
+      (facts.isResponseSyntaxAt(source, m.index) !== true ||
+        !facts.isRouteHandlerAt(source, m.index))
+    )
+      continue
+    report(lineAt(content, m.index))
+  }
+  if (facts === undefined || source === undefined) return out
+  const reported = new Set(out.map((finding) => finding.line))
+  const exportsByImport = new Map<string, boolean>()
+  const importReturnsResponse =
+    project === undefined
+      ? undefined
+      : (specifier: string, name: string): boolean => {
+          const key = `${specifier}\0${name}`
+          let answer = exportsByImport.get(key)
+          if (answer === undefined) {
+            const target = projectModule(project, file, specifier)
+            const text = target === undefined ? undefined : project.get(target)
+            const module =
+              target === undefined || text === undefined ? undefined : facts.parse(target, text)
+            answer = module !== undefined && facts.exportReturnsResponse(module, name)
+            exportsByImport.set(key, answer)
+          }
+          return answer
+        }
+  for (const position of facts.indirectResponseReturns(source, importReturnsResponse)) {
+    const line = lineAt(content, position)
+    if (reported.has(line)) continue
+    reported.add(line)
+    report(line)
+  }
+  return out.sort((a, b) => a.line - b.line)
 }
 
 /** What suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */

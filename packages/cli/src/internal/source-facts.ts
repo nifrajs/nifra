@@ -42,6 +42,17 @@ export interface SourceFacts {
    * function either one names, or a local function a handler returns a call to (one hop).
    */
   isRouteHandlerAt(source: TSApi.SourceFile, position: number): boolean
+  /**
+   * Positions of the values route handlers return that are a raw `Response` the lexical pattern
+   * cannot see: a local `const` holding one, the context's `json()`/`text()` from a registered
+   * handler, or a call to an imported function `importReturnsResponse` answers for.
+   */
+  indirectResponseReturns(
+    source: TSApi.SourceFile,
+    importReturnsResponse?: (specifier: string, name: string) => boolean,
+  ): readonly number[]
+  /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
+  exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
    * type-position `import("…")` such as `typeof import("x")` (false); undefined when neither. */
   isDynamicImportAt(
@@ -117,11 +128,15 @@ type FunctionNode =
   | TSApi.FunctionDeclaration
   | TSApi.MethodDeclaration
 
-/** Every route handler of `source`, by the rules {@link SourceFacts.isRouteHandlerAt} states. */
-function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): ReadonlySet<TSApi.Node> {
-  const isFunctionValue = (node: TSApi.Node): node is FunctionNode =>
-    ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)
-  // Local functions by name; a name declared twice keeps both, which only ever adds findings.
+function isFunctionValue(ts: TypeScriptApi, node: TSApi.Node): node is FunctionNode {
+  return ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)
+}
+
+/** Local functions by name; a name declared twice keeps both, which only ever adds findings. */
+function localFunctions(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+): ReadonlyMap<string, readonly FunctionNode[]> {
   const locals = new Map<string, FunctionNode[]>()
   const declare = (name: string, fn: FunctionNode): void => {
     locals.set(name, [...(locals.get(name) ?? []), fn])
@@ -130,16 +145,132 @@ function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): ReadonlySet
     if (ts.isFunctionDeclaration(node) && node.name !== undefined) declare(node.name.text, node)
     else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       const value = unwrapExpression(ts, node.initializer)
-      if (isFunctionValue(value)) declare(node.name.text, value)
+      if (isFunctionValue(ts, value)) declare(node.name.text, value)
     }
     ts.forEachChild(node, collect)
   }
   collect(source)
+  return locals
+}
 
-  const handlers = new Set<TSApi.Node>()
+/** The values `fn` itself returns: a concise arrow body, or each `return` outside nested functions. */
+function returnedValues(ts: TypeScriptApi, fn: FunctionNode): readonly TSApi.Expression[] {
+  const body = fn.body
+  if (body === undefined) return []
+  if (!ts.isBlock(body)) return [body]
+  const values: TSApi.Expression[] = []
+  // The facade over TypeScript 7 guarantees `isFunctionLike`; a class method is function-like too.
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isFunctionLike(node)) return
+    if (ts.isReturnStatement(node) && node.expression !== undefined) values.push(node.expression)
+    ts.forEachChild(node, visit)
+  }
+  ts.forEachChild(body, visit)
+  return values
+}
+
+/** Local variables of `fn` (outside nested functions) initialised with a raw `Response`. */
+function responseBindings(ts: TypeScriptApi, fn: FunctionNode): ReadonlySet<string> {
+  const names = new Set<string>()
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isFunctionLike(node)) return
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      rawResponseExpression(ts, unwrapExpression(ts, node.initializer))
+    )
+      names.add(node.name.text)
+    ts.forEachChild(node, visit)
+  }
+  if (fn.body !== undefined) ts.forEachChild(fn.body, visit)
+  return names
+}
+
+/** Whether a value `fn` returns is a raw `Response`, written there or held in a local variable. */
+function returnsRawResponse(ts: TypeScriptApi, fn: FunctionNode): boolean {
+  const bindings = responseBindings(ts, fn)
+  return returnedValues(ts, fn).some((value) => {
+    const unwrapped = unwrapExpression(ts, value)
+    return (
+      rawResponseExpression(ts, unwrapped) ||
+      (ts.isIdentifier(unwrapped) && bindings.has(unwrapped.text))
+    )
+  })
+}
+
+/** Value imports from relative modules, by local name: `import { json as reply } from "./http"`. */
+function relativeImports(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+): ReadonlyMap<string, { readonly specifier: string; readonly name: string }> {
+  const imports = new Map<string, { readonly specifier: string; readonly name: string }>()
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+      continue
+    const specifier = statement.moduleSpecifier.text
+    const clause = statement.importClause
+    if (!specifier.startsWith(".") || clause === undefined || clause.isTypeOnly) continue
+    const named = clause.namedBindings
+    if (named === undefined || !ts.isNamedImports(named)) continue
+    for (const element of named.elements) {
+      if (element.isTypeOnly) continue
+      const name = (element.propertyName ?? element.name).text
+      imports.set(element.name.text, { specifier, name })
+    }
+  }
+  return imports
+}
+
+/** The local name `source` exports as `name`: an exported declaration, or `export { local as name }`. */
+function exportedLocal(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+  name: string,
+): string | undefined {
+  const exported = (modifiers: readonly TSApi.ModifierLike[] | undefined): boolean =>
+    modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name?.text === name && exported(statement.modifiers)) return name
+    } else if (ts.isVariableStatement(statement)) {
+      const declarations = statement.declarationList.declarations
+      if (
+        exported(statement.modifiers) &&
+        declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name)
+      )
+        return name
+    } else if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier === undefined &&
+      !statement.isTypeOnly &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+    ) {
+      for (const element of statement.exportClause.elements)
+        if (element.name.text === name && !element.isTypeOnly)
+          return (element.propertyName ?? element.name).text
+    }
+  }
+  return undefined
+}
+
+interface RouteHandlerSets {
+  /** Functions a route registration or an `implement()` map passes: their first parameter is the context. */
+  readonly direct: ReadonlySet<FunctionNode>
+  /** Local functions a direct handler returns a call to (one hop). */
+  readonly returned: ReadonlySet<FunctionNode>
+  /** {@link direct} and {@link returned} together. */
+  readonly all: ReadonlySet<TSApi.Node>
+}
+
+/** Every route handler of `source`, by the rules {@link SourceFacts.isRouteHandlerAt} states. */
+function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): RouteHandlerSets {
+  const locals = localFunctions(ts, source)
+  const handlers = new Set<FunctionNode>()
   const named = (expression: TSApi.Node): readonly FunctionNode[] => {
     if (ts.isIdentifier(expression)) return locals.get(expression.text) ?? []
-    return isFunctionValue(expression) ? [expression] : []
+    return isFunctionValue(ts, expression) ? [expression] : []
   }
   const find = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -174,7 +305,7 @@ function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): ReadonlySet
   find(source)
 
   // One hop: a local function a handler returns a call to answers for that handler.
-  const returned = new Set<TSApi.Node>()
+  const returned = new Set<FunctionNode>()
   const follow = (node: TSApi.Node): void => {
     const value =
       ts.isReturnStatement(node) && node.expression !== undefined
@@ -188,8 +319,27 @@ function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): ReadonlySet
     ts.forEachChild(node, follow)
   }
   for (const handler of handlers) follow(handler)
-  for (const fn of returned) handlers.add(fn)
-  return handlers
+  const all = new Set<TSApi.Node>(handlers)
+  for (const fn of returned) all.add(fn)
+  return { direct: handlers, returned, all }
+}
+
+/** `c.json(…)`/`c.text(…)` on the handler's own context parameter: both build a plain `Response`. */
+function contextResponseCall(
+  ts: TypeScriptApi,
+  handler: FunctionNode,
+  value: TSApi.Expression,
+): boolean {
+  const context = handler.parameters[0]?.name
+  if (context === undefined || !ts.isIdentifier(context)) return false
+  if (!ts.isCallExpression(value) || !ts.isPropertyAccessExpression(value.expression)) return false
+  const target = value.expression.expression
+  const method = value.expression.name.text
+  return (
+    ts.isIdentifier(target) &&
+    target.text === context.text &&
+    (method === "json" || method === "text")
+  )
 }
 
 export interface SourceFactsOptions {
@@ -325,17 +475,55 @@ export function createSourceFacts(
     return false
   }
 
-  const handlersBySource = new WeakMap<TSApi.SourceFile, ReadonlySet<TSApi.Node>>()
-  const isRouteHandlerAt = (source: TSApi.SourceFile, position: number): boolean => {
+  const handlersBySource = new WeakMap<TSApi.SourceFile, RouteHandlerSets>()
+  const handlersOf = (source: TSApi.SourceFile): RouteHandlerSets => {
     let handlers = handlersBySource.get(source)
     if (handlers === undefined) {
       handlers = routeHandlers(ts, source)
       handlersBySource.set(source, handlers)
     }
+    return handlers
+  }
+  const isRouteHandlerAt = (source: TSApi.SourceFile, position: number): boolean => {
+    const { all } = handlersOf(source)
     return (
-      ancestorAt(ts, source, position, (node): node is TSApi.Node => handlers.has(node)) !==
-      undefined
+      ancestorAt(ts, source, position, (node): node is TSApi.Node => all.has(node)) !== undefined
     )
+  }
+
+  const indirectResponseReturns = (
+    source: TSApi.SourceFile,
+    importReturnsResponse?: (specifier: string, name: string) => boolean,
+  ): readonly number[] => {
+    const { direct, returned } = handlersOf(source)
+    const imports = importReturnsResponse === undefined ? undefined : relativeImports(ts, source)
+    const positions: number[] = []
+    const inspect = (handler: FunctionNode, isDirect: boolean): void => {
+      const bindings = responseBindings(ts, handler)
+      for (const value of returnedValues(ts, handler)) {
+        const unwrapped = unwrapExpression(ts, value)
+        const imported =
+          ts.isCallExpression(unwrapped) && ts.isIdentifier(unwrapped.expression)
+            ? imports?.get(unwrapped.expression.text)
+            : undefined
+        if (
+          (ts.isIdentifier(unwrapped) && bindings.has(unwrapped.text)) ||
+          (isDirect && contextResponseCall(ts, handler, unwrapped)) ||
+          (imported !== undefined &&
+            importReturnsResponse?.(imported.specifier, imported.name) === true)
+        )
+          positions.push(unwrapped.getStart(source))
+      }
+    }
+    for (const handler of direct) inspect(handler, true)
+    for (const handler of returned) if (!direct.has(handler)) inspect(handler, false)
+    return positions
+  }
+
+  const exportReturnsResponse = (source: TSApi.SourceFile, name: string): boolean => {
+    const local = exportedLocal(ts, source, name)
+    if (local === undefined) return false
+    return (localFunctions(ts, source).get(local) ?? []).some((fn) => returnsRawResponse(ts, fn))
   }
 
   const isDynamicImportAt = (
@@ -369,6 +557,8 @@ export function createSourceFacts(
     isFunctionRouteCallAt,
     isResponseSyntaxAt,
     isRouteHandlerAt,
+    indirectResponseReturns,
+    exportReturnsResponse,
     isDynamicImportAt,
   }
 }
