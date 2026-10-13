@@ -501,6 +501,45 @@ describe("computeUpgrade / runUpgrade", () => {
     const ok = await runUpgrade(process.cwd(), { list: true, json: true })
     expect(ok).toBe(true)
   })
+
+  test("--list shows the notes of every release after the declared one", async () => {
+    const root = join(FIXTURES, "list-notes")
+    await mkdir(root, { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^5.0.0" } }),
+    )
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      expect(await runUpgrade(root, { list: true, cliVersion: "5.1.0" })).toBe(true)
+      expect(await runUpgrade(root, { list: true, json: true, cliVersion: "5.1.0" })).toBe(true)
+    } finally {
+      log.mockRestore()
+    }
+    const [text, json] = lines
+    expect(text).toContain("this project declares 5.0.0")
+    expect(text).toContain("  5.0.0  (declared)\n  5.1.0\n    - `merge()` now recompiles")
+    // A release at or below the declared one is listed by version only.
+    expect(text).not.toContain("@nifra-gate-reviewed")
+    const parsed: unknown = JSON.parse(json ?? "{}")
+    expect(Reflect.get(Object(parsed), "installed")).toBe("5.0.0")
+    const notes = Reflect.get(Object(parsed), "notes")
+    expect(Reflect.get(notes, "5.1.0")).toEqual(getRecipe("5.1.0")?.notes ?? ["missing"])
+    expect(Reflect.get(notes, "5.0.0")).toEqual(getRecipe("5.0.0")?.notes ?? ["missing"])
+  })
+
+  test("every minor and major release this CLI offers has its own recipe", () => {
+    for (const version of upgradeTargets("5.1.0").filter((v) => /^\d+\.\d+\.0$/.test(v)))
+      if (compareSemverSpec(version, "5.0.0") >= 0) expect(getRecipe(version)).toBeDefined()
+  })
+
+  test("an upgrade across 5.1.0 carries its notes", () => {
+    const chained = chainRecipes("5.1.0", "5.0.0")
+    expect(
+      (chained.notes ?? []).some((note) => note.startsWith("5.1.0: `merge()` now recompiles")),
+    ).toBe(true)
+  })
 })
 
 // ── chained upgrades across releases ──────────────────────────────────────────

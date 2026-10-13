@@ -343,6 +343,21 @@ if ((await $`bun run check:packed`.nothrow()).exitCode !== 0) failures += 1
     }
   }
 
+  // (d) A minor or major release announces what an app can observe through its upgrade recipe: its
+  // notes are what `nifra upgrade` prints across it and `--list` shows. A release without one would
+  // upgrade apps silently, so its absence fails here, before the version reaches npm.
+  if (/^\d+\.\d+\.0$/.test(cliVersion)) {
+    const { getRecipe } = await import("../packages/cli/src/recipes/index.ts")
+    if (getRecipe(cliVersion) === undefined) {
+      failures += 1
+      console.error(
+        `✗ no upgrade recipe for ${cliVersion}: add packages/cli/src/recipes/${cliVersion}.ts (notes for every change an app can observe, or an empty list) and register it in recipes/index.ts`,
+      )
+    } else {
+      console.log(`✓ upgrade recipe for ${cliVersion} is registered`)
+    }
+  }
+
   // (c) `--auth better-auth` injects an `@nifrajs/better-auth` dep into scaffolded apps; its range must
   // track the published @nifrajs/better-auth version (also `fixed`, == cliVersion). Its sibling
   // `better-auth` peer pin is a third-party version and is intentionally NOT checked here.

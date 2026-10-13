@@ -464,7 +464,9 @@ export interface ReflectedHook {
   readonly kind: HookKind
   /** The plugin that registered it, else the function's own name, else `(anonymous)`. */
   readonly name: string
-  /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`. */
+  /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`; `route`
+   * for a runtime the route resolved at registration (`responseContract`, `effectLedger`,
+   * `idempotency`), whose `name` is the contract mode or the runtime. */
   readonly site: string
   /** The header names a static `responseHeaders()` declaration sets. */
   readonly headers?: readonly string[]
@@ -726,16 +728,24 @@ export function reflectHooks(source: unknown): ReflectedHookReport {
       const entry = recordOf(route.entry)
       const chain = (field: string, kind: HookKind) =>
         entry === undefined ? [] : listOf(entry, field).flatMap((hook) => entriesOf(hook, kind))
+      // A runtime is pinned into the route when it registers (or is merged), so it is listed with the
+      // route's site rather than a hook's; the mode is the name so a warn -> enforce change shows.
+      const mode = recordOf(recordOf(entry?.responseContract)?.runtime)?.mode
+      const pinned = (present: boolean, kind: HookKind, name: string): ReflectedHook[] =>
+        present ? [{ kind, name, site: "route" }] : []
       routes.push({
         method: route.method,
         path: reportPath(route.path),
         hooks: [
           ...requestPhase(probes),
           ...chain("around", "around"),
+          ...pinned(entry?.ledgered !== undefined, "effectLedger", "effectLedger"),
           ...chain("authStages", "authenticate"),
           ...chain("derives", "derive"),
           ...chain("beforeHandle", "beforeHandle"),
+          ...pinned(entry?.idempotent !== undefined, "idempotency", "idempotency"),
           ...chain("afterHandle", "afterHandle"),
+          ...pinned(typeof mode === "string", "responseContract", String(mode)),
           ...chain("onError", "onError"),
           ...responsePhase(probes),
         ],

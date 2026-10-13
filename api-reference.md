@@ -2682,7 +2682,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/reflection`
 
-- **HookKind** _(type)_ - `type HookKind = | "onRequest" | "around" | "authenticate" | "derive" | "beforeHandle" | "afterHandle" | "onError" | "onResponse" | "responseHeaders" | "onResponseFinalized"`
+- **HookKind** _(type)_ - `type HookKind`
   Where each registered hook came from, for `reflectHooks` (`nifra routes --hooks`). Development-only: every write sits behind the inline `process.env.NODE_ENV !== "production"` guard at its call site in `server.ts`, so a production define folds the writes away and this module drops out of the bundle…
 - **JsonSchema** _(type)_ - `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.

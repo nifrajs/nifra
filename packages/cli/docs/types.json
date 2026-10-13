@@ -6525,7 +6525,7 @@
     "name": "HookKind",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type HookKind = \"onRequest\" | \"around\" | \"authenticate\" | \"derive\" | \"beforeHandle\" | \"afterHandle\" | \"onError\" | \"onResponse\" | \"responseHeaders\" | \"onResponseFinalized\";",
+    "signature": "export type HookKind = \"onRequest\" | \"around\" | \"authenticate\" | \"derive\" | \"beforeHandle\" | \"afterHandle\" | \"onError\" | \"onResponse\" | \"responseHeaders\" | \"onResponseFinalized\" | \"effectLedger\" | \"idempotency\" | \"responseContract\";",
     "doc": "/**\n * Where each registered hook came from, for `reflectHooks` (`nifra routes --hooks`). Development-only:\n * every write sits behind the inline `process.env.NODE_ENV !== \"production\"` guard at its call site in\n * `server.ts`, so a production define folds the writes away and this module drops out of the bundle.\n * Reads happen only from reflection, never on the request path.\n */"
   },
   {
@@ -11492,7 +11492,7 @@
     "name": "ReflectedHook",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ReflectedHook {\n    readonly kind: HookKind;\n    /** The plugin that registered it, else the function's own name, else `(anonymous)`. */\n    readonly name: string;\n    /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`. */\n    readonly site: string;\n    /** The header names a static `responseHeaders()` declaration sets. */\n    readonly headers?: readonly string[];\n}",
+    "signature": "export interface ReflectedHook {\n    readonly kind: HookKind;\n    /** The plugin that registered it, else the function's own name, else `(anonymous)`. */\n    readonly name: string;\n    /** Where it was registered: `app`, `group /api`, `merge #1`, `mount /auth`, or `unknown`; `route`\n     * for a runtime the route resolved at registration (`responseContract`, `effectLedger`,\n     * `idempotency`), whose `name` is the contract mode or the runtime. */\n    readonly site: string;\n    /** The header names a static `responseHeaders()` declaration sets. */\n    readonly headers?: readonly string[];\n}",
     "doc": "/** One hook that runs for a route or an unmatched path: what it is, who added it, and where. */"
   },
   {

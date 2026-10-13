@@ -16,6 +16,10 @@ export type HookKind =
   | "onResponse"
   | "responseHeaders"
   | "onResponseFinalized"
+  // Runtimes a route resolved at registration: reflected beside its hooks, never tagged as one.
+  | "effectLedger"
+  | "idempotency"
+  | "responseContract"
 
 export interface HookOrigin {
   readonly kind: HookKind

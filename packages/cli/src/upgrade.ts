@@ -1149,6 +1149,33 @@ export function upgradeTargets(cliVersion: string): string[] {
   return versions.sort(compareSemverSpec)
 }
 
+/** Each target with the notes of every release after the installed one: what an app can observe
+ * changing on the way up. Older releases are listed by version only. */
+function renderUpgradeList(
+  targets: readonly string[],
+  installed: string | null,
+  notes: Readonly<Record<string, readonly string[]>>,
+): string {
+  const lines = [
+    installed === null
+      ? "available upgrade targets:"
+      : `available upgrade targets (this project declares ${installed}):`,
+  ]
+  for (const version of targets) {
+    const ahead = installed === null || compareSemverSpec(version, installed) > 0
+    lines.push(`  ${version}${version === installed ? "  (declared)" : ""}`)
+    if (!ahead) continue
+    const list = notes[version] ?? []
+    if (list.length === 0) lines.push("    no change an app can observe")
+    for (const note of list) lines.push(`    - ${note}`)
+  }
+  lines.push(
+    "",
+    "A newer release upgrades with its own CLI: bunx @nifrajs/cli@<version> upgrade <version>",
+  )
+  return lines.join("\n")
+}
+
 /** The command that runs `version`'s own CLI with the same flags. `version` is a validated release. */
 function newerCliCommand(version: string, options: UpgradeOptions): string {
   const flags = [
@@ -1167,13 +1194,11 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const cliVersion = options.cliVersion ?? listRecipeVersions().at(-1) ?? "0.0.0"
   const targets = upgradeTargets(cliVersion)
   if (options.list) {
-    if (options.json) console.log(JSON.stringify({ versions: targets, cliVersion }, null, 2))
-    else {
-      console.log(
-        `available upgrade targets:\n${targets.map((v) => `  ${v}`).join("\n")}\n\n` +
-          `A newer release upgrades with its own CLI: bunx @nifrajs/cli@<version> upgrade <version>`,
-      )
-    }
+    const installed = installedGroupVersion(cwd)
+    const notes = Object.fromEntries(targets.map((v) => [v, getRecipe(v)?.notes ?? []]))
+    if (options.json)
+      console.log(JSON.stringify({ versions: targets, cliVersion, installed, notes }, null, 2))
+    else console.log(renderUpgradeList(targets, installed, notes))
     return true
   }
 
