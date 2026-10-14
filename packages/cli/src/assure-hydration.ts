@@ -20,6 +20,7 @@ import {
   readBoundedStream,
   readHeadTail,
   signalProcessGroup,
+  stopGroupOnExit,
 } from "./mcp-io.ts"
 import { frameworkWebAppOptions } from "./web-app-options.ts"
 
@@ -649,6 +650,7 @@ export async function runHydrationAssurance(
       detached: OWN_PROCESS_GROUP,
     },
   )
+  stopGroupOnExit(proc)
   const stopper = escalatingStop((name) => signalProcessGroup(proc, name))
   let stopped: string | undefined
   const stop = (reason: string): void => {

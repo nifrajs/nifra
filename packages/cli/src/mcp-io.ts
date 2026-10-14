@@ -69,6 +69,21 @@ export function escalatingStop(
   }
 }
 
+/**
+ * Once a child spawned with `detached: OWN_PROCESS_GROUP` exits, stop what is left of its group:
+ * SIGTERM, then SIGKILL after the grace period. A process the project's code started (a dev proxy, a
+ * watcher, an embedded database) outlives the child otherwise, and one that inherited the child's
+ * stdout or stderr keeps the caller's read, and the call, open until its deadline.
+ */
+export function stopGroupOnExit(proc: {
+  readonly pid: number
+  readonly exited: Promise<unknown>
+  kill(signal?: NodeJS.Signals): void
+}): void {
+  if (!OWN_PROCESS_GROUP) return
+  void proc.exited.then(() => escalatingStop((name) => signalProcessGroup(proc, name)).stop())
+}
+
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
 /**

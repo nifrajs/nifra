@@ -42,6 +42,7 @@ import {
   OWN_PROCESS_GROUP,
   readBoundedStream,
   signalProcessGroup,
+  stopGroupOnExit,
   timeoutMessage,
   validateLocalPort,
 } from "./mcp-io.ts"
@@ -720,6 +721,7 @@ export async function spawnChild(
     stderr: "pipe",
     detached: OWN_PROCESS_GROUP,
   })
+  stopGroupOnExit(proc)
   const stopper = escalatingStop((name) => signalProcessGroup(proc, name))
   let killed = false
   const kill = (): void => {

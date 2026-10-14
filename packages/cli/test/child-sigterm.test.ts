@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { runHydrationAssurance } from "../src/assure-hydration.ts"
 import { spawnChild, WarmWorker } from "../src/mcp-exec.ts"
 import { escalatingStop } from "../src/mcp-io.ts"
+import { askProjectChild } from "../src/mcp-isolate.ts"
 import {
   createFixtureProject,
   createFixtureRoot,
@@ -113,6 +114,81 @@ test.skipIf(process.platform === "win32")(
     }
     // The test's own timeout bounds this wait: before the fix the child outlived the worker for good.
     while (alive()) await Bun.sleep(10)
+  },
+  60_000,
+)
+
+/** Spawns a helper the way `Bun.spawn` does by default: it inherits, and holds open, its parent's stderr. */
+const helperSource = (dir: string): string[] => [
+  'import { writeFileSync } from "node:fs"',
+  "const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'])",
+  `writeFileSync(${JSON.stringify(join(dir, "helper"))}, String(child.pid))`,
+]
+
+/** Waits for the helper to be gone, and how long the call took to return. */
+async function helperEnds(dir: string, call: () => Promise<unknown>): Promise<number> {
+  const started = performance.now()
+  await call()
+  const took = performance.now() - started
+  const pid = Number(readFileSync(join(dir, "helper"), "utf8"))
+  const alive = (): boolean => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  while (alive()) await Bun.sleep(10)
+  return took
+}
+
+test.skipIf(process.platform === "win32")(
+  "a cold run returns once its child exits, and ends the process its app started",
+  async () => {
+    const dir = createFixtureProject(root, "cold-grandchild-")
+    writeAppFile(dir, "package.json", JSON.stringify({ name: "cold-grandchild", type: "module" }))
+    writeAppFile(
+      dir,
+      "backend/app.ts",
+      [
+        ...helperSource(dir),
+        'export const backend = { fetch: () => new Response("cold") }',
+        "",
+      ].join("\n"),
+    )
+    let out = ""
+    const took = await helperEnds(dir, async () => {
+      out = await spawnChild("mcp-run", dir, { requests: [{ path: "/" }] }, "run")
+    })
+    expect(out).toContain("cold")
+    // Bounded by the kill grace period, not by the 30 s timeout the open stderr pipe used to hold.
+    expect(took).toBeLessThan(10_000)
+  },
+  60_000,
+)
+
+test.skipIf(process.platform === "win32")(
+  "a project child returns once it exits, and ends the process the project config started",
+  async () => {
+    const dir = createFixtureProject(root, "project-grandchild-")
+    writeAppFile(
+      dir,
+      "package.json",
+      JSON.stringify({ name: "project-grandchild", type: "module" }),
+    )
+    writeAppFile(
+      dir,
+      "nifra.config.ts",
+      [...helperSource(dir), 'export const apps = { web: "./web" }', ""].join("\n"),
+    )
+    const took = await helperEnds(dir, async () => {
+      expect(await askProjectChild(dir, { op: "monorepo" }, { timeoutMs: 20_000 })).toEqual({
+        ok: true,
+        apps: { web: "./web" },
+      })
+    })
+    expect(took).toBeLessThan(10_000)
   },
   60_000,
 )
