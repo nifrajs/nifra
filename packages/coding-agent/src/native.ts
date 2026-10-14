@@ -181,6 +181,8 @@ interface NativePendingApproval {
   readonly capability: string
   readonly resolve: (resolution: NativeApprovalResolution) => void
   readonly timer: ReturnType<typeof setTimeout> | undefined
+  /** When the approval times out, in epoch ms; undefined for `approvalTimeoutMs: "never"`. */
+  readonly expiresAt: number | undefined
   readonly onAbort: () => void
   readonly signal: AbortSignal
 }
@@ -649,6 +651,7 @@ export class NifraBackend implements AgentBackend {
         capability,
         resolve,
         timer,
+        expiresAt: timeoutMs === "never" ? undefined : Date.now() + timeoutMs,
         onAbort,
         signal,
       }
@@ -719,6 +722,13 @@ export class NifraBackend implements AgentBackend {
   ): NativeApprovalResolution | undefined {
     const pending = this.pendingApprovals.get(approvalId)
     if (pending === undefined || pending.sessionId !== session.id) return undefined
+    // The timeout timer can fire late (a busy loop, a suspended host), so an approve that arrives
+    // after the deadline is refused here instead of winning the race against it.
+    if (approved && pending.expiresAt !== undefined && Date.now() >= pending.expiresAt) {
+      approved = false
+      reason = "approval timed out"
+      errorCode = "APPROVAL_TIMEOUT"
+    }
     clearTimeout(pending.timer)
     pending.signal.removeEventListener("abort", pending.onAbort)
     this.pendingApprovals.delete(approvalId)

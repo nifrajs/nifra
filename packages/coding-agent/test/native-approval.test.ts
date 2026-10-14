@@ -238,6 +238,24 @@ describe("NifraBackend native approvals", () => {
     await backend.close("native")
   })
 
+  test("an approve after the deadline is refused even before the late timeout timer runs", async () => {
+    const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: 20 })
+    const { events, iterator, required } = await startApprovalTurn(backend)
+    // A busy host: the deadline passes while the timeout timer cannot run.
+    const busyUntil = Date.now() + 60
+    while (Date.now() < busyUntil) {}
+    expect(await backend.resolveApproval("native", required.approvalId, true)).toBe(false)
+    await drain(iterator, events)
+
+    expect(events.filter(isApprovalResolved)).toEqual([
+      expect.objectContaining({ approved: false, reason: "approval timed out" }),
+    ])
+    const completed = events.find((event) => event.type === "tool.completed")
+    expect(completed?.error?.code).toBe("APPROVAL_TIMEOUT")
+    expect(executed).toHaveLength(0)
+    await backend.close("native")
+  })
+
   test("CodingAgentHost exposes and resolves native approvals through the protocol", async () => {
     const { backend, executed } = makeNativeBackend({})
     const host = new CodingAgentHost({ backend })
