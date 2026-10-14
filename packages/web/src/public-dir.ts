@@ -111,7 +111,11 @@ function isHiddenPath(root: string, abs: string): boolean {
 const BUFFERED_BODY_MAX = 256 * 1024
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
-async function readPinned(handle: FileHandle, start: number, length: number): Promise<Uint8Array> {
+async function readPinned(
+  handle: FileHandle,
+  start: number,
+  length: number,
+): Promise<Uint8Array<ArrayBuffer>> {
   const bytes = new Uint8Array(length)
   let offset = 0
   while (offset < length) {
@@ -275,7 +279,7 @@ export function servePublicDir(
       const body = async (
         start: number,
         end: number,
-      ): Promise<Uint8Array | ReadableStream<Uint8Array>> => {
+      ): Promise<Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>> => {
         const length = end - start + 1
         if (length <= BUFFERED_BODY_MAX) {
           const bytes = await readPinned(handle!, start, length)

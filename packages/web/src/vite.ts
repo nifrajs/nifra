@@ -301,8 +301,10 @@ export async function pipeWebBodyToNode(
     res.end()
     return
   }
+  // A call, so the check after an await is not narrowed by the one before it.
+  const destroyed = (): boolean => res.destroyed === true
   // The client left while the app ran: `close` fired before anyone listened, and no `drain` comes.
-  if (res.destroyed === true) {
+  if (destroyed()) {
     await body.cancel().catch(() => {})
     return
   }
@@ -321,7 +323,7 @@ export async function pipeWebBodyToNode(
       const { done, value } = await reader.read()
       if (done) break
       if (!res.write(value) && !closed && res.once !== undefined) {
-        if (res.destroyed === true) {
+        if (destroyed()) {
           onClose()
           break
         }
