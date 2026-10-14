@@ -60,6 +60,13 @@ const SCRIPT_ESCAPE_MAP: Readonly<Record<string, string>> = {
   [LINE_SEP]: "\\u2028",
   [PARA_SEP]: "\\u2029",
 }
+// Pages (the chain's last entry) whose string render suspended, with how many more requests go
+// straight to the stream instead of rendering the whole tree twice. The count runs out so a page
+// that suspended only once (a cold `lazy`) gets its buffered render back.
+const SUSPENDING_PAGES = new WeakMap<object, number>()
+const SUSPENDED_STREAMS = 32
+const isWeakKey = (value: unknown): value is object =>
+  (typeof value === "object" && value !== null) || typeof value === "function"
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
 
@@ -565,6 +572,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       streamNonce,
       streamNonce === nonce ? nonceAttr : ` nonce="${escapeAttr(streamNonce ?? "")}"`,
     ).then((response) => new ResponseRenderedPage(response))
+  const last = chain[chain.length - 1]
+  const leaf = isWeakKey(last) ? last : undefined
   if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
     // Under a CSP a render can still write a script for this request alone (Solid's serialized
     // error boundary, React's streamed Suspense reveal): it is handed a nonce, which the document
@@ -576,6 +585,15 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       headers["cache-control"] = "private, no-store"
       const policy = cspHeaderValue(csp, adapter, renderNonce)
       if (policy !== undefined) headers["content-security-policy"] = policy
+    }
+    // A page whose string render suspended before goes straight to the stream: the string pass
+    // would render the whole tree only to be thrown away again.
+    const skips = leaf === undefined ? undefined : SUSPENDING_PAGES.get(leaf)
+    if (leaf !== undefined && skips !== undefined) {
+      if (skips > 1) SUSPENDING_PAGES.set(leaf, skips - 1)
+      else SUSPENDING_PAGES.delete(leaf)
+      adoptNonce()
+      return streamed(renderNonce)
     }
     const out =
       parts !== undefined
@@ -591,6 +609,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       if (bodyHtml === undefined) {
         // The render suspended on something only the streaming renderer waits for (React's `use`
         // in a `<Suspense>`): stream the page, so the boundary resolves on the server.
+        if (leaf !== undefined) SUSPENDING_PAGES.set(leaf, SUSPENDED_STREAMS)
         if (parts !== undefined) {
           parts.head = ""
           parts.body = ""

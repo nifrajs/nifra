@@ -188,6 +188,32 @@ test("a render that suspends is streamed, with the nonce its streamed scripts ne
   expect(await open.text()).toContain("<p>resolved</p>")
 })
 
+test("a page whose render suspended is streamed without another string render, for a while", async () => {
+  let stringRenders = 0
+  let suspends = true
+  const counting: RenderAdapter = {
+    ...adapter,
+    renderToString: () => {
+      stringRenders++
+      return suspends ? undefined : "<p>buffered</p>"
+    },
+    renderToStream: () => streamOf("<p>streamed</p>"),
+  }
+  const Page = () => null
+  const render = async () =>
+    (
+      await renderPage({ adapter: counting, chain: [Page], data: null, clientEntry: "/c.js" })
+    ).text()
+  expect(await render()).toContain("<p>streamed</p>")
+  expect(stringRenders).toBe(1)
+  suspends = false
+  for (let i = 0; i < 32; i++) expect(await render()).toContain("<p>streamed</p>")
+  expect(stringRenders).toBe(1)
+  // The page stopped suspending (a `lazy` that loaded): it gets its buffered render back.
+  expect(await render()).toContain("<p>buffered</p>")
+  expect(stringRenders).toBe(2)
+})
+
 test("an adapter whose hydration head stops matching the hashed one falls back to a nonce", async () => {
   let head = "<script>globalThis.boot = 1</script>"
   const drifting: RenderAdapter = { ...adapter, hydrationHead: () => head }

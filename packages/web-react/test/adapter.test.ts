@@ -151,6 +151,35 @@ test("a page that suspends without defer() renders its resolved content on the s
   expect(html).toContain("<span>SSR_RESOLVED</span>")
 })
 
+test("a page known to suspend renders once per request, not once per renderer", async () => {
+  let renders = 0
+  const Slow = (props: { pending: Promise<string> }) =>
+    createElement("span", null, use(props.pending))
+  const Page = (props: { data: { pending: Promise<string> } }) => {
+    renders++
+    return createElement(
+      Suspense,
+      { fallback: "FALLBACK" },
+      createElement(Slow, { pending: props.data.pending }),
+    )
+  }
+  const render = async (value: string) => {
+    const pending = new Promise<string>((r) => setTimeout(() => r(value), 5))
+    const res = await renderPage({
+      adapter: reactAdapter,
+      chain: [Page],
+      data: { pending },
+      clientEntry: "/c.js",
+      hydrate: false,
+    })
+    return res.text()
+  }
+  expect(await render("FIRST")).toContain("<span>FIRST</span>")
+  renders = 0
+  expect(await render("SECOND")).toContain("<span>SECOND</span>")
+  expect(renders).toBe(1)
+})
+
 test("a component that suspends with no boundary above it renders once resolved, not a throw", async () => {
   let resolve!: (value: string) => void
   const pending = new Promise<string>((r) => {
