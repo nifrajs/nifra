@@ -15,6 +15,7 @@
   Keep custom start-only `ObservationLifecycle` implementations compatible. The factory returns the extended `RecordingObservationLifecycle` interface with the new `record` method.
   
   Mark the migration parser's TypeScript keyword-kind comparison as syntax, so the security check does not mistake it for a secret comparison.
+- 7fa40da: `cache.set` now waits for a `wrap` load's store write already sent for the same key, as `delete`, `invalidateTag` and `clear` do. Withdrawal only stopped a load that had not yet written, so with an async store that applies requests out of order an older loaded value could land after, and overwrite, a newer `set`.
 
 ## 5.2.1
 

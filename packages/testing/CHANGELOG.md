@@ -5,6 +5,13 @@
 ### Patch Changes
 
 - Updated dependencies [7ab9692]
+- Updated dependencies [61724f9]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [46a93c7]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
   - @nifrajs/agent@5.3.0
   - @nifrajs/client@5.3.0
   - @nifrajs/core@5.3.0

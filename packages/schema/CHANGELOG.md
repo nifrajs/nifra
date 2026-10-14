@@ -18,7 +18,8 @@
 
 ### Patch Changes
 
-- @nifrajs/uploads@5.3.0
+- Updated dependencies [0dea5b3]
+  - @nifrajs/uploads@5.3.0
 
 ## 5.2.1
 

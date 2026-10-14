@@ -4,9 +4,13 @@
 
 ### Patch Changes
 
-- @nifrajs/coding-agent@5.3.0
-- @nifrajs/agent-app@5.3.0
-- @nifrajs/agent-protocol@5.3.0
+- Updated dependencies [c8d7745]
+- Updated dependencies [b186218]
+- Updated dependencies [7093af2]
+- Updated dependencies [d6b349c]
+  - @nifrajs/agent-app@5.3.0
+  - @nifrajs/agent-protocol@5.3.0
+  - @nifrajs/coding-agent@5.3.0
 
 ## 5.2.1
 

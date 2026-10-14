@@ -4,7 +4,13 @@
 
 ### Patch Changes
 
+- 61724f9: A cancelled turn no longer commits a model answer that arrives after the cancel. A model port that ignores its `signal` could still return output or a tool call, and output validation can be async; `turn` now rechecks the signal once the model answers and again after validating output, and suspends as `cancelled` instead of saving a completed state or running the tool.
 - Updated dependencies [7ab9692]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
   - @nifrajs/core@5.3.0
 
 ## 5.2.1

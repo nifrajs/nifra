@@ -2,7 +2,10 @@
 
 ## 5.3.0
 
-No changes in this release.
+### Patch Changes
+
+- 81dbb5e: `FileStorage` resolves the directory holding its root once, on first use, and works beneath that real path from then on, checking before every operation that it is still the same directory. Every operation used to re-walk the configured path, so repointing a symbolic link above the root, or renaming an ancestor by whoever could write there, redirected later reads, writes and deletes into another tree; the first now has no effect and the second makes each operation fail with `StorageKeyError`. A root reached through a link that is later repointed keeps using the tree it first resolved until the process restarts.
+- b3ca1d6: Concurrent `FileStorage.put` calls on one key no longer leave a body served with another put's content type and metadata. The body and its metadata sidecar are separate files, so two successful puts could each land one of them last. Puts and deletes of a key on one instance now run one at a time, and a sidecar records the body file it was written with: a read ignores a sidecar naming another body (another process's put landing in between), falling back to the type inferred from the key. Sidecars written by earlier versions are read as before.
 
 ## 5.2.1
 

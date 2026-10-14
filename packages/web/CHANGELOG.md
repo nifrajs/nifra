@@ -19,7 +19,18 @@
 ### Patch Changes
 
 - 0e1d03f: A build no longer copies hidden files from `public/` - any path segment starting with `.` other than `.well-known`, such as `.env`, `.git/` or `.DS_Store`. Development never served them, but the build copied them and every target then served them: the Bun, Node and Deno entries from their allowlist, the static, Pages and Vercel hosts from the directory. The development parity check lists public files by the same rule, and `servePublicDir` also refuses a visible name whose real target is hidden.
+- 605c246: Under a hash-based `createCspPolicy`, a buffered render that writes a script for that request alone (Solid serializing a server error an `ErrorBoundary` caught, for hydration) no longer ships it unauthorized. The render is handed a nonce; when the HTML it returns carries it, the document keeps the nonce in its `Content-Security-Policy` and becomes `private, no-store`, and every other document stays nonce-free and cacheable as before.
+- 271917a: A soft navigation's deferred data stream is cancelled and released when a line fails to parse. A malformed first line threw out of `parseNdjsonData` with the body still locked and streaming and the abort listener attached, and a malformed later line stopped reading without cancelling the body; every exit now detaches from the signal, cancels an unfinished body and releases the reader.
+- 69dfb60: `rangeResponse()` and `servePublicDir` ignore a `Range` header on a HEAD request, as RFC 9110 section 14.2 defines range handling for GET only: HEAD answers 200 with the full `content-length` and no `content-range`, the same as the Node static bridge. Before, HEAD with `Range` answered 206 or 416 with the metadata of the requested slice.
+- 605c246: A React page that suspends without `defer()` (`use(promise)` or `lazy` inside `<Suspense>`) now renders its resolved content on the server. The buffered fast path rendered it with React's string renderer, which cannot wait, so the document kept the fallback for good (with `hydrate: false` or JavaScript off, the content never appeared), and a component suspending with no boundary above it failed the render. `RenderAdapter.renderToString` may now return `undefined` for a render that suspended; the React adapter does so, and the page is streamed instead, with a CSP nonce when the policy needs one.
+- 13224fe: The server entry `buildTarget` generates for `bun`, `node` and `deno` serves static files the way `nifra dev` does. Bun and Node now hand a manifest-approved path to `servePublicDir`, and Deno runs the same checks on its own file API: the real path must sit inside the deploy directory, so a symbolic link planted in the deployed tree no longer reaches a file outside it; a HEAD request is answered from the file's size instead of reading it whole (the Node entry read the entire file); and a single byte range gets a `206` (an unsatisfiable one a `416`), with `accept-ranges` advertised.
+- 00c266e: A streamed page now renders only as fast as the client reads it. The document stream read the whole app stream up front, so a client that stopped reading left the full rendered body queued in memory; it now pulls one renderer chunk per read. The Vite dev bridge (`pipeWebBodyToNode`) likewise waits for `drain` when the socket buffer is full instead of writing every chunk at once, and removes its listeners when the body ends.
 - Updated dependencies [7ab9692]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
   - @nifrajs/core@5.3.0
   - @nifrajs/island-trigger@5.3.0
 

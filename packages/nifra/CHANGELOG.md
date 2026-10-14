@@ -5,6 +5,11 @@
 ### Patch Changes
 
 - Updated dependencies [7ab9692]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
   - @nifrajs/core@5.3.0
 
 ## 5.2.1

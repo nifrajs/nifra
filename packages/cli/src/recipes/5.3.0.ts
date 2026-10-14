@@ -4,8 +4,9 @@ import type { UpgradeRecipe } from "./index.ts"
  * Upgrade recipe for Nifra 5.3.
  *
  * No import or dependency moves. The typed client reads two route return shapes differently,
- * `nifra check` and `nifra upgrade` report more, and a build, a GraphQL endpoint and a session store
- * refuse inputs they used to take; each note says what changes and what keeps the old answer.
+ * `nifra check` and `nifra upgrade` report more, and a build, a GraphQL endpoint, a session store and
+ * a few constructors refuse inputs they used to take; each note says what changes and what keeps the
+ * old answer.
  */
 export const recipe: UpgradeRecipe = {
   version: "5.3.0",
@@ -24,5 +25,10 @@ export const recipe: UpgradeRecipe = {
     "A build no longer copies hidden files from `public/` - any path segment starting with `.` other than `.well-known` - so `.env`, `.git/` or `.DS_Store` there is no longer deployed or served, matching development. A host marker a static deploy relies on, such as GitHub Pages' `.nojekyll`, now has to be written into the build output after the build.",
     "`@nifrajs/graphql` refuses a document whose fragments, named and inline, expand past `maxFragmentExpansion` (default 20,000 selections summed over its selection sets) with a 400 before validation. Pass a higher `maxFragmentExpansion` to `respondGraphql`, `graphqlWebSocket` or `mountGraphql` if a legitimate client document is refused.",
     "A store-mode `@nifrajs/auth` session now writes a revocation marker under `<id>.revoked` on logout and rotation, and every load reads it beside the record. A custom `SessionStore` must accept that key like any other; one that validates keys against the session-id shape has to allow the suffix.",
+    "A raw request target holding a character a URL parser percent-encodes in a path (`\"`, `<`, `>`, `^`, `` ` ``, `{`, `}`, a space or non-ASCII) now routes as its encoded path on Node, Deno and Bun's native route table, as it already did on workerd and Bun's parsed URL: `GET /vault<tag>` reaches a route registered as `/vault%3Ctag%3E`, and `c.req.url` on Node and Deno carries the encoded form. Params are decoded as before.",
+    "`rangeResponse()` and `servePublicDir` ignore `Range` on a HEAD request (RFC 9110 section 14.2): HEAD answers 200 with the full `content-length`, where it used to answer 206 or 416.",
+    "Invalid numbers are refused where they used to disable a limit or strand work: `@nifrajs/edge` `server({ maxBodyBytes })` throws a `RangeError` for anything but a non-negative safe integer; `@nifrajs/jobs` `enqueue` throws for a `NaN` or infinite `delayMs` or `runAt`, `fixedBackoff`/`exponentialBackoff` throw for a non-finite or negative delay or a `jitter` outside [0, 1], and a backoff returning a non-finite delay dead-letters the job; `@nifrajs/mock` throws `UnsupportedMockSchemaError` for an `anyOf` whose every alternative contradicts the keywords beside it.",
+    "`RenderAdapter.renderToString` may return `undefined` for a render that suspended; the page is then streamed. A custom adapter keeps working unchanged; code that calls an adapter's `renderToString` itself has to handle `undefined`. Under `createCspPolicy`, a buffered page whose render writes a script of its own (a Solid `ErrorBoundary` that caught a server error) now carries a nonce and `cache-control: private, no-store`, like a deferred page.",
+    "`FileStorage` resolves the directory holding its root once and checks it before every operation: renaming an ancestor of the root now fails each operation with `StorageKeyError`, and a root reached through a symbolic link that is later repointed keeps the first tree until restart. Restart the process after moving a storage root.",
   ],
 }

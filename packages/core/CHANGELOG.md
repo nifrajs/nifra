@@ -6,6 +6,14 @@
 
 - 7ab9692: A route answering `status(code, body)` with a code typed as plain `number` now types the client's `data` as that body; it was `unknown`. A code typed as a literal union (`200 | 409`) still splits into one arm per code. A plain return beside `status(200, body)` now types the 200 arm as either body; the two used to be intersected.
 
+### Patch Changes
+
+- 808bac8: A response body refused by its `content-length` alone is now cancelled. `readBoundedBytes` (behind the typed client's `maxDecodedBytes` and `decodeTransportResponse`) and the `jwks()` key fetch threw on an oversized declared length without touching the body, which left the stream, and its connection, open until the sender gave up.
+- d4bae56: `server({ maxBodyBytes })` from `@nifrajs/edge` refuses a `maxBodyBytes` that is not a non-negative safe integer at construction, with the same `RangeError` the full `@nifrajs/core` server throws. A `NaN` (an invalid numeric environment value, for example) compared false against every body length, so the edge server accepted bodies of any size.
+- 007060d: An in-process client reads a handler's streamed body under `maxDecodedBytes`, cancelling it once past the cap, as a network client does. It used to read every in-process body whole and check the size afterwards, which is safe for a body the app serialized but let a route returning its own `ReadableStream` buffer without limit before the check. A body the framework serialized keeps the whole-read lane: core records it when an in-process client exists (`hasResidentBody` from `@nifrajs/core/mount`).
+- 190ab39: A raw request target with a character a URL parser percent-encodes in a path (`"`, `<`, `>`, `^`, `` ` ``, `{`, `}`, a control, space or non-ASCII) now routes the same on every runtime. Bun and workerd route the parsed path, so `GET /vault<tag>` reached a route registered as `/vault%3Ctag%3E` there, while Node, Deno and Bun's native route table matched the raw text and could pick a broader `/:id` route with different guards. Node and Deno now encode such a target before anything reads it, and Bun's native table hands a param holding one of those characters to the portable router.
+- 7cf8df3: `ws.subscribe(topic)` on a closing or closed socket is now a no-op. Close drops a connection's topics, so an async handler that subscribed after the close (an `open` or `message` resuming late) left the dead socket in the in-process registry for good, where every `app.publish` kept sending to it.
+
 ## 5.2.1
 
 No changes in this release.

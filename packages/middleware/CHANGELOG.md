@@ -5,6 +5,8 @@
 ### Patch Changes
 
 - 400d1fa: `prettyJson()` passes a response through unchanged when its indented form would outgrow it more than eightfold (with a 64 KiB floor). Indentation repeats the nesting depth on every line, so a few kilobytes of deeply nested JSON, for example a request body an endpoint echoes back, expanded to tens of megabytes. The budget is checked before each line is built, so nothing past it is allocated.
+- 808bac8: A response body refused by its `content-length` alone is now cancelled. `readBoundedBytes` (behind the typed client's `maxDecodedBytes` and `decodeTransportResponse`) and the `jwks()` key fetch threw on an oversized declared length without touching the body, which left the stream, and its connection, open until the sender gave up.
+- 69dfb60: `rangeResponse()` and `servePublicDir` ignore a `Range` header on a HEAD request, as RFC 9110 section 14.2 defines range handling for GET only: HEAD answers 200 with the full `content-length` and no `content-range`, the same as the Node static bridge. Before, HEAD with `Range` answered 206 or 416 with the metadata of the requested slice.
 - Updated dependencies [7ab9692]
   - @nifrajs/schema@5.3.0
 
