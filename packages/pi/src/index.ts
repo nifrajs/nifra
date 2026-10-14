@@ -60,7 +60,7 @@ interface PiSession {
   seq: number
   turnId: string | undefined
   /** Pi ends a turn whose model call failed with an ordinary `agent_end`; the error is on its last message. */
-  modelError: string | undefined
+  modelError: ReturnType<typeof agentError> | undefined
   turnAbortCleanup: (() => void) | undefined
   reloadRequested: boolean
   reloadRevision: number
@@ -670,7 +670,7 @@ export class PiBackend implements AgentBackend {
             this.emit(session, { type: "assistant.message", turnId, text: piece })
         if (isRecord(message) && message.role === "assistant")
           session.modelError =
-            message.stopReason === "error" ? modelErrorText(message.errorMessage) : undefined
+            message.stopReason === "error" ? modelError(message.errorMessage) : undefined
         return
       }
       case "tool_execution_start":
@@ -847,7 +847,7 @@ export class PiBackend implements AgentBackend {
 
   private endTurn(session: PiSession): void {
     if (session.modelError === undefined) this.finishTurn(session)
-    else this.failActive(session, agentError("PI_MODEL_FAILED", session.modelError))
+    else this.failActive(session, session.modelError)
   }
 
   private finishTurn(session: PiSession): void {
@@ -1094,6 +1094,18 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
 ]
+
+// A rejected provider login or API key. Matched over Pi's whole error text, since a provider's auth
+// code (`invalid_refresh_token`, `authentication_error`) sits in the response body it quotes.
+const PI_AUTH_FAILURE =
+  /oauth refresh failed|invalid_refresh_token|refresh token|no api key|invalid[_ ]?(?:api[_ ]?key|x-api-key)|incorrect api key|authentication_error|unauthori[sz]ed|re-?authenticate|(?:sign(?:ing)?|log(?:ging)?)\s+in\s+again/i
+
+/** `PI_AUTH_REQUIRED` when the provider refused Pi's credentials, so a client can ask for a new
+ * sign-in or key; `PI_MODEL_FAILED` for any other model failure. */
+function modelError(value: unknown): ReturnType<typeof agentError> {
+  const auth = typeof value === "string" && PI_AUTH_FAILURE.test(value.slice(0, 4_096))
+  return agentError(auth ? "PI_AUTH_REQUIRED" : "PI_MODEL_FAILED", modelErrorText(value))
+}
 
 function modelErrorText(value: unknown): string {
   if (typeof value !== "string") return "Pi's model call failed"
