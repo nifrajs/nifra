@@ -99,6 +99,13 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
    */
   readonly maxFragmentExpansion?: number
   /**
+   * Maximum fragment comparisons validation makes: in each selection set it compares every two
+   * fragments spread there and, pair by pair, the fragments each reaches. Many fragments that select
+   * few fields cost work in the square of their count within the other limits. The default admits a
+   * binary tree of 255 fragments. Default 100,000.
+   */
+  readonly maxFragmentComparisons?: number
+  /**
    * Maximum asynchronous resolver execution time. Default 10 seconds. The execution's abort signal,
    * which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline and when the
    * request itself is aborted.
