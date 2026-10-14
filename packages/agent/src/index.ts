@@ -708,6 +708,13 @@ export async function turn<
       signal.aborted ? "cancelled" : "model",
     )
   }
+  // A model that ignores the signal can still answer after a cancel, and output validation can be
+  // async: neither may commit work the caller already cancelled.
+  const cancelledAfterModel = async () => {
+    await add("model", "failed", { code: "cancelled" })
+    return suspended(state, { kind: "cancelled", effectId: newId() }, "cancelled")
+  }
+  if (signal.aborted) return cancelledAfterModel()
   if (ports.deadline !== undefined && !canAttempt(ports.deadline, 0, AGENT_SETTLE_RESERVE_MS)) {
     await add("budget", "denied", { code: "deadline_exceeded" })
     return suspended(state, { kind: "budget", effectId: newId() }, "budget")
@@ -725,6 +732,7 @@ export async function turn<
   responses.push(response)
   if (response.kind === "output") {
     const outputResult = await validateStandard(definition.output, response.value)
+    if (signal.aborted) return cancelledAfterModel()
     if (!outputResult.ok) {
       await add("model", "failed", { code: "output_invalid" })
       const saved = freezeState({ ...state, status: "completed", step: state.step + 1, evidence })
