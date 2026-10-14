@@ -38,7 +38,12 @@ import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-pr
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
-import { forwardTerminalSignals, OWN_PROCESS_GROUP, signalProcessGroup } from "./mcp-io.ts"
+import {
+  forwardTerminalSignals,
+  OWN_PROCESS_GROUP,
+  signalProcessGroup,
+  stopGroupAndWait,
+} from "./mcp-io.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
@@ -209,7 +214,7 @@ async function runTsc(
       stop()
     }
     signal?.addEventListener("abort", abort, { once: true })
-    const releaseSignals = forwardTerminalSignals(stop)
+    const releaseSignals = forwardTerminalSignals(() => stopGroupAndWait(proc))
     let out = ""
     let err = ""
     let code: number | null = null

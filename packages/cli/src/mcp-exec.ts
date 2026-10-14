@@ -42,6 +42,7 @@ import {
   OWN_PROCESS_GROUP,
   readBoundedStream,
   signalProcessGroup,
+  stopGroupAndWait,
   stopGroupOnExit,
   timeoutMessage,
   validateLocalPort,
@@ -873,7 +874,7 @@ export class WarmWorker {
       detached: OWN_PROCESS_GROUP,
     }) as PipeSubprocess
     this.stopper = escalatingStop((name) => signalProcessGroup(this.proc, name))
-    this.releaseSignals = forwardTerminalSignals(() => this.stop())
+    this.releaseSignals = forwardTerminalSignals(() => stopGroupAndWait(this.proc))
     liveWarmWorkers.add(this)
     void this.readStdout()
     void this.readStderr()

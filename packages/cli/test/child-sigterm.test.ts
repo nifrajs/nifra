@@ -38,7 +38,7 @@ function ignoringApp(): string {
     [
       'import { writeFileSync } from "node:fs"',
       "process.on('SIGTERM', () => {})",
-      `writeFileSync(${JSON.stringify(join(dir, "ready"))}, "")`,
+      `writeFileSync(${JSON.stringify(join(dir, "ready"))}, String(process.pid))`,
       "export const backend = { fetch: () => new Promise(() => {}) }",
       "",
     ].join("\n"),
@@ -192,6 +192,48 @@ test.skipIf(process.platform === "win32")(
   },
   60_000,
 )
+
+for (const [how, signal, toGroup] of [
+  ["takes SIGTERM", "SIGTERM", false],
+  ["takes Ctrl+C", "SIGINT", true],
+] as const) {
+  test.skipIf(process.platform === "win32")(
+    `a server that ${how} ends a warm worker that catches SIGTERM before it exits`,
+    async () => {
+      const dir = ignoringApp()
+      const host = Bun.spawn(
+        [
+          process.execPath,
+          "-e",
+          [
+            `const { WarmWorker } = await import(${JSON.stringify(join(import.meta.dir, "../src/mcp-exec.ts"))})`,
+            `const worker = new WarmWorker("mcp-run", ${JSON.stringify(dir)}, "fingerprint", "run")`,
+            "void worker.request({ requests: [{ path: '/' }] }).catch(() => {})",
+            "setInterval(() => {}, 1000)",
+          ].join("\n"),
+        ],
+        // Its own group, so a Ctrl+C can be sent to the group a terminal would send it to.
+        { stdout: "ignore", stderr: "ignore", detached: true },
+      )
+      await fileAppears(dir, "ready")
+      const worker = Number(readFileSync(join(dir, "ready"), "utf8"))
+      process.kill(toGroup ? -host.pid : host.pid, signal)
+      await host.exited
+      expect(host.signalCode).toBe(signal)
+      const alive = (): boolean => {
+        try {
+          process.kill(worker, 0)
+          return true
+        } catch {
+          return false
+        }
+      }
+      // The server waits out the kill grace before it takes the signal: the worker is gone by then.
+      expect(alive()).toBe(false)
+    },
+    30_000,
+  )
+}
 
 test("a cancelled hydration run ends even when the project ignores SIGTERM", async () => {
   const dir = createFixtureProject(root, "hydration-")
