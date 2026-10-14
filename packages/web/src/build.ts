@@ -1541,8 +1541,10 @@ export function generateServerEntry(options: {
 
 /**
  * The Deno entry's static handler: `servePublicDir`'s checks on Deno's file API. The real path must sit
- * inside the root, so a link planted in the deployed tree cannot reach a file outside it; HEAD answers
- * from `stat` without reading; one byte range is served from a seek, several as the whole file.
+ * inside the root and cross no hidden segment, and the opened file must still be the one that path
+ * names, so a link planted in the deployed tree cannot reach a file outside it or a `.env` inside it.
+ * HEAD answers from `stat` without reading; one byte range is served from a seek, several as the
+ * whole file.
  */
 function denoStaticResponse(hashed: boolean): string[] {
   return [
@@ -1555,20 +1557,34 @@ function denoStaticResponse(hashed: boolean): string[] {
     "})",
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
+    "const hiddenSegment = (rel: string): boolean =>",
+    '  rel.split(/[\\\\/]/).some((segment) => segment.startsWith(".") && segment !== ".well-known")',
     "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
     '  const missing = () => new Response("not found", { status: 404 })',
     '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
-    "  let file",
+    "  let file, info",
     "  try {",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "    const real: string = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
     '    if (!real.startsWith(STATIC_REAL + (STATIC_REAL.includes("\\\\") ? "\\\\" : "/"))) return missing()',
+    "    if (hiddenSegment(real.slice(STATIC_REAL.length + 1))) return missing()",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "    file = await Deno.open(real)",
+    "    // Deno.open follows links, so a directory swapped for one after the check above redirects it.",
+    "    // The opened file must be the one at `real`, which must still resolve to itself.",
+    "    const opened = await file.stat()",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    const named = await Deno.stat(real)",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    if (opened.dev !== named.dev || opened.ino !== named.ino || (await Deno.realPath(real)) !== real) {",
+    "      file.close()",
+    "      return missing()",
+    "    }",
+    "    info = opened",
     "  } catch {",
+    "    file?.close()",
     "    return missing()",
     "  }",
-    "  const info = await file.stat()",
     "  const size: number = info.size",
     "  const headers = new Headers(staticHeaders(pathname))",
     '  const range = req.method === "GET" ? parseByteRange(req.headers.get("range"), size) : { kind: "none" as const }',

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { open, realpath, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
@@ -219,13 +219,17 @@ describe("diffManifestRoutes + formatManifestDrift", () => {
 const denoFiles = {
   SeekMode: { Start: 0 },
   realPath: (path: URL | string) => realpath(path instanceof URL ? fileURLToPath(path) : path),
+  stat: async (path: string) => {
+    const named = await stat(path)
+    return { dev: named.dev, ino: named.ino }
+  },
   async open(path: string) {
     const handle = await open(path, "r")
     let position = 0
     return {
       stat: async () => {
-        const stat = await handle.stat()
-        return { isFile: stat.isFile(), size: stat.size }
+        const opened = await handle.stat()
+        return { isFile: opened.isFile(), size: opened.size, dev: opened.dev, ino: opened.ino }
       },
       seek: async (offset: number) => {
         position = offset
@@ -243,6 +247,38 @@ const denoFiles = {
       },
     }
   },
+}
+
+interface StaticHandler {
+  staticPath(pathname: string): string | undefined
+  staticResponse(request: Request, file?: string, pathname?: string): Promise<Response>
+}
+
+/**
+ * Evaluate a generated entry's static gate and handler themselves, rooted at `dir` instead of the
+ * entry's own folder, rather than pattern-match their text. Deno's runs on the `deno` file API shim.
+ */
+async function staticHandler(src: string, dir: string, deno = denoFiles): Promise<StaticHandler> {
+  const start = src.indexOf("const STATIC_ROOT")
+  const end = Math.max(
+    src.indexOf("const server = Bun.serve"),
+    src.indexOf("await serve("),
+    src.indexOf("Deno.serve("),
+  )
+  const section = src.slice(start, end).replace('new URL("./", import.meta.url)', "ROOT_URL")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an async function's constructor is AsyncFunction, which TS does not name.
+  const AsyncFunction = (async () => {}).constructor as new (
+    ...source: string[]
+  ) => (...args: unknown[]) => Promise<unknown>
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section is the generated entry's static handler, which declares these two functions.
+  return (await new AsyncFunction(
+    "servePublicDir",
+    "fileURLToPath",
+    "parseByteRange",
+    "Deno",
+    "ROOT_URL",
+    `${new Bun.Transpiler({ loader: "ts" }).transformSync(section)}; return { staticPath, staticResponse }`,
+  )(servePublicDir, fileURLToPath, parseByteRange, deno, pathToFileURL(`${dir}/`))) as StaticHandler
 }
 
 describe("generateServerEntry", () => {
@@ -288,6 +324,11 @@ describe("generateServerEntry", () => {
     writeFileSync(join(root, "server-secret.txt"), "secret")
     // A link planted in the deployed tree, pointing outside it.
     symlinkSync(join(root, "server-secret.txt"), join(dir, "assets/leak.js"))
+    // A visible name linking to a hidden file inside it, and a hidden directory under /assets/.
+    writeFileSync(join(dir, ".env"), "SECRET=1")
+    symlinkSync(join(dir, ".env"), join(dir, "assets/env.js"))
+    mkdirSync(join(dir, "assets/.cache"))
+    writeFileSync(join(dir, "assets/.cache/x.js"), "cached")
     try {
       for (const target of ["bun", "node", "deno"] as const) {
         const src = generateServerEntry({
@@ -295,31 +336,7 @@ describe("generateServerEntry", () => {
           adapterImport: "../framework.ts",
           publicFiles: ["/robots.txt", "/logo.SVG", "/.well-known/acme-challenge/token"],
         })
-        // Evaluate the generated gate and handler themselves, rooted at `dir` instead of the entry's
-        // own folder, rather than pattern-match their text. Deno's runs on a `Deno` file API shim.
-        const start = src.indexOf("const STATIC_ROOT")
-        const end = Math.max(
-          src.indexOf("const server = Bun.serve"),
-          src.indexOf("await serve("),
-          src.indexOf("Deno.serve("),
-        )
-        const section = src.slice(start, end).replace('new URL("./", import.meta.url)', "ROOT_URL")
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an async function's constructor is AsyncFunction, which TS does not name.
-        const AsyncFunction = (async () => {}).constructor as new (
-          ...source: string[]
-        ) => (...args: unknown[]) => Promise<unknown>
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section is the generated entry's static handler, which declares these two functions.
-        const { staticPath, staticResponse } = (await new AsyncFunction(
-          "servePublicDir",
-          "fileURLToPath",
-          "parseByteRange",
-          "Deno",
-          "ROOT_URL",
-          `${new Bun.Transpiler({ loader: "ts" }).transformSync(section)}; return { staticPath, staticResponse }`,
-        )(servePublicDir, fileURLToPath, parseByteRange, denoFiles, pathToFileURL(`${dir}/`))) as {
-          staticPath: (pathname: string) => string | undefined
-          staticResponse: (request: Request, file?: string, pathname?: string) => Promise<Response>
-        }
+        const { staticPath, staticResponse } = await staticHandler(src, dir)
         const get = (path: string, init?: RequestInit) => {
           const file = staticPath(path)
           expect(file).toBeDefined()
@@ -345,8 +362,47 @@ describe("generateServerEntry", () => {
         expect(part.headers.get("content-range")).toBe("bytes 0-9/100")
         expect(await part.text()).toBe("x".repeat(10))
         expect((await get("/assets/leak.js")).status).toBe(404)
+        expect((await get("/assets/env.js")).status).toBe(404)
+        expect((await get("/assets/.cache/x.js")).status).toBe(404)
         expect(staticPath("/about")).toBeUndefined()
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("the Deno entry refuses a file reached through a directory swapped for a link after its check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nifra-static-swap-"))
+    const dir = join(root, "static")
+    mkdirSync(join(dir, "assets/chunks"), { recursive: true })
+    writeFileSync(join(dir, "assets/chunks/app.js"), "app")
+    mkdirSync(join(root, "outside"))
+    writeFileSync(join(root, "outside/app.js"), "secret")
+    let swap = false
+    // Deno.open follows links: `chunks` becomes one to a directory outside the root after the
+    // containment check passed and before the file is opened.
+    const racing = {
+      ...denoFiles,
+      open(path: string) {
+        if (swap) {
+          swap = false
+          renameSync(join(dir, "assets/chunks"), join(dir, "assets/chunks-old"))
+          symlinkSync(join(root, "outside"), join(dir, "assets/chunks"))
+        }
+        return denoFiles.open(path)
+      },
+    }
+    try {
+      const src = generateServerEntry({ target: "deno", adapterImport: "../framework.ts" })
+      const { staticPath, staticResponse } = await staticHandler(src, dir, racing)
+      const path = "/assets/chunks/app.js"
+      const get = () =>
+        staticResponse(new Request(`http://app.test${path}`), staticPath(path), path)
+      expect(await (await get()).text()).toBe("app")
+      swap = true
+      const swapped = await get()
+      expect(swapped.status).toBe(404)
+      expect(await swapped.text()).toBe("not found")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
