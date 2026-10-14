@@ -5,6 +5,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
@@ -322,6 +323,26 @@ describe("FileStorage filesystem containment", () => {
       // The resolved directory is gone altogether: still refused, never re-resolved elsewhere.
       await rm(join(base, "first"), { recursive: true })
       await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "a directory the first put creates above the root is pinned too",
+    async () => {
+      const base = await realpath(await mkdtemp(join(tmpdir(), "nifra-storage-created-")))
+      tmpDirs.push(base)
+      // `app` does not exist yet: the first put creates it beneath the pinned `base`.
+      const storage = new FileStorage(join(base, "app", "uploads"))
+      await storage.put("a.txt", "original")
+
+      await rename(join(base, "app"), join(base, "app-moved"))
+      await mkdir(join(base, "elsewhere", "uploads"), { recursive: true, mode: 0o755 })
+      await writeFile(join(base, "elsewhere", "uploads", "a.txt"), "planted")
+      await symlink(join(base, "elsewhere"), join(base, "app"), "dir")
+
+      await expect(storage.put("b.txt", "redirected")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.get("a.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      expect(await stat(join(base, "elsewhere", "uploads", "b.txt")).catch(() => null)).toBeNull()
     },
   )
 

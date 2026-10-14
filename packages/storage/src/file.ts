@@ -121,10 +121,37 @@ export class FileStorage implements StorageAdapter {
       () => [undefined, undefined] as const,
     )
     if (real !== anchor.path || info?.dev !== anchor.dev || info.ino !== anchor.ino) {
-      throw new StorageKeyError(
-        `storage key ${JSON.stringify(key)} is refused: the directory holding the storage root moved`,
-      )
+      throw this.movedError(key)
     }
+    await this.pinHolder(key)
+  }
+
+  private movedError(key: string): StorageKeyError {
+    return new StorageKeyError(
+      `storage key ${JSON.stringify(key)} is refused: the directory holding the storage root moved`,
+    )
+  }
+
+  /**
+   * Move the pin down to the directory holding the root once it exists. Pinned at first use, the
+   * anchor is the nearest existing ancestor; a directory a first write creates below it was never
+   * checked again, so swapping it for a link redirected every later operation. Called right after
+   * such a write creates directories, and before every operation.
+   */
+  private async pinHolder(key: string): Promise<void> {
+    const anchor = await this.anchor
+    const holder = dirname(this.root)
+    if (anchor === undefined || anchor.path === holder) return
+    let info: Awaited<ReturnType<typeof lstat>>
+    try {
+      info = await lstat(holder)
+    } catch (error) {
+      if (isMissing(error)) return
+      throw error
+    }
+    // Equal to its real path: no component between the pinned anchor and the holder is a link.
+    if (!info.isDirectory() || (await realpath(holder)) !== holder) throw this.movedError(key)
+    this.anchor = Promise.resolve({ path: holder, dev: info.dev, ino: info.ino })
   }
 
   private async resolveAnchor(): Promise<{ path: string; dev: number; ino: number }> {
@@ -340,6 +367,7 @@ export class FileStorage implements StorageAdapter {
   ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
+    await this.pinHolder(key)
     const staged = await this.stage(key, data)
     try {
       await this.assertNoSymlinkPath(base, path, key)
@@ -375,6 +403,7 @@ export class FileStorage implements StorageAdapter {
     data: Uint8Array | string,
   ): Promise<{ readonly path: string; readonly dev: number; readonly ino: number }> {
     await mkdir(this.stagingRoot, { recursive: true, mode: 0o755 })
+    await this.pinHolder(key)
     const path = join(this.stagingRoot, `${crypto.randomUUID()}.tmp`)
     await this.assertNoSymlinkPath(this.stagingRoot, path, key)
     let handle: FileHandle
@@ -413,6 +442,7 @@ export class FileStorage implements StorageAdapter {
     await this.assertNoSymlinkPath(base, path, key)
     // 0o755 whatever the umask: a group-writable directory (umask 002) would fail the trust check above.
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
+    await this.pinHolder(key)
     await this.assertNoSymlinkPath(base, path, key)
     try {
       const baseBefore = await lstat(base)
