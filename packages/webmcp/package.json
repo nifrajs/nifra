@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/webmcp",
-  "version": "5.2.1",
+  "version": "5.3.0",
   "description": "Typed WebMCP site tools and predictive UI contracts for Nifra.",
   "keywords": [
     "bun",

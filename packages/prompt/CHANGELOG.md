@@ -1,5 +1,12 @@
 # @nifrajs/prompt
 
+## 5.3.0
+
+### Patch Changes
+
+- Updated dependencies [7ab9692]
+  - @nifrajs/core@5.3.0
+
 ## 5.2.1
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @nifrajs/middleware
 
+## 5.3.0
+
+### Patch Changes
+
+- Updated dependencies [7ab9692]
+  - @nifrajs/schema@5.3.0
+
 ## 5.2.1
 
 ### Patch Changes

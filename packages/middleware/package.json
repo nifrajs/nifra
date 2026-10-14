@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/middleware",
-  "version": "5.2.1",
+  "version": "5.3.0",
   "description": "Composable middleware for nifra - auth, CSRF, JWT/JWKS, IP restriction, CORS, body limits, response cache, timing, and operational helpers.",
   "keywords": [
     "bun",
