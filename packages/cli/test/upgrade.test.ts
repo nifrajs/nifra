@@ -282,7 +282,7 @@ describe("peer ranges", () => {
       })
       const { text, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "5.3.0" }])
       expect(downgrades).toEqual([])
-      const after = (JSON.parse(text) as Record<string, Record<string, string>>)[field] ?? {}
+      const after: Record<string, string> = JSON.parse(text)[field]
       for (const spec of Object.values(after)) expect(specIncludes(spec, "5.3.0")).toBe(true)
       expect(after["@nifrajs/web"]).toBe("<6.0.0")
     }
