@@ -585,7 +585,7 @@ export { type QueryValue, queryObjectOf, searchOf }
 
 // Outside the printable ASCII a parsed path keeps as written: a control, space, `"`, `<`, `>`, `\`,
 // `^`, `` ` ``, `{`, `}`, or past ASCII (U+FFFD, an invalid escape, included).
-const UNROUTED_CHAR = /[^!#-;=?-[\]_a-z|~]/
+const UNROUTED_CHAR = /[^!#$%&'()*+,\-./0-9:;=?@A-Z[\]_a-z|~]/
 
 /**
  * A param value Bun's native route table matched but the portable router must decide: an invalid

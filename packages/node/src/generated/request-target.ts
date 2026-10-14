@@ -22,7 +22,8 @@
 // parser reads as a `/` in an http(s) path, or, before any `?` or `#`, a character outside the
 // class the parser keeps as written in a path: a control, space, `"`, `<`, `>`, `^`, `` ` ``, `{`,
 // `}`, or anything past ASCII, all of which it percent-encodes.
-const DOT_SEGMENT = /\\|\/(?:\.|%2e){1,2}(?:[/?#]|$)|^[^?#]*[^!#-;=?-\]_a-z|~]/i
+const DOT_SEGMENT =
+  /\\|\/(?:\.|%2e){1,2}(?:[/?#]|$)|^[^?#]*[^!#$%&'()*+,\-./0-9:;=?@A-Z[\\\]_a-z|~]/i
 
 /**
  * Whether `target` - an absolute URL or an origin-form `/path?query` - may hold a `.` or `..`
