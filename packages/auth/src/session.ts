@@ -290,15 +290,26 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
   const commit = async (c: SessionContext, session: Session<Data>): Promise<void> => {
     const state = stateOf(session, "commit")
+    const previousExpiry = state.expiresAt
+    // Capture before store reads so a later logout's marker outlives this renewal.
+    const committedAt = now()
+    // The loaded expiry still fences a request after its revocation marker has been collected.
+    if (previousExpiry !== undefined && previousExpiry <= committedAt) return
     // Rolling → slide the expiry; absolute → keep the original (set on the first commit).
     const expiresAt =
-      rolling || state.expiresAt === undefined ? now() + maxAge * 1000 : state.expiresAt
-    state.expiresAt = expiresAt
+      rolling || previousExpiry === undefined ? committedAt + maxAge * 1000 : previousExpiry
     const data = Object.fromEntries(state.data) as Record<string, unknown>
 
     if (store !== undefined) {
+      if (state.id !== undefined) {
+        const revoked = await store.get(revokedKey(state.id))
+        // Check again after the read: a delayed store operation can outlive both session and marker.
+        if (revoked !== undefined || (previousExpiry !== undefined && previousExpiry <= now()))
+          return
+      }
       if (state.regenerate) {
         if (state.id !== undefined) await revoke(state.id) // drop the pre-rotation session
+        if (previousExpiry !== undefined && previousExpiry <= now()) return
         state.id = undefined
         state.regenerate = false
       }
@@ -312,11 +323,15 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         await store.delete(state.id)
         return
       }
-      writeCookie(c, await sign(state.id), expiresAt)
+      const signed = await sign(state.id)
+      state.expiresAt = expiresAt
+      writeCookie(c, signed, expiresAt)
       return
     }
     // Cookie mode: the (signed) payload IS the cookie. serializeCookie enforces the 4 KB cap.
-    writeCookie(c, await sign(JSON.stringify({ data, expiresAt } satisfies Payload)), expiresAt)
+    const signed = await sign(JSON.stringify({ data, expiresAt } satisfies Payload))
+    state.expiresAt = expiresAt
+    writeCookie(c, signed, expiresAt)
   }
 
   const destroy = async (c: SessionContext, session?: Session<Data>): Promise<void> => {
