@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { t } from "@nifrajs/schema"
@@ -107,6 +107,60 @@ test("all() reuses parsed entries until files change", async () => {
     writeFileSync(join(dir, "post.md"), "---\ntitle: Updated\n---\n# Updated body")
     expect((await posts.all())[0]?.frontmatter.title).toBe("Updated")
     expect(validations).toBe(2)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+const titleSchema = {
+  "~standard": {
+    validate(value) {
+      const data = value as { title?: unknown }
+      return typeof data.title === "string"
+        ? { value: { title: data.title } }
+        : { issues: [{ message: "title required" }] }
+    },
+  },
+} satisfies StandardSchemaV1<{ title: string }>
+
+test("watch: false reads the directory once; a failed first read is retried", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-content-frozen-"))
+  try {
+    writeFileSync(join(dir, "post.md"), "---\nnope: 1\n---\n")
+    const posts = defineCollection({ dir, schema: titleSchema, watch: false })
+    await expect(posts.all()).rejects.toThrow()
+
+    writeFileSync(join(dir, "post.md"), "---\ntitle: First\n---\n# First")
+    const first = await posts.all()
+    expect(first.map((entry) => entry.frontmatter.title)).toEqual(["First"])
+    first.pop()
+
+    writeFileSync(join(dir, "post.md"), "---\ntitle: Updated\n---\n# Updated")
+    writeFileSync(join(dir, "other.md"), "---\ntitle: Other\n---\n")
+    expect((await posts.all()).map((entry) => entry.frontmatter.title)).toEqual(["First"])
+    // `get` still reads its one file.
+    expect((await posts.get("other"))?.frontmatter.title).toBe("Other")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a file deleted and recreated with the same size and mtime is read again", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-content-recreate-"))
+  try {
+    const path = join(dir, "post.md")
+    // One whole-second mtime for both files, so their size-and-mtime stamps are equal.
+    const mtime = new Date(1_700_000_000_000)
+    writeFileSync(path, "---\ntitle: AAAA\n---\n")
+    utimesSync(path, mtime, mtime)
+    const posts = defineCollection({ dir, schema: titleSchema })
+    expect((await posts.all())[0]?.frontmatter.title).toBe("AAAA")
+
+    unlinkSync(path)
+    expect(await posts.all()).toEqual([])
+    writeFileSync(path, "---\ntitle: BBBB\n---\n")
+    utimesSync(path, mtime, mtime)
+    expect((await posts.all())[0]?.frontmatter.title).toBe("BBBB")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

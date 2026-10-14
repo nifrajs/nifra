@@ -15,6 +15,11 @@ export interface CollectionConfig<S extends StandardSchemaV1> {
   readonly schema: S
   /** File extensions to include (default `[".md", ".markdown"]`). */
   readonly extensions?: readonly string[]
+  /** Look for changes on every `all()` (default `true`): a directory listing and a `stat` per file,
+   * so an edit shows without a restart. `false` lists and parses the directory once and returns that
+   * snapshot from then on, for a server whose content ships with its build. `get` checks its one
+   * file either way. */
+  readonly watch?: boolean
 }
 
 /** A typed collection over a content directory. */
@@ -80,6 +85,7 @@ export function defineCollection<S extends StandardSchemaV1>(
   const matches = (file: string): boolean => extensions.some((ext) => file.endsWith(ext))
   const fileCache = new Map<string, CachedEntry<InferSchema<S>>>()
   let collectionCache: CollectionSnapshot<InferSchema<S>> | undefined
+  let frozen: Promise<Array<Entry<InferSchema<S>>>> | undefined
 
   const readEntry = async (
     path: string,
@@ -109,20 +115,32 @@ export function defineCollection<S extends StandardSchemaV1>(
     )
   }
 
+  const load = async (): Promise<Array<Entry<InferSchema<S>>>> => {
+    const files = await listFiles()
+    const fingerprint = files.map((file) => `${file.file}\0${file.stamp}`).join("\0")
+    if (collectionCache?.fingerprint === fingerprint) return collectionCache.entries
+
+    const listed = new Set(files.map((file) => file.path))
+    for (const path of fileCache.keys()) if (!listed.has(path)) fileCache.delete(path)
+    const entries = await Promise.all(
+      files.map((file) => readEntry(file.path, slugOf(file.file), file.stamp)),
+    )
+    collectionCache = {
+      fingerprint,
+      entries,
+    }
+    return entries
+  }
+
   return {
     async all() {
-      const files = await listFiles()
-      const fingerprint = files.map((file) => `${file.file}\0${file.stamp}`).join("\0")
-      if (collectionCache?.fingerprint === fingerprint) return [...collectionCache.entries]
-
-      const entries = await Promise.all(
-        files.map((file) => readEntry(file.path, slugOf(file.file), file.stamp)),
-      )
-      collectionCache = {
-        fingerprint,
-        entries,
-      }
-      return [...entries]
+      if (config.watch !== false) return [...(await load())]
+      // A failed first read is not kept, so the next call retries it.
+      frozen ??= load().catch((error: unknown) => {
+        frozen = undefined
+        throw error
+      })
+      return [...(await frozen)]
     },
     async get(slug) {
       if (!isSafeSlug(slug)) return null
@@ -134,6 +152,7 @@ export function defineCollection<S extends StandardSchemaV1>(
         try {
           stat = await statPath(file)
         } catch {
+          fileCache.delete(file)
           continue // Not this extension; try the next configured one.
         }
         if (!stat.isFile()) continue
