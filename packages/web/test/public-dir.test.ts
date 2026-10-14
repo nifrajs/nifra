@@ -354,7 +354,7 @@ test("multiple ranges fall back to the full body rather than buffering multipart
   })
 })
 
-test("HEAD reports the same headers GET does, including a ranged one", async () => {
+test("HEAD reports the same headers GET does, and the whole representation under Range", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.txt"), "0123456789")
     const serve = servePublicDir({ dir })
@@ -366,10 +366,14 @@ test("HEAD reports the same headers GET does, including a ranged one", async () 
     expect(headResponse?.headers.get("accept-ranges")).toBe("bytes")
     expect(await headResponse?.text()).toBe("")
 
-    const headRange = await serve(ranged("/clip.txt", { range: "bytes=0-3" }, "HEAD"))
-    expect(headRange?.status).toBe(206)
-    expect(headRange?.headers.get("content-range")).toBe("bytes 0-3/10")
-    expect(await headRange?.text()).toBe("")
+    // Range is defined for GET only (RFC 9110 section 14.2), as the Node static bridge applies it.
+    for (const range of ["bytes=0-3", "bytes=99-"]) {
+      const headRange = await serve(ranged("/clip.txt", { range }, "HEAD"))
+      expect(headRange?.status).toBe(200)
+      expect(headRange?.headers.get("content-range")).toBeNull()
+      expect(headRange?.headers.get("content-length")).toBe("10")
+      expect(await headRange?.text()).toBe("")
+    }
   })
 })
 

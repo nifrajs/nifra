@@ -144,8 +144,8 @@ export function rangeResponse(
 
   if (shouldReturnNotModified(request, options)) return emptyResponse(304, headers)
 
-  const requestedRange =
-    request.method === "GET" || request.method === "HEAD" ? request.headers.get("range") : null
+  // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
+  const requestedRange = request.method === "GET" ? request.headers.get("range") : null
   const range =
     requestedRange !== null && ifRangeMatches(request.headers.get("if-range"), options)
       ? parseByteRange(requestedRange, bytes.byteLength)

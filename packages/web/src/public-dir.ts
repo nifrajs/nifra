@@ -242,7 +242,8 @@ export function servePublicDir(
         return new Response(null, { status: 304, headers })
       }
 
-      const rangeHeader = request.headers.get("range")
+      // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
+      const rangeHeader = head ? null : request.headers.get("range")
       const range =
         rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
           ? parseByteRange(rangeHeader, size)

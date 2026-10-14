@@ -124,16 +124,19 @@ describe("rangeResponse()", () => {
     }
   })
 
-  test("keeps HEAD bodyless while preserving representation length", async () => {
-    const response = rangeResponse(
-      new Request("http://x/file.txt", { method: "HEAD", headers: { range: "bytes=2-5" } }),
-      "0123456789",
-      { contentType: "text/plain" },
-    )
+  // RFC 9110 section 14.2 defines Range for GET only, so HEAD describes the whole representation.
+  test("ignores Range on HEAD and keeps it bodyless with the full length", async () => {
+    for (const range of ["bytes=2-5", "bytes=99-"]) {
+      const response = rangeResponse(
+        new Request("http://x/file.txt", { method: "HEAD", headers: { range } }),
+        "0123456789",
+        { contentType: "text/plain" },
+      )
 
-    expect(response.status).toBe(206)
-    expect(response.headers.get("content-range")).toBe("bytes 2-5/10")
-    expect(response.headers.get("content-length")).toBe("4")
-    expect(await response.text()).toBe("")
+      expect(response.status).toBe(200)
+      expect(response.headers.get("content-range")).toBeNull()
+      expect(response.headers.get("content-length")).toBe("10")
+      expect(await response.text()).toBe("")
+    }
   })
 })
