@@ -113,7 +113,7 @@ import {
   readBodyFramed,
 } from "./request-context.ts"
 import { recordRequestReplacement } from "./request-lineage.ts"
-import { hasDotSegment, resolveDotSegments } from "./request-target.ts"
+import { needsResolving, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -583,14 +583,19 @@ export { plainValidationError } from "./validation.ts"
 // importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
 export { type QueryValue, queryObjectOf, searchOf }
 
+// Outside the printable ASCII a parsed path keeps as written: a control, space, `"`, `<`, `>`, `\`,
+// `^`, `` ` ``, `{`, `}`, or past ASCII (U+FFFD, an invalid escape, included).
+const UNROUTED_CHAR = /[^!#-;=?-[\]_a-z|~]/
+
 /**
  * A param value Bun's native route table matched but the portable router must decide: an invalid
  * escape, or a piece of path Bun matched raw while its own parsed URL says otherwise - a `.` / `..`
- * segment (Bun hands `%2e` over decoded), or a backslash, which the parsed URL reads as `/`.
+ * segment (Bun hands `%2e` over decoded), a backslash, which the parsed URL reads as `/`, or a
+ * character the parsed URL percent-encodes (`/t/<b>` is `/t/%3Cb%3E`, which a static route for that
+ * text matches). The value is decoded, so a raw `<` and a sent `%3C` look alike; both are re-routed.
  */
 const unroutedParam = (value: string | undefined): boolean =>
-  value !== undefined &&
-  (value.includes("\uFFFD") || value.includes("\\") || value === "." || value === "..")
+  value !== undefined && (value === "." || value === ".." || UNROUTED_CHAR.test(value))
 
 function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
@@ -605,7 +610,7 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
-/** `req` as Bun or workerd would have delivered it: the same request, its URL's dot segments resolved. */
+/** `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it. */
 const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegments(req.url), req)
 
 function normalizeMountPrefix(path: string): string {
@@ -3159,7 +3164,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
+    if (rawRequestTargets && needsResolving(req.url)) req = withResolvedTarget(req)
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
     if (this.trustBodyFraming) markTrustedBodyFraming(req)
@@ -3655,7 +3660,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
-    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
+    if (rawRequestTargets && needsResolving(req.url)) req = withResolvedTarget(req)
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
     platform = this.trustedPlatform(req, platform)
 

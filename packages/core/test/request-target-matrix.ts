@@ -31,6 +31,8 @@ export function requestTargetApp<App>(app: App): App {
     .get("/posts", () => ({ route: "GET /posts" }))
     .get("/users/:id", (c) => ({ route: "GET /users/:id", id: c.params.id }))
     .get("/users/:id/posts", (c) => ({ route: "GET /users/:id/posts", id: c.params.id }))
+    .get("/tags/%3Cb%3E", () => ({ route: "GET /tags/%3Cb%3E" }))
+    .get("/tags/:tag", (c) => ({ route: "GET /tags/:tag", tag: c.params.tag }))
     .post("/echo", async (c) => ({
       route: "POST /echo",
       url: new URL(c.req.url).pathname,
@@ -72,6 +74,12 @@ export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
   { method: "GET", target: "/users/a%5Cb", answer: { route: "GET /users/:id", id: "a\\b" } },
   { method: "GET", target: "/users/...", answer: { route: "GET /users/:id", id: "..." } },
   { method: "GET", target: "/users/.a", answer: { route: "GET /users/:id", id: ".a" } },
+  // A character the parsed URL percent-encodes routes as its encoding: raw or encoded, one route.
+  { method: "GET", target: "/tags/<b>", answer: { route: "GET /tags/%3Cb%3E" } },
+  { method: "GET", target: "/tags/%3Cb%3E", answer: { route: "GET /tags/%3Cb%3E" } },
+  { method: "GET", target: "/tags/{x}", answer: { route: "GET /tags/:tag", tag: "{x}" } },
+  { method: "GET", target: '/tags/"q"', answer: { route: "GET /tags/:tag", tag: '"q"' } },
+  { method: "GET", target: "/tags/`t`", answer: { route: "GET /tags/:tag", tag: "`t`" } },
   // The query is not part of the path.
   { method: "GET", target: "/users/7?next=/../x", answer: { route: "GET /users/:id", id: "7" } },
   // Absolute-form (RFC 9112 section 3.2.2) routes its path with the Host header, as Bun does: the

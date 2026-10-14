@@ -2,7 +2,8 @@
 // Copied so @nifrajs/node resolves a raw target exactly as core does, without depending on it.
 
 /**
- * Dot segments in a request target, resolved the way a WHATWG URL parser resolves them.
+ * Dot segments in a request target, resolved the way a WHATWG URL parser resolves them, and the
+ * characters it percent-encodes in a path, encoded.
  *
  * Bun and workerd hand an app a request whose URL is already parsed: a client that sends
  * `/users/../posts`, `/users/%2e%2e/posts` or `/users/..\posts` is asking for `/posts`, and that
@@ -10,24 +11,27 @@
  * exactly as it was sent. Routing the raw text on those runtimes and the parsed text on the others
  * sends one request to two different handlers - with two different sets of guards - depending on
  * where the app runs. So a raw target is resolved before anything reads it, and every runtime routes
- * the same path.
+ * the same path. The same goes for a raw `/vault<tag>`: the parsed URL is `/vault%3Ctag%3E`, the
+ * path a route registered for that text matches.
  *
  * No imports: `@nifrajs/node` carries a generated copy of this module, since it never depends on
  * core at runtime.
  */
 
-// A `.` or `..` segment (`%2e` counts as a dot, in either case), or a backslash, which a WHATWG
-// parser reads as a `/` in an http(s) path.
-const DOT_SEGMENT = /\\|\/(?:\.|%2e){1,2}(?:[/?#]|$)/i
+// A `.` or `..` segment (`%2e` counts as a dot, in either case), a backslash, which a WHATWG
+// parser reads as a `/` in an http(s) path, or, before any `?` or `#`, a character outside the
+// class the parser keeps as written in a path: a control, space, `"`, `<`, `>`, `^`, `` ` ``, `{`,
+// `}`, or anything past ASCII, all of which it percent-encodes.
+const DOT_SEGMENT = /\\|\/(?:\.|%2e){1,2}(?:[/?#]|$)|^[^?#]*[^!#-;=?-\]_a-z|~]/i
 
 /**
  * Whether `target` - an absolute URL or an origin-form `/path?query` - may hold a `.` or `..`
- * segment, raw or percent-encoded, or a backslash: what a WHATWG parser would rewrite. Never false
- * when the path has one. It can be true when only the query looks like one (`?next=/../x`):
- * resolving that target leaves its path and query as they are, apart from the characters a parser
- * always percent-encodes.
+ * segment, raw or percent-encoded, a backslash, or a character a WHATWG parser percent-encodes in a
+ * path: what that parser would rewrite. Never false when the path has one. It can be true when only
+ * the query looks like one (`?next=/../x`): resolving that target leaves its path and query as they
+ * are, apart from the characters a parser always percent-encodes.
  */
-export function hasDotSegment(target: string): boolean {
+export function needsResolving(target: string): boolean {
   // One regex pass: measured faster on Node and Deno than substring scans that gate it.
   return DOT_SEGMENT.test(target)
 }
