@@ -126,4 +126,37 @@ describe("deploy targets publish no backend source", () => {
       )
     }
   })
+
+  // Development never serves a hidden public file; a build used to copy it, and every target then
+  // served it - the self-hosted entries from their allowlist, the CDN hosts from the directory.
+  test("hidden public files ship on no target, .well-known on every one", async () => {
+    for (const target of BUILD_TARGETS) {
+      const app = fixture({
+        "public/.env": "CUSTOM_SERVICE_PASSWORD=not-a-build-env-value\n",
+        "public/.git/config": "[remote]\n",
+        "public/img/.DS_Store": "x",
+        "public/.well-known/security.txt": "Contact: mailto:security@example.com\n",
+      })
+      const outDir = join(app, "dist")
+      await build(app, target)
+      // The platform's own config (Vercel's `.vc-config.json`) is not public output; the static tree is.
+      const staticDir = join(outDir, planBuildTarget(target, outDir).staticDir)
+      const published = filesUnder(staticDir).map((file) =>
+        relative(staticDir, file).replaceAll("\\", "/"),
+      )
+      expect({
+        target,
+        hidden: published.filter((file) => /(^|\/)\.(?!well-known\/)/.test(file)),
+      }).toEqual({
+        target,
+        hidden: [],
+      })
+      expect(published).toContain(".well-known/security.txt")
+      // The self-hosted entries allowlist public paths by exact string.
+      for (const file of filesUnder(outDir)) {
+        if (!/\.(?:m?js|ts)$/.test(file)) continue
+        expect(readFileSync(file, "utf8")).not.toContain('"/.env"')
+      }
+    }
+  })
 })

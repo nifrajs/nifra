@@ -181,15 +181,32 @@ test("copyPublicDir mirrors the tree and reports URL paths", async () => {
     await writeFile(join(from, "fonts", "inter.woff2"), "font")
     await mkdir(join(from, ".well-known", "acme-challenge"), { recursive: true })
     await writeFile(join(from, ".well-known", "acme-challenge", "token"), "acme")
+    // Hidden files are never shipped, as development never serves them; a link inside one is not
+    // even looked at.
+    await writeFile(join(from, ".env"), "SECRET=1")
+    await mkdir(join(from, ".git"), { recursive: true })
+    await writeFile(join(from, ".git", "config"), "[core]")
+    await symlink(join(dir, "elsewhere"), join(from, ".git", "link"))
+    await writeFile(join(from, "fonts", ".DS_Store"), "x")
+    await mkdir(join(from, ".well-known", ".private"), { recursive: true })
+    await writeFile(join(from, ".well-known", ".private", "key"), "k")
 
     const copied = await copyPublicDir(from, to)
-    // Dotfiles are included: `.well-known` is exactly the kind of file this exists to serve.
+    // `.well-known` is the one dot-directory shipped: it is exactly the kind of file this exists to serve.
     expect(copied).toEqual([
       "/.well-known/acme-challenge/token",
       "/fonts/inter.woff2",
       "/robots.txt",
     ])
     expect(await Bun.file(join(to, "fonts", "inter.woff2")).text()).toBe("font")
+    for (const hidden of [
+      ".env",
+      ".git",
+      join("fonts", ".DS_Store"),
+      join(".well-known", ".private"),
+    ]) {
+      expect(await Bun.file(join(to, hidden)).exists()).toBe(false)
+    }
 
     // The copied output serves through the same handler.
     const serve = servePublicDir({ dir: to })
@@ -395,6 +412,15 @@ test("hides dot-segments other than .well-known", async () => {
     expect(await serve(get("/%2eenv"))).toBeUndefined()
     expect(await serve(get("/.git/config"))).toBeUndefined()
     expect(await (await serve(get("/.well-known/security.txt")))?.text()).toBe("Contact: x")
+  })
+})
+
+test("a visible name linking to a hidden file inside the root is hidden too", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, ".env"), "SECRET=1")
+    await symlink(join(dir, ".env"), join(dir, "visible.txt"))
+    const serve = servePublicDir({ dir })
+    expect(await serve(get("/visible.txt"))).toBeUndefined()
   })
 })
 

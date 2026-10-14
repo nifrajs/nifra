@@ -239,7 +239,14 @@ test("development parity lists public files by the URL the build records for the
     await mkdir(routesDir, { recursive: true })
     await mkdir(join(publicDir, "docs"), { recursive: true })
     await writeFile(join(routesDir, "index.tsx"), "export default () => null\n")
-    for (const name of ["My Logo.png", "café.txt", "docs/report,2026 #1.csv"]) {
+    await mkdir(join(publicDir, ".git"), { recursive: true })
+    for (const name of [
+      "My Logo.png",
+      "café.txt",
+      "docs/report,2026 #1.csv",
+      ".env",
+      ".git/config",
+    ]) {
       await writeFile(join(publicDir, name), "x")
     }
     const built = await copyPublicDir(publicDir, join(root, "dist"))

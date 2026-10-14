@@ -17,6 +17,7 @@ import { extname, normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
+import { isHiddenPublicPath } from "./internal/public-url.ts"
 import { openResolved } from "./open-resolved.ts"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
@@ -96,15 +97,12 @@ export const CONTENT_TYPES: Readonly<Record<string, string>> = {
 }
 
 /**
- * Whether a confined path crosses a dot-segment other than `.well-known`. The build copies `public/`
- * with dotfiles included, so an editor or VCS artifact (`.env`, `.git/`, `.DS_Store`) dropped there
- * would otherwise be downloadable. Checked on the resolved path, so `%2e` encodings are covered.
+ * Whether a confined path crosses a hidden segment ({@link isHiddenPublicPath}). Checked on the
+ * resolved path, so `%2e` encodings are covered, and again on the real target, so a visible name
+ * linking to `.env` is refused too.
  */
 function isHiddenPath(root: string, abs: string): boolean {
-  for (const segment of abs.slice(root.length + 1).split(sep)) {
-    if (segment.startsWith(".") && segment !== ".well-known") return true
-  }
-  return false
+  return abs !== root && isHiddenPublicPath(abs.slice(root.length + 1))
 }
 
 /** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
@@ -194,7 +192,8 @@ export function servePublicDir(
     if (
       resolvedRoot === undefined ||
       resolvedFile === undefined ||
-      (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + sep))
+      (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + sep)) ||
+      isHiddenPath(resolvedRoot, resolvedFile)
     ) {
       return undefined
     }

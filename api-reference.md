@@ -5583,7 +5583,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
   Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
 - **copyPublicDir** _(function)_ - `copyPublicDir: (from: string, to: string) => Promise<string[]>`
-  Copy `from` into `to`, returning the URL paths copied (sorted).
+  Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than `.well-known` are skipped, as development never serves them: every target ships this list, and a CDN-hosted one serves whatever was copied.
 - **dataFileFor** _(function)_ - `dataFileFor: (pattern: string) => string`
   The static loader-data file next to a route's `index.html`: `/` → `_data.json`, `/a/b` → `a/b/_data.json`. The client fetches it on soft-nav into a prerendered route (no worker).
 - **detectNodeBuiltinsInClient** _(function)_ - `detectNodeBuiltinsInClient: (graph: ClientModuleGraph) => ReadonlyArray<NodeBuiltinFinding>`

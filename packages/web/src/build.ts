@@ -61,7 +61,7 @@ import {
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
-import { publicUrlPath } from "./internal/public-url.ts"
+import { isHiddenPublicPath, publicUrlPath } from "./internal/public-url.ts"
 import {
   assertNoSecrets,
   buildEnvironment,
@@ -340,7 +340,9 @@ export function cloudflareRouteRules(
 
 /** The built asset map - the server reads `entry` for the client script + serves `assets`. */
 /**
- * Copy `from` into `to`, returning the URL paths copied (sorted).
+ * Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than
+ * `.well-known` are skipped, as development never serves them: every target ships this list, and a
+ * CDN-hosted one serves whatever was copied.
  *
  * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and
  * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package
@@ -351,6 +353,7 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
   const sourceReal = await realpath(source)
   const copied: string[] = []
   for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: false })) {
+    if (isHiddenPublicPath(rel)) continue
     const candidate = join(source, rel)
     const candidateStat = await lstat(candidate)
     if (candidateStat.isSymbolicLink()) {

@@ -17685,7 +17685,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function copyPublicDir(from: string, to: string): Promise<string[]>;",
-    "doc": "/**\n * Copy `from` into `to`, returning the URL paths copied (sorted).\n *\n * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and\n * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package\n * entry - a dynamic `import(\"bun\")` there fails the browser build outright.\n */"
+    "doc": "/**\n * Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than\n * `.well-known` are skipped, as development never serves them: every target ships this list, and a\n * CDN-hosted one serves whatever was copied.\n *\n * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and\n * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package\n * entry - a dynamic `import(\"bun\")` there fails the browser build outright.\n */"
   },
   {
     "name": "copyRef",
