@@ -32,6 +32,7 @@ import {
   type StoragePresignOptions,
   toBytes,
 } from "../src/index.ts"
+import { racePuts } from "./race-puts.ts"
 
 /** An in-memory fake of the R2 binding so `R2Storage`'s mapping is exercised without real R2. Uses
  * conditional spreads (not `field: undefined`) to satisfy `exactOptionalPropertyTypes`. */
@@ -325,6 +326,14 @@ describe("FileStorage filesystem containment", () => {
       await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
     },
   )
+
+  test("two instances putting one key at once both succeed, last writer wins", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-storage-race-"))
+    tmpDirs.push(dir, `${dir}.nifra-state`)
+    // A rename landing after this put's own is another writer's, not a link beneath the root.
+    const { mixed, failed } = await racePuts(new FileStorage(dir), new FileStorage(dir), 200)
+    expect({ mixed, failed }).toEqual({ mixed: 0, failed: [] })
+  })
 
   test.skipIf(process.platform === "win32")(
     "a directory the first put creates above the root is pinned too",

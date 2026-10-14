@@ -6,6 +6,7 @@
  * `<root>.nifra-metadata`) are still read, and objects with none infer content type from their extension.
  * Every write is staged beside the root and renamed into place, so a reader sees an object whole.
  */
+import { createHash } from "node:crypto"
 import { constants } from "node:fs"
 import {
   type FileHandle,
@@ -58,13 +59,19 @@ interface StoredMetadata {
   readonly contentType?: string
   readonly metadata?: Readonly<Record<string, string>>
   /** The body file this sidecar was written with, so a sidecar never describes another put's body. */
-  readonly body?: { readonly dev: number; readonly ino: number }
+  readonly body?: FileIdentity
 }
 
 interface FileIdentity {
   readonly dev: number
   readonly ino: number
+  /** The body's SHA-256 (base64) when it was written in place: its inode never changes there, so
+   * only the content tells one put's body from another's. */
+  readonly sha256?: string
 }
+
+const sha256 = (data: Uint8Array | string): string =>
+  createHash("sha256").update(data).digest("base64")
 
 const errorCode = (error: unknown): unknown =>
   error instanceof Error && "code" in error ? error.code : undefined
@@ -386,10 +393,10 @@ export class FileStorage implements StorageAdapter {
         realpath(path),
       ])
       const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
-      const targetChanged =
-        current.isSymbolicLink() || staged.dev !== current.dev || staged.ino !== current.ino
       const escaped = resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
-      if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
+      // Another file at the path after the rename is another writer's put of the same key landing
+      // after this one (last writer wins), unless it is a link or not a file.
+      if (baseChanged || escaped || !current.isFile()) throw this.symlinkError(key)
       return { dev: staged.dev, ino: staged.ino }
     } finally {
       // Gone already once the rename landed; this clears a staged file the write abandoned.
@@ -471,7 +478,7 @@ export class FileStorage implements StorageAdapter {
 
         await handle.truncate(0)
         await handle.writeFile(data)
-        return { dev: opened.dev, ino: opened.ino }
+        return { dev: opened.dev, ino: opened.ino, sha256: sha256(data) }
       } finally {
         await handle.close()
       }
@@ -536,9 +543,12 @@ export class FileStorage implements StorageAdapter {
       (await this.readMetadata(this.metadataRoot, this.metadataPathFor(key), key)) ??
       (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key))
     // A sidecar from before bodies were named describes whatever body is there, as it always did.
+    const named = sidecar?.body
     const stored =
-      sidecar?.body === undefined ||
-      (sidecar.body.dev === identity.dev && sidecar.body.ino === identity.ino)
+      named === undefined ||
+      (named.dev === identity.dev &&
+        named.ino === identity.ino &&
+        (named.sha256 === undefined || named.sha256 === sha256(body)))
         ? (sidecar ?? {})
         : {}
     // Objects with no sidecar still infer a useful MIME type from their extension.
