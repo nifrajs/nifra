@@ -170,7 +170,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
       if (isTerminal(entry.state)) continue
       entry.state = "leased"
       entry.attempt = job.attempt + 1
-      entry.generation = ++generation
+      const leasedGeneration = ++generation
+      entry.generation = leasedGeneration
       entry.leaseUntil = at + leaseMs
       entry.leaseId = `${job.id}:${entry.generation}`
       const idempotencyKey = await deriveRunIdempotencyKey(
@@ -179,6 +180,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
         dispatch.nodeId,
         entry.attempt,
       )
+      // Cancelled, or leased again, while the key was derived: this lease was never handed out.
+      if (entry.state !== "leased" || entry.generation !== leasedGeneration) continue
       const value = parseRunLease({
         version: RUN_DISPATCH_VERSION,
         leaseId: entry.leaseId,
@@ -202,6 +205,13 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
 
   function current(lease: RunLease): Entry | undefined {
     return byDispatchId.get(lease.dispatch.dispatchId)
+  }
+
+  // A cancel can land while a transition awaits the jobs adapter. It was accepted first, so the
+  // transition must not overwrite it, nor act on a lease the cancel withdrew.
+  function superseded(entry: Entry, lease: RunLease): DispatchWriteResult | undefined {
+    if (entry.state === "cancelled") return result("cancelled")
+    return leaseMatches(entry, lease) ? undefined : result("stale_lease")
   }
 
   async function checkpoint(lease: RunLease, source: RunCheckpoint): Promise<DispatchWriteResult> {
@@ -249,6 +259,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
         return result("invalid_checkpoint")
     }
     await jobs.complete(entry.jobId)
+    const lost = superseded(entry, lease)
+    if (lost !== undefined) return lost
     entry.state = "succeeded"
     appendEvidence(
       entry,
@@ -271,6 +283,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
     if (!Number.isSafeInteger(runAt) || runAt < 0)
       throw new RangeError("dispatch retry time is invalid")
     await jobs.retry(entry.jobId, runAt)
+    const lost = superseded(entry, lease)
+    if (lost !== undefined) return lost
     entry.state = "retrying"
     entry.checkpoint = undefined
     appendEvidence(
@@ -289,6 +303,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
     if (now() >= entry.leaseUntil) return result("stale_lease")
     const stableCode = code(failureCode)
     await jobs.deadLetter(entry.jobId, stableCode)
+    const lost = superseded(entry, lease)
+    if (lost !== undefined) return lost
     entry.state = "dead-lettered"
     const evidence = evidenceFor(
       entry,
