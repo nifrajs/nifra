@@ -92,6 +92,13 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
    */
   readonly maxFieldOverlaps?: number
   /**
+   * Maximum selections that fragments, named and inline, bring into the selection sets holding them,
+   * summed over the document. Validation walks each one per selection set, so a long chain of
+   * fragments that select almost nothing costs quadratic work within the depth and complexity limits.
+   * Default 20,000.
+   */
+  readonly maxFragmentExpansion?: number
+  /**
    * Maximum asynchronous resolver execution time. Default 10 seconds. The execution's abort signal,
    * which a resolver reads through `info.getAbortSignal()`, is aborted at this deadline and when the
    * request itself is aborted.

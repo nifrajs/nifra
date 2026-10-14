@@ -66,6 +66,7 @@ const SHARED_LIMITS = [
   "maxComplexity",
   "maxOperations",
   "maxFieldOverlaps",
+  "maxFragmentExpansion",
   "executionTimeoutMs",
 ] as const
 

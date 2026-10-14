@@ -29,6 +29,7 @@ export const DEFAULT_GRAPHQL_LIMITS = Object.freeze({
   maxComplexity: 1_000,
   maxOperations: 10,
   maxFieldOverlaps: 2_000,
+  maxFragmentExpansion: 20_000,
 })
 
 export interface GraphqlLimitsOptions {
@@ -39,6 +40,7 @@ export interface GraphqlLimitsOptions {
   readonly maxComplexity?: number
   readonly maxOperations?: number
   readonly maxFieldOverlaps?: number
+  readonly maxFragmentExpansion?: number
 }
 
 export interface GraphqlLimits {
@@ -49,6 +51,7 @@ export interface GraphqlLimits {
   readonly maxComplexity: number
   readonly maxOperations: number
   readonly maxFieldOverlaps: number
+  readonly maxFragmentExpansion: number
 }
 
 function limit(value: number | undefined, fallback: number, name: string, minimum: number): number {
@@ -93,6 +96,12 @@ export function graphqlLimits(options: GraphqlLimitsOptions = {}): GraphqlLimits
       "maxFieldOverlaps",
       0,
     ),
+    maxFragmentExpansion: limit(
+      options.maxFragmentExpansion,
+      DEFAULT_GRAPHQL_LIMITS.maxFragmentExpansion,
+      "maxFragmentExpansion",
+      0,
+    ),
   }
 }
 
@@ -109,13 +118,33 @@ export interface GraphqlDocumentMetrics {
   readonly depth: number
   readonly aliases: number
   readonly complexity: number
+  /**
+   * Selections that fragments, named and inline, bring into the selection sets holding them, summed
+   * over every selection set. graphql-js validation walks that expanded form once per selection set, so
+   * a chain of fragments that each select almost nothing - or inline fragments nested inside one
+   * another - costs work quadratic in their count while depth and complexity stay at one.
+   */
+  readonly fragmentExpansion: number
 }
 
-type SelectionMetrics = Omit<GraphqlDocumentMetrics, "operations">
+interface SelectionMetrics extends Omit<GraphqlDocumentMetrics, "operations"> {
+  /** The selections this list holds once its fragments are expanded in place. */
+  readonly expanded: number
+}
 
-const NO_SELECTIONS: SelectionMetrics = { depth: 0, aliases: 0, complexity: 0 }
+const NO_SELECTIONS: SelectionMetrics = {
+  depth: 0,
+  aliases: 0,
+  complexity: 0,
+  fragmentExpansion: 0,
+  expanded: 0,
+}
 
-/** `depth` counts from the selection set's own level, so one fragment measure holds at every spread. */
+/**
+ * `depth` counts from the selection set's own level, so one fragment measure holds at every spread.
+ * `fragmentExpansion` covers this list and the selection sets nested in it, but not the bodies of the
+ * fragments it spreads: the document counts each definition once, as validation visits it once.
+ */
 function selectionsMetrics(
   selections: readonly SelectionNode[],
   fragment: (name: string) => SelectionMetrics,
@@ -123,6 +152,8 @@ function selectionsMetrics(
   let depth = 0
   let aliases = 0
   let complexity = 0
+  let fragmentExpansion = 0
+  let expanded = selections.length
   for (const selection of selections) {
     let nested: SelectionMetrics
     if (selection.kind === Kind.FIELD) {
@@ -133,17 +164,22 @@ function selectionsMetrics(
           ? NO_SELECTIONS
           : selectionsMetrics(selection.selectionSet.selections, fragment)
       depth = Math.max(depth, nested.depth + 1)
-    } else {
-      nested =
-        selection.kind === Kind.INLINE_FRAGMENT
-          ? selectionsMetrics(selection.selectionSet.selections, fragment)
-          : fragment(selection.name.value)
+      fragmentExpansion += nested.fragmentExpansion
+    } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+      nested = selectionsMetrics(selection.selectionSet.selections, fragment)
       depth = Math.max(depth, nested.depth)
+      fragmentExpansion += nested.fragmentExpansion
+      expanded += nested.expanded
+    } else {
+      nested = fragment(selection.name.value)
+      depth = Math.max(depth, nested.depth)
+      expanded += nested.expanded
     }
     aliases += nested.aliases
     complexity += nested.complexity
   }
-  return { depth, aliases, complexity }
+  fragmentExpansion += expanded - selections.length
+  return { depth, aliases, complexity, fragmentExpansion, expanded }
 }
 
 /**
@@ -177,15 +213,21 @@ export function documentMetrics(document: DocumentNode): GraphqlDocumentMetrics 
   let depth = 0
   let aliases = 0
   let complexity = 0
+  let fragmentExpansion = 0
   for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION) {
+      fragmentExpansion += fragment(definition.name.value).fragmentExpansion
+      continue
+    }
     if (definition.kind !== Kind.OPERATION_DEFINITION) continue
     operations += 1
     const metrics = selectionsMetrics(definition.selectionSet.selections, fragment)
     depth = Math.max(depth, metrics.depth)
     aliases += metrics.aliases
     complexity += metrics.complexity
+    fragmentExpansion += metrics.fragmentExpansion
   }
-  return { operations, depth, aliases, complexity }
+  return { operations, depth, aliases, complexity, fragmentExpansion }
 }
 
 export function requestLimitError(
@@ -324,6 +366,9 @@ export function documentLimitError(
   }
   if (metrics.complexity > limits.maxComplexity) {
     return `GraphQL document exceeds the complexity limit of ${limits.maxComplexity}.`
+  }
+  if (metrics.fragmentExpansion > limits.maxFragmentExpansion) {
+    return `GraphQL document expands fragments beyond the limit of ${limits.maxFragmentExpansion} selections.`
   }
   return undefined
 }

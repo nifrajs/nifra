@@ -22,12 +22,9 @@ function doublingFragments(levels: number): string {
 describe("documentMetrics", () => {
   test("measures each fragment once, however often a document spreads it", () => {
     // 2^60 expanded fields: walking every spread in place never finishes.
-    expect(documentMetrics(parse(doublingFragments(60)))).toEqual({
-      operations: 1,
-      depth: 1,
-      aliases: 0,
-      complexity: 2 ** 60,
-    })
+    const { fragmentExpansion, ...metrics } = documentMetrics(parse(doublingFragments(60)))
+    expect(metrics).toEqual({ operations: 1, depth: 1, aliases: 0, complexity: 2 ** 60 })
+    expect(fragmentExpansion).toBeGreaterThan(2 ** 60)
   })
 
   test("a shared fragment counts at every spread, at the depth it is spread", () => {
@@ -40,6 +37,7 @@ describe("documentMetrics", () => {
       depth: 3,
       aliases: 3,
       complexity: 8,
+      fragmentExpansion: 4,
     })
   })
 
@@ -54,7 +52,62 @@ describe("documentMetrics", () => {
       depth: 1,
       aliases: 0,
       complexity: 2,
+      fragmentExpansion: 6,
     })
+  })
+
+  test("fragment expansion grows with the square of a chain or a nesting, not with its fields", () => {
+    expect(documentMetrics(parse(fragmentChain(4))).fragmentExpansion).toBe(4 + 6)
+    expect(documentMetrics(parse(nestedInlineFragments(4))).fragmentExpansion).toBe(10)
+    expect(documentMetrics(parse("{ hello me { hello } }")).fragmentExpansion).toBe(0)
+  })
+})
+
+/** `{ ...f0 }` then `f{i}` spreading `f{i+1}`, the last selecting one field: compact, depth 1. */
+function fragmentChain(n: number): string {
+  let query = "{...f0}"
+  for (let i = 0; i < n - 1; i++) query += `fragment f${i} on Query{...f${i + 1}}`
+  return `${query}fragment f${n - 1} on Query{hello}`
+}
+
+const nestedInlineFragments = (n: number): string =>
+  `{${"...on Query{".repeat(n)}hello${"}".repeat(n)}}`
+
+// Both fit the 64 KiB query limit at depth 1 and complexity 1, and validation (and, for the nesting,
+// the overlap count before it) held the event loop for hundreds of milliseconds per request.
+describe("fragment chains and nested inline fragments are bounded before validation", () => {
+  const post = (query: string, options: { maxFragmentExpansion?: number } = {}) =>
+    respondGraphql(
+      new Request("http://x/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query }),
+      }),
+      { schema, rootValue: { hello: () => "world" }, ...options },
+    )
+  const refusal = {
+    errors: [
+      { message: "GraphQL document expands fragments beyond the limit of 20000 selections." },
+    ],
+  }
+
+  test("a long fragment chain is refused", async () => {
+    const response = await post(fragmentChain(1000))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual(refusal)
+  })
+
+  test("deeply nested inline fragments are refused", async () => {
+    const response = await post(nestedInlineFragments(4000))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual(refusal)
+  })
+
+  test("a short chain still runs, and the limit is configurable", async () => {
+    const ok = await post(fragmentChain(20))
+    expect(await ok.json()).toEqual({ data: { hello: "world" } })
+    const tight = await post(fragmentChain(20), { maxFragmentExpansion: 100 })
+    expect(tight.status).toBe(400)
   })
 })
 

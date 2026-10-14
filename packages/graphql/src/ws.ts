@@ -94,6 +94,7 @@ export interface GraphqlWsOptions<
   readonly maxComplexity?: number
   readonly maxOperations?: number
   readonly maxFieldOverlaps?: number
+  readonly maxFragmentExpansion?: number
   /** Maximum concurrent subscription operation ids per connection. Default 20. */
   readonly maxSubscriptions?: number
   /**
