@@ -57,6 +57,13 @@ function inferContentType(key: string): string | undefined {
 interface StoredMetadata {
   readonly contentType?: string
   readonly metadata?: Readonly<Record<string, string>>
+  /** The body file this sidecar was written with, so a sidecar never describes another put's body. */
+  readonly body?: { readonly dev: number; readonly ino: number }
+}
+
+interface FileIdentity {
+  readonly dev: number
+  readonly ino: number
 }
 
 const errorCode = (error: unknown): unknown =>
@@ -76,6 +83,8 @@ export class FileStorage implements StorageAdapter {
   private metadataRoot = ""
   private legacyMetadataRoot = ""
   private stagingRoot = ""
+  /** Each key's latest write, so this instance publishes a key's body and sidecar one put at a time. */
+  private readonly writes = new Map<string, Promise<void>>()
   /** The directory holding the root and its bookkeeping, by real path and identity, once resolved. */
   private anchor:
     | Promise<{ readonly path: string; readonly dev: number; readonly ino: number }>
@@ -328,7 +337,7 @@ export class FileStorage implements StorageAdapter {
     path: string,
     key: string,
     data: Uint8Array | string,
-  ): Promise<void> {
+  ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
     const staged = await this.stage(key, data)
@@ -340,8 +349,7 @@ export class FileStorage implements StorageAdapter {
       } catch (error) {
         // A root that is its own mount point cannot take a rename from beside it.
         if (errorCode(error) !== "EXDEV") throw error
-        await this.writeInPlace(base, path, key, data)
-        return
+        return await this.writeInPlace(base, path, key, data)
       }
       const [current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
         lstat(path),
@@ -354,6 +362,7 @@ export class FileStorage implements StorageAdapter {
         current.isSymbolicLink() || staged.dev !== current.dev || staged.ino !== current.ino
       const escaped = resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
       if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
+      return { dev: staged.dev, ino: staged.ino }
     } finally {
       // Gone already once the rename landed; this clears a staged file the write abandoned.
       await discardStaged(staged.path)
@@ -400,7 +409,7 @@ export class FileStorage implements StorageAdapter {
     path: string,
     key: string,
     data: Uint8Array | string,
-  ): Promise<void> {
+  ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
     // 0o755 whatever the umask: a group-writable directory (umask 002) would fail the trust check above.
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
@@ -432,6 +441,7 @@ export class FileStorage implements StorageAdapter {
 
         await handle.truncate(0)
         await handle.writeFile(data)
+        return { dev: opened.dev, ino: opened.ino }
       } finally {
         await handle.close()
       }
@@ -441,25 +451,42 @@ export class FileStorage implements StorageAdapter {
     }
   }
 
+  /** Run `write` after this instance's earlier write of `key` settles. */
+  private serialized(key: string, write: () => Promise<void>): Promise<void> {
+    const next = (this.writes.get(key) ?? Promise.resolve()).then(write, write)
+    const settled = next.catch(() => {})
+    this.writes.set(key, settled)
+    void settled.then(() => {
+      if (this.writes.get(key) === settled) this.writes.delete(key)
+    })
+    return next
+  }
+
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
     await this.pinRoot(key)
     const path = this.pathFor(key)
-    await this.writeContained(this.root, path, key, toBytes(data))
     const metadataPath = this.metadataPathFor(key)
-    await this.removeLegacyMetadata(key)
-    if (options.contentType !== undefined || options.metadata !== undefined) {
-      await this.writeContained(
-        this.metadataRoot,
-        metadataPath,
-        key,
-        JSON.stringify({
-          ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
-          ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
-        }),
-      )
-    } else {
-      await this.removeContained(this.metadataRoot, metadataPath, key)
-    }
+    const bytes = toBytes(data)
+    await this.serialized(key, async () => {
+      // Body and sidecar are two files, so another process's put can land between them. The sidecar
+      // names the body it was written with, and a read ignores one that names another.
+      const body = await this.writeContained(this.root, path, key, bytes)
+      await this.removeLegacyMetadata(key)
+      if (options.contentType !== undefined || options.metadata !== undefined) {
+        await this.writeContained(
+          this.metadataRoot,
+          metadataPath,
+          key,
+          JSON.stringify({
+            ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
+            ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
+            body,
+          } satisfies StoredMetadata),
+        )
+      } else {
+        await this.removeContained(this.metadataRoot, metadataPath, key)
+      }
+    })
   }
 
   async get(key: string): Promise<StorageObject | null> {
@@ -468,15 +495,22 @@ export class FileStorage implements StorageAdapter {
     const bodyHandle = await this.openObject(this.root, path, key)
     if (bodyHandle === null) return null
     let body: Uint8Array
+    let identity: FileIdentity
     try {
+      identity = await bodyHandle.stat()
       body = new Uint8Array(await bodyHandle.readFile())
     } finally {
       await bodyHandle.close()
     }
-    const stored =
+    const sidecar =
       (await this.readMetadata(this.metadataRoot, this.metadataPathFor(key), key)) ??
-      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key)) ??
-      {}
+      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key))
+    // A sidecar from before bodies were named describes whatever body is there, as it always did.
+    const stored =
+      sidecar?.body === undefined ||
+      (sidecar.body.dev === identity.dev && sidecar.body.ino === identity.ino)
+        ? (sidecar ?? {})
+        : {}
     // Objects with no sidecar still infer a useful MIME type from their extension.
     const contentType = stored.contentType ?? inferContentType(key)
     return {
@@ -491,11 +525,13 @@ export class FileStorage implements StorageAdapter {
     await this.pinRoot(key)
     const path = this.pathFor(key)
     const metadataPath = this.metadataPathFor(key)
-    await Promise.all([
-      this.removeContained(this.root, path, key),
-      this.removeContained(this.metadataRoot, metadataPath, key),
-      this.removeLegacyMetadata(key),
-    ])
+    await this.serialized(key, async () => {
+      await Promise.all([
+        this.removeContained(this.root, path, key),
+        this.removeContained(this.metadataRoot, metadataPath, key),
+        this.removeLegacyMetadata(key),
+      ])
+    })
   }
 
   private async readMetadata(

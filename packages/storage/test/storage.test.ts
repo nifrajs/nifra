@@ -256,6 +256,40 @@ describe("FileStorage filesystem containment", () => {
     },
   )
 
+  test("a body is never served with another put's content type or metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-generation-"))
+    tmpDirs.push(root, `${root}.nifra-state`)
+    const sidecar = join(`${root}.nifra-state`, "metadata", "object.txt")
+    const first = new FileStorage(root)
+    await first.put("object.txt", "A", { contentType: "text/a", metadata: { v: "a" } })
+    const firstSidecar = await readFile(sidecar)
+    // Another process's put lands its body, then the first put's sidecar lands after it.
+    await new FileStorage(root).put("object.txt", "B", {
+      contentType: "text/b",
+      metadata: { v: "b" },
+    })
+    await writeFile(sidecar, firstSidecar)
+    const read = await first.get("object.txt")
+    expect(new TextDecoder().decode(read?.body)).toBe("B")
+    expect(read?.metadata).toBeUndefined()
+    expect(read?.contentType).toBe("text/plain")
+
+    // Within one instance, puts to a key publish one at a time, so each body keeps its own sidecar.
+    for (let round = 0; round < 10; round++) {
+      await Promise.all(
+        ["a", "b", "c"].map((v) =>
+          first.put("object.txt", v, { contentType: `text/${v}`, metadata: { v } }),
+        ),
+      )
+      const settled = await first.get("object.txt")
+      const body = new TextDecoder().decode(settled?.body)
+      expect({ type: settled?.contentType, v: settled?.metadata?.v }).toEqual({
+        type: `text/${body}`,
+        v: body,
+      })
+    }
+  })
+
   test.skipIf(process.platform === "win32")(
     "a swapped ancestor never redirects a later operation into another tree",
     async () => {
