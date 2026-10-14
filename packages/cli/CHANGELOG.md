@@ -26,16 +26,17 @@
 - 7ab9692: `nifra upgrade` leaves a `peerDependencies` range alone when it already admits the target, and raises one that excludes it keeping its operator, even with `--exact`: a library's `">=3.1.0"` floor stays put instead of becoming `">=5.2.0"`. A peer range no longer sets the version an upgrade starts from either: that comes from the lowest version a dependency, devDependency or override pins, then the lowest installed, and a peer floor only when nothing else names one, so a library workspace whose devDependencies are already on the target's major no longer replays the recipes of the releases its peer floor names. `nifra check` (NF-D002) and `nifra doctor` no longer count a peer floor as a second version of nifra in the workspace.
 - Updated dependencies [7ab9692]
 - Updated dependencies [7ab9692]
-  - @nifrajs/core@5.3.0
-  - @nifrajs/schema@5.3.0
-  - @nifrajs/web@5.3.0
+- Updated dependencies [0e1d03f]
+  - @nifrajs/agent-review@5.3.0
   - @nifrajs/client@5.3.0
+  - @nifrajs/core@5.3.0
   - @nifrajs/i18n@5.3.0
   - @nifrajs/mcp@5.3.0
-  - @nifrajs/testing@5.3.0
-  - @nifrajs/agent-review@5.3.0
   - @nifrajs/mcp-db@5.3.0
   - @nifrajs/runner@5.3.0
+  - @nifrajs/schema@5.3.0
+  - @nifrajs/testing@5.3.0
+  - @nifrajs/web@5.3.0
 
 ## 5.2.1
 
