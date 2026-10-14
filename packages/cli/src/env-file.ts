@@ -16,7 +16,9 @@
  *     would make the command look like it verified an environment it never loaded.
  */
 import { readdir, readFile } from "node:fs/promises"
+import { devNull } from "node:os"
 import { resolve } from "node:path"
+import { readBoundedStream } from "./mcp-io.ts"
 
 const ENV_FILE_FLAG = "--env-file"
 
@@ -179,24 +181,57 @@ async function envFromFiles(
   return added
 }
 
-/** What `process.env` holds in a Bun process started in `cwd` with `env` and the runtime `flags`. */
+const PROBE_TIMEOUT_MS = 10_000
+const PROBE_MAX_BYTES = 4 * 1024 * 1024
+
+/**
+ * What `process.env` holds in a Bun process started in `cwd` with `env` and the runtime `flags`. The
+ * empty `--config` keeps the project's bunfig preloads out: both probes would differ by none of what
+ * they set, and one that keeps its process alive held `nifra mcp` before it ever answered. A probe
+ * that still fails to answer in time fails the start, rather than serving with values it cannot tell
+ * came from a file.
+ */
 async function childEnv(
   cwd: string,
   env: Record<string, string | undefined>,
   flags: readonly string[],
 ): Promise<Record<string, string>> {
   const proc = Bun.spawn(
-    [process.execPath, ...flags, "-e", "process.stdout.write(JSON.stringify(process.env))"],
+    [
+      process.execPath,
+      `--config=${devNull}`,
+      ...flags,
+      "-e",
+      "process.stdout.write(JSON.stringify(process.env), () => process.exit(0))",
+    ],
     { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "ignore" },
   )
-  const [text] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+  let failure: string | undefined
+  const timer = setTimeout(() => {
+    failure = `took longer than ${PROBE_TIMEOUT_MS}ms`
+    proc.kill("SIGKILL")
+  }, PROBE_TIMEOUT_MS)
   let value: unknown
   try {
-    value = JSON.parse(text)
-  } catch {
-    return {}
+    const [output, code] = await Promise.all([
+      readBoundedStream(proc.stdout, PROBE_MAX_BYTES, () => proc.kill("SIGKILL")),
+      proc.exited,
+    ])
+    if (output.truncated) failure ??= `printed more than ${PROBE_MAX_BYTES} bytes`
+    else if (code !== 0) failure ??= `exited with code ${code}`
+    else value = JSON.parse(output.text)
+  } catch (error) {
+    failure ??= error instanceof Error ? error.message : String(error)
+  } finally {
+    clearTimeout(timer)
   }
-  if (typeof value !== "object" || value === null) return {}
+  if (failure !== undefined || typeof value !== "object" || value === null) {
+    throw new Error(
+      `[nifra] could not tell which variables the .env files in ${cwd} set: a Bun probe ${
+        failure ?? "printed no environment"
+      }`,
+    )
+  }
   return Object.fromEntries(
     Object.entries(value).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
