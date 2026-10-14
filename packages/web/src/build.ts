@@ -1366,7 +1366,14 @@ export function generateServerEntry(options: {
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
-  const lines: string[] = ['import { createWebApp } from "@nifrajs/web"']
+  // Bun and Node serve the client bundle through `servePublicDir`. Deno bundles for the browser
+  // condition, where `node:fs` is a stub, so its entry runs the same checks on Deno's own file API.
+  const nodeFs = target === "bun" || target === "node"
+  const lines: string[] = [
+    nodeFs
+      ? 'import { createWebApp, servePublicDir } from "@nifrajs/web"'
+      : 'import { createWebApp } from "@nifrajs/web"',
+  ]
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
   if (useImport !== undefined) lines.push(`import { use } from ${JSON.stringify(useImport)}`)
@@ -1384,6 +1391,8 @@ export function generateServerEntry(options: {
   // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
+  if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
+  if (target === "deno") lines.push('import { parseByteRange } from "@nifrajs/core/range"')
   lines.push(
     "",
     "const app = createWebApp({",
@@ -1459,14 +1468,20 @@ export function generateServerEntry(options: {
     '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
     "  return segments.every(safe) ? '.' + pathname : undefined",
     "}",
-    // The type table and cache policy `servePublicDir` uses. Without a known type, Bun answers a file
-    // as an `application/octet-stream` attachment, which a browser downloads instead of showing.
-    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
-    "const staticHeaders = (pathname: string): Record<string, string> => ({",
-    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
-    `  "cache-control": ${hashedFiles !== undefined ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
-    '  "x-content-type-options": "nosniff",',
-    "})",
+    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, HEAD
+    // answered without reading the file, byte ranges and conditional requests, and a descriptor opened
+    // only once the real path is inside the root, so a link planted in the deployed tree cannot reach
+    // a file outside it.
+    ...(nodeFs
+      ? [
+          "const serveStatic = servePublicDir({",
+          "  dir: fileURLToPath(STATIC_ROOT),",
+          ...(hashedFiles !== undefined ? ["  hashedFiles: HASHED_FILES,"] : []),
+          "})",
+          "const staticResponse = async (req: Request): Promise<Response> =>",
+          '  (await serveStatic(req)) ?? new Response("not found", { status: 404 })',
+        ]
+      : denoStaticResponse(hashedFiles !== undefined)),
   )
   // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
   // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
@@ -1478,11 +1493,9 @@ export function generateServerEntry(options: {
       "  port: Number(Bun.env.PORT ?? 3000),",
       "  async fetch(req, server) {",
       "    const { pathname } = new URL(req.url)",
-      "    const filePath = staticPath(pathname)",
-      "    if (filePath !== undefined) {",
-      "      const file = Bun.file(new URL(filePath, STATIC_ROOT))",
-      '      if (!(await file.exists())) return new Response("not found", { status: 404 })',
-      "      return new Response(file, { headers: staticHeaders(pathname) })",
+      // Braced: the next emitted line opens with `(`, which would otherwise call the returned value.
+      "    if (staticPath(pathname) !== undefined) {",
+      "      return staticResponse(req)",
       "    }",
       `    ${markFramed}`,
       "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
@@ -1497,20 +1510,11 @@ export function generateServerEntry(options: {
   }
   if (target === "node") {
     lines.push(
-      'import { readFile } from "node:fs/promises"',
       "await serve(",
       "  {",
       "    async fetch(req, platform) {",
       "      const { pathname } = new URL(req.url)",
-      "      const filePath = staticPath(pathname)",
-      "      if (filePath !== undefined) {",
-      "        try {",
-      "          const body = await readFile(new URL(filePath, STATIC_ROOT))",
-      "          return new Response(body, { headers: staticHeaders(pathname) })",
-      "        } catch {",
-      '          return new Response("not found", { status: 404 })',
-      "        }",
-      "      }",
+      "      if (staticPath(pathname) !== undefined) return staticResponse(req)",
       "      return app.fetch(req, platform)",
       "    },",
       "  },",
@@ -1526,19 +1530,90 @@ export function generateServerEntry(options: {
     "  const { pathname } = new URL(req.url)",
     "  const filePath = staticPath(pathname)",
     "  if (filePath !== undefined) {",
-    "    try {",
-    "      // @ts-ignore - Deno.readFile is present on the Deno runtime.",
-    "      const body = await Deno.readFile(new URL(filePath, STATIC_ROOT))",
-    "      return new Response(body, { headers: staticHeaders(pathname) })",
-    "    } catch {",
-    '      return new Response("not found", { status: 404 })',
-    "    }",
+    "    return staticResponse(req, filePath, pathname)",
     "  }",
     `  ${markFramed}`,
     "  return app.fetch(req, { clientIp: info.remoteAddr.hostname })",
     "})",
   )
   return `${lines.join("\n")}\n`
+}
+
+/**
+ * The Deno entry's static handler: `servePublicDir`'s checks on Deno's file API. The real path must sit
+ * inside the root, so a link planted in the deployed tree cannot reach a file outside it; HEAD answers
+ * from `stat` without reading; one byte range is served from a seek, several as the whole file.
+ */
+function denoStaticResponse(hashed: boolean): string[] {
+  return [
+    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
+    "const staticHeaders = (pathname: string): Record<string, string> => ({",
+    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
+    `  "cache-control": ${hashed ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
+    '  "x-content-type-options": "nosniff",',
+    '  "accept-ranges": "bytes",',
+    "})",
+    "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
+    "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
+    '  const missing = () => new Response("not found", { status: 404 })',
+    '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
+    "  let file",
+    "  try {",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    const real: string = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
+    '    if (!real.startsWith(STATIC_REAL + (STATIC_REAL.includes("\\\\") ? "\\\\" : "/"))) return missing()',
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    file = await Deno.open(real)",
+    "  } catch {",
+    "    return missing()",
+    "  }",
+    "  const info = await file.stat()",
+    "  const size: number = info.size",
+    "  const headers = new Headers(staticHeaders(pathname))",
+    '  const range = req.method === "GET" ? parseByteRange(req.headers.get("range"), size) : { kind: "none" as const }',
+    '  if (!info.isFile || req.method === "HEAD" || range.kind === "unsatisfiable") {',
+    "    file.close()",
+    "    if (!info.isFile) return missing()",
+    '    if (range.kind !== "unsatisfiable") {',
+    '      headers.set("content-length", String(size))',
+    "      return new Response(null, { headers })",
+    "    }",
+    '    headers.delete("content-type")',
+    '    headers.set("content-range", "bytes */" + size)',
+    "    return new Response(null, { status: 416, headers })",
+    "  }",
+    '  if (range.kind === "satisfiable" && range.ranges.length === 1) {',
+    "    const { start, end } = range.ranges[0]!",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    await file.seek(start, Deno.SeekMode.Start)",
+    "    let left = end - start + 1",
+    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
+    '    headers.set("content-length", String(left))',
+    "    const body = new ReadableStream<Uint8Array>({",
+    "      async pull(controller) {",
+    "        const chunk = new Uint8Array(Math.min(left, 65_536))",
+    "        const read: number | null = await file.read(chunk)",
+    "        if (read === null || read === 0) {",
+    "          file.close()",
+    "          controller.close()",
+    "          return",
+    "        }",
+    "        controller.enqueue(chunk.subarray(0, read))",
+    "        left -= read",
+    "        if (left <= 0) {",
+    "          file.close()",
+    "          controller.close()",
+    "        }",
+    "      },",
+    "      cancel: () => file.close(),",
+    "    })",
+    "    return new Response(body, { status: 206, headers })",
+    "  }",
+    '  headers.set("content-length", String(size))',
+    "  return new Response(file.readable, { headers })",
+    "}",
+  ]
 }
 
 /** Measure each emitted output file's raw + gzip size. Reads the file off disk and gzips it with
