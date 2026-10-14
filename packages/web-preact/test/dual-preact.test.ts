@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { load } from "../src/preact-render.ts"
+import { preactDedupePlugin } from "@nifrajs/web/build"
+import { bunResolverFn, load, moduleLooksBundled } from "../src/preact-render.ts"
 
 /**
  * Regression test for the dual-Preact SSR crash (the Preact analogue of the React one): under Bun runtime
@@ -167,4 +168,70 @@ test("load uses the bundled renderer on a non-Bun host (resolver undefined)", as
     undefined,
   )
   expect(typeof stream.renderToReadableStream).toBe("function")
+})
+
+// A `target: "bun"` server bundle keeps `Bun.resolveSync`, so the adapter re-rooted inside it too and
+// imported a second renderer and `preact` from the app's node_modules beside the bundled, deduped ones:
+// the page's hooks wrote one `options` global and the renderer read the other.
+describe("a bundled server renders hooks with its own renderer", () => {
+  const page = (adapterEntry: string): string => `
+import { h } from "preact"
+import { useState } from "preact/hooks"
+import { preactAdapter } from ${JSON.stringify(adapterEntry)}
+function Counter() {
+  const [n] = useState(7)
+  return h("p", null, "count:" + n)
+}
+try {
+  console.log("RESULT_OK:" + (await preactAdapter.renderToString([Counter], { data: null })))
+} catch (e) {
+  console.log("RESULT_ERR:" + (e instanceof Error ? e.message : String(e)))
+}
+`
+  const bundle = async (marked: boolean): Promise<string> => {
+    const entry = join(appRoot, `bundle-entry-${marked ? "marked" : "plain"}.ts`)
+    writeFileSync(entry, page(join(import.meta.dir, "../src/index.ts")))
+    const define: Record<string, string> = { "process.env.NODE_ENV": '"production"' }
+    if (marked) define["process.env.NIFRA_SSR_BUNDLED"] = '"1"'
+    const result = await Bun.build({
+      entrypoints: [entry],
+      outdir: join(appRoot, marked ? "out-marked" : "out-plain"),
+      target: "bun",
+      plugins: [preactDedupePlugin(appRoot)],
+      define,
+    })
+    expect(result.success).toBe(true)
+    return result.outputs[0]!.path
+  }
+
+  for (const marked of [true, false]) {
+    test(marked ? "with the build's marker" : "without it (a hand-rolled bun build)", async () => {
+      const proc = Bun.spawn(["bun", await bundle(marked)], {
+        cwd: appRoot, // where the app's own renderer and preact resolve from
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [out, err] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      await proc.exited
+      expect(`${out}\n${err}`).toContain("RESULT_OK:<p>count:7</p>")
+    })
+  }
+
+  test("the resolver is withheld under the marker or inside a bundle", () => {
+    expect(typeof bunResolverFn()).toBe("function")
+    process.env.NIFRA_SSR_BUNDLED = "1"
+    try {
+      expect(bunResolverFn()).toBeUndefined()
+    } finally {
+      delete process.env.NIFRA_SSR_BUNDLED
+    }
+    expect(moduleLooksBundled("file:///app/dist/server.mjs")).toBe(true)
+    expect(moduleLooksBundled("file:///pkg/src/preact-render.ts")).toBe(false)
+    expect(moduleLooksBundled("file:///pkg/dist/preact-render.js")).toBe(false)
+    expect(moduleLooksBundled("C:\\pkg\\dist\\preact-render.js")).toBe(false)
+    expect(moduleLooksBundled()).toBe(false)
+  })
 })
