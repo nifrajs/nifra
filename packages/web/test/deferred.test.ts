@@ -274,8 +274,10 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
           const line = lines[next++]
           if (line !== undefined) c.enqueue(enc.encode(line))
         },
+        // A source whose cancel fails is still released, with no unhandled rejection.
         cancel() {
           state.cancelled = true
+          throw new Error("source already gone")
         },
       })
       return { stream, cancelled: () => state.cancelled }

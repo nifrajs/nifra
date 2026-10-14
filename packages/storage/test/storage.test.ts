@@ -318,8 +318,40 @@ describe("FileStorage filesystem containment", () => {
       expect(await readFile(join(base, "moved", "objects", "object.txt"), "utf8")).toBe(
         "still mine",
       )
+
+      // The resolved directory is gone altogether: still refused, never re-resolved elsewhere.
+      await rm(join(base, "first"), { recursive: true })
+      await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
     },
   )
+
+  test.skipIf(process.platform === "win32")(
+    "a root that cannot be resolved yet is resolved again once it can be",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "nifra-storage-unresolved-"))
+      tmpDirs.push(base)
+      // A link to itself: resolving it fails with ELOOP, which is not a missing directory.
+      await symlink(join(base, "loop"), join(base, "loop"))
+      const storage = new FileStorage(join(base, "loop", "objects"))
+      await expect(storage.put("object.txt", "x")).rejects.toThrow()
+      await rm(join(base, "loop"))
+      await mkdir(join(base, "loop"))
+      await storage.put("object.txt", "x")
+      expect(await readFile(join(base, "loop", "objects", "object.txt"), "utf8")).toBe("x")
+    },
+  )
+
+  test("a failed put leaves its key free for the next one", async () => {
+    const base = await mkdtemp(join(tmpdir(), "nifra-storage-failed-put-"))
+    tmpDirs.push(base)
+    const storage = new FileStorage(join(base, "objects"))
+    await storage.put("a", "file")
+    // `a` is a file, so a body under `a/` cannot be written.
+    await expect(storage.put("a/b", "nested")).rejects.toThrow()
+    await storage.delete("a")
+    await storage.put("a/b", "nested")
+    expect(new TextDecoder().decode((await storage.get("a/b"))?.body)).toBe("nested")
+  })
 
   test.skipIf(process.platform === "win32")(
     "delete rejects a root whose parent can be swapped by another local principal",

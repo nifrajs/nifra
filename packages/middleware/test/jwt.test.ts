@@ -535,6 +535,7 @@ describe("jwt() / verifyJwt()", () => {
             pull: (controller) => controller.enqueue(ENC.encode("{}")),
             cancel() {
               declaredCancelled = true
+              throw new Error("source already gone")
             },
           }),
           { headers: { "content-length": "999" } },

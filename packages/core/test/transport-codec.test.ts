@@ -429,8 +429,10 @@ describe("readBoundedBytes", () => {
     let cancelled = false
     const stream = new ReadableStream<Uint8Array>({
       pull: (controller) => controller.enqueue(new Uint8Array(1)),
+      // A source whose cancel fails still yields the size refusal, not an unhandled rejection.
       cancel: () => {
         cancelled = true
+        throw new Error("source already gone")
       },
     })
     const response = new Response(stream, { headers: { "content-length": "5000" } })

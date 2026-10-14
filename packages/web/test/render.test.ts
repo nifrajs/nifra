@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import {
   canonical,
   DATA_GLOBAL,
@@ -788,6 +788,25 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
   // never the raw error text ("boom secret detail" is logged server-side, not leaked).
   expect(html).toContain('window.__nifraReject(0,"deferred_error")')
   expect(html).not.toContain("boom secret detail")
+})
+
+test("a deferred value that cannot be serialized streams __nifraReject, not a broken body", async () => {
+  const logged = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const html = await (
+      await renderPage({
+        adapter: stub,
+        chain: [null],
+        data: { big: defer(Promise.resolve(10n)) },
+        clientEntry: "/c.js",
+      })
+    ).text()
+    expect(html).toContain('window.__nifraReject(0,"deferred_error")')
+    expect(html.endsWith("</html>")).toBe(true)
+    expect(logged).toHaveBeenCalled()
+  } finally {
+    logged.mockRestore()
+  }
 })
 
 test("renderPage streams deferred resolutions out-of-order - a slow defer() doesn't block a fast one", async () => {
