@@ -201,7 +201,7 @@ export class AgentAppClient {
    * clients' turns. Events still held behind a gap when the stream ends are released in order.
    *
    * When the connection breaks mid-turn, the client follows the turn again with `turn.attach` from the
-   * last seq it received, so the views go on without a gap or a repeat. A host that cannot (it keeps
+   * last seq it delivered in order, so the views go on without a gap or a repeat. A host that cannot (it keeps
    * no turns, or no longer holds those events) refuses, and the break is thrown as before.
    */
   async *send(message: string, options?: { signal?: AbortSignal }): AsyncIterable<AgentEventView> {
@@ -253,7 +253,12 @@ export class AgentAppClient {
       attempts += 1
       if (this.resumeDelayMs > 0)
         await new Promise((resolve) => setTimeout(resolve, this.resumeDelayMs))
-      request = streamRequest("turn.attach", { afterSeq: lastSeq }, signal)
+      // From the last seq delivered in order, not the highest received: an event that arrived early
+      // waits behind a gap, and attaching past it would skip the gap for good. What is replayed
+      // twice the buffer drops.
+      const expected = buffer?.expected
+      const afterSeq = expected === undefined ? lastSeq : Math.min(lastSeq, expected - 1)
+      request = streamRequest("turn.attach", { afterSeq }, signal)
     }
     for (const ready of buffer?.flush() ?? []) yield advance(ready)
   }
