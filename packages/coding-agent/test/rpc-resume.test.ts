@@ -293,6 +293,26 @@ describe("resumable RPC turns", () => {
     }
   })
 
+  test("an event over the response limit ends the turn and cancels the backend", async () => {
+    for (const resumableTurns of [false, true]) {
+      const backend = new GatedBackend(2, (step) => (step === 0 ? "x".repeat(4_096) : "small"))
+      const server = await serve(backend, { maxResponseBytes: 2_048, resumableTurns })
+      try {
+        const turn = frames(await server.call("turn.send", { message: "go" }))
+        expect((await turn.next())?.id).toBeDefined()
+        backend.release(0)
+        const rest = await turn.rest()
+        expect(rest.map((frame) => frame.event)).toEqual(["error"])
+        await backend.cancelled.promise
+        expect(backend.cancels).toEqual(["turn stream failed"])
+        backend.release(1)
+        expect(backend.produced).toBe(1)
+      } finally {
+        await server.stop()
+      }
+    }
+  })
+
   test("without resumableTurns a disconnect still cancels and attach is unsupported", async () => {
     const backend = new GatedBackend(1)
     const server = await serve(backend)

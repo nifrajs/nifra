@@ -388,6 +388,11 @@ export class CodingAgentRpcServer {
         // holds the backend still instead of the server queueing the rest of the turn for it.
         const events = stream[Symbol.asyncIterator]()
         let finished = false
+        const stop = async (reason: string): Promise<void> => {
+          void events.return?.()
+          if (sessionId !== undefined)
+            await this.host.backend.cancel(sessionId, reason).catch(() => {})
+        }
         const body = new ReadableStream<Uint8Array>({
           async pull(controller) {
             if (finished) return
@@ -406,6 +411,9 @@ export class CodingAgentRpcServer {
             } catch (error) {
               if (finished) return
               finished = true
+              // A failed stream, an event over the response limit included, ends the turn for its
+              // only reader: stop the producer and the backend instead of leaving them running.
+              void stop("turn stream failed")
               try {
                 controller.enqueue(
                   encoder.encode(turnErrorFrame(error, includeErrorStacks, maxResponseBytes)),
@@ -420,9 +428,7 @@ export class CodingAgentRpcServer {
           cancel: async () => {
             if (finished) return
             finished = true
-            void events.return?.()
-            if (sessionId !== undefined)
-              await this.host.backend.cancel(sessionId, "client disconnected").catch(() => {})
+            await stop("client disconnected")
           },
         })
         return eventStreamResponse(body, cors)
@@ -754,6 +760,11 @@ export class CodingAgentRpcServer {
         turn.end()
       } catch (error) {
         turn.end(encoder.encode(turnErrorFrame(error, includeErrorStacks, maxResponseBytes)))
+        // The turn is over for every follower, so the backend must not go on running it.
+        controller.abort()
+        const sessionId = this.host.snapshot?.id
+        if (sessionId !== undefined)
+          void this.host.backend.cancel(sessionId, "turn stream failed").catch(() => {})
       } finally {
         if (this.turn === turn) clearTimeout(this.detachedTimer)
       }
