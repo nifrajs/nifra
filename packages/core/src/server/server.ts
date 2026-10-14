@@ -583,16 +583,18 @@ export { plainValidationError } from "./validation.ts"
 // importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
 export { type QueryValue, queryObjectOf, searchOf }
 
-// Outside the printable ASCII a parsed path keeps as written: a control, space, `"`, `<`, `>`, `\`,
-// `^`, `` ` ``, `{`, `}`, or past ASCII (U+FFFD, an invalid escape, included).
-const UNROUTED_CHAR = /[^!#$%&'()*+,\-./0-9:;=?@A-Z[\]_a-z|~]/
+// Outside the printable ASCII a parsed path keeps as written: a control, space, `"`, `#`, `<`, `>`,
+// `\`, `^`, `` ` ``, `{`, `}`, or past ASCII (U+FFFD, an invalid escape, included). Bun's table reads
+// a raw `#` and what follows as path, where the parsed URL ends the path there.
+const UNROUTED_CHAR = /[^!$%&'()*+,\-./0-9:;=?@A-Z[\]_a-z|~]/
 
 /**
  * A param value Bun's native route table matched but the portable router must decide: an invalid
  * escape, or a piece of path Bun matched raw while its own parsed URL says otherwise - a `.` / `..`
- * segment (Bun hands `%2e` over decoded), a backslash, which the parsed URL reads as `/`, or a
- * character the parsed URL percent-encodes (`/t/<b>` is `/t/%3Cb%3E`, which a static route for that
- * text matches). The value is decoded, so a raw `<` and a sent `%3C` look alike; both are re-routed.
+ * segment (Bun hands `%2e` over decoded), a backslash, which the parsed URL reads as `/`, a `#`,
+ * where the parsed URL's path ends (`/a/..#/b` is `/`), or a character the parsed URL
+ * percent-encodes (`/t/<b>` is `/t/%3Cb%3E`, which a static route for that text matches). The value
+ * is decoded, so a raw `<` and a sent `%3C` look alike; both are re-routed.
  */
 const unroutedParam = (value: string | undefined): boolean =>
   value !== undefined && (value === "." || value === ".." || UNROUTED_CHAR.test(value))

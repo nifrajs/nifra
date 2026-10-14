@@ -82,6 +82,12 @@ export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
   { method: "GET", target: "/tags/`t`", answer: { route: "GET /tags/:tag", tag: "`t`" } },
   // The query is not part of the path.
   { method: "GET", target: "/users/7?next=/../x", answer: { route: "GET /users/:id", id: "7" } },
+  // Nor is anything after a raw `#`: the path ends there, so no segment past it is routed.
+  { method: "GET", target: "/users/..#/posts", answer: { route: "GET /" } },
+  { method: "GET", target: "/users/7#/posts", answer: { route: "GET /users/:id", id: "7" } },
+  { method: "GET", target: "/users/a#b", answer: { route: "GET /users/:id", id: "a" } },
+  // An encoded `#` is data in a segment.
+  { method: "GET", target: "/users/c%23", answer: { route: "GET /users/:id", id: "c#" } },
   // Absolute-form (RFC 9112 section 3.2.2) routes its path with the Host header, as Bun does: the
   // target's authority never becomes part of the path the hooks and the router see.
   {
