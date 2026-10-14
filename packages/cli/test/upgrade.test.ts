@@ -97,6 +97,11 @@ describe("rewriteVersionSpec", () => {
     expect(rewriteVersionSpec("1.7.0", "1.8.0")).toBe("1.8.0")
     expect(rewriteVersionSpec(">=1.7.0", "1.8.0")).toBe(">=1.8.0")
   })
+  test("a strict bound becomes inclusive, so the result admits the target", () => {
+    expect(rewriteVersionSpec(">1.7.0", "1.8.0")).toBe(">=1.8.0")
+    expect(rewriteVersionSpec("<1.7.0", "1.8.0")).toBe("<=1.8.0")
+    expect(rewriteVersionSpec("<=1.7.0", "1.8.0")).toBe("<=1.8.0")
+  })
   test("skips non-semver / already-current specs (returns null)", () => {
     expect(rewriteVersionSpec("workspace:*", "1.8.0")).toBeNull()
     expect(rewriteVersionSpec("link:../x", "1.8.0")).toBeNull()
@@ -262,6 +267,24 @@ describe("peer ranges", () => {
         { field: "peerDependencies", name: "@nifrajs/client", from: "^4.0.0", to: "^5.2.0" },
         { field: "peerDependencies", name: "@nifrajs/schema", from: "~5.1.0", to: "~5.2.0" },
       ])
+    }
+  })
+
+  test("every rewritten range admits the target, and an upper bound that does is left alone", () => {
+    for (const field of ["dependencies", "peerDependencies"]) {
+      const pkg = JSON.stringify({
+        [field]: {
+          "@nifrajs/core": "<5.2.0",
+          "@nifrajs/web": "<6.0.0",
+          "@nifrajs/client": ">5.2.0",
+          "@nifrajs/schema": "<=5.2.0",
+        },
+      })
+      const { text, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "5.3.0" }])
+      expect(downgrades).toEqual([])
+      const after = (JSON.parse(text) as Record<string, Record<string, string>>)[field] ?? {}
+      for (const spec of Object.values(after)) expect(specIncludes(spec, "5.3.0")).toBe(true)
+      expect(after["@nifrajs/web"]).toBe("<6.0.0")
     }
   })
 

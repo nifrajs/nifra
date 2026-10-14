@@ -172,15 +172,22 @@ const PEER_FIELD = "peerDependencies"
 const SEMVER_SPEC =
   /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
+const UPPER_BOUND = /^\s*<=?/
+
+// A strict bound kept on the target would exclude it: `>5.2.0` → `>5.3.0` refuses 5.3.0.
+const INCLUSIVE_OPERATOR: Readonly<Record<string, string>> = { ">": ">=", "<": "<=" }
+
 /**
- * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …), or
- * dropping it when `exact`. Returns null when the spec is not a plain semver spec (→ skip it) or
- * already equals the target.
+ * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …;
+ * a strict `>` or `<` becomes `>=` or `<=`, so the result admits the target), or dropping it when
+ * `exact`. Returns null when the spec is not a plain semver spec (→ skip it) or already equals the
+ * target.
  */
 export function rewriteVersionSpec(spec: string, toVersion: string, exact = false): string | null {
   const match = SEMVER_SPEC.exec(spec.trim())
   if (!match) return null
-  const operator = exact ? "" : (match[1] ?? "")
+  const written = match[1] ?? ""
+  const operator = exact ? "" : (INCLUSIVE_OPERATOR[written] ?? written)
   const next = `${operator}${toVersion}`
   return next === spec ? null : next
 }
@@ -335,6 +342,9 @@ export function pinSweepText(
     // would admit one release only.
     const peer = field === PEER_FIELD
     if (peer && specIncludes(rawSpec, rule.to)) continue
+    // An upper bound has no floor to raise: one that admits the target (`<6.0.0`) stays as written,
+    // in every field, and is never read as a rollback.
+    if (UPPER_BOUND.test(rawSpec) && specIncludes(rawSpec, rule.to)) continue
     const next = rewriteVersionSpec(rawSpec, rule.to, exact && !peer)
     if (next === null) continue
     // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
