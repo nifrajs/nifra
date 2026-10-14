@@ -1,6 +1,6 @@
 import { Kind, OptionalKind, ReadonlyKind, type TSchema } from "@sinclair/typebox"
 import { TypeCompiler } from "@sinclair/typebox/compiler"
-import { COERCES, hasCompileHazard, type NifraSchema } from "./adapter.ts"
+import { hasCompileHazard, type NifraSchema, validatesByJsonSchemaAlone } from "./adapter.ts"
 
 export interface CompileSchemaOptions {
   /** Type-only import of the source schema, relative to the generated module. */
@@ -70,9 +70,9 @@ export function compileSchema<T extends TSchema>(
     options.source.length === 0
   )
     throw new Error("[nifra/schema] precompile requires a source module and an exported identifier")
-  if (COERCES in schema["~standard"].validate)
+  if (!validatesByJsonSchemaAlone(schema))
     throw new Error(
-      "[nifra/schema] precompile does not support coercing schemas; use the normal adapter",
+      "[nifra/schema] precompile does not support coercing schemas (t.query, t.form, …) or a validate that does more than check jsonSchema; use the normal adapter",
     )
   const node = literal(schema.jsonSchema)
   if (hasCompileHazard(schema.jsonSchema))

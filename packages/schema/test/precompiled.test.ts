@@ -4,6 +4,7 @@ import { join } from "node:path"
 import type { StandardSchemaV1 } from "@nifrajs/core/schema"
 import fc from "fast-check"
 import { compileSchema } from "../src/compile.ts"
+import { t as formT } from "../src/form.ts"
 import { t } from "../src/index.ts"
 
 const dir = mkdtempSync(join(import.meta.dir, ".tmp-precompiled-"))
@@ -86,6 +87,14 @@ describe("static schema compilation", () => {
     const options = { source: "./source.ts", exportName: "schema" }
     expect(() => compileSchema(t.query({ limit: t.integer() }), options)).toThrow("coercing")
     expect(() => compileSchema({ ...t.query({ limit: t.integer() }) }, options)).toThrow("coercing")
+    // A form coerces its text fields and reads multipart bodies: neither survives compilation.
+    const form = formT.form({ n: t.integer(), tags: t.array(t.string()) })
+    expect(() => compileSchema(form, options)).toThrow("coercing")
+    const handWritten: Parameters<typeof compileSchema>[0] = {
+      ...t.object({ n: t.integer() }),
+      "~standard": { ...t.object({ n: t.integer() })["~standard"], validate: () => ({ value: 1 }) },
+    }
+    expect(() => compileSchema(handWritten, options)).toThrow("more than check jsonSchema")
     expect(() => compileSchema(t.date(), options)).toThrow("custom registry kinds")
     expect(() => compileSchema(t.object({ "a\\b": t.string() }), options)).toThrow("escape safely")
     const payload = "x', (globalThis.__nifraInjected = true), '"

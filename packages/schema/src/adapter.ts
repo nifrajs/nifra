@@ -41,6 +41,18 @@ const MAX_ISSUES = 100
 /** Marks a coercing `validate`. On the function, not the schema, so a spread copy keeps it. */
 export const COERCES = Symbol.for("nifra.schema.coerce")
 
+// Every `validate` that checks its `jsonSchema` and nothing else: the only kind precompilation can
+// replace. A wrapper (`t.form`'s coercion and multipart reader, a hand-written Standard Schema) is
+// absent, so it is refused rather than compiled into a validator that drops what it adds.
+const PLAIN_VALIDATORS = new WeakSet<object>()
+
+/** Whether `schema` validates by its `jsonSchema` alone, as `fromTypeBox` without `coerce` builds it. */
+export function validatesByJsonSchemaAlone(schema: {
+  readonly "~standard": { readonly validate: object }
+}): boolean {
+  return PLAIN_VALIDATORS.has(schema["~standard"].validate)
+}
+
 function firstIssues(
   errors: Iterable<{ readonly message: string; readonly path: string }>,
 ): StandardIssue[] {
@@ -274,5 +286,6 @@ export function fromTypeBox<T extends TSchema>(
     jsonSchema: schema,
   }
   if (coerce) Object.defineProperty(result["~standard"].validate, COERCES, { value: true })
+  else PLAIN_VALIDATORS.add(result["~standard"].validate)
   return result
 }

@@ -16459,7 +16459,8 @@ The server imports `body` from `./generated/users.ts` and uses it as its route s
 source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
 schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
 
-Compilation refuses coercing query schemas, custom registry kinds such as dates/deferred values,
+Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
+schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,
 runtime-only metadata, and known TypeBox compiler escape hazards. Use the ordinary `t` adapter for
 these shapes. This opt-in build step leaves the existing validation API and runtime behavior intact.
 

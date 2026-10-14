@@ -13244,7 +13244,7 @@
     "name": "RunOptions",
     "kind": "interface",
     "package": "@nifrajs/runner",
-    "signature": "export interface RunOptions {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.local\"`. */\n    readonly origin?: string;\n    /** Cap on captured body text, in characters. Default 65536. */\n    readonly maxBodyChars?: number;\n}"
+    "signature": "export interface RunOptions {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.local\"`. */\n    readonly origin?: string;\n    /** Cap on captured body text, in characters: a non-negative integer, or `Infinity` for none.\n     * Default 65536. */\n    readonly maxBodyChars?: number;\n}"
   },
   {
     "name": "RunParallelNode",
