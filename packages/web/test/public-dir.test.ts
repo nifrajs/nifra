@@ -354,6 +354,29 @@ test("multiple ranges fall back to the full body rather than buffering multipart
   })
 })
 
+test("small bodies are read whole and large ones streamed, with the same bytes either way", async () => {
+  await withDir(async (dir) => {
+    // 256 KiB is where the handler stops reading a body whole and streams it instead.
+    const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024 + 7]
+    const files = sizes.map((size) => Uint8Array.from({ length: size }, (_, i) => (i * 31) % 251))
+    await Promise.all(files.map((bytes, i) => writeFile(join(dir, `f${i}.bin`), bytes)))
+    const serve = servePublicDir({ dir })
+
+    for (const [i, bytes] of files.entries()) {
+      const whole = await serve(new Request(`http://local/f${i}.bin`))
+      expect(whole?.headers.get("content-length")).toBe(String(bytes.length))
+      expect(new Uint8Array(await whole!.arrayBuffer())).toEqual(bytes)
+      if (bytes.length < 2) continue
+
+      const end = bytes.length - 2
+      const part = await serve(ranged(`/f${i}.bin`, { range: `bytes=1-${end}` }))
+      expect(part?.status).toBe(206)
+      expect(part?.headers.get("content-length")).toBe(String(end))
+      expect(new Uint8Array(await part!.arrayBuffer())).toEqual(bytes.subarray(1, end + 1))
+    }
+  })
+})
+
 test("HEAD reports the same headers GET does, and the whole representation under Range", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.txt"), "0123456789")

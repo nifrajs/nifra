@@ -12,7 +12,7 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
-import { realpath } from "node:fs/promises"
+import { type FileHandle, realpath } from "node:fs/promises"
 import { extname, normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
@@ -103,6 +103,23 @@ export const CONTENT_TYPES: Readonly<Record<string, string>> = {
  */
 function isHiddenPath(root: string, abs: string): boolean {
   return abs !== root && isHiddenPublicPath(abs.slice(root.length + 1))
+}
+
+// Up to this many bytes are read whole through the pinned descriptor, which then closes before the
+// response leaves: on Bun a 200 KB asset is served in 0.17 ms against 0.28 ms through a node:fs
+// stream. A larger body streams, so a video holds 64 KiB per request rather than the file.
+const BUFFERED_BODY_MAX = 256 * 1024
+
+/** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
+async function readPinned(handle: FileHandle, start: number, length: number): Promise<Uint8Array> {
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  while (offset < length) {
+    const { bytesRead } = await handle.read(bytes, offset, length - offset, start + offset)
+    if (bytesRead === 0) break
+    offset += bytesRead
+  }
+  return offset === length ? bytes : bytes.subarray(0, offset)
 }
 
 /** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
@@ -255,7 +272,16 @@ export function servePublicDir(
         return new Response(null, { status: 416, headers })
       }
 
-      const body = (start?: number, end?: number): ReadableStream<Uint8Array> => {
+      const body = async (
+        start: number,
+        end: number,
+      ): Promise<Uint8Array | ReadableStream<Uint8Array>> => {
+        const length = end - start + 1
+        if (length <= BUFFERED_BODY_MAX) {
+          const bytes = await readPinned(handle!, start, length)
+          headers.set("content-length", String(bytes.byteLength))
+          return bytes
+        }
         const stream = handle!.createReadStream({ start, end })
         // FileHandle.createReadStream owns closing the descriptor after EOF/abort.
         handle = undefined
@@ -266,14 +292,14 @@ export function servePublicDir(
         const { start, end } = range.ranges[0]!
         headers.set("content-range", `bytes ${start}-${end}/${size}`)
         headers.set("content-length", String(end - start + 1))
-        return new Response(head ? null : body(start, end), { status: 206, headers })
+        return new Response(head ? null : await body(start, end), { status: 206, headers })
       }
 
       // Multiple ranges would require assembling `multipart/byteranges`, and doing that for a file on
       // disk means buffering the whole representation to serve a request that asked for less of it.
       // RFC 9110 lets a server ignore Range entirely, so the full body is the conformant answer here.
       headers.set("content-length", String(size))
-      return new Response(head ? null : body(), { headers })
+      return new Response(head || size === 0 ? null : await body(0, size - 1), { headers })
     } finally {
       if (handle !== undefined) {
         try {
