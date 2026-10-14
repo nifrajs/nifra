@@ -16,7 +16,7 @@ import {
   signValue,
   unsignValue,
 } from "@nifrajs/core/cookies"
-import type { SessionRecord, SessionStore } from "./store.ts"
+import { REVOKED_SUFFIX, type SessionRecord, type SessionStore } from "./store.ts"
 
 /** The cookie + response surface the manager needs - a structural subset of nifra's `Context`, so any
  * `c` satisfies it and it's testable with a stub. */
@@ -111,7 +111,6 @@ const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8A
 // A revoked id keeps a marker under its own key. A request that loaded the session before logout and
 // commits after it rewrites the record, and a blind `set` cannot be made conditional on every store,
 // but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
-const REVOKED_SUFFIX = ".revoked"
 const revokedKey = (id: string): string => `${id}${REVOKED_SUFFIX}`
 
 interface Payload {

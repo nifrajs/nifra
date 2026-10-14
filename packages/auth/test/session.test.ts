@@ -332,6 +332,30 @@ describe("session - store mode", () => {
     expect(inFlight.setCalls).toEqual([])
   })
 
+  test("sessions written after a logout never push its marker out of a bounded memory store", async () => {
+    const store = new MemorySessionStore({ max: 50 })
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("userId", "victim")
+    await sessions.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+
+    const inFlight = ctx({ nifra_session: cookie })
+    const stale = await sessions.get(inFlight.context)
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+    for (let i = 0; i < 50; i++) {
+      const visitor = ctx()
+      const anonymous = await sessions.get(visitor.context)
+      anonymous.set("userId", `anon-${i}`)
+      await sessions.commit(visitor.context, anonymous)
+    }
+    await sessions.commit(inFlight.context, stale)
+
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    expect(inFlight.setCalls).toEqual([])
+  })
+
   test("a commit that loaded the pre-login session does not bring it back after rotation", async () => {
     const store = new MemorySessionStore()
     const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })

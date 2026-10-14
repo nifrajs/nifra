@@ -692,7 +692,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
   A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}) - the durable, shared production store: sessions hold across worker instances and survive restarts. Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so …
 - **MemorySessionStore** _(class)_ - `class MemorySessionStore`
-  In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances). Bounded: oldest-inserted entries evict past `max`.
+  In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances). Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their ow…
 - **MemorySessionStoreOptions** _(interface)_ - `interface MemorySessionStoreOptions`
 - **Session** _(interface)_ - `interface Session<Data extends Record<string, unknown> = Record<string, unknown>>`
   A typed session handle. Every key is optional - a fresh session is empty.

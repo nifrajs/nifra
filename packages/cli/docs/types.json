@@ -8821,14 +8821,14 @@
     "name": "MemorySessionStore",
     "kind": "class",
     "package": "@nifrajs/auth",
-    "signature": "export declare class MemorySessionStore implements SessionStore {\n    private readonly sessions;\n    private readonly max;\n    constructor(options?: MemorySessionStoreOptions);\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n}",
-    "doc": "/**\n * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR\n * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).\n * Bounded: oldest-inserted entries evict past `max`.\n */"
+    "signature": "export declare class MemorySessionStore implements SessionStore {\n    private readonly sessions;\n    private readonly markers;\n    private readonly max;\n    constructor(options?: MemorySessionStoreOptions);\n    private mapFor;\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n}",
+    "doc": "/**\n * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR\n * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).\n * Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their own.\n */"
   },
   {
     "name": "MemorySessionStoreOptions",
     "kind": "interface",
     "package": "@nifrajs/auth",
-    "signature": "export interface MemorySessionStoreOptions {\n    /** Allow the in-memory store in production. Off by default - per-instance sessions don't hold across\n     * instances and are lost on restart. */\n    readonly allowInProduction?: boolean;\n    /** Hard cap on stored sessions; the oldest-inserted is evicted past it (default 10_000). */\n    readonly max?: number;\n}"
+    "signature": "export interface MemorySessionStoreOptions {\n    /** Allow the in-memory store in production. Off by default - per-instance sessions don't hold across\n     * instances and are lost on restart. */\n    readonly allowInProduction?: boolean;\n    /** Hard cap on stored sessions; the oldest-inserted is evicted past it (default 10_000). Revocation\n     * markers are capped by it separately, so new sessions never evict one. */\n    readonly max?: number;\n}"
   },
   {
     "name": "MemoryStaticBoundaryCache",
@@ -14398,7 +14398,7 @@
     "kind": "interface",
     "package": "@nifrajs/auth",
     "signature": "export interface SessionStore {\n    /** The record for `id`, or `undefined` on a miss. */\n    get(id: string): Promise<SessionRecord | undefined>;\n    /** Store (or overwrite) the record for `id`. */\n    set(id: string, record: SessionRecord): Promise<void>;\n    /** Drop `id` (logout / regeneration). A no-op if absent. */\n    delete(id: string): Promise<void>;\n}",
-    "doc": "/**\n * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.\n * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}\n * prod-guards against the per-instance footgun. Logout and rotation also write a revocation marker, an\n * empty record under `<id>.revoked`, so a store must accept that key like any other.\n */"
+    "doc": "/**\n * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.\n * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}\n * prod-guards against the per-instance footgun. Logout and rotation also write a revocation marker, an\n * empty record under `<id>.revoked`, so a store must accept that key like any other, and keep it until\n * its `expiresAt`: a marker dropped earlier lets a request that loaded the session before the logout\n * write it back.\n */"
   },
   {
     "name": "SessionStore",
