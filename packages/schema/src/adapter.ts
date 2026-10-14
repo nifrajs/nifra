@@ -38,6 +38,9 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
 // large hostile body.
 const MAX_ISSUES = 100
 
+/** Marks a coercing `validate`. On the function, not the schema, so a spread copy keeps it. */
+export const COERCES = Symbol.for("nifra.schema.coerce")
+
 function firstIssues(
   errors: Iterable<{ readonly message: string; readonly path: string }>,
 ): StandardIssue[] {
@@ -138,32 +141,42 @@ function convertScalar(kind: ScalarKind, v: unknown): unknown {
   }
 }
 
+/** What ends or rewrites a single-quoted string in generated source. */
+const UNSAFE_IN_QUOTES = /['\\\n\r\u2028\u2029]/
+/** A quote is safe in a literal (TypeBox escapes it there); a backslash or line break is not. */
+const UNSAFE_IN_LITERAL = /[\\\n\r\u2028\u2029]/
+
 /**
- * TypeBox's `TypeCompiler` escapes only single quotes when embedding property keys and string
- * literals into generated source (`LiteralString.Escape`), so a BACKSLASH in a `properties` key or
- * a `Type.Literal` string survives raw into the `new Function` body and is reinterpreted as an
- * escape sequence there - the compiled checker then reads a DIFFERENT property (or compares a
- * different literal) than the schema declares, silently failing valid input (and a key like
- * `"a\\'b"` even changes which quote ends the string). The interpretive `Value` checker has no
- * codegen step and handles these keys correctly, so a schema carrying the hazard is pinned to the
- * eval-free path up front. Detected once at construction over the raw JSON schema tree; the
- * overwhelmingly common backslash-free schema pays one boolean.
+ * TypeBox's `TypeCompiler` splices schema text into generated source inside single quotes: a
+ * `Type.Literal` string escaped for quotes only (`LiteralString.Escape`), and property keys (a closed
+ * object's key list), a `format` name and a custom `Kind` not escaped at all. A backslash there is
+ * reinterpreted as an escape sequence - the checker reads a DIFFERENT property or literal and
+ * silently fails valid input - a line break breaks the source, and a quote ends the string so the
+ * rest runs as code. The interpretive `Value` checker has no codegen step and handles all of them,
+ * so a schema carrying the hazard is pinned to the eval-free path up front. Detected once at
+ * construction over the raw JSON schema tree.
  */
-function hasCompileHazard(node: unknown): boolean {
+export function hasCompileHazard(node: unknown): boolean {
   if (node === null || typeof node !== "object") return false
   if (Array.isArray(node)) return node.some(hasCompileHazard)
-  const record = node as Record<string, unknown>
+  const record = node as Record<PropertyKey, unknown>
+  const kind = record[Kind]
+  if (typeof kind === "string" && UNSAFE_IN_QUOTES.test(kind)) return true
+  // A tuple's length check splices `maxItems` in without TypeBox's usual number guard.
+  if (kind === "Tuple" && record.maxItems !== undefined && typeof record.maxItems !== "number")
+    return true
   for (const key of Object.getOwnPropertyNames(record)) {
     const value = record[key]
     if (
       (key === "properties" || key === "patternProperties") &&
       value !== null &&
       typeof value === "object" &&
-      Object.getOwnPropertyNames(value).some((prop) => prop.includes("\\"))
+      Object.getOwnPropertyNames(value).some((prop) => UNSAFE_IN_QUOTES.test(prop))
     ) {
       return true
     }
-    if (key === "const" && typeof value === "string" && value.includes("\\")) return true
+    if (key === "const" && typeof value === "string" && UNSAFE_IN_LITERAL.test(value)) return true
+    if (key === "format" && typeof value === "string" && UNSAFE_IN_QUOTES.test(value)) return true
     if (hasCompileHazard(value)) return true
   }
   return false
@@ -222,7 +235,7 @@ export function fromTypeBox<T extends TSchema>(
   // without 'unsafe-eval', or Trusted Types, the compile attempt is a violation the browser logs and
   // reports, once per schema, before the fallback below catches it.
   let evalFree = hasCompileHazard(schema) || "document" in globalThis
-  return {
+  const result: NifraSchema<T> = {
     "~standard": {
       version: 1,
       vendor: "nifra",
@@ -260,4 +273,6 @@ export function fromTypeBox<T extends TSchema>(
     },
     jsonSchema: schema,
   }
+  if (coerce) Object.defineProperty(result["~standard"].validate, COERCES, { value: true })
+  return result
 }

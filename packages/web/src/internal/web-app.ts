@@ -73,6 +73,8 @@ export interface CreateWebAppOptions<Env = unknown> {
   readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
+  /** Cache production module imports and layout preparation, never request data. Defaults to NODE_ENV === "production"; disable for a mutable manifest. */
+  readonly cacheRouteModules?: boolean
   /** URL of the built client entry (module script) injected into every page. */
   readonly clientEntry: string
   /** Default document title for all pages. */
@@ -475,6 +477,9 @@ export function createWebApp<Env = unknown>(
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
   const pageExecutor = createPageRequestExecutor<Env>({
+    ...(options.cacheRouteModules === undefined
+      ? {}
+      : { cacheRouteModules: options.cacheRouteModules }),
     ...(options.serverComponents === undefined
       ? {}
       : { serverComponents: options.serverComponents }),

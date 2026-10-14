@@ -46,6 +46,7 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
+import { prepareModules } from "./module-preparation.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -207,6 +208,7 @@ export interface PageExecutionOptions<Env = unknown> {
   ) => Promise<Response>
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
+  readonly cacheRouteModules?: boolean
   readonly clientEntry: string
   readonly title?: string
   readonly api?: unknown
@@ -309,6 +311,11 @@ export function createPageRequestExecutor<Env = unknown>(
   options: PageExecutionOptions<Env>,
 ): PageRequestExecutor<Env> {
   const { adapter, manifest, clientEntry, api } = options
+  const cacheModules =
+    options.cacheRouteModules ??
+    (typeof process !== "undefined" && process.env?.NODE_ENV === "production")
+  const loadModule = prepareModules(cacheModules)
+  const preparedLayouts = new WeakMap<RouteEntry, LoadedLayoutModules>()
   // The action result is request-local; a browser cannot manufacture this handoff.
   const progressiveActionData = new WeakMap<Request, unknown>()
   // Bound once per render, so every loader, action and boundary in that render shares one view of the
@@ -420,8 +427,10 @@ export function createPageRequestExecutor<Env = unknown>(
   // Load a route's layout modules once for the current execution. The render path needs each whole
   // module for its component + meta, while the data path also needs loader/gate/boundary declarations.
   const loadLayoutModules = async (route: RouteEntry): Promise<LoadedLayoutModules> => {
+    const known = cacheModules ? preparedLayouts.get(route) : undefined
+    if (known !== undefined) return known
     const modules = await Promise.all(
-      route.layoutIds.map((id) => (manifest.layouts[id] as LayoutEntry).load()),
+      route.layoutIds.map((id) => loadModule(manifest.layouts[id] as LayoutEntry)),
     )
     for (let i = 0; i < modules.length; i++) {
       if ((modules[i] as { action?: unknown }).action === undefined) continue
@@ -430,6 +439,7 @@ export function createPageRequestExecutor<Env = unknown>(
         `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports an \`action\`, but layouts do not run one - only route files do. Move the mutation into the route that submits to it.`,
       )
     }
+    if (cacheModules) preparedLayouts.set(route, modules)
     return modules
   }
 
@@ -616,7 +626,7 @@ export function createPageRequestExecutor<Env = unknown>(
       const dirTag = `${id.slice(0, id.length - "_middleware".length)}_layout`
       let outcome: unknown
       try {
-        const middleware = (await entry.load()).default
+        const middleware = (await loadModule(entry)).default
         // A `_layout.backend.ts` that exports no middleware is a layout data module, nothing more.
         if (middleware === undefined) continue
         if (typeof middleware !== "function") {
@@ -1410,7 +1420,8 @@ export function createPageRequestExecutor<Env = unknown>(
         if (!componentOwner && is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
           return renderNotFound(c, controls)
         }
-        const mod = await route.load()
+        const loaded = loadModule(route)
+        const mod = cacheModules && !(loaded instanceof Promise) ? loaded : await loaded
         const draft = await draftFlag(c.req)
         // Unpublished content is the editor's alone: whatever cache-control a loader sets, no cache keeps it.
         if (draft) controls.personalize()
@@ -1592,7 +1603,8 @@ export function createPageRequestExecutor<Env = unknown>(
 
     post: (route) =>
       withResponseControls(async (c, controls) => {
-        const mod = await route.load()
+        const loaded = loadModule(route)
+        const mod = cacheModules && !(loaded instanceof Promise) ? loaded : await loaded
         const draft = await draftFlag(c.req)
         if (draft) controls.personalize()
         if (mod.action === undefined) {

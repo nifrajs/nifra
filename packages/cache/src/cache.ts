@@ -395,9 +395,12 @@ export function createCache(options: CacheOptions = {}): Cache {
         }
       : observed(observer, undefined)
 
-  // Built per call rather than cached per context: a cache keyed by context would hold every request's
-  // context object for the process lifetime, which is a leak with a request body attached to it.
+  // Weakly keyed: a strong map would hold every request's context, request body attached, for the
+  // process lifetime. The beacon still runs on every operation, so reuse never skips a capability check.
+  const boundViews = new WeakMap<object, Cache>()
   function bind(context: object): Cache {
+    const existing = boundViews.get(context)
+    if (existing !== undefined) return existing
     const beacon = options.beacon
     if (beacon === undefined && observer === undefined) {
       throw new Error(
@@ -405,7 +408,10 @@ export function createCache(options: CacheOptions = {}): Cache {
       )
     }
     const base = observer === undefined ? plain : observed(observer, context)
-    if (beacon === undefined) return base
+    if (beacon === undefined) {
+      boundViews.set(context, base)
+      return base
+    }
     // A refused capability has to surface as a REJECTION, not a synchronous throw: every method here
     // returns a promise, and a caller who writes `.catch(…)` instead of `try` would otherwise miss it
     // entirely - turning a fail-closed gate into an unhandled crash.
@@ -419,7 +425,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     }
     const READ = [readToken]
     const WRITE = [writeToken]
-    return {
+    const bound: Cache = {
       get: <T = unknown>(key: string): Promise<T | undefined> =>
         guard(READ, () => base.get<T>(key)),
       has: (key) => guard(READ, () => base.has(key)),
@@ -433,6 +439,8 @@ export function createCache(options: CacheOptions = {}): Cache {
       clear: () => guard(WRITE, () => base.clear()),
       for: bind,
     }
+    boundViews.set(context, bound)
+    return bound
   }
 
   return plain

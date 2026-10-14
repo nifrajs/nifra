@@ -32,6 +32,9 @@ packages/web/test/.tmp-*
 /BENCHMARKS.md
 /SSR-BENCHMARKS.md
 /BENCHMARKS-REALWORLD.md
+/BENCHMARKS-PERFORMANCE.json
+bench/.tmp-performance-*/
+packages/schema/test/.tmp-precompiled-*/
 /PLAN.md
 /*-PLAN.md
 /*-PARITY.md

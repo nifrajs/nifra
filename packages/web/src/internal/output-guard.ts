@@ -201,6 +201,7 @@ function shapeOf(
 
 class Compiler {
   private readonly memo = new Map<Node, Project>()
+  private readonly issueFree = new WeakSet<Project>([LEAF, LEAF_ARRAY, DATE])
   private readonly ids = new Map<string, Node>()
   readonly sensitive: string[] = []
 
@@ -275,13 +276,13 @@ class Compiler {
   }
 
   private object(node: Node, where: string): Project {
-    const declared = new Map<string, Project>()
+    const declared: Record<string, Project> = Object.create(null)
     for (const [key, sub] of Object.entries(isNode(node.properties) ? node.properties : {})) {
       if (!isNode(sub)) continue
       if (isSensitiveFieldName(key) && typeof sub[DECLASSIFIED_KEY] !== "string") {
         this.sensitive.push(`${where}/${key}`)
       }
-      declared.set(key, this.compile(sub, `${where}/${key}`))
+      declared[key] = this.compile(sub, `${where}/${key}`)
     }
     const patterns: Array<readonly [RegExp, Project]> = []
     for (const [pattern, sub] of Object.entries(
@@ -302,7 +303,7 @@ class Compiler {
     }
     // A closed object drops a deferred marker's keys unless it declares them, so only an open one, or
     // one declaring the marker key, could pass a marker on.
-    const checksMarker = open || declared.has("__nifra_deferred")
+    const checksMarker = open || declared.__nifra_deferred !== undefined
     const project: Project = (value, state) => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return value
       if (checksMarker && isDeferred(value)) {
@@ -325,7 +326,7 @@ class Compiler {
       for (const key in input) {
         // An inherited enumerable key (a polluted prototype) is never data.
         if (!Object.hasOwn(input, key)) continue
-        const projector = declared.get(key) ?? (open ? undeclared(key) : undefined)
+        const projector = declared[key] ?? (open ? undeclared(key) : undefined)
         if (projector === undefined) {
           out ??= copyBefore(input, key)
           continue
@@ -346,6 +347,8 @@ class Compiler {
       }
       return out ?? value
     }
+    if (!checksMarker && Object.values(declared).every((child) => this.issueFree.has(child)))
+      this.issueFree.add(project)
     return project
   }
 
@@ -363,6 +366,25 @@ class Compiler {
     // An array of scalars is the validator's alone: no key to drop, and walking it here would cost
     // every `string[]` a loop. A `Date` inside one reaches the validator as it is.
     if (rest === LEAF && head.every((projector) => projector === LEAF)) return LEAF_ARRAY
+    // A uniform subtree that cannot emit deferred-marker issues needs no per-item path bookkeeping.
+    if (head.length === 0 && this.issueFree.has(rest)) {
+      const project: Project = (value, state) => {
+        if (!Array.isArray(value)) return value
+        let out: unknown[] | undefined
+        for (let i = 0; i < value.length; i++) {
+          const before = value[i]
+          const after = rest(before, state)
+          if (out !== undefined) out[i] = after
+          else if (after !== before) {
+            out = value.slice(0, i)
+            out[i] = after
+          }
+        }
+        return out ?? value
+      }
+      this.issueFree.add(project)
+      return project
+    }
     return (value, state) => {
       if (!Array.isArray(value)) return value
       let out: unknown[] | undefined

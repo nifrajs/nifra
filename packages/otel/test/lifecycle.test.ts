@@ -3,9 +3,86 @@ import {
   createObservationLifecycle,
   type NifraSpan,
   type ObservationAdapter,
+  type ObservationLifecycle,
 } from "../src/index.ts"
 
 describe("observation lifecycle", () => {
+  test("custom start-only lifecycles remain compatible with the public interface", () => {
+    const factory = createObservationLifecycle()
+    const custom: ObservationLifecycle = { start: factory.start }
+    expect(custom.start({ name: "custom" }).end().name).toBe("custom")
+    expect(factory.record({ name: "completed" }, { durationMs: 1 }).name).toBe("completed")
+  })
+
+  test("record observes later configured adapters without duplicating a sink", () => {
+    const seen: string[] = []
+    const first: ObservationAdapter = {
+      onEnd() {
+        seen.push("first")
+      },
+    }
+    const second: ObservationAdapter = {
+      onEnd() {
+        seen.push("second")
+      },
+    }
+    const adapters = [first]
+    const lifecycle = createObservationLifecycle({ adapters })
+    lifecycle.record({ name: "first" }, { durationMs: 1 })
+    adapters.push(first, second)
+    lifecycle.record({ name: "second" }, { durationMs: 1 })
+    expect(seen).toEqual(["first", "first", "second"])
+  })
+
+  test("record keeps start/end ordering, parentage, timing, deduplication and immutable exports", () => {
+    const events: string[] = []
+    const adapter: ObservationAdapter = {
+      onStart(span) {
+        events.push(span.status)
+        span.attributes.started = true
+      },
+      onEnd(span) {
+        events.push(span.status)
+      },
+    }
+    const lifecycle = createObservationLifecycle({
+      adapters: [
+        adapter,
+        adapter,
+        {
+          onStart() {
+            throw new Error("isolated")
+          },
+          onEnd() {
+            throw new Error("isolated")
+          },
+        },
+      ],
+      generateSpanId: () => "b".repeat(16),
+      clock: { wallTime: () => 1000, monotonicTime: () => 10 },
+    })
+    const span = lifecycle.record(
+      {
+        name: "cache wrap",
+        parent: { traceId: "a".repeat(32), spanId: "c".repeat(16), sampled: false },
+        startTime: 900,
+      },
+      { durationMs: 5, status: "error" },
+    )
+    expect(events).toEqual(["unset", "error"])
+    expect(span).toMatchObject({
+      traceId: "a".repeat(32),
+      parentSpanId: "c".repeat(16),
+      sampled: false,
+      startTime: 900,
+      endTime: 905,
+      durationMs: 5,
+      attributes: { started: true },
+    })
+    expect(Object.isFrozen(span)).toBe(true)
+    expect(Object.isFrozen(span.attributes)).toBe(true)
+  })
+
   test("owns parentage, monotonic timing, errors, and final classification", () => {
     const ended: NifraSpan[] = []
     const times = { wall: 1_000, monotonic: 10 }

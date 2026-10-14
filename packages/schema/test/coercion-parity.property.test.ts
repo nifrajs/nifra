@@ -139,6 +139,24 @@ describe("flat coercion plan vs Value.Convert parity", () => {
     expect("value" in litOk).toBe(true)
   })
 
+  test("a quote in a format name or closed-object key never runs as generated code", () => {
+    // TypeBox splices a `format` name and a closed object's key list into its checker unescaped, so
+    // a quote there ends the string and the rest runs inside `new Function`.
+    const payload = "x', (globalThis.__nifraInjected = true), '"
+    const injected = () => "__nifraInjected" in globalThis
+    try {
+      const format = fromTypeBox(Type.String({ format: payload }))
+      expect("issues" in format["~standard"].validate("hello")).toBe(true)
+      const keyed = fromTypeBox(
+        Type.Object({ [payload]: Type.String() }, { additionalProperties: false }),
+      )
+      expect("value" in keyed["~standard"].validate({ [payload]: "hello" })).toBe(true)
+      expect(injected()).toBe(false)
+    } finally {
+      Reflect.deleteProperty(globalThis, "__nifraInjected")
+    }
+  })
+
   test("non-flat schemas still take the full Value.Convert path (no plan short-circuit)", () => {
     // A union property makes the schema plan-ineligible; conversion must still happen (via
     // Value.Convert), proving the fallback wiring - "5" converts inside the union member.

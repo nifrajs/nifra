@@ -1736,7 +1736,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.3.0"`
+- **VERSION** _(const)_ - `VERSION: "5.2.1"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -4349,6 +4349,8 @@ _No named exports (side-effect entrypoint)._
 - **OtlpExporterOptions** _(interface)_ - `interface OtlpExporterOptions`
 - **ParsedTraceparent** _(interface)_ - `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
+- **RecordingObservationLifecycle** _(interface)_ - `interface RecordingObservationLifecycle`
+  Factory lifecycles can record completed work; custom start-only implementations remain valid.
 - **SpanKind** _(type)_ - `type SpanKind = "server" | "client" | "producer" | "consumer" | "internal"`
   The OTel span kind. A span without one is exported as `server`, the kind of the request spans that predate this field.
 - **SpanStatus** _(type)_ - `type SpanStatus = "unset" | "ok" | "error"`
@@ -4363,7 +4365,7 @@ _No named exports (side-effect entrypoint)._
   Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in one sink cannot prevent the remaining sinks from observing the span.
 - **consoleSpanExporter** _(function)_ - `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter`
   A no-frills exporter that logs each completed span as one structured line. Useful in dev or as a starting point before wiring a real backend.
-- **createObservationLifecycle** _(function)_ - `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
+- **createObservationLifecycle** _(function)_ - `createObservationLifecycle: (options?: ObservationLifecycleOptions) => RecordingObservationLifecycle`
   Creates an independent lifecycle factory. Adapters are always called fail-open.
 - **effectTracing** _(function)_ - `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
   Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
@@ -4576,6 +4578,12 @@ _No named exports (side-effect entrypoint)._
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
 
+### `@nifrajs/schema/compile`
+
+- **CompileSchemaOptions** _(interface)_ - `interface CompileSchemaOptions`
+- **compileSchema** _(function)_ - `compileSchema: <T extends TSchema>(schema: NifraSchema<T>, options: CompileSchemaOptions) => string`
+  Generate a typed module with static validation code. Run at build time, then import its export at runtime.
+
 ### `@nifrajs/schema/form`
 
 - **FileOptions** _(interface)_ - `interface FileOptions`
@@ -4599,6 +4607,21 @@ _No named exports (side-effect entrypoint)._
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
+
+### `@nifrajs/schema/precompiled`
+
+- **Kind** _(const)_ - `Kind: typeof Kind`
+  Symbol key applied to types
+- **OptionalKind** _(const)_ - `OptionalKind: typeof OptionalKind`
+  Symbol key applied to optional types
+- **ReadonlyKind** _(const)_ - `ReadonlyKind: typeof ReadonlyKind`
+  Symbol key applied to readonly types
+- **compiledFormat** _(function)_ - `compiledFormat: (name: string, value: string) => boolean`
+  The format callback used by generated validators; custom formats retain their registry semantics.
+- **compiledHash** _(function)_ - `compiledHash: (value: unknown) => bigint`
+  Creates a FNV1A-64 non cryptographic hash of the given value
+- **fromPrecompiled** _(function)_ - `fromPrecompiled: <T extends TSchema>(schema: T, check: (value: unknown) => boolean) => StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T; }`
+  Wrap a build-generated checker without shipping a schema builder or dynamic compiler.
 
 ## @nifrajs/storage
 
@@ -7471,7 +7494,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.3.0"`
+- **VERSION** _(const)_ - `VERSION: "5.2.1"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/schema",
-  "version": "5.3.0",
+  "version": "5.2.1",
   "description": "Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.",
   "keywords": [
     "bun",
@@ -23,6 +23,16 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./compile": {
+      "bun": "./src/compile.ts",
+      "types": "./dist/compile.d.ts",
+      "default": "./dist/compile.js"
+    },
+    "./precompiled": {
+      "bun": "./src/precompiled.ts",
+      "types": "./dist/precompiled.d.ts",
+      "default": "./dist/precompiled.js"
+    },
     ".": {
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",

@@ -94,6 +94,12 @@ export interface ObservationLifecycle {
   ): ActiveObservation
 }
 
+/** Factory lifecycles can record completed work; custom start-only implementations remain valid. */
+export interface RecordingObservationLifecycle extends ObservationLifecycle {
+  /** Record already-completed work without allocating an active observation. */
+  record(input: StartObservation, end: EndObservation): NifraSpan
+}
+
 export interface ObservationClock {
   /** Epoch milliseconds for interoperable start/end timestamps. */
   wallTime(): number
@@ -117,8 +123,20 @@ const defaultClock: ObservationClock = {
 /** Creates an independent lifecycle factory. Adapters are always called fail-open. */
 export function createObservationLifecycle(
   options: ObservationLifecycleOptions = {},
-): ObservationLifecycle {
+): RecordingObservationLifecycle {
   const adapters = options.adapters ?? []
+  let adapterSnapshot = [...adapters]
+  let recordedAdapters = [...new Set(adapterSnapshot)]
+  const adaptersForRecord = (): readonly ObservationAdapter[] => {
+    let changed = adapterSnapshot.length !== adapters.length
+    for (let i = 0; !changed && i < adapters.length; i++)
+      changed = adapterSnapshot[i] !== adapters[i]
+    if (changed) {
+      adapterSnapshot = [...adapters]
+      recordedAdapters = [...new Set(adapterSnapshot)]
+    }
+    return recordedAdapters
+  }
   const clock = options.clock ?? defaultClock
   const newTraceId = options.generateTraceId ?? generateTraceId
   const newSpanId = options.generateSpanId ?? generateSpanId
@@ -143,11 +161,7 @@ export function createObservationLifecycle(
     }
   }
 
-  const start = (
-    input: StartObservation,
-    additionalAdapters: readonly ObservationAdapter[] = [],
-  ): ActiveObservation => {
-    const spanAdapters = new Set([...adapters, ...additionalAdapters])
+  const makeSpan = (input: StartObservation): NifraSpan => {
     const parent =
       input.parent === undefined ? parseTraceparent(input.traceparent ?? null) : input.parent
     const traceId = parent?.traceId ?? newTraceId()
@@ -157,8 +171,7 @@ export function createObservationLifecycle(
       input.startTime !== undefined && Number.isFinite(input.startTime)
         ? input.startTime
         : clock.wallTime()
-    const monotonicStart = clock.monotonicTime()
-    const span: NifraSpan = {
+    return {
       traceId,
       spanId,
       ...(parent === null ? {} : { parentSpanId: parent.spanId }),
@@ -184,10 +197,47 @@ export function createObservationLifecycle(
             ),
           }),
     }
+  }
+
+  const finish = (
+    span: NifraSpan,
+    endInput: EndObservation,
+    monotonicStart: number,
+    recordedError = false,
+  ): NifraSpan => {
+    Object.assign(span.attributes, endInput.attributes)
+    if (endInput.durationMs !== undefined && Number.isFinite(endInput.durationMs)) {
+      span.durationMs = Math.max(0, endInput.durationMs)
+      span.endTime = span.startTime + span.durationMs
+    } else {
+      span.endTime = clock.wallTime()
+      span.durationMs = Math.max(0, clock.monotonicTime() - monotonicStart)
+    }
+    span.status =
+      endInput.status ??
+      (endInput.statusCode === undefined
+        ? recordedError
+          ? "error"
+          : "ok"
+        : endInput.statusCode >= 500
+          ? "error"
+          : "ok")
+    Object.freeze(span.attributes)
+    return Object.freeze(span)
+  }
+
+  const start = (
+    input: StartObservation,
+    additionalAdapters: readonly ObservationAdapter[] = [],
+  ): ActiveObservation => {
+    const spanAdapters = new Set([...adapters, ...additionalAdapters])
+    const span = makeSpan(input)
+    const { traceId, spanId, parentSpanId, sampled } = span
+    const monotonicStart = clock.monotonicTime()
     const context: ObservationContext = {
       traceId,
       spanId,
-      ...(parent === null ? {} : { parentSpanId: parent.spanId }),
+      ...(parentSpanId === undefined ? {} : { parentSpanId }),
       sampled,
       traceparent: formatTraceparent(traceId, spanId, sampled),
     }
@@ -230,28 +280,7 @@ export function createObservationLifecycle(
       end(endInput = {}) {
         if (ended) return span
         ended = true
-        Object.assign(span.attributes, endInput.attributes)
-        if (endInput.durationMs !== undefined && Number.isFinite(endInput.durationMs)) {
-          span.durationMs = Math.max(0, endInput.durationMs)
-          span.endTime = span.startTime + span.durationMs
-        } else {
-          span.endTime = clock.wallTime()
-          span.durationMs = Math.max(0, clock.monotonicTime() - monotonicStart)
-        }
-        span.status =
-          endInput.status ??
-          (endInput.statusCode === undefined
-            ? recordedError
-              ? "error"
-              : "ok"
-            : endInput.statusCode >= 500
-              ? "error"
-              : "ok")
-        // Publish an immutable completed span: a misbehaving adapter can no longer mutate the shared
-        // attributes bag and corrupt what other adapters (or the caller) observe. Adapters are fail-open,
-        // so a stray write throws into their own try/catch rather than changing request behavior.
-        Object.freeze(span.attributes)
-        Object.freeze(span)
+        finish(span, endInput, monotonicStart, recordedError)
         notifyEnd(span, [...spanAdapters])
         return span
       },
@@ -261,5 +290,19 @@ export function createObservationLifecycle(
     return active
   }
 
-  return { start }
+  return {
+    start,
+    record(input, endInput) {
+      const spanAdapters = adaptersForRecord()
+      const span = makeSpan(input)
+      const monotonicStart =
+        endInput.durationMs !== undefined && Number.isFinite(endInput.durationMs)
+          ? 0
+          : clock.monotonicTime()
+      notifyStart(span, spanAdapters)
+      finish(span, endInput, monotonicStart)
+      notifyEnd(span, spanAdapters)
+      return span
+    },
+  }
 }

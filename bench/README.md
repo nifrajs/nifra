@@ -1,5 +1,16 @@
 # Benchmarks
 
+`bun run bench/performance-improvements.ts --baseline /absolute/path/to/original-checkout --check
+--output BENCHMARKS-PERFORMANCE.json` compares the original and modified source checkouts in
+41 paired rounds, alternating measurement order. It checks output equality before measuring output
+guards, traced cache hits, full SSR responses, and static schema validation; it also compares identical
+bundled route shapes. Proof mode requires an idle host throughout and at least five percent improvement
+in every row. Omitting `--check` runs diagnostics; a busy-host diagnostic cannot report a proof as passed.
+The JSON report is ignored by Git. Static-schema results measure the opt-in generated module against
+the eval-free adapter, rather than against Bun's existing dynamic compiled checker.
+
+`NIFRA_PERF_GATE=1 bun run bench:p99` also refuses a busy host before starting and after measuring.
+
 Both HTTP benchmark aggregators refuse `--write` unless Bun, Node, and Deno match `.tool-versions` and the one-minute host load is at or below half the logical CPU count.
 
 The benchmark **code** lives here; the **results** are not committed. Absolute req/s moves with
