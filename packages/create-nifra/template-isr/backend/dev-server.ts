@@ -28,7 +28,9 @@ const app = createWebApp({
 
 app.get("/assets/*", async (c) => {
   const file = Bun.file(`${publicDir}${new URL(c.req.url).pathname}`)
+  // nifra-expect NF-C007: a built client file, not a typed API answer
   if (!(await file.exists())) return new Response("Not Found", { status: 404 })
+  // nifra-expect NF-C007: a built client file, not a typed API answer
   return new Response(file, {
     headers: {
       "content-type": "text/javascript; charset=utf-8",

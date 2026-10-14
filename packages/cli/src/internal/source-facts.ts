@@ -7,6 +7,18 @@ import type { TypeScriptApi } from "./typescript-import.ts"
  * Program: a rule asks for a file only after its lexical fast path found a candidate. That keeps
  * cold checks and projects without a TypeScript install on the existing conservative path.
  */
+/** What {@link SourceFacts.untypedResponseRoutes} finds in one file. */
+export interface UntypedResponseRoutes {
+  /** Whether `position` lies in one of those handlers. */
+  isUntypedAt(position: number): boolean
+  /**
+   * Positions of their returned raw `Response` values that the lexical pattern cannot see: a local
+   * `const` holding one, the context's `json()`/`text()` from a registered handler, or a call to an
+   * imported function `importReturnsResponse` answers for.
+   */
+  readonly indirectReturns: readonly number[]
+}
+
 export interface SourceFacts {
   parse(file: string, content: string): TSApi.SourceFile | undefined
   isValueImportAt(
@@ -37,20 +49,17 @@ export interface SourceFacts {
   ): boolean | undefined
   isResponseSyntaxAt(source: TSApi.SourceFile, position: number): boolean | undefined
   /**
-   * Whether `position` lies in a route handler: a function passed to `.get("/path", …)` and the
-   * other method registrations, a function value of an `implement(contract, {...})` map, a local
-   * function either one names, or a local function a handler returns a call to (one hop).
+   * The route handlers of `source` that return no plain value, so a raw `Response` they return leaves
+   * the typed client nothing to infer. A route handler is a function passed to `.get("/path", …)` and
+   * the other method registrations, a function value of an `implement(contract, {...})` map, a local
+   * function either one names, or a local function a handler returns a call to (one hop). A handler
+   * that also returns a plain value keeps the route typed (the client drops a bare `Response` from the
+   * union), and so does a registration that declares `{ response: … }`.
    */
-  isRouteHandlerAt(source: TSApi.SourceFile, position: number): boolean
-  /**
-   * Positions of the values route handlers return that are a raw `Response` the lexical pattern
-   * cannot see: a local `const` holding one, the context's `json()`/`text()` from a registered
-   * handler, or a call to an imported function `importReturnsResponse` answers for.
-   */
-  indirectResponseReturns(
+  untypedResponseRoutes(
     source: TSApi.SourceFile,
     importReturnsResponse?: (specifier: string, name: string) => boolean,
-  ): readonly number[]
+  ): UntypedResponseRoutes
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -258,16 +267,42 @@ function exportedLocal(
 interface RouteHandlerSets {
   /** Functions a route registration or an `implement()` map passes: their first parameter is the context. */
   readonly direct: ReadonlySet<FunctionNode>
-  /** Local functions a direct handler returns a call to (one hop). */
-  readonly returned: ReadonlySet<FunctionNode>
-  /** {@link direct} and {@link returned} together. */
-  readonly all: ReadonlySet<TSApi.Node>
+  /** The direct handlers registered at least once without a `{ response: … }` declaration. */
+  readonly undeclared: ReadonlySet<FunctionNode>
+  /** Local functions a direct handler returns a call to (one hop), with the handlers that do. */
+  readonly returned: ReadonlyMap<FunctionNode, ReadonlySet<FunctionNode>>
+}
+
+/** What a handler's returned value is, as far as one file shows: a raw `Response` reached some way,
+ * a plain value the client types, or neither for sure. */
+type ReturnKind = "raw" | "held" | "context" | "imported" | "helper" | "plain" | "unknown"
+const RESPONSE_KINDS: ReadonlySet<ReturnKind> = new Set([
+  "raw",
+  "held",
+  "context",
+  "imported",
+  "helper",
+])
+const INDIRECT_KINDS: ReadonlySet<ReturnKind> = new Set(["held", "context", "imported"])
+
+/** An options object literal with a `response` property: the route's output is declared. */
+function declaresResponse(ts: TypeScriptApi, argument: TSApi.Expression): boolean {
+  return (
+    ts.isObjectLiteralExpression(argument) &&
+    argument.properties.some(
+      (property) =>
+        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+        ts.isIdentifier(property.name) &&
+        property.name.text === "response",
+    )
+  )
 }
 
 /** Every route handler of `source`, by the rules {@link SourceFacts.isRouteHandlerAt} states. */
 function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): RouteHandlerSets {
   const locals = localFunctions(ts, source)
   const handlers = new Set<FunctionNode>()
+  const undeclared = new Set<FunctionNode>()
   const named = (expression: TSApi.Node): readonly FunctionNode[] => {
     if (ts.isIdentifier(expression)) return locals.get(expression.text) ?? []
     return isFunctionValue(ts, expression) ? [expression] : []
@@ -283,20 +318,29 @@ function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): RouteHandle
         first !== undefined &&
         (ts.isStringLiteralLike(first) || ts.isTemplateExpression(first))
       ) {
-        for (const argument of rest)
-          for (const fn of named(unwrapExpression(ts, argument))) handlers.add(fn)
+        const arguments_ = rest.map((argument) => unwrapExpression(ts, argument))
+        const declared = arguments_.some((argument) => declaresResponse(ts, argument))
+        for (const argument of arguments_)
+          for (const fn of named(argument)) {
+            handlers.add(fn)
+            if (!declared) undeclared.add(fn)
+          }
       }
       const implement =
         (ts.isIdentifier(callee) && callee.text === "implement") || method === "implement"
       const map =
         node.arguments[1] === undefined ? undefined : unwrapExpression(ts, node.arguments[1])
       if (implement && map !== undefined && ts.isObjectLiteralExpression(map)) {
+        const add = (fn: FunctionNode): void => {
+          handlers.add(fn)
+          undeclared.add(fn)
+        }
         for (const property of map.properties) {
-          if (ts.isMethodDeclaration(property)) handlers.add(property)
+          if (ts.isMethodDeclaration(property)) add(property)
           else if (ts.isPropertyAssignment(property))
-            for (const fn of named(unwrapExpression(ts, property.initializer))) handlers.add(fn)
+            for (const fn of named(unwrapExpression(ts, property.initializer))) add(fn)
           else if (ts.isShorthandPropertyAssignment(property))
-            for (const fn of locals.get(property.name.text) ?? []) handlers.add(fn)
+            for (const fn of locals.get(property.name.text) ?? []) add(fn)
         }
       }
     }
@@ -305,23 +349,27 @@ function routeHandlers(ts: TypeScriptApi, source: TSApi.SourceFile): RouteHandle
   find(source)
 
   // One hop: a local function a handler returns a call to answers for that handler.
-  const returned = new Set<FunctionNode>()
-  const follow = (node: TSApi.Node): void => {
-    const value =
-      ts.isReturnStatement(node) && node.expression !== undefined
-        ? node.expression
-        : ts.isArrowFunction(node) && !ts.isBlock(node.body)
-          ? node.body
-          : undefined
-    const call = value === undefined ? undefined : unwrapExpression(ts, value)
-    if (call !== undefined && ts.isCallExpression(call))
-      for (const fn of named(call.expression)) returned.add(fn)
-    ts.forEachChild(node, follow)
+  const returned = new Map<FunctionNode, Set<FunctionNode>>()
+  for (const handler of handlers) {
+    const follow = (node: TSApi.Node): void => {
+      const value =
+        ts.isReturnStatement(node) && node.expression !== undefined
+          ? node.expression
+          : ts.isArrowFunction(node) && !ts.isBlock(node.body)
+            ? node.body
+            : undefined
+      const call = value === undefined ? undefined : unwrapExpression(ts, value)
+      if (call !== undefined && ts.isCallExpression(call))
+        for (const fn of named(call.expression)) {
+          const callers = returned.get(fn) ?? new Set<FunctionNode>()
+          callers.add(handler)
+          returned.set(fn, callers)
+        }
+      ts.forEachChild(node, follow)
+    }
+    follow(handler)
   }
-  for (const handler of handlers) follow(handler)
-  const all = new Set<TSApi.Node>(handlers)
-  for (const fn of returned) all.add(fn)
-  return { direct: handlers, returned, all }
+  return { direct: handlers, undeclared, returned }
 }
 
 /** `c.json(…)`/`c.text(…)` on the handler's own context parameter: both build a plain `Response`. */
@@ -484,40 +532,76 @@ export function createSourceFacts(
     }
     return handlers
   }
-  const isRouteHandlerAt = (source: TSApi.SourceFile, position: number): boolean => {
-    const { all } = handlersOf(source)
-    return (
-      ancestorAt(ts, source, position, (node): node is TSApi.Node => all.has(node)) !== undefined
-    )
-  }
-
-  const indirectResponseReturns = (
+  const untypedResponseRoutes = (
     source: TSApi.SourceFile,
     importReturnsResponse?: (specifier: string, name: string) => boolean,
-  ): readonly number[] => {
-    const { direct, returned } = handlersOf(source)
+  ): UntypedResponseRoutes => {
+    const { direct, undeclared, returned } = handlersOf(source)
+    const locals = localFunctions(ts, source)
     const imports = importReturnsResponse === undefined ? undefined : relativeImports(ts, source)
-    const positions: number[] = []
-    const inspect = (handler: FunctionNode, isDirect: boolean): void => {
-      const bindings = responseBindings(ts, handler)
-      for (const value of returnedValues(ts, handler)) {
-        const unwrapped = unwrapExpression(ts, value)
-        const imported =
-          ts.isCallExpression(unwrapped) && ts.isIdentifier(unwrapped.expression)
-            ? imports?.get(unwrapped.expression.text)
-            : undefined
-        if (
-          (ts.isIdentifier(unwrapped) && bindings.has(unwrapped.text)) ||
-          (isDirect && contextResponseCall(ts, handler, unwrapped)) ||
-          (imported !== undefined &&
-            importReturnsResponse?.(imported.specifier, imported.name) === true)
-        )
-          positions.push(unwrapped.getStart(source))
-      }
+    // A call this file cannot see into, or a conditional, may or may not be a Response: it neither
+    // marks a handler untyped nor keeps it typed.
+    const kindOf = (fn: FunctionNode, isDirect: boolean, value: TSApi.Expression): ReturnKind => {
+      if (rawResponseExpression(ts, value)) return "raw"
+      if (ts.isConditionalExpression(value) || ts.isNewExpression(value)) return "unknown"
+      if (!ts.isCallExpression(value)) return "plain"
+      if (isDirect && contextResponseCall(ts, fn, value)) return "context"
+      if (!ts.isIdentifier(value.expression)) return "unknown"
+      const imported = imports?.get(value.expression.text)
+      if (imported !== undefined)
+        return importReturnsResponse?.(imported.specifier, imported.name) === true
+          ? "imported"
+          : "unknown"
+      // From a direct handler, a call to a local helper answers as the helper does (one hop).
+      const helpers = isDirect
+        ? (locals.get(value.expression.text) ?? []).filter((helper) => returned.has(helper))
+        : []
+      if (helpers.length === 0) return "unknown"
+      const kinds = helpers.flatMap((helper) =>
+        returnKinds(helper, false).map((entry) => entry.kind),
+      )
+      if (kinds.some((kind) => kind === "plain")) return "plain"
+      return kinds.every((kind) => RESPONSE_KINDS.has(kind)) ? "helper" : "unknown"
     }
-    for (const handler of direct) inspect(handler, true)
-    for (const handler of returned) if (!direct.has(handler)) inspect(handler, false)
-    return positions
+    const returnKinds = (fn: FunctionNode, isDirect: boolean) => {
+      const bindings = responseBindings(ts, fn)
+      return returnedValues(ts, fn).map((returnedValue) => {
+        const value = unwrapExpression(ts, returnedValue)
+        const kind: ReturnKind =
+          ts.isIdentifier(value) && bindings.has(value.text) ? "held" : kindOf(fn, isDirect, value)
+        return { value, kind }
+      })
+    }
+    // No plain return: a Response written anywhere in it (a `.then(() => new Response(…))` too)
+    // is what the route answers with.
+    const isUntyped = (fn: FunctionNode, isDirect: boolean): boolean =>
+      !returnKinds(fn, isDirect).some((entry) => entry.kind === "plain")
+
+    const untyped = new Map<FunctionNode, boolean>()
+    for (const handler of direct)
+      untyped.set(handler, undeclared.has(handler) && isUntyped(handler, true))
+    for (const [helper, callers] of returned) {
+      if (direct.has(helper)) continue
+      const reached = [...callers].some((caller) => untyped.get(caller) === true)
+      untyped.set(helper, reached && isUntyped(helper, false))
+    }
+    const indirectReturns: number[] = []
+    for (const [fn, untypedFn] of untyped) {
+      if (!untypedFn) continue
+      // A raw `new Response(` is the lexical pattern's to report, and a helper's at its own return.
+      for (const { value, kind } of returnKinds(fn, direct.has(fn)))
+        if (INDIRECT_KINDS.has(kind)) indirectReturns.push(value.getStart(source))
+    }
+    const byNode: ReadonlyMap<TSApi.Node, boolean> = untyped
+    return {
+      isUntypedAt: (position) => {
+        const handler = ancestorAt(ts, source, position, (node): node is TSApi.Node =>
+          byNode.has(node),
+        )
+        return handler !== undefined && byNode.get(handler) === true
+      },
+      indirectReturns,
+    }
   }
 
   const exportReturnsResponse = (source: TSApi.SourceFile, name: string): boolean => {
@@ -556,8 +640,7 @@ export function createSourceFacts(
     isRouteArgumentAt,
     isFunctionRouteCallAt,
     isResponseSyntaxAt,
-    isRouteHandlerAt,
-    indirectResponseReturns,
+    untypedResponseRoutes,
     exportReturnsResponse,
     isDynamicImportAt,
   }

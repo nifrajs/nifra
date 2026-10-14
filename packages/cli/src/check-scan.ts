@@ -3371,7 +3371,8 @@ const RESPONSE_RETURN = /(?:=>\s*|return\s+)(?:new\s+Response|Response\s*\.\s*js
  * `Response`, which collapses the typed client's `data` to `never`. Pure + line-accurate; returns `[]`
  * for any other file. With an AST it also follows what the lexical pattern cannot see: a local holding
  * the Response, the context's `json()`/`text()`, and - given `project` - a helper imported from a
- * relative module whose export returns one, reported at each route's return.
+ * relative module whose export returns one, reported at each route's return. It skips a handler the
+ * client still types: one that also returns a plain value, or whose route declares `response`.
  */
 export function scanResponseRoutes(
   file: string,
@@ -3395,25 +3396,9 @@ export function scanResponseRoutes(
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
   const source = facts?.parse(file, content)
-  RESPONSE_RETURN.lastIndex = 0
-  for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
-    // A parseable AST rejects `return new Response(` text that only lives in a normal string, and
-    // one outside a route handler (an auth stage's `rejected` helper, say). On malformed source we
-    // keep the lexical candidate; the typecheck gate will report the syntax error.
-    if (
-      facts !== undefined &&
-      source !== undefined &&
-      (facts.isResponseSyntaxAt(source, m.index) !== true ||
-        !facts.isRouteHandlerAt(source, m.index))
-    )
-      continue
-    report(lineAt(content, m.index))
-  }
-  if (facts === undefined || source === undefined) return out
-  const reported = new Set(out.map((finding) => finding.line))
   const exportsByImport = new Map<string, boolean>()
   const importReturnsResponse =
-    project === undefined
+    facts === undefined || project === undefined
       ? undefined
       : (specifier: string, name: string): boolean => {
           const key = `${specifier}\0${name}`
@@ -3428,7 +3413,27 @@ export function scanResponseRoutes(
           }
           return answer
         }
-  for (const position of facts.indirectResponseReturns(source, importReturnsResponse)) {
+  const routes =
+    facts === undefined || source === undefined
+      ? undefined
+      : facts.untypedResponseRoutes(source, importReturnsResponse)
+  RESPONSE_RETURN.lastIndex = 0
+  for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
+    // A parseable AST rejects `return new Response(` text that only lives in a normal string, one
+    // outside a route handler (an auth stage's `rejected` helper, say), and one in a handler the client
+    // still types: it returns a plain value too, or its route declares `response`. On malformed
+    // source we keep the lexical candidate; the typecheck gate will report the syntax error.
+    if (
+      facts !== undefined &&
+      source !== undefined &&
+      (facts.isResponseSyntaxAt(source, m.index) !== true || routes?.isUntypedAt(m.index) !== true)
+    )
+      continue
+    report(lineAt(content, m.index))
+  }
+  if (routes === undefined) return out
+  const reported = new Set(out.map((finding) => finding.line))
+  for (const position of routes.indirectReturns) {
     const line = lineAt(content, position)
     if (reported.has(line)) continue
     reported.add(line)

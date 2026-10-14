@@ -1335,6 +1335,33 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     expect(scanResponseRoutes("backend.ts", lines.join("\n")).map((f) => f.line)).toContain(3)
   })
 
+  test("with an AST, a route the client still types is not flagged", () => {
+    const lines = [
+      'import { server, t } from "@nifrajs/core"',
+      "const app = server()",
+      '  .get("/notes/:id", async (c) => {',
+      "    const note = await load(c.params.id)",
+      '    if (note === undefined) return c.json({ error: "not found" }, 404)',
+      "    return note",
+      "  })",
+      '  .get("/raw/:id", (c) => {',
+      '    if (c.params.id === "0") return new Response("gone", { status: 410 })',
+      "    return { id: c.params.id }",
+      "  })",
+      '  .get("/declared", { response: t.object({ ok: t.boolean() }) }, (c) => c.json({ ok: true }))',
+      '  .get("/declared-raw", { response: t.object({ ok: t.boolean() }) }, () => new Response("{}"))',
+      '  .get("/unknown", async (c) => {',
+      '    if (c.params.x) return c.text("no")',
+      "    return load(c.params.x)",
+      "  })",
+      '  .get("/only", (c) => c.json({ ok: true }))',
+      "",
+    ]
+    const found = scanResponseRoutes("backend.ts", lines.join("\n"), createSourceFacts(ts))
+    // `/unknown` returns a call this file cannot see into: not proof the route is typed.
+    expect(found.map((f) => f.line)).toEqual([15, 18])
+  })
+
   test("routes chained onto createWebApp are scanned like server() routes", () => {
     const src = [
       'import { createWebApp } from "@nifrajs/web"',
