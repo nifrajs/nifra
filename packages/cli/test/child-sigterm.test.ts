@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { watch } from "node:fs/promises"
 import { join } from "node:path"
 import { runHydrationAssurance } from "../src/assure-hydration.ts"
@@ -79,6 +79,43 @@ test("stopping a warm worker ends it even when the app ignores SIGTERM", async (
   worker.stop()
   await expect(pending).rejects.toThrow(/warm run worker exited/)
 }, 60_000)
+
+test.skipIf(process.platform === "win32")(
+  "stopping a warm worker also ends the process its app started",
+  async () => {
+    const dir = createFixtureProject(root, "grandchild-")
+    writeAppFile(dir, "package.json", JSON.stringify({ name: "grandchild", type: "module" }))
+    writeAppFile(
+      dir,
+      "backend/app.ts",
+      [
+        'import { writeFileSync } from "node:fs"',
+        "const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'])",
+        `writeFileSync(${JSON.stringify(join(dir, "ready"))}, String(child.pid))`,
+        "export const backend = { fetch: () => new Promise(() => {}) }",
+        "",
+      ].join("\n"),
+    )
+    const ready = fileAppears(dir, "ready")
+    const worker = new WarmWorker("mcp-run", dir, "fingerprint", "run")
+    const pending = worker.request({ requests: [{ path: "/" }] })
+    await ready
+    const pid = Number(readFileSync(join(dir, "ready"), "utf8"))
+    worker.stop()
+    await expect(pending).rejects.toThrow(/warm run worker exited/)
+    const alive = (): boolean => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    // The test's own timeout bounds this wait: before the fix the child outlived the worker for good.
+    while (alive()) await Bun.sleep(10)
+  },
+  60_000,
+)
 
 test("a cancelled hydration run ends even when the project ignores SIGTERM", async () => {
   const dir = createFixtureProject(root, "hydration-")
