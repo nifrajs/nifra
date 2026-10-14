@@ -406,6 +406,7 @@ function validateJwksUrl(url: URL): void {
 async function readTextBounded(res: Response, maxBytes: number): Promise<string> {
   const declared = res.headers.get("content-length")
   if (declared !== null && /^(?:0|[1-9]\d*)$/.test(declared) && Number(declared) > maxBytes) {
+    res.body?.cancel().catch(() => {})
     throw new Error("jwks: response too large")
   }
   const body = res.body

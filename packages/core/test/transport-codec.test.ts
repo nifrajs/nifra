@@ -425,6 +425,22 @@ describe("transport lane edges", () => {
 // skips re-encoding; only a string within 3x of the cap is measured exactly, and that exact count
 // is what decides accept vs reject for multi-byte text.
 describe("readBoundedBytes", () => {
+  test("a body refused by its declared length alone is cancelled, not left open", async () => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => controller.enqueue(new Uint8Array(1)),
+      cancel: () => {
+        cancelled = true
+      },
+    })
+    const response = new Response(stream, { headers: { "content-length": "5000" } })
+    await expect(readBoundedBytes(response, { maxBytes: 1000 })).rejects.toThrow(
+      "transport payload exceeds maxBytes",
+    )
+    await Bun.sleep(0)
+    expect(cancelled).toBe(true)
+  })
+
   test("an oversized stream whose cancel rejects still fails with the bound", async () => {
     let cancelled = false
     const stream = new ReadableStream<Uint8Array>({
