@@ -497,6 +497,38 @@ describe("query, explain, schema", () => {
     }
   })
 
+  test("a partial index whose predicate names a masked column is a read of that column", async () => {
+    // Choosing the index proves its WHERE holds for every row it yields, so a count through it
+    // answers the masked predicate without the bytecode ever reading the column.
+    const file = seededFile()
+    const writer = new Database(file)
+    writer.run("CREATE INDEX users_h ON users (id) WHERE password_hash LIKE 'h%'")
+    writer.run("CREATE INDEX users_email_mail ON users (email) WHERE email LIKE '%@%'")
+    writer.close()
+    const db = await openReadOnlySqlite(file)
+    const options = { ...CAPS, redaction: { column: (name: string) => name === "password_hash" } }
+    try {
+      for (const sql of [
+        "SELECT count(*) FROM users WHERE password_hash LIKE 'h%'",
+        "SELECT id FROM users INDEXED BY users_h WHERE password_hash LIKE 'h%'",
+      ]) {
+        const result = querySqlite(db, sql, options)
+        expect({ sql, code: isDbRefusal(result) ? result.code : "rows" }).toEqual({
+          sql,
+          code: "NIFRA_DB_COLUMN_REFUSED",
+        })
+      }
+      const unmasked = querySqlite(
+        db,
+        "SELECT email FROM users INDEXED BY users_email_mail WHERE email LIKE '%@%'",
+        options,
+      )
+      expect(isDbRefusal(unmasked)).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
   test("explain returns the plan steps, bounded by bytes", async () => {
     const db = await openReadOnlySqlite(seededFile())
     try {

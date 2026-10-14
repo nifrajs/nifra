@@ -329,6 +329,11 @@ interface CursorLayout {
   readonly keyCount: number
   /** The INTEGER PRIMARY KEY column the rowid is, if the table has one. */
   readonly rowid: string | undefined
+  /**
+   * The columns a partial index's WHERE names. Every row the index yields satisfies it, so opening
+   * the index filters on them as surely as reading them would.
+   */
+  readonly predicate: readonly string[]
 }
 
 /**
@@ -380,13 +385,20 @@ function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): Curso
       ...columns.filter((column) => Number(column.hidden) !== 2),
       ...columns.filter((column) => Number(column.hidden) === 2),
     ]
-    return { table: entry.table, fields: stored.map((column) => [column.name]), keyCount: 0, rowid }
+    return {
+      table: entry.table,
+      fields: stored.map((column) => [column.name]),
+      keyCount: 0,
+      rowid,
+      predicate: [],
+    }
   }
   // A substring match can only over-count: an expression field then reads one column too many.
   const source = (entry.sql ?? "").toLowerCase()
-  const named = columns
-    .map((column) => column.name)
-    .filter((name) => source.includes(name.toLowerCase()))
+  const namedIn = (text: string): string[] =>
+    columns.map((column) => column.name).filter((name) => text.includes(name.toLowerCase()))
+  const named = namedIn(source)
+  const where = /\bwhere\b/.exec(source)
   const xinfo = db
     .prepare<{ cid: number | bigint; name: string | null; key: number | bigint }, [string]>(
       "SELECT cid, name, key FROM pragma_index_xinfo(?) ORDER BY seqno",
@@ -405,6 +417,7 @@ function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): Curso
     ),
     keyCount: xinfo.filter((field) => Number(field.key) === 1).length,
     rowid,
+    predicate: where === null ? [] : namedIn(source.slice(where.index)),
   }
 }
 
@@ -452,6 +465,10 @@ function bytecodeReads(
   }
   if (masked === undefined) return { tables: [...reads], masked: [] }
 
+  const hits = new Set<string>()
+  const read = (layout: CursorLayout, names: readonly string[]): void => {
+    for (const name of names) if (masked(name)) hits.add(`${layout.table}.${name}`)
+  }
   const layouts = new Map<number, CursorLayout>()
   const layoutOf = (cursor: number): CursorLayout | undefined => {
     const entry = cursors.get(cursor)
@@ -460,12 +477,9 @@ function bytecodeReads(
     if (layout === undefined) {
       layout = cursorLayout(db, entry)
       layouts.set(cursor, layout)
+      read(layout, layout.predicate)
     }
     return layout
-  }
-  const hits = new Set<string>()
-  const read = (layout: CursorLayout, names: readonly string[]): void => {
-    for (const name of names) if (masked(name)) hits.add(`${layout.table}.${name}`)
   }
   for (const step of program) {
     const layout = layoutOf(Number(step.p1))
