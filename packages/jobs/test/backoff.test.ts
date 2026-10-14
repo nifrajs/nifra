@@ -16,4 +16,15 @@ describe("backoff", () => {
     expect(fixedBackoff(250)(7)).toBe(250)
     expect(noBackoff(3)).toBe(0)
   })
+
+  test("a non-finite or negative delay is refused when the strategy is built", () => {
+    for (const ms of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(() => fixedBackoff(ms)).toThrow(RangeError)
+      expect(() => exponentialBackoff({ baseMs: ms })).toThrow(RangeError)
+      expect(() => exponentialBackoff({ maxMs: ms })).toThrow(RangeError)
+    }
+    for (const jitter of [Number.NaN, -0.1, 1.5]) {
+      expect(() => exponentialBackoff({ jitter })).toThrow(RangeError)
+    }
+  })
 })
