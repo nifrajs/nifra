@@ -2597,8 +2597,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal runtime-provider seam used when an in-process WebSocket backend is mounted in Bun.
 - **NIFRA_PLATFORM_CLIENT_IP_DERIVED** _(const)_ - `NIFRA_PLATFORM_CLIENT_IP_DERIVED: typeof NIFRA_PLATFORM_CLIENT_IP_DERIVED`
   Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp` trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving it from the request's forwarding headers - an in-process call's `Request` is synthesized, so i…
+- **hasResidentBody** _(function)_ - `hasResidentBody: (response: Response) => boolean`
+  Whether {@link markResidentBody} recorded `response`. Another copy of this module did not.
+- **markResidentBody** _(function)_ - `markResidentBody: (response: Response) => Response`
+  Record a Response whose body the framework serialized into memory before building it. An in-process client reads only such a body whole; any other, a handler's own stream included, is read under its byte cap.
 - **preRouteMountPaths** _(function)_ - `preRouteMountPaths: (app: unknown) => readonly string[]`
   The path of every pre-route `mount()` on a nifra server, as the server matches it (`"/"` for a root mount). Such a mount answers every request under its path before the app's own routes run, and `fallbackOn: 404` only moves on to the next mount, so a route the app declares there is unreachable. Rea…
+- **recordResidentBodies** _(function)_ - `recordResidentBodies: () => void`
+  Called by an in-process client: nothing else reads the record, so until then it can be skipped.
+- **residentBodiesRecorded** _(const)_ - `residentBodiesRecorded: boolean`
+  Set once an in-process client exists, so the leanest response lane records its bodies too.
 
 ### `@nifrajs/core/multipart`
 

@@ -4,6 +4,7 @@
  * spine types, so the wire-response format lives in one module distinct from the request engine.
  */
 
+import { hasResidentBody, markResidentBody, residentBodiesRecorded } from "../mount.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
 import { plainError } from "./http.ts"
 import {
@@ -227,7 +228,8 @@ const RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
 
 /**
  * Responses known to carry a body and take header writes: framework renders built with one, and
- * foreign ones `writableResponse` has already checked. A body is sent once, so such a response belongs
+ * foreign ones `writableResponse` has already checked. A body the framework serialized itself is
+ * recorded by `markResidentBody` instead, and counts the same. A body is sent once, so such a response belongs
  * to whichever request holds it and is written in place without reading `.body` again - on Bun that
  * read turns a string body into a stream, measured at about 6% of a request.
  */
@@ -252,10 +254,9 @@ export function rememberRenderedResponse(response: Response, hasBody: boolean): 
   return response
 }
 
-/** `rememberRenderedResponse` for a Response the framework constructed with a body. */
+/** `rememberRenderedResponse` for a Response the framework built around a body it serialized. */
 function withBody(response: Response): Response {
-  WRITABLE_BODY_RESPONSES.add(response)
-  return response
+  return markResidentBody(response)
 }
 
 const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
@@ -289,7 +290,7 @@ function headersTakeWrites(headers: Headers): boolean {
  * handed back on any other request, that copy is copied again.
  */
 export function writableResponse(response: Response, request?: Request): Response {
-  if (WRITABLE_BODY_RESPONSES.has(response)) return response
+  if (hasResidentBody(response) || WRITABLE_BODY_RESPONSES.has(response)) return response
   if (response.body === null) {
     // A 101 upgrade and the status-0 `Response.error()` cannot be constructed, and a runtime makes
     // them per request.
@@ -426,7 +427,8 @@ export function fusedRespondNoSet(
   // hook walk is empty; an app that registers ANY response hook keeps the record, because the
   // alternative is `writableResponse` reading `.body` and probing the headers of every response (each
   // one is fresh, so nothing amortizes) - the probe alone measured 19% slower than the WeakSet write.
-  // Default false: an unknown caller pays one WeakSet write rather than a probe per response.
+  // Default false: an unknown caller pays one WeakSet write rather than a probe per response. Once an
+  // in-process client exists the write is no longer dead: it reads a recorded body whole.
   if (
     unstamped &&
     (tagResponseBody === false || tagResponseBody === undefined) &&
@@ -437,7 +439,8 @@ export function fusedRespondNoSet(
     !(result instanceof Response) &&
     !isResponseResult(result)
   ) {
-    return Response.json(result)
+    const response = Response.json(result)
+    return residentBodiesRecorded ? markResidentBody(response) : response
   }
   if (
     result !== undefined &&

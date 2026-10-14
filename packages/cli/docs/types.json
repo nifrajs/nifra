@@ -19605,6 +19605,13 @@
     "doc": "/** True when a raw Cookie header contains the same exact cookie name more than once. */"
   },
   {
+    "name": "hasResidentBody",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function hasResidentBody(response: Response): boolean;",
+    "doc": "/** Whether {@link markResidentBody} recorded `response`. Another copy of this module did not. */"
+  },
+  {
     "name": "hash8",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -20302,6 +20309,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function markIdempotencySafeToRetry(context: object): void;",
     "doc": "/**\n * Opt a concrete 5xx response into releasing its idempotency reservation, but only while the\n * request-local effect scope still proves that no owned effect began.\n */"
+  },
+  {
+    "name": "markResidentBody",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markResidentBody(response: Response): Response;",
+    "doc": "/**\n * Record a Response whose body the framework serialized into memory before building it. An\n * in-process client reads only such a body whole; any other, a handler's own stream included, is\n * read under its byte cap.\n */"
   },
   {
     "name": "matchMixedSegment",
@@ -21738,6 +21752,13 @@
     "signature": "export declare function recordProof(bundle: EvidenceBundle, proof: ProofEvidence): EvidenceBundle;"
   },
   {
+    "name": "recordResidentBodies",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function recordResidentBodies(): void;",
+    "doc": "/** Called by an in-process client: nothing else reads the record, so until then it can be skipped. */"
+  },
+  {
     "name": "recordTrajectory",
     "kind": "const",
     "package": "@nifrajs/testing",
@@ -22072,6 +22093,13 @@
     "package": "@nifrajs/client",
     "signature": "export declare function reservedKeyFor(segment: string): string | undefined;",
     "doc": "/**\n * The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards\n * (`*rest`) never collide - they are not spelled as property accesses.\n */"
+  },
+  {
+    "name": "residentBodiesRecorded",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare let residentBodiesRecorded: boolean;",
+    "doc": "/** Set once an in-process client exists, so the leanest response lane records its bodies too. */"
   },
   {
     "name": "resolveChainMeta",

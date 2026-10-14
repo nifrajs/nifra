@@ -5,6 +5,7 @@
  * sits below the server module in the graph.
  */
 import type { RequestBudget } from "../budget.ts"
+import { markResidentBody } from "../mount.ts"
 import { applyTransportCap, readBoundedBytes } from "./body.ts"
 import { readBoundedJsonSource } from "./body-lane.ts"
 import type { Platform } from "./context.ts"
@@ -348,7 +349,7 @@ export class RequestContext implements RawContext {
         reply = defer(text, i?.status ?? 200, headers)
       }
     }
-    reply ??= Response.json(body, i)
+    reply ??= markResidentBody(Response.json(body, i))
     // Remembered so a response contract holds the value to the route's schema: this is the
     // framework's JSON helper, not a raw-Response escape hatch.
     this.jsonBody = body
@@ -377,8 +378,10 @@ export class RequestContext implements RawContext {
       }
     }
     // Default to text/plain; if the caller passes their own headers, they own the content-type.
-    if (i?.headers !== undefined) return new Response(body, i)
-    return new Response(body, { ...i, headers: { "content-type": TEXT_CONTENT_TYPE } })
+    if (i?.headers !== undefined) return markResidentBody(new Response(body, i))
+    return markResidentBody(
+      new Response(body, { ...i, headers: { "content-type": TEXT_CONTENT_TYPE } }),
+    )
   }
 
   get query(): unknown {
