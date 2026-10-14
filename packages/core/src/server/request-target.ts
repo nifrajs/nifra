@@ -45,7 +45,14 @@ export function resolveDotSegments(target: string): string {
   if (target.charCodeAt(0) === 47 /* / */) {
     // Appended to an origin, not resolved against one: `//host/..` must stay a path on this origin.
     const url = new URL(`http://localhost${target}`)
-    return url.pathname + url.search
+    return encodeCaret(url.pathname) + url.search
   }
-  return URL.canParse(target) ? new URL(target).href : target
+  if (!URL.canParse(target)) return target
+  const url = new URL(target)
+  if (url.pathname.includes("^")) url.pathname = encodeCaret(url.pathname)
+  return url.href
 }
+
+// Bun, Node and workerd's parsers percent-encode a `^` in a path; Deno's keeps it as written.
+const encodeCaret = (path: string): string =>
+  path.includes("^") ? path.replaceAll("^", "%5E") : path

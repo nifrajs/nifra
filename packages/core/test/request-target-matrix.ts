@@ -32,6 +32,7 @@ export function requestTargetApp<App>(app: App): App {
     .get("/users/:id", (c) => ({ route: "GET /users/:id", id: c.params.id }))
     .get("/users/:id/posts", (c) => ({ route: "GET /users/:id/posts", id: c.params.id }))
     .get("/tags/%3Cb%3E", () => ({ route: "GET /tags/%3Cb%3E" }))
+    .get("/tags/%5E", () => ({ route: "GET /tags/%5E" }))
     .get("/tags/:tag", (c) => ({ route: "GET /tags/:tag", tag: c.params.tag }))
     .post("/echo", async (c) => ({
       route: "POST /echo",
@@ -80,6 +81,7 @@ export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
   { method: "GET", target: "/tags/{x}", answer: { route: "GET /tags/:tag", tag: "{x}" } },
   { method: "GET", target: '/tags/"q"', answer: { route: "GET /tags/:tag", tag: '"q"' } },
   { method: "GET", target: "/tags/`t`", answer: { route: "GET /tags/:tag", tag: "`t`" } },
+  { method: "GET", target: "/tags/^", answer: { route: "GET /tags/%5E" } },
   // The query is not part of the path.
   { method: "GET", target: "/users/7?next=/../x", answer: { route: "GET /users/:id", id: "7" } },
   // Nor is anything after a raw `#`: the path ends there, so no segment past it is routed.
