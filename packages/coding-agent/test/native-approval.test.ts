@@ -1,4 +1,4 @@
-import { describe, expect, jest, test } from "bun:test"
+import { describe, expect, jest, setSystemTime, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -239,12 +239,15 @@ describe("NifraBackend native approvals", () => {
   })
 
   test("an approve after the deadline is refused even before the late timeout timer runs", async () => {
-    const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: 20 })
+    const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: 60_000 })
     const { events, iterator, required } = await startApprovalTurn(backend)
-    // A busy host: the deadline passes while the timeout timer cannot run.
-    const busyUntil = Date.now() + 60
-    while (Date.now() < busyUntil) {}
-    expect(await backend.resolveApproval("native", required.approvalId, true)).toBe(false)
+    // A busy or suspended host: the clock passes the deadline before the timeout timer runs.
+    setSystemTime(new Date(Date.now() + 120_000))
+    try {
+      expect(await backend.resolveApproval("native", required.approvalId, true)).toBe(false)
+    } finally {
+      setSystemTime()
+    }
     await drain(iterator, events)
 
     expect(events.filter(isApprovalResolved)).toEqual([
