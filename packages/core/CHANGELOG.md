@@ -18,6 +18,7 @@
 - 288ceca: On Deno, a request whose `Host` header is not an authority (a reg-name or IP literal with an optional port) is refused with `400 {"ok":false,"error":"invalid_host"}` before routing, as Node already refuses it. Deno builds `Request.url` by appending the target to the Host as received, so `GET /public` with `Host: x/admin#` was routed to `/admin`, and `c.req.url` carried the spoofed path. Reading the header costs a bare route on Deno about 4% of its throughput; a route that reads any header already paid it.
 - 0f31edf: A raw `^` in a request path now routes as `%5E` on Deno too, as it already did on Bun, Node and workerd. Deno's URL parser keeps a `^` in a path as written, so `GET /vault/^` reached `/vault/:id` there and the static `/vault/%5E` everywhere else. The cross-runtime request-target matrix gains the case.
 - 4877137: No behavior change: a resolved request path encodes `^` with one unconditional replace, which costs fewer bytes in every server bundle.
+- b2ec456: An idempotent route's response refused by its `content-length` alone now has its body cancelled. The lane replaces it with a 507 and never reads it, so a streaming handler or a proxied upstream stayed open; a response refused while it streams was already cancelled.
 
 ## 5.2.1
 

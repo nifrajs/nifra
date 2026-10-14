@@ -2,7 +2,9 @@
 
 ## 5.3.0
 
-No changes in this release.
+### Patch Changes
+
+- bbbb430: `resolveLocale` and `negotiateLocale` match `Accept-Language` in one pass with a map lookup per range, choosing the same locale as before. A 16 KB header of 1,333 ranges against 40 locales took 6.8 ms per request, because every range was sorted and compared with every locale. It now takes 0.27 ms. A normal header takes 6 us instead of 12 us.
 
 ## 5.2.1
 

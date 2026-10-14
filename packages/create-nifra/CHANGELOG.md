@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - da2694f: NF-C007 no longer reports a route the typed client still types. A handler that returns a plain value beside a raw `Response` (`if (!note) return c.json({ error }, 404); return note`) keeps `data` typed, because the client drops a bare `Response` from the union, and a route that declares `{ response: t.… }` is typed by its schema, as the advisory's own hint says. A handler whose returns are all a `Response`, or calls `nifra check` cannot see into, is still reported. The batteries starter checks clean again, and the ISR starter marks its built-file route.
+- 3cbebc1: The API and batteries starters' `start` script runs with `NODE_ENV=production` and `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`, like a site's built `start`. It ran the TypeScript source with no `NODE_ENV`, so it ran in development mode. With `--auth`, better-auth then fell back to its development secret when `BETTER_AUTH_SECRET` was empty, where production refuses to start.
 
 ## 5.2.1
 

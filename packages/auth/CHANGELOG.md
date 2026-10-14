@@ -5,6 +5,8 @@
 ### Patch Changes
 
 - a32b33e: A store-mode session ended by `destroy` or rotated by `regenerate` stays ended. A request that loaded the session before the logout and committed after it (a rolling renewal, a slow handler) used to write the record back, so a copy of the cookie taken before logout worked again. Logout and rotation now also write a revocation marker under `<id>.revoked`, every load checks it, and a commit of a revoked session removes its write and sets no cookie, so it cannot replace a session the browser obtained since. A custom `SessionStore` must accept that key like any other; loading a store-mode session reads two keys in parallel.
+- 88f91aa: `MemorySessionStore` keeps revocation markers apart from sessions, each bounded by `max`, so sessions written after a logout can no longer evict its marker. Once `max` newer sessions had been written, a request that loaded the session before the logout and committed after it brought the logged-out session back and re-issued its cookie. Markers also no longer take capacity from live sessions. The `SessionStore` contract now says a custom store must keep a marker until its `expiresAt`.
+- 55b9a41: `destroy(c, session)` empties and detaches the session object it is passed. Committing that object later in the same request now starts a new session holding only what was set after the call. In store mode, that commit used to vanish against the revocation marker, so a flash message set after logout was lost without an error. In cookie mode, it signed the logged-out data, user id included, into a fresh cookie. The 5.3.0 upgrade notes say so.
 
 ## 5.2.1
 

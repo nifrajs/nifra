@@ -6,6 +6,7 @@
 
 - 48c9895: A query through a partial SQLite index whose `WHERE` names a masked column is now refused like any other read of that column. Choosing the index proves its predicate for every row it yields, so `SELECT count(*) FROM users WHERE password_hash LIKE 'h%'` could answer the masked predicate through an existing partial index without the bytecode ever reading the column.
 - @nifrajs/mcp@5.3.0
+- 9fbb84e: A query that walks an index on a masked column in key order is refused like any other read of that column. `ORDER BY <masked column>` served by its index never read or compared the column, so it was admitted and returned rows ranked by the masked value.
 
 ## 5.2.1
 
