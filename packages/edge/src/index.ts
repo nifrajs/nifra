@@ -15,6 +15,7 @@
 import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   answerNotFound,
+  assertByteLimit,
   capBodyBytes,
   type FormOrigins,
   type NotFoundHandler,
@@ -109,6 +110,8 @@ export class EdgeServer {
 
   constructor(options: EdgeOptions = {}) {
     this.#maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+    // A NaN or negative cap compares false against every length, which turns the limit off.
+    assertByteLimit(this.#maxBodyBytes, "maxBodyBytes")
     this.#protoPoisoning = options.protoPoisoning ?? "reject"
     this.#formOrigins = options.formOrigins
     this.#notFound = options.notFound

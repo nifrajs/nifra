@@ -16611,6 +16611,13 @@
     "doc": "/** Fail before starting work that cannot fit inside the remaining time. */"
   },
   {
+    "name": "assertByteLimit",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function assertByteLimit(value: number, name?: string): void;",
+    "doc": "/** Security/resource limits must be finite byte counts. Invalid values otherwise make `> maxBytes`\n * comparisons fail open (notably for `NaN`) and can re-enable unbounded buffering. */"
+  },
+  {
     "name": "assertCssLoadingCompatible",
     "kind": "function",
     "package": "@nifrajs/web",

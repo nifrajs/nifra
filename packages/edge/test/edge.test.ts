@@ -112,6 +112,19 @@ test("custom maxBodyBytes rejects an over-cap body with 413", async () => {
   expect(res.status).toBe(413)
 })
 
+// NaN compares false against every length, so an unvalidated cap (an invalid numeric env value, say)
+// turned body limits off; the full server already refused it.
+test("an invalid maxBodyBytes is refused at construction, as the full server refuses it", () => {
+  for (const maxBodyBytes of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+    expect(() => server({ maxBodyBytes })).toThrow(
+      /maxBodyBytes must be a non-negative safe integer/,
+    )
+    expect(() => coreServer({ maxBodyBytes })).toThrow(
+      /maxBodyBytes must be a non-negative safe integer/,
+    )
+  }
+})
+
 // --- Byte-parity with the full @nifrajs/core server: the whole point of reusing the shipped lane. ---
 
 test("parity: 404 not-found envelope matches the full Server", async () => {

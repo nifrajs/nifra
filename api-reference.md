@@ -2315,6 +2315,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
+- **assertByteLimit** _(function)_ - `assertByteLimit: (value: number, name?: string) => void`
+  Security/resource limits must be finite byte counts. Invalid values otherwise make `> maxBytes` comparisons fail open (notably for `NaN`) and can re-enable unbounded buffering.
 - **capBodyBytes** _(function)_ - `capBodyBytes: (request: Request, maxBytes: number) => Request`
   A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
