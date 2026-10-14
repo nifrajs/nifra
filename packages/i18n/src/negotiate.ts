@@ -58,27 +58,22 @@ const parseCookie = (header: string | null, name: string): string | undefined =>
 
 /** The supported locales by lowercased tag, and by the tag or base subtag a request's tag falls back to. */
 interface LocaleIndex {
-  readonly exact: ReadonlyMap<string, Locale>
-  readonly base: ReadonlyMap<string, Locale>
+  readonly exact: Map<string, Locale>
+  readonly base: Map<string, Locale>
 }
 
-const baseSubtag = (lower: string): string => {
-  const dash = lower.indexOf("-")
-  return dash === -1 ? lower : lower.slice(0, dash)
-}
+const baseSubtag = (lower: string): string => lower.split("-", 1)[0] ?? lower
 
 const indexLocales = (locales: readonly Locale[]): LocaleIndex => {
-  const exact = new Map<string, Locale>()
-  const base = new Map<string, Locale>()
-  // The first locale wins each key, as a search through the list in order would.
-  for (const locale of locales) {
+  const index: LocaleIndex = { exact: new Map(), base: new Map() }
+  // Last to first, so each key ends on the first locale that has it, as an in-order search finds.
+  for (let i = locales.length; i-- > 0; ) {
+    const locale = locales[i] ?? ""
     const lower = locale.toLowerCase()
-    if (!exact.has(lower)) exact.set(lower, locale)
-    if (!base.has(lower)) base.set(lower, locale)
-    const sub = baseSubtag(lower)
-    if (!base.has(sub)) base.set(sub, locale)
+    index.exact.set(lower, locale)
+    index.base.set(lower, locale).set(baseSubtag(lower), locale)
   }
-  return { exact, base }
+  return index
 }
 
 /** Find a supported locale matching `tag` (exact, case-insensitive) or its base subtag (`fr-CA`→`fr`). */
@@ -92,10 +87,9 @@ const rangeQuality = (range: string, from: number): number => {
   for (let at = range.indexOf("q=", from); at !== -1; at = range.indexOf("q=", at + 2)) {
     // A parameter starts after `;` and optional whitespace; `range[from - 1]` is the first `;`.
     let before = at - 1
-    while (before >= from && (range[before] === " " || range[before] === "\t")) before--
-    if (range[before] !== ";") continue
-    const semi = range.indexOf(";", at)
-    return Number.parseFloat(range.slice(at + 2, semi === -1 ? range.length : semi))
+    while (before >= from && " \t".includes(range.charAt(before))) before--
+    // `parseFloat` stops at the `;` ending the parameter.
+    if (range[before] === ";") return Number.parseFloat(range.slice(at + 2))
   }
   return 1
 }
@@ -108,14 +102,10 @@ const rangeQuality = (range: string, from: number): number => {
 const matchHeader = (header: string, index: LocaleIndex, wildcard: Locale): Locale | undefined => {
   let best: Locale | undefined
   let bestQuality = 0
-  for (let start = 0; start <= header.length; ) {
-    const comma = header.indexOf(",", start)
-    const end = comma === -1 ? header.length : comma
-    const range = header.slice(start, end)
-    start = end + 1
-    const semi = range.indexOf(";")
-    const tag = (semi === -1 ? range : range.slice(0, semi)).trim()
-    const quality = semi === -1 ? 1 : rangeQuality(range, semi + 1)
+  for (const range of header.split(",")) {
+    const tag = (range.split(";", 1)[0] ?? "").trim()
+    // With no `;`, the search starts at 0 and finds no parameter: no `;` precedes any `q=`.
+    const quality = rangeQuality(range, range.indexOf(";") + 1)
     if (tag === "" || !Number.isFinite(quality) || quality <= bestQuality) continue
     const matched = tag === "*" ? wildcard : matchLocale(tag, index)
     if (matched === undefined) continue
