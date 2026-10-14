@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { connect } from "node:net"
 import { join } from "node:path"
 import {
@@ -461,4 +461,22 @@ test("a client that aborts a dev-endpoint body mid-upload leaves the server up",
   })
   await new Promise((resolve) => setTimeout(resolve, 100))
   expect((await fetch(`${origin}${LAST_ERROR_PATH}`)).status).toBe(200)
+})
+
+test("a hidden file in public/ reaches the app, as in production, and is never served", async () => {
+  const publicDir = join(root, "public")
+  mkdirSync(join(publicDir, ".git"), { recursive: true })
+  mkdirSync(join(publicDir, ".well-known"))
+  writeFileSync(join(publicDir, ".env"), "SECRET=hunter2\n")
+  writeFileSync(join(publicDir, ".git", "config"), "[core]\n")
+  writeFileSync(join(publicDir, ".well-known", "security.txt"), "Contact: x\n")
+  writeFileSync(join(publicDir, "robots.txt"), "User-agent: *\n")
+  symlinkSync(join(publicDir, ".env"), join(publicDir, "env.txt"))
+  const origin = await start(() => new Response("from the app", { status: 404 }))
+  for (const path of ["/.env", "/.git/config", "/%2eenv", "/env.txt"]) {
+    const res = await fetch(`${origin}${path}`)
+    expect([path, res.status, await res.text()]).toEqual([path, 404, "from the app"])
+  }
+  expect(await (await fetch(`${origin}/robots.txt`)).text()).toBe("User-agent: *\n")
+  expect(await (await fetch(`${origin}/.well-known/security.txt`)).text()).toBe("Contact: x\n")
 })
