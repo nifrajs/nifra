@@ -154,7 +154,7 @@ test("under a hash CSP, the script Solid writes for a caught server error may ru
   })
   const html = await res.text()
   const policy = res.headers.get("content-security-policy") ?? ""
-  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].filter(
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script[^>]*>/gi)].filter(
     (m) => !/\bsrc=|application\/json/.test(m[1] ?? ""),
   )
   // Solid serialized the boundary's error for hydration in a script of this render's own.
