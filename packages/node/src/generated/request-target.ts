@@ -45,17 +45,14 @@ export function needsResolving(target: string): boolean {
  * `*`, or text no URL parser accepts - comes back as it arrived: there is no path to resolve.
  */
 export function resolveDotSegments(target: string): string {
+  // Bun, Node and workerd's parsers percent-encode a `^` in a path; Deno's keeps it as written.
   if (target.charCodeAt(0) === 47 /* / */) {
     // Appended to an origin, not resolved against one: `//host/..` must stay a path on this origin.
     const url = new URL(`http://localhost${target}`)
-    return encodeCaret(url.pathname) + url.search
+    return url.pathname.replaceAll("^", "%5E") + url.search
   }
   if (!URL.canParse(target)) return target
   const url = new URL(target)
-  if (url.pathname.includes("^")) url.pathname = encodeCaret(url.pathname)
+  url.pathname = url.pathname.replaceAll("^", "%5E")
   return url.href
 }
-
-// Bun, Node and workerd's parsers percent-encode a `^` in a path; Deno's keeps it as written.
-const encodeCaret = (path: string): string =>
-  path.includes("^") ? path.replaceAll("^", "%5E") : path
