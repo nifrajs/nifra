@@ -121,6 +121,73 @@ test("a deferred page, a meta script or a nonced link under a CSP policy carries
   }
 })
 
+/** Whether the policy lets every executable inline script in `html` run: by its nonce or its hash. */
+async function everyInlineScriptAllowed(html: string, policy: string): Promise<boolean> {
+  for (const { attrs, body } of executableInlineScripts(html)) {
+    const nonce = attrs.match(/\bnonce="([^"]+)"/)?.[1]
+    if (nonce !== undefined && policy.includes(`'nonce-${nonce}'`)) continue
+    if (!policy.includes(await sha256Source(body))) return false
+  }
+  return true
+}
+
+test("a render that writes a script of its own keeps the nonce it was handed; one that writes none drops it", async () => {
+  // Like Solid serializing a caught server error: a script only some renders write.
+  const serializing: RenderAdapter = {
+    ...adapter,
+    renderToString: (_chain, props, options) =>
+      props.data === "error" && options?.nonce !== undefined
+        ? `<p>fallback</p><script nonce="${options.nonce}">self.$R=["boom"]</script>`
+        : props.data === "error"
+          ? `<p>fallback</p><script>self.$R=["boom"]</script>`
+          : "<p>plain</p>",
+  }
+  const csp = createCspPolicy({ header })
+  const render = (data: string) =>
+    renderPage({ adapter: serializing, chain: [null], data, clientEntry: "/c.js", csp })
+  const failed = await render("error")
+  const failedHtml = await failed.text()
+  const failedPolicy = failed.headers.get("content-security-policy") ?? ""
+  expect(failedPolicy).toContain("'nonce-")
+  expect(failed.headers.get("cache-control")).toBe("private, no-store")
+  expect(await everyInlineScriptAllowed(failedHtml, failedPolicy)).toBe(true)
+  const plain = await render("plain")
+  const plainHtml = await plain.text()
+  const plainPolicy = plain.headers.get("content-security-policy") ?? ""
+  expect([plainHtml.includes("nonce="), plainPolicy.includes("'nonce-")]).toEqual([false, false])
+  expect(plain.headers.get("cache-control")).toBeNull()
+  expect(await everyInlineScriptAllowed(plainHtml, plainPolicy)).toBe(true)
+})
+
+test("a render that suspends is streamed, with the nonce its streamed scripts need", async () => {
+  const suspending: RenderAdapter = {
+    ...adapter,
+    renderToString: () => undefined,
+    renderToStream: (_chain, _props, options) =>
+      streamOf(`<p>resolved</p><script nonce="${options?.nonce ?? ""}">reveal()</script>`),
+  }
+  const csp = createCspPolicy({ header })
+  const res = await renderPage({
+    adapter: suspending,
+    chain: [null],
+    data: null,
+    clientEntry: "/c.js",
+    csp,
+  })
+  const html = await res.text()
+  const policy = res.headers.get("content-security-policy") ?? ""
+  expect(html).toContain("<p>resolved</p>")
+  expect(res.headers.get("cache-control")).toBe("private, no-store")
+  expect(await everyInlineScriptAllowed(html, policy)).toBe(true)
+  const open = await renderPage({
+    adapter: suspending,
+    chain: [null],
+    data: null,
+    clientEntry: "/c.js",
+  })
+  expect(await open.text()).toContain("<p>resolved</p>")
+})
+
 test("an adapter whose hydration head stops matching the hashed one falls back to a nonce", async () => {
   let head = "<script>globalThis.boot = 1</script>"
   const drifting: RenderAdapter = { ...adapter, hydrationHead: () => head }

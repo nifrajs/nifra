@@ -155,13 +155,16 @@ export interface RenderAdapter {
   ): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
   /**
    * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the
-   * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data).
+   * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data); a
+   * document that sends a policy keeps the nonce only when the returned HTML carries it. Return
+   * `undefined` when the render suspended on something only `renderToStream` waits for (React's
+   * `use` or `lazy` inside `<Suspense>`): the page is then streamed instead.
    */
   renderToString?(
     chain: readonly unknown[],
     props: RenderProps,
     options?: RenderStreamOptions,
-  ): string | Promise<string>
+  ): string | undefined | Promise<string | undefined>
   /** Per-document bootstrap markup injected into `<head>` for client hydration. */
   hydrationHead(nonce?: string): string
   /**

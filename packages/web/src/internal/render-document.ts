@@ -1,6 +1,12 @@
 import { isSameOriginPath, type ResponseResult, status as statusResult } from "@nifrajs/core/server"
 import type { BoundaryRegistration, BoundaryStates } from "../boundary.ts"
-import { type CspPolicy, cspDocumentNonce, cspHeaderValue, prepareCspPolicy } from "../csp.ts"
+import {
+  type CspPolicy,
+  cspCandidateNonce,
+  cspDocumentNonce,
+  cspHeaderValue,
+  prepareCspPolicy,
+} from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
 import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
@@ -544,43 +550,65 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // streaming renderer are pure overhead vs a single sync render + concat. A buffered string body also
   // gets an automatic Content-Length. A render throw surfaces here exactly as the streaming path's
   // shell-readiness `await` does, so the `_error` boundary still maps it to a status.
+  const streamed = (streamNonce: string | undefined): Promise<RenderedPage> =>
+    renderStreamedPage(
+      adapter,
+      chain,
+      renderProps,
+      shellOf,
+      parts,
+      closeRootHtml,
+      allDeferred,
+      tailHtml,
+      status,
+      headers,
+      streamNonce,
+      streamNonce === nonce ? nonceAttr : ` nonce="${escapeAttr(streamNonce ?? "")}"`,
+    ).then((response) => new ResponseRenderedPage(response))
   if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
+    // Under a CSP a render can still write a script for this request alone (Solid's serialized
+    // error boundary, React's streamed Suspense reveal): it is handed a nonce, which the document
+    // keeps only when the render used it, so every other document stays nonce-free and cacheable.
+    const renderNonce =
+      nonce ?? (csp === undefined ? undefined : cspCandidateNonce(csp, requestedNonce))
+    const adoptNonce = (): void => {
+      if (renderNonce === nonce || csp === undefined || renderNonce === undefined) return
+      headers["cache-control"] = "private, no-store"
+      const policy = cspHeaderValue(csp, adapter, renderNonce)
+      if (policy !== undefined) headers["content-security-policy"] = policy
+    }
     const out =
       parts !== undefined
         ? adapter.renderToString(
             chain,
             renderProps,
-            nonce === undefined ? { parts } : { nonce, parts },
+            renderNonce === undefined ? { parts } : { nonce: renderNonce, parts },
           )
-        : nonce === undefined
+        : renderNonce === undefined
           ? adapter.renderToString(chain, renderProps)
-          : adapter.renderToString(chain, renderProps, { nonce })
-    return typeof out === "string"
-      ? new BufferedRenderedPage(shellOf() + out + closeRootHtml + tailHtml, status, headers)
-      : out.then(
-          (bodyHtml) =>
-            new BufferedRenderedPage(
-              shellOf() + bodyHtml + closeRootHtml + tailHtml,
-              status,
-              headers,
-            ),
-        )
+          : adapter.renderToString(chain, renderProps, { nonce: renderNonce })
+    const page = (bodyHtml: string | undefined): MaybePromise<RenderedPage> => {
+      if (bodyHtml === undefined) {
+        // The render suspended on something only the streaming renderer waits for (React's `use`
+        // in a `<Suspense>`): stream the page, so the boundary resolves on the server.
+        if (parts !== undefined) {
+          parts.head = ""
+          parts.body = ""
+        }
+        adoptNonce()
+        return streamed(renderNonce)
+      }
+      if (renderNonce !== undefined && bodyHtml.includes(`nonce="${renderNonce}"`)) adoptNonce()
+      return new BufferedRenderedPage(
+        shellOf() + bodyHtml + closeRootHtml + tailHtml,
+        status,
+        headers,
+      )
+    }
+    return out instanceof Promise ? out.then(page) : page(out)
   }
 
-  return renderStreamedPage(
-    adapter,
-    chain,
-    renderProps,
-    shellOf,
-    parts,
-    closeRootHtml,
-    allDeferred,
-    tailHtml,
-    status,
-    headers,
-    nonce,
-    nonceAttr,
-  ).then((response) => new ResponseRenderedPage(response))
+  return streamed(nonce)
 }
 
 async function renderStreamedPage(
