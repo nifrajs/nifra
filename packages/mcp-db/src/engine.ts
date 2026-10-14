@@ -300,6 +300,9 @@ const KEY_COMPARE_OPCODES = new Set([
   "IfNoHope",
 ])
 const ROWID_OPCODES = new Set(["Rowid", "SeekRowid", "NotExists", "IdxRowid"])
+// Each steps a cursor in key order, so the rows it yields are ranked by every key field: an index
+// walked for `ORDER BY <column>` leaks the order of a column it never reads or compares.
+const KEY_ORDER_OPCODES = new Set(["Rewind", "Last", "Next", "Prev"])
 
 interface BytecodeReads {
   readonly tables: readonly string[]
@@ -429,7 +432,8 @@ function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): Curso
  * (`pragma_*`, `dbstat`, `json_each`) is never exposed.
  *
  * With `masked`, also every masked column a cursor on a table or index yields (`Column`), compares
- * (a seek or index range check, so a filter counts) or reads as the rowid. Values the statement
+ * (a seek or index range check, so a filter counts), orders by (stepping an index in key order) or
+ * reads as the rowid. Values the statement
  * derives from those reads live in other cursors and registers, so an alias or an expression
  * cannot hide the column it started from.
  */
@@ -489,6 +493,8 @@ function bytecodeReads(
       const count = Number(step.p4)
       const compared = Number.isInteger(count) && count > 0 ? count : layout.keyCount
       for (const field of layout.fields.slice(0, compared)) read(layout, field)
+    } else if (KEY_ORDER_OPCODES.has(step.opcode)) {
+      for (const field of layout.fields.slice(0, layout.keyCount)) read(layout, field)
     } else if (ROWID_OPCODES.has(step.opcode) && layout.rowid !== undefined) {
       read(layout, [layout.rowid])
     }

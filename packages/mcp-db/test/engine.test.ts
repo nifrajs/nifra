@@ -529,6 +529,38 @@ describe("query, explain, schema", () => {
     }
   })
 
+  test("walking an index on a masked column in key order is a read of that column", async () => {
+    // `ORDER BY password_hash` served by its index never reads or compares the column, but the rows
+    // come back ranked by it.
+    const file = seededFile()
+    const writer = new Database(file)
+    writer.run("CREATE INDEX users_hash ON users (password_hash)")
+    writer.close()
+    const db = await openReadOnlySqlite(file)
+    const options = { ...CAPS, redaction: { column: (name: string) => name === "password_hash" } }
+    try {
+      for (const sql of [
+        "SELECT email FROM users ORDER BY password_hash",
+        "SELECT email FROM users ORDER BY password_hash DESC LIMIT 1",
+        "SELECT email FROM users INDEXED BY users_hash ORDER BY password_hash",
+      ]) {
+        const result = querySqlite(db, sql, options)
+        expect({ sql, code: isDbRefusal(result) ? result.code : "rows" }).toEqual({
+          sql,
+          code: "NIFRA_DB_COLUMN_REFUSED",
+        })
+      }
+      for (const sql of ["SELECT email FROM users ORDER BY email", "SELECT count(*) FROM users"]) {
+        expect({ sql, refused: isDbRefusal(querySqlite(db, sql, options)) }).toEqual({
+          sql,
+          refused: false,
+        })
+      }
+    } finally {
+      db.close()
+    }
+  })
+
   test("explain returns the plan steps, bounded by bytes", async () => {
     const db = await openReadOnlySqlite(seededFile())
     try {
