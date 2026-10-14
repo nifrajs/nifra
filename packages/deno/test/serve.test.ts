@@ -3,6 +3,8 @@ import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import {
+  invalidHostMismatches,
+  rawExchange,
   rawUpgradeStatus,
   requestTargetApp,
   requestTargetMismatches,
@@ -584,6 +586,23 @@ Deno.test("a target with dot segments or a backslash routes the path it resolves
   const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
   try {
     assertEquals(await requestTargetMismatches(running.port), [])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// Deno builds the request URL from the Host as received: `Host: x/users/7#` with `GET /posts` was
+// routed to `/users/:id`. Such a Host is refused, as Node refuses it.
+Deno.test("a Host that is not an authority never steers the routed path", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await invalidHostMismatches(running.port), [])
+    const refused = await rawExchange(running.port, "GET", "/posts", undefined, "x/users/7#")
+    assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+    for (const host of ["127.0.0.1:8080", "[::1]:80", "my_svc.local"]) {
+      const served = await rawExchange(running.port, "GET", "/posts", undefined, host)
+      assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
+    }
   } finally {
     await running.stop({ drainMs: 0 })
   }

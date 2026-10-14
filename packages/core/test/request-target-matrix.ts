@@ -115,12 +115,13 @@ export function rawExchange(
   method: string,
   target: string,
   body?: string,
+  host = "127.0.0.1",
 ): Promise<RawAnswer> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     const chunks: Buffer[] = []
     socket.on("connect", () => {
-      const head = [`${method} ${target} HTTP/1.1`, "Host: 127.0.0.1", "Connection: close"]
+      const head = [`${method} ${target} HTTP/1.1`, `Host: ${host}`, "Connection: close"]
       if (body !== undefined) {
         head.push("Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`)
       }
@@ -136,6 +137,33 @@ export function rawExchange(
       }
     })
   })
+}
+
+/**
+ * Host values that are not an authority. A runtime that builds the request URL from the Host as
+ * received would read the path or query in them as part of the target: `Host: x/users/7#` with a
+ * request for `/posts` became a request for `/users/7`.
+ */
+export const INVALID_HOSTS: readonly string[] = [
+  "x/users/7#",
+  "x/users/7",
+  "x/users/7?",
+  "x#",
+  "x@y",
+  "x\\users\\7#",
+  "x:1/users/7#",
+]
+
+/** Each invalid Host whose request for `/posts` was answered by anything but a 400 or `GET /posts`. */
+export async function invalidHostMismatches(port: number): Promise<string[]> {
+  const mismatches: string[] = []
+  for (const host of INVALID_HOSTS) {
+    const answer = await rawExchange(port, "GET", "/posts", undefined, host)
+    if (answer.status === 400) continue
+    if (answer.status === 200 && answer.body === JSON.stringify({ route: "GET /posts" })) continue
+    mismatches.push(`Host ${host}: got ${answer.status} ${answer.body}`)
+  }
+  return mismatches
 }
 
 /** The status a WebSocket handshake sent to `target`, byte for byte, is answered with. */
