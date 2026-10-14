@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { EventEmitter } from "node:events"
 import { applyResponseHeaders, pipeWebBodyToNode } from "../src/vite.ts"
 
 // A header sink mock recording setHeader calls (the dev server writes onto a Node ServerResponse).
@@ -129,4 +130,74 @@ test("pipeWebBodyToNode cancels the reader when the client disconnects", async (
   m.triggerClose() // client hung up
   await done
   expect(cancelled).toBe(true)
+})
+
+// A Node response whose socket buffer is full: `write` says so until the test lets it drain.
+function fullSink() {
+  const sink = Object.assign(new EventEmitter(), {
+    writes: 0,
+    full: true,
+    ended: false,
+    write(_c: Uint8Array) {
+      sink.writes++
+      return !sink.full
+    },
+    end() {
+      sink.ended = true
+    },
+  })
+  return sink
+}
+
+const turns = async (n: number) => {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve))
+}
+
+test("pipeWebBodyToNode reads no further until a full socket drains", async () => {
+  let pulls = 0
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(c) {
+        if (pulls === 32) return c.close()
+        pulls++
+        c.enqueue(new Uint8Array(1024))
+      },
+    },
+    { highWaterMark: 0 },
+  )
+  const sink = fullSink()
+  const done = pipeWebBodyToNode(body, sink)
+  await turns(10)
+  expect([pulls, sink.writes, sink.ended]).toEqual([1, 1, false])
+  sink.full = false
+  sink.emit("drain")
+  await done
+  expect([pulls, sink.writes, sink.ended]).toEqual([32, 32, true])
+  expect([sink.listenerCount("drain"), sink.listenerCount("close")]).toEqual([0, 0])
+})
+
+test("pipeWebBodyToNode ends and cancels the body when the client leaves during a full socket", async () => {
+  let cancelled = false
+  let pulls = 0
+  const body = new ReadableStream<Uint8Array>(
+    {
+      // Bounded, so a pipe that ignores the full socket finishes (and fails) rather than spins.
+      pull(c) {
+        if (pulls === 32) return c.close()
+        pulls++
+        c.enqueue(new Uint8Array(1024))
+      },
+      cancel() {
+        cancelled = true
+      },
+    },
+    { highWaterMark: 0 },
+  )
+  const sink = fullSink()
+  const done = pipeWebBodyToNode(body, sink)
+  await turns(10)
+  sink.emit("close")
+  await done
+  expect([cancelled, sink.writes, sink.ended]).toEqual([true, 1, true])
+  expect([sink.listenerCount("drain"), sink.listenerCount("close")]).toEqual([0, 0])
 })

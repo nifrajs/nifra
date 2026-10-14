@@ -253,6 +253,9 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
 interface NodeResLike {
   flushHeaders?(): void
   on(event: "close", cb: () => void): void
+  // Optional so a bare sink still fits; without them a full buffer is not waited out.
+  once?(event: "drain", cb: () => void): void
+  off?(event: "close" | "drain", cb: () => void): void
   write(chunk: Uint8Array): boolean
   end(): void
 }
@@ -282,6 +285,8 @@ export function applyResponseHeaders(headers: Headers, res: NodeHeaderSink): voi
  * `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never
  * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it
  * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.
+ * A write the socket can't take yet is waited out (`drain`) before the next read, so a slow client
+ * holds one chunk rather than the whole body.
  */
 export async function pipeWebBodyToNode(
   body: ReadableStream<Uint8Array> | null,
@@ -293,15 +298,35 @@ export async function pipeWebBodyToNode(
   }
   const reader = body.getReader()
   res.flushHeaders?.()
-  res.on("close", () => void reader.cancel().catch(() => {}))
+  let closed = false
+  let wake: (() => void) | undefined
+  const onClose = (): void => {
+    closed = true
+    void reader.cancel().catch(() => {})
+    wake?.()
+  }
+  res.on("close", onClose)
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      res.write(value)
+      if (!res.write(value) && !closed && res.once !== undefined) {
+        let drain!: () => void
+        const drained = new Promise<void>((resolve) => {
+          drain = resolve
+        })
+        wake = drain
+        res.once("drain", drain)
+        await drained
+        res.off?.("drain", drain)
+        wake = undefined
+      }
     }
   } catch {
     // client disconnected mid-stream - the `close` handler already cancelled the reader
+  } finally {
+    res.off?.("close", onClose)
+    reader.releaseLock()
   }
   res.end()
 }

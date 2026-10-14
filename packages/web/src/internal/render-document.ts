@@ -673,6 +673,9 @@ function htmlResponse(body: string, init: ResponseInit): Response {
  * script per deferred value (emitted once its promise settles - by now the app stream has awaited
  * the same Suspense boundaries - and placed OUTSIDE `#root`) → `tail`. A mid-stream app error errors
  * the result (the body breaks) rather than silently truncating a 200.
+ *
+ * The app stream is read one chunk per pull, so a client that stops reading stops the renderer
+ * too: a stalled connection holds a chunk, not the whole rendered body.
  */
 function streamDocument(
   shell: Uint8Array,
@@ -687,45 +690,59 @@ function streamDocument(
   // A client that goes away cancels the body: the renderer stops, and nothing more is written.
   let cancelled = false
   let released = false
+  const release = (): void => {
+    if (released) return
+    released = true
+    reader.releaseLock()
+  }
+  // Settled into scripts now, not when the app stream ends: a rejection a stalled client never
+  // reads up to is still handled (and logged) rather than left unhandled.
+  const scripts = deferred.map((d) =>
+    d.promise
+      .then(
+        (value) =>
+          // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
+          // separators before this framework-owned script is emitted.
+          `<script${nonceAttr}>window.__nifraResolve(${d.id},${serializeData(value)})</script>`, // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
+      )
+      .catch((err: unknown) => {
+        // A rejected (or unserializable) deferred streams __nifraReject (the client `<Await>`
+        // surfaces it) - it must not break the whole body. Redact: stream a stable opaque code,
+        // never the raw error text; log the real reason server-side.
+        console.error("[nifra/web] deferred value rejected:", err)
+        return `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
+      }),
+  )
   return new ReadableStream({
-    async start(controller) {
+    start(controller) {
+      controller.enqueue(shell)
+    },
+    async pull(controller) {
       try {
-        controller.enqueue(shell)
-        for (;;) {
+        if (!released) {
           const { done, value } = await reader.read()
           if (cancelled) return
-          if (done) break
-          controller.enqueue(value)
+          if (!done) {
+            controller.enqueue(value)
+            return
+          }
+          release()
+          controller.enqueue(closeRoot)
         }
-        controller.enqueue(closeRoot)
         // Stream each resolution as ITS OWN promise settles - NOT in array order. A slow
         // defer() must not block a faster one; each script self-addresses by id, so order is irrelevant.
         await Promise.all(
-          deferred.map(async (d) => {
-            let script: string
-            try {
-              const value = serializeData(await d.promise)
-              // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
-              // separators before this framework-owned script is emitted.
-              script = `<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>` // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
-            } catch (err) {
-              // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) - it must
-              // not break the whole body. Redact: stream a stable opaque code, never the raw error
-              // text; log the real reason server-side.
-              console.error("[nifra/web] deferred value rejected:", err)
-              script = `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
-            }
-            if (!cancelled) controller.enqueue(enc.encode(script))
+          scripts.map(async (script) => {
+            const html = await script
+            if (!cancelled) controller.enqueue(enc.encode(html))
           }),
         )
         if (cancelled) return
         controller.enqueue(tail)
         controller.close()
       } catch (err) {
+        release()
         if (!cancelled) controller.error(err)
-      } finally {
-        released = true
-        reader.releaseLock()
       }
     },
     cancel(reason) {
