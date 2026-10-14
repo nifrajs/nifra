@@ -15,7 +15,8 @@ export interface SessionRecord {
 /**
  * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.
  * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}
- * prod-guards against the per-instance footgun.
+ * prod-guards against the per-instance footgun. Logout and rotation also write a revocation marker, an
+ * empty record under `<id>.revoked`, so a store must accept that key like any other.
  */
 export interface SessionStore {
   /** The record for `id`, or `undefined` on a miss. */

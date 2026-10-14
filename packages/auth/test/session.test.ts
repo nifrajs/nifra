@@ -40,6 +40,9 @@ function requestContext(cookie: string): SessionContext {
 const lastCookie = (setCalls: Array<{ value: string }>): string =>
   setCalls.at(-1)?.value ?? "(no cookie written)"
 
+/** The store-mode session id a cookie carries: the signed value is `<id>.<signature>`. */
+const idOf = (cookie: string): string => cookie.slice(0, cookie.lastIndexOf("."))
+
 interface Data extends Record<string, unknown> {
   userId: string
   role: "admin" | "user"
@@ -305,6 +308,91 @@ describe("session - store mode", () => {
     const forged = `${cookie.slice(0, dot + 1)}${head === "A" ? "B" : "A"}${cookie.slice(dot + 2)}`
     await sessions.destroy(ctx({ nifra_session: forged }).context)
     expect((await sessions.get(ctx({ nifra_session: cookie }).context)).get("userId")).toBe("u1")
+  })
+
+  // A request that loaded the session before a logout and commits after it (a rolling renewal, a
+  // slow handler) used to write the record back, so a copy of the cookie taken before logout worked
+  // again.
+  test("a commit that loaded the session before logout does not bring it back", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("userId", "victim")
+    await sessions.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+
+    const inFlight = ctx({ nifra_session: cookie })
+    const stale = await sessions.get(inFlight.context)
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+    await sessions.commit(inFlight.context, stale)
+
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    // The browser may already hold a newer session; the stale response must not replace it.
+    expect(inFlight.setCalls).toEqual([])
+  })
+
+  test("a commit that loaded the pre-login session does not bring it back after rotation", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("role", "user")
+    await sessions.commit(a.context, s)
+    const before = lastCookie(a.setCalls)
+
+    const stale = await sessions.get(ctx({ nifra_session: before }).context)
+    const login = await sessions.get(ctx({ nifra_session: before }).context)
+    login.set("userId", "u1")
+    sessions.regenerate(login)
+    await sessions.commit(ctx().context, login)
+    await sessions.commit(ctx().context, stale)
+
+    expect((await sessions.get(ctx({ nifra_session: before }).context)).isEmpty).toBe(true)
+  })
+
+  // The write can also land after the revocation finished but before the commit's own check runs;
+  // the next load still refuses the record and removes it.
+  test("a load refuses and removes a record written back after revocation", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("userId", "victim")
+    await sessions.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+    const id = idOf(cookie)
+
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+    await store.set(id, { data: { userId: "victim" }, expiresAt: 10_000 })
+
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    expect(await store.get(id)).toBeUndefined()
+  })
+
+  test("a signed revocation marker never reads as a session", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("userId", "u1")
+    await sessions.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+    const id = idOf(cookie)
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+
+    // Reachable only with a value the app signed itself. Neither a commit nor a logout through it may
+    // touch the marker's key.
+    const marker = await signSession(`${id}.revoked`)
+    const m = ctx({ nifra_session: marker })
+    const loaded = await sessions.get(m.context)
+    expect(loaded.isEmpty).toBe(true)
+    loaded.set("userId", "attacker")
+    await sessions.commit(m.context, loaded)
+    expect((await store.get(`${id}.revoked`))?.data).toEqual({})
+    await sessions.destroy(ctx({ nifra_session: marker }).context)
+    await store.set(id, { data: { userId: "u1" }, expiresAt: 10_000 })
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
   })
 
   test("mutators: set/unset/has/clear/data", async () => {

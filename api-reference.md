@@ -705,7 +705,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionRecord** _(interface)_ - `interface SessionRecord`
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
-  Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun.
+  Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun. Logout and rotation also write a revocation marke…
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
   The response a guard denies a missing session with, in place of the default `401` JSON.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`

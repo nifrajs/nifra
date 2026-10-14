@@ -84,7 +84,8 @@ export interface SessionManager<Data extends Record<string, unknown> = Record<st
   read(request: Request): Promise<Session<Data>>
   /** Persist the session: write the store (store mode) + the signed cookie. */
   commit(c: SessionContext, session: Session<Data>): Promise<void>
-  /** End the session: drop the store record (store mode) + clear the cookie. */
+  /** End the session: drop the store record (store mode) + clear the cookie. In store mode the id is
+   * also marked revoked, so a request that loaded the session earlier cannot write it back. */
   destroy(c: SessionContext, session?: Session<Data>): Promise<void>
   /** Rotate the session id on the next commit (call on privilege change - login - to defend against
    * session fixation). Data is preserved; the old store record is dropped. */
@@ -106,6 +107,12 @@ const encodeBase64Url = (bytes: Uint8Array): string => {
 
 /** A 256-bit random session id (base64url). High-entropy + unguessable - the cookie also signs it. */
 const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+
+// A revoked id keeps a marker under its own key. A request that loaded the session before logout and
+// commits after it rewrites the record, and a blind `set` cannot be made conditional on every store,
+// but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
+const REVOKED_SUFFIX = ".revoked"
+const revokedKey = (id: string): string => `${id}${REVOKED_SUFFIX}`
 
 interface Payload {
   data: Record<string, unknown>
@@ -227,8 +234,17 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     if (unsigned === null) return make({}) // tampered / wrong secret → fail closed (anonymous)
 
     if (store !== undefined) {
-      const record = await store.get(unsigned)
+      // Only reachable with a value the app signed itself (legacy mode): never read a marker as a session.
+      if (unsigned.endsWith(REVOKED_SUFFIX)) return make({})
+      const [record, revoked] = await Promise.all([
+        store.get(unsigned),
+        store.get(revokedKey(unsigned)),
+      ])
       if (record === undefined) return make({})
+      if (revoked !== undefined) {
+        await store.delete(unsigned) // a commit that raced the logout wrote it back
+        return make({})
+      }
       if (record.expiresAt <= now()) {
         await store.delete(unsigned) // expired - evict + treat as no session
         return make({})
@@ -263,6 +279,13 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     c.set.cookie(cookieName, value, { ...cookieOpts, maxAge: maxAgeSeconds })
   }
 
+  // Marker first: a racing commit's write either precedes the delete below or follows the marker.
+  const revoke = async (id: string): Promise<void> => {
+    if (store === undefined) return
+    await store.set(revokedKey(id), { data: {}, expiresAt: now() + maxAge * 1000 })
+    await store.delete(id)
+  }
+
   const commit = async (c: SessionContext, session: Session<Data>): Promise<void> => {
     const state = stateOf(session, "commit")
     // Rolling → slide the expiry; absolute → keep the original (set on the first commit).
@@ -273,12 +296,20 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
     if (store !== undefined) {
       if (state.regenerate) {
-        if (state.id !== undefined) await store.delete(state.id) // drop the pre-rotation session
+        if (state.id !== undefined) await revoke(state.id) // drop the pre-rotation session
         state.id = undefined
         state.regenerate = false
       }
-      if (state.id === undefined) state.id = randomId()
+      const loaded = state.id !== undefined
+      state.id ??= randomId()
       await store.set(state.id, { data, expiresAt } satisfies SessionRecord)
+      // Checked after the write: a revocation that lands before it is seen here, one that lands after
+      // it deletes the record itself. Either way the cookie is left alone - the browser may hold a
+      // newer session by now, and this response must not replace or clear it.
+      if (loaded && (await store.get(revokedKey(state.id))) !== undefined) {
+        await store.delete(state.id)
+        return
+      }
       writeCookie(c, await sign(state.id), expiresAt)
       return
     }
@@ -297,7 +328,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         const raw = sessionCookie(c)
         if (raw !== undefined) id = (await unsign(raw)) ?? undefined
       }
-      if (id !== undefined) await store.delete(id)
+      if (id !== undefined && !id.endsWith(REVOKED_SUFFIX)) await revoke(id)
     }
     c.set.deleteCookie(cookieName, {
       path: cookieOpts.path ?? "/",
