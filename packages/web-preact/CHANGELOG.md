@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - 5abaf61: A bundled Bun server renders with the renderer and `preact` inlined in the bundle. The adapter re-rooted `preact-render-to-string` to the app's `node_modules` whenever `Bun.resolveSync` existed, which a `target: "bun"` bundle keeps, so a server started from an installed app root loaded a second renderer and `preact` from disk and every page using a hook failed with a `__H` TypeError. Re-rooting now stays off under the build's `NIFRA_SSR_BUNDLED` marker and inside any bundle, as in the React adapter; the unbundled Bun runtime still re-roots.
+- 042db5d: A Preact page that suspends without `defer()` (a `preact/compat` `<Suspense>` around a thrown promise, or `lazy`) is streamed and resolves on the server; it was a 500. A page whose string render suspended skips the string pass for its next 32 requests and goes straight to the stream, so a React page that suspends on `use` renders once per request rather than twice.
 - Updated dependencies [7ab9692]
 - Updated dependencies [7ab9692]
 - Updated dependencies [0e1d03f]
