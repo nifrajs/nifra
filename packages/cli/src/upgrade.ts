@@ -331,7 +331,7 @@ export function pinSweepText(
   let out = text
   const changes: Array<Omit<PinChange, "file">> = []
   const downgrades: Array<Omit<PinChange, "file">> = []
-  for (const { path, key, target: name, spec: rawSpec } of pinEntries(parsed)) {
+  for (const { path, holder, key, target: name, spec: rawSpec } of pinEntries(parsed)) {
     const field = path.join(".")
     const rule = rules.find(
       (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
@@ -360,17 +360,14 @@ export function pinSweepText(
       downgrades.push({ field, name: key, from: rawSpec, to: next })
       continue
     }
-    // Replace exactly `"key"<ws>:<ws>"spec"` inside this field's object, preserving the whitespace. A
-    // nested `overrides` entry repeated with the same spec maps the same way, so every one is replaced.
-    const range = objectRangeAt(out, path)
-    if (range === undefined) continue
-    const pattern = new RegExp(`("${escapeRegExp(key)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`, "g")
-    const body = out.slice(range.start, range.end)
-    const replaced = body.replace(pattern, `$1${next}$2`)
-    if (replaced !== body) {
-      out = out.slice(0, range.start) + replaced + out.slice(range.end)
-      changes.push({ field, name: key, from: rawSpec, to: next })
-    }
+    // Replace exactly `"key"<ws>:<ws>"spec"` inside the object holding this pin, preserving the
+    // whitespace: npm's nested `{ ".": "5.2.0" }` under another package names that package.
+    const range = objectRangeAt(out, holder)
+    const at = range === undefined ? undefined : memberValueAt(out, range, key)
+    const written = JSON.stringify(rawSpec)
+    if (at === undefined || out.slice(at, at + written.length) !== written) continue
+    out = out.slice(0, at) + JSON.stringify(next) + out.slice(at + written.length)
+    changes.push({ field, name: key, from: rawSpec, to: next })
   }
   return { text: out, changes, downgrades }
 }
@@ -393,31 +390,41 @@ function overrideTarget(key: string): string {
 }
 
 /** Every string version spec a package.json declares for a package, with the field path it sits in. */
-function pinEntries(
-  parsed: Record<string, unknown>,
-): Array<{ path: readonly string[]; key: string; target: string; spec: string }> {
-  const entries: Array<{ path: readonly string[]; key: string; target: string; spec: string }> = []
+interface PinEntry {
+  /** The field the pin is reported under: a dependency field, or the override field it sits in. */
+  readonly path: readonly string[]
+  /** The object holding the pin, nested override parents included. */
+  readonly holder: readonly string[]
+  readonly key: string
+  readonly target: string
+  readonly spec: string
+}
+
+function pinEntries(parsed: Record<string, unknown>): PinEntry[] {
+  const entries: PinEntry[] = []
   for (const field of DEP_FIELDS) {
     const deps = parsed[field]
     if (typeof deps !== "object" || deps === null) continue
     for (const [name, spec] of Object.entries(deps))
-      if (typeof spec === "string") entries.push({ path: [field], key: name, target: name, spec })
+      if (typeof spec === "string")
+        entries.push({ path: [field], holder: [field], key: name, target: name, spec })
   }
   for (const path of OVERRIDE_FIELDS) {
     let value: unknown = parsed
     for (const key of path)
       value = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
     // npm nests an override under the package whose dependency it pins; `.` pins that package itself.
-    const walk = (object: object, parent: string | undefined): void => {
+    const walk = (object: object, parent: string | undefined, holder: readonly string[]): void => {
       for (const [key, spec] of Object.entries(object)) {
         const target = key === "." ? parent : overrideTarget(key)
         if (typeof spec === "string" && target !== undefined)
-          entries.push({ path, key, target, spec })
+          entries.push({ path, holder, key, target, spec })
         else if (typeof spec === "object" && spec !== null && !Array.isArray(spec))
-          walk(spec, target)
+          walk(spec, target, [...holder, key])
       }
     }
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) walk(value, undefined)
+    if (typeof value === "object" && value !== null && !Array.isArray(value))
+      walk(value, undefined, path)
   }
   return entries
 }
@@ -468,6 +475,18 @@ function memberObjectRange(
   within: { start: number; end: number },
   key: string,
 ): { start: number; end: number } | undefined {
+  const at = memberValueAt(text, within, key)
+  return at !== undefined && text[at] === "{"
+    ? { start: at + 1, end: closingBrace(text, at) }
+    : undefined
+}
+
+/** Where `key`'s value starts among the direct members of the object body `within`. */
+function memberValueAt(
+  text: string,
+  within: { start: number; end: number },
+  key: string,
+): number | undefined {
   let depth = 0
   for (let index = within.start; index < within.end; index++) {
     const char = text[index]
@@ -480,9 +499,7 @@ function memberObjectRange(
       if (depth === 0 && text[after] === ":" && text.slice(index + 1, close) === key) {
         after++
         while (/\s/.test(text[after] ?? "")) after++
-        return text[after] === "{"
-          ? { start: after + 1, end: closingBrace(text, after) }
-          : undefined
+        return after
       }
       index = close
     }

@@ -212,6 +212,30 @@ describe("pinSweepText", () => {
     expect(parsed.resolutions["nifra-lookalike"]).toBe("1.7.0")
   })
 
+  test("a nested override pins only the package it sits under", () => {
+    const pkg = JSON.stringify(
+      {
+        overrides: {
+          "@nifrajs/core": { ".": "1.7.0", "some-dep": { ".": "1.7.0" } },
+          "some-lib": { ".": "1.7.0", "@nifrajs/core": "1.7.0" },
+        },
+      },
+      null,
+      2,
+    )
+    const { text, changes } = pinSweepText(pkg, RECIPE.pins)
+    expect(changes).toEqual([
+      { field: "overrides", name: ".", from: "1.7.0", to: "1.8.0" },
+      { field: "overrides", name: "@nifrajs/core", from: "1.7.0", to: "1.8.0" },
+    ])
+    const parsed = JSON.parse(text)
+    expect(parsed.overrides["@nifrajs/core"]).toEqual({
+      ".": "1.8.0",
+      "some-dep": { ".": "1.7.0" },
+    })
+    expect(parsed.overrides["some-lib"]).toEqual({ ".": "1.7.0", "@nifrajs/core": "1.8.0" })
+  })
+
   test("an override above the target is a rollback like any pin", () => {
     const pkg = JSON.stringify({ overrides: { "@nifrajs/core": "2.3.0" } }, null, 2)
     const { downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }])
