@@ -139,9 +139,10 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
-/** The fields a signature covers. Newline-delimited into a canonical string (newlines can't appear in
- * a URL query value, so the join is unambiguous). `q`/`exp` are normalized to `""` when absent so the
- * signer and verifier agree. */
+/** The fields a signature covers, newline-delimited into a canonical string. `src` can hold a newline
+ * (`%0A` decodes to one), but it is the first field and the handler accepts only digits for `w`, `q`
+ * and `exp`, so the last three newlines always delimit them and the join is unambiguous. `q`/`exp`
+ * are normalized to `""` when absent so the signer and verifier agree. */
 export interface ImageSignatureParts {
   readonly src: string
   readonly w: string

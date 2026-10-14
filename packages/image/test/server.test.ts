@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { deflateSync } from "node:zlib"
@@ -246,6 +246,25 @@ describe("local source SSRF guards", () => {
     await symlink(join(outside, "secret.png"), join(root, "link.png"))
     const h = createImageHandler({ backend: makeStub().backend, root })
     expect((await h(get("src=/link.png&w=10"))).status).toBe(403)
+  })
+
+  test("a hidden name is not found, read through a link or not; .well-known is served", async () => {
+    const root = await tempRoot()
+    await mkdir(join(root, ".git"))
+    await mkdir(join(root, ".well-known"))
+    await writeFile(join(root, ".hidden.png"), makePng(4, 4))
+    await writeFile(join(root, ".git/config.png"), makePng(4, 4))
+    await writeFile(join(root, ".env"), "SECRET=1")
+    await writeFile(join(root, ".well-known/logo.png"), makePng(4, 4))
+    await symlink(join(root, ".hidden.png"), join(root, "visible.png"))
+    const stub = makeStub()
+    const h = createImageHandler({ backend: stub.backend, root })
+
+    for (const src of ["/.hidden.png", "/.git/config.png", "/.env", "/.nope", "/visible.png"]) {
+      expect((await h(get(`src=${encodeURIComponent(src)}&w=10`))).status).toBe(404)
+    }
+    expect(stub.transformCalls.length).toBe(0)
+    expect((await h(get("src=/.well-known/logo.png&w=10"))).status).toBe(200)
   })
 
   test("source exceeding maxSourceBytes (on disk) → 413", async () => {
