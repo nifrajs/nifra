@@ -4262,7 +4262,7 @@ _No named exports (side-effect entrypoint)._
 - **poweredBy** _(function)_ - `poweredBy: (options?: PoweredByOptions) => Middleware`
   Opt-in `X-Powered-By` style header. Nifra does not emit this by default; use it only when you want a public framework/product marker.
 - **prettyJson** _(function)_ - `prettyJson: (options?: PrettyJsonOptions) => import("@nifrajs/core").IdentityPlugin<never>`
-  Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content, skips encoded responses, caps inspection size, and leaves invalid JSON untouched.
+  Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content, skips encoded responses, caps inspection size, and leaves invalid JSON untouched, as well as a document nested deeply enough that its indented form would outgrow it many times over.
 - **problemDetails** _(function)_ - `problemDetails: (options?: ProblemDetailsOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Opt-in RFC 9457 formatting for Nifra's structured error envelope.
 - **rangeResponse** _(function)_ - `rangeResponse: (request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions) => Response`

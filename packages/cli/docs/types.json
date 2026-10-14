@@ -21390,7 +21390,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function prettyJson(options?: PrettyJsonOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
-    "doc": "/**\n * Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content,\n * skips encoded responses, caps inspection size, and leaves invalid JSON untouched.\n */"
+    "doc": "/**\n * Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content,\n * skips encoded responses, caps inspection size, and leaves invalid JSON untouched, as well as a\n * document nested deeply enough that its indented form would outgrow it many times over.\n */"
   },
   {
     "name": "previewEndpoint",

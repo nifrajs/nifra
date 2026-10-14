@@ -89,17 +89,29 @@ async function peekText(res: Response, maxBytes: number): Promise<Peeked> {
   }
 }
 
+// Every line carries its depth in indentation, so output grows with size times nesting: 8 KB of
+// nested arrays became 32 MB. A document that would outgrow its input this much goes out as it came.
+const MAX_GROWTH = 8
+const MIN_OUTPUT_BUDGET = 64 * 1024
+
 /**
  * Re-indent JSON text the way `JSON.stringify(value, null, spaces)` lays it out, without turning it
  * into values: every string and number is copied as written. A parse/stringify round trip rounds an
  * integer past 2^53 (`12345678901234567890` came back `12345678901234567000`), turns `1e400` into
- * `null`, and rewrites escapes. `text` must already be known-valid JSON.
+ * `null`, and rewrites escapes. `text` must already be known-valid JSON. `undefined` when the result
+ * would pass the growth budget, checked before each line is built.
  */
-function reindentJson(text: string, spaces: number): string {
+function reindentJson(text: string, spaces: number): string | undefined {
   const unit = " ".repeat(spaces)
   const pretty = spaces > 0
+  const budget = Math.max(MIN_OUTPUT_BUDGET, text.length * MAX_GROWTH)
   let out = ""
   let depth = 0
+  const lineBreak = (head: string, tail: string): boolean => {
+    if (out.length + depth * spaces > budget) return false
+    out += `${head}\n${unit.repeat(depth)}${tail}`
+    return true
+  }
   const nextSignificant = (from: number): number => {
     let at = from
     while (at < text.length && isJsonWhitespace(text.charCodeAt(at))) at++
@@ -120,13 +132,16 @@ function reindentJson(text: string, spaces: number): string {
         i = close
       } else {
         depth++
-        out += pretty ? `${text[i]}\n${unit.repeat(depth)}` : text[i]
+        if (!pretty) out += text[i]
+        else if (!lineBreak(text[i]!, "")) return undefined
       }
     } else if (code === 125 /* } */ || code === 93 /* ] */) {
       depth--
-      out += pretty ? `\n${unit.repeat(depth)}${text[i]}` : text[i]
+      if (!pretty) out += text[i]
+      else if (!lineBreak("", text[i]!)) return undefined
     } else if (code === 44 /* , */) {
-      out += pretty ? `,\n${unit.repeat(depth)}` : ","
+      if (!pretty) out += ","
+      else if (!lineBreak(",", "")) return undefined
     } else if (code === 58 /* : */) {
       out += pretty ? ": " : ":"
     } else {
@@ -146,7 +161,8 @@ function requestView(request: Request): NodeRequestContext {
 
 /**
  * Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content,
- * skips encoded responses, caps inspection size, and leaves invalid JSON untouched.
+ * skips encoded responses, caps inspection size, and leaves invalid JSON untouched, as well as a
+ * document nested deeply enough that its indented form would outgrow it many times over.
  */
 export function prettyJson(options: PrettyJsonOptions = {}) {
   const spaces = options.spaces ?? 2
@@ -185,7 +201,8 @@ export function prettyJson(options: PrettyJsonOptions = {}) {
           } catch {
             return undefined
           }
-          return `${reindentJson(text, spaces)}${newline ? "\n" : ""}`
+          const pretty = reindentJson(text, spaces)
+          return pretty === undefined ? undefined : `${pretty}${newline ? "\n" : ""}`
         },
         onResponseRaw(response, req) {
           if (!isEnabled(requestView(req))) return response
@@ -222,18 +239,22 @@ async function prettyRawResponse(
 ): Promise<Response> {
   const peeked = await peekText(response, maxBytes)
   if ("response" in peeked) return peeked.response
-  try {
-    JSON.parse(peeked.text)
-  } catch {
-    return new Response(peeked.bytes.slice(), {
+  const original = (): Response =>
+    new Response(peeked.bytes.slice(), {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
     })
+  try {
+    JSON.parse(peeked.text)
+  } catch {
+    return original()
   }
+  const pretty = reindentJson(peeked.text, spaces)
+  if (pretty === undefined) return original()
   const headers = new Headers(response.headers)
   headers.delete("content-length")
-  return new Response(`${reindentJson(peeked.text, spaces)}${newline ? "\n" : ""}`, {
+  return new Response(`${pretty}${newline ? "\n" : ""}`, {
     status: response.status,
     statusText: response.statusText,
     headers,
