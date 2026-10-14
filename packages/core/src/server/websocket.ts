@@ -60,6 +60,9 @@ export class TopicRegistry {
   private readonly memberships = new WeakMap<NifraWebSocket, Set<string>>()
 
   subscribe(topic: string, ws: NifraWebSocket): void {
+    // CLOSING or CLOSED: close has run, or is about to run, `unsubscribeAll`, so an async handler's
+    // late subscribe would hold the dead socket for good.
+    if (ws.readyState >= 2) return
     let subs = this.topics.get(topic)
     if (subs === undefined) {
       subs = new Set()
