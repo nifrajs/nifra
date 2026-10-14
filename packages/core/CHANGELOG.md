@@ -17,6 +17,7 @@
 - 74ec04f: On Bun's `listen()`, a raw `#` in the request target no longer picks a route the parsed URL does not. Bun's native route table read `#` and everything after it as path, so `GET /admin/..#/users/42/delete` ran a `/admin/:org/users/:userId/delete` handler while `c.req.url` and `app.fetch` saw `/`, and a guard that checks the URL path let it through. A param holding `#` now goes to the portable router, which routes the path the URL ends with (`/` here), as Node, Deno and `app.fetch` already did. A sent `%23` routes as before.
 - 288ceca: On Deno, a request whose `Host` header is not an authority (a reg-name or IP literal with an optional port) is refused with `400 {"ok":false,"error":"invalid_host"}` before routing, as Node already refuses it. Deno builds `Request.url` by appending the target to the Host as received, so `GET /public` with `Host: x/admin#` was routed to `/admin`, and `c.req.url` carried the spoofed path. Reading the header costs a bare route on Deno about 4% of its throughput; a route that reads any header already paid it.
 - 0f31edf: A raw `^` in a request path now routes as `%5E` on Deno too, as it already did on Bun, Node and workerd. Deno's URL parser keeps a `^` in a path as written, so `GET /vault/^` reached `/vault/:id` there and the static `/vault/%5E` everywhere else. The cross-runtime request-target matrix gains the case.
+- 4877137: No behavior change: a resolved request path encodes `^` with one unconditional replace, which costs fewer bytes in every server bundle.
 
 ## 5.2.1
 
