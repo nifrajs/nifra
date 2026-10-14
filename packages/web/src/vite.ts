@@ -254,6 +254,8 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
 
 /** The bits of a Node ServerResponse `pipeWebBodyToNode` touches - structural, to avoid a node:http dep here. */
 interface NodeResLike {
+  /** Set once the socket is gone: `close` has fired, and a write returns `false` for good. */
+  readonly destroyed?: boolean
   flushHeaders?(): void
   on(event: "close", cb: () => void): void
   // Optional so a bare sink still fits; without them a full buffer is not waited out.
@@ -299,6 +301,11 @@ export async function pipeWebBodyToNode(
     res.end()
     return
   }
+  // The client left while the app ran: `close` fired before anyone listened, and no `drain` comes.
+  if (res.destroyed === true) {
+    await body.cancel().catch(() => {})
+    return
+  }
   const reader = body.getReader()
   res.flushHeaders?.()
   let closed = false
@@ -314,6 +321,10 @@ export async function pipeWebBodyToNode(
       const { done, value } = await reader.read()
       if (done) break
       if (!res.write(value) && !closed && res.once !== undefined) {
+        if (res.destroyed === true) {
+          onClose()
+          break
+        }
         let drain!: () => void
         const drained = new Promise<void>((resolve) => {
           drain = resolve

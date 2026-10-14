@@ -201,3 +201,62 @@ test("pipeWebBodyToNode ends and cancels the body when the client leaves during 
   expect([cancelled, sink.writes, sink.ended]).toEqual([true, 1, true])
   expect([sink.listenerCount("drain"), sink.listenerCount("close")]).toEqual([0, 0])
 })
+
+test("pipeWebBodyToNode cancels the body of a client that left before piping began", async () => {
+  // Node's response is destroyed and its `close` already fired; every write returns false.
+  let cancelled = false
+  let writes = 0
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode("data: x\n\n"))
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  const res = {
+    destroyed: true,
+    on() {},
+    once() {},
+    off() {},
+    write() {
+      writes++
+      return false
+    },
+    end() {},
+  }
+  const settled = await Promise.race([
+    pipeWebBodyToNode(body, res).then(() => true),
+    Bun.sleep(500).then(() => false),
+  ])
+  expect({ settled, cancelled, writes }).toEqual({ settled: true, cancelled: true, writes: 0 })
+})
+
+test("pipeWebBodyToNode stops at a write the destroyed response refuses", async () => {
+  let cancelled = false
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode("x"))
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  const res = {
+    destroyed: false,
+    on() {},
+    once() {},
+    off() {},
+    write() {
+      // The socket goes away as this write lands.
+      res.destroyed = true
+      return false
+    },
+    end() {},
+  }
+  const settled = await Promise.race([
+    pipeWebBodyToNode(body, res).then(() => true),
+    Bun.sleep(500).then(() => false),
+  ])
+  expect({ settled, cancelled }).toEqual({ settled: true, cancelled: true })
+})
