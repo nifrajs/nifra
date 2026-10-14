@@ -125,10 +125,12 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
 
   const queue: NifraSpan[] = []
   let timer: ReturnType<typeof setInterval> | undefined
-  // Spans ever queued, and spans since sent, failed or dropped. The queue is FIFO and drops its
-  // oldest, so every span queued before a flush is settled once `settled` reaches that flush's mark.
+  // Spans ever queued, numbered in order. The queue holds the newest `queue.length` of them and the
+  // batch in flight the run starting at `inFlightFrom`, so every span numbered below the older of the
+  // two has been sent, failed or dropped. A count of settled spans is not enough: a later span dropped
+  // on overflow would count toward an earlier flush whose batch is still exporting.
   let queued = 0
-  let settled = 0
+  let inFlightFrom: number | undefined
   const waiters: Array<{ readonly mark: number; readonly resolve: () => void }> = []
   let pumping = false
 
@@ -180,11 +182,11 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
     }
   }
 
-  const settle = (count: number): void => {
-    settled += count
+  const settle = (): void => {
+    const unsettled = inFlightFrom ?? queued - queue.length
     for (let i = waiters.length - 1; i >= 0; i--) {
       const waiter = waiters[i]
-      if (waiter === undefined || waiter.mark > settled) continue
+      if (waiter === undefined || waiter.mark > unsettled) continue
       waiters.splice(i, 1)
       waiter.resolve()
     }
@@ -193,9 +195,11 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   // One export in flight at a time; spans arriving meanwhile wait in the bounded queue.
   const pump = async (): Promise<void> => {
     while (queue.length > 0) {
+      inFlightFrom = queued - queue.length
       const batch = queue.splice(0, maxBatch)
       await send(batch)
-      settle(batch.length)
+      inFlightFrom = undefined
+      settle()
     }
   }
 
@@ -209,7 +213,7 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   }
 
   const flush = (): Promise<void> => {
-    if (settled === queued) return Promise.resolve()
+    if (inFlightFrom === undefined && queue.length === 0) return Promise.resolve()
     const done = new Promise<void>((resolve) => waiters.push({ mark: queued, resolve }))
     kick()
     return done
@@ -227,7 +231,7 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
       queued++
       if (queue.length > maxQueue) {
         queue.shift() // drop the oldest under sustained backpressure rather than grow unbounded
-        settle(1)
+        settle()
         report(new Error("otlp_queue_overflow_span_dropped"))
       }
       if (queue.length >= maxBatch) kick()

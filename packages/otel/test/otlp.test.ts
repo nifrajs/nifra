@@ -289,6 +289,31 @@ describe("otlpExporter", () => {
     expect(started).toBe(2)
   })
 
+  test("a later overflow drop does not resolve a flush whose batch is still exporting", async () => {
+    const releases: Array<() => void> = []
+    const exp = otlpExporter({
+      url: "http://c",
+      batch: { maxBatch: 1, maxQueue: 1 },
+      onError: () => {},
+      fetch: () =>
+        new Promise((resolve) => releases.push(() => resolve({ ok: true, status: 200 }))),
+    })
+    exp.onEnd(span({ name: "in flight" }))
+    let flushed = false
+    const flush = exp.flush().then(() => {
+      flushed = true
+    })
+    exp.onEnd(span({ name: "queued" }))
+    exp.onEnd(span({ name: "overflow" })) // drops "queued", which the flush never waited for
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(flushed).toBe(false)
+    releases.shift()?.()
+    await flush
+    expect(flushed).toBe(true)
+    releases.shift()?.()
+    await exp.flush()
+  })
+
   test("an export past timeoutMs is aborted, reported, and lets flush resolve", async () => {
     const errors: unknown[] = []
     let signal: AbortSignal | undefined
