@@ -67,7 +67,8 @@ export interface RunResult {
 export interface RunOptions {
   /** Origin used to resolve relative paths. Default `"http://nifra.local"`. */
   readonly origin?: string
-  /** Cap on captured body text, in characters. Default 65536. */
+  /** Cap on captured body text, in characters: a non-negative integer, or `Infinity` for none.
+   * Default 65536. */
   readonly maxBodyChars?: number
 }
 
@@ -206,6 +207,13 @@ export async function runRequest(
   }
 
   const start = now()
+  // NaN would compare false in every truncation test and read an endless body forever.
+  if (!(maxBody >= 0) || !(Number.isInteger(maxBody) || maxBody === Number.POSITIVE_INFINITY)) {
+    const error = new RangeError(
+      `@nifrajs/runner: maxBodyChars must be a non-negative integer or Infinity, got ${maxBody}`,
+    )
+    return { ...base, ok: false, durationMs: now() - start, error: toError(error) }
+  }
   let request: Request
   try {
     request = buildRequest(spec, origin)
