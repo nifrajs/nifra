@@ -327,4 +327,31 @@ describe("createCache - a store shared by several caches", () => {
       expect(await cache.get("k")).toBeUndefined()
     }
   })
+
+  test("a set waits for a load's write already sent for its key", async () => {
+    const memory = new MemoryCache()
+    const loadSent = Promise.withResolvers<void>()
+    const loadLands = Promise.withResolvers<void>()
+    // The load's write is held until the test lets it land, after the newer set has gone through.
+    const store: CacheStore = {
+      get: (key) => memory.get(key),
+      set: async (key, entry, tags) => {
+        if (entry.value === "loaded") {
+          loadSent.resolve()
+          await loadLands.promise
+        }
+        memory.set(key, entry, tags)
+      },
+      delete: (key) => memory.delete(key),
+      invalidateTag: (tag) => memory.invalidateTag(tag),
+      clear: () => memory.clear(),
+    }
+    const cache = createCache({ store })
+    const wrapped = cache.wrap("k", () => "loaded")
+    await loadSent.promise
+    const newer = cache.set("k", "newer")
+    loadLands.resolve()
+    await Promise.all([wrapped, newer])
+    expect(await cache.get<string>("k")).toBe("newer")
+  })
 })

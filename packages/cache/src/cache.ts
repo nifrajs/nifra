@@ -119,8 +119,8 @@ export function createCache(options: CacheOptions = {}): Cache {
   // A delete, tag invalidation, clear or newer set withdraws a load's right to store its result, so
   // a refresh that started before the invalidation cannot write the old value back. A store with
   // `fence`/`setIfFence` also refuses a load's write after such a change from another cache sharing
-  // it, and a delete, invalidation or clear waits for this cache's async writes it covers, so a store
-  // that applies requests out of order cannot land one of them after it.
+  // it, and a set, delete, invalidation or clear waits for this cache's async writes it covers, so a
+  // store that applies requests out of order cannot land one of them after it.
   const inflight = new Map<
     string,
     { readonly promise: Promise<unknown>; readonly tags: readonly string[]; withdraw(): void }
@@ -138,7 +138,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     readonly tags: readonly string[]
     readonly done: Promise<unknown>
   }>()
-  // Run a delete, invalidation or clear after every async write it covers has settled.
+  // Run a set, delete, invalidation or clear after every async write it covers has settled.
   const after = (
     matches: (key: string, tags: readonly string[]) => boolean,
     change: () => void | Promise<void>,
@@ -192,8 +192,11 @@ export function createCache(options: CacheOptions = {}): Cache {
   }
 
   function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
-    withdraw((flightKey) => flightKey === key)
-    return write(key, value, opts)
+    const matches = (writeKey: string): boolean => writeKey === key
+    withdraw(matches)
+    // A load's write already sent is past withdrawal, and a store that applies writes out of order
+    // could land it over this one.
+    return after(matches, () => write(key, value, opts))
   }
 
   function remove(key: string): Promise<void> {
