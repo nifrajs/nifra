@@ -85,7 +85,10 @@ export interface SessionManager<Data extends Record<string, unknown> = Record<st
   /** Persist the session: write the store (store mode) + the signed cookie. */
   commit(c: SessionContext, session: Session<Data>): Promise<void>
   /** End the session: drop the store record (store mode) + clear the cookie. In store mode the id is
-   * also marked revoked, so a request that loaded the session earlier cannot write it back. */
+   * also marked revoked, so a request that loaded the session earlier cannot write it back. The
+   * `session` passed in is emptied and detached: committing it later in the same request starts a
+   * new session holding only what was set since. A session object not passed in stays bound to the
+   * ended id, and committing it writes nothing. */
   destroy(c: SessionContext, session?: Session<Data>): Promise<void>
   /** Rotate the session id on the next commit (call on privilege change - login - to defend against
    * session fixation). Data is preserved; the old store record is dropped. */
@@ -317,10 +320,11 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   }
 
   const destroy = async (c: SessionContext, session?: Session<Data>): Promise<void> => {
+    const state = session === undefined ? undefined : states.get(session)
     if (store !== undefined) {
       let id: string | undefined
       if (session !== undefined) {
-        id = states.get(session)?.id
+        id = state?.id
       } else {
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
@@ -328,6 +332,14 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         if (raw !== undefined) id = (await unsign(raw)) ?? undefined
       }
       if (id !== undefined && !id.endsWith(REVOKED_SUFFIX)) await revoke(id)
+    }
+    // A later commit of this object must neither write the ended data back (cookie mode) nor vanish
+    // against the revocation marker (store mode).
+    if (state !== undefined) {
+      state.id = undefined
+      state.expiresAt = undefined
+      state.regenerate = false
+      state.data.clear()
     }
     c.set.deleteCookie(cookieName, {
       path: cookieOpts.path ?? "/",

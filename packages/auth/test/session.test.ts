@@ -266,6 +266,36 @@ describe("session - store mode", () => {
     expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
   })
 
+  test("committing a destroyed session later in the request starts a new one", async () => {
+    for (const store of [new MemorySessionStore(), undefined]) {
+      const sessions = createSessions<Data>({
+        secret: SECRET,
+        ...(store === undefined ? {} : { store }),
+        now: () => 1000,
+      })
+      const a = ctx()
+      const s = await sessions.get(a.context)
+      s.set("userId", "u1")
+      await sessions.commit(a.context, s)
+      const before = lastCookie(a.setCalls)
+
+      const d = ctx({ nifra_session: before })
+      const loaded = await sessions.get(d.context)
+      await sessions.destroy(d.context, loaded)
+      expect(loaded.isEmpty).toBe(true)
+      loaded.set("role", "user")
+      await sessions.commit(d.context, loaded)
+      const after = lastCookie(d.setCalls)
+
+      expect(after).not.toBe(before)
+      const next = await sessions.get(ctx({ nifra_session: after }).context)
+      expect(next.data).toEqual({ role: "user" })
+      if (store !== undefined) {
+        expect((await sessions.get(ctx({ nifra_session: before }).context)).isEmpty).toBe(true)
+      }
+    }
+  })
+
   test("destroy with no session still clears the cookie", async () => {
     const sessions = make()
     const d = ctx()
