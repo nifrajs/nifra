@@ -5,6 +5,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -252,6 +253,37 @@ describe("FileStorage filesystem containment", () => {
       await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
       await expect(storage.exists("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
       await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "a swapped ancestor never redirects a later operation into another tree",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "nifra-storage-ancestor-"))
+      tmpDirs.push(base)
+      for (const tree of ["first", "second"])
+        await mkdir(join(base, tree, "objects"), { recursive: true })
+      await writeFile(join(base, "second", "objects", "object.txt"), "planted")
+      await symlink(join(base, "first"), join(base, "current"), "dir")
+      const storage = new FileStorage(join(base, "current", "objects"))
+      await storage.put("object.txt", "mine")
+
+      // The link above the root is repointed: the storage keeps working in the tree it resolved.
+      await rm(join(base, "current"))
+      await symlink(join(base, "second"), join(base, "current"), "dir")
+      expect(new TextDecoder().decode((await storage.get("object.txt"))?.body)).toBe("mine")
+      await storage.put("object.txt", "still mine")
+      expect(await readFile(join(base, "second", "objects", "object.txt"), "utf8")).toBe("planted")
+
+      // The resolved directory itself is renamed away and replaced: every operation fails closed.
+      await rename(join(base, "first"), join(base, "moved"))
+      await mkdir(join(base, "first", "objects"), { recursive: true })
+      await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.put("object.txt", "x")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      expect(await readFile(join(base, "moved", "objects", "object.txt"), "utf8")).toBe(
+        "still mine",
+      )
     },
   )
 

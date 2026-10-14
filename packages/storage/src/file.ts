@@ -72,20 +72,68 @@ const isMissing = (error: unknown): boolean => {
 const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => {})
 
 export class FileStorage implements StorageAdapter {
-  private readonly root: string
-  private readonly metadataRoot: string
-  private readonly legacyMetadataRoot: string
-  private readonly stagingRoot: string
+  private root = ""
+  private metadataRoot = ""
+  private legacyMetadataRoot = ""
+  private stagingRoot = ""
+  /** The directory holding the root and its bookkeeping, by real path and identity, once resolved. */
+  private anchor:
+    | Promise<{ readonly path: string; readonly dev: number; readonly ino: number }>
+    | undefined
 
   constructor(root: string) {
-    this.root = resolve(root)
+    this.placeRoot(resolve(root))
+  }
+
+  private placeRoot(root: string): void {
+    this.root = root
     // Keep bookkeeping outside the object tree so every otherwise-safe key remains usable, including
     // `.nifra-metadata/*`, and list() never needs a reserved-prefix exception. Sidecars mirror the
     // object paths exactly, so two keys clash there only where their objects would clash anyway.
-    const state = `${this.root}.nifra-state`
+    const state = `${root}.nifra-state`
     this.metadataRoot = join(state, "metadata")
     this.stagingRoot = join(state, "staging")
-    this.legacyMetadataRoot = `${this.root}.nifra-metadata`
+    this.legacyMetadataRoot = `${root}.nifra-metadata`
+  }
+
+  /**
+   * Resolve the directory holding the root (or its nearest existing ancestor) once, then work beneath
+   * that real path and prove before every operation that it is still the same directory. Swapping an
+   * ancestor, for a symbolic link or by a rename from whoever can write above the root, then cannot
+   * redirect a later read, write or delete into another tree: the operation fails closed instead.
+   */
+  private async pinRoot(key: string): Promise<void> {
+    this.anchor ??= this.resolveAnchor().catch((error: unknown) => {
+      this.anchor = undefined
+      throw error
+    })
+    const anchor = await this.anchor
+    const [real, info] = await Promise.all([realpath(anchor.path), lstat(anchor.path)]).catch(
+      () => [undefined, undefined] as const,
+    )
+    if (real !== anchor.path || info?.dev !== anchor.dev || info.ino !== anchor.ino) {
+      throw new StorageKeyError(
+        `storage key ${JSON.stringify(key)} is refused: the directory holding the storage root moved`,
+      )
+    }
+  }
+
+  private async resolveAnchor(): Promise<{ path: string; dev: number; ino: number }> {
+    const missing = [basename(this.root)]
+    let existing = dirname(this.root)
+    for (;;) {
+      try {
+        const path = await realpath(existing)
+        const info = await lstat(path)
+        this.placeRoot(join(path, ...missing))
+        return { path, dev: info.dev, ino: info.ino }
+      } catch (error) {
+        const parent = dirname(existing)
+        if (!isMissing(error) || parent === existing) throw error
+        missing.unshift(basename(existing))
+        existing = parent
+      }
+    }
   }
 
   private metadataPathFor(key: string): string {
@@ -394,6 +442,7 @@ export class FileStorage implements StorageAdapter {
   }
 
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     await this.writeContained(this.root, path, key, toBytes(data))
     const metadataPath = this.metadataPathFor(key)
@@ -414,6 +463,7 @@ export class FileStorage implements StorageAdapter {
   }
 
   async get(key: string): Promise<StorageObject | null> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     const bodyHandle = await this.openObject(this.root, path, key)
     if (bodyHandle === null) return null
@@ -438,6 +488,7 @@ export class FileStorage implements StorageAdapter {
   }
 
   async delete(key: string): Promise<void> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     const metadataPath = this.metadataPathFor(key)
     await Promise.all([
@@ -476,6 +527,7 @@ export class FileStorage implements StorageAdapter {
   }
 
   async exists(key: string): Promise<boolean> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     const handle = await this.openObject(this.root, path, key)
     if (handle === null) return false
@@ -527,6 +579,7 @@ export class FileStorage implements StorageAdapter {
 
   async list(options: ListOptions = {}): Promise<string[]> {
     const prefix = options.prefix ?? ""
+    await this.pinRoot(prefix)
     const limit = options.limit ?? Number.POSITIVE_INFINITY
     // Start below the directories the prefix already names, and stop once `limit` keys are found:
     // the walk visits entries in key order, so the first keys found are the first keys sorted.
