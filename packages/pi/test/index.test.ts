@@ -309,6 +309,50 @@ process.stdin.on("data", (chunk) => {
     await backend.close("stale-signal")
   })
 
+  test("records a cancelled run sends late never reach the next turn", async () => {
+    // Pi ends an aborted run on its own schedule; here its leftovers land after the next send.
+    // "answer" ends the aborted run with an abort response, "late" ends it after the next prompt ran.
+    const lateRecords = (mode: "end" | "answer" | "late") => `
+let buffer = ""
+function emit(value) { process.stdout.write(JSON.stringify(value) + "\\n") }
+function finish(text) {
+  emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } })
+  emit({ type: "agent_end" })
+}
+process.stdin.on("data", (chunk) => {
+  buffer += String(chunk)
+  for (;;) {
+    const newline = buffer.indexOf("\\n")
+    if (newline === -1) break
+    const command = JSON.parse(buffer.slice(0, newline))
+    buffer = buffer.slice(newline + 1)
+    if (command.type === "prompt" && command.message === "new") finish("new")
+    if (command.type === "abort" && "${mode}" === "answer") {
+      emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "old" } })
+      emit({ type: "response", command: "abort", success: true })
+    } else if (command.type === "abort" && "${mode}" === "late") setTimeout(() => finish("old"), 50)
+    else if (command.type === "abort") finish("old")
+  }
+})
+`
+    for (const mode of ["end", "answer", "late"] as const) {
+      const backend = new PiBackend({
+        command: process.execPath,
+        rpcArgs: ["-e", lateRecords(mode)],
+      })
+      await backend.createSession({ cwd: process.cwd(), sessionId: "late-records" })
+      const first = collect(backend.send({ sessionId: "late-records", message: "old" }))
+      const cancelling = backend.cancel("late-records")
+      const second = collect(backend.send({ sessionId: "late-records", message: "new" }))
+      await Promise.all([first, cancelling])
+      const texts = (await second).flatMap((event) =>
+        event.type === "assistant.message" || event.type === "assistant.delta" ? [event.text] : [],
+      )
+      expect(texts).toEqual(["new"])
+      await backend.close("late-records")
+    }
+  })
+
   test("close racing a process reload never resurrects the session", async () => {
     const fakeRestart = `
 process.stdin.on("data", () => {})
