@@ -115,9 +115,10 @@ test("all() reuses parsed entries until files change", async () => {
 const titleSchema = {
   "~standard": {
     validate(value) {
-      const data = value as { title?: unknown }
-      return typeof data.title === "string"
-        ? { value: { title: data.title } }
+      const title =
+        typeof value === "object" && value !== null && "title" in value ? value.title : undefined
+      return typeof title === "string"
+        ? { value: { title } }
         : { issues: [{ message: "title required" }] }
     },
   },

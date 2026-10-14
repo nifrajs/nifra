@@ -268,11 +268,10 @@ describe("session - store mode", () => {
 
   test("committing a destroyed session later in the request starts a new one", async () => {
     for (const store of [new MemorySessionStore(), undefined]) {
-      const sessions = createSessions<Data>({
-        secret: SECRET,
-        ...(store === undefined ? {} : { store }),
-        now: () => 1000,
-      })
+      const sessions =
+        store === undefined
+          ? createSessions<Data>({ secret: SECRET, now: () => 1000 })
+          : createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
       const a = ctx()
       const s = await sessions.get(a.context)
       s.set("userId", "u1")
