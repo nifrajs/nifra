@@ -65,6 +65,19 @@ describe("negotiateLocale", () => {
     const header = `${Array.from({ length: 5000 }, (_, i) => `xx-${i};q=0.9`).join(",")},de;q=0.1`
     expect(negotiateLocale(req({ "accept-language": header }), opts)).toBe("de")
   })
+
+  test("a 16 KB header against 40 locales costs a map lookup per range, not a scan", () => {
+    const locales = Array.from({ length: 40 }, (_, i) => `l${i}-R${i}`)
+    const ranges = Array.from({ length: 1333 }, (_, i) => `x${i % 99}-Y;q=0.${i % 9}`)
+    const header = `${ranges.join(",").slice(0, 16_000)},l39-r39;q=0.01`
+    const options = { locales, defaultLocale: "l0-R0" }
+    const started = performance.now()
+    for (let i = 0; i < 100; i++) {
+      expect(negotiateLocale(req({ "accept-language": header }), options)).toBe("l39-R39")
+    }
+    // 100 negotiations took 445 ms when every range was sorted and matched against every locale.
+    expect(performance.now() - started).toBeLessThan(200)
+  })
 })
 
 describe("resolveLocale", () => {
