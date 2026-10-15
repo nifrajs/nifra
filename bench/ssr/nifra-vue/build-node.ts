@@ -4,6 +4,7 @@
  *   bun run bench/ssr/nifra-vue/build-node.ts
  */
 import { mkdirSync, rmSync } from "node:fs"
+import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
 
 const dir = import.meta.dir
 const dist = `${dir}/dist-node`
@@ -22,6 +23,7 @@ const client = await Bun.build({
   entrypoints: [`${dir}/client.ts`],
   outdir: dist,
   target: "browser",
+  plugins: [vueBunPlugin("dom")],
   conditions: ["bun", "browser"],
   naming: "client.js",
   minify: true,
@@ -32,6 +34,7 @@ const srv = await Bun.build({
   entrypoints: [`${dir}/server-node.ts`],
   outdir: dist,
   target: "node",
+  plugins: [vueBunPlugin("ssr")],
   conditions: nodeSourceConditions,
   minify: true,
   define,

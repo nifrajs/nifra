@@ -1,7 +1,7 @@
 import { renderPage } from "@nifrajs/web"
 import { vueAdapter } from "@nifrajs/web-vue"
 import { catalogItems } from "../shared/catalog.ts"
-import { App } from "./app.ts"
+import App from "./App.vue"
 
 /** The whole app, as code you would write yourself: one fetch handler that calls nifra's renderer. */
 export function catalogHandler(clientJs: string): (req: Request) => Response | Promise<Response> {

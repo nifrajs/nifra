@@ -1,3 +1,5 @@
+import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
+
 const define = {
   "process.env.NODE_ENV": '"production"',
   __VUE_OPTIONS_API__: "true",
@@ -9,6 +11,7 @@ const client = await Bun.build({
   entrypoints: [`${import.meta.dir}/client.ts`],
   outdir: `${import.meta.dir}/dist`,
   target: "browser",
+  plugins: [vueBunPlugin("dom")],
   conditions: ["bun", "browser"],
   naming: "client.js",
   minify: true,
@@ -19,6 +22,7 @@ const server = await Bun.build({
   entrypoints: [`${import.meta.dir}/server.ts`],
   outdir: import.meta.dir,
   target: "node",
+  plugins: [vueBunPlugin("ssr")],
   conditions: ["node"],
   naming: "server-bun.js",
   minify: true,
