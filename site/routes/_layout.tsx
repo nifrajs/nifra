@@ -2,17 +2,24 @@ import type { ReactNode } from "react"
 import fonts from "../shared/data/fonts.json"
 
 // The hero demo plays once on load and again on Replay. A CSS animation only restarts when its name
-// changes, so the two autoplay radios get identical rules under different keyframe names.
+// changes, so the two autoplay radios get identical rules under different keyframe names. Frame 1
+// starts opaque with its lines in place, so the figure never paints as an empty box.
 const demoAutoplay = (id: string, k: string): string => `
   #${id}:checked ~ .demo-screen .demo-frame {
     animation: demo-frame-${k} var(--demo-step) linear calc(var(--n) * var(--demo-step)) forwards;
   }
+  #${id}:checked ~ .demo-screen .demo-frame[data-step="1"] { animation-name: demo-lead-${k}; }
   #${id}:checked ~ .demo-screen .demo-frame[data-step="4"] { animation-name: demo-hold-${k}; }
   #${id}:checked ~ .demo-screen .demo-line {
     animation: demo-line-${k} 0.32s ease-out calc(var(--n) * var(--demo-step) + 0.3s + var(--i) * 0.11s) both;
   }
+  #${id}:checked ~ .demo-screen .demo-frame[data-step="1"] .demo-line { animation: none; }
   #${id}:checked ~ .demo-steps .demo-step::after {
     animation: demo-fill-${k} var(--demo-step) linear calc(var(--n) * var(--demo-step)) forwards;
+  }
+  @keyframes demo-lead-${k} {
+    0%, 95% { opacity: 1; visibility: visible; }
+    100% { opacity: 0; visibility: hidden; }
   }
   @keyframes demo-frame-${k} {
     0% { opacity: 0; visibility: visible; }
@@ -187,17 +194,17 @@ const css = `
     --atmo-glow: 20%;
   }
 
-  /* Theme toggle (top-right): sun in light, moon in dark. */
-  .theme-toggle {
+  /* Theme toggle (top-right): sun in light, moon in dark. The phone-width menu button shares its box. */
+  .theme-toggle, .nav-menu {
     display: inline-grid; place-items: center; width: 36px; height: 36px; margin-left: 4px;
     border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--surface);
     color: var(--muted); cursor: pointer;
     flex: 0 0 auto;
     transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
   }
-  .theme-toggle:hover { color: var(--fg); border-color: var(--color-ink-3); background: var(--panel); }
-  .theme-toggle:active { background: var(--panel-2); }
-  .theme-toggle svg { width: 18px; height: 18px; }
+  .theme-toggle:hover, .nav-menu:hover { color: var(--fg); border-color: var(--color-ink-3); background: var(--panel); }
+  .theme-toggle:active, .nav-menu:active { background: var(--panel-2); }
+  .theme-toggle svg, .nav-menu svg { width: 18px; height: 18px; }
   .theme-toggle .moon { display: none; }
   :root[data-theme="dark"] .theme-toggle .sun { display: none; }
   :root[data-theme="dark"] .theme-toggle .moon { display: block; }
@@ -288,6 +295,13 @@ const css = `
   nav.top a:active { background: var(--panel-2); }
   nav.top a.icon-link { display: inline-flex; align-items: center; padding: 8px; color: var(--muted); }
   nav.top a.icon-link svg { width: 20px; height: 20px; display: block; }
+  /* A popover only so phone widths can fold it behind .nav-menu; elsewhere its links sit in the bar.
+     Declaring display here also lifts the UA's display:none from a closed popover. */
+  .nav-links { display: contents; }
+  .nav-menu { display: none; }
+  .nav-menu .menu-close { display: none; }
+  nav.top:has(.nav-links:popover-open) .nav-menu .menu-open { display: none; }
+  nav.top:has(.nav-links:popover-open) .nav-menu .menu-close { display: block; }
   .nowrap { white-space: nowrap; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
@@ -640,6 +654,26 @@ const css = `
     nav.top a.icon-link { padding: 8px 12px 8px 0; }
     /* Lifted onto the logo row: left in the flow it lands alone on a row of its own once the links wrap. */
     .theme-toggle { position: absolute; top: 8px; right: 0; margin: 0; }
+  }
+  @media (max-width: 620px) {
+    /* One row again: the links fold into a popover opened by .nav-menu, dropped just under the bar. */
+    header.site .wrap { height: 60px; padding: 0; flex-direction: row; align-items: center; gap: 8px; }
+    nav.top { width: auto; flex-wrap: nowrap; gap: 8px; }
+    .theme-toggle, .nav-menu { position: static; margin: 0; }
+    .nav-menu { display: inline-grid; }
+    .nav-links:not(:popover-open) { display: none; }
+    .nav-links:popover-open {
+      position: absolute; inset: 60px 16px auto; width: auto; height: auto; margin: 0;
+      display: flex; flex-wrap: wrap; gap: 4px; padding: 8px;
+      color: inherit; background: var(--surface);
+      border: 1px solid var(--line-2); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+    }
+    nav.top .nav-links a { flex: 1 0 100%; padding: 12px; font-size: 15px; }
+    nav.top .nav-links a:hover { background: var(--hover); }
+    nav.top .nav-links a.icon-link { flex: 0 0 auto; padding: 12px; }
+  }
+  @media (max-width: 360px) {
+    .logo-badge { display: none; }
   }
   @media (max-width: 620px) {
     .wrap { width: min(calc(100% - 32px), 1140px); }
@@ -1835,36 +1869,38 @@ export default function Layout(props: { children?: ReactNode }) {
             <span className="logo-badge">Built in Nifra</span>
           </a>
           <nav className="top" aria-label="Primary navigation">
-            <a href="/docs">Docs</a>
-            <a href="/play">Playground</a>
-            <a href="/frameworks">Frameworks</a>
-            <a href="/benchmarks">Benchmarks</a>
-            <a href="/blog">Blog</a>
-            <a href="/docs/security">Security</a>
-            <a
-              className="icon-link"
-              href="https://github.com/nifrajs/nifra"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Nifra on GitHub"
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.69.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z" />
-              </svg>
-              <span className="sr-only">GitHub</span>
-            </a>
-            <a
-              className="icon-link"
-              href="https://www.npmjs.com/package/nifra"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Nifra on npm"
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M0 7.334v8h6.666v1.334H12v-1.334h12v-8zm6.666 6.665H5.334v-4H3.999v4H1.335V8.667h5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669zm12.001 0h-1.33v-4h-1.336v4h-1.335v-4h-1.33v4h-2.671V8.667h8.002z" />
-              </svg>
-              <span className="sr-only">npm</span>
-            </a>
+            <div className="nav-links" id="nav-links" popover="auto">
+              <a href="/docs">Docs</a>
+              <a href="/play">Playground</a>
+              <a href="/frameworks">Frameworks</a>
+              <a href="/benchmarks">Benchmarks</a>
+              <a href="/blog">Blog</a>
+              <a href="/docs/security">Security</a>
+              <a
+                className="icon-link"
+                href="https://github.com/nifrajs/nifra"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Nifra on GitHub"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.69.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z" />
+                </svg>
+                <span className="sr-only">GitHub</span>
+              </a>
+              <a
+                className="icon-link"
+                href="https://www.npmjs.com/package/nifra"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Nifra on npm"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M0 7.334v8h6.666v1.334H12v-1.334h12v-8zm6.666 6.665H5.334v-4H3.999v4H1.335V8.667h5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669zm12.001 0h-1.33v-4h-1.336v4h-1.335v-4h-1.33v4h-2.671V8.667h8.002z" />
+                </svg>
+                <span className="sr-only">npm</span>
+              </a>
+            </div>
             <button
               id="theme-toggle"
               className="theme-toggle"
@@ -1894,6 +1930,36 @@ export default function Layout(props: { children?: ReactNode }) {
                 aria-hidden="true"
               >
                 <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+              </svg>
+            </button>
+            <button
+              className="nav-menu"
+              type="button"
+              popoverTarget="nav-links"
+              aria-controls="nav-links"
+              aria-label="Menu"
+            >
+              <svg
+                className="menu-open"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              <svg
+                className="menu-close"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M6 6l12 12M18 6L6 18" />
               </svg>
             </button>
           </nav>
