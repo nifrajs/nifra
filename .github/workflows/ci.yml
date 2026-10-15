@@ -213,17 +213,6 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      # The SDK test compiles a generated net/http client. On a fresh runner nearly all of that is
-      # compiling the standard library it imports (16-35 s here, once past the test's 90 s timeout),
-      # so build those packages into the Go cache outside any test timeout.
-      - name: Warm the Go build cache
-        run: go build bytes encoding/json fmt io net/http net/url strings
-
-      # The SDK tests also start python3, and its first start on a fresh runner is slow too (2-10 s
-      # here, once past the tests' 30 s timeout). Pay it here, loading what the generated client imports.
-      - name: Warm Python
-        run: python3 -c "import dataclasses, json, py_compile, types, typing, urllib.error, urllib.parse, urllib.request"
-
       - name: Test
         # Bun 1.3.x on Windows can panic with an internal integer overflow after the entire monorepo
         # suite shares one process (~0.8 GB RSS in the failed run). This runs the exact same test dirs

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -15,6 +15,34 @@ import {
 const document = toOpenAPI(server().get("/users/:id", () => ({ ok: true }))) as OpenAPIDocument
 
 describe("SDK generation", () => {
+  // A fresh CI runner pays a cold start the first time it runs python3 (2-30 s) and compiles the
+  // standard library the Go client imports (15-90 s). Neither is what these tests check, so both are
+  // paid here, under a budget of their own, by loading each generated client once.
+  beforeAll(async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-warm-"))
+    try {
+      const warmups: Promise<number>[] = []
+      if (Bun.which("python3") !== null) {
+        await Bun.write(join(dir, "nifra_sdk.py"), renderSdk(document, "python"))
+        const load = "import sys; sys.path.insert(0, sys.argv[1]); import py_compile, nifra_sdk"
+        warmups.push(
+          Bun.spawn(["python3", "-c", load, dir], { stdout: "ignore", stderr: "ignore" }).exited,
+        )
+      }
+      if (Bun.which("go") !== null) {
+        await Bun.write(join(dir, "go.mod"), "module example.com/nifra-sdk\n\ngo 1.22\n")
+        await Bun.write(join(dir, "nifra_sdk.go"), renderSdk(document, "go"))
+        warmups.push(
+          Bun.spawn(["go", "build", "./..."], { cwd: dir, stdout: "ignore", stderr: "ignore" })
+            .exited,
+        )
+      }
+      await Promise.all(warmups)
+    } finally {
+      await removeReleasedDirectory(dir)
+    }
+  }, 300_000)
+
   test("renders a usable standard-library Python client", () => {
     const source = renderSdk(document, "python")
     expect(source).toContain("class Client:")
