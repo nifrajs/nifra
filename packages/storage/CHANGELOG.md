@@ -9,6 +9,7 @@
 - 654d763: `FileStorage` pins the directory holding its root as soon as that directory exists. When the root's parent was missing at first use, the pin stayed on a higher ancestor, so swapping a directory the first put created for a link redirected later reads and writes into another tree; such an operation now fails with `StorageKeyError`.
 - 32774b7: Concurrent puts of one key from two `FileStorage` instances (two processes) behave as last writer wins. A put whose rename was followed by the other's failed with a false "crosses a symbolic link" error, about 4% of the time under contention. On a root that is its own mount point, where the body is written in place and keeps its inode, the sidecar now also names the body by its SHA-256, so a read never serves one put's body with the other put's content type and metadata (19 of 300 contended reads did).
 - 7881245: On Windows, two `FileStorage` puts of one key at once both succeed again, last writer wins: Windows refuses a rename onto a file while another rename replaces it (`EPERM`, `EACCES`, `EBUSY`), so that rename is now retried for up to about 0.6 s.
+- e287d3e: No behavior change: the Windows rename retry is a helper of its own, tested on every platform.
 
 ## 5.2.1
 
