@@ -104,6 +104,9 @@ export async function stopGroupAndWait(
   // The leader is reaped once `exited` settles; a member that survived it keeps the group alive.
   while (OWN_PROCESS_GROUP && Date.now() < deadline && groupAlive(proc.pid)) await Bun.sleep(25)
   signalProcessGroup(proc, "SIGKILL")
+  // Reap the leader before this process takes the signal: a killed child it never waited for stays in
+  // the process table until its new parent gets to it.
+  await Promise.race([proc.exited, Bun.sleep(graceMs)])
 }
 
 function groupAlive(pid: number): boolean {
