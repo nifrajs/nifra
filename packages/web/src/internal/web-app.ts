@@ -259,7 +259,8 @@ export interface CreateWebAppOptions<Env = unknown> {
    * Pages a self-hosted build prerendered, answered from their file instead of rendered. `nifra build
    * --target bun|node` wires this from its prerender pass. The page is served from the page route,
    * so `use` middleware and every request hook run first; a request with a query string, a navigation
-   * data or component request, or a draft-mode visitor renders on demand as before.
+   * data or component request, or a draft-mode visitor renders on demand as before. Ignored with
+   * {@link nonce}, whose documents need a nonce minted for their request.
    */
   readonly prerenderedPages?: PrerenderedPages
   /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:
@@ -533,8 +534,9 @@ export function createWebApp<Env = unknown>(
     cacheChannel,
   })
 
+  // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.
   const prerendered =
-    options.prerenderedPages === undefined
+    options.prerenderedPages === undefined || options.nonce !== undefined
       ? undefined
       : servePrerenderedPages(options.prerenderedPages, options.draftSecret)
   let ownsRootCatchAll = false

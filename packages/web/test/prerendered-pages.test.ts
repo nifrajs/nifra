@@ -10,7 +10,11 @@ import {
   prerenderedPageReader,
   type RenderAdapter,
 } from "../src/index.ts"
-import { prerenderedDocumentHeaders } from "../src/internal/prerendered-pages.ts"
+import {
+  prerenderedDocumentHeaders,
+  servablePrerenderedPages,
+} from "../src/internal/prerendered-pages.ts"
+import { createNonceResolver } from "../src/nonce.ts"
 import { DATA_HEADER } from "../src/router.ts"
 
 const stub: RenderAdapter = {
@@ -79,7 +83,50 @@ describe("prerenderedDocumentHeaders", () => {
   })
 })
 
+describe("servablePrerenderedPages", () => {
+  const ok = { "content-language": "en" }
+
+  test("keys each page by the pathname of the request that rendered it", () => {
+    expect(
+      servablePrerenderedPages([
+        { path: "/", file: "index.html", serveHeaders: ok },
+        { path: "//x", file: "x/index.html", serveHeaders: ok },
+        { path: "/blog/caf%C3%A9", file: "blog/café/index.html", serveHeaders: ok },
+        { path: "/private", file: "private/index.html" },
+      ]),
+    ).toEqual({
+      "/": { file: "index.html", headers: ok },
+      // Not "/": parsed against a base, "//x" would name a host and key the root page.
+      "//x": { file: "x/index.html", headers: ok },
+      "/blog/caf%C3%A9": { file: "blog/café/index.html", headers: ok },
+    })
+  })
+
+  test("two paths written to one file are both left to render on demand", () => {
+    expect(
+      servablePrerenderedPages([
+        { path: "/x", file: "x/index.html", serveHeaders: ok },
+        { path: "//x", file: "x/index.html", serveHeaders: ok },
+        { path: "/About", file: "About/index.html", serveHeaders: ok },
+        { path: "/about", file: "about/index.html", serveHeaders: ok },
+        { path: "/kept", file: "kept/index.html", serveHeaders: ok },
+      ]),
+    ).toEqual({ "/kept": { file: "kept/index.html", headers: ok } })
+  })
+})
+
 describe("createWebApp prerenderedPages", () => {
+  test("an app with a nonce renders every page on demand", async () => {
+    const app = createWebApp({
+      adapter: stub,
+      manifest,
+      clientEntry: "/c.js",
+      nonce: createNonceResolver(),
+      prerenderedPages: pagesWith(),
+    })
+    expect(await (await app.fetch(new Request("http://x/"))).text()).toContain("<p>rendered</p>")
+  })
+
   test("a plain document request is answered from the file with the replayed headers", async () => {
     const app = createWebApp({
       adapter: stub,

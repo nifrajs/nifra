@@ -5579,7 +5579,7 @@ _No named exports (side-effect entrypoint)._
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
 - **ServerPrerenderedPage** _(interface)_ - `interface ServerPrerenderedPage`
-  One page a self-hosting build prerendered: its file under `_prerendered/` and the headers it is served with (a prerender entry's `file` and `serveHeaders`).
+  One page a self-hosting build prerendered: its file and the headers it is served with.
 - **SizeReport** _(interface)_ - `interface SizeReport`
   A whole build's size report - every chunk (largest first) + the totals.
 - **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`

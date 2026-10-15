@@ -1965,8 +1965,8 @@ the server answers each from its file instead of rendering it. The file is serve
 page route, so `use` middleware still runs first and a gate in front of the page
 still applies. A request with a query string, a navigation data request, or a draft-mode
 visitor renders on demand. So does a page whose build-time render set a cookie, was private or
-`no-store` (every `nonce` page is), or varied on a request header. The
-Vite pipeline and the edge targets render every page on demand.
+`no-store`, or varied on a request header, and every page of an app with a
+`nonce`. The Vite pipeline and the edge targets render every page on demand.
 
 ### ISR - cache with stale-while-revalidate
 

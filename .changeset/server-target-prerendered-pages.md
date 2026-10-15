@@ -11,7 +11,8 @@ These keep rendering on demand:
 - a request with a query string
 - a navigation data or server-component request
 - a draft-mode visitor
-- a page whose build-time render set a cookie, was `private` or `no-store` (every `nonce` page is), or varied on a request header.
+- a page whose build-time render set a cookie, was `private` or `no-store`, or varied on a request header
+- every page of an app with a `nonce`, whose documents need a nonce minted per request.
 
 On Node, the SSR benchmark's prerendered catalog page is served about 2.1x (Svelte) to 2.6x (Vue) faster than rendering it on each request.
 

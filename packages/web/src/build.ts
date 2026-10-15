@@ -60,6 +60,10 @@ import {
   assertIdentityParity,
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
+import {
+  type ServerPrerenderedPage,
+  servablePrerenderedPages,
+} from "./internal/prerendered-pages.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
 import { isHiddenPublicPath, publicUrlPath } from "./internal/public-url.ts"
 import {
@@ -129,6 +133,8 @@ interface BunMetafile {
   >
 }
 
+// A page a bun or node build answers from its file (`generateServerEntry`'s `prerenderedPages`).
+export type { ServerPrerenderedPage } from "./internal/prerendered-pages.ts"
 // The secret scan every client build, `public/` copy and prerender runs.
 export type { SecretExemption, SecretRule } from "./internal/secret-scan.ts"
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
@@ -1303,13 +1309,6 @@ const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>>
 /** Where a self-hosting build writes its prerendered pages, beside `server.js`. */
 const PRERENDERED_DIR = "_prerendered"
 
-/** One page a self-hosting build prerendered: its file under `_prerendered/` and the headers it is
- * served with (a prerender entry's `file` and `serveHeaders`). */
-export interface ServerPrerenderedPage {
-  readonly file: string
-  readonly headers: Readonly<Record<string, string>>
-}
-
 /**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
@@ -1883,15 +1882,7 @@ async function prerenderForServer(
     )
     return {}
   }
-  const pages: Record<string, ServerPrerenderedPage> = {}
-  for (const entry of result.prerendered) {
-    if (entry.serveHeaders === undefined) continue
-    pages[new URL(entry.path, "http://localhost").pathname] = {
-      file: entry.file,
-      headers: entry.serveHeaders,
-    }
-  }
-  return pages
+  return servablePrerenderedPages(result.prerendered)
 }
 
 /** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */

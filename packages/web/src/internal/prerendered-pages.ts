@@ -50,6 +50,37 @@ export function prerenderedDocumentHeaders(
   return replayed
 }
 
+/** One page a self-hosting build prerendered: its file and the headers it is served with. */
+export interface ServerPrerenderedPage {
+  readonly file: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+/**
+ * The prerendered pages a server may answer from their file, keyed by the pathname of the request that
+ * rendered them. Left out: a render specific to its request, and two paths written to one file (`/x`
+ * and `//x`, or `/A` and `/a` on a case-insensitive disk), where only the last render is on disk.
+ */
+export function servablePrerenderedPages(
+  entries: readonly {
+    readonly path: string
+    readonly file: string
+    readonly serveHeaders?: Readonly<Record<string, string>>
+  }[],
+): Record<string, ServerPrerenderedPage> {
+  const writes = new Map<string, number>()
+  for (const { file } of entries) {
+    writes.set(file.toLowerCase(), (writes.get(file.toLowerCase()) ?? 0) + 1)
+  }
+  const pages: Record<string, ServerPrerenderedPage> = {}
+  for (const { path, file, serveHeaders } of entries) {
+    if (serveHeaders === undefined || writes.get(file.toLowerCase()) !== 1) continue
+    // Concatenated as prerenderRoutes requested it: `new URL("//x", base)` would read a host.
+    pages[new URL(`http://localhost${path}`).pathname] = { file, headers: serveHeaders }
+  }
+  return pages
+}
+
 /**
  * Wrap a page route's GET handler so a plain document request for a prerendered path is answered from
  * its file. Anything a file cannot answer the way a render would renders on demand: a query string, a
