@@ -85,6 +85,28 @@ const isMissing = (error: unknown): boolean => {
 /** Remove a staging file that may already be gone. */
 const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => {})
 
+// Windows refuses a rename onto a file while another rename replaces it or a reader holds it open
+// (EPERM, EACCES, EBUSY). Two puts of one key race there, so the rename is retried briefly.
+const WINDOWS_RENAME_BUSY: ReadonlySet<unknown> = new Set(["EPERM", "EACCES", "EBUSY"])
+const RENAME_RETRY_DELAYS_MS = [1, 2, 4, 8, 16, 32, 64, 100, 100, 100, 100, 100]
+
+async function renameOver(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await rename(from, to)
+    } catch (error) {
+      const delay = RENAME_RETRY_DELAYS_MS[attempt]
+      if (
+        process.platform !== "win32" ||
+        delay === undefined ||
+        !WINDOWS_RENAME_BUSY.has(errorCode(error))
+      )
+        throw error
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+  }
+}
+
 export class FileStorage implements StorageAdapter {
   private root = ""
   private metadataRoot = ""
@@ -380,7 +402,7 @@ export class FileStorage implements StorageAdapter {
       await this.assertNoSymlinkPath(base, path, key)
       const baseBefore = await lstat(base)
       try {
-        await rename(staged.path, path)
+        await renameOver(staged.path, path)
       } catch (error) {
         // A root that is its own mount point cannot take a rename from beside it.
         if (errorCode(error) !== "EXDEV") throw error
