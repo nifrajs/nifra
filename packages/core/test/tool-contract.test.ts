@@ -306,6 +306,38 @@ describe("typed tool contracts", () => {
     expect(executions).toBe(1)
   })
 
+  test("an executor that commits and then throws or rejects runs once across same-key retries", async () => {
+    for (const fail of [
+      () => {
+        throw new Error("response lost after commit")
+      },
+      () => Promise.reject(new Error("response lost after commit")),
+    ]) {
+      let effects = 0
+      const tool = defineTool({
+        name: "orders.charge",
+        description: "Charge an order.",
+        input,
+        output,
+        capability: "orders.charge",
+        idempotency: { scope: "request", key: (value) => value.name },
+        execute: () => {
+          effects += 1
+          return fail()
+        },
+      })
+      const options = {
+        capabilities: ["orders.charge"],
+        idempotency: new MemoryToolIdempotencyStore(),
+      }
+      const first = await executeTool(tool, { name: "a" }, options)
+      const retry = await executeTool(tool, { name: "a" }, options)
+      expect(first.ok ? undefined : first.error.code).toBe("execution_failed")
+      expect(retry.ok ? undefined : retry.error.code).toBe("idempotency_duplicate")
+      expect(effects).toBe(1)
+    }
+  })
+
   test("a pending tool key lapses after its lease unless renewed, and a completed one holds for ttlMs", () => {
     let now = 0
     const store = new MemoryToolIdempotencyStore({ ttlMs: 1000, now: () => now })
