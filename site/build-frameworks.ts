@@ -13,8 +13,8 @@
  * Build-isolation rule (the load-bearing constraint): Solid's Babel plugin and Svelte's compiler plugin
  * each match a broad file filter (`.tsx` / `.svelte`) and WOULD transform the React/Preact `.tsx` if they
  * shared a `Bun.build`. Plugins do not leak across separate `Bun.build` calls, so every framework gets its
- * OWN isolated build with exactly its plugin. The Solid/Svelte SSR renderers are likewise prebuilt into
- * isolated modules and imported for their fragment (their components can't be `import`ed raw here).
+ * OWN isolated build with exactly its plugin. The Vue/Solid/Svelte SSR renderers are likewise prebuilt
+ * into isolated modules and imported for their fragment (their components can't be `import`ed raw here).
  *
  *   bun run site/build-frameworks.ts   # standalone: refresh shared/data/frameworks-demo.json + print sizes
  * Normally invoked by site/build.ts with the real `dist/assets` outDir.
@@ -27,12 +27,11 @@ import { preactAdapter } from "@nifrajs/web-preact"
 import { reactAdapter } from "@nifrajs/web-react"
 import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
-import { vueAdapter } from "@nifrajs/web-vue"
+import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
 import type { BunPlugin } from "bun"
 import { App as ReactApp } from "../bench/ssr/nifra/app.tsx"
 import ReactLayout from "../bench/ssr/nifra/layout.tsx"
 import { App as PreactApp } from "../bench/ssr/nifra-preact/app.ts"
-import { App as VueApp } from "../bench/ssr/nifra-vue/app.ts"
 import { type CatalogPageData, catalogItems } from "./shared/frameworks/data.ts"
 
 const DIR = import.meta.dir
@@ -88,7 +87,7 @@ const SPECS: readonly FrameworkSpec[] = [
     idiom: "composables",
     clientEntry: `${DIR}/frameworks/vue.client.ts`,
     clientConditions: ["bun", "browser"],
-    clientPlugins: [],
+    clientPlugins: [vueBunPlugin("dom")],
     define: VUE_DEFINE,
   },
   {
@@ -180,9 +179,19 @@ async function buildClientBundle(
   return { bytesRaw: bytes.byteLength, bytesGzip: gzip.byteLength }
 }
 
-/** Render a framework's SSR fragment + hydration head. React/Preact/Vue render directly (no plugin
- * needed for the render call). Solid/Svelte are prebuilt into an isolated module - their components
- * can't be `import`ed into this file without their compiler plugin - and imported back for the fragment. */
+/** The compiler plugin + resolve conditions each prebuilt SSR renderer needs. */
+const SSR_BUILD: Record<
+  "vue" | "solid" | "svelte",
+  { readonly plugin: () => BunPlugin; readonly conditions: string[] }
+> = {
+  vue: { plugin: () => vueBunPlugin("ssr"), conditions: ["bun"] },
+  solid: { plugin: () => solidBunPlugin("ssr"), conditions: ["bun", "solid"] },
+  svelte: { plugin: () => svelteBunPlugin("ssr"), conditions: ["bun", "svelte"] },
+}
+
+/** Render a framework's SSR fragment + hydration head. React/Preact render directly (no plugin needed
+ * for the render call). Vue/Solid/Svelte are prebuilt into an isolated module - their components can't
+ * be `import`ed into this file without their compiler plugin - and imported back for the fragment. */
 async function renderFragment(
   spec: FrameworkSpec,
   data: CatalogPageData,
@@ -203,17 +212,13 @@ async function renderFragment(
         hydrationHead: preactAdapter.hydrationHead(),
       }
     case "vue":
-      return {
-        fragmentHtml: String(await vueAdapter.renderToString?.([VueApp], props)),
-        hydrationHead: vueAdapter.hydrationHead(),
-      }
     case "solid":
     case "svelte": {
       // Prebuild the SSR renderer in isolation (its own compiler plugin) → import the built JS for the
       // fragment. The renderer module owns the catalog data, so the result matches the client chain.
       const ssrEntry = `${DIR}/frameworks/${spec.id}.ssr.ts`
-      const ssrPlugin = spec.id === "solid" ? solidBunPlugin("ssr") : svelteBunPlugin("ssr")
-      const ssrConditions = spec.id === "solid" ? ["bun", "solid"] : ["bun", "svelte"]
+      const ssrPlugin = SSR_BUILD[spec.id].plugin()
+      const ssrConditions = SSR_BUILD[spec.id].conditions
       const built = await Bun.build({
         entrypoints: [ssrEntry],
         outdir: join(scratchDir, spec.id),
