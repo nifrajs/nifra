@@ -6,6 +6,7 @@
  * resolution scripts settle. The per-adapter `<Await>` lives in `@nifrajs/web-{solid,react}/client`.
  */
 import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-codec"
+import { isDeferredFree } from "./internal/deferred-free.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 
 /**
@@ -65,6 +66,7 @@ export function prepareDeferred(
   readonly deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>
 } {
   const deferred: Array<{ id: number; promise: Promise<unknown> }> = []
+  if (isDeferredFree(data)) return { forComponent: data, forClient: data, deferred }
   // Structural sharing: a subtree with no deferred value returns the ORIGINAL node for
   // both sides (`fc`/`cl` identical to the input), so a deferred-free result - the common case - is
   // returned by reference with no persisted clone, no downstream copy, and no throwaway clone
@@ -321,6 +323,14 @@ export async function parseNdjsonData(
   // accumulate listeners across navigations (a per-nav signal would be GC'd, but don't rely on it).
   const onAbort = (): void => void reader.cancel()
   if (signal) signal.addEventListener("abort", onAbort, { once: true })
+  let ended = false
+  // Every way out, a malformed line included, detaches from the signal and the body: a source left
+  // streaming into a reader nobody reads, or still locked to it, would hold its response open.
+  const release = (): void => {
+    signal?.removeEventListener("abort", onAbort) // no-op if it already fired ({ once: true })
+    if (!ended) reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
 
   const readLine = async (): Promise<string | null> => {
     for (;;) {
@@ -332,6 +342,7 @@ export async function parseNdjsonData(
       }
       const { done, value } = await reader.read()
       if (done) {
+        ended = true
         const rest = buffer
         buffer = ""
         return rest === "" ? null : rest
@@ -344,8 +355,14 @@ export async function parseNdjsonData(
   // Only plain JSON carries t.date() tags; a richer codec decodes its own dates.
   const decode = (line: string): unknown =>
     codec === plainJsonCodec ? parsePageData(line) : codec.decode(line)
-  const first = await readLine()
-  const data = markersFromPlaceholders(first === null ? null : decode(first), pending)
+  let data: unknown
+  try {
+    const first = await readLine()
+    data = markersFromPlaceholders(first === null ? null : decode(first), pending)
+  } catch (error) {
+    release()
+    throw error
+  }
 
   void (async () => {
     try {
@@ -363,7 +380,7 @@ export async function parseNdjsonData(
     } catch {
       // stream errored - leftovers are rejected below (unless this was an abort)
     } finally {
-      signal?.removeEventListener("abort", onAbort) // no-op if it already fired ({ once: true })
+      release()
       // A natural stream end with markers unsettled = truncation → reject (so `<Await>` shows its
       // error). An `abort` = a superseded navigation → leave them pending: the markers are detached
       // (their data was never applied), so rejecting would only risk an error flash mid-transition.

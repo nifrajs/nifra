@@ -228,8 +228,11 @@ export async function readBoundedBytes(
 ): Promise<Uint8Array> {
   const maxBytes = maxBytesOf(options)
   const declared = response.headers.get("content-length")
-  if (declared !== null && /^\d+$/u.test(declared) && Number(declared) > maxBytes)
+  if (declared !== null && /^\d+$/u.test(declared) && Number(declared) > maxBytes) {
+    // Refused unread, the body would otherwise hold its connection open until the sender gives up.
+    response.body?.cancel().catch(() => {})
     throw new TransportCodecError("transport payload exceeds maxBytes")
+  }
   if (response.body === null) return new Uint8Array(0)
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []

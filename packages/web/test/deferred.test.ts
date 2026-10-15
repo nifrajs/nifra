@@ -263,6 +263,38 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     await expect(asMarker(data.feed).promise).rejects.toThrow("boom")
   })
 
+  test("a malformed line cancels the body and releases it, on line 1 or later", async () => {
+    const source = (lines: readonly string[]) => {
+      const state = { cancelled: false }
+      const enc = new TextEncoder()
+      let next = 0
+      // Pulled one line at a time and never closed: only a cancel ends it.
+      const stream = new ReadableStream<Uint8Array>({
+        pull(c) {
+          const line = lines[next++]
+          if (line !== undefined) c.enqueue(enc.encode(line))
+        },
+        // A source whose cancel fails is still released, with no unhandled rejection.
+        cancel() {
+          state.cancelled = true
+          throw new Error("source already gone")
+        },
+      })
+      return { stream, cancelled: () => state.cancelled }
+    }
+    const bad = source(["{not json\n"])
+    await expect(parseNdjsonData(bad.stream)).rejects.toThrow()
+    expect(bad.cancelled()).toBe(true)
+    expect(bad.stream.locked).toBe(false)
+
+    const later = source(['{"feed":{"__nifra_deferred":0}}\n', "{not json\n"])
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: line 1 of this body is the object `{ feed }`.
+    const data = (await parseNdjsonData(later.stream)) as Record<string, unknown>
+    await expect(asMarker(data.feed).promise).rejects.toThrow(/ended before/)
+    expect(later.cancelled()).toBe(true)
+    expect(later.stream.locked).toBe(false)
+  })
+
   test("a truncated stream rejects the unsettled marker (no hang)", async () => {
     const data = (await parseNdjsonData(
       streamOf([{ text: '{"feed":{"__nifra_deferred":0}}\n' }]),

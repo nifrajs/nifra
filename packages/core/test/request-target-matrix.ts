@@ -31,6 +31,9 @@ export function requestTargetApp<App>(app: App): App {
     .get("/posts", () => ({ route: "GET /posts" }))
     .get("/users/:id", (c) => ({ route: "GET /users/:id", id: c.params.id }))
     .get("/users/:id/posts", (c) => ({ route: "GET /users/:id/posts", id: c.params.id }))
+    .get("/tags/%3Cb%3E", () => ({ route: "GET /tags/%3Cb%3E" }))
+    .get("/tags/%5E", () => ({ route: "GET /tags/%5E" }))
+    .get("/tags/:tag", (c) => ({ route: "GET /tags/:tag", tag: c.params.tag }))
     .post("/echo", async (c) => ({
       route: "POST /echo",
       url: new URL(c.req.url).pathname,
@@ -72,8 +75,21 @@ export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
   { method: "GET", target: "/users/a%5Cb", answer: { route: "GET /users/:id", id: "a\\b" } },
   { method: "GET", target: "/users/...", answer: { route: "GET /users/:id", id: "..." } },
   { method: "GET", target: "/users/.a", answer: { route: "GET /users/:id", id: ".a" } },
+  // A character the parsed URL percent-encodes routes as its encoding: raw or encoded, one route.
+  { method: "GET", target: "/tags/<b>", answer: { route: "GET /tags/%3Cb%3E" } },
+  { method: "GET", target: "/tags/%3Cb%3E", answer: { route: "GET /tags/%3Cb%3E" } },
+  { method: "GET", target: "/tags/{x}", answer: { route: "GET /tags/:tag", tag: "{x}" } },
+  { method: "GET", target: '/tags/"q"', answer: { route: "GET /tags/:tag", tag: '"q"' } },
+  { method: "GET", target: "/tags/`t`", answer: { route: "GET /tags/:tag", tag: "`t`" } },
+  { method: "GET", target: "/tags/^", answer: { route: "GET /tags/%5E" } },
   // The query is not part of the path.
   { method: "GET", target: "/users/7?next=/../x", answer: { route: "GET /users/:id", id: "7" } },
+  // Nor is anything after a raw `#`: the path ends there, so no segment past it is routed.
+  { method: "GET", target: "/users/..#/posts", answer: { route: "GET /" } },
+  { method: "GET", target: "/users/7#/posts", answer: { route: "GET /users/:id", id: "7" } },
+  { method: "GET", target: "/users/a#b", answer: { route: "GET /users/:id", id: "a" } },
+  // An encoded `#` is data in a segment.
+  { method: "GET", target: "/users/c%23", answer: { route: "GET /users/:id", id: "c#" } },
   // Absolute-form (RFC 9112 section 3.2.2) routes its path with the Host header, as Bun does: the
   // target's authority never becomes part of the path the hooks and the router see.
   {
@@ -101,12 +117,13 @@ export function rawExchange(
   method: string,
   target: string,
   body?: string,
+  host = "127.0.0.1",
 ): Promise<RawAnswer> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     const chunks: Buffer[] = []
     socket.on("connect", () => {
-      const head = [`${method} ${target} HTTP/1.1`, "Host: 127.0.0.1", "Connection: close"]
+      const head = [`${method} ${target} HTTP/1.1`, `Host: ${host}`, "Connection: close"]
       if (body !== undefined) {
         head.push("Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`)
       }
@@ -122,6 +139,33 @@ export function rawExchange(
       }
     })
   })
+}
+
+/**
+ * Host values that are not an authority. A runtime that builds the request URL from the Host as
+ * received would read the path or query in them as part of the target: `Host: x/users/7#` with a
+ * request for `/posts` became a request for `/users/7`.
+ */
+export const INVALID_HOSTS: readonly string[] = [
+  "x/users/7#",
+  "x/users/7",
+  "x/users/7?",
+  "x#",
+  "x@y",
+  "x\\users\\7#",
+  "x:1/users/7#",
+]
+
+/** Each invalid Host whose request for `/posts` was answered by anything but a 400 or `GET /posts`. */
+export async function invalidHostMismatches(port: number): Promise<string[]> {
+  const mismatches: string[] = []
+  for (const host of INVALID_HOSTS) {
+    const answer = await rawExchange(port, "GET", "/posts", undefined, host)
+    if (answer.status === 400) continue
+    if (answer.status === 200 && answer.body === JSON.stringify({ route: "GET /posts" })) continue
+    mismatches.push(`Host ${host}: got ${answer.status} ${answer.body}`)
+  }
+  return mismatches
 }
 
 /** The status a WebSocket handshake sent to `target`, byte for byte, is answered with. */

@@ -22,6 +22,7 @@ import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { hasWebConfig } from "../internal/nifra-project.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
+import { commentBlockExpectation } from "./comment-markers.ts"
 import type { CheckRule } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -206,7 +207,47 @@ const unwrapExpression = (ts: typeof TSApi, node: TSApi.Expression): TSApi.Expre
 export interface EntryApiMount {
   readonly line: number
   readonly apiPrefix: EntryApiPrefix
+  /** The line of the `apiPrefix` property that decides it, when one does. */
+  readonly prefixLine: number | undefined
 }
+
+/** A module's matcher for `createWebApp` callees imported from `@nifrajs/web`, by name or through a
+ * namespace; `undefined` when the module imports it neither way. */
+function createWebAppCallee(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+): ((callee: TSApi.Expression) => boolean) | undefined {
+  const names = new Set<string>()
+  const namespaces = new Set<string>()
+  for (const statement of tree.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+      continue
+    const bindings = statement.importClause?.namedBindings
+    if (bindings === undefined || statement.moduleSpecifier.text !== WEB_PACKAGE) continue
+    if (ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text)
+    else
+      for (const element of bindings.elements)
+        if ((element.propertyName ?? element.name).text === "createWebApp")
+          names.add(element.name.text)
+  }
+  if (names.size === 0 && namespaces.size === 0) return undefined
+  return (callee) =>
+    ts.isIdentifier(callee)
+      ? names.has(callee.text)
+      : ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        namespaces.has(callee.expression.text) &&
+        callee.name.text === "createWebApp"
+}
+
+const objectPropertyName = (
+  ts: typeof TSApi,
+  property: TSApi.ObjectLiteralElementLike,
+): string | undefined =>
+  property.name !== undefined &&
+  (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+    ? property.name.text
+    : undefined
 
 /**
  * Every `createWebApp({ api, ... })` call in a module, `createWebApp` imported from `@nifrajs/web`.
@@ -219,27 +260,23 @@ export function entryApiMounts(
   tree: TSApi.SourceFile,
   file: string,
 ): EntryApiMount[] {
-  const webNames = new Set<string>()
-  const webNamespaces = new Set<string>()
+  const isCreateWebApp = createWebAppCallee(ts, tree)
+  if (isCreateWebApp === undefined) return []
   const configNames = new Set<string>()
   const configNamespaces = new Set<string>()
   const strings = new Map<string, string>()
   for (const statement of tree.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-      const from = statement.moduleSpecifier.text
       const bindings = statement.importClause?.namedBindings
-      const isWeb = from === WEB_PACKAGE
-      const isConfig = namesFrameworkConfig(file, from)
-      if (bindings === undefined || (!isWeb && !isConfig)) continue
+      if (bindings === undefined || !namesFrameworkConfig(file, statement.moduleSpecifier.text))
+        continue
       if (ts.isNamespaceImport(bindings)) {
-        ;(isWeb ? webNamespaces : configNamespaces).add(bindings.name.text)
+        configNamespaces.add(bindings.name.text)
         continue
       }
-      for (const element of bindings.elements) {
-        const imported = (element.propertyName ?? element.name).text
-        if (isWeb && imported === "createWebApp") webNames.add(element.name.text)
-        if (isConfig && imported === "apiPrefix") configNames.add(element.name.text)
-      }
+      for (const element of bindings.elements)
+        if ((element.propertyName ?? element.name).text === "apiPrefix")
+          configNames.add(element.name.text)
       continue
     }
     if (
@@ -260,7 +297,6 @@ export function entryApiMounts(
         strings.set(declaration.name.text, init.text)
     }
   }
-  if (webNames.size === 0 && webNamespaces.size === 0) return []
 
   const readPrefix = (node: TSApi.Expression): EntryApiPrefix => {
     const expr = unwrapExpression(ts, node)
@@ -280,19 +316,6 @@ export function entryApiMounts(
       return { kind: "config" }
     return { kind: "unreadable" }
   }
-  const isCreateWebApp = (callee: TSApi.Expression): boolean =>
-    ts.isIdentifier(callee)
-      ? webNames.has(callee.text)
-      : ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(callee.expression) &&
-        webNamespaces.has(callee.expression.text) &&
-        callee.name.text === "createWebApp"
-  const propertyName = (property: TSApi.ObjectLiteralElementLike): string | undefined =>
-    property.name !== undefined &&
-    (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
-      ? property.name.text
-      : undefined
-
   const mounts: EntryApiMount[] = []
   const visit = (node: TSApi.Node): void => {
     const arg = ts.isCallExpression(node) ? node.arguments[0] : undefined
@@ -302,25 +325,34 @@ export function entryApiMounts(
       isCreateWebApp(node.expression) &&
       options !== undefined &&
       ts.isObjectLiteralExpression(options) &&
-      options.properties.some((property) => propertyName(property) === "api")
+      options.properties.some((property) => objectPropertyName(ts, property) === "api")
     ) {
       // The last of an `apiPrefix` property and a spread decides, as it does at runtime.
       let apiPrefix: EntryApiPrefix = { kind: "literal", value: "", unset: true }
+      let prefixNode: TSApi.Node | undefined
       for (const property of options.properties) {
         if (ts.isSpreadAssignment(property)) apiPrefix = { kind: "unreadable" }
-        else if (propertyName(property) !== "apiPrefix") continue
+        else if (objectPropertyName(ts, property) !== "apiPrefix") continue
         else if (ts.isPropertyAssignment(property)) apiPrefix = readPrefix(property.initializer)
         else if (ts.isShorthandPropertyAssignment(property)) apiPrefix = readPrefix(property.name)
         else apiPrefix = { kind: "unreadable" }
+        prefixNode = ts.isSpreadAssignment(property) ? undefined : property
       }
-      const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-      mounts.push({ line, apiPrefix })
+      const lineOf = (at: TSApi.Node): number =>
+        tree.getLineAndCharacterOfPosition(at.getStart(tree)).line + 1
+      mounts.push({
+        line: lineOf(node),
+        apiPrefix,
+        prefixLine: prefixNode === undefined ? undefined : lineOf(prefixNode),
+      })
     }
     ts.forEachChild(node, visit)
   }
   visit(tree)
   return mounts
 }
+
+const ENTRY_PREFIX_EXPECTATION = ["NF-C035"]
 
 const servedAt = (prefix: string): string => (prefix === "" ? "nowhere" : `at ${prefix}`)
 
@@ -350,19 +382,30 @@ async function entryApiPrefixFindings(
       true,
       scriptKindOf(ts, file),
     )
-    for (const { line, apiPrefix } of entryApiMounts(ts, tree, file)) {
+    const lines = text.split("\n")
+    for (const { line, apiPrefix, prefixLine } of entryApiMounts(ts, tree, file)) {
       if (apiPrefix.kind !== "literal" || apiPrefix.value === expected) continue
+      if (
+        [line, prefixLine].some(
+          (at) => at !== undefined && commentBlockExpectation(lines, at, ENTRY_PREFIX_EXPECTATION),
+        )
+      )
+        continue
       const specifier = posix.relative(posix.dirname(file), origin.replace(SCRIPT_SOURCE, ""))
       const passed = apiPrefix.unset
         ? "no apiPrefix"
         : `apiPrefix ${JSON.stringify(apiPrefix.value)}`
+      const hatch =
+        expected === ""
+          ? "Mark a deliberate difference with `// nifra-expect NF-C035: <reason>` above the call."
+          : `If another server already serves this backend at ${expected}, mark the call with \`// nifra-expect NF-C035: <reason>\` instead${apiPrefix.value === "" ? ": an apiPrefix here would add a second path to it that skips that server's middleware" : ""}.`
       findings.push(
         diagnostic({
           code: "NF-C035",
           severity: "warn",
           file,
           line,
-          message: `${file} calls createWebApp with a backend and ${passed}, so the server it starts serves the backend ${servedAt(apiPrefix.value)}, while \`nifra dev\` serves it ${servedAt(expected)} (${origin}). Pass the framework config's value: \`import { apiPrefix } from "${specifier.startsWith(".") ? specifier : `./${specifier}`}"\` and \`createWebApp({ ..., apiPrefix })\`.`,
+          message: `${file} calls createWebApp with a backend and ${passed}, so the server it starts serves the backend ${servedAt(apiPrefix.value)}, while \`nifra dev\` serves it ${servedAt(expected)} (${origin}). Pass the framework config's value: \`import { apiPrefix } from "${specifier.startsWith(".") ? specifier : `./${specifier}`}"\` and \`createWebApp({ ..., apiPrefix })\`. ${hatch}`,
           evidence: [
             `createWebApp apiPrefix: ${apiPrefix.unset ? "unset" : JSON.stringify(apiPrefix.value)}`,
             `${origin} apiPrefix: ${JSON.stringify(expected)}`,
@@ -382,7 +425,8 @@ async function entryApiPrefixFindings(
  *
  * An app module that calls `createWebApp` itself is checked against the same value, since only the
  * framework config reaches `nifra dev`: a backend it mounts at another `apiPrefix`, or with none, is
- * served in production where dev never served it.
+ * served in production where dev never served it. No static read sees a mount another server makes,
+ * so `// nifra-expect NF-C035: <reason>` on the call or its `apiPrefix` line accepts the difference.
  */
 export const implicitApiMountRule: CheckRule = {
   code: "NF-C035",
@@ -421,6 +465,121 @@ export const implicitApiMountRule: CheckRule = {
       }),
       ...entries,
     ]
+  },
+}
+
+const COPY_MODULE = "@nifrajs/i18n/copy"
+const SERVER_MANIFEST = /(?:^|\/)server-manifest(?:\.[cm]?[jt]s)?$/
+const ENTRY_COPY_EXPECTATION = ["NF-C044"]
+
+/** A `createWebApp` call that serves a client build and passes no `copyChunks`. */
+export interface EntryCopyChunksGap {
+  readonly line: number
+  /** The generated server manifest the module imports from, when it does. */
+  readonly manifest: string | undefined
+}
+
+/**
+ * Every `createWebApp({ clientEntry, ... })` call in a module that passes no `copyChunks`. A call with
+ * no `clientEntry` ships no client build; one whose options come from a spread, a variable or a
+ * computed key may carry `copyChunks`, so it is left out. Pure.
+ */
+export function entryCopyChunksGaps(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+): EntryCopyChunksGap[] {
+  const isCreateWebApp = createWebAppCallee(ts, tree)
+  if (isCreateWebApp === undefined) return []
+  let manifest: string | undefined
+  for (const statement of tree.statements)
+    if (
+      manifest === undefined &&
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      SERVER_MANIFEST.test(statement.moduleSpecifier.text)
+    )
+      manifest = statement.moduleSpecifier.text
+  const gaps: EntryCopyChunksGap[] = []
+  const visit = (node: TSApi.Node): void => {
+    const arg = ts.isCallExpression(node) ? node.arguments[0] : undefined
+    const options = arg === undefined ? undefined : unwrapExpression(ts, arg)
+    if (
+      ts.isCallExpression(node) &&
+      isCreateWebApp(node.expression) &&
+      options !== undefined &&
+      ts.isObjectLiteralExpression(options)
+    ) {
+      const names = options.properties.map((property) =>
+        ts.isSpreadAssignment(property) ? undefined : objectPropertyName(ts, property),
+      )
+      if (
+        names.includes("clientEntry") &&
+        !names.includes("copyChunks") &&
+        !names.includes(undefined)
+      )
+        gaps.push({
+          line: tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1,
+          manifest,
+        })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  return gaps
+}
+
+/**
+ * NF-C044: an app module calls `createWebApp` with a client build and no `copyChunks` while the app
+ * defines copy tables (`@nifrajs/i18n/copy`). A production client build moves the tables into one
+ * chunk per locale, which a page loads from the `copyChunks` its server lists, so the first page that
+ * renders copy fails. `nifra dev` never splits them, so dev and e2e pass. The split reads the source
+ * with the app's TypeScript compiler API, which TypeScript 7 lacks; such an app ships its tables whole,
+ * so it is left out.
+ */
+export const entryCopyChunksRule: CheckRule = {
+  code: "NF-C044",
+  title: "createWebApp passes no copy chunks",
+  async scan(ctx) {
+    const scripts = ctx.sources.files.filter((file) => SCRIPT_SOURCE.test(file)).sort(codeUnitOrder)
+    const definer = scripts.find((file) => ctx.sources.read(file)?.includes(COPY_MODULE) === true)
+    if (definer === undefined) return []
+    const candidates = scripts.filter(
+      (file) => ctx.sources.read(file)?.includes("createWebApp") === true,
+    )
+    if (candidates.length === 0) return []
+    const ts = (await loadRuleTypeScript(ctx)).compiler
+    if (ts === undefined || Number.parseInt(ts.version, 10) >= 7) return []
+    const findings: Diagnostic[] = []
+    for (const file of candidates) {
+      const text = ctx.sources.read(file) ?? ""
+      const tree = ts.createSourceFile(
+        file,
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKindOf(ts, file),
+      )
+      const lines = text.split("\n")
+      for (const { line, manifest } of entryCopyChunksGaps(ts, tree)) {
+        if (commentBlockExpectation(lines, line, ENTRY_COPY_EXPECTATION)) continue
+        const pass =
+          manifest === undefined
+            ? "the `copyChunks` its `clientEntry` comes with (the generated server manifest's export, or `buildClient()`'s result)"
+            : `\`import { copyChunks } from "${manifest}"\``
+        findings.push(
+          diagnostic({
+            code: "NF-C044",
+            severity: "warn",
+            file,
+            line,
+            message: `${file} calls createWebApp with a clientEntry and no copyChunks, while ${definer} defines copy tables. A production client build moves them into one chunk per locale, and a page loads its locale's chunk from the copyChunks the server lists, so the first page that renders copy fails ("no copy chunk for locale"); \`nifra dev\` never splits them, so dev and e2e pass. Pass ${pass} and \`createWebApp({ ..., copyChunks })\`. Mark a deliberate omission with \`// nifra-expect NF-C044: <reason>\` above the call.`,
+            evidence: ["createWebApp copyChunks: unset", `copy tables: ${definer}`],
+            verify: "nifra check",
+          }),
+        )
+      }
+    }
+    return findings
   },
 }
 
@@ -789,6 +948,7 @@ export const pageRules = Object.freeze([
   shadowedPageRule,
   statusLayoutRule,
   implicitApiMountRule,
+  entryCopyChunksRule,
   layoutMetaDataRule,
   frontendServerExportRule,
   ungatedLayoutRefusalRule,

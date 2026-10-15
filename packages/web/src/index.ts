@@ -87,6 +87,7 @@ export {
 // Generated client entries intentionally import the browser router from the client subpath:
 // `import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"`.
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
+export type { PrerenderedPages } from "./internal/prerendered-pages.ts"
 export {
   gone,
   notFound,
@@ -224,7 +225,9 @@ export {
 } from "./nonce.ts"
 // public/ - user-authored static files, served identically in dev and production by one handler.
 export {
+  type PrerenderedPageReaderOptions,
   type PublicDirCache,
+  prerenderedPageReader,
   resolvePublicPath,
   type ServePublicDirOptions,
   servePublicDir,

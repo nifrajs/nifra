@@ -69,25 +69,85 @@ export function escalatingStop(
   }
 }
 
+/**
+ * Once a child spawned with `detached: OWN_PROCESS_GROUP` exits, stop what is left of its group:
+ * SIGTERM, then SIGKILL after the grace period. A process the project's code started (a dev proxy, a
+ * watcher, an embedded database) outlives the child otherwise, and one that inherited the child's
+ * stdout or stderr keeps the caller's read, and the call, open until its deadline.
+ */
+export function stopGroupOnExit(proc: {
+  readonly pid: number
+  readonly exited: Promise<unknown>
+  kill(signal?: NodeJS.Signals): void
+}): void {
+  if (!OWN_PROCESS_GROUP) return
+  void proc.exited.then(() => escalatingStop((name) => signalProcessGroup(proc, name)).stop())
+}
+
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
 /**
- * A child in its own group no longer gets the Ctrl+C the terminal sends its parent: on SIGINT,
- * SIGTERM or SIGHUP run `stop`, then let this process take the signal as it would have. Returns the
- * function that removes the listeners.
+ * SIGTERM to a child's group, then wait for the whole group to exit, SIGKILL whatever is left once
+ * `graceMs` passes. Resolves when the group is gone or killed.
  */
-export function forwardTerminalSignals(stop: () => void): () => void {
+export async function stopGroupAndWait(
+  proc: {
+    readonly pid: number
+    readonly exited: Promise<unknown>
+    kill(signal?: NodeJS.Signals): void
+  },
+  graceMs: number = KILL_GRACE_MS,
+): Promise<void> {
+  const deadline = Date.now() + graceMs
+  signalProcessGroup(proc, "SIGTERM")
+  await Promise.race([proc.exited, Bun.sleep(graceMs)])
+  // The leader is reaped once `exited` settles; a member that survived it keeps the group alive.
+  while (OWN_PROCESS_GROUP && Date.now() < deadline && groupAlive(proc.pid)) await Bun.sleep(25)
+  signalProcessGroup(proc, "SIGKILL")
+  // Reap the leader before this process takes the signal: a killed child it never waited for stays in
+  // the process table until its new parent gets to it.
+  await Promise.race([proc.exited, Bun.sleep(graceMs)])
+}
+
+function groupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Every registered stop runs on one signal, together, and the signal is raised again only once all
+// of them have finished: re-raising at once ended this process before a child that catches SIGTERM
+// could be sent SIGKILL.
+const terminalStops = new Set<{ readonly stop: () => void | Promise<void> }>()
+
+function onTerminalSignal(signal: NodeJS.Signals): void {
+  const stops = [...terminalStops]
+  terminalStops.clear()
+  // A second Ctrl+C while the children stop ends this process at once.
+  for (const name of FORWARDED_SIGNALS) process.off(name, onTerminalSignal)
+  void Promise.allSettled(stops.map(async ({ stop }) => stop())).then(() =>
+    process.kill(process.pid, signal),
+  )
+}
+
+/**
+ * A child in its own group no longer gets the Ctrl+C the terminal sends its parent: on SIGINT,
+ * SIGTERM or SIGHUP run `stop` (with every other registered one), wait for what it returns, then let
+ * this process take the signal as it would have. Returns the function that unregisters `stop`.
+ */
+export function forwardTerminalSignals(stop: () => void | Promise<void>): () => void {
   if (!OWN_PROCESS_GROUP) return () => {}
-  const remove = (): void => {
-    for (const name of FORWARDED_SIGNALS) process.off(name, forward)
+  if (terminalStops.size === 0)
+    for (const name of FORWARDED_SIGNALS) process.on(name, onTerminalSignal)
+  const entry = { stop }
+  terminalStops.add(entry)
+  return () => {
+    if (!terminalStops.delete(entry) || terminalStops.size > 0) return
+    for (const name of FORWARDED_SIGNALS) process.off(name, onTerminalSignal)
   }
-  const forward = (signal: NodeJS.Signals): void => {
-    stop()
-    remove()
-    process.kill(process.pid, signal)
-  }
-  for (const name of FORWARDED_SIGNALS) process.on(name, forward)
-  return remove
 }
 
 /** Accept only a concrete TCP port. Port 0 (bind-any-free-port) is not a valid read target. */

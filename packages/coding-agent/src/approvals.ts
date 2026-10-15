@@ -228,12 +228,18 @@ export class ApprovalManager {
     if (pending === undefined) return undefined
     clearTimeout(pending.timer)
     this.pendingApprovals.delete(approvalId)
-    pending.settle(approved === true)
+    const at = Date.now()
+    // The timeout timer can fire late (a busy loop, a suspended host), so an approve that arrives
+    // after the deadline is refused here instead of winning the race against it.
+    const late = approved === true && at >= pending.request.expiresAt
+    const granted = approved === true && !late
+    const why = late ? "approval timed out" : reason
+    pending.settle(granted)
     const decision: ApprovalDecision = {
       approvalId,
-      approved: approved === true,
-      ...(reason === undefined ? {} : { reason: reason.slice(0, 512) }),
-      at: Date.now(),
+      approved: granted,
+      ...(why === undefined ? {} : { reason: why.slice(0, 512) }),
+      at,
     }
     // A failing broadcast must not become an unhandled rejection in the host.
     Promise.resolve(this.options.onResolved?.(decision)).catch(() => {})

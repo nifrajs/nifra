@@ -1,5 +1,35 @@
 # @nifrajs/testing
 
+## 5.3.0
+
+### Patch Changes
+
+- Updated dependencies [7ab9692]
+- Updated dependencies [61724f9]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [46a93c7]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
+  - @nifrajs/agent@5.3.0
+  - @nifrajs/client@5.3.0
+  - @nifrajs/core@5.3.0
+  - @nifrajs/mcp@5.3.0
+  - @nifrajs/mock@5.3.0
+  - @nifrajs/webmcp@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/agent@5.2.1
+  - @nifrajs/client@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/mcp@5.2.1
+  - @nifrajs/mock@5.2.1
+  - @nifrajs/webmcp@5.2.1
+
 ## 5.2.0
 
 ### Patch Changes

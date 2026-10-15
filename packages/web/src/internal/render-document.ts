@@ -1,6 +1,12 @@
 import { isSameOriginPath, type ResponseResult, status as statusResult } from "@nifrajs/core/server"
 import type { BoundaryRegistration, BoundaryStates } from "../boundary.ts"
-import { type CspPolicy, cspDocumentNonce, cspHeaderValue, prepareCspPolicy } from "../csp.ts"
+import {
+  type CspPolicy,
+  cspCandidateNonce,
+  cspDocumentNonce,
+  cspHeaderValue,
+  prepareCspPolicy,
+} from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
 import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
@@ -54,6 +60,13 @@ const SCRIPT_ESCAPE_MAP: Readonly<Record<string, string>> = {
   [LINE_SEP]: "\\u2028",
   [PARA_SEP]: "\\u2029",
 }
+// Pages (the chain's last entry) whose string render suspended, with how many more requests go
+// straight to the stream instead of rendering the whole tree twice. The count runs out so a page
+// that suspended only once (a cold `lazy`) gets its buffered render back.
+const SUSPENDING_PAGES = new WeakMap<object, number>()
+const SUSPENDED_STREAMS = 32
+const isWeakKey = (value: unknown): value is object =>
+  (typeof value === "object" && value !== null) || typeof value === "function"
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
 
@@ -544,43 +557,77 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // streaming renderer are pure overhead vs a single sync render + concat. A buffered string body also
   // gets an automatic Content-Length. A render throw surfaces here exactly as the streaming path's
   // shell-readiness `await` does, so the `_error` boundary still maps it to a status.
+  const streamed = (streamNonce: string | undefined): Promise<RenderedPage> =>
+    renderStreamedPage(
+      adapter,
+      chain,
+      renderProps,
+      shellOf,
+      parts,
+      closeRootHtml,
+      allDeferred,
+      tailHtml,
+      status,
+      headers,
+      streamNonce,
+      streamNonce === nonce ? nonceAttr : ` nonce="${escapeAttr(streamNonce ?? "")}"`,
+    ).then((response) => new ResponseRenderedPage(response))
+  const last = chain[chain.length - 1]
+  const leaf = isWeakKey(last) ? last : undefined
   if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
+    // Under a CSP a render can still write a script for this request alone (Solid's serialized
+    // error boundary, React's streamed Suspense reveal): it is handed a nonce, which the document
+    // keeps only when the render used it, so every other document stays nonce-free and cacheable.
+    const renderNonce =
+      nonce ?? (csp === undefined ? undefined : cspCandidateNonce(csp, requestedNonce))
+    const adoptNonce = (): void => {
+      if (renderNonce === nonce || csp === undefined || renderNonce === undefined) return
+      headers["cache-control"] = "private, no-store"
+      const policy = cspHeaderValue(csp, adapter, renderNonce)
+      if (policy !== undefined) headers["content-security-policy"] = policy
+    }
+    // A page whose string render suspended before goes straight to the stream: the string pass
+    // would render the whole tree only to be thrown away again.
+    const skips = leaf === undefined ? undefined : SUSPENDING_PAGES.get(leaf)
+    if (leaf !== undefined && skips !== undefined) {
+      if (skips > 1) SUSPENDING_PAGES.set(leaf, skips - 1)
+      else SUSPENDING_PAGES.delete(leaf)
+      adoptNonce()
+      return streamed(renderNonce)
+    }
     const out =
       parts !== undefined
         ? adapter.renderToString(
             chain,
             renderProps,
-            nonce === undefined ? { parts } : { nonce, parts },
+            renderNonce === undefined ? { parts } : { nonce: renderNonce, parts },
           )
-        : nonce === undefined
+        : renderNonce === undefined
           ? adapter.renderToString(chain, renderProps)
-          : adapter.renderToString(chain, renderProps, { nonce })
-    return typeof out === "string"
-      ? new BufferedRenderedPage(shellOf() + out + closeRootHtml + tailHtml, status, headers)
-      : out.then(
-          (bodyHtml) =>
-            new BufferedRenderedPage(
-              shellOf() + bodyHtml + closeRootHtml + tailHtml,
-              status,
-              headers,
-            ),
-        )
+          : adapter.renderToString(chain, renderProps, { nonce: renderNonce })
+    const page = (bodyHtml: string | undefined): MaybePromise<RenderedPage> => {
+      if (bodyHtml === undefined) {
+        // The render suspended on something only the streaming renderer waits for (React's `use`
+        // in a `<Suspense>`): stream the page, so the boundary resolves on the server.
+        if (leaf !== undefined) SUSPENDING_PAGES.set(leaf, SUSPENDED_STREAMS)
+        if (parts !== undefined) {
+          parts.head = ""
+          parts.body = ""
+        }
+        adoptNonce()
+        return streamed(renderNonce)
+      }
+      if (renderNonce !== undefined && bodyHtml.includes(`nonce="${renderNonce}"`)) adoptNonce()
+      return new BufferedRenderedPage(
+        shellOf() + bodyHtml + closeRootHtml + tailHtml,
+        status,
+        headers,
+      )
+    }
+    return out instanceof Promise ? out.then(page) : page(out)
   }
 
-  return renderStreamedPage(
-    adapter,
-    chain,
-    renderProps,
-    shellOf,
-    parts,
-    closeRootHtml,
-    allDeferred,
-    tailHtml,
-    status,
-    headers,
-    nonce,
-    nonceAttr,
-  ).then((response) => new ResponseRenderedPage(response))
+  return streamed(nonce)
 }
 
 async function renderStreamedPage(
@@ -673,6 +720,9 @@ function htmlResponse(body: string, init: ResponseInit): Response {
  * script per deferred value (emitted once its promise settles - by now the app stream has awaited
  * the same Suspense boundaries - and placed OUTSIDE `#root`) → `tail`. A mid-stream app error errors
  * the result (the body breaks) rather than silently truncating a 200.
+ *
+ * The app stream is read one chunk per pull, so a client that stops reading stops the renderer
+ * too: a stalled connection holds a chunk, not the whole rendered body.
  */
 function streamDocument(
   shell: Uint8Array,
@@ -687,45 +737,59 @@ function streamDocument(
   // A client that goes away cancels the body: the renderer stops, and nothing more is written.
   let cancelled = false
   let released = false
+  const release = (): void => {
+    if (released) return
+    released = true
+    reader.releaseLock()
+  }
+  // Settled into scripts now, not when the app stream ends: a rejection a stalled client never
+  // reads up to is still handled (and logged) rather than left unhandled.
+  const scripts = deferred.map((d) =>
+    d.promise
+      .then(
+        (value) =>
+          // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
+          // separators before this framework-owned script is emitted.
+          `<script${nonceAttr}>window.__nifraResolve(${d.id},${serializeData(value)})</script>`, // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
+      )
+      .catch((err: unknown) => {
+        // A rejected (or unserializable) deferred streams __nifraReject (the client `<Await>`
+        // surfaces it) - it must not break the whole body. Redact: stream a stable opaque code,
+        // never the raw error text; log the real reason server-side.
+        console.error("[nifra/web] deferred value rejected:", err)
+        return `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
+      }),
+  )
   return new ReadableStream({
-    async start(controller) {
+    start(controller) {
+      controller.enqueue(shell)
+    },
+    async pull(controller) {
       try {
-        controller.enqueue(shell)
-        for (;;) {
+        if (!released) {
           const { done, value } = await reader.read()
           if (cancelled) return
-          if (done) break
-          controller.enqueue(value)
+          if (!done) {
+            controller.enqueue(value)
+            return
+          }
+          release()
+          controller.enqueue(closeRoot)
         }
-        controller.enqueue(closeRoot)
         // Stream each resolution as ITS OWN promise settles - NOT in array order. A slow
         // defer() must not block a faster one; each script self-addresses by id, so order is irrelevant.
         await Promise.all(
-          deferred.map(async (d) => {
-            let script: string
-            try {
-              const value = serializeData(await d.promise)
-              // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
-              // separators before this framework-owned script is emitted.
-              script = `<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>` // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
-            } catch (err) {
-              // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) - it must
-              // not break the whole body. Redact: stream a stable opaque code, never the raw error
-              // text; log the real reason server-side.
-              console.error("[nifra/web] deferred value rejected:", err)
-              script = `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
-            }
-            if (!cancelled) controller.enqueue(enc.encode(script))
+          scripts.map(async (script) => {
+            const html = await script
+            if (!cancelled) controller.enqueue(enc.encode(html))
           }),
         )
         if (cancelled) return
         controller.enqueue(tail)
         controller.close()
       } catch (err) {
+        release()
         if (!cancelled) controller.error(err)
-      } finally {
-        released = true
-        reader.releaseLock()
       }
     },
     cancel(reason) {

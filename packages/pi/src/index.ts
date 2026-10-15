@@ -60,7 +60,7 @@ interface PiSession {
   seq: number
   turnId: string | undefined
   /** Pi ends a turn whose model call failed with an ordinary `agent_end`; the error is on its last message. */
-  modelError: string | undefined
+  modelError: ReturnType<typeof agentError> | undefined
   turnAbortCleanup: (() => void) | undefined
   reloadRequested: boolean
   reloadRevision: number
@@ -68,6 +68,11 @@ interface PiSession {
   buffer: string
   closed: boolean
   readonly approvals: Map<string, { readonly method: string }>
+  /** The turn whose prompt reached Pi, so a cancel knows Pi has a run to abort. */
+  promptedTurnId: string | undefined
+  /** Aborted runs whose closing `agent_end` has not arrived: until it does, every record is theirs. */
+  staleRuns: number
+  drain: PromiseWithResolvers<void> | undefined
 }
 
 interface PiRpcRecord {
@@ -195,6 +200,9 @@ export class PiBackend implements AgentBackend {
       buffer: "",
       closed: false,
       approvals: new Map(),
+      promptedTurnId: undefined,
+      staleRuns: 0,
+      drain: undefined,
     }
     this.sessions.set(id, session)
     this.attachProcess(session, proc)
@@ -242,14 +250,19 @@ export class PiBackend implements AgentBackend {
     }
     // An already-aborted signal is settled above. Do not write a prompt after that cancellation.
     if (session.active !== stream || session.turnId !== turnId) return stream
-    void writeRpc(session.process.stdin, { type: "prompt", message: input.message }).catch(
-      (error) => {
-        if (session.active !== stream || session.turnId !== turnId) return
-        stream.fail(error)
-        this.clearTurn(session, stream, turnId)
-        this.updateSnapshot(session, "failed")
-      },
-    )
+    const prompt = (): Promise<void> => {
+      if (session.active !== stream || session.turnId !== turnId) return Promise.resolve()
+      session.promptedTurnId = turnId
+      return writeRpc(session.process.stdin, { type: "prompt", message: input.message })
+    }
+    // A cancelled run still emitting would answer into this turn, so its prompt waits for the drain.
+    const prompting = session.drain === undefined ? prompt() : session.drain.promise.then(prompt)
+    void prompting.catch((error) => {
+      if (session.active !== stream || session.turnId !== turnId) return
+      stream.fail(error)
+      this.clearTurn(session, stream, turnId)
+      this.updateSnapshot(session, "failed")
+    })
     return stream
   }
 
@@ -436,11 +449,13 @@ export class PiBackend implements AgentBackend {
 
   private attachProcess(session: PiSession, process: Bun.Subprocess): void {
     session.process = process
+    this.endDrain(session) // the runs a previous process was aborting died with it
     void this.readStdout(session)
     void this.readStderr(session)
     void process.exited.then((exitCode) => {
       if (session.process !== process || session.restarting) return
       session.closed = true
+      this.endDrain(session)
       this.clearTurnSignal(session)
       if (session.active !== undefined) {
         this.failActive(session, agentError("PI_EXITED", `Pi exited with code ${exitCode}`))
@@ -530,6 +545,13 @@ export class PiBackend implements AgentBackend {
 
   private consumeRecord(session: PiSession, record: PiRpcRecord): void {
     if (record.type === "response") {
+      // Pi answers an abort once it has handled it, so that answer also ends the drain: a Pi that ends
+      // an aborted run without an `agent_end` must not hold every later prompt back. An abort that
+      // failed had no run to stop, and says nothing about the turn running now.
+      if (record.command === "abort") {
+        if (session.staleRuns > 0) this.endDrain(session)
+        return
+      }
       if (record.success === false) {
         this.failActive(
           session,
@@ -582,10 +604,11 @@ export class PiBackend implements AgentBackend {
     }
     // Only a `confirm` inside a turn becomes an approval. Any other dialog is cancelled at once, or
     // the extension waits on an answer nobody can give; notify, setStatus and the like expect none.
+    const stale = session.staleRuns > 0
     if (
       record.type === "extension_ui_request" &&
       PI_DIALOG_METHODS.has(record.method) &&
-      (record.method !== "confirm" || session.active === undefined) &&
+      (record.method !== "confirm" || session.active === undefined || stale) &&
       boundedPiToken(record.id)
     ) {
       const active = session.active
@@ -598,6 +621,14 @@ export class PiBackend implements AgentBackend {
         if (session.active === active && session.turnId === turnId)
           this.failActive(session, agentError("PI_IO", "Pi could not receive the dialog response"))
       })
+      return
+    }
+    if (stale) {
+      if (
+        (record.type === "agent_end" && record.willRetry !== true) ||
+        record.type === "agent_settled"
+      )
+        if (--session.staleRuns === 0) this.endDrain(session)
       return
     }
     const active = session.active
@@ -639,7 +670,7 @@ export class PiBackend implements AgentBackend {
             this.emit(session, { type: "assistant.message", turnId, text: piece })
         if (isRecord(message) && message.role === "assistant")
           session.modelError =
-            message.stopReason === "error" ? modelErrorText(message.errorMessage) : undefined
+            message.stopReason === "error" ? modelError(message.errorMessage) : undefined
         return
       }
       case "tool_execution_start":
@@ -816,7 +847,7 @@ export class PiBackend implements AgentBackend {
 
   private endTurn(session: PiSession): void {
     if (session.modelError === undefined) this.finishTurn(session)
-    else this.failActive(session, agentError("PI_MODEL_FAILED", session.modelError))
+    else this.failActive(session, session.modelError)
   }
 
   private finishTurn(session: PiSession): void {
@@ -846,9 +877,17 @@ export class PiBackend implements AgentBackend {
     const turnId = session.turnId
     const stopReason = boundedPiText(reason, 512) || "cancelled"
     this.clearTurnSignal(session)
-    const writing = session.closed
-      ? Promise.resolve()
-      : writeRpc(session.process.stdin, { type: "abort" })
+    // Pi has a run to abort only once the turn's prompt reached it. That run's records keep coming
+    // until its `agent_end`, and are drained there rather than taken by the next turn.
+    const prompted = turnId !== undefined && session.promptedTurnId === turnId && !session.closed
+    if (prompted) {
+      session.promptedTurnId = undefined
+      session.staleRuns += 1
+      session.drain ??= Promise.withResolvers<void>()
+    }
+    const writing = prompted
+      ? writeRpc(session.process.stdin, { type: "abort" })
+      : Promise.resolve()
     this.updateSnapshot(session, "stopped")
     this.emit(session, { type: "session.stopped", reason: stopReason })
     active?.complete()
@@ -856,6 +895,12 @@ export class PiBackend implements AgentBackend {
     // Settle the caller synchronously before waiting for a buffered abort: an already-aborted
     // request must never send a prompt. An exited process may refuse the abort without undoing it.
     await writing.catch(() => undefined)
+  }
+
+  private endDrain(session: PiSession): void {
+    session.staleRuns = 0
+    session.drain?.resolve()
+    session.drain = undefined
   }
 
   private clearTurnSignal(session: PiSession): void {
@@ -1049,6 +1094,18 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
 ]
+
+// A rejected provider login or API key. Matched over Pi's whole error text, since a provider's auth
+// code (`invalid_refresh_token`, `authentication_error`) sits in the response body it quotes.
+const PI_AUTH_FAILURE =
+  /oauth refresh failed|invalid_refresh_token|refresh token|no api key|invalid[_ ]?(?:api[_ ]?key|x-api-key)|incorrect api key|authentication_error|unauthori[sz]ed|re-?authenticate|(?:sign(?:ing)?|log(?:ging)?)\s+in\s+again/i
+
+/** `PI_AUTH_REQUIRED` when the provider refused Pi's credentials, so a client can ask for a new
+ * sign-in or key; `PI_MODEL_FAILED` for any other model failure. */
+function modelError(value: unknown): ReturnType<typeof agentError> {
+  const auth = typeof value === "string" && PI_AUTH_FAILURE.test(value.slice(0, 4_096))
+  return agentError(auth ? "PI_AUTH_REQUIRED" : "PI_MODEL_FAILED", modelErrorText(value))
+}
 
 function modelErrorText(value: unknown): string {
   if (typeof value !== "string") return "Pi's model call failed"

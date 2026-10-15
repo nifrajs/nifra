@@ -1,5 +1,38 @@
 # @nifrajs/web-solid
 
+## 5.3.0
+
+### Patch Changes
+
+- 90433ee: Solid server renders no longer read `process.env.NODE_ENV` on every render. The check that keeps a caught server error's text out of the hydration script now runs only when an error is serialized, with the same outcome: outside development and test, including an unset `NODE_ENV`, the browser receives "Internal Server Error". On Node, where each `process.env` read is a native call, the SSR benchmark's catalog page renders about 1.5% faster.
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [0e1d03f]
+- Updated dependencies [808bac8]
+- Updated dependencies [605c246]
+- Updated dependencies [271917a]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [69dfb60]
+- Updated dependencies [190ab39]
+- Updated dependencies [605c246]
+- Updated dependencies [13224fe]
+- Updated dependencies [00c266e]
+- Updated dependencies [7cf8df3]
+  - @nifrajs/core@5.3.0
+  - @nifrajs/i18n@5.3.0
+  - @nifrajs/image@5.3.0
+  - @nifrajs/web@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/core@5.2.1
+  - @nifrajs/i18n@5.2.1
+  - @nifrajs/image@5.2.1
+  - @nifrajs/web@5.2.1
+
 ## 5.2.0
 
 ### Minor Changes

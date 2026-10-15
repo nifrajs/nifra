@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { getEventListeners } from "node:events"
 import { server } from "@nifrajs/core"
 import { sse, streaming } from "@nifrajs/core/sse"
 import { t } from "@nifrajs/schema"
@@ -206,6 +207,46 @@ describe("api.route.subscribe()", () => {
     controller.abort()
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(closed).toBe(true)
+  })
+  test("a closed subscription leaves no abort listener on a long-lived caller signal", async () => {
+    const parent = new AbortController()
+    const listeners = (): number => getEventListeners(parent.signal, "abort").length
+    const subscribe = eventsOver(() => new Promise<Response>(() => {}))
+    for (let i = 0; i < 100; i++) subscribe(() => {}, { signal: parent.signal }).close()
+    expect(listeners()).toBe(0)
+
+    // A finite stream that completes on its own releases its listener too.
+    const app = server()
+      .use(streaming())
+      .sse("/once", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "x" })
+        stream.close()
+      })
+    let finished!: () => void
+    const ended = new Promise<void>((resolve) => {
+      finished = resolve
+    })
+    testClient<typeof app>(app).once.subscribe(() => {}, {
+      signal: parent.signal,
+      reconnect: false,
+      onClose: finished,
+    })
+    await ended
+    expect(listeners()).toBe(0)
+
+    // The parent still closes every live subscription, once each.
+    let closes = 0
+    for (let i = 0; i < 3; i++) {
+      subscribe(() => {}, {
+        signal: parent.signal,
+        onClose: () => {
+          closes += 1
+        },
+      })
+    }
+    expect(listeners()).toBe(3)
+    parent.abort()
+    expect(closes).toBe(3)
   })
   test("parses the id and retry frame fields alongside the data payload", async () => {
     // `retry:` re-times the client's own reconnect and `id:` seeds Last-Event-ID, so both are read

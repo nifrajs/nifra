@@ -107,6 +107,7 @@ function encodeValue(value: unknown): string {
 /** The default JSON-first codec. Repeated keys (`?t=a&t=b`) decode to an array; single keys to a value. */
 const jsonCodec: SearchCodec = {
   parse(raw, limits) {
+    if (raw === "" || raw === "?") return {}
     const usp = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw)
     // Two passes instead of the old `Set(keys) + getAll(key)` shape, which rescanned the complete
     // URLSearchParams list once per distinct key (O(keys²)). Admission must be decided BEFORE any

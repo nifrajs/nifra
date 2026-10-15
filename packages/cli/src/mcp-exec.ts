@@ -38,9 +38,12 @@ import {
   CHILD_TIMEOUT_MS,
   type EscalatingStop,
   escalatingStop,
+  forwardTerminalSignals,
   OWN_PROCESS_GROUP,
   readBoundedStream,
   signalProcessGroup,
+  stopGroupAndWait,
+  stopGroupOnExit,
   timeoutMessage,
   validateLocalPort,
 } from "./mcp-io.ts"
@@ -719,6 +722,7 @@ export async function spawnChild(
     stderr: "pipe",
     detached: OWN_PROCESS_GROUP,
   })
+  stopGroupOnExit(proc)
   const stopper = escalatingStop((name) => signalProcessGroup(proc, name))
   let killed = false
   const kill = (): void => {
@@ -846,6 +850,7 @@ export class WarmWorker {
     }
   >()
   private readonly stopper: EscalatingStop
+  private readonly releaseSignals: () => void
   private stdoutBuffer = ""
   private stdoutBufferBytes = 0
   private stderrBuffer = ""
@@ -865,14 +870,20 @@ export class WarmWorker {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      // Its own process group, stopped as a group: a process the app started dies with the worker.
+      detached: OWN_PROCESS_GROUP,
     }) as PipeSubprocess
-    this.stopper = escalatingStop((name) => this.proc.kill(name))
+    this.stopper = escalatingStop((name) => signalProcessGroup(this.proc, name))
+    this.releaseSignals = forwardTerminalSignals(() => stopGroupAndWait(this.proc))
     liveWarmWorkers.add(this)
     void this.readStdout()
     void this.readStderr()
     void this.proc.exited.then((code) => {
       this.closed = true
-      this.stopper.dispose()
+      this.releaseSignals()
+      // The worker is gone but the group may not be: whatever it started still gets SIGTERM, then
+      // SIGKILL after the grace period.
+      this.stopper.stop()
       liveWarmWorkers.delete(this)
       const err = new Error(
         `warm ${this.label} worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,

@@ -264,3 +264,21 @@ describe("runApp", () => {
     expect(await runApp(echoApp, [])).toEqual([])
   })
 })
+
+test("an invalid maxBodyChars is reported without calling the app", async () => {
+  let calls = 0
+  const app = {
+    fetch: () => {
+      calls++
+      return new Response("x")
+    },
+  }
+  for (const maxBodyChars of [Number.NaN, -1, 1.5]) {
+    const result = await runRequest(app, { path: "/" }, { maxBodyChars })
+    expect(result.ok).toBe(false)
+    expect(result.error?.name).toBe("RangeError")
+  }
+  expect(calls).toBe(0)
+  const unbounded = await runRequest(app, { path: "/" }, { maxBodyChars: Number.POSITIVE_INFINITY })
+  expect(unbounded.bodyText).toBe("x")
+})

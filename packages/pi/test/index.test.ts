@@ -156,7 +156,7 @@ process.stdin.on("data", (chunk) => {
     expect(events.some((event) => event.type === "session.failed")).toBe(false)
   })
 
-  test("a turn whose model call failed fails, with Pi's error, instead of completing", async () => {
+  test("a turn whose provider login was refused fails with PI_AUTH_REQUIRED instead of completing", async () => {
     const script = `
 process.stdin.on("data", (chunk) => {
   if (!String(chunk).includes("prompt")) return
@@ -175,14 +175,50 @@ process.stdin.on("data", (chunk) => {
           for await (const event of backend.send({ sessionId: "model-failed", message: "hello" }))
             events.push(event)
         })(),
-      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      ).rejects.toMatchObject({ code: "PI_AUTH_REQUIRED" })
       expect(events.some((event) => event.type === "session.completed")).toBe(false)
       expect(events.find((event) => event.type === "session.failed")).toMatchObject({
-        error: { code: "PI_MODEL_FAILED", message: "OAuth refresh failed for openai-codex" },
+        error: { code: "PI_AUTH_REQUIRED", message: "OAuth refresh failed for openai-codex" },
       })
       expect((await backend.snapshot("model-failed")).status).toBe("failed")
     } finally {
       await backend.close("model-failed")
+    }
+  })
+
+  test("a model failure other than a refused credential is PI_MODEL_FAILED", async () => {
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: "503 Service Unavailable: the model is overloaded" }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed], willRetry: false }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n")
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", script] })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "model-overloaded" })
+      const events: AgentEvent[] = []
+      await expect(
+        (async () => {
+          for await (const event of backend.send({
+            sessionId: "model-overloaded",
+            message: "hello",
+          }))
+            events.push(event)
+        })(),
+      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      expect(events.some((event) => event.type === "session.completed")).toBe(false)
+      expect(events.find((event) => event.type === "session.failed")).toMatchObject({
+        error: {
+          code: "PI_MODEL_FAILED",
+          message: "503 Service Unavailable: the model is overloaded",
+        },
+      })
+      expect((await backend.snapshot("model-overloaded")).status).toBe("failed")
+    } finally {
+      await backend.close("model-overloaded")
     }
   })
 
@@ -204,7 +240,7 @@ process.stdin.on("data", (chunk) => {
           for await (const event of backend.send({ sessionId: "model-key-echo", message: "hello" }))
             events.push(event)
         })(),
-      ).rejects.toMatchObject({ code: "PI_MODEL_FAILED" })
+      ).rejects.toMatchObject({ code: "PI_AUTH_REQUIRED" })
       const failed = events.find((event) => event.type === "session.failed")
       const message = failed?.type === "session.failed" ? failed.error.message : ""
       expect(message).toContain("401 Incorrect API key provided: [REDACTED]")
@@ -307,6 +343,50 @@ process.stdin.on("data", (chunk) => {
     expect(events.some((event) => event.type === "session.completed")).toBe(true)
     expect((await backend.snapshot("stale-signal")).status).toBe("idle")
     await backend.close("stale-signal")
+  })
+
+  test("records a cancelled run sends late never reach the next turn", async () => {
+    // Pi ends an aborted run on its own schedule; here its leftovers land after the next send.
+    // "answer" ends the aborted run with an abort response, "late" ends it after the next prompt ran.
+    const lateRecords = (mode: "end" | "answer" | "late") => `
+let buffer = ""
+function emit(value) { process.stdout.write(JSON.stringify(value) + "\\n") }
+function finish(text) {
+  emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } })
+  emit({ type: "agent_end" })
+}
+process.stdin.on("data", (chunk) => {
+  buffer += String(chunk)
+  for (;;) {
+    const newline = buffer.indexOf("\\n")
+    if (newline === -1) break
+    const command = JSON.parse(buffer.slice(0, newline))
+    buffer = buffer.slice(newline + 1)
+    if (command.type === "prompt" && command.message === "new") finish("new")
+    if (command.type === "abort" && "${mode}" === "answer") {
+      emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "old" } })
+      emit({ type: "response", command: "abort", success: true })
+    } else if (command.type === "abort" && "${mode}" === "late") setTimeout(() => finish("old"), 50)
+    else if (command.type === "abort") finish("old")
+  }
+})
+`
+    for (const mode of ["end", "answer", "late"] as const) {
+      const backend = new PiBackend({
+        command: process.execPath,
+        rpcArgs: ["-e", lateRecords(mode)],
+      })
+      await backend.createSession({ cwd: process.cwd(), sessionId: "late-records" })
+      const first = collect(backend.send({ sessionId: "late-records", message: "old" }))
+      const cancelling = backend.cancel("late-records")
+      const second = collect(backend.send({ sessionId: "late-records", message: "new" }))
+      await Promise.all([first, cancelling])
+      const texts = (await second).flatMap((event) =>
+        event.type === "assistant.message" || event.type === "assistant.delta" ? [event.text] : [],
+      )
+      expect(texts).toEqual(["new"])
+      await backend.close("late-records")
+    }
   })
 
   test("close racing a process reload never resurrects the session", async () => {

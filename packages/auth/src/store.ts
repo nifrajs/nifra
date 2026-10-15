@@ -15,7 +15,10 @@ export interface SessionRecord {
 /**
  * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.
  * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}
- * prod-guards against the per-instance footgun.
+ * prod-guards against the per-instance footgun. Logout and rotation also write a revocation marker, an
+ * empty record under `<id>.revoked`, so a store must accept that key like any other, and keep it until
+ * its `expiresAt`: a marker dropped earlier lets a request that loaded the session before the logout
+ * write it back.
  */
 export interface SessionStore {
   /** The record for `id`, or `undefined` on a miss. */
@@ -26,21 +29,28 @@ export interface SessionStore {
   delete(id: string): Promise<void>
 }
 
+/** The suffix of a revocation marker's key: `<id>.revoked`. */
+export const REVOKED_SUFFIX = ".revoked"
+
 export interface MemorySessionStoreOptions {
   /** Allow the in-memory store in production. Off by default - per-instance sessions don't hold across
    * instances and are lost on restart. */
   readonly allowInProduction?: boolean
-  /** Hard cap on stored sessions; the oldest-inserted is evicted past it (default 10_000). */
+  /** Hard cap on stored sessions; the oldest-inserted is evicted past it (default 10_000). Revocation
+   * markers are capped by it separately, so new sessions never evict one. */
   readonly max?: number
 }
 
 /**
  * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR
  * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).
- * Bounded: oldest-inserted entries evict past `max`.
+ * Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their own.
  */
 export class MemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionRecord>()
+  // Apart from the sessions: anonymous sessions written after a logout must not push its marker out.
+  // Markers share one lifetime, so the oldest-inserted is the first to expire.
+  private readonly markers = new Map<string, SessionRecord>()
   private readonly max: number
 
   constructor(options: MemorySessionStoreOptions = {}) {
@@ -58,23 +68,28 @@ export class MemorySessionStore implements SessionStore {
     }
   }
 
+  private mapFor(id: string): Map<string, SessionRecord> {
+    return id.endsWith(REVOKED_SUFFIX) ? this.markers : this.sessions
+  }
+
   get(id: string): Promise<SessionRecord | undefined> {
-    return Promise.resolve(this.sessions.get(id))
+    return Promise.resolve(this.mapFor(id).get(id))
   }
 
   set(id: string, record: SessionRecord): Promise<void> {
-    this.sessions.delete(id) // re-insert at the tail so Map order tracks recency for the bounded evict
-    this.sessions.set(id, record)
-    while (this.sessions.size > this.max) {
-      const oldest = this.sessions.keys().next().value
+    const entries = this.mapFor(id)
+    entries.delete(id) // re-insert at the tail so Map order tracks recency for the bounded evict
+    entries.set(id, record)
+    while (entries.size > this.max) {
+      const oldest = entries.keys().next().value
       if (oldest === undefined) break
-      this.sessions.delete(oldest)
+      entries.delete(oldest)
     }
     return Promise.resolve()
   }
 
   delete(id: string): Promise<void> {
-    this.sessions.delete(id)
+    this.mapFor(id).delete(id)
     return Promise.resolve()
   }
 }

@@ -76,6 +76,31 @@ export function preRouteMountPaths(app: unknown): readonly string[] {
   return paths
 }
 
+const RESIDENT_BODIES = new WeakSet<Response>()
+
+/** Set once an in-process client exists, so the leanest response lane records its bodies too. */
+export let residentBodiesRecorded = false
+
+/** Called by an in-process client: nothing else reads the record, so until then it can be skipped. */
+export function recordResidentBodies(): void {
+  residentBodiesRecorded = true
+}
+
+/**
+ * Record a Response whose body the framework serialized into memory before building it. An
+ * in-process client reads only such a body whole; any other, a handler's own stream included, is
+ * read under its byte cap.
+ */
+export function markResidentBody(response: Response): Response {
+  RESIDENT_BODIES.add(response)
+  return response
+}
+
+/** Whether {@link markResidentBody} recorded `response`. Another copy of this module did not. */
+export function hasResidentBody(response: Response): boolean {
+  return RESIDENT_BODIES.has(response)
+}
+
 /** Structural mount capability exposed by an in-process typed client. */
 export interface BackendMount<Env = unknown> {
   readonly [NIFRA_BACKEND_MOUNT]: BackendMountHandler<Env>

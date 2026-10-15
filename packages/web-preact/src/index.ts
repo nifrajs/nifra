@@ -47,6 +47,23 @@ function withIslandRuntimeNonce(
   )
 }
 
+// What `preact-render-to-string`'s sync renderer throws when a component suspends (a `preact/compat`
+// `<Suspense>` around a thrown promise, or `lazy`).
+const SUSPENDED = 'Use "renderToStringAsync" for suspenseful rendering.'
+
+/** `renderToString` of `node`, or `undefined` when the render suspended: the page is then streamed. */
+function renderUnlessSuspended(
+  renderToString: (node: ReturnType<typeof compose>) => string,
+  node: ReturnType<typeof compose>,
+): string | undefined {
+  try {
+    return renderToString(node)
+  } catch (error) {
+    if (error instanceof Error && error.message === SUSPENDED) return undefined
+    throw error
+  }
+}
+
 /** The Preact server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const preactAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). The sync
@@ -54,13 +71,16 @@ export const preactAdapter: RenderAdapter = {
   //
   // The first render resolves the renderer lazily (from the consumer app's node_modules under Bun
   // runtime SSR - see ./preact-render). Once loaded, return the string directly so renderPage can use
-  // its synchronous buffered fast path on every subsequent request.
+  // its synchronous buffered fast path on every subsequent request. A render that suspends is handed
+  // back (`undefined`) to be streamed, where the boundary resolves.
   renderToString(chain, props) {
     const loaded = preactRenderToString()
     if (loaded instanceof Promise) {
-      return loaded.then(({ renderToString }) => renderToString(compose(chain, props)))
+      return loaded.then(({ renderToString }) =>
+        renderUnlessSuspended(renderToString, compose(chain, props)),
+      )
     }
-    return loaded.renderToString(compose(chain, props))
+    return renderUnlessSuspended(loaded.renderToString, compose(chain, props))
   },
   async renderToStream(chain, props, options) {
     // `renderToReadableStream` yields a Web ReadableStream<Uint8Array>; <Suspense> boundaries

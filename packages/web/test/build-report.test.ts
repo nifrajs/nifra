@@ -1,4 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { open, realpath, stat } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Readable } from "node:stream"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { parseByteRange } from "@nifrajs/core/range"
 import {
   aggregateSizeReport,
   BUILD_TARGETS,
@@ -17,7 +24,7 @@ import {
   renderSizeReport,
   resyncServerManifestSource,
 } from "../src/build.ts"
-import { generateServerManifest } from "../src/index.ts"
+import { generateServerManifest, servePublicDir } from "../src/index.ts"
 
 // Pure size + drift helpers for `nifra build --report` and the #7 server-manifest drift guard. They're
 // the deterministic cores (no fs / no Bun.build), measured + bundled by the orchestrators in build.ts.
@@ -208,6 +215,72 @@ describe("diffManifestRoutes + formatManifestDrift", () => {
 
 // --- Generated server entry (per-target) --------------------------------------------------------------
 
+/** The slice of Deno's file API the generated Deno entry uses, over `node:fs`. */
+const denoFiles = {
+  SeekMode: { Start: 0 },
+  realPath: (path: URL | string) => realpath(path instanceof URL ? fileURLToPath(path) : path),
+  stat: async (path: string) => {
+    const named = await stat(path)
+    return { dev: named.dev, ino: named.ino }
+  },
+  async open(path: string) {
+    const handle = await open(path, "r")
+    let position = 0
+    return {
+      stat: async () => {
+        const opened = await handle.stat()
+        return { isFile: opened.isFile(), size: opened.size, dev: opened.dev, ino: opened.ino }
+      },
+      seek: async (offset: number) => {
+        position = offset
+      },
+      read: async (into: Uint8Array) => {
+        const { bytesRead } = await handle.read(into, 0, into.length, position)
+        position += bytesRead
+        return bytesRead === 0 ? null : bytesRead
+      },
+      get readable() {
+        return Readable.toWeb(handle.createReadStream())
+      },
+      close: () => {
+        handle.close().catch(() => {})
+      },
+    }
+  },
+}
+
+interface StaticHandler {
+  staticPath(pathname: string): string | undefined
+  staticResponse(request: Request, file?: string, pathname?: string): Promise<Response>
+}
+
+/**
+ * Evaluate a generated entry's static gate and handler themselves, rooted at `dir` instead of the
+ * entry's own folder, rather than pattern-match their text. Deno's runs on the `deno` file API shim.
+ */
+async function staticHandler(src: string, dir: string, deno = denoFiles): Promise<StaticHandler> {
+  const start = src.indexOf("const STATIC_ROOT")
+  const end = Math.max(
+    src.indexOf("const server = Bun.serve"),
+    src.indexOf("await serve("),
+    src.indexOf("Deno.serve("),
+  )
+  const section = src.slice(start, end).replace('new URL("./", import.meta.url)', "ROOT_URL")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an async function's constructor is AsyncFunction, which TS does not name.
+  const AsyncFunction = (async () => {}).constructor as new (
+    ...source: string[]
+  ) => (...args: unknown[]) => Promise<unknown>
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section is the generated entry's static handler, which declares these two functions.
+  return (await new AsyncFunction(
+    "servePublicDir",
+    "fileURLToPath",
+    "parseByteRange",
+    "Deno",
+    "ROOT_URL",
+    `${new Bun.Transpiler({ loader: "ts" }).transformSync(section)}; return { staticPath, staticResponse }`,
+  )(servePublicDir, fileURLToPath, parseByteRange, deno, pathToFileURL(`${dir}/`))) as StaticHandler
+}
+
 describe("generateServerEntry", () => {
   test("cloudflare → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
     const src = generateServerEntry({
@@ -239,37 +312,103 @@ describe("generateServerEntry", () => {
     expect(src).not.toContain("api:")
   })
 
-  test("every self-hosting entry serves static files with a real type, nosniff and a cache policy", async () => {
-    for (const target of ["bun", "node", "deno"] as const) {
-      const src = generateServerEntry({ target, adapterImport: "../framework.ts" })
-      expect(src).toContain("headers: staticHeaders(pathname)")
-      expect(src).not.toContain("TYPES[ext]")
-      // Evaluate the generated helper itself rather than pattern-match its text.
-      const helper = src.slice(
-        src.indexOf("const TYPES"),
-        src.indexOf("\n})\n", src.indexOf("const staticHeaders")) + 3,
-      )
-      const staticHeaders = new Function(
-        `${new Bun.Transpiler({ loader: "ts" }).transformSync(helper)}; return staticHeaders`,
-      )() as (pathname: string) => Record<string, string>
-      expect(staticHeaders("/robots.txt")).toEqual({
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "public, max-age=86400",
-        "x-content-type-options": "nosniff",
-      })
-      expect(staticHeaders("/logo.SVG")["content-type"]).toBe("image/svg+xml")
-      expect(staticHeaders("/assets/page-1a2b3c.js")).toEqual({
-        "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "public, max-age=31536000, immutable",
-        "x-content-type-options": "nosniff",
-      })
-      expect(staticHeaders("/.well-known/acme-challenge/token")["content-type"]).toBe(
-        "application/octet-stream",
-      )
+  test("every self-hosting entry serves static files as dev does: type, cache, HEAD, ranges, no escaping link", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nifra-static-entry-"))
+    const dir = join(root, "static")
+    mkdirSync(join(dir, "assets"), { recursive: true })
+    mkdirSync(join(dir, ".well-known/acme-challenge"), { recursive: true })
+    writeFileSync(join(dir, "robots.txt"), "User-agent: *")
+    writeFileSync(join(dir, "logo.SVG"), "<svg/>")
+    writeFileSync(join(dir, ".well-known/acme-challenge/token"), "token")
+    writeFileSync(join(dir, "assets/page-1a2b3c.js"), "x".repeat(100))
+    writeFileSync(join(root, "server-secret.txt"), "secret")
+    // A link planted in the deployed tree, pointing outside it.
+    symlinkSync(join(root, "server-secret.txt"), join(dir, "assets/leak.js"))
+    // A visible name linking to a hidden file inside it, and a hidden directory under /assets/.
+    writeFileSync(join(dir, ".env"), "SECRET=1")
+    symlinkSync(join(dir, ".env"), join(dir, "assets/env.js"))
+    mkdirSync(join(dir, "assets/.cache"))
+    writeFileSync(join(dir, "assets/.cache/x.js"), "cached")
+    try {
+      for (const target of ["bun", "node", "deno"] as const) {
+        const src = generateServerEntry({
+          target,
+          adapterImport: "../framework.ts",
+          publicFiles: ["/robots.txt", "/logo.SVG", "/.well-known/acme-challenge/token"],
+        })
+        const { staticPath, staticResponse } = await staticHandler(src, dir)
+        const get = (path: string, init?: RequestInit) => {
+          const file = staticPath(path)
+          expect(file).toBeDefined()
+          return staticResponse(new Request(`http://app.test${path}`, init), file, path)
+        }
+        const robots = await get("/robots.txt")
+        expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+        expect(robots.headers.get("cache-control")).toBe("public, max-age=86400")
+        expect(robots.headers.get("x-content-type-options")).toBe("nosniff")
+        expect((await get("/logo.SVG")).headers.get("content-type")).toBe("image/svg+xml")
+        expect((await get("/.well-known/acme-challenge/token")).headers.get("content-type")).toBe(
+          "application/octet-stream",
+        )
+        const asset = await get("/assets/page-1a2b3c.js")
+        expect(asset.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+        expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+        expect(await asset.text()).toHaveLength(100)
+        const head = await get("/assets/page-1a2b3c.js", { method: "HEAD" })
+        expect(head.headers.get("content-length")).toBe("100")
+        expect(head.body).toBeNull()
+        const part = await get("/assets/page-1a2b3c.js", { headers: { range: "bytes=0-9" } })
+        expect(part.status).toBe(206)
+        expect(part.headers.get("content-range")).toBe("bytes 0-9/100")
+        expect(await part.text()).toBe("x".repeat(10))
+        expect((await get("/assets/leak.js")).status).toBe(404)
+        expect((await get("/assets/env.js")).status).toBe(404)
+        expect((await get("/assets/.cache/x.js")).status).toBe(404)
+        expect(staticPath("/about")).toBeUndefined()
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test("node → @nifrajs/node serve + node:fs readFile", () => {
+  test("the Deno entry refuses a file reached through a directory swapped for a link after its check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nifra-static-swap-"))
+    const dir = join(root, "static")
+    mkdirSync(join(dir, "assets/chunks"), { recursive: true })
+    writeFileSync(join(dir, "assets/chunks/app.js"), "app")
+    mkdirSync(join(root, "outside"))
+    writeFileSync(join(root, "outside/app.js"), "secret")
+    let swap = false
+    // Deno.open follows links: `chunks` becomes one to a directory outside the root after the
+    // containment check passed and before the file is opened.
+    const racing = {
+      ...denoFiles,
+      open(path: string) {
+        if (swap) {
+          swap = false
+          renameSync(join(dir, "assets/chunks"), join(dir, "assets/chunks-old"))
+          symlinkSync(join(root, "outside"), join(dir, "assets/chunks"))
+        }
+        return denoFiles.open(path)
+      },
+    }
+    try {
+      const src = generateServerEntry({ target: "deno", adapterImport: "../framework.ts" })
+      const { staticPath, staticResponse } = await staticHandler(src, dir, racing)
+      const path = "/assets/chunks/app.js"
+      const get = () =>
+        staticResponse(new Request(`http://app.test${path}`), staticPath(path), path)
+      expect(await (await get()).text()).toBe("app")
+      swap = true
+      const swapped = await get()
+      expect(swapped.status).toBe(404)
+      expect(await swapped.text()).toBe("not found")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("node → @nifrajs/node serve + the shared static handler", () => {
     const src = generateServerEntry({
       target: "node",
       adapterImport: "../framework.ts",
@@ -277,11 +416,12 @@ describe("generateServerEntry", () => {
       publicFiles: ["/robots.txt", "/.well-known/acme-challenge/token"],
     })
     expect(src).toContain('import { serve } from "@nifrajs/node"')
-    expect(src).toContain('import { readFile } from "node:fs/promises"')
+    expect(src).toContain('import { createWebApp, servePublicDir } from "@nifrajs/web"')
+    expect(src).not.toContain("readFile")
     expect(src).toContain("await serve(")
     expect(src).toContain('new Set(["/robots.txt","/.well-known/acme-challenge/token"])')
     expect(src).toContain("PUBLIC_FILES.has(pathname)")
-    expect(src).toContain("new URL(filePath, STATIC_ROOT)")
+    expect(src).toContain("dir: fileURLToPath(STATIC_ROOT)")
     expect(src).toContain("return app.fetch(req, platform)")
   })
 

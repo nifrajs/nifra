@@ -3,10 +3,17 @@
 </script>
 
 <script lang="ts">
-  import App from "../../nifra-svelte/App.svelte"
   import type { LoaderData } from "@nifrajs/client"
+  import type { loader } from "./index.backend"
 
   let { data }: { data: LoaderData<typeof loader> } = $props()
 </script>
 
-<App {data} />
+<main>
+  <h1>Items ({data.items.length})</h1>
+  <ul>
+    {#each data.items as it (it.id)}
+      <li>{it.name}</li>
+    {/each}
+  </ul>
+</main>

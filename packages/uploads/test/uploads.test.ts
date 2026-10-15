@@ -70,6 +70,18 @@ describe("detectFileType", () => {
     expect(detectFileType(fourth.subarray(0, FILE_TYPE_PREFIX_BYTES - 1))?.mime).toBe("image/heic")
   })
 
+  test("an ftyp box's declared size does not reach past the prefix", () => {
+    // A fifth compatible brand lies beyond FILE_TYPE_PREFIX_BYTES, so it never decides the type, and a
+    // box claiming megabytes of brands is read no further than the prefix.
+    const fifth = isobmff("mif1", "miaf", "MA1B", "MiHB", "msf1", "avif")
+    expect(detectFileType(fifth)?.mime).toBe("image/heic")
+    const claimed = new Uint8Array(8 * 1024 * 1024)
+    claimed.set(isobmff("mif1"))
+    claimed.set([0x7f, 0xff, 0xff, 0xff], 0)
+    claimed.set(isobmff("avif").subarray(8, 12), claimed.length - 4)
+    expect(detectFileType(claimed)?.mime).toBe("image/heic")
+  })
+
   test("returns null for unrecognized bytes", () => {
     expect(detectFileType(bytesOf(1, 2, 3, 4, 5, 6, 7, 8))).toBeNull()
   })

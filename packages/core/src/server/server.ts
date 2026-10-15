@@ -113,7 +113,7 @@ import {
   readBodyFramed,
 } from "./request-context.ts"
 import { recordRequestReplacement } from "./request-lineage.ts"
-import { hasDotSegment, resolveDotSegments } from "./request-target.ts"
+import { needsResolving, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -583,14 +583,21 @@ export { plainValidationError } from "./validation.ts"
 // importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
 export { type QueryValue, queryObjectOf, searchOf }
 
+// Outside the printable ASCII a parsed path keeps as written: a control, space, `"`, `#`, `<`, `>`,
+// `\`, `^`, `` ` ``, `{`, `}`, or past ASCII (U+FFFD, an invalid escape, included). Bun's table reads
+// a raw `#` and what follows as path, where the parsed URL ends the path there.
+const UNROUTED_CHAR = /[^!$%&'()*+,\-./0-9:;=?@A-Z[\]_a-z|~]/
+
 /**
  * A param value Bun's native route table matched but the portable router must decide: an invalid
  * escape, or a piece of path Bun matched raw while its own parsed URL says otherwise - a `.` / `..`
- * segment (Bun hands `%2e` over decoded), or a backslash, which the parsed URL reads as `/`.
+ * segment (Bun hands `%2e` over decoded), a backslash, which the parsed URL reads as `/`, a `#`,
+ * where the parsed URL's path ends (`/a/..#/b` is `/`), or a character the parsed URL
+ * percent-encodes (`/t/<b>` is `/t/%3Cb%3E`, which a static route for that text matches). The value
+ * is decoded, so a raw `<` and a sent `%3C` look alike; both are re-routed.
  */
 const unroutedParam = (value: string | undefined): boolean =>
-  value !== undefined &&
-  (value.includes("\uFFFD") || value.includes("\\") || value === "." || value === "..")
+  value !== undefined && (value === "." || value === ".." || UNROUTED_CHAR.test(value))
 
 function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
@@ -605,8 +612,18 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
-/** `req` as Bun or workerd would have delivered it: the same request, its URL's dot segments resolved. */
+/** `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it. */
 const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegments(req.url), req)
+
+// A Host as RFC 9110 allows it: a reg-name or an IP literal, then an optional port. Deno builds
+// `Request.url` by appending the target to the Host as received, so `Host: x/admin#` turned a
+// request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
+const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::\d{1,5})?$/i
+
+const invalidHost = (req: Request): boolean => {
+  const host = req.headers.get("host")
+  return host !== null && !HOST_AUTHORITY.test(host)
+}
 
 function normalizeMountPrefix(path: string): string {
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
@@ -3159,7 +3176,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
+    if (rawRequestTargets) {
+      if (invalidHost(req)) return jsonError(400, "invalid_host")
+      if (needsResolving(req.url)) req = withResolvedTarget(req)
+    }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
     if (this.trustBodyFraming) markTrustedBodyFraming(req)
@@ -3654,8 +3674,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (req.method !== "GET") return WS_PASS
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
-    // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
-    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
+    // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
+    if (rawRequestTargets) {
+      if (invalidHost(req)) {
+        return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
+      }
+      if (needsResolving(req.url)) req = withResolvedTarget(req)
+    }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
     platform = this.trustedPlatform(req, platform)
 

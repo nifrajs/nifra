@@ -11,7 +11,7 @@
  * Vite's `middlewares` are Connect-style - it runs fine under Bun.
  */
 
-import { type Dirent, readdirSync, writeFileSync } from "node:fs"
+import { type Dirent, existsSync, readdirSync, realpathSync, writeFileSync } from "node:fs"
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -33,6 +33,7 @@ import {
   formatIdentityParityFindings,
   identityParityHeadline,
 } from "./internal/parity.ts"
+import { isHiddenPublicPath } from "./internal/public-url.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { normalizeRolldownPlugins } from "./internal/vite-plugin-compat.ts"
@@ -77,6 +78,8 @@ interface ViteLike {
   ssrFixStacktrace(err: Error): void
   /** The module graph, used to invalidate a changed file AND its transitive importers before reload. */
   readonly moduleGraph?: ViteModuleGraph
+  /** The resolved config: `publicDir` is absolute, or `""` when the public directory is off. */
+  readonly config?: { readonly publicDir?: string }
   readonly watcher: {
     on(event: "change" | "add" | "unlink", cb: (path: string) => void): void
     on(event: "ready", cb: () => void): void
@@ -251,8 +254,13 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
 
 /** The bits of a Node ServerResponse `pipeWebBodyToNode` touches - structural, to avoid a node:http dep here. */
 interface NodeResLike {
+  /** Set once the socket is gone: `close` has fired, and a write returns `false` for good. */
+  readonly destroyed?: boolean
   flushHeaders?(): void
   on(event: "close", cb: () => void): void
+  // Optional so a bare sink still fits; without them a full buffer is not waited out.
+  once?(event: "drain", cb: () => void): void
+  off?(event: "close" | "drain", cb: () => void): void
   write(chunk: Uint8Array): boolean
   end(): void
 }
@@ -282,6 +290,8 @@ export function applyResponseHeaders(headers: Headers, res: NodeHeaderSink): voi
  * `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never
  * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it
  * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.
+ * A write the socket can't take yet is waited out (`drain`) before the next read, so a slow client
+ * holds one chunk rather than the whole body.
  */
 export async function pipeWebBodyToNode(
   body: ReadableStream<Uint8Array> | null,
@@ -291,17 +301,48 @@ export async function pipeWebBodyToNode(
     res.end()
     return
   }
+  // A call, so the check after an await is not narrowed by the one before it.
+  const destroyed = (): boolean => res.destroyed === true
+  // The client left while the app ran: `close` fired before anyone listened, and no `drain` comes.
+  if (destroyed()) {
+    await body.cancel().catch(() => {})
+    return
+  }
   const reader = body.getReader()
   res.flushHeaders?.()
-  res.on("close", () => void reader.cancel().catch(() => {}))
+  let closed = false
+  let wake: (() => void) | undefined
+  const onClose = (): void => {
+    closed = true
+    void reader.cancel().catch(() => {})
+    wake?.()
+  }
+  res.on("close", onClose)
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      res.write(value)
+      if (!res.write(value) && !closed && res.once !== undefined) {
+        if (destroyed()) {
+          onClose()
+          break
+        }
+        let drain!: () => void
+        const drained = new Promise<void>((resolve) => {
+          drain = resolve
+        })
+        wake = drain
+        res.once("drain", drain)
+        await drained
+        res.off?.("drain", drain)
+        wake = undefined
+      }
     }
   } catch {
     // client disconnected mid-stream - the `close` handler already cancelled the reader
+  } finally {
+    res.off?.("close", onClose)
+    reader.releaseLock()
   }
   res.end()
 }
@@ -416,7 +457,38 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     handleWithVite(req, res)
   })
 
+  // Vite's public middleware serves every file under the public directory, dotfiles included. A
+  // build ships no hidden file and the Bun pipeline's `servePublicDir` refuses one, so a request for
+  // `/.env` or `/.git/config` goes to the app here too, as it does in production.
+  function isHiddenPublicFile(url: string): boolean {
+    const configured = vite.config?.publicDir
+    if (configured === undefined || configured === "") return false
+    // Vite writes the path with `/`; resolved, it uses the platform's separator like `file`.
+    const publicDir = resolvePath(configured)
+    let rel: string
+    try {
+      rel = decodeURIComponent(new URL(url, "http://localhost").pathname).slice(1)
+    } catch {
+      return false
+    }
+    const file = resolvePath(publicDir, rel)
+    if (!file.startsWith(publicDir + sep) || !existsSync(file)) return false
+    if (isHiddenPublicPath(rel)) return true
+    // A visible name linking to a hidden file is refused too, as `servePublicDir` refuses it.
+    try {
+      const real = realpathSync(file)
+      const realRoot = realpathSync(publicDir)
+      return real.startsWith(realRoot + sep) && isHiddenPublicPath(real.slice(realRoot.length + 1))
+    } catch {
+      return false
+    }
+  }
+
   function handleWithVite(req: IncomingMessage, res: ServerResponse): void {
+    if (isHiddenPublicFile(req.url ?? "/")) {
+      handleWithApp(req, res)
+      return
+    }
     vite.middlewares(req, res, (error) => {
       // In middleware mode Vite reports a module's transform error to the overlay and passes the
       // request on. A request naming a source file was for a module, never a page: it gets the error,
@@ -437,60 +509,64 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
         return
       }
       // Not a Vite asset → nifra SSR. (`next` runs after Vite declines, so the body is still readable.)
-      void (async () => {
-        try {
-          const body = await readNodeBody(req)
-          const webRequest = toWebRequest(req, body)
-          let overlay = false
-          const nifraRes = await session.track(webRequest, async () => {
-            try {
-              return await app.fetch(webRequest)
-            } catch (err) {
-              // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
-              // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
-              if (err instanceof Error) vite.ssrFixStacktrace(err)
-              overlay = true
-              return new Response(
-                session.failure(err, { method: req.method ?? "GET", url: req.url ?? "/" }),
-                { status: 500, headers: { "content-type": "text/html; charset=utf-8" } },
-              )
-            }
-          })
-          const contentType = nifraRes.headers.get("content-type") ?? ""
-          res.statusCode = nifraRes.status
-          const requestId = nifraRes.headers.get(DEV_REQUEST_ID_HEADER)
-          if (requestId !== null) res.setHeader(DEV_REQUEST_ID_HEADER, requestId)
-          if (overlay || session.isOverlay(nifraRes)) {
-            res.setHeader("content-type", "text/html; charset=utf-8")
-            res.end(await nifraRes.text())
-            return
-          }
-          if (!contentType.includes("text/html")) {
-            // Data / redirect / asset response - pass through untouched, streamed (SSE-safe). Set-Cookie is
-            // emitted per-header so multi-cookie responses (e.g. better-auth sessions) aren't collapsed.
-            applyResponseHeaders(nifraRes.headers, res)
-            await pipeWebBodyToNode(nifraRes.body, res)
-            return
-          }
-          // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML, keeping the
-          // app's headers (cookies, CSP, cache-control) as the Bun pipeline does.
-          const headers = new Headers(nifraRes.headers)
-          headers.delete("content-length") // the body grows with Vite's tags
-          const page = session.decorateHtml(webRequest, await nifraRes.text(), headers, requestId)
-          const html = admitViteTags(await vite.transformIndexHtml(req.url ?? "/", page), headers)
-          applyResponseHeaders(headers, res)
-          res.setHeader("content-type", "text/html; charset=utf-8")
-          res.end(html)
-        } catch (err) {
-          // A failure past the app (reading the body, Vite's HTML transform): same overlay, same feed.
-          if (err instanceof Error) vite.ssrFixStacktrace(err)
-          const html = session.failure(err, { method: req.method ?? "GET", url: req.url ?? "/" })
-          res.statusCode = 500
-          res.setHeader("content-type", "text/html; charset=utf-8")
-          res.end(html)
-        }
-      })()
+      handleWithApp(req, res)
     })
+  }
+
+  function handleWithApp(req: IncomingMessage, res: ServerResponse): void {
+    void (async () => {
+      try {
+        const body = await readNodeBody(req)
+        const webRequest = toWebRequest(req, body)
+        let overlay = false
+        const nifraRes = await session.track(webRequest, async () => {
+          try {
+            return await app.fetch(webRequest)
+          } catch (err) {
+            // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
+            // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
+            if (err instanceof Error) vite.ssrFixStacktrace(err)
+            overlay = true
+            return new Response(
+              session.failure(err, { method: req.method ?? "GET", url: req.url ?? "/" }),
+              { status: 500, headers: { "content-type": "text/html; charset=utf-8" } },
+            )
+          }
+        })
+        const contentType = nifraRes.headers.get("content-type") ?? ""
+        res.statusCode = nifraRes.status
+        const requestId = nifraRes.headers.get(DEV_REQUEST_ID_HEADER)
+        if (requestId !== null) res.setHeader(DEV_REQUEST_ID_HEADER, requestId)
+        if (overlay || session.isOverlay(nifraRes)) {
+          res.setHeader("content-type", "text/html; charset=utf-8")
+          res.end(await nifraRes.text())
+          return
+        }
+        if (!contentType.includes("text/html")) {
+          // Data / redirect / asset response - pass through untouched, streamed (SSE-safe). Set-Cookie is
+          // emitted per-header so multi-cookie responses (e.g. better-auth sessions) aren't collapsed.
+          applyResponseHeaders(nifraRes.headers, res)
+          await pipeWebBodyToNode(nifraRes.body, res)
+          return
+        }
+        // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML, keeping the
+        // app's headers (cookies, CSP, cache-control) as the Bun pipeline does.
+        const headers = new Headers(nifraRes.headers)
+        headers.delete("content-length") // the body grows with Vite's tags
+        const page = session.decorateHtml(webRequest, await nifraRes.text(), headers, requestId)
+        const html = admitViteTags(await vite.transformIndexHtml(req.url ?? "/", page), headers)
+        applyResponseHeaders(headers, res)
+        res.setHeader("content-type", "text/html; charset=utf-8")
+        res.end(html)
+      } catch (err) {
+        // A failure past the app (reading the body, Vite's HTML transform): same overlay, same feed.
+        if (err instanceof Error) vite.ssrFixStacktrace(err)
+        const html = session.failure(err, { method: req.method ?? "GET", url: req.url ?? "/" })
+        res.statusCode = 500
+        res.setHeader("content-type", "text/html; charset=utf-8")
+        res.end(html)
+      }
+    })()
   }
 
   // `conditions: ["bun"]` makes Vite resolve nifra's workspace packages (`@nifrajs/web-react/client`, …) to

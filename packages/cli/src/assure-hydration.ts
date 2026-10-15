@@ -20,6 +20,8 @@ import {
   readBoundedStream,
   readHeadTail,
   signalProcessGroup,
+  stopGroupAndWait,
+  stopGroupOnExit,
 } from "./mcp-io.ts"
 import { frameworkWebAppOptions } from "./web-app-options.ts"
 
@@ -649,6 +651,7 @@ export async function runHydrationAssurance(
       detached: OWN_PROCESS_GROUP,
     },
   )
+  stopGroupOnExit(proc)
   const stopper = escalatingStop((name) => signalProcessGroup(proc, name))
   let stopped: string | undefined
   const stop = (reason: string): void => {
@@ -657,7 +660,10 @@ export async function runHydrationAssurance(
   }
   const onAbort = (): void => stop("cancelled")
   control.signal?.addEventListener("abort", onAbort, { once: true })
-  const releaseSignals = forwardTerminalSignals(() => stop("interrupted"))
+  const releaseSignals = forwardTerminalSignals(() => {
+    stopped ??= "interrupted"
+    return stopGroupAndWait(proc)
+  })
   const timeoutMs = control.timeoutMs ?? HYDRATION_RUN_TIMEOUT_MS
   const timer = setTimeout(() => stop(`timed out after ${timeoutMs} ms`), timeoutMs)
   try {

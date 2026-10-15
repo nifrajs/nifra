@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { buildTarget } from "../src/build.ts"
+import { buildTarget, generateServerEntry } from "../src/build.ts"
 import { discoverRoutes } from "../src/fs.ts"
 import type { RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
@@ -277,3 +277,131 @@ test("--target bun caches only the build's content-hashed files as immutable", a
     await proc.exited
   }
 }, 60_000)
+
+const prerenderingApp = (client: { entry: string }) =>
+  createWebApp({
+    adapter: stubAdapter,
+    manifest: discoverRoutes(routesDir),
+    clientEntry: client.entry,
+  })
+
+test("--target bun answers a prerendered page from its file and renders the rest on demand", async () => {
+  const outDir = join(projectRoot, "dist-bun-prerendered")
+  await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-prerendered"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    prerenderApp: prerenderingApp,
+  })
+  const file = join(outDir, "_prerendered", "index.html")
+  // Marked after the build, so a response carrying the mark came from the file and not a render.
+  writeFileSync(file, readFileSync(file, "utf8").replace("<p>nifra", "<p>from-file nifra"))
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    const page = await fetch(`${base}/`)
+    expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8")
+    expect(await page.text()).toContain("<p>from-file nifra")
+    const onDemand = await (await fetch(`${base}/?tab=1`)).text()
+    expect(onDemand).toContain("<p>nifra</p>")
+    expect(onDemand).not.toContain("from-file")
+    // The page files are not public files.
+    expect((await fetch(`${base}/_prerendered/index.html`)).status).toBe(404)
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
+
+test("a route that cannot load at build time costs the bun build its prerender, not the build", async () => {
+  writeFileSync(join(routesDir, "broken.tsx"), 'throw new Error("needs a production database")\n')
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    const outDir = join(projectRoot, "dist-bun-broken")
+    await buildTarget("bun", {
+      routesDir,
+      outDir,
+      workDir: join(projectRoot, ".work-bun-broken"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      prerenderApp: prerenderingApp,
+    })
+    expect(existsSync(join(outDir, "_prerendered"))).toBe(false)
+    expect(readFileSync(join(outDir, "server.js"), "utf8")).not.toContain("_prerendered")
+    expect(String(warn.mock.calls[0]?.[0])).toContain("needs a production database")
+  } finally {
+    warn.mockRestore()
+  }
+}, 60_000)
+
+test("a secret in a page a bun build prerenders still fails the build", async () => {
+  const name = "NIFRA_BUILD_TARGET_TEST_TOKEN"
+  const value = "Zq8mW2vX9pLr4TbN7yKc3HdF"
+  process.env[name] = value
+  try {
+    const failure = await buildTarget("bun", {
+      routesDir,
+      outDir: join(projectRoot, "dist-bun-secret"),
+      workDir: join(projectRoot, ".work-bun-secret"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      prerenderApp: () => ({
+        fetch: () => new Response(`<p>${value}</p>`, { headers: { "content-type": "text/html" } }),
+      }),
+    }).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(String(failure)).toContain(`value of ${name}`)
+  } finally {
+    delete process.env[name]
+  }
+}, 60_000)
+
+test("a public file under _prerendered/ is refused by a prerendering bun build", async () => {
+  mkdirSync(join(projectRoot, "public", "_prerendered"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "_prerendered", "index.html"), "<p>public</p>")
+  const failure = await buildTarget("bun", {
+    routesDir,
+    outDir: join(projectRoot, "dist-bun-clash"),
+    workDir: join(projectRoot, ".work-bun-clash"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    prerenderApp: prerenderingApp,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  expect(String(failure)).toContain("/_prerendered/index.html sit under /_prerendered/")
+}, 60_000)
+
+test("the node entry reads prerendered pages; the edge and deno entries refuse them", () => {
+  const prerenderedPages = {
+    "/": { file: "index.html", headers: { "content-language": "en" } },
+  }
+  const node = generateServerEntry({
+    target: "node",
+    adapterImport: "./framework.ts",
+    prerenderedPages,
+  })
+  expect(node).toContain(
+    'import { createWebApp, prerenderedPageReader, servePublicDir } from "@nifrajs/web"',
+  )
+  expect(node).toContain('pages: {"/":{"content-language":"en"}},')
+  expect(node).toContain('files: {"/":"index.html"},')
+  expect(node).toContain("  prerenderedPages,")
+  expect(generateServerEntry({ target: "node", adapterImport: "./framework.ts" })).not.toContain(
+    "prerendered",
+  )
+  for (const target of ["deno", "cloudflare", "vercel"] as const) {
+    expect(() =>
+      generateServerEntry({ target, adapterImport: "./framework.ts", prerenderedPages }),
+    ).toThrow(`served by the bun and node targets, not ${target}`)
+  }
+})

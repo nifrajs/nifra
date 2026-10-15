@@ -12,3 +12,27 @@ export function urlPartsFor(request: Request): UrlParts {
   REQUEST_URL_PARTS.set(request, parts)
   return parts
 }
+
+// The origin depends only on the text before the path, which repeats across requests, so each
+// distinct prefix is parsed once instead of every request's whole URL. Cleared when full: a client
+// can vary the Host header without bound.
+const ORIGINS = new Map<string, string>()
+
+/** `new URL(request.url).origin`, or `""` for a URL that does not parse. */
+export function originFor(request: { readonly url: string }): string {
+  const url = request.url
+  const schemeEnd = url.indexOf("://")
+  const pathStart = schemeEnd === -1 ? -1 : url.indexOf("/", schemeEnd + 3)
+  const prefix = pathStart === -1 ? url : url.slice(0, pathStart)
+  let origin = ORIGINS.get(prefix)
+  if (origin === undefined) {
+    try {
+      origin = new URL(prefix).origin
+    } catch {
+      origin = ""
+    }
+    if (ORIGINS.size >= 64) ORIGINS.clear()
+    ORIGINS.set(prefix, origin)
+  }
+  return origin
+}

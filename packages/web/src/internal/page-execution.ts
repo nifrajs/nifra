@@ -46,6 +46,7 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
+import { prepareModules } from "./module-preparation.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -57,6 +58,7 @@ import {
   notFound,
   type RenderAssemblyCache,
   type RenderedPage,
+  type RenderPageOptions,
   type RevalidateResult,
   redirect,
   renderPageResult,
@@ -67,7 +69,7 @@ import {
   tagLayoutError,
   withDuplicateInstanceHint,
 } from "./render-document.ts"
-import { urlPartsFor } from "./request-url.ts"
+import { originFor, urlPartsFor } from "./request-url.ts"
 import {
   ACTION_SCOPE,
   type CoreResponseControls,
@@ -207,6 +209,7 @@ export interface PageExecutionOptions<Env = unknown> {
   ) => Promise<Response>
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
+  readonly cacheRouteModules?: boolean
   readonly clientEntry: string
   readonly title?: string
   readonly api?: unknown
@@ -296,6 +299,12 @@ type LayoutChain = {
  */
 type LayoutChainSource = (page: RouteModule, count: number) => Promise<LayoutChain | undefined>
 
+/** A document's render input, filled in field by field. */
+type DocumentInput = { -readonly [K in keyof RenderPageOptions]: RenderPageOptions[K] } & {
+  readonly clientEntry: string
+  readonly hydrate: boolean
+}
+
 /**
  * Own the page request program behind one private seam.
  *
@@ -309,6 +318,11 @@ export function createPageRequestExecutor<Env = unknown>(
   options: PageExecutionOptions<Env>,
 ): PageRequestExecutor<Env> {
   const { adapter, manifest, clientEntry, api } = options
+  const cacheModules =
+    options.cacheRouteModules ??
+    (typeof process !== "undefined" && process.env?.NODE_ENV === "production")
+  const loadModule = prepareModules(cacheModules)
+  const preparedLayouts = new WeakMap<RouteEntry, LoadedLayoutModules>()
   // The action result is request-local; a browser cannot manufacture this handoff.
   const progressiveActionData = new WeakMap<Request, unknown>()
   // Bound once per render, so every loader, action and boundary in that render shares one view of the
@@ -326,6 +340,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ? { prerenderedPaths: options.prerenderedPaths ?? [] }
       : { prerenderedListUrl: options.prerenderedListUrl }
   const copyOption = options.copyChunks === undefined ? {} : { copyChunks: options.copyChunks }
+  const appDocumentOptions = { ...prerenderedHandover, ...copyOption, ...cspOption, ...titleOption }
   const { i18n } = options
   const pageLocales = new Map(i18n?.locales.locales.map((locale) => [locale.key, locale]))
   /** The request's locale for a document, with the served locales the client names locales from. */
@@ -420,8 +435,10 @@ export function createPageRequestExecutor<Env = unknown>(
   // Load a route's layout modules once for the current execution. The render path needs each whole
   // module for its component + meta, while the data path also needs loader/gate/boundary declarations.
   const loadLayoutModules = async (route: RouteEntry): Promise<LoadedLayoutModules> => {
+    const known = cacheModules ? preparedLayouts.get(route) : undefined
+    if (known !== undefined) return known
     const modules = await Promise.all(
-      route.layoutIds.map((id) => (manifest.layouts[id] as LayoutEntry).load()),
+      route.layoutIds.map((id) => loadModule(manifest.layouts[id] as LayoutEntry)),
     )
     for (let i = 0; i < modules.length; i++) {
       if ((modules[i] as { action?: unknown }).action === undefined) continue
@@ -430,6 +447,7 @@ export function createPageRequestExecutor<Env = unknown>(
         `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports an \`action\`, but layouts do not run one - only route files do. Move the mutation into the route that submits to it.`,
       )
     }
+    if (cacheModules) preparedLayouts.set(route, modules)
     return modules
   }
 
@@ -616,7 +634,7 @@ export function createPageRequestExecutor<Env = unknown>(
       const dirTag = `${id.slice(0, id.length - "_middleware".length)}_layout`
       let outcome: unknown
       try {
-        const middleware = (await entry.load()).default
+        const middleware = (await loadModule(entry)).default
         // A `_layout.backend.ts` that exports no middleware is a layout data module, nothing more.
         if (middleware === undefined) continue
         if (typeof middleware !== "function") {
@@ -774,14 +792,6 @@ export function createPageRequestExecutor<Env = unknown>(
     return undefined
   }
 
-  const originOf = (req: Request): string => {
-    try {
-      return new URL(req.url).origin
-    } catch {
-      return ""
-    }
-  }
-
   const pathOf = (req: Request): string => {
     try {
       const parts = urlPartsFor(req)
@@ -794,8 +804,8 @@ export function createPageRequestExecutor<Env = unknown>(
   /** What a status or error page's `meta` receives: no route params, and its own data. */
   const statusMetaArgs = (req: Request, data: unknown, nonce: string | undefined): MetaArgs =>
     nonce === undefined
-      ? { data, pageData: data, params: {}, origin: originOf(req) }
-      : { data, pageData: data, params: {}, origin: originOf(req), nonce }
+      ? { data, pageData: data, params: {}, origin: originFor(req) }
+      : { data, pageData: data, params: {}, origin: originFor(req), nonce }
 
   const renderError = async (
     req: Request,
@@ -1121,13 +1131,15 @@ export function createPageRequestExecutor<Env = unknown>(
         data,
         pageData: data,
         params,
-        origin: originOf(req),
+        origin: originFor(req),
         ...(nonce === undefined ? {} : { nonce }),
       },
       serverLeafOf(route, mod),
     )
     try {
-      return await renderPageResult({
+      // Optional fields are assigned, not spread in: a conditional spread per field cost every
+      // document request about 1us on Bun.
+      const page: DocumentInput = {
         adapter,
         chain,
         data,
@@ -1138,38 +1150,32 @@ export function createPageRequestExecutor<Env = unknown>(
         path: pathOf(req),
         search: searchChainOf(layoutModules, mod, req),
         matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
-        ...(serverComponents === undefined ? {} : { serverComponents }),
-        ...(progressiveActionData.has(req) ? { actionData: progressiveActionData.get(req) } : {}),
         hydrate: mod.hydrate !== false,
-        ...(layoutData !== undefined ? { layoutData } : {}),
-        ...(boundaryStates !== undefined ? { boundaries: boundaryStates } : {}),
         ...preloadOf(route.id),
         ...stylesOf(route.id),
-        ...prerenderedHandover,
-        ...copyOption,
+        ...appDocumentOptions,
         ...localeOption(req),
-        ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
-        // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
-        ...(mod.revalidate !== undefined && !personalized && options.cacheChannel?.enabled === true
-          ? { revalidate: mod.revalidate }
-          : {}),
-        ...(mod.revalidateTags !== undefined &&
-        !personalized &&
-        options.cacheChannel?.enabled === true
-          ? {
-              revalidateTags: routeTags(
-                mod.revalidateTags,
-                { params, url: new URL(req.url) },
-                route.id,
-              ),
-            }
-          : {}),
-        ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
-        ...(nonce === undefined ? {} : { nonce }),
-        ...cspOption,
-        ...titleOption,
-        ...(assemblyCache === undefined ? {} : { assemblyCache }),
-      })
+      }
+      if (serverComponents !== undefined) page.serverComponents = serverComponents
+      if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
+      if (layoutData !== undefined) page.layoutData = layoutData
+      if (boundaryStates !== undefined) page.boundaries = boundaryStates
+      if (responseHeaders !== undefined) page.headers = responseHeaders
+      // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
+      if (!personalized && options.cacheChannel?.enabled === true) {
+        if (mod.revalidate !== undefined) page.revalidate = mod.revalidate
+        if (mod.revalidateTags !== undefined) {
+          page.revalidateTags = routeTags(
+            mod.revalidateTags,
+            { params, url: new URL(req.url) },
+            route.id,
+          )
+        }
+      }
+      if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
+      if (nonce !== undefined) page.nonce = nonce
+      if (assemblyCache !== undefined) page.assemblyCache = assemblyCache
+      return await renderPageResult(page)
     } catch (err) {
       if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized, settled)
       if (isControlFlow(err)) throw err
@@ -1252,7 +1258,7 @@ export function createPageRequestExecutor<Env = unknown>(
       data: null,
       pageData: null,
       params,
-      origin: originOf(req),
+      origin: originFor(req),
       ...(nonce === undefined ? {} : { nonce }),
     })
     let headers: Headers | undefined
@@ -1410,7 +1416,8 @@ export function createPageRequestExecutor<Env = unknown>(
         if (!componentOwner && is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
           return renderNotFound(c, controls)
         }
-        const mod = await route.load()
+        const loaded = loadModule(route)
+        const mod = cacheModules && !(loaded instanceof Promise) ? loaded : await loaded
         const draft = await draftFlag(c.req)
         // Unpublished content is the editor's alone: whatever cache-control a loader sets, no cache keeps it.
         if (draft) controls.personalize()
@@ -1592,7 +1599,8 @@ export function createPageRequestExecutor<Env = unknown>(
 
     post: (route) =>
       withResponseControls(async (c, controls) => {
-        const mod = await route.load()
+        const loaded = loadModule(route)
+        const mod = cacheModules && !(loaded instanceof Promise) ? loaded : await loaded
         const draft = await draftFlag(c.req)
         if (draft) controls.personalize()
         if (mod.action === undefined) {
@@ -1810,7 +1818,7 @@ export function createPageRequestExecutor<Env = unknown>(
             data,
             pageData: data,
             params: c.params,
-            origin: originOf(c.req),
+            origin: originFor(c.req),
             ...(nonce === undefined ? {} : { nonce }),
           },
           serverLeafOf(route, mod),

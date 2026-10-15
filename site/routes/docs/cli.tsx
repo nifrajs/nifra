@@ -19,7 +19,9 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 
 const UPGRADE = `nifra upgrade --list          # the release targets this CLI knows
 nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.0.0 --write   # apply, then nifra check verifies (--no-verify skips it)
+nifra upgrade 5.0.0 --write   # apply; it verifies with nifra check once the target is installed
+bun install                   # install the new pins
+nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left`
 
 const FRAMEWORK = `// framework.ts - deploy-safe; generated server entries import this file.
@@ -157,7 +159,11 @@ nifra migrate --from tailwind --to stylex --dir src`}
         moved, lists comments a release stopped honoring, and pins each group dependency to the
         target, keeping its <code>^</code> or <code>~</code> unless you pass <code>--exact</code>.
         The pins in <code>overrides</code>, <code>resolutions</code> and{" "}
-        <code>pnpm.overrides</code> move with them, since an override decides what installs.
+        <code>pnpm.overrides</code> move with them, since an override decides what installs. A{" "}
+        <code>peerDependencies</code> range is what a library accepts, not a pin: it is raised only
+        when it excludes the target (keeping its operator, even with <code>--exact</code>), and a
+        library&apos;s <code>&quot;&gt;=3.1.0&quot;</code> floor never sets the version the upgrade
+        starts from unless nothing else, installed or declared, names one.
       </p>
       <CodeBlock code={UPGRADE} lang="bash" />
       <p>
@@ -174,9 +180,14 @@ nifra migrate --from tailwind --to stylex --dir src`}
         <code>package.json</code> is listed with its line: the rest of an agent file, an MCP config
         elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
         workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
-        installing. With <code>--write</code> it also
-        prints how hook scope changed across the
-        upgrade (<code>--no-hooks</code> skips that). <code>nifra doctor</code> and{" "}
+        installing. <code>nifra check</code> reads the installed packages, so <code>--write</code>{" "}
+        runs it (<code>--no-verify</code> skips that) only once they match the target: until the new
+        pins are installed it would judge the release you are leaving, and the command prints the
+        install to run first instead. With <code>--write</code> it also saves the hook report from
+        before the edits and, once the target is installed, prints how hook scope changed across the
+        upgrade (<code>--no-hooks</code> skips that); before then,{" "}
+        <code>nifra routes --hooks --since</code> compares after the install.{" "}
+        <code>nifra doctor</code> and{" "}
         <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;
         see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>. A{" "}
         <code>file:</code> package whose dependencies this upgrade moves keeps its old ones in{" "}

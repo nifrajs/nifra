@@ -5,6 +5,8 @@ import {
   mkdtemp,
   open,
   readFile,
+  realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -30,6 +32,7 @@ import {
   type StoragePresignOptions,
   toBytes,
 } from "../src/index.ts"
+import { racePuts } from "./race-puts.ts"
 
 /** An in-memory fake of the R2 binding so `R2Storage`'s mapping is exercised without real R2. Uses
  * conditional spreads (not `field: undefined`) to satisfy `exactOptionalPropertyTypes`. */
@@ -254,6 +257,134 @@ describe("FileStorage filesystem containment", () => {
       await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
     },
   )
+
+  test("a body is never served with another put's content type or metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-generation-"))
+    tmpDirs.push(root, `${root}.nifra-state`)
+    const sidecar = join(`${root}.nifra-state`, "metadata", "object.txt")
+    const first = new FileStorage(root)
+    await first.put("object.txt", "A", { contentType: "text/a", metadata: { v: "a" } })
+    const firstSidecar = await readFile(sidecar)
+    // Exact IDs: an NTFS file ID passes 2^53, where two live files can round to one number.
+    const { dev, ino } = await stat(join(root, "object.txt"), { bigint: true })
+    expect(JSON.parse(firstSidecar.toString()).body).toEqual({ dev: String(dev), ino: String(ino) })
+    // Another process's put lands its body, then the first put's sidecar lands after it.
+    await new FileStorage(root).put("object.txt", "B", {
+      contentType: "text/b",
+      metadata: { v: "b" },
+    })
+    await writeFile(sidecar, firstSidecar)
+    const read = await first.get("object.txt")
+    expect(new TextDecoder().decode(read?.body)).toBe("B")
+    expect(read?.metadata).toBeUndefined()
+    expect(read?.contentType).toBe("text/plain")
+
+    // Within one instance, puts to a key publish one at a time, so each body keeps its own sidecar.
+    for (let round = 0; round < 10; round++) {
+      await Promise.all(
+        ["a", "b", "c"].map((v) =>
+          first.put("object.txt", v, { contentType: `text/${v}`, metadata: { v } }),
+        ),
+      )
+      const settled = await first.get("object.txt")
+      const body = new TextDecoder().decode(settled?.body)
+      expect({ type: settled?.contentType, v: settled?.metadata?.v }).toEqual({
+        type: `text/${body}`,
+        v: body,
+      })
+    }
+  })
+
+  test.skipIf(process.platform === "win32")(
+    "a swapped ancestor never redirects a later operation into another tree",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "nifra-storage-ancestor-"))
+      tmpDirs.push(base)
+      for (const tree of ["first", "second"])
+        await mkdir(join(base, tree, "objects"), { recursive: true })
+      await writeFile(join(base, "second", "objects", "object.txt"), "planted")
+      await symlink(join(base, "first"), join(base, "current"), "dir")
+      const storage = new FileStorage(join(base, "current", "objects"))
+      await storage.put("object.txt", "mine")
+
+      // The link above the root is repointed: the storage keeps working in the tree it resolved.
+      await rm(join(base, "current"))
+      await symlink(join(base, "second"), join(base, "current"), "dir")
+      expect(new TextDecoder().decode((await storage.get("object.txt"))?.body)).toBe("mine")
+      await storage.put("object.txt", "still mine")
+      expect(await readFile(join(base, "second", "objects", "object.txt"), "utf8")).toBe("planted")
+
+      // The resolved directory itself is renamed away and replaced: every operation fails closed.
+      await rename(join(base, "first"), join(base, "moved"))
+      await mkdir(join(base, "first", "objects"), { recursive: true })
+      await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.put("object.txt", "x")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      expect(await readFile(join(base, "moved", "objects", "object.txt"), "utf8")).toBe(
+        "still mine",
+      )
+
+      // The resolved directory is gone altogether: still refused, never re-resolved elsewhere.
+      await rm(join(base, "first"), { recursive: true })
+      await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    },
+  )
+
+  test("two instances putting one key at once both succeed, last writer wins", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-storage-race-"))
+    tmpDirs.push(dir, `${dir}.nifra-state`)
+    // A rename landing after this put's own is another writer's, not a link beneath the root.
+    const { mixed, failed } = await racePuts(new FileStorage(dir), new FileStorage(dir), 200)
+    expect({ mixed, failed }).toEqual({ mixed: 0, failed: [] })
+  })
+
+  test.skipIf(process.platform === "win32")(
+    "a directory the first put creates above the root is pinned too",
+    async () => {
+      const base = await realpath(await mkdtemp(join(tmpdir(), "nifra-storage-created-")))
+      tmpDirs.push(base)
+      // `app` does not exist yet: the first put creates it beneath the pinned `base`.
+      const storage = new FileStorage(join(base, "app", "uploads"))
+      await storage.put("a.txt", "original")
+
+      await rename(join(base, "app"), join(base, "app-moved"))
+      await mkdir(join(base, "elsewhere", "uploads"), { recursive: true, mode: 0o755 })
+      await writeFile(join(base, "elsewhere", "uploads", "a.txt"), "planted")
+      await symlink(join(base, "elsewhere"), join(base, "app"), "dir")
+
+      await expect(storage.put("b.txt", "redirected")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.get("a.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      expect(await stat(join(base, "elsewhere", "uploads", "b.txt")).catch(() => null)).toBeNull()
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "a root that cannot be resolved yet is resolved again once it can be",
+    async () => {
+      const base = await mkdtemp(join(tmpdir(), "nifra-storage-unresolved-"))
+      tmpDirs.push(base)
+      // A link to itself: resolving it fails with ELOOP, which is not a missing directory.
+      await symlink(join(base, "loop"), join(base, "loop"))
+      const storage = new FileStorage(join(base, "loop", "objects"))
+      await expect(storage.put("object.txt", "x")).rejects.toThrow()
+      await rm(join(base, "loop"))
+      await mkdir(join(base, "loop"))
+      await storage.put("object.txt", "x")
+      expect(await readFile(join(base, "loop", "objects", "object.txt"), "utf8")).toBe("x")
+    },
+  )
+
+  test("a failed put leaves its key free for the next one", async () => {
+    const base = await mkdtemp(join(tmpdir(), "nifra-storage-failed-put-"))
+    tmpDirs.push(base)
+    const storage = new FileStorage(join(base, "objects"))
+    await storage.put("a", "file")
+    // `a` is a file, so a body under `a/` cannot be written.
+    await expect(storage.put("a/b", "nested")).rejects.toThrow()
+    await storage.delete("a")
+    await storage.put("a/b", "nested")
+    expect(new TextDecoder().decode((await storage.get("a/b"))?.body)).toBe("nested")
+  })
 
   test.skipIf(process.platform === "win32")(
     "delete rejects a root whose parent can be swapped by another local principal",

@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test"
 import { unlinkSync } from "node:fs"
-import { assertRenderAdapterConformance, renderPageResult } from "@nifrajs/web"
-import { createComponent, createResource, Suspense } from "solid-js"
+import {
+  assertRenderAdapterConformance,
+  createCspPolicy,
+  renderPage,
+  renderPageResult,
+} from "@nifrajs/web"
+import { createComponent, createResource, ErrorBoundary, Suspense } from "solid-js"
 import { solidAdapter } from "../src/index.ts"
 import { solidBunPlugin } from "../src/plugin.ts"
 
@@ -127,4 +132,43 @@ test("solidBunPlugin compiles a .tsx through Solid's Babel transform", async () 
 test("solidBunPlugin names itself per generate mode", () => {
   expect(solidBunPlugin("ssr").name).toBe("nifra-solid-ssr")
   expect(solidBunPlugin("dom").name).toBe("nifra-solid-dom")
+})
+
+test("under a hash CSP, the script Solid writes for a caught server error may run", async () => {
+  const Page = () =>
+    createComponent(ErrorBoundary, {
+      fallback: () => "Something went wrong",
+      get children(): never {
+        throw new Error("server error")
+      },
+    })
+  const csp = createCspPolicy({
+    header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,
+  })
+  const res = await renderPage({
+    adapter: solidAdapter,
+    chain: [Page],
+    data: null,
+    clientEntry: "/assets/client.js",
+    csp,
+  })
+  const html = await res.text()
+  const policy = res.headers.get("content-security-policy") ?? ""
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script[^>]*>/gi)].filter(
+    (m) => !/\bsrc=|application\/json/.test(m[1] ?? ""),
+  )
+  // Solid serialized the boundary's error for hydration in a script of this render's own.
+  expect(scripts.some((m) => (m[2] ?? "").includes("$R"))).toBe(true)
+  for (const [, attrs = "", body = ""] of scripts) {
+    const nonce = attrs.match(/\bnonce="([^"]+)"/)?.[1]
+    if (nonce !== undefined && policy.includes(`'nonce-${nonce}'`)) continue
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
+    )
+    expect([body, policy]).toEqual([
+      body,
+      expect.stringContaining(`'sha256-${btoa(String.fromCharCode(...digest))}'`),
+    ])
+  }
+  expect(res.headers.get("cache-control")).toBe("private, no-store")
 })

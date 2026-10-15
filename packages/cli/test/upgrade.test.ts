@@ -10,9 +10,11 @@ import {
   computeUpgrade,
   installedGroupVersion,
   moveDependenciesText,
+  pendingInstall,
   pinSweepText,
   rewriteVersionSpec,
   runUpgrade,
+  specIncludes,
   specVersion,
   upgradeTargets,
 } from "../src/upgrade.ts"
@@ -94,6 +96,11 @@ describe("rewriteVersionSpec", () => {
     expect(rewriteVersionSpec("~1.7.0", "1.8.0")).toBe("~1.8.0")
     expect(rewriteVersionSpec("1.7.0", "1.8.0")).toBe("1.8.0")
     expect(rewriteVersionSpec(">=1.7.0", "1.8.0")).toBe(">=1.8.0")
+  })
+  test("a strict bound becomes inclusive, so the result admits the target", () => {
+    expect(rewriteVersionSpec(">1.7.0", "1.8.0")).toBe(">=1.8.0")
+    expect(rewriteVersionSpec("<1.7.0", "1.8.0")).toBe("<=1.8.0")
+    expect(rewriteVersionSpec("<=1.7.0", "1.8.0")).toBe("<=1.8.0")
   })
   test("skips non-semver / already-current specs (returns null)", () => {
     expect(rewriteVersionSpec("workspace:*", "1.8.0")).toBeNull()
@@ -205,11 +212,150 @@ describe("pinSweepText", () => {
     expect(parsed.resolutions["nifra-lookalike"]).toBe("1.7.0")
   })
 
+  test("a nested override pins only the package it sits under", () => {
+    const pkg = JSON.stringify(
+      {
+        overrides: {
+          "@nifrajs/core": { ".": "1.7.0", "some-dep": { ".": "1.7.0" } },
+          "some-lib": { ".": "1.7.0", "@nifrajs/core": "1.7.0" },
+        },
+      },
+      null,
+      2,
+    )
+    const { text, changes } = pinSweepText(pkg, RECIPE.pins)
+    expect(changes).toEqual([
+      { field: "overrides", name: ".", from: "1.7.0", to: "1.8.0" },
+      { field: "overrides", name: "@nifrajs/core", from: "1.7.0", to: "1.8.0" },
+    ])
+    const parsed = JSON.parse(text)
+    expect(parsed.overrides["@nifrajs/core"]).toEqual({
+      ".": "1.8.0",
+      "some-dep": { ".": "1.7.0" },
+    })
+    expect(parsed.overrides["some-lib"]).toEqual({ ".": "1.7.0", "@nifrajs/core": "1.8.0" })
+  })
+
   test("an override above the target is a rollback like any pin", () => {
     const pkg = JSON.stringify({ overrides: { "@nifrajs/core": "2.3.0" } }, null, 2)
     const { downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }])
     expect(downgrades).toEqual([
       { field: "overrides", name: "@nifrajs/core", from: "2.3.0", to: "2.0.0" },
+    ])
+  })
+})
+
+describe("peer ranges", () => {
+  test("specIncludes reads a single-comparator range as npm does", () => {
+    expect(specIncludes(">=3.1.0", "5.2.0")).toBe(true)
+    expect(specIncludes(">5.2.0", "5.2.0")).toBe(false)
+    expect(specIncludes("<6.0.0", "5.2.0")).toBe(true)
+    expect(specIncludes("<=5.1.0", "5.2.0")).toBe(false)
+    expect(specIncludes("^5.0.0", "5.2.0")).toBe(true)
+    expect(specIncludes("^4.0.0", "5.2.0")).toBe(false)
+    expect(specIncludes("^0.3.0", "0.3.9")).toBe(true)
+    expect(specIncludes("^0.3.0", "0.4.0")).toBe(false)
+    expect(specIncludes("^0.0.3", "0.0.4")).toBe(false)
+    expect(specIncludes("~5.1.0", "5.1.9")).toBe(true)
+    expect(specIncludes("~5.1.0", "5.2.0")).toBe(false)
+    expect(specIncludes("5.2.0", "5.2.0")).toBe(true)
+    expect(specIncludes("=5.1.0", "5.2.0")).toBe(false)
+    // A prerelease satisfies only a spec naming a prerelease of the same core.
+    expect(specIncludes(">=5.0.0", "6.0.0-beta.1")).toBe(false)
+    expect(specIncludes("^6.0.0-beta.0", "6.0.0-beta.1")).toBe(true)
+    expect(specIncludes(">=3.1.0 <6", "5.2.0")).toBe(false)
+    expect(specIncludes("workspace:*", "5.2.0")).toBe(false)
+  })
+
+  test("a peer range that admits the target is left; one that excludes it keeps its operator", () => {
+    const pkg = JSON.stringify(
+      {
+        peerDependencies: {
+          "@nifrajs/core": ">=3.1.0",
+          "@nifrajs/web": "^5.0.0",
+          "@nifrajs/client": "^4.0.0",
+          "@nifrajs/schema": "~5.1.0",
+        },
+        devDependencies: { "@nifrajs/core": "5.1.0", "@nifrajs/web": "5.1.0" },
+      },
+      null,
+      2,
+    )
+    const pins = [{ match: "@nifrajs/", to: "5.2.0" }]
+    for (const exact of [false, true]) {
+      const { changes, downgrades } = pinSweepText(pkg, pins, false, exact)
+      expect(downgrades).toHaveLength(0)
+      expect(changes).toEqual([
+        { field: "devDependencies", name: "@nifrajs/core", from: "5.1.0", to: "5.2.0" },
+        { field: "devDependencies", name: "@nifrajs/web", from: "5.1.0", to: "5.2.0" },
+        { field: "peerDependencies", name: "@nifrajs/client", from: "^4.0.0", to: "^5.2.0" },
+        { field: "peerDependencies", name: "@nifrajs/schema", from: "~5.1.0", to: "~5.2.0" },
+      ])
+    }
+  })
+
+  test("every rewritten range admits the target, and an upper bound that does is left alone", () => {
+    for (const field of ["dependencies", "peerDependencies"]) {
+      const pkg = JSON.stringify({
+        [field]: {
+          "@nifrajs/core": "<5.2.0",
+          "@nifrajs/web": "<6.0.0",
+          "@nifrajs/client": ">5.2.0",
+          "@nifrajs/schema": "<=5.2.0",
+        },
+      })
+      const { text, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "5.3.0" }])
+      expect(downgrades).toEqual([])
+      const after: Record<string, string> = JSON.parse(text)[field]
+      for (const spec of Object.values(after)) expect(specIncludes(spec, "5.3.0")).toBe(true)
+      expect(after["@nifrajs/web"]).toBe("<6.0.0")
+    }
+  })
+
+  test("a peer floor is not the version a workspace upgrades from", async () => {
+    const root = join(FIXTURES, "peer-floor")
+    await mkdir(join(root, "packages", "lib"), { recursive: true })
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "libs", private: true }))
+    const lib = (dev: Record<string, string>) =>
+      writeFile(
+        join(root, "packages", "lib", "package.json"),
+        JSON.stringify(
+          { name: "lib", peerDependencies: { "@nifrajs/core": ">=3.1.0" }, devDependencies: dev },
+          null,
+          2,
+        ),
+      )
+    await lib({})
+    expect(installedGroupVersion(root)).toBe("3.1.0")
+    await mkdir(join(root, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await writeFile(
+      join(root, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "5.0.0" }),
+    )
+    expect(installedGroupVersion(root)).toBe("5.0.0")
+    await lib({ "@nifrajs/core": "5.1.0" })
+    expect(installedGroupVersion(root)).toBe("5.1.0")
+
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      expect(await runUpgrade(root, { version: "5.2.0", json: true, cliVersion: "5.2.0" })).toBe(
+        true,
+      )
+    } finally {
+      log.mockRestore()
+    }
+    const report = Object(JSON.parse(lines.join("\n")))
+    expect(Reflect.get(report, "from")).toBe("5.1.0")
+    expect(Reflect.get(report, "steps")).toEqual(["5.2.0"])
+    expect(Reflect.get(report, "pins")).toEqual([
+      {
+        file: "packages/lib/package.json",
+        field: "devDependencies",
+        name: "@nifrajs/core",
+        from: "5.1.0",
+        to: "5.2.0",
+      },
     ])
   })
 })
@@ -573,14 +719,17 @@ describe("computeUpgrade / runUpgrade", () => {
     ).toBe(true)
   })
 
-  test("an upgrade from 5.0 to 5.2 carries the notes of every minor, in order", () => {
-    const notes = chainRecipes("5.2.0", "5.0.0").notes ?? []
+  test("an upgrade from 5.0 to 5.3 carries the notes of every minor, in order", () => {
+    const notes = chainRecipes("5.3.0", "5.0.0").notes ?? []
     const at = (prefix: string) => notes.findIndex((note) => note.startsWith(prefix))
     const order = [
       at("5.1.0: "),
       at("5.2.0: A closed request-header schema"),
       at("5.2.0: The development `unusedScopedHooks` audit"),
       at("5.2.0: The Bun build"),
+      at("5.3.0: A route answering `status(code, body)`"),
+      at("5.3.0: `nifra check` adds NF-C045"),
+      at("5.3.0: `nifra upgrade` leaves a `peerDependencies` range"),
     ]
     expect(order.every((index) => index >= 0)).toBe(true)
     expect(order.toSorted((a, b) => a - b)).toEqual(order)
@@ -725,29 +874,91 @@ describe("chained upgrades", () => {
     )
   })
 
-  test("--write --json verifies inside the one JSON document", async () => {
-    const root = await scaffoldV1("chain-json-verify")
+  interface UpgradeReport {
+    readonly write: boolean
+    readonly check?: { readonly ok: boolean }
+    readonly install?: unknown
+  }
+  const jsonUpgrade = async (root: string): Promise<{ result: boolean; report: UpgradeReport }> => {
     const lines: string[] = []
     const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
     const error = spyOn(console, "error").mockImplementation(() => {})
-    let result: boolean
     try {
-      result = await runUpgrade(root, {
+      const result = await runUpgrade(root, {
         version: "4.0.0",
         cliVersion: "4.0.0",
         write: true,
         json: true,
         hooks: false,
       })
+      return { result, report: JSON.parse(lines.join("\n")) }
     } finally {
       log.mockRestore()
       error.mockRestore()
     }
-    const report = JSON.parse(lines.join("\n"))
+  }
+
+  test("--write leaves the check until the edited pins are installed", async () => {
+    const root = await scaffoldV1("chain-uninstalled")
+    const { result, out } = await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, hooks: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain(
+      "Not checked yet: `nifra check` reads the installed packages, and the edited pins are not installed yet, so it would judge the release this upgrade leaves rather than 4.0.0. Install, then check:\n  bun install\n  nifra check",
+    )
+    expect(out).not.toContain("upgrade applied but")
+
+    const json = await jsonUpgrade(await scaffoldV1("chain-uninstalled-json"))
+    expect(json.result).toBe(true)
+    expect(json.report.check).toBeUndefined()
+    expect(json.report.install).toEqual({ command: "bun install", installed: [] })
+  })
+
+  test("--write --json verifies inside the one JSON document once the target is installed", async () => {
+    const root = await scaffoldV1("chain-json-verify")
+    await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, verify: false }),
+    )
+    const { result, report } = await jsonUpgrade(root)
     expect(report.write).toBe(true)
-    expect(typeof report.check.ok).toBe("boolean")
-    expect(result).toBe(report.check.ok)
+    expect(report.install).toBeUndefined()
+    expect(typeof report.check?.ok).toBe("boolean")
+    expect(result).toBe(report.check?.ok === true)
   }, 120_000)
+
+  test("an install below the target, or a lockfile, decides what the deferred check names", async () => {
+    const root = join(FIXTURES, "installed-below")
+    const core = join(root, "node_modules", "@nifrajs", "core")
+    await mkdir(core, { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "4.0.0" } }),
+    )
+    await writeFile(
+      join(core, "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "3.7.0" }),
+    )
+    await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
+    const plan = computeUpgrade(root, chainRecipes("4.0.0", "4.0.0"), false)
+    expect(plan.pins).toEqual([])
+    expect(pendingInstall(root, plan)).toEqual({
+      command: "pnpm install",
+      installed: [{ package: "@nifrajs/core", version: "3.7.0" }],
+    })
+    const { result, out } = await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, hooks: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain("and node_modules still holds @nifrajs/core 3.7.0, so it would judge")
+    expect(out).toContain("  pnpm install\n  nifra check")
+
+    await writeFile(
+      join(core, "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "4.0.0" }),
+    )
+    expect(pendingInstall(root, plan)).toBeUndefined()
+  })
 
   test("--exact pins the exact version", async () => {
     const root = await scaffoldV1("chain-exact")

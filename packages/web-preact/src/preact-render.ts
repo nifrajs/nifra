@@ -13,10 +13,10 @@
  * root** makes it pull the app's `preact` transitively, matching the components: one `options`, one core,
  * no crash. (Empirically verified against a two-copy install fixture - see test/dual-preact.test.ts.)
  *
- * Guarding precisely so the PRODUCTION/BUILT path is untouched: when `Bun.resolveSync` is unavailable
- * (Node / Deno / Cloudflare / Vercel / any bundled output), the build has already bundled a single
- * `preact` + renderer, so the static `import` is correct AND the only thing that works without a Bun
- * resolver. We fall back to it there. The app-root resolution runs ONLY under the Bun runtime.
+ * Guarding precisely so the PRODUCTION/BUILT path is untouched: a bundled output (Node / Deno /
+ * Cloudflare / Vercel, and a `target: "bun"` bundle, which still has `Bun.resolveSync`) already holds a
+ * single deduped `preact` + renderer, so the static `import` is correct there - see
+ * {@link bunResolverFn}. The app-root resolution runs ONLY under the unbundled Bun runtime.
  */
 
 import type { VNode } from "preact"
@@ -109,8 +109,28 @@ export async function load<T>(
   return (await import("preact-render-to-string")) as T
 }
 
-/** The ambient `Bun.resolveSync`, or undefined on a non-Bun host (where the static import is the only path). */
-function bunResolverFn(): ResolveSync | undefined {
+/**
+ * Whether this module is executing from inside a bundle rather than as its own file. Bundling rewrites
+ * `import.meta.url` to the output file, so a basename that is no longer `preact-render.*` (the `.ts`
+ * source, the `.js` in the published dist) means this module was concatenated into one. Catches a
+ * server bundled without `buildServer`, which never defines `NIFRA_SSR_BUNDLED`. `url` is for tests.
+ */
+export function moduleLooksBundled(url: string = import.meta.url): boolean {
+  const base = url.split(/[/\\]/).pop() ?? ""
+  return !base.startsWith("preact-render.")
+}
+
+/**
+ * The ambient `Bun.resolveSync`, or undefined where re-rooting must NOT happen: a non-Bun host, or a
+ * bundled SSR output. `buildServer` defines `process.env.NIFRA_SSR_BUNDLED` as `"1"` in every bundle,
+ * whose renderer and `preact` are already inlined and deduped; a `target: "bun"` bundle still has
+ * `Bun.resolveSync`, and re-rooting there imports a SECOND renderer and `preact` from disk, so the
+ * bundled components' hooks write one `options` global while the renderer reads another - the `__H`
+ * crash. Read per call so a test can drive it. Exported for unit tests.
+ */
+export function bunResolverFn(): ResolveSync | undefined {
+  if (process.env.NIFRA_SSR_BUNDLED === "1") return undefined
+  if (moduleLooksBundled()) return undefined
   return hasBunResolveSync && bunResolver?.resolveSync !== undefined
     ? bunResolver.resolveSync.bind(bunResolver)
     : undefined

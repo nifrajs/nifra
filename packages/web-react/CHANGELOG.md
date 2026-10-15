@@ -1,5 +1,42 @@
 # @nifrajs/web-react
 
+## 5.3.0
+
+### Patch Changes
+
+- 605c246: A React page that suspends without `defer()` (`use(promise)` or `lazy` inside `<Suspense>`) now renders its resolved content on the server. The buffered fast path rendered it with React's string renderer, which cannot wait, so the document kept the fallback for good (with `hydrate: false` or JavaScript off, the content never appeared), and a component suspending with no boundary above it failed the render. `RenderAdapter.renderToString` may now return `undefined` for a render that suspended; the React adapter does so, and the page is streamed instead, with a CSP nonce when the policy needs one.
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [0e1d03f]
+- Updated dependencies [808bac8]
+- Updated dependencies [605c246]
+- Updated dependencies [271917a]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [69dfb60]
+- Updated dependencies [190ab39]
+- Updated dependencies [605c246]
+- Updated dependencies [13224fe]
+- Updated dependencies [00c266e]
+- Updated dependencies [7cf8df3]
+  - @nifrajs/authjs@5.3.0
+  - @nifrajs/core@5.3.0
+  - @nifrajs/i18n@5.3.0
+  - @nifrajs/image@5.3.0
+  - @nifrajs/schema@5.3.0
+  - @nifrajs/web@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/authjs@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/i18n@5.2.1
+  - @nifrajs/image@5.2.1
+  - @nifrajs/schema@5.2.1
+  - @nifrajs/web@5.2.1
+
 ## 5.2.0
 
 ### Minor Changes

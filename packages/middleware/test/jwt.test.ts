@@ -525,15 +525,25 @@ describe("jwt() / verifyJwt()", () => {
   })
 
   test("bounds JWKS response reads before buffering untrusted bodies", async () => {
+    let declaredCancelled = false
     const byLength = jwks({
       url: "https://issuer.test/jwks.json",
       maxBytes: 8,
       fetch: (async () =>
-        new Response("{}", {
-          headers: { "content-length": "999" },
-        })) as unknown as typeof fetch,
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull: (controller) => controller.enqueue(ENC.encode("{}")),
+            cancel() {
+              declaredCancelled = true
+              throw new Error("source already gone")
+            },
+          }),
+          { headers: { "content-length": "999" } },
+        )) as unknown as typeof fetch,
     })
     await expect(byLength({ alg: "RS256", kid: "kid" }, {})).rejects.toThrow(/too large/)
+    await Bun.sleep(0)
+    expect(declaredCancelled).toBe(true)
 
     let cancelled = false
     const streamed = jwks({

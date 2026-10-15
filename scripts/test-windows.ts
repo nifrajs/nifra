@@ -124,9 +124,15 @@ if (
 )
   failed.push(codingAgent)
 
-// Every batch runs even after one fails, so a single run reports every Windows failure.
+// Every batch runs even after one fails, so a single run reports every Windows failure. A Windows
+// runner stalls for seconds at a time, so a test without its own timeout gets 20 s here, not Bun's 5 s
+// (two unrelated tests that take 0.2 s ran past 5 s in one day); Linux keeps the tight default.
 for (const [label, directories] of batches) {
-  const status = await runBatch(label, directories, ["--parallel=1", "--max-concurrency=1"])
+  const status = await runBatch(label, directories, [
+    "--parallel=1",
+    "--max-concurrency=1",
+    "--timeout=20000",
+  ])
   if (status !== 0) failed.push(label)
 }
 if (failed.length > 0) {

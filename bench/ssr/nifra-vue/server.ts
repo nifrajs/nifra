@@ -1,32 +1,15 @@
-import { server } from "@nifrajs/core/server"
-import { renderPage } from "@nifrajs/web"
-import { vueAdapter } from "@nifrajs/web-vue"
-import { type CatalogPageData, catalogItems } from "../shared/catalog.ts"
-import { App } from "./app.ts"
+/**
+ * nifra's render API in a server you write yourself, on Bun: a raw `Bun.serve` fetch handler. No
+ * nifra router, createWebApp, file routes or loader - so not a framework app (bench/ssr/README.md).
+ *
+ *   bun run bench/ssr/nifra-vue/build.ts && PORT=4321 bun bench/ssr/nifra-vue/server-bun.js
+ */
+import { catalogHandler } from "./handler.ts"
 
-const clientJs = await Bun.file(`${import.meta.dir}/dist/client.js`)
-  .text()
-  .catch(() => "// run build.ts first")
+const clientJs = await Bun.file(`${import.meta.dir}/dist/client.js`).text()
 
-function loader(): CatalogPageData {
-  return { items: catalogItems() }
-}
-
-const app = server()
-  .get(
-    "/client.js",
-    // nifra-expect raw-response - static client asset is intentionally served as bytes
-    () => new Response(clientJs, { headers: { "content-type": "text/javascript" } }),
-  )
-  .get("/", () =>
-    renderPage({
-      adapter: vueAdapter,
-      chain: [App],
-      data: loader(),
-      clientEntry: "/client.js",
-      title: "nifra SSR bench (Vue)",
-    }),
-  )
-
-const running = app.listen(Number(Bun.env.PORT ?? 4321))
-console.log(`nifra-vue http://localhost:${running.port}`)
+Bun.serve({
+  port: Number(Bun.env.PORT ?? 4321),
+  hostname: "127.0.0.1",
+  fetch: catalogHandler(clientJs),
+})

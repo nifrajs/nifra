@@ -1,5 +1,32 @@
 # @nifrajs/coding-agent
 
+## 5.3.0
+
+### Patch Changes
+
+- b186218: An approval can no longer be granted after it expires. Expiry was enforced only by the timeout timer, so an approve that arrived after the deadline but before a delayed timer ran (a busy event loop, a suspended host) was accepted; `ApprovalManager` now checks the deadline when it admits a decision and denies a late approve with "approval timed out".
+- 7093af2: A run cancelled while a dispatch transition is in flight stays cancelled. `complete`, `retry` and `deadLetter` on the durable jobs dispatch store checked the entry, awaited the job store, then wrote their terminal state over a `cancel` that had been accepted in between; they now recheck after the await and report `cancelled`. A dispatch cancelled while its lease was being issued is no longer handed out.
+- d6b349c: A `turn.send` stream that fails, an event over `maxResponseBytes` included, now cancels the backend turn. The RPC server closed the response with an error frame but left the producer suspended and the backend running the turn for no reader; it now stops both, as a client disconnect already did, on the plain and the resumable turn paths.
+- 36dc9d4: `NifraBackend` refuses an approval that arrives after `approvalTimeoutMs`, as `ApprovalManager` already does. Its deadline was enforced only by a timer, so an approve that came after the deadline while that timer had not yet run (a busy event loop, a suspended host, an `approval` callback settling late) was granted and the tool ran. The decision is now checked against the deadline when it is admitted and reported as `approval timed out` with `APPROVAL_TIMEOUT`.
+- Updated dependencies [61724f9]
+- Updated dependencies [df8da3a]
+- Updated dependencies [1a3af3e]
+  - @nifrajs/agent@5.3.0
+  - @nifrajs/agent-protocol@5.3.0
+  - @nifrajs/agent-review@5.3.0
+  - @nifrajs/jobs@5.3.0
+  - @nifrajs/pi@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/agent@5.2.1
+  - @nifrajs/agent-protocol@5.2.1
+  - @nifrajs/agent-review@5.2.1
+  - @nifrajs/jobs@5.2.1
+  - @nifrajs/pi@5.2.1
+
 ## 5.2.0
 
 ### Patch Changes

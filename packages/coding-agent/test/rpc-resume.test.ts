@@ -17,6 +17,8 @@ class GatedBackend implements AgentBackend {
   readonly cancelled = Promise.withResolvers<void>()
   /** How many deltas the backend has produced so far. */
   produced = 0
+  /** A cancel that records the reason and then fails, as a backend that has already gone away does. */
+  cancelFails = false
   private readonly gates: Array<PromiseWithResolvers<void>> = []
   private current: AgentSessionSnapshot | undefined
   private seq = 0
@@ -68,6 +70,7 @@ class GatedBackend implements AgentBackend {
   async cancel(_sessionId: string, reason = "cancelled"): Promise<void> {
     this.cancels.push(reason)
     this.cancelled.resolve()
+    if (this.cancelFails) throw new Error("backend already gone")
   }
 
   async snapshot(): Promise<AgentSessionSnapshot> {
@@ -290,6 +293,27 @@ describe("resumable RPC turns", () => {
       expect(backend.produced).toBe(steps)
     } finally {
       await server.stop()
+    }
+  })
+
+  test("an event over the response limit ends the turn and cancels the backend", async () => {
+    for (const resumableTurns of [false, true]) {
+      const backend = new GatedBackend(2, (step) => (step === 0 ? "x".repeat(4_096) : "small"))
+      backend.cancelFails = true
+      const server = await serve(backend, { maxResponseBytes: 2_048, resumableTurns })
+      try {
+        const turn = frames(await server.call("turn.send", { message: "go" }))
+        expect((await turn.next())?.id).toBeDefined()
+        backend.release(0)
+        const rest = await turn.rest()
+        expect(rest.map((frame) => frame.event)).toEqual(["error"])
+        await backend.cancelled.promise
+        expect(backend.cancels).toEqual(["turn stream failed"])
+        backend.release(1)
+        expect(backend.produced).toBe(1)
+      } finally {
+        await server.stop()
+      }
     }
   })
 

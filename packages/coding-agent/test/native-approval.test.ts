@@ -1,4 +1,4 @@
-import { describe, expect, jest, test } from "bun:test"
+import { describe, expect, jest, setSystemTime, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -232,6 +232,27 @@ describe("NifraBackend native approvals", () => {
 
     expect(events.some((event) => isApprovalResolved(event) && !event.approved)).toBe(true)
     expect(events.find((event) => isApprovalResolved(event))?.reason).toBe("approval timed out")
+    const completed = events.find((event) => event.type === "tool.completed")
+    expect(completed?.error?.code).toBe("APPROVAL_TIMEOUT")
+    expect(executed).toHaveLength(0)
+    await backend.close("native")
+  })
+
+  test("an approve after the deadline is refused even before the late timeout timer runs", async () => {
+    const { backend, executed } = makeNativeBackend({ approvalTimeoutMs: 60_000 })
+    const { events, iterator, required } = await startApprovalTurn(backend)
+    // A busy or suspended host: the clock passes the deadline before the timeout timer runs.
+    setSystemTime(new Date(Date.now() + 120_000))
+    try {
+      expect(await backend.resolveApproval("native", required.approvalId, true)).toBe(false)
+    } finally {
+      setSystemTime()
+    }
+    await drain(iterator, events)
+
+    expect(events.filter(isApprovalResolved)).toEqual([
+      expect.objectContaining({ approved: false, reason: "approval timed out" }),
+    ])
     const completed = events.find((event) => event.type === "tool.completed")
     expect(completed?.error?.code).toBe("APPROVAL_TIMEOUT")
     expect(executed).toHaveLength(0)

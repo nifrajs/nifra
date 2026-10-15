@@ -32,8 +32,9 @@ export * from "./backend.ts"
 export interface ImageHandlerOptions {
   /** Codec backend. Default: {@link bunImageBackend} (requires the Bun runtime). */
   readonly backend?: ImageBackend
-  /** Absolute directory that local (path) sources resolve under. Path-traversal- and symlink-guarded.
-   * Omit to **disable local sources** (every path source → 403). */
+  /** Absolute directory that local (path) sources resolve under. Path-traversal- and symlink-guarded,
+   * and a hidden name (a segment starting with `.` other than `.well-known`) is not found, as with
+   * `@nifrajs/web`'s public files. Omit to **disable local sources** (every path source → 403). */
   readonly root?: string
   /** Exact origins (`https://cdn.example`) allowed for remote sources. Omitted/empty ⇒ **no remote
    * sources** (fail-closed against SSRF). Only `http:`/`https:` URLs are ever considered. */
@@ -363,6 +364,14 @@ async function fetchRemote(
   }
 }
 
+/** `@nifrajs/web`'s public-file rule: `.env`, `.git/` and the like are never a source. */
+function isHiddenPath(rel: string): boolean {
+  for (const segment of rel.split(/[\\/]/)) {
+    if (segment.startsWith(".") && segment !== ".well-known") return true
+  }
+  return false
+}
+
 async function readLocal(
   src: string,
   cfg: ResolvedConfig,
@@ -378,6 +387,10 @@ async function readLocal(
   if (resolved !== cfg.root && !resolved.startsWith(cfg.root + sep)) {
     return { ok: false, status: 403, code: "source_not_allowed" }
   }
+  // Not found rather than refused: a different answer would tell a caller which hidden files exist.
+  if (isHiddenPath(resolved.slice(cfg.root.length + 1))) {
+    return { ok: false, status: 404, code: "source_not_found" }
+  }
   // Resolve containment, then open that verified name exactly once. Reopening `resolved` after these
   // checks would let a writable source tree swap a symlink between verification and read, and
   // openResolved refuses the name once any component of it became one.
@@ -387,6 +400,9 @@ async function readLocal(
     const realRoot = await realpath(cfg.root)
     if (real !== realRoot && !real.startsWith(realRoot + sep)) {
       return { ok: false, status: 403, code: "source_not_allowed" }
+    }
+    if (isHiddenPath(real.slice(realRoot.length + 1))) {
+      return { ok: false, status: 404, code: "source_not_found" }
     }
   } catch {
     return { ok: false, status: 404, code: "source_not_found" }

@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
-# Free SSR bench ports (4300-4337) and stop stray bench / meta-framework servers.
+# Free SSR bench ports (4300-4369) and stop stray bench / meta-framework servers.
 set -eu
 
-for port in $(seq 4300 4359); do
+for port in $(seq 4300 4369); do
   pids=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
   if [ -n "$pids" ]; then
     echo "free :$port (pid $pids)"
@@ -16,4 +16,4 @@ pkill -f "solidstart/.output/server" 2>/dev/null || true
 pkill -f "react-router-serve" 2>/dev/null || true
 
 sleep 1
-echo "ports 4300-4359 clear"
+echo "ports 4300-4369 clear"

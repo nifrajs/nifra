@@ -21,6 +21,28 @@ export function removeFixtureRoot(root: string): void {
   rmSync(root, { recursive: true, force: true })
 }
 
+/**
+ * Remove a directory a killed tool may still hold. On Windows its child processes (a killed `go`
+ * leaves `compile` running) keep their handles for a moment, and removal fails with EBUSY until then.
+ */
+export async function removeReleasedDirectory(
+  directory: string,
+  remove: (directory: string) => void = (path) => rmSync(path, { recursive: true, force: true }),
+): Promise<void> {
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    try {
+      remove(directory)
+      return
+    } catch (error) {
+      const code = error instanceof Error ? Reflect.get(error, "code") : undefined
+      const held = code === "EBUSY" || code === "EPERM" || code === "EACCES" || code === "ENOTEMPTY"
+      if (!held || Date.now() >= deadline) throw error
+      await Bun.sleep(100)
+    }
+  }
+}
+
 /** Write a fixture file at an app-relative path (`backend/app.ts`), creating its directory. */
 export function writeAppFile(root: string, path: string, content: string): string {
   const file = join(root, path)

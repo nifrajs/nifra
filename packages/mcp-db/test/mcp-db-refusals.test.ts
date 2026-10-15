@@ -89,7 +89,9 @@ test("a query beyond maxConcurrentQueries is refused while another runs", async 
   const db = new Database(file, { readonly: true })
   const server = serveDatabaseAsMcp(db, {
     tables: ["a", "b"],
-    runQuery: { authorize: () => true, maxConcurrentQueries: 1 },
+    // The join takes 0.3 s on a Windows runner and over 7 s on a slow one; the deadline is not under
+    // test, and at its 5 s default it raced the test's own timeout.
+    runQuery: { authorize: () => true, maxConcurrentQueries: 1, queryTimeoutMs: 30_000 },
   })
   try {
     // The first call is answered by the worker, so the second reaches the handler while it is open.
@@ -103,7 +105,7 @@ test("a query beyond maxConcurrentQueries is refused while another runs", async 
     await server.close?.()
     db.close()
   }
-})
+}, 60_000)
 
 test("a statement that fails while running is reported as a query error", async () => {
   const server = serveDatabaseAsMcp(seeded(), {

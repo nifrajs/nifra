@@ -13,10 +13,14 @@ export interface SessionData extends Record<string, unknown> {
 // once the client strips the loader the whole import drops. Server-only singletons → lazy.
 let manager: SessionManager<SessionData> | undefined
 export const getSessions = (): SessionManager<SessionData> => {
-  // Store mode (data server-side, revocable). Dev: in-memory store + a dev secret + secure:false for
-  // local http. Production swaps in KVSessionStore(env.SESSIONS) + a real secret (and drops secure).
+  // Store mode (data server-side, revocable). Dev: in-memory store + secure:false for local http.
+  // Production swaps in KVSessionStore(env.SESSIONS) + SESSION_SECRET (and drops secure). Without
+  // SESSION_SECRET each process signs with a random secret: the in-memory store forgets sessions on
+  // restart anyway, and no secret anyone can read ships with the example.
   manager ??= createSessions<SessionData>({
-    secret: Bun.env.SESSION_SECRET ?? "dev-secret-change-me-in-prod",
+    secret:
+      Bun.env.SESSION_SECRET ??
+      Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url"),
     store: new MemorySessionStore(),
     cookie: { secure: false },
   })

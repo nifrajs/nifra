@@ -40,6 +40,9 @@ coveragePathIgnorePatterns = [
   # (`.tmp-load-YT8mKB`). Beyond the per-file gate they also churned the committed coverage baseline -
   # every `--update` swapped one random path for another, so the diff never meant anything.
   "**/cli/test/.tmp-*/**",
+  # The validators `schema/test/precompiled.test.ts` generates and imports, under a directory named at
+  # random per run: generated code, where a schema that never takes a branch leaves a function unrun.
+  "**/schema/test/.tmp-*/**",
   # The `@nifrajs/cli` package is dev/MCP tooling - command dispatch (`cli.ts`), stdio/JSON-RPC MCP
   # servers (`mcp.ts`, `mcp-render.ts`, `mcp-run.ts`, `mcp-ws.ts`), and `check`/`doctor`/`port`. Its
   # tests NOW run in the gated suite (so regressions are caught), but the spawn/stdio/process surface

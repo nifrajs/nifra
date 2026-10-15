@@ -181,15 +181,32 @@ test("copyPublicDir mirrors the tree and reports URL paths", async () => {
     await writeFile(join(from, "fonts", "inter.woff2"), "font")
     await mkdir(join(from, ".well-known", "acme-challenge"), { recursive: true })
     await writeFile(join(from, ".well-known", "acme-challenge", "token"), "acme")
+    // Hidden files are never shipped, as development never serves them; a link inside one is not
+    // even looked at.
+    await writeFile(join(from, ".env"), "SECRET=1")
+    await mkdir(join(from, ".git"), { recursive: true })
+    await writeFile(join(from, ".git", "config"), "[core]")
+    await symlink(join(dir, "elsewhere"), join(from, ".git", "link"))
+    await writeFile(join(from, "fonts", ".DS_Store"), "x")
+    await mkdir(join(from, ".well-known", ".private"), { recursive: true })
+    await writeFile(join(from, ".well-known", ".private", "key"), "k")
 
     const copied = await copyPublicDir(from, to)
-    // Dotfiles are included: `.well-known` is exactly the kind of file this exists to serve.
+    // `.well-known` is the one dot-directory shipped: it is exactly the kind of file this exists to serve.
     expect(copied).toEqual([
       "/.well-known/acme-challenge/token",
       "/fonts/inter.woff2",
       "/robots.txt",
     ])
     expect(await Bun.file(join(to, "fonts", "inter.woff2")).text()).toBe("font")
+    for (const hidden of [
+      ".env",
+      ".git",
+      join("fonts", ".DS_Store"),
+      join(".well-known", ".private"),
+    ]) {
+      expect(await Bun.file(join(to, hidden)).exists()).toBe(false)
+    }
 
     // The copied output serves through the same handler.
     const serve = servePublicDir({ dir: to })
@@ -337,7 +354,30 @@ test("multiple ranges fall back to the full body rather than buffering multipart
   })
 })
 
-test("HEAD reports the same headers GET does, including a ranged one", async () => {
+test("small bodies are read whole and large ones streamed, with the same bytes either way", async () => {
+  await withDir(async (dir) => {
+    // 256 KiB is where the handler stops reading a body whole and streams it instead.
+    const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024 + 7]
+    const files = sizes.map((size) => Uint8Array.from({ length: size }, (_, i) => (i * 31) % 251))
+    await Promise.all(files.map((bytes, i) => writeFile(join(dir, `f${i}.bin`), bytes)))
+    const serve = servePublicDir({ dir })
+
+    for (const [i, bytes] of files.entries()) {
+      const whole = await serve(new Request(`http://local/f${i}.bin`))
+      expect(whole?.headers.get("content-length")).toBe(String(bytes.length))
+      expect(new Uint8Array(await whole!.arrayBuffer())).toEqual(bytes)
+      if (bytes.length < 2) continue
+
+      const end = bytes.length - 2
+      const part = await serve(ranged(`/f${i}.bin`, { range: `bytes=1-${end}` }))
+      expect(part?.status).toBe(206)
+      expect(part?.headers.get("content-length")).toBe(String(end))
+      expect(new Uint8Array(await part!.arrayBuffer())).toEqual(bytes.subarray(1, end + 1))
+    }
+  })
+})
+
+test("HEAD reports the same headers GET does, and the whole representation under Range", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.txt"), "0123456789")
     const serve = servePublicDir({ dir })
@@ -349,10 +389,14 @@ test("HEAD reports the same headers GET does, including a ranged one", async () 
     expect(headResponse?.headers.get("accept-ranges")).toBe("bytes")
     expect(await headResponse?.text()).toBe("")
 
-    const headRange = await serve(ranged("/clip.txt", { range: "bytes=0-3" }, "HEAD"))
-    expect(headRange?.status).toBe(206)
-    expect(headRange?.headers.get("content-range")).toBe("bytes 0-3/10")
-    expect(await headRange?.text()).toBe("")
+    // Range is defined for GET only (RFC 9110 section 14.2), as the Node static bridge applies it.
+    for (const range of ["bytes=0-3", "bytes=99-"]) {
+      const headRange = await serve(ranged("/clip.txt", { range }, "HEAD"))
+      expect(headRange?.status).toBe(200)
+      expect(headRange?.headers.get("content-range")).toBeNull()
+      expect(headRange?.headers.get("content-length")).toBe("10")
+      expect(await headRange?.text()).toBe("")
+    }
   })
 })
 
@@ -395,6 +439,15 @@ test("hides dot-segments other than .well-known", async () => {
     expect(await serve(get("/%2eenv"))).toBeUndefined()
     expect(await serve(get("/.git/config"))).toBeUndefined()
     expect(await (await serve(get("/.well-known/security.txt")))?.text()).toBe("Contact: x")
+  })
+})
+
+test("a visible name linking to a hidden file inside the root is hidden too", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, ".env"), "SECRET=1")
+    await symlink(join(dir, ".env"), join(dir, "visible.txt"))
+    const serve = servePublicDir({ dir })
+    expect(await serve(get("/visible.txt"))).toBeUndefined()
   })
 })
 

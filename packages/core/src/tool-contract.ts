@@ -469,8 +469,9 @@ export async function executeTool<Input, Output>(
       await options.idempotency?.abandon(reservationInput(reservation))
     } catch {}
   }
-  // Once the executor has run, the reservation is never released: a retry would repeat a side effect
-  // that may have committed. A store that throws on completion counts as one that refused it.
+  // Once the executor has started, the reservation is never released, even when it throws: a retry
+  // would repeat a side effect that may have committed. A store that throws on completion counts as
+  // one that refused it.
   let executed = false
   const complete = async (): Promise<boolean> => {
     if (reservation === undefined) return true
@@ -660,6 +661,7 @@ export async function executeTool<Input, Output>(
       record("execution", "dry-run")
       return finish({ ok: true, dryRun })
     }
+    executed = true
     const output = await tool.execute(validatedInput.value, {
       effectId,
       signal,
@@ -667,7 +669,6 @@ export async function executeTool<Input, Output>(
       dryRun,
       ...(tool.policy === undefined ? {} : { policy: tool.policy }),
     })
-    executed = true
     record("execution", "committed")
     const validatedOutput = await validateStandard(tool.output, output)
     if (!validatedOutput.ok) {
@@ -699,7 +700,9 @@ export async function executeTool<Input, Output>(
     }
     return finish({ ok: true, dryRun, output: validatedOutput.value })
   } catch (error) {
-    if (!executed) await abandon()
+    // A completion the store refuses still leaves the key pending until its lease lapses.
+    if (executed) await complete()
+    else await abandon()
     const code = signal.aborted || isAbortError(error) ? "cancelled" : "execution_failed"
     record("execution", "failed", code)
     return finish({ ok: false, dryRun, error: { code, stage: "execution" } })

@@ -692,7 +692,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
   A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}) - the durable, shared production store: sessions hold across worker instances and survive restarts. Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so …
 - **MemorySessionStore** _(class)_ - `class MemorySessionStore`
-  In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances). Bounded: oldest-inserted entries evict past `max`.
+  In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances). Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their ow…
 - **MemorySessionStoreOptions** _(interface)_ - `interface MemorySessionStoreOptions`
 - **Session** _(interface)_ - `interface Session<Data extends Record<string, unknown> = Record<string, unknown>>`
   A typed session handle. Every key is optional - a fresh session is empty.
@@ -705,7 +705,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionRecord** _(interface)_ - `interface SessionRecord`
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
-  Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun.
+  Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun. Logout and rotation also write a revocation marke…
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
   The response a guard denies a missing session with, in place of the default `401` JSON.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
@@ -1736,7 +1736,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.2.0"`
+- **VERSION** _(const)_ - `VERSION: "5.3.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -2315,6 +2315,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
+- **assertByteLimit** _(function)_ - `assertByteLimit: (value: number, name?: string) => void`
+  Security/resource limits must be finite byte counts. Invalid values otherwise make `> maxBytes` comparisons fail open (notably for `NaN`) and can re-enable unbounded buffering.
 - **capBodyBytes** _(function)_ - `capBodyBytes: (request: Request, maxBytes: number) => Request`
   A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
@@ -2595,8 +2597,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal runtime-provider seam used when an in-process WebSocket backend is mounted in Bun.
 - **NIFRA_PLATFORM_CLIENT_IP_DERIVED** _(const)_ - `NIFRA_PLATFORM_CLIENT_IP_DERIVED: typeof NIFRA_PLATFORM_CLIENT_IP_DERIVED`
   Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp` trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving it from the request's forwarding headers - an in-process call's `Request` is synthesized, so i…
+- **hasResidentBody** _(function)_ - `hasResidentBody: (response: Response) => boolean`
+  Whether {@link markResidentBody} recorded `response`. Another copy of this module did not.
+- **markResidentBody** _(function)_ - `markResidentBody: (response: Response) => Response`
+  Record a Response whose body the framework serialized into memory before building it. An in-process client reads only such a body whole; any other, a handler's own stream included, is read under its byte cap.
 - **preRouteMountPaths** _(function)_ - `preRouteMountPaths: (app: unknown) => readonly string[]`
   The path of every pre-route `mount()` on a nifra server, as the server matches it (`"/"` for a root mount). Such a mount answers every request under its path before the app's own routes run, and `fallbackOn: 404` only moves on to the next mount, so a route the app declares there is unreachable. Rea…
+- **recordResidentBodies** _(function)_ - `recordResidentBodies: () => void`
+  Called by an in-process client: nothing else reads the record, so until then it can be skipped.
+- **residentBodiesRecorded** _(const)_ - `residentBodiesRecorded: boolean`
+  Set once an in-process client exists, so the leanest response lane records its bodies too.
 
 ### `@nifrajs/core/multipart`
 
@@ -4262,7 +4272,7 @@ _No named exports (side-effect entrypoint)._
 - **poweredBy** _(function)_ - `poweredBy: (options?: PoweredByOptions) => Middleware`
   Opt-in `X-Powered-By` style header. Nifra does not emit this by default; use it only when you want a public framework/product marker.
 - **prettyJson** _(function)_ - `prettyJson: (options?: PrettyJsonOptions) => import("@nifrajs/core").IdentityPlugin<never>`
-  Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content, skips encoded responses, caps inspection size, and leaves invalid JSON untouched.
+  Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content, skips encoded responses, caps inspection size, and leaves invalid JSON untouched, as well as a document nested deeply enough that its indented form would outgrow it many times over.
 - **problemDetails** _(function)_ - `problemDetails: (options?: ProblemDetailsOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Opt-in RFC 9457 formatting for Nifra's structured error envelope.
 - **rangeResponse** _(function)_ - `rangeResponse: (request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions) => Response`
@@ -4349,6 +4359,8 @@ _No named exports (side-effect entrypoint)._
 - **OtlpExporterOptions** _(interface)_ - `interface OtlpExporterOptions`
 - **ParsedTraceparent** _(interface)_ - `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
+- **RecordingObservationLifecycle** _(interface)_ - `interface RecordingObservationLifecycle`
+  Factory lifecycles can record completed work; custom start-only implementations remain valid.
 - **SpanKind** _(type)_ - `type SpanKind = "server" | "client" | "producer" | "consumer" | "internal"`
   The OTel span kind. A span without one is exported as `server`, the kind of the request spans that predate this field.
 - **SpanStatus** _(type)_ - `type SpanStatus = "unset" | "ok" | "error"`
@@ -4363,7 +4375,7 @@ _No named exports (side-effect entrypoint)._
   Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in one sink cannot prevent the remaining sinks from observing the span.
 - **consoleSpanExporter** _(function)_ - `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter`
   A no-frills exporter that logs each completed span as one structured line. Useful in dev or as a starting point before wiring a real backend.
-- **createObservationLifecycle** _(function)_ - `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
+- **createObservationLifecycle** _(function)_ - `createObservationLifecycle: (options?: ObservationLifecycleOptions) => RecordingObservationLifecycle`
   Creates an independent lifecycle factory. Adapters are always called fail-open.
 - **effectTracing** _(function)_ - `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
   Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
@@ -4576,6 +4588,12 @@ _No named exports (side-effect entrypoint)._
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
 
+### `@nifrajs/schema/compile`
+
+- **CompileSchemaOptions** _(interface)_ - `interface CompileSchemaOptions`
+- **compileSchema** _(function)_ - `compileSchema: <T extends TSchema>(schema: NifraSchema<T>, options: CompileSchemaOptions) => string`
+  Generate a typed module with static validation code. Run at build time, then import its export at runtime.
+
 ### `@nifrajs/schema/form`
 
 - **FileOptions** _(interface)_ - `interface FileOptions`
@@ -4599,6 +4617,21 @@ _No named exports (side-effect entrypoint)._
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
+
+### `@nifrajs/schema/precompiled`
+
+- **Kind** _(const)_ - `Kind: typeof Kind`
+  Symbol key applied to types
+- **OptionalKind** _(const)_ - `OptionalKind: typeof OptionalKind`
+  Symbol key applied to optional types
+- **ReadonlyKind** _(const)_ - `ReadonlyKind: typeof ReadonlyKind`
+  Symbol key applied to readonly types
+- **compiledFormat** _(function)_ - `compiledFormat: (name: string, value: string) => boolean`
+  The format callback used by generated validators; custom formats retain their registry semantics.
+- **compiledHash** _(function)_ - `compiledHash: (value: unknown) => bigint`
+  Creates a FNV1A-64 non cryptographic hash of the given value
+- **fromPrecompiled** _(function)_ - `fromPrecompiled: <T extends TSchema>(schema: T, check: (value: unknown) => boolean) => StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T; }`
+  Wrap a build-generated checker without shipping a schema builder or dynamic compiler.
 
 ## @nifrajs/storage
 
@@ -5249,6 +5282,9 @@ _No named exports (side-effect entrypoint)._
   A dynamic load that has started but is not part of the initial render barrier.
 - **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
   When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
+- **PrerenderedPageReaderOptions** _(interface)_ - `interface PrerenderedPageReaderOptions`
+- **PrerenderedPages** _(interface)_ - `interface PrerenderedPages`
+  Pages a self-hosted build prerendered, which `createWebApp` answers from their file instead of rendering them. The file is served from inside the app, after `use` middleware, so a gate in front of the pages still runs.
 - **PreviewEndpointOptions** _(interface)_ - `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
 - **PublicDirCache** _(interface)_ - `interface PublicDirCache`
@@ -5427,6 +5463,8 @@ _No named exports (side-effect entrypoint)._
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **pageLocaleIn** _(function)_ - `pageLocaleIn: (config: PageLocales, path: string) => PageLocale | undefined`
   The locale a path is in, by the rule `@nifrajs/i18n/routing`'s `localeOf` follows: a first path segment that names a served locale, ignoring ASCII case, or else the default.
+- **prerenderedPageReader** _(function)_ - `prerenderedPageReader: (options: PrerenderedPageReaderOptions) => (pathname: string) => Promise<string | undefined>`
+  Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so…
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => ResponseResult`
@@ -5540,6 +5578,8 @@ _No named exports (side-effect entrypoint)._
   Each importable option mapped to the specifier of the module that exports it.
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
+- **ServerPrerenderedPage** _(interface)_ - `interface ServerPrerenderedPage`
+  One page a self-hosting build prerendered: its file and the headers it is served with.
 - **SizeReport** _(interface)_ - `interface SizeReport`
   A whole build's size report - every chunk (largest first) + the totals.
 - **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`
@@ -5560,7 +5600,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
   Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
 - **copyPublicDir** _(function)_ - `copyPublicDir: (from: string, to: string) => Promise<string[]>`
-  Copy `from` into `to`, returning the URL paths copied (sorted).
+  Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than `.well-known` are skipped, as development never serves them: every target ships this list, and a CDN-hosted one serves whatever was copied.
 - **dataFileFor** _(function)_ - `dataFileFor: (pattern: string) => string`
   The static loader-data file next to a route's `index.html`: `/` → `_data.json`, `/a/b` → `a/b/_data.json`. The client fetches it on soft-nav into a prerendered route (no worker).
 - **detectNodeBuiltinsInClient** _(function)_ - `detectNodeBuiltinsInClient: (graph: ClientModuleGraph) => ReadonlyArray<NodeBuiltinFinding>`
@@ -7135,9 +7175,9 @@ _No named exports (side-effect entrypoint)._
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **RenderPropsProvider** _(const)_ - `RenderPropsProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererEl…`
-  The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot.
+  Provides {@link useMatches}' render props to its subtree: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot. `compose` provides the same key through its single route-context component.
 - **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
-  The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
+  Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides th…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
@@ -7471,7 +7511,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.2.0"`
+- **VERSION** _(const)_ - `VERSION: "5.3.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`

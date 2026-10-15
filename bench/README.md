@@ -1,5 +1,16 @@
 # Benchmarks
 
+`bun run bench/performance-improvements.ts --baseline /absolute/path/to/original-checkout --check
+--output BENCHMARKS-PERFORMANCE.json` compares the original and modified source checkouts in
+41 paired rounds, alternating measurement order. It checks output equality before measuring output
+guards, traced cache hits, full SSR responses, and static schema validation; it also compares identical
+bundled route shapes. Proof mode requires an idle host throughout and at least five percent improvement
+in every row. Omitting `--check` runs diagnostics; a busy-host diagnostic cannot report a proof as passed.
+The JSON report is ignored by Git. Static-schema results measure the opt-in generated module against
+the eval-free adapter, rather than against Bun's existing dynamic compiled checker.
+
+`NIFRA_PERF_GATE=1 bun run bench:p99` also refuses a busy host before starting and after measuring.
+
 Both HTTP benchmark aggregators refuse `--write` unless Bun, Node, and Deno match `.tool-versions` and the one-minute host load is at or below half the logical CPU count.
 
 The benchmark **code** lives here; the **results** are not committed. Absolute req/s moves with
@@ -70,3 +81,6 @@ baseline row. `bridge-fetch.ts` (Bun or Node) is the in-process `app.fetch()` co
 bridge's `around()` plugin, and `bridge-http.ts` runs the same comparison over TCP with count-bounded
 `oha` on Bun and Node. Node loads the built dist: run `bun run build && bun run
 scripts/link-for-node.ts` first.
+
+`bench/ssr/README.md` says what each SSR row runs. Every headline row is a real app built and served
+the way its framework ships it, measured in interleaved rounds against the comparator.

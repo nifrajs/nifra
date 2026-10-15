@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import { method as route } from "../src/server/methods.ts"
-import { requestTargetApp, requestTargetMismatches } from "./request-target-matrix.ts"
+import {
+  invalidHostMismatches,
+  requestTargetApp,
+  requestTargetMismatches,
+} from "./request-target-matrix.ts"
 
 /**
  * `listen()` on Bun hands some routes to Bun's own route table. These tests hold that lane to the
@@ -294,6 +298,7 @@ describe("Bun-native route table agrees with the portable router", () => {
     const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
       expect(await requestTargetMismatches(instance.port)).toEqual([])
+      expect(await invalidHostMismatches(instance.port)).toEqual([])
     } finally {
       instance.stop(true)
     }

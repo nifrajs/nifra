@@ -29,6 +29,41 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
   emitted without a detailed schema (Standard Schema exposes no JSON Schema).
 
+### Static validators for edge runtimes
+
+`@nifrajs/schema/compile` generates a TypeScript module at build time. Import that generated module
+in the server: its validator runs without `new Function`, retains the source schema's inferred types,
+and keeps the schema builder and dynamic compiler out of the runtime bundle. Invalid data still
+produces the same structured issues, capped at 100.
+
+Define the source schema in `src/schemas/users.ts`:
+
+```ts
+import { t } from "@nifrajs/schema"
+export const body = t.object({ name: t.string({ minLength: 1 }), age: t.integer() })
+```
+
+Generate `src/generated/users.ts` before building the app:
+
+```ts
+import { compileSchema } from "@nifrajs/schema/compile"
+import { body } from "../src/schemas/users.ts"
+
+await Bun.write(
+  "src/generated/users.ts",
+  compileSchema(body, { source: "../schemas/users.ts", exportName: "body" }),
+)
+```
+
+The server imports `body` from `./generated/users.ts` and uses it as its route schema. The generated
+source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
+schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
+
+Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
+schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,
+runtime-only metadata, and known TypeBox compiler escape hazards. Use the ordinary `t` adapter for
+these shapes. This opt-in build step leaves the existing validation API and runtime behavior intact.
+
 ### Forms and files - `@nifrajs/schema/form`
 
 The `t` exported from `@nifrajs/schema/form` is the same builder plus `t.file` and `t.form`. A

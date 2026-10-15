@@ -1,30 +1,28 @@
-import { buildClient } from "@nifrajs/web/build"
+/**
+ * Build the ISR app for both runtimes: the client bundle into dist/assets/, then each server entry
+ * through buildServer, which generates ./server-manifest from routes/ (the docs' custom-server path).
+ */
+import { rmSync } from "node:fs"
+import { buildClient, buildServer } from "@nifrajs/web/build"
 
 const dir = import.meta.dir
+const routesDir = `${dir}/routes`
 const dist = `${dir}/dist`
-const define = { "process.env.NODE_ENV": '"production"' }
+rmSync(dist, { recursive: true, force: true })
 
-const manifest = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: dist,
+const client = await buildClient({
+  routesDir,
+  outDir: `${dist}/assets`,
   clientModule: "@nifrajs/web-react/client",
-  conditions: ["bun", "browser"],
-  define,
+  define: { "process.env.NODE_ENV": '"production"' },
 })
-
-const server = await Bun.build({
-  entrypoints: [`${dir}/server.ts`],
-  outdir: dir,
-  target: "node",
-  conditions: ["node"],
-  naming: "server-bun.js",
-  minify: true,
-  define,
-})
-
-if (!server.success) {
-  for (const log of server.logs) console.error(log)
-  process.exit(1)
+for (const target of ["bun", "node"] as const) {
+  await buildServer({
+    routesDir,
+    serverEntry: `${dir}/server-${target}.ts`,
+    outDir: dist,
+    clientEntry: client.entry,
+    target,
+  })
 }
-
-console.log("built", manifest.entry, ...server.outputs.map((o) => o.path))
+console.log("built", client.entry, `${dist}/server-bun.js`, `${dist}/server-node.js`)

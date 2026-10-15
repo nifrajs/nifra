@@ -211,6 +211,17 @@ interface Hold {
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
+/** A store compares eligibility with `<=`, which is never true for `NaN`: such a job is never leased,
+ * retried or dead-lettered. Refused before it is written. */
+function eligibleTime(value: number, label: string): number {
+  if (!Number.isFinite(value)) {
+    throw new RangeError(
+      `jobs: ${label} must be a finite number of milliseconds, got ${String(value)}`,
+    )
+  }
+  return value
+}
+
 const TRACEPARENT = /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/
 
 // A shape check only, to keep arbitrary strings out of the store; the tracer parses it properly.
@@ -361,7 +372,10 @@ export function createQueue(options: QueueOptions = {}): Queue {
     traceparent: string | undefined,
   ): Promise<string> {
     const value = await validate(name, def.input, payload)
-    const runAt = opts.runAt ?? now() + Math.max(0, opts.delayMs ?? 0)
+    const runAt =
+      opts.runAt !== undefined
+        ? eligibleTime(opts.runAt, "runAt")
+        : now() + Math.max(0, eligibleTime(opts.delayMs ?? 0, "delayMs"))
     const job = { name, payload: value, runAt, maxAttempts: def.attempts }
     return await store.enqueue(traceparent === undefined ? job : { ...job, traceparent })
   }
@@ -417,7 +431,17 @@ export function createQueue(options: QueueOptions = {}): Queue {
         await store.deadLetter(job.id, errText(err), hold.lease)
         return "dead-lettered"
       }
-      await store.retry(job.id, now() + Math.max(0, def.backoff(attempt)), hold.lease)
+      const delay = def.backoff(attempt)
+      if (!Number.isFinite(delay)) {
+        // Rescheduled at NaN or Infinity, the job would never run again and never dead-letter.
+        const invalid = new RangeError(
+          `jobs: backoff for ${JSON.stringify(job.name)} returned ${String(delay)} after attempt ${attempt}, not a finite delay`,
+        )
+        safeOnError(invalid, job.name)
+        await store.deadLetter(job.id, `${errText(err)}; ${invalid.message}`, hold.lease)
+        return "dead-lettered"
+      }
+      await store.retry(job.id, now() + Math.max(0, delay), hold.lease)
       return "retried"
     }
     // Outside the try: a store that fails to record a success must not retry or dead-letter a job

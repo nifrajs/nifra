@@ -88,6 +88,27 @@ describe("MemoryCacheStore", () => {
       expect(() => new MemoryCacheStore()).not.toThrow()
     })
   })
+
+  test("a purge whose mark was evicted still refuses a render that began before it", async () => {
+    const store = new MemoryCacheStore({ max: 3 })
+    const before = store.fence()
+    await store.delete("/target")
+    await store.invalidateTag("posts")
+    for (let i = 0; i < 4; i++) {
+      await store.delete(`/other-${i}`)
+      await store.invalidateTag(`other-${i}`)
+    }
+    await store.set("/target", { ...entry("stale"), fence: before })
+    expect(await store.get("/target")).toBeUndefined()
+    await store.set("/tagged", { ...entry("stale"), tags: ["posts"], fence: before })
+    expect(await store.get("/tagged")).toBeUndefined()
+
+    const after = store.fence()
+    await store.set("/target", { ...entry("fresh"), fence: after })
+    expect((await store.get("/target"))?.body).toBe("fresh")
+    await store.set("/tagged", { ...entry("fresh"), tags: ["posts"], fence: after })
+    expect((await store.get("/tagged"))?.body).toBe("fresh")
+  })
 })
 
 import {

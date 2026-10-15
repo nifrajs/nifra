@@ -7,11 +7,13 @@ import {
   type BackendPlatformBinder,
   type BackendWebSocketMountHandler,
   type BackendWebSocketRuntimeProvider,
+  hasResidentBody,
   NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
   NIFRA_BACKEND_WS_MOUNT,
   NIFRA_BACKEND_WS_RUNTIME,
+  recordResidentBodies,
 } from "@nifrajs/core/mount"
 import type { Platform } from "@nifrajs/core/server"
 import {
@@ -334,6 +336,7 @@ function createInProcessClient<
   // of a remote user must not look local to rate limits or IP rules.
   unboundPlatform: Platform | undefined,
 ): InProcessClient<App> {
+  recordResidentBodies()
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
   // is the platform-aware auto-mount path. The optional third argument is the calling request's
@@ -387,10 +390,10 @@ function createInProcessClient<
   ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
-  // LOCAL_FETCH marks the transport as same-process: its response bodies are memory the app already
-  // holds, so `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the
-  // streaming byte-cap reader) - the cap itself is still enforced on the result. Network clients are
-  // never marked; they keep the bounded-while-streaming read.
+  // LOCAL_FETCH marks the transport as same-process: a body the app serialized into memory
+  // (`hasResidentBody`) may take the native `Response.text()` read (measured ~23x cheaper than the
+  // streaming byte-cap reader), the cap still enforced on the result. Any other body, a handler's own
+  // stream included, and every network client keep the bounded-while-streaming read.
   const baseOptions = { ...options, [NO_SOCKET]: true, [LOCAL_FETCH]: true } as ClientOptions
   const proxy = client<App>("http://nifra.internal", { ...baseOptions, fetch: bridge })
   // Request scoping: a view whose every call carries one request's platform (clientIp/env/waitUntil),
@@ -895,14 +898,18 @@ function subscribeSse(
   const maxDelayMs =
     (typeof reconnectConfig === "object" ? reconnectConfig.maxDelayMs : undefined) ?? 15_000
 
-  if (callOptions?.signal !== undefined) {
-    if (callOptions.signal.aborted) closed = true
-    else callOptions.signal.addEventListener("abort", () => close(), { once: true })
+  const signal = callOptions?.signal
+  const onAbort = (): void => close()
+  if (signal !== undefined) {
+    if (signal.aborted) closed = true
+    else signal.addEventListener("abort", onAbort, { once: true })
   }
 
   const close = (): void => {
     if (closed) return
     closed = true
+    // A long-lived caller signal would otherwise hold every closed subscription's callbacks.
+    signal?.removeEventListener("abort", onAbort)
     controller.abort()
     callOptions?.onClose?.()
   }
@@ -1098,11 +1105,13 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
-  // In-process responses (the marked transport) hold their body as same-process memory the app
-  // already allocated, so the streaming byte-cap reader protects nothing there - the native read
-  // is ~23x cheaper and the SAME cap is enforced on the result (identical error). A network
-  // client is never marked and keeps the bounded-while-streaming read.
-  const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
+  // An in-process body the framework serialized is memory the app already allocated, so the
+  // streaming byte-cap reader protects nothing there - the native read is ~23x cheaper and the SAME
+  // cap is enforced on the result (identical error). A handler's stream is not: read whole, it would
+  // be buffered past the cap before the check, so it takes the bounded read a network client does.
+  const local =
+    (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true &&
+    hasResidentBody(response)
   if (isTransportMedia(contentType)) {
     if (local) {
       return decodeTransportText(

@@ -105,6 +105,36 @@ describe("generateMockValue", () => {
     expect(items).toHaveLength(4)
   })
 
+  // The keywords beside `anyOf` constrain every alternative; generating from the alternative alone
+  // returned `"mock_value"` for a schema capped at one character.
+  test("an anyOf value also satisfies the keywords beside it", () => {
+    for (const r of [0, 0.99]) {
+      const value = generateMockValue(
+        {
+          type: "string",
+          maxLength: 1,
+          anyOf: [{ type: "string" }, { type: "string", minLength: 1 }],
+        },
+        undefined,
+        () => r,
+      )
+      expect(typeof value === "string" && value.length <= 1).toBe(true)
+    }
+    // An alternative the siblings contradict is skipped, whichever one the random pick lands on.
+    for (const r of [0, 0.99]) {
+      expect(
+        generateMockValue(
+          { type: "string", anyOf: [{ type: "number" }, { type: "string" }] },
+          "f",
+          () => r,
+        ),
+      ).toBeString()
+    }
+    expect(() => generateMockValue({ type: "string", anyOf: [{ type: "number" }] })).toThrow(
+      UnsupportedMockSchemaError,
+    )
+  })
+
   test("an allOf value satisfies every branch's constraints at once", () => {
     const adult = {
       allOf: [

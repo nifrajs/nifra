@@ -388,6 +388,25 @@ describe("AgentAppClient.send resumes a broken turn", () => {
     ])
   })
 
+  test("re-attaches below an event that arrived ahead of a gap, so the gap still fills", async () => {
+    const transport = new ScriptedTransport([
+      async function* () {
+        yield delta(1, "a")
+        yield delta(3, "c") // 2 is still in flight when the connection breaks
+        throw reset("turn.send")
+      },
+      async function* () {
+        yield delta(2, "b")
+        yield delta(3, "c")
+        yield completed(4)
+      },
+    ])
+    const { seqs, error, calls } = await run(transport)
+    expect(error).toBeUndefined()
+    expect(seqs).toEqual([1, 2, 3, 4])
+    expect(calls[1]?.params).toEqual({ afterSeq: 1 })
+  })
+
   test("a host that refuses the attach gets the original break thrown", async () => {
     const broken = reset("turn.send")
     const transport = new ScriptedTransport([

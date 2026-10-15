@@ -250,6 +250,8 @@ export class IdempotencyResponseTooLargeError extends Error {
 async function boundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
   const contentLength = response.headers.get("content-length")
   if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
+    // Replaced by a terminal error, never read: a streaming producer would otherwise stay open.
+    await response.body?.cancel().catch(() => {})
     throw new IdempotencyResponseTooLargeError(maxBytes)
   }
   const body = response.clone().body

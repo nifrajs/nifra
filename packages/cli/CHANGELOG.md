@@ -1,5 +1,107 @@
 # @nifrajs/cli
 
+## 5.3.0
+
+### Minor Changes
+
+- 7ab9692: `nifra check` reports NF-C045, a warning, for a route added to a server as a statement of its own (`app.get("/x", h)` with its result unused) when that server is exported or read by `typeof`. The route is served, but `typeof app`, which the typed client reads, never includes it. `// nifra-expect NF-C045: <reason>` above the statement accepts a route kept off the type on purpose.
+  
+  The raw-`Response` advisory (NF-C007) and the static route scan read routes chained onto `createWebApp(...)` as well as `server(...)`. NF-C007 also counts a `Response` held in a local before it is returned, a handler's `c.json()` or `c.text()`, and a call to a function imported from a relative module that returns one, reported at each route that returns it.
+- 2a429e6: `nifra build --target bun` and `--target node` prerender the routes that opt in (`export const prerender = true`, or `getStaticPaths`) into `_prerendered/` beside `server.js`. The server then answers those pages from their file instead of rendering them on every request.
+  
+  The file is served from the page route, so `use` middleware and every request hook still run first. A gate in front of a page still applies, and response hooks still add their headers. The page carries the `content-language` and Content-Security-Policy its build-time render produced. Loader headers and cookies are not sent, as for any prerendered page.
+  
+  These keep rendering on demand:
+  - a request with a query string
+  - a navigation data or server-component request
+  - a draft-mode visitor
+  - a page whose build-time render set a cookie, was `private` or `no-store`, or varied on a request header
+  - every page of an app with a `nonce`, whose documents need a nonce minted per request.
+  
+  On Node, the SSR benchmark's prerendered catalog page is served about 2.1x (Svelte) to 2.6x (Vue) faster than rendering it on each request.
+  
+  New in `@nifrajs/web`:
+  - `createWebApp({ prerenderedPages })`
+  - `prerenderedPageReader`, which opens only the build's own files inside the directory and keeps each page in memory once read, up to 32 MiB by default
+  - `PrerenderEntry.serveHeaders` on `prerenderRoutes` results.
+  
+  Prerendering now runs during these builds, so it loads every route module and runs the opted-in loaders at build time. Two effects:
+  - If a route module cannot load there, the build warns and every page renders on demand, as before.
+  - A secret in a prerendered page fails the build, as it does for `--target static`.
+  
+  The Vite pipeline, `deno`, and the edge targets are unchanged.
+
+### Patch Changes
+
+- 7ab9692: `nifra check` reports NF-C044, a warning, for a `createWebApp` call that passes a `clientEntry` and no `copyChunks` in an app with copy tables (`@nifrajs/i18n/copy`). A production client build moves the tables into one chunk per locale that a page loads from the `copyChunks` its server lists, so such a server fails on the first page that renders copy, while `nifra dev` (which never splits) and e2e pass. The finding names the server manifest the module already imports from, which exports `copyChunks`; `// nifra-expect NF-C044: <reason>` on the call accepts a server that never serves those pages. An app on TypeScript 7, whose build keeps tables whole, is not reported.
+- 7ab9692: Add build-time schema compilation that emits typed static validators without runtime code generation. Generated modules preserve strict validation and structured issues while avoiding the schema builder and dynamic compiler in deployed bundles.
+- 84acf41: A `nifra` server that takes SIGTERM or Ctrl+C waits for the warm worker it had to SIGKILL to exit before it ends, so the worker is gone when the server is, instead of lingering in the process table until its new parent reaps it.
+  
+  A schema whose property key, `format` name or custom kind holds a quote, backslash or line break, or whose literal holds a backslash or line break, now validates on the eval-free checker and is refused by build-time compilation. TypeBox splices that text into generated source unescaped, so a quote could end the string and run the rest as code.
+  
+  Prepare immutable route modules and layout chains in production while executing authorization gates and loaders for every request. Mutable manifests can disable module preparation with `cacheRouteModules: false`.
+  
+  Reduce output projection bookkeeping for uniform subtrees, reuse request-bound cache views, and record completed cache spans without allocating an active observation. Span parentage, sampling, redaction, exporter isolation, and capability enforcement remain intact.
+  
+  Keep custom start-only `ObservationLifecycle` implementations compatible. The factory returns the extended `RecordingObservationLifecycle` interface with the new `record` method.
+  
+  Mark the migration parser's TypeScript keyword-kind comparison as syntax, so the security check does not mistake it for a secret comparison.
+- 7ab9692: `nifra upgrade 5.3.0` prints what changes for a 5.2 app: `status()` with a `number` code types `data` as its body, a plain return beside `status(200, ...)` unions the two bodies, NF-C045, NF-C044, the wider raw-`Response` advisory, and peer ranges left alone.
+- 7ab9692: `nifra upgrade` leaves a `peerDependencies` range alone when it already admits the target, and raises one that excludes it keeping its operator (a strict `<` or `>` becomes `<=` or `>=`, so the raised range admits the target), even with `--exact`: a library's `">=3.1.0"` floor stays put instead of becoming `">=5.2.0"`. A peer range no longer sets the version an upgrade starts from either: that comes from the lowest version a dependency, devDependency or override pins, then the lowest installed, and a peer floor only when nothing else names one, so a library workspace whose devDependencies are already on the target's major no longer replays the recipes of the releases its peer floor names. `nifra check` (NF-D002) and `nifra doctor` no longer count a peer floor as a second version of nifra in the workspace.
+- 3fa5688: `nifra mcp` no longer hangs at startup in a project whose bunfig preload keeps its process alive. The probes that tell which variables the project's `.env` files set ran the project's preloads and waited for the process to end; they now skip the project's bunfig, exit as soon as they have printed, and are bounded in time and output. A probe that still fails stops the server with an error naming the cause, instead of serving with values it cannot attribute.
+- 37e1a14: Stopping a warm `nifra_run`/`nifra_render` worker now ends the processes the app started too. The worker was signalled alone, so a child process the backend spawned kept running after the worker exited (and after the MCP server closed). It now runs in its own process group, which gets SIGTERM and then SIGKILL after the grace period, and a terminal signal to the server reaches it.
+- bb38d29: GraphQL documents whose fragments reach no field are refused before validation. Such a fragment reads zero on complexity, depth and field pairs, but graphql-js compares every pair of fragments a selection set spreads before it reports an unknown fragment or a cycle, so 64 KiB of `...A1 ...A2 ...` whose fragments each spread an unknown fragment, themselves or a shared cycle passed every limit and held the event loop for about 400 ms per request. A spread of an unknown fragment and a fragment cycle are now refused with graphql-js's message (without `locations`) before `validate()`, which answers that document in about 12 ms, parsing included. A new `maxFragmentComparisons` limit (default 100,000) counts the fragment comparisons validation would make, stopping once past the limit, so many valid fragments that each select a distinct field are bounded as well: 1,000 such spreads validated in 70 ms and 2,000 in 400 ms, and are now refused. The default admits a binary tree of 255 fragments. Set it on `respondGraphql`, `graphqlWebSocket` or `mountGraphql`, which shares it with its subscriptions.
+- 14f3726: A process the project starts no longer outlives an MCP call that loaded it. The cold `nifra_run`, `nifra_render` and `nifra_ws` path, the isolated project child behind `nifra mcp`'s project tools and resources, the database tools and the hydration run now stop the child's process group once the child exits (SIGTERM, then SIGKILL after the grace period), as the warm worker already did. A helper that inherited the child's stderr also held the call open until its deadline (30 s for a cold run) or, for a project tool call, which has none, until the helper exited; the call now returns when the child does.
+- da2694f: NF-C007 no longer reports a route the typed client still types. A handler that returns a plain value beside a raw `Response` (`if (!note) return c.json({ error }, 404); return note`) keeps `data` typed, because the client drops a bare `Response` from the union, and a route that declares `{ response: t.… }` is typed by its schema, as the advisory's own hint says. A handler whose returns are all a `Response`, or calls `nifra check` cannot see into, is still reported. The batteries starter checks clean again, and the ISR starter marks its built-file route.
+- 4254ba6: `nifra upgrade` no longer writes a range that excludes the version it upgrades to. A strict bound kept its operator, so a peer `"<5.2.0"` became `"<5.3.0"` and a dependency `">5.2.0"` became `">5.3.0"`, both still refusing 5.3.0; they now become `"<=5.3.0"` and `">=5.3.0"`. An upper bound that already admits the target, such as `"<6.0.0"`, is left as written in every field; it was rewritten to `"<5.3.0"` and refused as a rollback, which blocked the whole upgrade.
+- c145f2e: `nifra upgrade` rewrites a nested npm override only inside the object it sits in. A nifra package's `{ ".": "5.2.0" }` was replaced across the whole `overrides` field, so another package's `{ ".": "5.2.0" }` at the same version moved to the nifra target too, a version that package may not have.
+- 86c6573: When `nifra mcp` takes SIGINT, SIGTERM or SIGHUP, it stops every child it runs in its own process group (warm workers, a hydration run, a `nifra check` typecheck), waits for each group to exit, sends SIGKILL to what is left after the kill grace period, and only then takes the signal. It took the signal at once, so a worker that catches SIGTERM, or a process it started that ignores it, outlived the server; a Ctrl+C in the terminal no longer reaches a child in its own group directly. A second signal while the children stop ends the server at once.
+- 55b9a41: `destroy(c, session)` empties and detaches the session object it is passed. Committing that object later in the same request now starts a new session holding only what was set after the call. In store mode, that commit used to vanish against the revocation marker, so a flash message set after logout was lost without an error. In cookie mode, it signed the logged-out data, user id included, into a fresh cookie. The 5.3.0 upgrade notes say so.
+- 5f240c4: A Pi turn whose provider refused its sign-in or API key now fails with `PI_AUTH_REQUIRED`, so a client can ask for a new login or key; any other failed model call stays `PI_MODEL_FAILED`. An expired OAuth login (`invalid_refresh_token`) or an incorrect API key used to report `PI_MODEL_FAILED` like an overloaded model. The 5.3.0 upgrade notes say so.
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [0e1d03f]
+- Updated dependencies [808bac8]
+- Updated dependencies [605c246]
+- Updated dependencies [271917a]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [48c9895]
+- Updated dependencies [69dfb60]
+- Updated dependencies [190ab39]
+- Updated dependencies [605c246]
+- Updated dependencies [13224fe]
+- Updated dependencies [00c266e]
+- Updated dependencies [7cf8df3]
+- Updated dependencies [2a429e6]
+  - @nifrajs/agent-review@5.3.0
+  - @nifrajs/client@5.3.0
+  - @nifrajs/core@5.3.0
+  - @nifrajs/i18n@5.3.0
+  - @nifrajs/mcp@5.3.0
+  - @nifrajs/mcp-db@5.3.0
+  - @nifrajs/runner@5.3.0
+  - @nifrajs/schema@5.3.0
+  - @nifrajs/testing@5.3.0
+  - @nifrajs/web@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- 604967f: `nifra check`'s NF-C035 accepts `// nifra-expect NF-C035: <reason>` on a `createWebApp` call, or on its `apiPrefix` line, for an app whose backend another server already serves where `nifra dev` does. The finding at the call says so, and for a call that passes no `apiPrefix` it adds that one there would give the backend a second path that skips that server's middleware.
+- ec8080c: `nifra upgrade --write` no longer runs `nifra check` against packages its edits have not installed: that check read the release being left, so it could fail on a mix of versions or pass on the old one. While package.json pins or bun.lock entries it changed are not installed, or `node_modules` holds a nifra package at another version, it prints the install command (`bun install`, or `pnpm`, `yarn` or `npm install` by lockfile) and `nifra check` to run after it, and exits 0, so `nifra upgrade <version> --write && bun install` chains. `--json` reports `install` in place of `check`. The hook-scope diff waits for the install too: the report from before the edits is saved for `nifra routes --hooks --since`.
+- @nifrajs/agent-review@5.2.1
+  - @nifrajs/client@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/i18n@5.2.1
+  - @nifrajs/mcp@5.2.1
+  - @nifrajs/mcp-db@5.2.1
+  - @nifrajs/runner@5.2.1
+  - @nifrajs/schema@5.2.1
+  - @nifrajs/testing@5.2.1
+  - @nifrajs/web@5.2.1
+
 ## 5.2.0
 
 ### Minor Changes

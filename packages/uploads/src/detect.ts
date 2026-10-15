@@ -86,9 +86,12 @@ export function detectFileType(bytes: Uint8Array): FileType | null {
         bytes[offset + 3] ?? 0,
       )
     const brand = brandAt(8)
-    // The compatible brands follow the minor version, to the end of the ftyp box.
+    // The compatible brands follow the minor version, to the end of the ftyp box. Only those inside the
+    // prefix count: the box size is the sender's claim, and a verdict must not depend on bytes a caller
+    // that sniffs `FILE_TYPE_PREFIX_BYTES` never reads.
     const boxEnd = Math.min(
       bytes.length,
+      FILE_TYPE_PREFIX_BYTES,
       ((bytes[0] ?? 0) << 24) | ((bytes[1] ?? 0) << 16) | ((bytes[2] ?? 0) << 8) | (bytes[3] ?? 0),
     )
     const compatible: string[] = []

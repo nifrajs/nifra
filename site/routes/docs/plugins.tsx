@@ -346,7 +346,7 @@ export default function Plugins() {
       <p>
         <code>nifra routes --hooks --json</code> writes the report; <code>--since &lt;file&gt;</code>{" "}
         prints what runs differently from a saved one. <code>nifra upgrade --write</code> saves the
-        report before it edits anything and prints the scope diff, and <code>nifra check --json</code>{" "}
+        report before it edits anything and prints the scope diff once the target is installed, and <code>nifra check --json</code>{" "}
         includes it as <code>hooks</code> when <code>nifra.assurance.ts</code> names a{" "}
         <code>source</code>. Origins are recorded only outside production builds.
       </p>

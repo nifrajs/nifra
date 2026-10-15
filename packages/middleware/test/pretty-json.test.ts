@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { t } from "@nifrajs/schema"
 import { prettyJson } from "../src/index.ts"
 
 describe("prettyJson()", () => {
@@ -116,6 +117,35 @@ describe("prettyJson()", () => {
 
     const res = await app.fetch(new Request("http://x/"))
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes)
+  })
+
+  // Indentation repeats the depth on every line: 8 KB of nested arrays used to come back as 32 MB.
+  test("passes a deeply nested document through instead of amplifying it", async () => {
+    const nested = `{"a":${"[".repeat(4000)}0${"]".repeat(4000)}}`
+    const app = server()
+      .use(prettyJson())
+      .post("/echo", { body: t.looseObject({}) }, (c) => c.body)
+      .get("/raw", () => new Response(nested, { headers: { "content-type": "application/json" } }))
+
+    const echoed = await app.fetch(
+      new Request("http://x/echo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: nested,
+      }),
+    )
+    expect(echoed.status).toBe(200)
+    expect(await echoed.text()).toBe(nested)
+    expect(await (await app.fetch(new Request("http://x/raw"))).text()).toBe(nested)
+  })
+
+  test("still indents ordinary nesting", async () => {
+    const nested = `${"[".repeat(50)}1,2${"]".repeat(50)}`
+    const app = server()
+      .use(prettyJson())
+      .get("/", () => new Response(nested, { headers: { "content-type": "application/json" } }))
+    const text = await (await app.fetch(new Request("http://x/"))).text()
+    expect(text).toBe(`${JSON.stringify(JSON.parse(nested), null, 2)}\n`)
   })
 
   test("validates construction", () => {

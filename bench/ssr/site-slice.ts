@@ -3,10 +3,10 @@
  * results and hands them here; the builders are pure so they can be unit-tested without running
  * oha. Table A (uncached SSR) and Table B (SSG/ISR) are emitted as SEPARATE slices and rendered
  * as separately-labelled tables - never blended into one, which is exactly the apples-to-oranges
- * read SSR-BENCHMARKS.md warns against. The landing bar chart and multipliers stay Table A only.
+ * read bench/ssr/README.md warns against. The landing bar chart and multipliers stay Table A only.
  */
 import type { BenchRow, Multiplier } from "../site-bench.ts"
-import type { SsrBenchResult, SsrBenchTarget } from "./harness.ts"
+import { rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
 
 /** One measured Table A row: the target it ran plus the framework section it ran under. */
 export interface SsrRunRow {
@@ -52,7 +52,7 @@ const DISPLAY: Record<string, string> = {
 }
 
 /** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */
-const NIFRA_MODE = /\((SSG|ISR)\)$/
+const NIFRA_MODE = /\((SSG|ISR)(?:, node)?\)$/
 
 /** The rival each framework's multiplier compares nifra's NODE row against (same-runtime, fair). */
 const RIVAL: Record<string, { target: string; label: string }> = {
@@ -66,15 +66,17 @@ function displayName(row: SsrRunRow): string {
   const mapped = DISPLAY[row.target.name]
   if (mapped !== undefined) return mapped
   const fw = row.framework
+  const runtime = row.target.runtime === "node" ? "Node" : "Bun"
+  // Spelled out so neither row can be read as an app served like the meta-frameworks are.
+  if (rowKind(row.target) === "own-server") {
+    return `Nifra + ${fw} render API in your own server (${runtime})`
+  }
+  if (rowKind(row.target) === "static-host") return `Nifra + ${fw} SSG files on a static host`
   // nifra Table B rows: "nifra+react (SSG)" → "Nifra + React SSG (Bun)"
   const mode = NIFRA_MODE.exec(row.target.name)
-  if (mode !== null) {
-    return row.target.runtime === "node"
-      ? `Nifra + ${fw} ${mode[1]} (Node)`
-      : `Nifra + ${fw} ${mode[1]} (Bun)`
-  }
+  if (mode !== null) return `Nifra + ${fw} ${mode[1]} (${runtime})`
   // nifra rows: "nifra+react" → "Nifra + React (Bun)", "nifra+react (node)" → "Nifra + React (Node)"
-  return row.target.runtime === "node" ? `Nifra + ${fw} (Node)` : `Nifra + ${fw} (Bun)`
+  return `Nifra + ${fw} (${runtime})`
 }
 
 function isNifra(row: SsrRunRow): boolean {
@@ -109,10 +111,15 @@ export function ssrTablesSlice(rows: readonly SsrRunRow[]): readonly SsrTable[] 
   return order.map((framework) => ({ framework, rows: byFw.get(framework) ?? [] }))
 }
 
+/** Rows that compare a framework app with a framework app; the own-server rows never headline. */
+function likeForLike(row: SsrRunRow): boolean {
+  return rowKind(row.target) === "app"
+}
+
 /** The landing bar chart: the React story (Bun + Node vs Next + Remix) - the `heroSsr` slice. */
 export function heroSsrSlice(rows: readonly SsrRunRow[]): readonly BenchRow[] {
   return rows
-    .filter((r) => r.framework === "React")
+    .filter((r) => r.framework === "React" && likeForLike(r))
     .map((r) => ({
       name: displayName(r),
       reqs: r.result.rps,
@@ -122,7 +129,7 @@ export function heroSsrSlice(rows: readonly SsrRunRow[]): readonly BenchRow[] {
 
 /** Every Table A row as a flat bar list (grouped by framework order) - the `frontend` slice. */
 export function frontendSlice(rows: readonly SsrRunRow[]): readonly BenchRow[] {
-  return rows.map((r) => ({
+  return rows.filter(likeForLike).map((r) => ({
     name: displayName(r),
     reqs: r.result.rps,
     ...(isNifra(r) ? { you: true } : {}),
@@ -142,7 +149,7 @@ export function multipliersSlice(rows: readonly SsrRunRow[]): readonly Multiplie
   const out: Multiplier[] = []
   for (const [fw, rival] of Object.entries(RIVAL)) {
     const nifraNode = rows.find(
-      (r) => r.framework === fw && isNifra(r) && r.target.runtime === "node",
+      (r) => r.framework === fw && isNifra(r) && likeForLike(r) && r.target.runtime === "node",
     )
     const rivalRow = rows.find((r) => r.target.name === rival.target)
     if (nifraNode === undefined || rivalRow === undefined || rivalRow.result.rps === 0) continue

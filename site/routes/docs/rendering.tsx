@@ -237,6 +237,16 @@ export default function Rendering() {
         worker.
       </p>
       <CodeBlock code={BUILD} />
+      <p>
+        On a server you run yourself, <code>nifra build --target bun</code> or <code>node</code>{" "}
+        prerenders the same routes into <code>_prerendered/</code> beside <code>server.js</code>, and
+        the server answers each from its file instead of rendering it. The file is served from the
+        page route, so <code>use</code> middleware still runs first and a gate in front of the page
+        still applies. A request with a query string, a navigation data request, or a draft-mode
+        visitor renders on demand. So does a page whose build-time render set a cookie, was private or{" "}
+        <code>no-store</code>, or varied on a request header, and every page of an app with a{" "}
+        <code>nonce</code>. The Vite pipeline and the edge targets render every page on demand.
+      </p>
 
       <h2>ISR - cache with stale-while-revalidate</h2>
       <p>

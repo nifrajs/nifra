@@ -19,6 +19,7 @@ import {
   readBoundedLines,
   readBoundedStream,
   signalProcessGroup,
+  stopGroupOnExit,
 } from "./mcp-io.ts"
 import type {
   AppSurface,
@@ -134,6 +135,7 @@ export async function askProjectChild(
       `cannot start a process in ${cwd}: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  stopGroupOnExit(proc)
   let stopped: "timeout" | "cancel" | undefined
   const stop = (reason: "timeout" | "cancel"): void => {
     if (stopped !== undefined) return

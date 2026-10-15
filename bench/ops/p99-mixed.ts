@@ -9,7 +9,11 @@
  * client overhead is in the numbers, so read them as same-machine ratios and tail SHAPE, not as
  * wire-true absolutes.
  */
+
+import { performanceHost } from "../performance-host.ts"
 import { spawnServer } from "./_spawn.ts"
+
+if (Bun.env.NIFRA_PERF_GATE === "1") performanceHost(true)
 
 const DURATION_S = Number(Bun.env.DURATION_S ?? 10)
 const CONCURRENCY = Number(Bun.env.CONCURRENCY ?? 32)
@@ -75,6 +79,7 @@ console.log(`  p99.9      ${p999.toFixed(2)} ms`)
 console.log(`  max        ${max.toFixed(2)} ms`)
 
 if (Bun.env.NIFRA_PERF_GATE === "1") {
+  performanceHost(true)
   const failures = [
     ...(errors === 0 ? [] : [`${errors} request error(s)`]),
     ...(p99 <= 2 ? [] : [`p99 ${p99.toFixed(2)} ms > 2 ms`]),

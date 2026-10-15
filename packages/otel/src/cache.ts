@@ -100,8 +100,8 @@ export function cacheTracing(options: CacheTracingOptions = {}): CacheTracingObs
     if (event.tag !== undefined)
       keyAttributes(attributes, event.tag, "nifra.cache.tag_prefix", "nifra.cache.tag")
     const revalidation = event.op === "revalidate"
-    lifecycle
-      .start({
+    lifecycle.record(
+      {
         name: `cache ${event.op}`,
         kind: "internal",
         startTime: event.startedAt,
@@ -109,7 +109,8 @@ export function cacheTracing(options: CacheTracingOptions = {}): CacheTracingObs
         ...(revalidation
           ? { parent: null, links: [{ traceId: trace.traceId, spanId: trace.spanId }] }
           : { parent: trace }),
-      })
-      .end({ status: event.outcome === "error" ? "error" : "ok", durationMs: event.durationMs })
+      },
+      { status: event.outcome === "error" ? "error" : "ok", durationMs: event.durationMs },
+    )
   }
 }

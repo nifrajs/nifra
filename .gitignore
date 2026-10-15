@@ -32,6 +32,9 @@ packages/web/test/.tmp-*
 /BENCHMARKS.md
 /SSR-BENCHMARKS.md
 /BENCHMARKS-REALWORLD.md
+/BENCHMARKS-PERFORMANCE.json
+bench/.tmp-performance-*/
+packages/schema/test/.tmp-precompiled-*/
 /PLAN.md
 /*-PLAN.md
 /*-PARITY.md
@@ -49,6 +52,7 @@ bench/**/*.md
 !bench/README.md
 !bench/techempower/README.md
 !bench/http/worst-case/README.md
+!bench/ssr/README.md
 /plans
 
 # Local editor/agent tooling - machine-specific (absolute paths, local settings); never committed.

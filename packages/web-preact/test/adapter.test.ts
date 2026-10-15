@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { assertRenderAdapterConformance, type RenderProps } from "@nifrajs/web"
+import { assertRenderAdapterConformance, type RenderProps, renderPage } from "@nifrajs/web"
 import { type ComponentChildren, type FunctionComponent, h } from "preact"
 import { preactAdapter } from "../src/index.ts"
 
@@ -84,6 +84,45 @@ test("renderToStream stamps the nonce on Preact's streamed island runtime, and o
   expect(nonced).toContain("<script>window.app=1</script>")
   expect(nonced.match(/nonce=/g)?.length).toBe(1)
   expect(await read()).not.toContain("nonce=")
+})
+
+test("a page that suspends without defer() is streamed and resolves on the server", async () => {
+  const { Suspense } = await import("preact/compat")
+  let settled = false
+  const slow = new Promise<void>((r) =>
+    setTimeout(() => {
+      settled = true
+      r()
+    }, 10),
+  )
+  const Slow: FunctionComponent = () => {
+    if (!settled) throw slow
+    return h("span", null, "RESOLVED")
+  }
+  const Page: FunctionComponent = () =>
+    h("div", null, h(Suspense, { fallback: "FALLBACK" }, h(Slow, null)))
+  const res = await renderPage({
+    adapter: preactAdapter,
+    chain: [Page],
+    data: null,
+    clientEntry: "/c.js",
+    hydrate: false,
+  })
+  expect(res.status).toBe(200)
+  expect(await res.text()).toContain("<span>RESOLVED</span>")
+})
+
+test("the string render hands a suspending page back to be streamed", async () => {
+  const { Suspense } = await import("preact/compat")
+  const Slow: FunctionComponent = () => {
+    throw new Promise(() => {})
+  }
+  const Page: FunctionComponent = () => h(Suspense, { fallback: "FALLBACK" }, h(Slow, null))
+  expect(await preactAdapter.renderToString?.([Page], { data: null })).toBeUndefined()
+  const Broken: FunctionComponent = () => {
+    throw new Error("broken")
+  }
+  expect(async () => preactAdapter.renderToString?.([Broken], { data: null })).toThrow("broken")
 })
 
 test("renderToStream leaves an app script that opens like the island runtime un-nonced", async () => {

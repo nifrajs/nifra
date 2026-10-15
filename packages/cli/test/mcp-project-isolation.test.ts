@@ -457,7 +457,9 @@ describe("forgetAutoLoadedEnv", () => {
       `import { forgetAutoLoadedEnv } from ${JSON.stringify(join(import.meta.dir, "../src/env-file.ts"))}\n` +
         "const removed = await forgetAutoLoadedEnv()\n" +
         'const names = ["A_FILE", "A_SHELL", "A_EXPANDED", "A_LOCAL", "A_PRELOADED", "NODE_ENV"]\n' +
-        "console.log(JSON.stringify({ removed: [...removed].sort(), left: Object.fromEntries(names.map((n) => [n, process.env[n] ?? null])) }))\n",
+        "console.log(JSON.stringify({ removed: [...removed].sort(), left: Object.fromEntries(names.map((n) => [n, process.env[n] ?? null])) }))\n" +
+        // A preload may hold this process open too; the answer is printed by now.
+        "process.exit(0)\n",
     )
     const proc = Bun.spawn([process.execPath, script], {
       cwd: dir,
@@ -491,6 +493,19 @@ describe("forgetAutoLoadedEnv", () => {
     writeFileSync(join(dir, ".env"), "A_FILE=file\n")
     writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./preload.ts"]\n')
     writeFileSync(join(dir, "preload.ts"), 'process.env.A_PRELOADED = "preloaded"\n')
+    const { removed, left } = await forgetIn(dir, {})
+    expect(removed).toEqual(["A_FILE"])
+    expect(left.A_PRELOADED).toBe("preloaded")
+  }, 30_000)
+
+  test("a preload that keeps its process alive does not hold the probe", async () => {
+    const dir = tempRoot()
+    writeFileSync(join(dir, ".env"), "A_FILE=file\n")
+    writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./preload.ts"]\n')
+    writeFileSync(
+      join(dir, "preload.ts"),
+      'process.env.A_PRELOADED = "preloaded"\nsetInterval(() => {}, 1000)\n',
+    )
     const { removed, left } = await forgetIn(dir, {})
     expect(removed).toEqual(["A_FILE"])
     expect(left.A_PRELOADED).toBe("preloaded")

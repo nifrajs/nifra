@@ -12,11 +12,12 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
-import { realpath } from "node:fs/promises"
+import { type FileHandle, realpath } from "node:fs/promises"
 import { extname, normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
+import { isHiddenPublicPath } from "./internal/public-url.ts"
 import { openResolved } from "./open-resolved.ts"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
@@ -96,15 +97,33 @@ export const CONTENT_TYPES: Readonly<Record<string, string>> = {
 }
 
 /**
- * Whether a confined path crosses a dot-segment other than `.well-known`. The build copies `public/`
- * with dotfiles included, so an editor or VCS artifact (`.env`, `.git/`, `.DS_Store`) dropped there
- * would otherwise be downloadable. Checked on the resolved path, so `%2e` encodings are covered.
+ * Whether a confined path crosses a hidden segment ({@link isHiddenPublicPath}). Checked on the
+ * resolved path, so `%2e` encodings are covered, and again on the real target, so a visible name
+ * linking to `.env` is refused too.
  */
 function isHiddenPath(root: string, abs: string): boolean {
-  for (const segment of abs.slice(root.length + 1).split(sep)) {
-    if (segment.startsWith(".") && segment !== ".well-known") return true
+  return abs !== root && isHiddenPublicPath(abs.slice(root.length + 1))
+}
+
+// Up to this many bytes are read whole through the pinned descriptor, which then closes before the
+// response leaves: on Bun a 200 KB asset is served in 0.17 ms against 0.28 ms through a node:fs
+// stream. A larger body streams, so a video holds 64 KiB per request rather than the file.
+const BUFFERED_BODY_MAX = 256 * 1024
+
+/** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
+async function readPinned(
+  handle: FileHandle,
+  start: number,
+  length: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  while (offset < length) {
+    const { bytesRead } = await handle.read(bytes, offset, length - offset, start + offset)
+    if (bytesRead === 0) break
+    offset += bytesRead
   }
-  return false
+  return offset === length ? bytes : bytes.subarray(0, offset)
 }
 
 /** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
@@ -194,7 +213,8 @@ export function servePublicDir(
     if (
       resolvedRoot === undefined ||
       resolvedFile === undefined ||
-      (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + sep))
+      (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + sep)) ||
+      isHiddenPath(resolvedRoot, resolvedFile)
     ) {
       return undefined
     }
@@ -243,7 +263,8 @@ export function servePublicDir(
         return new Response(null, { status: 304, headers })
       }
 
-      const rangeHeader = request.headers.get("range")
+      // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
+      const rangeHeader = head ? null : request.headers.get("range")
       const range =
         rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
           ? parseByteRange(rangeHeader, size)
@@ -255,7 +276,16 @@ export function servePublicDir(
         return new Response(null, { status: 416, headers })
       }
 
-      const body = (start?: number, end?: number): ReadableStream<Uint8Array> => {
+      const body = async (
+        start: number,
+        end: number,
+      ): Promise<Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>> => {
+        const length = end - start + 1
+        if (length <= BUFFERED_BODY_MAX) {
+          const bytes = await readPinned(handle!, start, length)
+          headers.set("content-length", String(bytes.byteLength))
+          return bytes
+        }
         const stream = handle!.createReadStream({ start, end })
         // FileHandle.createReadStream owns closing the descriptor after EOF/abort.
         handle = undefined
@@ -266,14 +296,14 @@ export function servePublicDir(
         const { start, end } = range.ranges[0]!
         headers.set("content-range", `bytes ${start}-${end}/${size}`)
         headers.set("content-length", String(end - start + 1))
-        return new Response(head ? null : body(start, end), { status: 206, headers })
+        return new Response(head ? null : await body(start, end), { status: 206, headers })
       }
 
       // Multiple ranges would require assembling `multipart/byteranges`, and doing that for a file on
       // disk means buffering the whole representation to serve a request that asked for less of it.
       // RFC 9110 lets a server ignore Range entirely, so the full body is the conformant answer here.
       headers.set("content-length", String(size))
-      return new Response(head ? null : body(), { headers })
+      return new Response(head || size === 0 ? null : await body(0, size - 1), { headers })
     } finally {
       if (handle !== undefined) {
         try {
@@ -282,6 +312,71 @@ export function servePublicDir(
           // Closing a descriptor is best-effort after the response decision is made.
         }
       }
+    }
+  }
+}
+
+export interface PrerenderedPageReaderOptions {
+  /** Absolute path of the directory the build wrote the prerendered pages into. */
+  readonly dir: string
+  /** Each page path mapped to its file, relative to `dir`. */
+  readonly files: Readonly<Record<string, string>>
+  /** Bytes of HTML kept in memory once read (default 32 MiB); a page past the budget is read per request. */
+  readonly cacheBytes?: number
+}
+
+/**
+ * Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's
+ * own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the
+ * deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so a page
+ * is kept after its first read; `undefined` (a missing or refused file) renders the page on demand.
+ */
+export function prerenderedPageReader(
+  options: PrerenderedPageReaderOptions,
+): (pathname: string) => Promise<string | undefined> {
+  const root = resolve(options.dir)
+  const rootReal = realpath(root).catch(() => undefined)
+  const files = new Map(Object.entries(options.files))
+  const budget = options.cacheBytes ?? 32 * 1024 * 1024
+  const cache = new Map<string, string>()
+  let cachedBytes = 0
+  return async (pathname) => {
+    const cached = cache.get(pathname)
+    if (cached !== undefined) return cached
+    const rel = files.get(pathname)
+    if (rel === undefined) return undefined
+    const abs = resolve(root, rel)
+    if (!abs.startsWith(root + sep) || isHiddenPath(root, abs)) return undefined
+    const [resolvedRoot, resolvedFile] = await Promise.all([
+      rootReal,
+      realpath(abs).catch(() => undefined),
+    ])
+    if (
+      resolvedRoot === undefined ||
+      resolvedFile === undefined ||
+      !resolvedFile.startsWith(resolvedRoot + sep)
+    ) {
+      return undefined
+    }
+    let handle: FileHandle
+    try {
+      handle = await openResolved(resolvedFile)
+    } catch {
+      return undefined
+    }
+    try {
+      if (!(await handle.stat()).isFile()) return undefined
+      const bytes = await handle.readFile()
+      const html = bytes.toString("utf8")
+      if (!cache.has(pathname) && cachedBytes + bytes.byteLength <= budget) {
+        cache.set(pathname, html)
+        cachedBytes += bytes.byteLength
+      }
+      return html
+    } catch {
+      return undefined
+    } finally {
+      await handle.close().catch(() => undefined)
     }
   }
 }

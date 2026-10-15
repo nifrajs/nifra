@@ -326,6 +326,47 @@ test("runs the project TypeScript 7 typecheck instead of the CLI compiler", asyn
   }
 })
 
+test("the raw-Response and route-statement checks read their AST on TypeScript 7", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-ts7-response-"))
+  try {
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "app" }))
+    await installTypeScriptPackage(root, "typescript7")
+    await mkdir(join(root, "backend"), { recursive: true })
+    await writeFile(
+      join(root, "backend", "wire.ts"),
+      "function send(payload: unknown) {\n  const out = Response.json(payload)\n  return out\n}\nexport { send }\n",
+    )
+    await writeFile(
+      join(root, "backend", "app.ts"),
+      [
+        'import { createWebApp } from "@nifrajs/web"',
+        'import { send } from "./wire"',
+        "export const app = createWebApp(options)",
+        '  .get("/shelves", () => send([]))',
+        '  .get("/loans", (c) => c.json([]))',
+        'app.post("/returns", () => ({ ok: true }))',
+        "export type App = typeof app",
+        "export default app",
+        "",
+      ].join("\n"),
+    )
+
+    const result = await collectCheckResult(root, { lintsOnly: true })
+    const warns = result.diagnostics.filter((finding) => finding.rule === "response-route")
+    expect(warns.map((finding) => `${finding.file}:${finding.line}`)).toEqual([
+      "backend/app.ts:4",
+      "backend/app.ts:5",
+    ])
+    const codes = result.diagnostics.map(
+      (finding) => `${finding.code} ${finding.file}:${finding.line}`,
+    )
+    expect(codes).toContain("NF-C045 backend/app.ts:6")
+    expect(codes.some((entry) => entry.startsWith("NF-C017"))).toBe(false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("the TypeScript 7 check follows imports into modules outside its scanned set", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-ts7-imports-"))
   try {

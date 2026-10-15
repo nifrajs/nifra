@@ -1,5 +1,77 @@
 # @nifrajs/web
 
+## 5.3.0
+
+### Minor Changes
+
+- 7ab9692: Add build-time schema compilation that emits typed static validators without runtime code generation. Generated modules preserve strict validation and structured issues while avoiding the schema builder and dynamic compiler in deployed bundles.
+  
+  A schema whose property key, `format` name or custom kind holds a quote, backslash or line break, or whose literal holds a backslash or line break, now validates on the eval-free checker and is refused by build-time compilation. TypeBox splices that text into generated source unescaped, so a quote could end the string and run the rest as code.
+  
+  Prepare immutable route modules and layout chains in production while executing authorization gates and loaders for every request. Mutable manifests can disable module preparation with `cacheRouteModules: false`.
+  
+  Reduce output projection bookkeeping for uniform subtrees, reuse request-bound cache views, and record completed cache spans without allocating an active observation. Span parentage, sampling, redaction, exporter isolation, and capability enforcement remain intact.
+  
+  Keep custom start-only `ObservationLifecycle` implementations compatible. The factory returns the extended `RecordingObservationLifecycle` interface with the new `record` method.
+  
+  Mark the migration parser's TypeScript keyword-kind comparison as syntax, so the security check does not mistake it for a secret comparison.
+- 2a429e6: `nifra build --target bun` and `--target node` prerender the routes that opt in (`export const prerender = true`, or `getStaticPaths`) into `_prerendered/` beside `server.js`. The server then answers those pages from their file instead of rendering them on every request.
+  
+  The file is served from the page route, so `use` middleware and every request hook still run first. A gate in front of a page still applies, and response hooks still add their headers. The page carries the `content-language` and Content-Security-Policy its build-time render produced. Loader headers and cookies are not sent, as for any prerendered page.
+  
+  These keep rendering on demand:
+  - a request with a query string
+  - a navigation data or server-component request
+  - a draft-mode visitor
+  - a page whose build-time render set a cookie, was `private` or `no-store`, or varied on a request header
+  - every page of an app with a `nonce`, whose documents need a nonce minted per request.
+  
+  On Node, the SSR benchmark's prerendered catalog page is served about 2.1x (Svelte) to 2.6x (Vue) faster than rendering it on each request.
+  
+  New in `@nifrajs/web`:
+  - `createWebApp({ prerenderedPages })`
+  - `prerenderedPageReader`, which opens only the build's own files inside the directory and keeps each page in memory once read, up to 32 MiB by default
+  - `PrerenderEntry.serveHeaders` on `prerenderRoutes` results.
+  
+  Prerendering now runs during these builds, so it loads every route module and runs the opted-in loaders at build time. Two effects:
+  - If a route module cannot load there, the build warns and every page renders on demand, as before.
+  - A secret in a prerendered page fails the build, as it does for `--target static`.
+  
+  The Vite pipeline, `deno`, and the edge targets are unchanged.
+
+### Patch Changes
+
+- 0e1d03f: A build no longer copies hidden files from `public/` - any path segment starting with `.` other than `.well-known`, such as `.env`, `.git/` or `.DS_Store`. The Bun development pipeline never served them (the Vite one did; see below), but the build copied them and every target then served them: the Bun, Node and Deno entries from their allowlist, the static, Pages and Vercel hosts from the directory. The development parity check lists public files by the same rule, and `servePublicDir` also refuses a visible name whose real target is hidden.
+- 605c246: Under a hash-based `createCspPolicy`, a buffered render that writes a script for that request alone (Solid serializing a server error an `ErrorBoundary` caught, for hydration) no longer ships it unauthorized. The render is handed a nonce; when the HTML it returns carries it, the document keeps the nonce in its `Content-Security-Policy` and becomes `private, no-store`, and every other document stays nonce-free and cacheable as before.
+- 271917a: A soft navigation's deferred data stream is cancelled and released when a line fails to parse. A malformed first line threw out of `parseNdjsonData` with the body still locked and streaming and the abort listener attached, and a malformed later line stopped reading without cancelling the body; every exit now detaches from the signal, cancels an unfinished body and releases the reader.
+- 69dfb60: `rangeResponse()` and `servePublicDir` ignore a `Range` header on a HEAD request, as RFC 9110 section 14.2 defines range handling for GET only: HEAD answers 200 with the full `content-length` and no `content-range`, the same as the Node static bridge. Before, HEAD with `Range` answered 206 or 416 with the metadata of the requested slice.
+- 605c246: A React page that suspends without `defer()` (`use(promise)` or `lazy` inside `<Suspense>`) now renders its resolved content on the server. The buffered fast path rendered it with React's string renderer, which cannot wait, so the document kept the fallback for good (with `hydrate: false` or JavaScript off, the content never appeared), and a component suspending with no boundary above it failed the render. `RenderAdapter.renderToString` may now return `undefined` for a render that suspended; the React adapter does so, and the page is streamed instead, with a CSP nonce when the policy needs one.
+- 13224fe: The server entry `buildTarget` generates for `bun`, `node` and `deno` serves static files the way `nifra dev` does. Bun and Node now hand a manifest-approved path to `servePublicDir`, and Deno runs the same checks on its own file API: the real path must sit inside the deploy directory, so a symbolic link planted in the deployed tree no longer reaches a file outside it; a HEAD request is answered from the file's size instead of reading it whole (the Node entry read the entire file); and a single byte range gets a `206` (an unsatisfiable one a `416`), with `accept-ranges` advertised.
+- 00c266e: A streamed page now renders only as fast as the client reads it. The document stream read the whole app stream up front, so a client that stopped reading left the full rendered body queued in memory; it now pulls one renderer chunk per read. The Vite dev bridge (`pipeWebBodyToNode`) likewise waits for `drain` when the socket buffer is full instead of writing every chunk at once, and removes its listeners when the body ends.
+- 042db5d: A Preact page that suspends without `defer()` (a `preact/compat` `<Suspense>` around a thrown promise, or `lazy`) is streamed and resolves on the server; it was a 500. A page whose string render suspended skips the string pass for its next 32 requests and goes straight to the stream, so a React page that suspends on `use` renders once per request rather than twice.
+- 49e37bd: `nifra dev` on the Vite pipeline no longer serves hidden files from `public/`. Vite's public middleware served every file there, dotfiles included, so `/.env`, `/.git/config` and `/%2eenv` answered with their contents. A request for a hidden file, or a visible name whose real target is hidden, now goes to the app, as it does in production and on the Bun pipeline. The dev server binds 127.0.0.1 and Vite refuses a foreign `Host`, so the exposure was limited to local processes and the developer's own browser.
+- 6826956: The Vite dev bridge cancels a non-HTML response body when the client left before piping began, or while a write was refused. It waited for a `drain` that never came, so an SSE source or a streamed body from the app stayed open for every aborted request.
+- 3318232: `servePublicDir` reads a body of up to 256 KiB whole through its pinned descriptor and closes it before the response leaves. A larger body still streams. On Bun, a 200 KB public file is served in 0.17 ms where a `node:fs` stream took 0.28 ms; a 10 KB file takes 0.12-0.14 ms instead of 0.16 ms. The self-hosted Bun, Node and Deno entries serve static files through this handler.
+- 7e5cd65: The self-hosted Deno entry's static handler applies `servePublicDir`'s hidden-file rule to the real path, so `/assets/<name>` linking to a `.env` inside the deploy directory is 404 rather than served. It also checks that the file it opened is still the one at the checked real path. `Deno.open` follows links, so a directory swapped for a link after the containment check used to redirect the open outside the deploy directory.
+- d874102: No behavior change: the error a secret in a build artifact throws sets its name in a constructor, and the prerendered page reader's failure paths are tested.
+- 80bf986: Page documents render with less work per request. Loader data that a closed output schema has settled skips the scan for deferred values. The request origin is parsed once per host. An empty query string skips search parsing. The render options are assembled without a copy per optional field. On the SSR bench apps this measured 6 to 10% more requests per second on Bun and Node.
+- d890695: `MemoryCacheStore` no longer stores a render that began before a purge whose record it has since evicted. Purge records are bounded by `max`; once a page's or tag's record was evicted, a slow render that began before that purge was accepted and served the purged page again (one purge followed by 500 others was enough at the default `max`). Such a render is now served but not cached; a render that began after the purge is cached as before.
+- Updated dependencies [7ab9692]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
+  - @nifrajs/core@5.3.0
+  - @nifrajs/island-trigger@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/core@5.2.1
+  - @nifrajs/island-trigger@5.2.1
+
 ## 5.2.0
 
 ### Minor Changes

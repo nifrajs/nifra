@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { hasDotSegment, resolveDotSegments } from "../src/server/request-target.ts"
+import { needsResolving, resolveDotSegments } from "../src/server/request-target.ts"
 
-describe("hasDotSegment", () => {
+describe("needsResolving", () => {
   test("finds a dot segment, raw or encoded in either case, and a backslash", () => {
     for (const target of [
       "/users/..",
@@ -19,8 +19,18 @@ describe("hasDotSegment", () => {
       "/a/..#frag",
       "http://h/a/../b",
       "https://h:8080/%2e%2e",
+      "/vault<tag>",
+      '/a"b',
+      "/a^b",
+      "/a`b",
+      "/a{b}",
+      "/a b",
+      "/a\tb",
+      "/a\u007fb",
+      "/caf\u00e9",
+      "http://h/a<b>",
     ]) {
-      expect([target, hasDotSegment(target)]).toEqual([target, true])
+      expect([target, needsResolving(target)]).toEqual([target, true])
     }
   })
 
@@ -37,11 +47,21 @@ describe("hasDotSegment", () => {
       "/a/%2e%2e%2fx",
       "/a%2fb",
       "/search?q=a%20b",
+      "/search?q=<b>{x}",
+      "/a#<b>",
+      "/a|b[c]",
+      "/a%3Cb%3E",
       "http://h",
       "*",
     ]) {
-      expect([target, hasDotSegment(target)]).toEqual([target, false])
+      expect([target, needsResolving(target)]).toEqual([target, false])
     }
+  })
+
+  test("a character the parser encodes in a path is encoded, not left for the router", () => {
+    expect(resolveDotSegments("/vault<tag>?q=<x>")).toBe("/vault%3Ctag%3E?q=%3Cx%3E")
+    expect(resolveDotSegments('/a^b`c{d}"e')).toBe("/a%5Eb%60c%7Bd%7D%22e")
+    expect(resolveDotSegments("/caf\u00e9")).toBe("/caf%C3%A9")
   })
 
   test("may flag a query that looks like a segment, which resolving leaves as it is", () => {
@@ -59,7 +79,8 @@ describe("hasDotSegment", () => {
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
       return (((t ^ (t >>> 14)) >>> 0) % bound) | 0
     }
-    // Every piece is text the parser keeps as written unless it is (part of) a dot segment.
+    // Every piece is text the parser keeps as written unless it is (part of) a dot segment or a
+    // character it percent-encodes in a path.
     const pieces = [
       "a",
       "7",
@@ -74,6 +95,12 @@ describe("hasDotSegment", () => {
       "a.",
       "%2f",
       "\\",
+      "<b>",
+      "^",
+      "`",
+      "{}",
+      '"',
+      "\u00e9",
     ]
     for (let round = 0; round < 5000; round++) {
       const segments: string[] = []
@@ -86,7 +113,7 @@ describe("hasDotSegment", () => {
       const path = `/${segments.join("/")}`
       const target = random(3) === 0 ? `${path}?q=/../x` : path
       const parsed = new URL(`http://localhost${target}`)
-      if (!hasDotSegment(target)) expect([target, parsed.pathname]).toEqual([target, path])
+      if (!needsResolving(target)) expect([target, parsed.pathname]).toEqual([target, path])
       expect([target, resolveDotSegments(target)]).toEqual([
         target,
         parsed.pathname + parsed.search,

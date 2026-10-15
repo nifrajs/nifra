@@ -8,9 +8,10 @@ import {
 } from "../src/cli.ts"
 import type { Diagnostic } from "../src/diagnostics.ts"
 import { getFixRecipe } from "../src/fix-recipes.ts"
+import type { TypeScriptSession } from "../src/internal/typescript-import.ts"
 import { buildRouteTable, unservedRoutesWarning } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
-import { runRuleRegistry, sourceIndex } from "../src/rules/index.ts"
+import { type RuleContext, runRuleRegistry, sourceIndex } from "../src/rules/index.ts"
 import { pageRules, readStaticApiPrefix } from "../src/rules/pages.ts"
 import {
   frameworkMountPaths,
@@ -687,6 +688,64 @@ describe("NF-C035", () => {
       ])
     })
 
+    test("a nifra-expect comment on the call or its apiPrefix line accepts the difference", async () => {
+      const accepted = [
+        [
+          "// nifra-expect NF-C035: the outer server mounts the backend at /api",
+          "export const app = createWebApp({ api: inProcessClient(backend) })",
+        ],
+        [
+          "export const app = createWebApp({",
+          "  api: inProcessClient(backend),",
+          "  // The outer server mounts the backend at /api, behind its own middleware.",
+          "  // nifra-expect NF-C035: a second mount here would skip that middleware",
+          '  apiPrefix: "",',
+          "})",
+        ],
+        ["export const app = createWebApp({ api: backend }) // nifra-expect NF-C035"],
+      ]
+      for (const lines of accepted) {
+        expect(
+          await scanEntry({
+            "backend/framework.ts": framework('"/api"'),
+            "server.ts": entry(...lines),
+          }),
+        ).toEqual([])
+      }
+      const otherCode = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry(
+          "// nifra-expect NF-C027: unrelated",
+          "export const app = createWebApp({ api: backend })",
+        ),
+      })
+      expect(otherCode.map((f) => f.line)).toEqual([5])
+    })
+
+    test("the advice names the hatch, and warns that a second mount skips the other server's middleware", async () => {
+      const [none] = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "" })'),
+      })
+      expect(none?.message).toContain(
+        "If another server already serves this backend at /api, mark the call with `// nifra-expect NF-C035: <reason>` instead: an apiPrefix here would add a second path to it that skips that server's middleware.",
+      )
+      const [other] = await scanEntry({
+        "backend/framework.ts": framework('"/api"'),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "/v1" })'),
+      })
+      expect(other?.message).toEndWith(
+        "If another server already serves this backend at /api, mark the call with `// nifra-expect NF-C035: <reason>` instead.",
+      )
+      const [, devNowhere] = await scanEntry({
+        "backend/framework.ts": adapterSource.join("\n"),
+        "server.ts": entry('export const app = createWebApp({ api: backend, apiPrefix: "/api" })'),
+      })
+      expect(devNowhere?.message).toEndWith(
+        "Mark a deliberate difference with `// nifra-expect NF-C035: <reason>` above the call.",
+      )
+    })
+
     test("a different literal or same-module const is reported; the import path is relative to the entry", async () => {
       const findings = await scanEntry({
         "backend/framework.ts": framework('"/api"'),
@@ -979,5 +1038,105 @@ describe("NF-C042", () => {
         }),
       ),
     ).toEqual([])
+  })
+})
+
+describe("NF-C044", () => {
+  const definer = [
+    'import { defineCopy } from "@nifrajs/i18n/copy"',
+    'export const copy = defineCopy({ locales: ["en", "hi"], defaultLocale: "en" })',
+  ].join("\n")
+  const scan = async (files: Record<string, string>, session?: TypeScriptSession) => {
+    const dir = project(files)
+    const facts = projectFacts("backend/app.ts", "", [])
+    const sources = sourceIndex(Object.entries(files).map(([file, content]) => ({ file, content })))
+    const ctx: RuleContext = { root: dir, sources, project: { ...facts, source: sources } }
+    const findings = await runRuleRegistry(
+      session === undefined ? ctx : { ...ctx, typescriptSession: session },
+      pageRules,
+    )
+    return findings.filter((finding) => finding.code === "NF-C044")
+  }
+  const entry = (...lines: string[]): string =>
+    [
+      'import { createWebApp } from "@nifrajs/web"',
+      'import { clientEntry, manifest } from "./dist/server-manifest"',
+      ...lines,
+    ].join("\n")
+
+  test("a createWebApp with a clientEntry and no copyChunks in an app with copy tables is reported", async () => {
+    const findings = await scan({
+      "shared/copy.ts": definer,
+      "server.ts": entry(
+        "",
+        "export const app = createWebApp({",
+        "  adapter,",
+        "  manifest,",
+        "  clientEntry,",
+        "})",
+      ),
+    })
+    expect(findings.map((f) => [f.severity, f.file, f.line, f.fix])).toEqual([
+      ["warn", "server.ts", 4, undefined],
+    ])
+    expect(findings[0]?.message).toContain("while shared/copy.ts defines copy tables")
+    expect(findings[0]?.message).toContain("`nifra dev` never splits them")
+    expect(findings[0]?.message).toContain(
+      'Pass `import { copyChunks } from "./dist/server-manifest"` and `createWebApp({ ..., copyChunks })`.',
+    )
+    expect(findings[0]?.evidence).toEqual([
+      "createWebApp copyChunks: unset",
+      "copy tables: shared/copy.ts",
+    ])
+    const [bare] = await scan({
+      "shared/copy.ts": definer,
+      "server.ts": [
+        'import * as web from "@nifrajs/web"',
+        "export const app = web.createWebApp({ adapter, manifest, clientEntry: build.entry })",
+      ].join("\n"),
+    })
+    expect(bare?.message).toContain("`buildClient()`'s result")
+  })
+
+  test("copyChunks passed or possibly spread in, no clientEntry, no copy tables, or a nifra-expect is not reported", async () => {
+    const unreported = [
+      "export const app = createWebApp({ adapter, manifest, clientEntry, copyChunks })",
+      "export const app = createWebApp({ manifest, clientEntry, copyChunks: assets.copyChunks })",
+      "export const app = createWebApp({ manifest, clientEntry, ...built })",
+      "export const app = createWebApp({ manifest, clientEntry, [key]: value })",
+      "export const app = createWebApp({ manifest })",
+      "export const app = createWebApp(options)",
+      "// nifra-expect NF-C044: serves the API pages only\nexport const app = createWebApp({ manifest, clientEntry })",
+      "export const app = createWebApp({ clientEntry }) // nifra-expect NF-C044",
+    ]
+    for (const line of unreported) {
+      expect(await scan({ "shared/copy.ts": definer, "server.ts": entry(line) })).toEqual([])
+    }
+    expect(
+      await scan({
+        "server.ts": entry("export const app = createWebApp({ manifest, clientEntry })"),
+      }),
+    ).toEqual([])
+    expect(
+      await scan({
+        "shared/copy.ts": definer,
+        "server.ts":
+          'import { createWebApp } from "./local"\nexport const app = createWebApp({ clientEntry })',
+      }),
+    ).toEqual([])
+  })
+
+  test("under TypeScript 7 the build ships copy tables whole, so nothing is reported", async () => {
+    const ts = await import("typescript")
+    const files = {
+      "shared/copy.ts": definer,
+      "server.ts": entry("export const app = createWebApp({ manifest, clientEntry })"),
+    }
+    const session = (version: string): TypeScriptSession => ({
+      compiler: { ...ts, version },
+      close: async () => {},
+    })
+    expect(await scan(files, session("7.0.2"))).toEqual([])
+    expect((await scan(files, session("6.0.3"))).map((f) => f.line)).toEqual([3])
   })
 })

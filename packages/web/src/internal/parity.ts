@@ -20,7 +20,7 @@ import { discoverRoutes } from "../fs.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
 import { withoutComments } from "./html-spans.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
-import { publicUrlPath } from "./public-url.ts"
+import { isHiddenPublicPath, publicUrlPath } from "./public-url.ts"
 
 const DEPENDENCY_FIELDS = [
   "dependencies",
@@ -1077,6 +1077,7 @@ const publicFilesUnder = (publicDir: string | false | undefined): readonly strin
   const files: string[] = []
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (isHiddenPublicPath(entry.name)) continue // the build skips it too
       const path = join(current, entry.name)
       if (entry.isDirectory()) walk(path)
       else if (entry.isFile()) files.push(publicUrlPath(relative(root, path)))

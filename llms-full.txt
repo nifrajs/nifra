@@ -1054,9 +1054,12 @@ Prefer `c.set` over returning a raw `Response`. A `Response`
 return makes the typed client infer `data: never`, so you silently lose drift
 detection for that route (`nifra check` flags it, NF-C007). `c.set`
 keeps your plain-object return fully typed. The check reads the functions a route
-registration or an `implement()` map passes, and a local function one returns a
-call to; a helper that answers an auth stage, or a handler registered from a list of route
-objects, is not read.
+registration (on `server()` or `createWebApp()`) or an
+`implement()` map passes, and a local function one returns a call to. It counts a
+`Response` held in a local before it is returned, a handler's
+`c.json()`/`c.text()`, and a call to a function imported from a
+relative module that returns one, reported at each route that returns it. A helper that
+answers an auth stage, or a handler registered from a list of route objects, is not read.
 
 A `Response` a handler or hook returns or throws still gets the
 `c.set.headers` it lacks and the queued cookies, so a guard's
@@ -1088,6 +1091,10 @@ ends the request from a handler or any hook, returned or thrown, without buildin
 and queued cookies still apply. On the typed client, checking `res.status === 409`
 narrows `res.data` to the declared 409 body; a status the route does not declare
 falls into one arm whose `data` is `unknown`.
+
+The code may be a runtime value. Typed as a literal union (`200 | 409`), it splits
+into one arm per code. Typed as plain `number`, it cannot be sorted into success
+or error, so its body types `res.data`: a 2xx from that return can only carry it.
 
 ```ts
 import { client } from "@nifrajs/client"
@@ -1302,6 +1309,16 @@ await api.search.get({ query: { page: "3" } })              // query string
 await api.users({ id: "1" }).posts({ postId: "2" }).get()   // nested params
 await api.files("report.json").get()                        // /files/:name.json → the segment as sent
 ```
+
+**Chain the routes the client calls.** Each registration returns a new type that records
+its route, so `typeof app` holds only the routes chained onto the expression
+`app` is assigned from. `app.get("/x", handler)` written as a
+statement of its own still serves `/x`, but the client has no call for it. Chain
+the registration, or declare the routes on their own `server()` and
+`merge()` it. `nifra check` reports such a statement on a server whose
+type is exported or read by `typeof` (NF-C045, advisory). The same holds for
+`createWebApp`: its type holds the routes chained onto it, and the routes of the
+`api` it mounts keep their type on that backend server.
 
 A segment that is part literal, part param - `/files/:name.json`,
 `/post-:id`, `/v:major.:minor` - has no single param to name, so it is
@@ -1941,6 +1958,15 @@ const { prerendered } = await prerenderRoutes({
 const paths = prerendered.map((p) => p.path)
 Bun.write("./dist/_routes.json", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))
 ```
+
+On a server you run yourself, `nifra build --target bun` or `node`
+prerenders the same routes into `_prerendered/` beside `server.js`, and
+the server answers each from its file instead of rendering it. The file is served from the
+page route, so `use` middleware still runs first and a gate in front of the page
+still applies. A request with a query string, a navigation data request, or a draft-mode
+visitor renders on demand. So does a page whose build-time render set a cookie, was private or
+`no-store`, or varied on a request header, and every page of an app with a
+`nonce`. The Vite pipeline and the edge targets render every page on demand.
 
 ### ISR - cache with stale-while-revalidate
 
@@ -3205,7 +3231,7 @@ app&rsquo;s `responseHeaders()`.
 
 `nifra routes --hooks --json` writes the report; `--since <file>`
 prints what runs differently from a saved one. `nifra upgrade --write` saves the
-report before it edits anything and prints the scope diff, and `nifra check --json`
+report before it edits anything and prints the scope diff once the target is installed, and `nifra check --json`
 includes it as `hooks` when `nifra.assurance.ts` names a
 `source`. Origins are recorded only outside production builds.
 
@@ -5686,6 +5712,13 @@ the same module declares. A table built any other way, or written in a `.svelte`
 (TypeScript 7 ships none) the build warns and keeps tables whole. It adds about 1 ms per
 module to a production build.
 
+- A server entry that calls `createWebApp` with a `clientEntry` and
+no `copyChunks` passes `nifra dev`, which never splits, and fails on the
+first production page that renders copy. `nifra check` reports that call as
+`NF-C044`; the generated server manifest exports `copyChunks` for it
+to import, and `// nifra-expect NF-C044: <reason>` on the call accepts a
+server that never serves those pages.
+
 ### Rich text
 
 `rich(t, key, tags, vars)` renders a message's tags with your components, never
@@ -6628,12 +6661,18 @@ oldest first. A recipe moves a removed package to its replacement, rewrites impo
 moved, lists comments a release stopped honoring, and pins each group dependency to the
 target, keeping its `^` or `~` unless you pass `--exact`.
 The pins in `overrides`, `resolutions` and
-`pnpm.overrides` move with them, since an override decides what installs.
+`pnpm.overrides` move with them, since an override decides what installs. A
+`peerDependencies` range is what a library accepts, not a pin: it is raised only
+when it excludes the target (keeping its operator, even with `--exact`), and a
+library&apos;s `">=3.1.0"` floor never sets the version the upgrade
+starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list          # the release targets this CLI knows
 nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.0.0 --write   # apply, then nifra check verifies (--no-verify skips it)
+nifra upgrade 5.0.0 --write   # apply; it verifies with nifra check once the target is installed
+bun install                   # install the new pins
+nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left
 ```
 
@@ -6650,9 +6689,14 @@ the edit `nifra init-agents --sync-mcp` makes. Another version pinned outside
 `package.json` is listed with its line: the rest of an agent file, an MCP config
 elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
 workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
-installing. With `--write` it also
-prints how hook scope changed across the
-upgrade (`--no-hooks` skips that). `nifra doctor` and
+installing. `nifra check` reads the installed packages, so `--write`
+runs it (`--no-verify` skips that) only once they match the target: until the new
+pins are installed it would judge the release you are leaving, and the command prints the
+install to run first instead. With `--write` it also saves the hook report from
+before the edits and, once the target is installed, prints how hook scope changed across the
+upgrade (`--no-hooks` skips that); before then,
+`nifra routes --hooks --since` compares after the install.
+`nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
 see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A
 `file:` package whose dependencies this upgrade moves keeps its old ones in
@@ -8512,7 +8556,10 @@ server entry and the dev server read one value without a re-export. A hand-writt
 `createWebApp` call passes `apiPrefix` itself; import it from
 `backend/framework.ts` so production serves the backend where
 `nifra dev` does. `nifra check` reports `NF-C035` at a call
-that mounts a backend with no `apiPrefix`, or with a different one.
+that mounts a backend with no `apiPrefix`, or with a different one. When another
+server already serves the backend there, behind middleware of its own, an
+`apiPrefix` on the call would add a second path to it that skips that middleware: mark the call
+`// nifra-expect NF-C035: <reason>` instead.
 
 Because the backend answers first and its 404 is final, a page file under the prefix (
 `routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
@@ -9108,7 +9155,8 @@ header keeps the page out of the store.
 -
 **Prerender.** A prerendered page is a static file: it is served without the
 loader's headers or cookies. Set those on the host that serves the file, or keep the route
-on-demand.
+on-demand. A `bun` or `node` build serves the file itself, after
+`use` middleware, with the page's `content-language` and CSP.
 
 ### Two ways to handle a request
 
@@ -16391,6 +16439,41 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
   emitted without a detailed schema (Standard Schema exposes no JSON Schema).
 
+### Static validators for edge runtimes
+
+`@nifrajs/schema/compile` generates a TypeScript module at build time. Import that generated module
+in the server: its validator runs without `new Function`, retains the source schema's inferred types,
+and keeps the schema builder and dynamic compiler out of the runtime bundle. Invalid data still
+produces the same structured issues, capped at 100.
+
+Define the source schema in `src/schemas/users.ts`:
+
+```ts
+import { t } from "@nifrajs/schema"
+export const body = t.object({ name: t.string({ minLength: 1 }), age: t.integer() })
+```
+
+Generate `src/generated/users.ts` before building the app:
+
+```ts
+import { compileSchema } from "@nifrajs/schema/compile"
+import { body } from "../src/schemas/users.ts"
+
+await Bun.write(
+  "src/generated/users.ts",
+  compileSchema(body, { source: "../schemas/users.ts", exportName: "body" }),
+)
+```
+
+The server imports `body` from `./generated/users.ts` and uses it as its route schema. The generated
+source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
+schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
+
+Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
+schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,
+runtime-only metadata, and known TypeBox compiler escape hazards. Use the ordinary `t` adapter for
+these shapes. This opt-in build step leaves the existing validation API and runtime behavior intact.
+
 ### Forms and files - `@nifrajs/schema/form`
 
 The `t` exported from `@nifrajs/schema/form` is the same builder plus `t.file` and `t.form`. A
@@ -17540,7 +17623,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
-`ActiveObservation`, `AttributeValue`, `EffectTracingOptions`, `EffectTracingPlugin`, `EndObservation`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ObservationScope`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `SpanKind`, `SpanStatus`, `StartObservation`, `TraceContext`, `TracingOptions`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `effectTracing`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `otlpExporter`, `parseTraceparent`, `traceHeaders`, `tracing`
+`ActiveObservation`, `AttributeValue`, `EffectTracingOptions`, `EffectTracingPlugin`, `EndObservation`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ObservationScope`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `RecordingObservationLifecycle`, `SpanKind`, `SpanStatus`, `StartObservation`, `TraceContext`, `TracingOptions`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `effectTracing`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `otlpExporter`, `parseTraceparent`, `traceHeaders`, `tracing`
 
 ## @nifrajs/pi
 
@@ -17580,7 +17663,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import {
   canonical,
   DATA_GLOBAL,
@@ -66,6 +66,41 @@ test("cancelling the document body cancels the renderer's stream and reads no fu
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
   expect(cancelled).toBe("client went away")
   expect(pulls).toBe(at)
+})
+
+test("a document body nobody reads pulls nothing more from the renderer", async () => {
+  let pulls = 0
+  const adapter: RenderAdapter = {
+    hydrationHead: () => "",
+    renderToStream: () =>
+      new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (pulls === 32) return controller.close()
+            pulls++
+            controller.enqueue(new Uint8Array(1024))
+          },
+        },
+        { highWaterMark: 0 },
+      ),
+  }
+  const res = await renderPage({ adapter, chain: [], data: {}, clientEntry: "/e.js" })
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+  expect(pulls).toBeLessThanOrEqual(1)
+  const reader = res.body!.getReader()
+  await reader.read()
+  await reader.read()
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+  expect(pulls).toBeLessThanOrEqual(3)
+  const decoder = new TextDecoder()
+  let rest = ""
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    rest += decoder.decode(value, { stream: true })
+  }
+  expect(rest.endsWith("</html>")).toBe(true)
+  expect(pulls).toBe(32)
 })
 
 test("renderPage builds an HTML doc: SSR markup, hydration head, data, client entry", async () => {
@@ -753,6 +788,25 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
   // never the raw error text ("boom secret detail" is logged server-side, not leaked).
   expect(html).toContain('window.__nifraReject(0,"deferred_error")')
   expect(html).not.toContain("boom secret detail")
+})
+
+test("a deferred value that cannot be serialized streams __nifraReject, not a broken body", async () => {
+  const logged = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const html = await (
+      await renderPage({
+        adapter: stub,
+        chain: [null],
+        data: { big: defer(Promise.resolve(10n)) },
+        clientEntry: "/c.js",
+      })
+    ).text()
+    expect(html).toContain('window.__nifraReject(0,"deferred_error")')
+    expect(html.endsWith("</html>")).toBe(true)
+    expect(logged).toHaveBeenCalled()
+  } finally {
+    logged.mockRestore()
+  }
 })
 
 test("renderPage streams deferred resolutions out-of-order - a slow defer() doesn't block a fast one", async () => {

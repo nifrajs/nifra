@@ -4,7 +4,7 @@
  */
 
 import { hydrate } from "@nifrajs/web-vue/client"
-import { App } from "../../bench/ssr/nifra-vue/app.ts"
+import App from "../../bench/ssr/nifra-vue/App.vue"
 import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "../shared/frameworks/data.ts"
 
 const data = (globalThis as Record<string, unknown>)[FRAMEWORK_DATA_GLOBAL]

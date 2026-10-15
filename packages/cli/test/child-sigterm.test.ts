@@ -1,10 +1,11 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { watch } from "node:fs/promises"
 import { join } from "node:path"
 import { runHydrationAssurance } from "../src/assure-hydration.ts"
 import { spawnChild, WarmWorker } from "../src/mcp-exec.ts"
 import { escalatingStop } from "../src/mcp-io.ts"
+import { askProjectChild } from "../src/mcp-isolate.ts"
 import {
   createFixtureProject,
   createFixtureRoot,
@@ -37,7 +38,7 @@ function ignoringApp(): string {
     [
       'import { writeFileSync } from "node:fs"',
       "process.on('SIGTERM', () => {})",
-      `writeFileSync(${JSON.stringify(join(dir, "ready"))}, "")`,
+      `writeFileSync(${JSON.stringify(join(dir, "ready"))}, String(process.pid))`,
       "export const backend = { fetch: () => new Promise(() => {}) }",
       "",
     ].join("\n"),
@@ -79,6 +80,160 @@ test("stopping a warm worker ends it even when the app ignores SIGTERM", async (
   worker.stop()
   await expect(pending).rejects.toThrow(/warm run worker exited/)
 }, 60_000)
+
+test.skipIf(process.platform === "win32")(
+  "stopping a warm worker also ends the process its app started",
+  async () => {
+    const dir = createFixtureProject(root, "grandchild-")
+    writeAppFile(dir, "package.json", JSON.stringify({ name: "grandchild", type: "module" }))
+    writeAppFile(
+      dir,
+      "backend/app.ts",
+      [
+        'import { writeFileSync } from "node:fs"',
+        "const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'])",
+        `writeFileSync(${JSON.stringify(join(dir, "ready"))}, String(child.pid))`,
+        "export const backend = { fetch: () => new Promise(() => {}) }",
+        "",
+      ].join("\n"),
+    )
+    const ready = fileAppears(dir, "ready")
+    const worker = new WarmWorker("mcp-run", dir, "fingerprint", "run")
+    const pending = worker.request({ requests: [{ path: "/" }] })
+    await ready
+    const pid = Number(readFileSync(join(dir, "ready"), "utf8"))
+    worker.stop()
+    await expect(pending).rejects.toThrow(/warm run worker exited/)
+    const alive = (): boolean => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    // The test's own timeout bounds this wait: before the fix the child outlived the worker for good.
+    while (alive()) await Bun.sleep(10)
+  },
+  60_000,
+)
+
+/** Spawns a helper the way `Bun.spawn` does by default: it inherits, and holds open, its parent's stderr. */
+const helperSource = (dir: string): string[] => [
+  'import { writeFileSync } from "node:fs"',
+  "const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'])",
+  `writeFileSync(${JSON.stringify(join(dir, "helper"))}, String(child.pid))`,
+]
+
+/** Waits for the helper to be gone, and how long the call took to return. */
+async function helperEnds(dir: string, call: () => Promise<unknown>): Promise<number> {
+  const started = performance.now()
+  await call()
+  const took = performance.now() - started
+  const pid = Number(readFileSync(join(dir, "helper"), "utf8"))
+  const alive = (): boolean => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  while (alive()) await Bun.sleep(10)
+  return took
+}
+
+test.skipIf(process.platform === "win32")(
+  "a cold run returns once its child exits, and ends the process its app started",
+  async () => {
+    const dir = createFixtureProject(root, "cold-grandchild-")
+    writeAppFile(dir, "package.json", JSON.stringify({ name: "cold-grandchild", type: "module" }))
+    writeAppFile(
+      dir,
+      "backend/app.ts",
+      [
+        ...helperSource(dir),
+        'export const backend = { fetch: () => new Response("cold") }',
+        "",
+      ].join("\n"),
+    )
+    let out = ""
+    const took = await helperEnds(dir, async () => {
+      out = await spawnChild("mcp-run", dir, { requests: [{ path: "/" }] }, "run")
+    })
+    expect(out).toContain("cold")
+    // Bounded by the kill grace period, not by the 30 s timeout the open stderr pipe used to hold.
+    expect(took).toBeLessThan(10_000)
+  },
+  60_000,
+)
+
+test.skipIf(process.platform === "win32")(
+  "a project child returns once it exits, and ends the process the project config started",
+  async () => {
+    const dir = createFixtureProject(root, "project-grandchild-")
+    writeAppFile(
+      dir,
+      "package.json",
+      JSON.stringify({ name: "project-grandchild", type: "module" }),
+    )
+    writeAppFile(
+      dir,
+      "nifra.config.ts",
+      [...helperSource(dir), 'export const apps = { web: "./web" }', ""].join("\n"),
+    )
+    const took = await helperEnds(dir, async () => {
+      expect(await askProjectChild(dir, { op: "monorepo" }, { timeoutMs: 20_000 })).toEqual({
+        ok: true,
+        apps: { web: "./web" },
+      })
+    })
+    expect(took).toBeLessThan(10_000)
+  },
+  60_000,
+)
+
+for (const [how, signal, toGroup] of [
+  ["takes SIGTERM", "SIGTERM", false],
+  ["takes Ctrl+C", "SIGINT", true],
+] as const) {
+  test.skipIf(process.platform === "win32")(
+    `a server that ${how} ends a warm worker that catches SIGTERM before it exits`,
+    async () => {
+      const dir = ignoringApp()
+      const host = Bun.spawn(
+        [
+          process.execPath,
+          "-e",
+          [
+            `const { WarmWorker } = await import(${JSON.stringify(join(import.meta.dir, "../src/mcp-exec.ts"))})`,
+            `const worker = new WarmWorker("mcp-run", ${JSON.stringify(dir)}, "fingerprint", "run")`,
+            "void worker.request({ requests: [{ path: '/' }] }).catch(() => {})",
+            "setInterval(() => {}, 1000)",
+          ].join("\n"),
+        ],
+        // Its own group, so a Ctrl+C can be sent to the group a terminal would send it to.
+        { stdout: "ignore", stderr: "ignore", detached: true },
+      )
+      await fileAppears(dir, "ready")
+      const worker = Number(readFileSync(join(dir, "ready"), "utf8"))
+      process.kill(toGroup ? -host.pid : host.pid, signal)
+      await host.exited
+      expect(host.signalCode).toBe(signal)
+      const alive = (): boolean => {
+        try {
+          process.kill(worker, 0)
+          return true
+        } catch {
+          return false
+        }
+      }
+      // The server waits out the kill grace before it takes the signal: the worker is gone by then.
+      expect(alive()).toBe(false)
+    },
+    30_000,
+  )
+}
 
 test("a cancelled hydration run ends even when the project ignores SIGTERM", async () => {
   const dir = createFixtureProject(root, "hydration-")

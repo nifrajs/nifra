@@ -1,5 +1,82 @@
 # @nifrajs/examples
 
+## 5.3.0
+
+### Patch Changes
+
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [7ab9692]
+- Updated dependencies [a32b33e]
+- Updated dependencies [400d1fa]
+- Updated dependencies [5abaf61]
+- Updated dependencies [0e1d03f]
+- Updated dependencies [808bac8]
+- Updated dependencies [3fa5688]
+- Updated dependencies [37e1a14]
+- Updated dependencies [605c246]
+- Updated dependencies [271917a]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [69dfb60]
+- Updated dependencies [190ab39]
+- Updated dependencies [605c246]
+- Updated dependencies [13224fe]
+- Updated dependencies [00c266e]
+- Updated dependencies [7cf8df3]
+  - @nifrajs/auth@5.3.0
+  - @nifrajs/cli@5.3.0
+  - @nifrajs/client@5.3.0
+  - @nifrajs/content@5.3.0
+  - @nifrajs/core@5.3.0
+  - @nifrajs/deno@5.3.0
+  - @nifrajs/i18n@5.3.0
+  - @nifrajs/image@5.3.0
+  - @nifrajs/mcp@5.3.0
+  - @nifrajs/middleware@5.3.0
+  - @nifrajs/node@5.3.0
+  - @nifrajs/schema@5.3.0
+  - @nifrajs/web@5.3.0
+  - @nifrajs/web-preact@5.3.0
+  - @nifrajs/web-react@5.3.0
+  - @nifrajs/web-solid@5.3.0
+  - @nifrajs/web-svelte@5.3.0
+  - @nifrajs/web-vanilla@5.3.0
+  - @nifrajs/web-vue@5.3.0
+  - @nifrajs/webmcp@5.3.0
+  - @nifrajs/workers@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- Updated dependencies [604967f]
+- Updated dependencies [ec8080c]
+  - @nifrajs/cli@5.2.1
+  - @nifrajs/auth@5.2.1
+  - @nifrajs/client@5.2.1
+  - @nifrajs/content@5.2.1
+  - @nifrajs/core@5.2.1
+  - @nifrajs/deno@5.2.1
+  - @nifrajs/i18n@5.2.1
+  - @nifrajs/image@5.2.1
+  - @nifrajs/mcp@5.2.1
+  - @nifrajs/middleware@5.2.1
+  - @nifrajs/node@5.2.1
+  - @nifrajs/schema@5.2.1
+  - @nifrajs/web@5.2.1
+  - @nifrajs/web-preact@5.2.1
+  - @nifrajs/web-react@5.2.1
+  - @nifrajs/web-solid@5.2.1
+  - @nifrajs/web-svelte@5.2.1
+  - @nifrajs/web-vanilla@5.2.1
+  - @nifrajs/web-vue@5.2.1
+  - @nifrajs/webmcp@5.2.1
+  - @nifrajs/workers@5.2.1
+
 ## 5.2.0
 
 ### Patch Changes

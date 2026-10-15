@@ -1,5 +1,29 @@
 # @nifrajs/otel
 
+## 5.3.0
+
+### Minor Changes
+
+- 7ab9692: Add build-time schema compilation that emits typed static validators without runtime code generation. Generated modules preserve strict validation and structured issues while avoiding the schema builder and dynamic compiler in deployed bundles.
+  
+  A schema whose property key, `format` name or custom kind holds a quote, backslash or line break, or whose literal holds a backslash or line break, now validates on the eval-free checker and is refused by build-time compilation. TypeBox splices that text into generated source unescaped, so a quote could end the string and run the rest as code.
+  
+  Prepare immutable route modules and layout chains in production while executing authorization gates and loaders for every request. Mutable manifests can disable module preparation with `cacheRouteModules: false`.
+  
+  Reduce output projection bookkeeping for uniform subtrees, reuse request-bound cache views, and record completed cache spans without allocating an active observation. Span parentage, sampling, redaction, exporter isolation, and capability enforcement remain intact.
+  
+  Keep custom start-only `ObservationLifecycle` implementations compatible. The factory returns the extended `RecordingObservationLifecycle` interface with the new `record` method.
+  
+  Mark the migration parser's TypeScript keyword-kind comparison as syntax, so the security check does not mistake it for a secret comparison.
+
+### Patch Changes
+
+- 3553267: `otlpExporter`'s `flush()` and `shutdown()` no longer resolve while a span queued before the call is still exporting. Settlement counted spans sent, failed or dropped, so a later span dropped on queue overflow counted toward an earlier flush and resolved it before its batch had settled; a flush now waits until every span queued before it has left the queue and the export in flight.
+
+## 5.2.1
+
+No changes in this release.
+
 ## 5.2.0
 
 ### Patch Changes

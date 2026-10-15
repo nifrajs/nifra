@@ -1,11 +1,18 @@
 /** @jsxImportSource preact */
-
 import type { LoaderData } from "@nifrajs/client"
-import { App } from "../../nifra-preact/app.ts"
 import type { loader } from "./index.backend.ts"
 
 export const meta = { title: "nifra SSR bench (Preact SSG)" }
 
-export default function Index(props: { data: LoaderData<typeof loader> }) {
-  return <App data={props.data} />
+export default function Index({ data }: { data: LoaderData<typeof loader> }) {
+  return (
+    <main>
+      <h1>Items ({data.items.length})</h1>
+      <ul>
+        {data.items.map((it) => (
+          <li key={it.id}>{it.name}</li>
+        ))}
+      </ul>
+    </main>
+  )
 }

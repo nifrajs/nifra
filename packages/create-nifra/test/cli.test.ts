@@ -119,6 +119,17 @@ describe("scaffold - templates", () => {
     })
   })
 
+  test("the API templates start one production process", async () => {
+    for (const template of ["api", "batteries"] as const) {
+      const dir = await freshDir(`start-${template}`)
+      await scaffold({ target: dir, template })
+      // Run from source, nothing defines NODE_ENV, so without it `start` ran in development mode.
+      expect((await readPkg(dir)).scripts?.start).toBe(
+        "NODE_ENV=production NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun run backend/index.ts",
+      )
+    }
+  })
+
   test("every template keeps .env files out of git", async () => {
     for (const template of ["api", "batteries", "site", "isr"] as const) {
       const dir = await freshDir(`env-${template}`)

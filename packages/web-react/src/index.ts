@@ -8,6 +8,16 @@ import { compose } from "./compose.ts"
 import { reactDomServer } from "./react-dom-server.ts"
 import { explainRenderError } from "./render-error.ts"
 
+// The marker opening a Suspense boundary the server gave up on. Markup can't forge it: React escapes
+// text, and a comment only comes from React itself or `dangerouslySetInnerHTML`.
+const CLIENT_RENDERED_BOUNDARY = "<!--$!-->"
+
+// React error 426, minified in production: a component suspended with no Suspense boundary above it.
+const suspendedSynchronously = (error: unknown): boolean =>
+  error instanceof Error &&
+  (error.message.includes("Minified React error #426;") ||
+    error.message.includes("suspended while responding to synchronous input"))
+
 /** The React server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const reactAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). React's
@@ -18,13 +28,20 @@ export const reactAdapter: RenderAdapter = {
   // Async because the `react-dom/server` module is resolved lazily (from the consumer app's node_modules
   // under Bun runtime SSR - see ./react-dom-server). `RenderAdapter.renderToString` permits a Promise;
   // renderPage awaits it.
+  //
+  // React's string renderer cannot wait for a component that suspends (`use`, `lazy`): it writes the
+  // boundary's fallback behind a client-render marker, or throws with no boundary above it. Either
+  // way the page is handed back (`undefined`) to be streamed, where the boundary resolves.
   async renderToString(chain, props) {
     const { renderToString } = await reactDomServer()
+    let html: string
     try {
-      return renderToString(compose(chain, props))
+      html = renderToString(compose(chain, props))
     } catch (error) {
+      if (suspendedSynchronously(error)) return undefined
       throw explainRenderError(error)
     }
+    return html.includes(CLIENT_RENDERED_BOUNDARY) ? undefined : html
   },
   async renderToStream(chain, props, options) {
     // Resolves a Web `ReadableStream<Uint8Array>` once the shell is renderable; Suspense

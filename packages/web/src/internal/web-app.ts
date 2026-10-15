@@ -22,6 +22,7 @@ import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
+import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
@@ -73,6 +74,8 @@ export interface CreateWebAppOptions<Env = unknown> {
   readonly serverComponents?: import("../server-components/types.ts").ServerComponentRuntime
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
+  /** Cache production module imports and layout preparation, never request data. Defaults to NODE_ENV === "production"; disable for a mutable manifest. */
+  readonly cacheRouteModules?: boolean
   /** URL of the built client entry (module script) injected into every page. */
   readonly clientEntry: string
   /** Default document title for all pages. */
@@ -252,6 +255,14 @@ export interface CreateWebAppOptions<Env = unknown> {
    * 4 KB of JSON is served once from `/__nifra/prerendered.json?v=<version>`, cacheable for good, and
    * pages hand over only that URL; `prerenderRoutes` writes the file into a static output. */
   readonly prerenderedPaths?: readonly string[]
+  /**
+   * Pages a self-hosted build prerendered, answered from their file instead of rendered. `nifra build
+   * --target bun|node` wires this from its prerender pass. The page is served from the page route,
+   * so `use` middleware and every request hook run first; a request with a query string, a navigation
+   * data or component request, or a draft-mode visitor renders on demand as before. Ignored with
+   * {@link nonce}, whose documents need a nonce minted for their request.
+   */
+  readonly prerenderedPages?: PrerenderedPages
   /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:
    * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the
    * team - unreleased feature names, internal hostnames, and "don't touch X yet" notes live there
@@ -475,6 +486,9 @@ export function createWebApp<Env = unknown>(
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
   const pageExecutor = createPageRequestExecutor<Env>({
+    ...(options.cacheRouteModules === undefined
+      ? {}
+      : { cacheRouteModules: options.cacheRouteModules }),
     ...(options.serverComponents === undefined
       ? {}
       : { serverComponents: options.serverComponents }),
@@ -520,17 +534,23 @@ export function createWebApp<Env = unknown>(
     cacheChannel,
   })
 
+  // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.
+  const prerendered =
+    options.prerenderedPages === undefined || options.nonce !== undefined
+      ? undefined
+      : servePrerenderedPages(options.prerenderedPages, options.draftSecret)
   let ownsRootCatchAll = false
   for (const route of manifest.routes) {
     const pattern = requestPattern(route.pattern)
     if (pattern.startsWith("/*")) ownsRootCatchAll = true
+    const render = pageExecutor.get(route)
     app.register(
       "GET",
       pattern,
       options.serverComponents?.owns(route.id)
         ? { capabilities: options.serverComponents.capabilities(route.id) }
         : undefined,
-      pageExecutor.get(route),
+      prerendered === undefined ? render : prerendered(render),
     )
     app.register("POST", pattern, undefined, pageExecutor.post(route))
   }

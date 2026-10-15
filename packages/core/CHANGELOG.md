@@ -1,5 +1,30 @@
 # @nifrajs/core
 
+## 5.3.0
+
+### Minor Changes
+
+- 7ab9692: A route answering `status(code, body)` with a code typed as plain `number` now types the client's `data` as that body; it was `unknown`. A code typed as a literal union (`200 | 409`) still splits into one arm per code. A plain return beside `status(200, body)` now types the 200 arm as either body; the two used to be intersected.
+
+### Patch Changes
+
+- 808bac8: A response body refused by its `content-length` alone is now cancelled. `readBoundedBytes` (behind the typed client's `maxDecodedBytes` and `decodeTransportResponse`) and the `jwks()` key fetch threw on an oversized declared length without touching the body, which left the stream, and its connection, open until the sender gave up.
+- d4bae56: `server({ maxBodyBytes })` from `@nifrajs/edge` refuses a `maxBodyBytes` that is not a non-negative safe integer at construction, with the same `RangeError` the full `@nifrajs/core` server throws. A `NaN` (an invalid numeric environment value, for example) compared false against every body length, so the edge server accepted bodies of any size.
+- 007060d: An in-process client reads a handler's streamed body under `maxDecodedBytes`, cancelling it once past the cap, as a network client does. It used to read every in-process body whole and check the size afterwards, which is safe for a body the app serialized but let a route returning its own `ReadableStream` buffer without limit before the check. A body the framework serialized keeps the whole-read lane: core records it when an in-process client exists (`hasResidentBody` from `@nifrajs/core/mount`).
+- 190ab39: A raw request target with a character a URL parser percent-encodes in a path (`"`, `<`, `>`, `^`, `` ` ``, `{`, `}`, a control, space or non-ASCII) now routes the same on every runtime. Bun and workerd route the parsed path, so `GET /vault<tag>` reached a route registered as `/vault%3Ctag%3E` there, while Node, Deno and Bun's native route table matched the raw text and could pick a broader `/:id` route with different guards. Node and Deno now encode such a target before anything reads it, and Bun's native table hands a param holding one of those characters to the portable router.
+- 7cf8df3: `ws.subscribe(topic)` on a closing or closed socket is now a no-op. Close drops a connection's topics, so an async handler that subscribed after the close (an `open` or `message` resuming late) left the dead socket in the in-process registry for good, where every `app.publish` kept sending to it.
+- c98049d: No behavior change: the character classes that decide which characters a parsed request path keeps as written now list each character instead of using the ranges `#-;` and `?-]`. They match the same set.
+- 74ec04f: On Bun's `listen()`, a raw `#` in the request target no longer picks a route the parsed URL does not. Bun's native route table read `#` and everything after it as path, so `GET /admin/..#/users/42/delete` ran a `/admin/:org/users/:userId/delete` handler while `c.req.url` and `app.fetch` saw `/`, and a guard that checks the URL path let it through. A param holding `#` now goes to the portable router, which routes the path the URL ends with (`/` here), as Node, Deno and `app.fetch` already did. A sent `%23` routes as before.
+- 288ceca: On Deno, a request whose `Host` header is not an authority (a reg-name or IP literal with an optional port) is refused with `400 {"ok":false,"error":"invalid_host"}` before routing, as Node already refuses it. Deno builds `Request.url` by appending the target to the Host as received, so `GET /public` with `Host: x/admin#` was routed to `/admin`, and `c.req.url` carried the spoofed path. Reading the header costs a bare route on Deno about 4% of its throughput; a route that reads any header already paid it.
+- 0f31edf: A raw `^` in a request path now routes as `%5E` on Deno too, as it already did on Bun, Node and workerd. Deno's URL parser keeps a `^` in a path as written, so `GET /vault/^` reached `/vault/:id` there and the static `/vault/%5E` everywhere else. The cross-runtime request-target matrix gains the case.
+- 4877137: No behavior change: a resolved request path encodes `^` with one unconditional replace, which costs fewer bytes in every server bundle.
+- b2ec456: An idempotent route's response refused by its `content-length` alone now has its body cancelled. The lane replaces it with a 507 and never reads it, so a streaming handler or a proxied upstream stayed open; a response refused while it streams was already cancelled.
+- 365ba87: A tool call whose executor throws or rejects now keeps its idempotency key: a retry with the same key answers `idempotency_duplicate` instead of running the executor again. The key was released on a throw, so an executor that committed its effect and then failed (a lost response, an error after the write) ran that effect a second time on retry. Pre-execution refusals (budget, cancellation before the call) and dry runs still release the key. To retry a failure known to have committed nothing, use a new key.
+
+## 5.2.1
+
+No changes in this release.
+
 ## 5.2.0
 
 ### Minor Changes

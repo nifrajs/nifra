@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FileStorage } from "../src/index.ts"
+import { racePuts } from "./race-puts.ts"
 
 // mock.module rewrites the shared node:fs/promises namespace, so keep the real functions first.
 const real = { ...fs }
@@ -35,6 +36,13 @@ describe("FileStorage on a root that is its own mount point", () => {
     const object = await storage.get("doc.txt")
     expect(object === null ? null : text(object.body)).toBe("second")
     expect(await real.readdir(join(`${dir}.nifra-state`, "staging"))).toEqual([])
+  })
+
+  test("concurrent puts from two instances never serve one put's body with the other's metadata", async () => {
+    const { dir } = await storageOnItsOwnMount()
+    // The body keeps its inode when written in place, so the sidecar names it by content too.
+    const { mixed, failed } = await racePuts(new FileStorage(dir), new FileStorage(dir), 200)
+    expect({ mixed, failed }).toEqual({ mixed: 0, failed: [] })
   })
 
   test.skipIf(process.platform === "win32")(

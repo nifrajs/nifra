@@ -517,6 +517,87 @@ describe("agent turns", () => {
     expect(executions).toBe(0)
   })
 
+  test("an answer that arrives after a cancel is not committed", async () => {
+    const store = new MemoryAgentStateStore()
+    const controller = new AbortController()
+    const late = await turn(
+      definition(),
+      createAgentState("late-answer"),
+      { value: { prompt: "hello" } },
+      {
+        model: {
+          complete: () => {
+            controller.abort() // a model that ignores the signal and answers anyway
+            return { kind: "output", value: { answer: "too late" } }
+          },
+        },
+        capabilities: [],
+        state: store,
+        signal: controller.signal,
+        clock: () => 1,
+      },
+    )
+    expect(late.status).toBe("suspended")
+    if (late.status === "suspended") expect(late.reason).toBe("cancelled")
+    expect((await store.load("late-answer"))?.status).not.toBe("completed")
+
+    const validating = new AbortController()
+    const slowOutput: typeof output = {
+      ...output,
+      "~standard": {
+        ...output["~standard"],
+        validate: async (value) => {
+          validating.abort()
+          return output["~standard"].validate(value)
+        },
+      },
+    }
+    const validated = await turn(
+      { ...definition(), output: slowOutput },
+      createAgentState("late-validation"),
+      { value: { prompt: "hello" } },
+      {
+        model: { complete: () => ({ kind: "output", value: { answer: "ok" } }) },
+        capabilities: [],
+        signal: validating.signal,
+        clock: () => 1,
+      },
+    )
+    expect(validated.status).toBe("suspended")
+
+    let executions = 0
+    const tool = defineTool({
+      name: "reference.write",
+      description: "Write a reference value.",
+      input: t.object({ value: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "reference.write",
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const calling = new AbortController()
+    const called = await turn(
+      definition(tool),
+      createAgentState("late-tool-call"),
+      { value: { prompt: "write" } },
+      {
+        model: {
+          complete: () => {
+            calling.abort()
+            return { kind: "tool", name: "reference.write", input: { value: "x" } }
+          },
+        },
+        capabilities: ["reference.write"],
+        signal: calling.signal,
+        clock: () => 1,
+      },
+    )
+    expect(called.status).toBe("suspended")
+    expect(executions).toBe(0)
+  })
+
   test("suspends a provider failure as a model suspension, not a budget one", async () => {
     const result = await turn(
       definition(),

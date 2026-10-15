@@ -119,8 +119,8 @@ export function createCache(options: CacheOptions = {}): Cache {
   // A delete, tag invalidation, clear or newer set withdraws a load's right to store its result, so
   // a refresh that started before the invalidation cannot write the old value back. A store with
   // `fence`/`setIfFence` also refuses a load's write after such a change from another cache sharing
-  // it, and a delete, invalidation or clear waits for this cache's async writes it covers, so a store
-  // that applies requests out of order cannot land one of them after it.
+  // it, and a set, delete, invalidation or clear waits for this cache's async writes it covers, so a
+  // store that applies requests out of order cannot land one of them after it.
   const inflight = new Map<
     string,
     { readonly promise: Promise<unknown>; readonly tags: readonly string[]; withdraw(): void }
@@ -138,7 +138,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     readonly tags: readonly string[]
     readonly done: Promise<unknown>
   }>()
-  // Run a delete, invalidation or clear after every async write it covers has settled.
+  // Run a set, delete, invalidation or clear after every async write it covers has settled.
   const after = (
     matches: (key: string, tags: readonly string[]) => boolean,
     change: () => void | Promise<void>,
@@ -192,8 +192,11 @@ export function createCache(options: CacheOptions = {}): Cache {
   }
 
   function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
-    withdraw((flightKey) => flightKey === key)
-    return write(key, value, opts)
+    const matches = (writeKey: string): boolean => writeKey === key
+    withdraw(matches)
+    // A load's write already sent is past withdrawal, and a store that applies writes out of order
+    // could land it over this one.
+    return after(matches, () => write(key, value, opts))
   }
 
   function remove(key: string): Promise<void> {
@@ -395,9 +398,12 @@ export function createCache(options: CacheOptions = {}): Cache {
         }
       : observed(observer, undefined)
 
-  // Built per call rather than cached per context: a cache keyed by context would hold every request's
-  // context object for the process lifetime, which is a leak with a request body attached to it.
+  // Weakly keyed: a strong map would hold every request's context, request body attached, for the
+  // process lifetime. The beacon still runs on every operation, so reuse never skips a capability check.
+  const boundViews = new WeakMap<object, Cache>()
   function bind(context: object): Cache {
+    const existing = boundViews.get(context)
+    if (existing !== undefined) return existing
     const beacon = options.beacon
     if (beacon === undefined && observer === undefined) {
       throw new Error(
@@ -405,7 +411,10 @@ export function createCache(options: CacheOptions = {}): Cache {
       )
     }
     const base = observer === undefined ? plain : observed(observer, context)
-    if (beacon === undefined) return base
+    if (beacon === undefined) {
+      boundViews.set(context, base)
+      return base
+    }
     // A refused capability has to surface as a REJECTION, not a synchronous throw: every method here
     // returns a promise, and a caller who writes `.catch(…)` instead of `try` would otherwise miss it
     // entirely - turning a fail-closed gate into an unhandled crash.
@@ -419,7 +428,7 @@ export function createCache(options: CacheOptions = {}): Cache {
     }
     const READ = [readToken]
     const WRITE = [writeToken]
-    return {
+    const bound: Cache = {
       get: <T = unknown>(key: string): Promise<T | undefined> =>
         guard(READ, () => base.get<T>(key)),
       has: (key) => guard(READ, () => base.has(key)),
@@ -433,6 +442,8 @@ export function createCache(options: CacheOptions = {}): Cache {
       clear: () => guard(WRITE, () => base.clear()),
       for: bind,
     }
+    boundViews.set(context, bound)
+    return bound
   }
 
   return plain

@@ -1,5 +1,16 @@
 # @nifrajs/client
 
+## 5.3.0
+
+### Patch Changes
+
+- 007060d: An in-process client reads a handler's streamed body under `maxDecodedBytes`, cancelling it once past the cap, as a network client does. It used to read every in-process body whole and check the size afterwards, which is safe for a body the app serialized but let a route returning its own `ReadableStream` buffer without limit before the check. A body the framework serialized keeps the whole-read lane: core records it when an in-process client exists (`hasResidentBody` from `@nifrajs/core/mount`).
+- e007d3a: A closed `subscribe()` subscription removes its abort listener from the `signal` it was given. The listener stayed until that signal aborted, so subscriptions opened and closed under one long-lived signal each kept their callbacks alive (100 closed subscriptions left 100 listeners). Aborting the signal still closes every live subscription.
+
+## 5.2.1
+
+No changes in this release.
+
 ## 5.2.0
 
 ### Patch Changes

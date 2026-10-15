@@ -190,7 +190,10 @@ export default function Backends() {
         <code>createWebApp</code> call passes <code>apiPrefix</code> itself; import it from{" "}
         <code>backend/framework.ts</code> so production serves the backend where{" "}
         <code>nifra dev</code> does. <code>nifra check</code> reports <code>NF-C035</code> at a call
-        that mounts a backend with no <code>apiPrefix</code>, or with a different one.
+        that mounts a backend with no <code>apiPrefix</code>, or with a different one. When another
+        server already serves the backend there, behind middleware of its own, an{" "}
+        <code>apiPrefix</code> on the call would add a second path to it that skips that middleware: mark the call{" "}
+        <code>{"// nifra-expect NF-C035: <reason>"}</code> instead.
       </p>
       <p>
         Because the backend answers first and its 404 is final, a page file under the prefix (

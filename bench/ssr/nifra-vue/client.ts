@@ -1,6 +1,6 @@
 import { DATA_GLOBAL } from "@nifrajs/web"
 import { hydrate } from "@nifrajs/web-vue/client"
-import { App } from "./app.ts"
+import App from "./App.vue"
 
 const data = (globalThis as Record<string, unknown>)[DATA_GLOBAL]
 const root = document.getElementById("root")

@@ -79,6 +79,10 @@ entries are fully typed into your loaders:
 
 <CodeBlock code={COLLECTION} />
 
+`all()` lists the folder and checks each file for changes on every call, so an edit shows without a
+restart. When the content ships with the build, pass `watch: false` to read it once and reuse that
+snapshot; `get(slug)` still checks its one file.
+
 ## MDX routes
 
 Add the MDX plugin to your build and any `routes/**/*.mdx` file becomes a page - Markdown that can

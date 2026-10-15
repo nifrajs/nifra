@@ -14,6 +14,7 @@
  * its own `validate` output, as zod and valibot objects do by default.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
+import { markDeferredFree } from "./deferred-free.ts"
 import { wireDate } from "./wire-date.ts"
 
 // Registry symbols shared with core and `@nifrajs/schema`, so two copies of either still agree.
@@ -84,6 +85,8 @@ interface CompiledGuard {
   readonly validate: StandardSchemaV1["~standard"]["validate"]
   /** Dev only: name the keys the guard dropped, so a schema missing a field is not a silent blank. */
   readonly warnDropped: boolean
+  /** No value this guard passes can hold a `defer()` marker (see internal/deferred-free.ts). */
+  readonly deferredFree: boolean
 }
 
 interface Deferred {
@@ -200,7 +203,10 @@ function shapeOf(
 }
 
 class Compiler {
+  /** Some node may pass a `defer()` marker on: a deferred node, or one that lets any value through. */
+  mayPassMarker = false
   private readonly memo = new Map<Node, Project>()
+  private readonly issueFree = new WeakSet<Project>([LEAF, LEAF_ARRAY, DATE])
   private readonly ids = new Map<string, Node>()
   readonly sensitive: string[] = []
 
@@ -263,25 +269,33 @@ class Compiler {
       case "array":
         return this.array(node, where)
       case "leaf":
+        // `not` (or an object `const`) without a `type` can accept an object.
+        if (node.type === undefined) this.mayPassMarker = true
         return LEAF
       default:
-        return UNKNOWN
+        return this.unknown()
     }
   }
 
+  private unknown(): Project {
+    this.mayPassMarker = true
+    return UNKNOWN
+  }
+
   private extra(schema: unknown, where: string): Project | undefined {
-    if (schema === true || (isNode(schema) && Object.keys(schema).length === 0)) return UNKNOWN
+    if (schema === true || (isNode(schema) && Object.keys(schema).length === 0))
+      return this.unknown()
     return isNode(schema) ? this.compile(schema, `${where}/*`) : undefined
   }
 
   private object(node: Node, where: string): Project {
-    const declared = new Map<string, Project>()
+    const declared: Record<string, Project> = Object.create(null)
     for (const [key, sub] of Object.entries(isNode(node.properties) ? node.properties : {})) {
       if (!isNode(sub)) continue
       if (isSensitiveFieldName(key) && typeof sub[DECLASSIFIED_KEY] !== "string") {
         this.sensitive.push(`${where}/${key}`)
       }
-      declared.set(key, this.compile(sub, `${where}/${key}`))
+      declared[key] = this.compile(sub, `${where}/${key}`)
     }
     const patterns: Array<readonly [RegExp, Project]> = []
     for (const [pattern, sub] of Object.entries(
@@ -302,7 +316,7 @@ class Compiler {
     }
     // A closed object drops a deferred marker's keys unless it declares them, so only an open one, or
     // one declaring the marker key, could pass a marker on.
-    const checksMarker = open || declared.has("__nifra_deferred")
+    const checksMarker = open || declared.__nifra_deferred !== undefined
     const project: Project = (value, state) => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return value
       if (checksMarker && isDeferred(value)) {
@@ -325,7 +339,7 @@ class Compiler {
       for (const key in input) {
         // An inherited enumerable key (a polluted prototype) is never data.
         if (!Object.hasOwn(input, key)) continue
-        const projector = declared.get(key) ?? (open ? undeclared(key) : undefined)
+        const projector = declared[key] ?? (open ? undeclared(key) : undefined)
         if (projector === undefined) {
           out ??= copyBefore(input, key)
           continue
@@ -346,6 +360,8 @@ class Compiler {
       }
       return out ?? value
     }
+    if (!checksMarker && Object.values(declared).every((child) => this.issueFree.has(child)))
+      this.issueFree.add(project)
     return project
   }
 
@@ -356,13 +372,32 @@ class Compiler {
         ? node.items
         : []
     const head = prefixNodes.map((sub, i) =>
-      isNode(sub) ? this.compile(sub, `${where}/${i}`) : UNKNOWN,
+      isNode(sub) ? this.compile(sub, `${where}/${i}`) : this.unknown(),
     )
     const restSchema = Array.isArray(node.items) ? node.additionalItems : node.items
-    const rest = this.extra(restSchema, where) ?? UNKNOWN
+    const rest = this.extra(restSchema, where) ?? this.unknown()
     // An array of scalars is the validator's alone: no key to drop, and walking it here would cost
     // every `string[]` a loop. A `Date` inside one reaches the validator as it is.
     if (rest === LEAF && head.every((projector) => projector === LEAF)) return LEAF_ARRAY
+    // A uniform subtree that cannot emit deferred-marker issues needs no per-item path bookkeeping.
+    if (head.length === 0 && this.issueFree.has(rest)) {
+      const project: Project = (value, state) => {
+        if (!Array.isArray(value)) return value
+        let out: unknown[] | undefined
+        for (let i = 0; i < value.length; i++) {
+          const before = value[i]
+          const after = rest(before, state)
+          if (out !== undefined) out[i] = after
+          else if (after !== before) {
+            out = value.slice(0, i)
+            out[i] = after
+          }
+        }
+        return out ?? value
+      }
+      this.issueFree.add(project)
+      return project
+    }
     return (value, state) => {
       if (!Array.isArray(value)) return value
       let out: unknown[] | undefined
@@ -424,7 +459,7 @@ class Compiler {
     const branches: Node[] = []
     this.branches(node, where, branches, new Set())
     const kinds = branches.map(shapeOf)
-    if (kinds.includes("unknown")) return UNKNOWN
+    if (kinds.includes("unknown")) return this.unknown()
     const deferreds = branches.filter((_, i) => kinds[i] === "deferred")
     if (deferreds.length > 1) {
       throw new OutputGuardError(
@@ -463,6 +498,7 @@ class Compiler {
   }
 
   private deferred(node: Node, where: string): Project {
+    this.mayPassMarker = true
     const validate = (node as { readonly [DEFERRED_VALIDATE]?: unknown })[DEFERRED_VALIDATE]
     if (!isNode(node.inner) || typeof validate !== "function") {
       throw new OutputGuardError(
@@ -473,6 +509,7 @@ class Compiler {
       project: this.compile(node.inner, where),
       validate: validate as CompiledGuard["validate"],
       warnDropped: inDevelopment(),
+      deferredFree: false,
     }
     return (value, state) => {
       if (!isDeferred(value)) return value
@@ -591,9 +628,11 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
   const standard = schema as StandardSchemaV1
   const json = jsonSchemaOf(standard)
   let project: Project | undefined
+  let deferredFree = false
   if (json !== undefined) {
     const compiler = new Compiler(json)
     project = compiler.compile(json, "")
+    deferredFree = !compiler.mayPassMarker
     if (compiler.sensitive.length > 0) {
       throw new OutputGuardError(
         `${owner} declares sensitive field(s) ${compiler.sensitive.join(", ")} in ${exportName}. Remove them, or mark a field that must reach the browser with t.declassified("why it may", schema)`,
@@ -605,6 +644,7 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
     project,
     validate: standard["~standard"].validate,
     warnDropped: inDevelopment(),
+    deferredFree,
   }
   compiled.set(schema, guard)
   return guard
@@ -675,6 +715,8 @@ function settle(
     // No JSON Schema to project by: the schema's own validate stripped what it does not declare.
     if (guard.warnDropped) warnDropped(label, input, result.value)
   }
+  // Only the projected value itself: a validator that returns a new value (a transform) may add a marker.
+  if (guard.deferredFree && result.value === input) markDeferredFree(result.value)
   return result.value
 }
 

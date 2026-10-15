@@ -3,7 +3,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { status } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import * as z from "zod"
-import { defer } from "../src/deferred.ts"
+import { defer, prepareDeferred } from "../src/deferred.ts"
 import {
   buildManifest,
   createWebApp,
@@ -13,6 +13,7 @@ import {
   redirect,
   revalidate,
 } from "../src/index.ts"
+import { isDeferredFree } from "../src/internal/deferred-free.ts"
 import {
   type ChannelContract,
   guardChannel,
@@ -409,6 +410,41 @@ describe("deferred values", () => {
     expect((await refusal(() => guard(opaque, { a: [defer(Promise.resolve(1))] }))).paths).toEqual([
       "/a/0",
     ])
+  })
+
+  test("a value a closed schema settled skips the deferred walk", () => {
+    const schema = t.object({ items: t.array(t.object({ id: t.integer(), name: t.string() })) })
+    const out = guard(schema, { items: [{ id: 1, name: "a", extra: 1 }] })
+    expect(isDeferredFree(out)).toBe(true)
+    expect(prepareDeferred(out)).toEqual({ forComponent: out, forClient: out, deferred: [] })
+  })
+
+  test("a schema that could pass a marker on leaves its value to the walk", () => {
+    const deferredField = t.object({ feed: t.deferred(t.integer()) })
+    expect(isDeferredFree(guard(deferredField, { feed: defer(Promise.resolve(1)) }))).toBe(false)
+    expect(isDeferredFree(guard(t.looseObject({ id: t.string() }), { id: "1" }))).toBe(false)
+    for (const field of [{}, { not: { type: "string" } }]) {
+      const closed = projectingBy({ type: "object", properties: { a: field } })
+      expect(isDeferredFree(guard(closed, { a: 1 }))).toBe(false)
+    }
+    const opaque: StandardSchemaV1 = {
+      "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
+    }
+    expect(isDeferredFree(guard(opaque, { a: 1 }))).toBe(false)
+  })
+
+  test("a validator that returns a new value is walked, though its schema is closed", () => {
+    const transform = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: () => ({ value: { feed: defer(Promise.resolve(1)) } }),
+      },
+      jsonSchema: { type: "object", properties: {} },
+    }
+    const out = guard(transform, {})
+    expect(isDeferredFree(out)).toBe(false)
+    expect(prepareDeferred(out).deferred).toHaveLength(1)
   })
 })
 

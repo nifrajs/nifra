@@ -300,6 +300,9 @@ const KEY_COMPARE_OPCODES = new Set([
   "IfNoHope",
 ])
 const ROWID_OPCODES = new Set(["Rowid", "SeekRowid", "NotExists", "IdxRowid"])
+// Each steps a cursor in key order, so the rows it yields are ranked by every key field: an index
+// walked for `ORDER BY <column>` leaks the order of a column it never reads or compares.
+const KEY_ORDER_OPCODES = new Set(["Rewind", "Last", "Next", "Prev"])
 
 interface BytecodeReads {
   readonly tables: readonly string[]
@@ -329,6 +332,11 @@ interface CursorLayout {
   readonly keyCount: number
   /** The INTEGER PRIMARY KEY column the rowid is, if the table has one. */
   readonly rowid: string | undefined
+  /**
+   * The columns a partial index's WHERE names. Every row the index yields satisfies it, so opening
+   * the index filters on them as surely as reading them would.
+   */
+  readonly predicate: readonly string[]
 }
 
 /**
@@ -380,13 +388,20 @@ function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): Curso
       ...columns.filter((column) => Number(column.hidden) !== 2),
       ...columns.filter((column) => Number(column.hidden) === 2),
     ]
-    return { table: entry.table, fields: stored.map((column) => [column.name]), keyCount: 0, rowid }
+    return {
+      table: entry.table,
+      fields: stored.map((column) => [column.name]),
+      keyCount: 0,
+      rowid,
+      predicate: [],
+    }
   }
   // A substring match can only over-count: an expression field then reads one column too many.
   const source = (entry.sql ?? "").toLowerCase()
-  const named = columns
-    .map((column) => column.name)
-    .filter((name) => source.includes(name.toLowerCase()))
+  const namedIn = (text: string): string[] =>
+    columns.map((column) => column.name).filter((name) => text.includes(name.toLowerCase()))
+  const named = namedIn(source)
+  const where = /\bwhere\b/.exec(source)
   const xinfo = db
     .prepare<{ cid: number | bigint; name: string | null; key: number | bigint }, [string]>(
       "SELECT cid, name, key FROM pragma_index_xinfo(?) ORDER BY seqno",
@@ -405,6 +420,7 @@ function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): Curso
     ),
     keyCount: xinfo.filter((field) => Number(field.key) === 1).length,
     rowid,
+    predicate: where === null ? [] : namedIn(source.slice(where.index)),
   }
 }
 
@@ -416,7 +432,8 @@ function cursorLayout(db: Pick<Database, "prepare">, entry: CatalogEntry): Curso
  * (`pragma_*`, `dbstat`, `json_each`) is never exposed.
  *
  * With `masked`, also every masked column a cursor on a table or index yields (`Column`), compares
- * (a seek or index range check, so a filter counts) or reads as the rowid. Values the statement
+ * (a seek or index range check, so a filter counts), orders by (stepping an index in key order) or
+ * reads as the rowid. Values the statement
  * derives from those reads live in other cursors and registers, so an alias or an expression
  * cannot hide the column it started from.
  */
@@ -452,6 +469,10 @@ function bytecodeReads(
   }
   if (masked === undefined) return { tables: [...reads], masked: [] }
 
+  const hits = new Set<string>()
+  const read = (layout: CursorLayout, names: readonly string[]): void => {
+    for (const name of names) if (masked(name)) hits.add(`${layout.table}.${name}`)
+  }
   const layouts = new Map<number, CursorLayout>()
   const layoutOf = (cursor: number): CursorLayout | undefined => {
     const entry = cursors.get(cursor)
@@ -460,12 +481,9 @@ function bytecodeReads(
     if (layout === undefined) {
       layout = cursorLayout(db, entry)
       layouts.set(cursor, layout)
+      read(layout, layout.predicate)
     }
     return layout
-  }
-  const hits = new Set<string>()
-  const read = (layout: CursorLayout, names: readonly string[]): void => {
-    for (const name of names) if (masked(name)) hits.add(`${layout.table}.${name}`)
   }
   for (const step of program) {
     const layout = layoutOf(Number(step.p1))
@@ -475,6 +493,8 @@ function bytecodeReads(
       const count = Number(step.p4)
       const compared = Number.isInteger(count) && count > 0 ? count : layout.keyCount
       for (const field of layout.fields.slice(0, compared)) read(layout, field)
+    } else if (KEY_ORDER_OPCODES.has(step.opcode)) {
+      for (const field of layout.fields.slice(0, layout.keyCount)) read(layout, field)
     } else if (ROWID_OPCODES.has(step.opcode) && layout.rowid !== undefined) {
       read(layout, [layout.rowid])
     }

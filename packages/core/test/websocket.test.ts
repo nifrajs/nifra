@@ -891,6 +891,29 @@ describe("attachWebSocket", () => {
     expect(socket.sent).toHaveLength(0)
   })
 
+  test("a subscribe that lands after close is dropped, not held by the registry", async () => {
+    const socket = new FakeSocket()
+    const pubsub = new TopicRegistry()
+    const resume = Promise.withResolvers<void>()
+    let subscribed!: Promise<void>
+    attachWebSocket(
+      socket,
+      {
+        open: (ws) => {
+          subscribed = resume.promise.then(() => ws.subscribe("t"))
+        },
+      },
+      undefined,
+      { openNow: true, pubsub },
+    )
+    socket.readyState = 3
+    socket.fire("close", { code: 1000, reason: "" })
+    resume.resolve()
+    await subscribed
+    pubsub.publish("t", "after close")
+    expect(socket.sent).toEqual([])
+  })
+
   test("openNow:false waits for the open event", () => {
     const socket = new FakeSocket()
     let opened = false

@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url"
 import { FastResponse } from "srvx/node"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
-import { hasDotSegment, resolveDotSegments } from "./generated/request-target.ts"
+import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 
@@ -1509,9 +1509,10 @@ function runNodeSource(
 }
 
 /**
- * Resolve the target's `.` / `..` segments and backslashes in place, before anything reads it. Node
- * keeps the target as the client sent it, where Bun and workerd deliver it parsed; resolving it here
- * routes `/users/../admin` to `/admin` on every runtime, and every later reader - static files,
+ * Resolve the target's `.` / `..` segments and backslashes, and encode what a parser encodes in a
+ * path, in place, before anything reads it. Node keeps the target as the client sent it, where Bun
+ * and workerd deliver it parsed; resolving it here routes `/users/../admin` to `/admin` and
+ * `/vault<tag>` to `/vault%3Ctag%3E` on every runtime, and every later reader - static files,
  * mounts, the app, `c.req.url` - sees the one path.
  */
 const ABSOLUTE_FORM = /^[a-z][a-z\d+.-]*:\/\//i
@@ -1529,7 +1530,7 @@ function resolveTarget(nodeReq: IncomingMessage): void {
     target = rest.charCodeAt(0) === 47 ? rest : `/${rest}`
     nodeReq.url = target
   }
-  if (hasDotSegment(target)) nodeReq.url = resolveDotSegments(target)
+  if (needsResolving(target)) nodeReq.url = resolveDotSegments(target)
 }
 
 function handle(

@@ -1165,6 +1165,7 @@ function globCalls(ts: typeof TS, file: string, text: string): GlobCall[] {
       ts.isPropertyAccessExpression(node.expression) &&
       node.expression.name.text === "glob" &&
       ts.isMetaProperty(node.expression.expression) &&
+      // nifra-expect NF-S002: keywordToken is a TypeScript SyntaxKind enum identifying import.meta, never a credential or request value.
       node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword
     ) {
       const arg = node.arguments[0]

@@ -138,6 +138,44 @@ describe("createQueue - retries + dead-letter", () => {
   })
 })
 
+// A store compares eligibility with `<=`, never true for NaN: such a job was written, counted as
+// pending forever, and never ran, retried or dead-lettered.
+describe("createQueue - non-finite schedules", () => {
+  test("a non-finite delayMs or runAt is refused before the job is written", async () => {
+    const q = createQueue({ now: makeClock().now })
+    const job = q.define("later", { handler() {} })
+    for (const opts of [
+      { delayMs: Number.NaN },
+      { delayMs: Number.POSITIVE_INFINITY },
+      { runAt: Number.NaN },
+      { runAt: Number.POSITIVE_INFINITY },
+    ]) {
+      await expect(job.enqueue({}, opts)).rejects.toThrow(/finite number of milliseconds/)
+    }
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
+  test("a backoff that returns a non-finite delay dead-letters the job instead of stranding it", async () => {
+    const errors: unknown[] = []
+    const q = createQueue({ now: makeClock().now, onError: (error) => errors.push(error) })
+    let calls = 0
+    const job = q.define("bad-backoff", {
+      retries: { attempts: 3, backoff: () => Number.NaN },
+      handler() {
+        calls += 1
+        throw new Error("boom")
+      },
+    })
+    await job.enqueue({})
+    await q.drain()
+    expect(calls).toBe(1)
+    expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 1 })
+    expect(
+      errors.some((e) => e instanceof RangeError && /not a finite delay/.test(e.message)),
+    ).toBe(true)
+  })
+})
+
 describe("createQueue - scheduling", () => {
   test("a delayed job is not run before its runAt", async () => {
     const clock = makeClock()

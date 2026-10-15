@@ -81,7 +81,7 @@ test("useBlocker boolean form reads as itself", () => {
 })
 
 test("compose threads RenderProps.search to useSearch (reactive ref, SSR-correct)", async () => {
-  // The value the server puts in RenderProps.search flows through compose's SearchProvider to useSearch;
+  // The value the server puts in RenderProps.search flows through compose's route context to useSearch;
   // the client mount derives the same value via searchOfChain, so the two renders match.
   const Page = defineComponent({
     setup() {

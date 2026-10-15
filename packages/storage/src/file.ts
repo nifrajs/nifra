@@ -6,6 +6,7 @@
  * `<root>.nifra-metadata`) are still read, and objects with none infer content type from their extension.
  * Every write is staged beside the root and renamed into place, so a reader sees an object whole.
  */
+import { createHash } from "node:crypto"
 import { constants } from "node:fs"
 import {
   type FileHandle,
@@ -18,6 +19,7 @@ import {
   unlink,
 } from "node:fs/promises"
 import { basename, dirname, join, posix, resolve, sep } from "node:path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
   type ListOptions,
@@ -57,7 +59,27 @@ function inferContentType(key: string): string | undefined {
 interface StoredMetadata {
   readonly contentType?: string
   readonly metadata?: Readonly<Record<string, string>>
+  /** The body file this sidecar was written with, so a sidecar never describes another put's body. */
+  readonly body?: FileIdentity
 }
+
+interface FileIdentity {
+  /** Read as bigints, kept as decimal strings: an NTFS file ID passes 2^53, where two live files can
+   * round to one double. */
+  readonly dev: string
+  readonly ino: string
+  /** The body's SHA-256 (base64) when it was written in place: its inode never changes there, so
+   * only the content tells one put's body from another's. */
+  readonly sha256?: string
+}
+
+const identityOf = async (handle: FileHandle): Promise<FileIdentity> => {
+  const { dev, ino } = await handle.stat({ bigint: true })
+  return { dev: String(dev), ino: String(ino) }
+}
+
+const sha256 = (data: Uint8Array | string): string =>
+  createHash("sha256").update(data).digest("base64")
 
 const errorCode = (error: unknown): unknown =>
   error instanceof Error && "code" in error ? error.code : undefined
@@ -71,21 +93,122 @@ const isMissing = (error: unknown): boolean => {
 /** Remove a staging file that may already be gone. */
 const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => {})
 
+// Windows refuses a rename onto a file while another rename replaces it or a reader holds it open
+// (EPERM, EACCES, EBUSY). Two puts of one key race there, so the rename is retried briefly.
+const WINDOWS_RENAME_BUSY: ReadonlySet<unknown> = new Set(["EPERM", "EACCES", "EBUSY"])
+const RENAME_RETRY_DELAYS_MS = [1, 2, 4, 8, 16, 32, 64, 100, 100, 100, 100, 100]
+
+/** `move(from, to)`, retried while `retryBusy` and the target is busy. Exported for its test. */
+export async function renameOver(
+  from: string,
+  to: string,
+  move: (from: string, to: string) => Promise<void> = rename,
+  retryBusy: boolean = process.platform === "win32",
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await move(from, to)
+    } catch (error) {
+      const delay = RENAME_RETRY_DELAYS_MS[attempt]
+      if (!retryBusy || delay === undefined || !WINDOWS_RENAME_BUSY.has(errorCode(error)))
+        throw error
+      await sleep(delay)
+    }
+  }
+}
+
 export class FileStorage implements StorageAdapter {
-  private readonly root: string
-  private readonly metadataRoot: string
-  private readonly legacyMetadataRoot: string
-  private readonly stagingRoot: string
+  private root = ""
+  private metadataRoot = ""
+  private legacyMetadataRoot = ""
+  private stagingRoot = ""
+  /** Each key's latest write, so this instance publishes a key's body and sidecar one put at a time. */
+  private readonly writes = new Map<string, Promise<void>>()
+  /** The directory holding the root and its bookkeeping, by real path and identity, once resolved. */
+  private anchor:
+    | Promise<{ readonly path: string; readonly dev: number; readonly ino: number }>
+    | undefined
 
   constructor(root: string) {
-    this.root = resolve(root)
+    this.placeRoot(resolve(root))
+  }
+
+  private placeRoot(root: string): void {
+    this.root = root
     // Keep bookkeeping outside the object tree so every otherwise-safe key remains usable, including
     // `.nifra-metadata/*`, and list() never needs a reserved-prefix exception. Sidecars mirror the
     // object paths exactly, so two keys clash there only where their objects would clash anyway.
-    const state = `${this.root}.nifra-state`
+    const state = `${root}.nifra-state`
     this.metadataRoot = join(state, "metadata")
     this.stagingRoot = join(state, "staging")
-    this.legacyMetadataRoot = `${this.root}.nifra-metadata`
+    this.legacyMetadataRoot = `${root}.nifra-metadata`
+  }
+
+  /**
+   * Resolve the directory holding the root (or its nearest existing ancestor) once, then work beneath
+   * that real path and prove before every operation that it is still the same directory. Swapping an
+   * ancestor, for a symbolic link or by a rename from whoever can write above the root, then cannot
+   * redirect a later read, write or delete into another tree: the operation fails closed instead.
+   */
+  private async pinRoot(key: string): Promise<void> {
+    this.anchor ??= this.resolveAnchor().catch((error: unknown) => {
+      this.anchor = undefined
+      throw error
+    })
+    const anchor = await this.anchor
+    const [real, info] = await Promise.all([realpath(anchor.path), lstat(anchor.path)]).catch(
+      () => [undefined, undefined] as const,
+    )
+    if (real !== anchor.path || info?.dev !== anchor.dev || info.ino !== anchor.ino) {
+      throw this.movedError(key)
+    }
+    await this.pinHolder(key)
+  }
+
+  private movedError(key: string): StorageKeyError {
+    return new StorageKeyError(
+      `storage key ${JSON.stringify(key)} is refused: the directory holding the storage root moved`,
+    )
+  }
+
+  /**
+   * Move the pin down to the directory holding the root once it exists. Pinned at first use, the
+   * anchor is the nearest existing ancestor; a directory a first write creates below it was never
+   * checked again, so swapping it for a link redirected every later operation. Called right after
+   * such a write creates directories, and before every operation.
+   */
+  private async pinHolder(key: string): Promise<void> {
+    const anchor = await this.anchor
+    const holder = dirname(this.root)
+    if (anchor === undefined || anchor.path === holder) return
+    let info: Awaited<ReturnType<typeof lstat>>
+    try {
+      info = await lstat(holder)
+    } catch (error) {
+      if (isMissing(error)) return
+      throw error
+    }
+    // Equal to its real path: no component between the pinned anchor and the holder is a link.
+    if (!info.isDirectory() || (await realpath(holder)) !== holder) throw this.movedError(key)
+    this.anchor = Promise.resolve({ path: holder, dev: info.dev, ino: info.ino })
+  }
+
+  private async resolveAnchor(): Promise<{ path: string; dev: number; ino: number }> {
+    const missing = [basename(this.root)]
+    let existing = dirname(this.root)
+    for (;;) {
+      try {
+        const path = await realpath(existing)
+        const info = await lstat(path)
+        this.placeRoot(join(path, ...missing))
+        return { path, dev: info.dev, ino: info.ino }
+      } catch (error) {
+        const parent = dirname(existing)
+        if (!isMissing(error) || parent === existing) throw error
+        missing.unshift(basename(existing))
+        existing = parent
+      }
+    }
   }
 
   private metadataPathFor(key: string): string {
@@ -280,20 +403,20 @@ export class FileStorage implements StorageAdapter {
     path: string,
     key: string,
     data: Uint8Array | string,
-  ): Promise<void> {
+  ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
+    await this.pinHolder(key)
     const staged = await this.stage(key, data)
     try {
       await this.assertNoSymlinkPath(base, path, key)
       const baseBefore = await lstat(base)
       try {
-        await rename(staged.path, path)
+        await renameOver(staged.path, path)
       } catch (error) {
         // A root that is its own mount point cannot take a rename from beside it.
         if (errorCode(error) !== "EXDEV") throw error
-        await this.writeInPlace(base, path, key, data)
-        return
+        return await this.writeInPlace(base, path, key, data)
       }
       const [current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
         lstat(path),
@@ -302,10 +425,11 @@ export class FileStorage implements StorageAdapter {
         realpath(path),
       ])
       const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
-      const targetChanged =
-        current.isSymbolicLink() || staged.dev !== current.dev || staged.ino !== current.ino
       const escaped = resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
-      if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
+      // Another file at the path after the rename is another writer's put of the same key landing
+      // after this one (last writer wins), unless it is a link or not a file.
+      if (baseChanged || escaped || !current.isFile()) throw this.symlinkError(key)
+      return { dev: staged.dev, ino: staged.ino }
     } finally {
       // Gone already once the rename landed; this clears a staged file the write abandoned.
       await discardStaged(staged.path)
@@ -316,8 +440,9 @@ export class FileStorage implements StorageAdapter {
   private async stage(
     key: string,
     data: Uint8Array | string,
-  ): Promise<{ readonly path: string; readonly dev: number; readonly ino: number }> {
+  ): Promise<FileIdentity & { readonly path: string }> {
     await mkdir(this.stagingRoot, { recursive: true, mode: 0o755 })
+    await this.pinHolder(key)
     const path = join(this.stagingRoot, `${crypto.randomUUID()}.tmp`)
     await this.assertNoSymlinkPath(this.stagingRoot, path, key)
     let handle: FileHandle
@@ -333,8 +458,7 @@ export class FileStorage implements StorageAdapter {
     }
     try {
       await handle.writeFile(data)
-      const info = await handle.stat()
-      return { path, dev: info.dev, ino: info.ino }
+      return { path, ...(await identityOf(handle)) }
     } catch (error) {
       await discardStaged(path)
       throw error
@@ -352,10 +476,11 @@ export class FileStorage implements StorageAdapter {
     path: string,
     key: string,
     data: Uint8Array | string,
-  ): Promise<void> {
+  ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
     // 0o755 whatever the umask: a group-writable directory (umask 002) would fail the trust check above.
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
+    await this.pinHolder(key)
     await this.assertNoSymlinkPath(base, path, key)
     try {
       const baseBefore = await lstat(base)
@@ -384,6 +509,7 @@ export class FileStorage implements StorageAdapter {
 
         await handle.truncate(0)
         await handle.writeFile(data)
+        return { ...(await identityOf(handle)), sha256: sha256(data) }
       } finally {
         await handle.close()
       }
@@ -393,40 +519,69 @@ export class FileStorage implements StorageAdapter {
     }
   }
 
+  /** Run `write` after this instance's earlier write of `key` settles. */
+  private serialized(key: string, write: () => Promise<void>): Promise<void> {
+    const next = (this.writes.get(key) ?? Promise.resolve()).then(write, write)
+    const settled = next.catch(() => {})
+    this.writes.set(key, settled)
+    void settled.then(() => {
+      if (this.writes.get(key) === settled) this.writes.delete(key)
+    })
+    return next
+  }
+
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
-    await this.writeContained(this.root, path, key, toBytes(data))
     const metadataPath = this.metadataPathFor(key)
-    await this.removeLegacyMetadata(key)
-    if (options.contentType !== undefined || options.metadata !== undefined) {
-      await this.writeContained(
-        this.metadataRoot,
-        metadataPath,
-        key,
-        JSON.stringify({
-          ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
-          ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
-        }),
-      )
-    } else {
-      await this.removeContained(this.metadataRoot, metadataPath, key)
-    }
+    const bytes = toBytes(data)
+    await this.serialized(key, async () => {
+      // Body and sidecar are two files, so another process's put can land between them. The sidecar
+      // names the body it was written with, and a read ignores one that names another.
+      const body = await this.writeContained(this.root, path, key, bytes)
+      await this.removeLegacyMetadata(key)
+      if (options.contentType !== undefined || options.metadata !== undefined) {
+        await this.writeContained(
+          this.metadataRoot,
+          metadataPath,
+          key,
+          JSON.stringify({
+            ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
+            ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
+            body,
+          } satisfies StoredMetadata),
+        )
+      } else {
+        await this.removeContained(this.metadataRoot, metadataPath, key)
+      }
+    })
   }
 
   async get(key: string): Promise<StorageObject | null> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     const bodyHandle = await this.openObject(this.root, path, key)
     if (bodyHandle === null) return null
     let body: Uint8Array
+    let identity: FileIdentity
     try {
+      identity = await identityOf(bodyHandle)
       body = new Uint8Array(await bodyHandle.readFile())
     } finally {
       await bodyHandle.close()
     }
-    const stored =
+    const sidecar =
       (await this.readMetadata(this.metadataRoot, this.metadataPathFor(key), key)) ??
-      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key)) ??
-      {}
+      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key))
+    // A sidecar from before bodies were named describes whatever body is there, as it always did.
+    const named = sidecar?.body
+    const stored =
+      named === undefined ||
+      (named.dev === identity.dev &&
+        named.ino === identity.ino &&
+        (named.sha256 === undefined || named.sha256 === sha256(body)))
+        ? (sidecar ?? {})
+        : {}
     // Objects with no sidecar still infer a useful MIME type from their extension.
     const contentType = stored.contentType ?? inferContentType(key)
     return {
@@ -438,13 +593,16 @@ export class FileStorage implements StorageAdapter {
   }
 
   async delete(key: string): Promise<void> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     const metadataPath = this.metadataPathFor(key)
-    await Promise.all([
-      this.removeContained(this.root, path, key),
-      this.removeContained(this.metadataRoot, metadataPath, key),
-      this.removeLegacyMetadata(key),
-    ])
+    await this.serialized(key, async () => {
+      await Promise.all([
+        this.removeContained(this.root, path, key),
+        this.removeContained(this.metadataRoot, metadataPath, key),
+        this.removeLegacyMetadata(key),
+      ])
+    })
   }
 
   private async readMetadata(
@@ -476,6 +634,7 @@ export class FileStorage implements StorageAdapter {
   }
 
   async exists(key: string): Promise<boolean> {
+    await this.pinRoot(key)
     const path = this.pathFor(key)
     const handle = await this.openObject(this.root, path, key)
     if (handle === null) return false
@@ -527,6 +686,7 @@ export class FileStorage implements StorageAdapter {
 
   async list(options: ListOptions = {}): Promise<string[]> {
     const prefix = options.prefix ?? ""
+    await this.pinRoot(prefix)
     const limit = options.limit ?? Number.POSITIVE_INFINITY
     // Start below the directories the prefix already names, and stop once `limit` keys are found:
     // the walk visits entries in key order, so the first keys found are the first keys sorted.

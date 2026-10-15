@@ -1,5 +1,24 @@
 # @nifrajs/mock
 
+## 5.3.0
+
+### Patch Changes
+
+- 46a93c7: A mocked `anyOf` value now satisfies the keywords beside it. A schema such as `{ type: "string", maxLength: 1, anyOf: [...] }` previously generated from one alternative alone, so the mock could return a value the schema rejects; each alternative is now merged with its siblings, an alternative they contradict is skipped, and a schema with no satisfiable alternative throws `UnsupportedMockSchemaError`.
+- Updated dependencies [7ab9692]
+- Updated dependencies [808bac8]
+- Updated dependencies [d4bae56]
+- Updated dependencies [007060d]
+- Updated dependencies [190ab39]
+- Updated dependencies [7cf8df3]
+  - @nifrajs/core@5.3.0
+
+## 5.2.1
+
+### Patch Changes
+
+- @nifrajs/core@5.2.1
+
 ## 5.2.0
 
 ### Patch Changes

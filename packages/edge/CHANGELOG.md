@@ -1,5 +1,15 @@
 # @nifrajs/edge
 
+## 5.3.0
+
+### Patch Changes
+
+- d4bae56: `server({ maxBodyBytes })` from `@nifrajs/edge` refuses a `maxBodyBytes` that is not a non-negative safe integer at construction, with the same `RangeError` the full `@nifrajs/core` server throws. A `NaN` (an invalid numeric environment value, for example) compared false against every body length, so the edge server accepted bodies of any size.
+
+## 5.2.1
+
+No changes in this release.
+
 ## 5.2.0
 
 ### Patch Changes

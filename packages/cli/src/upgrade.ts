@@ -12,7 +12,9 @@
  *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
- *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface.
+ *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface. It reads the
+ *      installed packages, so while the edited pins are not installed yet it is skipped with the
+ *      install command to run first: a check then would judge the release being left.
  *
  * Upgrading across several releases runs every recipe between the installed version (the lowest
  * fixed-group version the workspace declares) and the target, oldest first, then pins the target. A
@@ -69,7 +71,8 @@ export interface UpgradeOptions {
   readonly json?: boolean
   /** Print the available target versions and return. */
   readonly list?: boolean
-  /** After `--write`, run `nifra check` and fail the command if it fails. Default true. */
+  /** After `--write`, run `nifra check` and fail the command if it fails, once the install matches
+   * the target; until then, print the install command to run first. Default true. */
   readonly verify?: boolean
   /** Permit a target BELOW the installed version (a rollback). Default false → fail-closed. */
   readonly allowDowngrade?: boolean
@@ -162,21 +165,29 @@ const DEP_FIELDS = [
   "peerDependencies",
   "optionalDependencies",
 ] as const
+const PEER_FIELD = "peerDependencies"
 
 // Only a bare semver spec is rewritten. Anything else - workspace:*, link:/file:, npm: aliases, git
 // urls, "*", "latest", or a multi-part range - is intentionally left untouched (skipped, not guessed).
 const SEMVER_SPEC =
   /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
+const UPPER_BOUND = /^\s*<=?/
+
+// A strict bound kept on the target would exclude it: `>5.2.0` → `>5.3.0` refuses 5.3.0.
+const INCLUSIVE_OPERATOR: Readonly<Record<string, string>> = { ">": ">=", "<": "<=" }
+
 /**
- * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …), or
- * dropping it when `exact`. Returns null when the spec is not a plain semver spec (→ skip it) or
- * already equals the target.
+ * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …;
+ * a strict `>` or `<` becomes `>=` or `<=`, so the result admits the target), or dropping it when
+ * `exact`. Returns null when the spec is not a plain semver spec (→ skip it) or already equals the
+ * target.
  */
 export function rewriteVersionSpec(spec: string, toVersion: string, exact = false): string | null {
   const match = SEMVER_SPEC.exec(spec.trim())
   if (!match) return null
-  const operator = exact ? "" : (match[1] ?? "")
+  const written = match[1] ?? ""
+  const operator = exact ? "" : (INCLUSIVE_OPERATOR[written] ?? written)
   const next = `${operator}${toVersion}`
   return next === spec ? null : next
 }
@@ -252,6 +263,48 @@ export function compareSemverSpec(a: string, b: string): number {
   return 0
 }
 
+/**
+ * Whether a plain semver spec's range admits `version`, as npm reads it: `^` and `~` stop before the
+ * next breaking release, and a prerelease satisfies only a spec naming a prerelease of its own core.
+ * False for any other spec.
+ */
+export function specIncludes(spec: string, version: string): boolean {
+  const match = SEMVER_SPEC.exec(spec.trim())
+  const target = parseSpecVersion(version)
+  const floor = specVersion(spec)
+  if (match === null || target === null || floor === null) return false
+  const core: readonly [number, number, number] = [
+    Number(match[2]),
+    Number(match[3]),
+    Number(match[4]),
+  ]
+  if (
+    target.prerelease.length > 0 &&
+    (match[5] === undefined || compareSemverCore(core, target.core) !== 0)
+  )
+    return false
+  const order = compareSemverSpec(version, floor)
+  switch (match[1]) {
+    case ">=":
+      return order >= 0
+    case ">":
+      return order > 0
+    case "<=":
+      return order <= 0
+    case "<":
+      return order < 0
+    case "^": {
+      const below: readonly [number, number, number] =
+        core[0] > 0 ? [core[0] + 1, 0, 0] : core[1] > 0 ? [0, core[1] + 1, 0] : [0, 0, core[2] + 1]
+      return order >= 0 && compareSemverCore(target.core, below) < 0
+    }
+    case "~":
+      return order >= 0 && compareSemverCore(target.core, [core[0], core[1] + 1, 0]) < 0
+    default:
+      return order === 0
+  }
+}
+
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
@@ -278,13 +331,21 @@ export function pinSweepText(
   let out = text
   const changes: Array<Omit<PinChange, "file">> = []
   const downgrades: Array<Omit<PinChange, "file">> = []
-  for (const { path, key, target: name, spec: rawSpec } of pinEntries(parsed)) {
+  for (const { path, holder, key, target: name, spec: rawSpec } of pinEntries(parsed)) {
     const field = path.join(".")
     const rule = rules.find(
       (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
     )
     if (!rule) continue
-    const next = rewriteVersionSpec(rawSpec, rule.to, exact)
+    // A peer range states what a library accepts, not what installs: widening a floor that already
+    // admits the target would drop every consumer still on an older release, and an exact peer pin
+    // would admit one release only.
+    const peer = field === PEER_FIELD
+    if (peer && specIncludes(rawSpec, rule.to)) continue
+    // An upper bound has no floor to raise: one that admits the target (`<6.0.0`) stays as written,
+    // in every field, and is never read as a rollback.
+    if (UPPER_BOUND.test(rawSpec) && specIncludes(rawSpec, rule.to)) continue
+    const next = rewriteVersionSpec(rawSpec, rule.to, exact && !peer)
     if (next === null) continue
     // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
     // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
@@ -299,17 +360,14 @@ export function pinSweepText(
       downgrades.push({ field, name: key, from: rawSpec, to: next })
       continue
     }
-    // Replace exactly `"key"<ws>:<ws>"spec"` inside this field's object, preserving the whitespace. A
-    // nested `overrides` entry repeated with the same spec maps the same way, so every one is replaced.
-    const range = objectRangeAt(out, path)
-    if (range === undefined) continue
-    const pattern = new RegExp(`("${escapeRegExp(key)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`, "g")
-    const body = out.slice(range.start, range.end)
-    const replaced = body.replace(pattern, `$1${next}$2`)
-    if (replaced !== body) {
-      out = out.slice(0, range.start) + replaced + out.slice(range.end)
-      changes.push({ field, name: key, from: rawSpec, to: next })
-    }
+    // Replace exactly `"key"<ws>:<ws>"spec"` inside the object holding this pin, preserving the
+    // whitespace: npm's nested `{ ".": "5.2.0" }` under another package names that package.
+    const range = objectRangeAt(out, holder)
+    const at = range === undefined ? undefined : memberValueAt(out, range, key)
+    const written = JSON.stringify(rawSpec)
+    if (at === undefined || out.slice(at, at + written.length) !== written) continue
+    out = out.slice(0, at) + JSON.stringify(next) + out.slice(at + written.length)
+    changes.push({ field, name: key, from: rawSpec, to: next })
   }
   return { text: out, changes, downgrades }
 }
@@ -332,31 +390,41 @@ function overrideTarget(key: string): string {
 }
 
 /** Every string version spec a package.json declares for a package, with the field path it sits in. */
-function pinEntries(
-  parsed: Record<string, unknown>,
-): Array<{ path: readonly string[]; key: string; target: string; spec: string }> {
-  const entries: Array<{ path: readonly string[]; key: string; target: string; spec: string }> = []
+interface PinEntry {
+  /** The field the pin is reported under: a dependency field, or the override field it sits in. */
+  readonly path: readonly string[]
+  /** The object holding the pin, nested override parents included. */
+  readonly holder: readonly string[]
+  readonly key: string
+  readonly target: string
+  readonly spec: string
+}
+
+function pinEntries(parsed: Record<string, unknown>): PinEntry[] {
+  const entries: PinEntry[] = []
   for (const field of DEP_FIELDS) {
     const deps = parsed[field]
     if (typeof deps !== "object" || deps === null) continue
     for (const [name, spec] of Object.entries(deps))
-      if (typeof spec === "string") entries.push({ path: [field], key: name, target: name, spec })
+      if (typeof spec === "string")
+        entries.push({ path: [field], holder: [field], key: name, target: name, spec })
   }
   for (const path of OVERRIDE_FIELDS) {
     let value: unknown = parsed
     for (const key of path)
       value = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
     // npm nests an override under the package whose dependency it pins; `.` pins that package itself.
-    const walk = (object: object, parent: string | undefined): void => {
+    const walk = (object: object, parent: string | undefined, holder: readonly string[]): void => {
       for (const [key, spec] of Object.entries(object)) {
         const target = key === "." ? parent : overrideTarget(key)
         if (typeof spec === "string" && target !== undefined)
-          entries.push({ path, key, target, spec })
+          entries.push({ path, holder, key, target, spec })
         else if (typeof spec === "object" && spec !== null && !Array.isArray(spec))
-          walk(spec, target)
+          walk(spec, target, [...holder, key])
       }
     }
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) walk(value, undefined)
+    if (typeof value === "object" && value !== null && !Array.isArray(value))
+      walk(value, undefined, path)
   }
   return entries
 }
@@ -407,6 +475,18 @@ function memberObjectRange(
   within: { start: number; end: number },
   key: string,
 ): { start: number; end: number } | undefined {
+  const at = memberValueAt(text, within, key)
+  return at !== undefined && text[at] === "{"
+    ? { start: at + 1, end: closingBrace(text, at) }
+    : undefined
+}
+
+/** Where `key`'s value starts among the direct members of the object body `within`. */
+function memberValueAt(
+  text: string,
+  within: { start: number; end: number },
+  key: string,
+): number | undefined {
   let depth = 0
   for (let index = within.start; index < within.end; index++) {
     const char = text[index]
@@ -419,9 +499,7 @@ function memberObjectRange(
       if (depth === 0 && text[after] === ":" && text.slice(index + 1, close) === key) {
         after++
         while (/\s/.test(text[after] ?? "")) after++
-        return text[after] === "{"
-          ? { start: after + 1, end: closingBrace(text, after) }
-          : undefined
+        return after
       }
       index = close
     }
@@ -598,10 +676,15 @@ export function groupDeclaredNames(cwd: string): ReadonlySet<string> {
 
 /**
  * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
- * with the files that declare it. An override counts: it decides what installs. `workspace:`, `link:`
- * and other non-semver specs are not versions.
+ * with the files that declare it. An override counts: it decides what installs. A peer range does
+ * not (`>=3.1.0` names a floor a library accepts, not a version anything loads), and `workspace:`,
+ * `link:` and other non-semver specs are not versions.
  */
 export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly string[]> {
+  return groupSpecVersions(cwd, false)
+}
+
+function groupSpecVersions(cwd: string, peers: boolean): Map<string, string[]> {
   const versions = new Map<string, string[]>()
   for (const rel of scan(cwd, "**/package.json")) {
     let parsed: Record<string, unknown>
@@ -610,8 +693,8 @@ export function groupPinVersions(cwd: string): ReadonlyMap<string, readonly stri
     } catch {
       continue
     }
-    for (const { target, spec } of pinEntries(parsed)) {
-      if (!isFixedGroup(target)) continue
+    for (const { path, target, spec } of pinEntries(parsed)) {
+      if (!isFixedGroup(target) || (path[0] === PEER_FIELD) !== peers) continue
       const version = specVersion(spec)
       if (version === null) continue
       const files = versions.get(version) ?? []
@@ -860,15 +943,27 @@ export function installedGroupPackages(
 }
 
 /**
- * The lowest fixed-group version any package.json under `cwd` declares with a plain semver spec, or
- * null when none does. Recipes newer than it still have edits to make somewhere in the workspace.
+ * The version the workspace upgrades from: the lowest fixed-group version any package.json under
+ * `cwd` pins ({@link groupPinVersions}), since recipes newer than it still have edits to make
+ * somewhere. Without a pin, the lowest one installed inside the root, then the lowest peer floor;
+ * null when none names one.
  */
 export function installedGroupVersion(cwd: string): string | null {
-  let lowest: string | null = null
-  for (const version of groupPinVersions(cwd).keys()) {
-    if (lowest === null || compareSemverSpec(version, lowest) < 0) lowest = version
+  const lowest = (versions: Iterable<string>): string | null => {
+    let found: string | null = null
+    for (const version of versions)
+      if (found === null || compareSemverSpec(version, found) < 0) found = version
+    return found
   }
-  return lowest
+  return (
+    lowest(groupPinVersions(cwd).keys()) ??
+    lowest(
+      installedGroupPackages(cwd)
+        .filter((entry) => entry.inside)
+        .map((entry) => entry.version),
+    ) ??
+    lowest(groupSpecVersions(cwd, true).keys())
+  )
 }
 
 /** One recipe that applies every release recipe after `installed` up to `target`, oldest first. */
@@ -1133,7 +1228,7 @@ function renderPlan(
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)
-  if (!write) lines.push("\nRe-run with --write to apply, then nifra check verifies.")
+  if (!write) lines.push("\nRe-run with --write to apply, then install and run nifra check.")
   return lines.join("\n").trimEnd()
 }
 
@@ -1174,10 +1269,60 @@ function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[
   ].join("\n")
 }
 
-/** The hook report around `--write`: the diff and where the pre-upgrade report was saved, or why not. */
+/** The hook report around `--write`: the diff and where the pre-upgrade report was saved, or why not.
+ * `install` means the edits are not installed yet, so only the pre-upgrade report was taken. */
 export type UpgradeHookScope =
   | { readonly saved: string; readonly changes: readonly HookReportChange[] }
+  | { readonly saved: string; readonly pending: "install" }
   | { readonly error: string; readonly saved?: string }
+
+/** The edits `--write` made that the installed packages do not reflect yet. */
+export interface PendingInstall {
+  /** The command that installs them, by the lockfile the project keeps. */
+  readonly command: string
+  /** Fixed-group packages installed inside the root at a version other than the target. */
+  readonly installed: readonly { readonly package: string; readonly version: string }[]
+}
+
+const INSTALL_COMMANDS: readonly (readonly [lockfile: string, command: string])[] = [
+  ["pnpm-lock.yaml", "pnpm install"],
+  ["yarn.lock", "yarn install"],
+  ["package-lock.json", "npm install"],
+]
+
+/**
+ * Whether the project needs an install before a check can judge the target: `--write` changed what
+ * package.json declares or what bun.lock records, or node_modules holds a group package at another
+ * version. A link from outside the root is left out; installing here does not move it.
+ */
+export function pendingInstall(cwd: string, plan: UpgradePlan): PendingInstall | undefined {
+  const installed = installedGroupPackages(cwd)
+    .filter((entry) => entry.inside && entry.version !== plan.version)
+    .map(({ package: name, version }) => ({ package: name, version }))
+  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0 || plan.lockPruned
+  if (!edited && installed.length === 0) return undefined
+  const command =
+    INSTALL_COMMANDS.find(([lockfile]) => existsSync(join(cwd, lockfile)))?.[1] ?? "bun install"
+  return { command, installed }
+}
+
+const SHOWN_INSTALLS = 3
+
+function renderPendingInstall(pending: PendingInstall, version: string): string {
+  const shown = pending.installed
+    .slice(0, SHOWN_INSTALLS)
+    .map((entry) => `${entry.package} ${entry.version}`)
+  const more = pending.installed.length - shown.length
+  const holds =
+    shown.length === 0
+      ? "the edited pins are not installed yet"
+      : `node_modules still holds ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`
+  return [
+    `Not checked yet: \`nifra check\` reads the installed packages, and ${holds}, so it would judge the release this upgrade leaves rather than ${version}. Install, then check:`,
+    `  ${pending.command}`,
+    "  nifra check",
+  ].join("\n")
+}
 
 async function hookReportBefore(cwd: string): Promise<ReflectedHookReport | { error: string }> {
   try {
@@ -1190,15 +1335,18 @@ async function hookReportBefore(cwd: string): Promise<ReflectedHookReport | { er
 }
 
 /** The report after the edits, from a fresh process: the edited sources must not come from this one's
- * module cache. Saves the pre-upgrade report for `nifra routes --hooks --since` after an install. */
+ * module cache. Saves the pre-upgrade report for `nifra routes --hooks --since` after an install.
+ * While the edits are not installed, the old release would load in its place, so none is taken. */
 async function hookScopeAcross(
   cwd: string,
   before: ReflectedHookReport | { error: string },
+  installed: boolean,
 ): Promise<UpgradeHookScope> {
   if ("error" in before) return { error: before.error }
   const saved = join(cwd, HOOKS_BEFORE_UPGRADE_FILE)
   mkdirSync(dirname(saved), { recursive: true })
   writeFileSync(saved, `${JSON.stringify(before, null, 2)}\n`)
+  if (!installed) return { saved: HOOKS_BEFORE_UPGRADE_FILE, pending: "install" }
   const entry = fileURLToPath(
     new URL(import.meta.url.endsWith(".ts") ? "./cli.ts" : "./cli.js", import.meta.url),
   )
@@ -1232,6 +1380,7 @@ function renderHookScope(scope: UpgradeHookScope): string {
     const head = `Hook scope: not captured (${scope.error}).`
     return scope.saved === undefined ? head : [head, ...since(scope.saved)].join("\n")
   }
+  if ("pending" in scope) return since(scope.saved).join("\n")
   return [
     "Hook scope across the edits (nifra routes --hooks):",
     renderHookDiff(scope.changes)
@@ -1392,14 +1541,18 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
   const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
-  const hooks = before === undefined ? undefined : await hookScopeAcross(cwd, before)
+  const pending = write ? pendingInstall(cwd, plan) : undefined
+  const hooks =
+    before === undefined ? undefined : await hookScopeAcross(cwd, before, pending === undefined)
 
-  // Verify only makes sense once edits are on disk. Default on after --write; opt out with --no-verify.
-  const verify = write && options.verify !== false
+  // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
+  // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
+  const verify = write && options.verify !== false && pending === undefined
   if (options.json) {
     // The check result rides inside the one JSON document; its human report would break the stream.
     const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
     if (hooks !== undefined) report.hooks = hooks
+    if (pending !== undefined) report.install = pending
     let ok = true
     if (verify) {
       const { collectProjectVerification } = await import("./verification.ts")
@@ -1415,6 +1568,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   if (plan.linkedSkew.length > 0)
     console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
   if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
+  if (pending !== undefined && options.verify !== false)
+    console.log(`\n${renderPendingInstall(pending, recipe.version)}`)
 
   if (verify) {
     const { runCheck } = await import("./check.ts")

@@ -15,7 +15,6 @@ import {
   type Translation,
 } from "@nifrajs/i18n"
 import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
-import type { RenderProps } from "@nifrajs/web"
 import { localeOfProps } from "@nifrajs/web/client"
 import {
   type ComputedRef,
@@ -27,16 +26,11 @@ import {
   inject,
   type PropType,
   provide,
-  type Ref,
   type VNodeChild,
 } from "vue"
+import { PROPS_KEY } from "./route-context.ts"
 
 const I18N_KEY: InjectionKey<ComputedRef<Formatter>> = Symbol("nifra-i18n")
-// The registry key `router.ts`'s `RenderPropsProvider` provides the render's props under.
-// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: InjectionKey only brands a symbol's type, and router.ts provides this registry key with exactly this value type.
-const PROPS_KEY = Symbol.for("nifra.web-vue.render-props") as InjectionKey<
-  Readonly<Ref<RenderProps>>
->
 
 /** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,
  * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes

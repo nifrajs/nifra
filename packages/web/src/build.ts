@@ -60,8 +60,12 @@ import {
   assertIdentityParity,
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
+import {
+  type ServerPrerenderedPage,
+  servablePrerenderedPages,
+} from "./internal/prerendered-pages.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
-import { publicUrlPath } from "./internal/public-url.ts"
+import { isHiddenPublicPath, publicUrlPath } from "./internal/public-url.ts"
 import {
   assertNoSecrets,
   buildEnvironment,
@@ -71,6 +75,7 @@ import {
   originName,
   publicScanFiles,
   type SecretExemption,
+  SecretScanError,
   scanForSecrets,
   textOf,
 } from "./internal/secret-scan.ts"
@@ -94,7 +99,7 @@ import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { assertNoImportGlob, importGlobPlugin } from "./plugins/import-glob.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
-import { prerenderRoutes } from "./prerender.ts"
+import { type PrerenderOptions, prerenderRoutes } from "./prerender.ts"
 import { CONTENT_TYPES, IMMUTABLE, ONE_DAY } from "./public-dir.ts"
 import { createZoneClassifier } from "./zones.ts"
 
@@ -128,6 +133,8 @@ interface BunMetafile {
   >
 }
 
+// A page a bun or node build answers from its file (`generateServerEntry`'s `prerenderedPages`).
+export type { ServerPrerenderedPage } from "./internal/prerendered-pages.ts"
 // The secret scan every client build, `public/` copy and prerender runs.
 export type { SecretExemption, SecretRule } from "./internal/secret-scan.ts"
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
@@ -340,7 +347,9 @@ export function cloudflareRouteRules(
 
 /** The built asset map - the server reads `entry` for the client script + serves `assets`. */
 /**
- * Copy `from` into `to`, returning the URL paths copied (sorted).
+ * Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than
+ * `.well-known` are skipped, as development never serves them: every target ships this list, and a
+ * CDN-hosted one serves whatever was copied.
  *
  * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and
  * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package
@@ -351,6 +360,7 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
   const sourceReal = await realpath(source)
   const copied: string[] = []
   for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: false })) {
+    if (isHiddenPublicPath(rel)) continue
     const candidate = join(source, rel)
     const candidateStat = await lstat(candidate)
     if (candidateStat.isSymbolicLink()) {
@@ -1296,6 +1306,9 @@ const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>>
   vercel: "x-real-ip",
 }
 
+/** Where a self-hosting build writes its prerendered pages, beside `server.js`. */
+const PRERENDERED_DIR = "_prerendered"
+
 /**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
@@ -1332,6 +1345,9 @@ export function generateServerEntry(options: {
   readonly clientIp?: ServerEntryClientIp
   /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */
   readonly copyChunks?: boolean
+  /** `bun` / `node` only: the pages the build prerendered into `_prerendered/`, by request path, which
+   * the app answers from their file (see `createWebApp`'s `prerenderedPages`). */
+  readonly prerenderedPages?: Readonly<Record<string, ServerPrerenderedPage>>
 }): string {
   const {
     target,
@@ -1363,7 +1379,22 @@ export function generateServerEntry(options: {
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
-  const lines: string[] = ['import { createWebApp } from "@nifrajs/web"']
+  // Bun and Node serve the client bundle through `servePublicDir`. Deno bundles for the browser
+  // condition, where `node:fs` is a stub, so its entry runs the same checks on Deno's own file API.
+  const nodeFs = target === "bun" || target === "node"
+  const prerendered = Object.entries(options.prerenderedPages ?? {})
+  if (prerendered.length > 0 && !nodeFs) {
+    throw new Error(
+      `[nifra/web] generateServerEntry: prerendered pages are served by the bun and node targets, not ${target}`,
+    )
+  }
+  const lines: string[] = [
+    !nodeFs
+      ? 'import { createWebApp } from "@nifrajs/web"'
+      : prerendered.length > 0
+        ? 'import { createWebApp, prerenderedPageReader, servePublicDir } from "@nifrajs/web"'
+        : 'import { createWebApp, servePublicDir } from "@nifrajs/web"',
+  ]
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
   if (useImport !== undefined) lines.push(`import { use } from ${JSON.stringify(useImport)}`)
@@ -1381,11 +1412,29 @@ export function generateServerEntry(options: {
   // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
+  if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
+  if (target === "deno") lines.push('import { parseByteRange } from "@nifrajs/core/range"')
+  if (prerendered.length > 0) {
+    const headers = Object.fromEntries(prerendered.map(([path, page]) => [path, page.headers]))
+    const files = Object.fromEntries(prerendered.map(([path, page]) => [path, page.file]))
+    lines.push(
+      "",
+      `// The pages the build prerendered into ${PRERENDERED_DIR}/, answered from their file after \`use\`.`,
+      "const prerenderedPages = {",
+      `  pages: ${JSON.stringify(headers)},`,
+      "  read: prerenderedPageReader({",
+      `    dir: fileURLToPath(new URL(${JSON.stringify(`./${PRERENDERED_DIR}/`)}, import.meta.url)),`,
+      `    files: ${JSON.stringify(files)},`,
+      "  }),",
+      "}",
+    )
+  }
   lines.push(
     "",
     "const app = createWebApp({",
     "  adapter,",
     ...(useImport !== undefined ? ["  use,"] : []),
+    ...(prerendered.length > 0 ? ["  prerenderedPages,"] : []),
     ...importedOptions.map((name) => `  ${name},`),
     "  manifest,",
     "  clientEntry,",
@@ -1456,14 +1505,20 @@ export function generateServerEntry(options: {
     '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
     "  return segments.every(safe) ? '.' + pathname : undefined",
     "}",
-    // The type table and cache policy `servePublicDir` uses. Without a known type, Bun answers a file
-    // as an `application/octet-stream` attachment, which a browser downloads instead of showing.
-    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
-    "const staticHeaders = (pathname: string): Record<string, string> => ({",
-    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
-    `  "cache-control": ${hashedFiles !== undefined ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
-    '  "x-content-type-options": "nosniff",',
-    "})",
+    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, HEAD
+    // answered without reading the file, byte ranges and conditional requests, and a descriptor opened
+    // only once the real path is inside the root, so a link planted in the deployed tree cannot reach
+    // a file outside it.
+    ...(nodeFs
+      ? [
+          "const serveStatic = servePublicDir({",
+          "  dir: fileURLToPath(STATIC_ROOT),",
+          ...(hashedFiles !== undefined ? ["  hashedFiles: HASHED_FILES,"] : []),
+          "})",
+          "const staticResponse = async (req: Request): Promise<Response> =>",
+          '  (await serveStatic(req)) ?? new Response("not found", { status: 404 })',
+        ]
+      : denoStaticResponse(hashedFiles !== undefined)),
   )
   // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
   // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
@@ -1475,11 +1530,9 @@ export function generateServerEntry(options: {
       "  port: Number(Bun.env.PORT ?? 3000),",
       "  async fetch(req, server) {",
       "    const { pathname } = new URL(req.url)",
-      "    const filePath = staticPath(pathname)",
-      "    if (filePath !== undefined) {",
-      "      const file = Bun.file(new URL(filePath, STATIC_ROOT))",
-      '      if (!(await file.exists())) return new Response("not found", { status: 404 })',
-      "      return new Response(file, { headers: staticHeaders(pathname) })",
+      // Braced: the next emitted line opens with `(`, which would otherwise call the returned value.
+      "    if (staticPath(pathname) !== undefined) {",
+      "      return staticResponse(req)",
       "    }",
       `    ${markFramed}`,
       "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
@@ -1494,20 +1547,11 @@ export function generateServerEntry(options: {
   }
   if (target === "node") {
     lines.push(
-      'import { readFile } from "node:fs/promises"',
       "await serve(",
       "  {",
       "    async fetch(req, platform) {",
       "      const { pathname } = new URL(req.url)",
-      "      const filePath = staticPath(pathname)",
-      "      if (filePath !== undefined) {",
-      "        try {",
-      "          const body = await readFile(new URL(filePath, STATIC_ROOT))",
-      "          return new Response(body, { headers: staticHeaders(pathname) })",
-      "        } catch {",
-      '          return new Response("not found", { status: 404 })',
-      "        }",
-      "      }",
+      "      if (staticPath(pathname) !== undefined) return staticResponse(req)",
       "      return app.fetch(req, platform)",
       "    },",
       "  },",
@@ -1523,19 +1567,106 @@ export function generateServerEntry(options: {
     "  const { pathname } = new URL(req.url)",
     "  const filePath = staticPath(pathname)",
     "  if (filePath !== undefined) {",
-    "    try {",
-    "      // @ts-ignore - Deno.readFile is present on the Deno runtime.",
-    "      const body = await Deno.readFile(new URL(filePath, STATIC_ROOT))",
-    "      return new Response(body, { headers: staticHeaders(pathname) })",
-    "    } catch {",
-    '      return new Response("not found", { status: 404 })',
-    "    }",
+    "    return staticResponse(req, filePath, pathname)",
     "  }",
     `  ${markFramed}`,
     "  return app.fetch(req, { clientIp: info.remoteAddr.hostname })",
     "})",
   )
   return `${lines.join("\n")}\n`
+}
+
+/**
+ * The Deno entry's static handler: `servePublicDir`'s checks on Deno's file API. The real path must sit
+ * inside the root and cross no hidden segment, and the opened file must still be the one that path
+ * names, so a link planted in the deployed tree cannot reach a file outside it or a `.env` inside it.
+ * HEAD answers from `stat` without reading; one byte range is served from a seek, several as the
+ * whole file.
+ */
+function denoStaticResponse(hashed: boolean): string[] {
+  return [
+    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
+    "const staticHeaders = (pathname: string): Record<string, string> => ({",
+    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
+    `  "cache-control": ${hashed ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
+    '  "x-content-type-options": "nosniff",',
+    '  "accept-ranges": "bytes",',
+    "})",
+    "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
+    "const hiddenSegment = (rel: string): boolean =>",
+    '  rel.split(/[\\\\/]/).some((segment) => segment.startsWith(".") && segment !== ".well-known")',
+    "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
+    '  const missing = () => new Response("not found", { status: 404 })',
+    '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
+    "  let file, info",
+    "  try {",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    const real: string = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
+    '    if (!real.startsWith(STATIC_REAL + (STATIC_REAL.includes("\\\\") ? "\\\\" : "/"))) return missing()',
+    "    if (hiddenSegment(real.slice(STATIC_REAL.length + 1))) return missing()",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    file = await Deno.open(real)",
+    "    // Deno.open follows links, so a directory swapped for one after the check above redirects it.",
+    "    // The opened file must be the one at `real`, which must still resolve to itself.",
+    "    const opened = await file.stat()",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    const named = await Deno.stat(real)",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    if (opened.dev !== named.dev || opened.ino !== named.ino || (await Deno.realPath(real)) !== real) {",
+    "      file.close()",
+    "      return missing()",
+    "    }",
+    "    info = opened",
+    "  } catch {",
+    "    file?.close()",
+    "    return missing()",
+    "  }",
+    "  const size: number = info.size",
+    "  const headers = new Headers(staticHeaders(pathname))",
+    '  const range = req.method === "GET" ? parseByteRange(req.headers.get("range"), size) : { kind: "none" as const }',
+    '  if (!info.isFile || req.method === "HEAD" || range.kind === "unsatisfiable") {',
+    "    file.close()",
+    "    if (!info.isFile) return missing()",
+    '    if (range.kind !== "unsatisfiable") {',
+    '      headers.set("content-length", String(size))',
+    "      return new Response(null, { headers })",
+    "    }",
+    '    headers.delete("content-type")',
+    '    headers.set("content-range", "bytes */" + size)',
+    "    return new Response(null, { status: 416, headers })",
+    "  }",
+    '  if (range.kind === "satisfiable" && range.ranges.length === 1) {',
+    "    const { start, end } = range.ranges[0]!",
+    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "    await file.seek(start, Deno.SeekMode.Start)",
+    "    let left = end - start + 1",
+    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
+    '    headers.set("content-length", String(left))',
+    "    const body = new ReadableStream<Uint8Array>({",
+    "      async pull(controller) {",
+    "        const chunk = new Uint8Array(Math.min(left, 65_536))",
+    "        const read: number | null = await file.read(chunk)",
+    "        if (read === null || read === 0) {",
+    "          file.close()",
+    "          controller.close()",
+    "          return",
+    "        }",
+    "        controller.enqueue(chunk.subarray(0, read))",
+    "        left -= read",
+    "        if (left <= 0) {",
+    "          file.close()",
+    "          controller.close()",
+    "        }",
+    "      },",
+    "      cancel: () => file.close(),",
+    "    })",
+    "    return new Response(body, { status: 206, headers })",
+    "  }",
+    '  headers.set("content-length", String(size))',
+    "  return new Response(file.readable, { headers })",
+    "}",
+  ]
 }
 
 /** Measure each emitted output file's raw + gzip size. Reads the file off disk and gzips it with
@@ -1581,7 +1712,9 @@ export interface BuildTargetOptions {
    * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same
    * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known
    * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never
-   * hydrate. Required for `target: "static"` (SSG drives `app.fetch`); ignored otherwise. */
+   * hydrate. Required for `target: "static"` (SSG drives `app.fetch`). For `bun` and `node` it is
+   * optional: given, the opted-in routes are prerendered into `_prerendered/` and the server answers
+   * them from their file; the other targets ignore it. */
   readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>
   /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */
   readonly clientPlugins?: readonly BunPlugin[]
@@ -1710,6 +1843,48 @@ function assertNoPublicCollision(
   }
 }
 
+/** Prerender a self-hosting build's opted-in routes into `dir` and return the pages its server may
+ * answer from their file: those whose render was not specific to its request. */
+async function prerenderForServer(
+  prerenderApp: NonNullable<BuildTargetOptions["prerenderApp"]>,
+  client: BuildManifest,
+  routesDir: string,
+  dir: string,
+  publicFiles: readonly string[],
+  secrets: NonNullable<PrerenderOptions["secrets"]>,
+): Promise<Record<string, ServerPrerenderedPage>> {
+  const owned = `/${PRERENDERED_DIR}/`
+  const clashes = publicFiles.filter((file) => file.toLowerCase().startsWith(owned))
+  if (clashes.length > 0) {
+    throw new Error(
+      `[nifra/web] public file(s) ${clashes.join(", ")} sit under ${owned}, where the build writes its ` +
+        "prerendered pages. Rename or move them out of the public directory.",
+    )
+  }
+  let result: Awaited<ReturnType<typeof prerenderRoutes>>
+  try {
+    result = await prerenderRoutes({
+      app: await prerenderApp(client),
+      routes: discoverRoutes(routesDir).routes,
+      outDir: dir,
+      secrets,
+    })
+  } catch (error) {
+    // Prerendering loads every route module at build time, which a server build never needed before:
+    // one that cannot load there (a connection opened on import, an env var only production sets) costs
+    // the speedup, not the build. A secret in a page still fails it.
+    if (error instanceof SecretScanError) throw error
+    rmSync(dir, { recursive: true, force: true })
+    console.warn(
+      `[nifra/web] prerendering failed, so the server renders every page on demand: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+    return {}
+  }
+  return servablePrerenderedPages(result.prerendered)
+}
+
 /** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */
 export async function buildTarget(
   target: BuildTarget,
@@ -1810,6 +1985,21 @@ export async function buildTargetWith(
     writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
   }
 
+  // A self-hosting server answers its prerendered pages from their file. The static target is all
+  // prerendered pages; the edge targets keep rendering them on demand.
+  const prerenderedPages =
+    options.prerenderApp !== undefined &&
+    (targetPlan.target === "bun" || targetPlan.target === "node")
+      ? await prerenderForServer(
+          options.prerenderApp,
+          client,
+          routesDir,
+          `${staticRoot}/${PRERENDERED_DIR}`,
+          publicFiles,
+          secretScan,
+        )
+      : undefined
+
   if (targetPlan.kind === "static") {
     if (options.prerenderApp === undefined) {
       throw new Error(
@@ -1865,6 +2055,7 @@ export async function buildTargetWith(
       hashedFiles: client.assets,
       ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
       ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
+      ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
     }),
   )
   const { worker } = await bundler.buildServer({

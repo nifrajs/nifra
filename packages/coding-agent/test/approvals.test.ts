@@ -1,4 +1,4 @@
-import { describe, expect, jest, test } from "bun:test"
+import { describe, expect, jest, setSystemTime, test } from "bun:test"
 import {
   AGENT_PROTOCOL_VERSION,
   type AgentApprovalRequiredEvent,
@@ -74,6 +74,26 @@ describe("bounded approvals", () => {
     })
     await expect(result).resolves.toBe(false)
     manager.close()
+  })
+
+  test("an approve that arrives after the deadline, before the late timer, is denied", async () => {
+    setSystemTime(new Date(1_000_000))
+    try {
+      const manager = new ApprovalManager({ timeoutMs: 2_000 })
+      const offered = await manager.offer({
+        id: "approval-late",
+        sessionId: "session",
+        action: "write file",
+        capability: "filesystem",
+      })
+      expect(offered?.expiresAt).toBe(1_002_000)
+      setSystemTime(new Date(1_002_000))
+      const decision = manager.resolve("approval-late", true, "looks good")
+      expect(decision).toMatchObject({ approved: false, reason: "approval timed out" })
+      manager.close()
+    } finally {
+      setSystemTime()
+    }
   })
 
   test("a decision made while the broadcast is still in flight reaches the waiter", async () => {

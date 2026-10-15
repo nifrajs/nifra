@@ -175,6 +175,10 @@ export function cspDocumentNonce(
   return requested ?? policy[CSP_POLICY].generate()
 }
 
+/** A nonce for a render that may write a script of its own; the document carries it only if used. */
+export const cspCandidateNonce = (policy: CspPolicy, requested: string | undefined): string =>
+  requested ?? policy[CSP_POLICY].generate()
+
 /** The Content-Security-Policy value for one document, or `undefined` when the policy sends none. */
 export function cspHeaderValue(
   policy: CspPolicy,

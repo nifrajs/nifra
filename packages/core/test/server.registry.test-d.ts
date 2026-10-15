@@ -160,8 +160,38 @@ export type _MergeDoesNotRetrofitParentHooks = Expect<Equal<ComposedPublic["erro
 declare const dynamicCode: number
 const dynamicStatusApp = server().get("/dynamic", () => status(dynamicCode, { ok: true }))
 type DynamicRoute = RegistryOf<typeof dynamicStatusApp>["/dynamic"]["GET"]
-export type _DynamicStatusIsOpaque = Expect<
-  Equal<NonNullable<DynamicRoute["responses"]>, { 200: unknown }>
+export type _DynamicStatusKeepsBody = Expect<
+  Equal<NonNullable<DynamicRoute["responses"]>, { 200: { readonly ok: true } }>
+>
+export type _DynamicStatusOutput = Expect<Equal<DynamicRoute["output"], { readonly ok: true }>>
+
+// A dynamic code beside a plain return: the 200 arm is either body, never both at once.
+const mixedDynamicApp = server().get("/mixed", (c) =>
+  c.query.get("mode") === "upstream" ? status(dynamicCode, { relayed: true }) : { local: true },
+)
+type MixedDynamicRoute = RegistryOf<typeof mixedDynamicApp>["/mixed"]["GET"]
+export type _DynamicStatusUnionsWithPlain = Expect<
+  Equal<MixedDynamicRoute["output"], { readonly relayed: true } | { local: boolean }>
+>
+
+// The same for a literal 200 beside a plain return, which used to intersect the two bodies.
+const mixedLiteralApp = server().get("/literal", (c) =>
+  c.query.get("mode") === "created" ? status(200, { created: true }) : { existing: true },
+)
+type MixedLiteralRoute = RegistryOf<typeof mixedLiteralApp>["/literal"]["GET"]
+export type _LiteralStatusUnionsWithPlain = Expect<
+  Equal<MixedLiteralRoute["output"], { readonly created: true } | { existing: boolean }>
+>
+
+// A code typed as a literal union keeps every arm: the error stays out of `data`.
+declare const knownCode: 200 | 409
+const knownCodeApp = server().get("/known", () => status(knownCode, { reserved: false }))
+type KnownCodeRoute = RegistryOf<typeof knownCodeApp>["/known"]["GET"]
+export type _KnownCodeSuccess = Expect<
+  Equal<KnownCodeRoute["output"], { readonly reserved: false }>
+>
+export type _KnownCodeErrors = Expect<
+  Equal<KnownCodeRoute["errors"], { 409: { readonly reserved: false } }>
 >
 
 // A handler whose return isn't assignable to the declared response is a compile error (no drift).

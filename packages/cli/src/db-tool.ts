@@ -38,6 +38,7 @@ import {
   readBoundedLines,
   readBoundedStream,
   signalProcessGroup,
+  stopGroupOnExit,
 } from "./mcp-io.ts"
 
 /** Added to the declared `timeoutMs` before the subprocess is killed. */
@@ -138,6 +139,7 @@ export async function runDbChild(
     stderr: "pipe",
     detached: OWN_PROCESS_GROUP,
   })
+  stopGroupOnExit(proc)
   let killedFor: "startup" | "deadline" | "cancel" | undefined
   const kill = (reason: NonNullable<typeof killedFor>): void => {
     if (killedFor !== undefined) return

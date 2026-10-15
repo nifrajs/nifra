@@ -250,7 +250,9 @@ async function init(): Promise<void> {
   }
 
   // A share link (`#play=…`) reconstructs custom editor state; otherwise the SSR'd starter stands.
-  const payload = readShareHash(location.hash)
+  // Never inside a frame: a page framing /play could load code of its choosing and steer a click onto
+  // Run, which runs it on this origin. The home page's own embed carries no share link.
+  const payload = window.self === window.top ? readShareHash(location.hash) : null
   const restored = payload ? await decodeState(payload) : null
   if (restored) {
     code.value = restored.code
@@ -259,6 +261,13 @@ async function init(): Promise<void> {
     for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
       btn.classList.remove("active") // custom code - no preset is active
     }
+    out.replaceChildren(
+      el(
+        "div",
+        "play-running",
+        "This code came from a share link and runs in this tab when you press Run. Read it first.",
+      ),
+    )
   }
   // Run once so the results panel is populated on first paint (restored or default).
   if (!restored) void run(code, reqs, out)

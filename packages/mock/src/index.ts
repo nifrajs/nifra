@@ -309,7 +309,23 @@ export function generateMockValue(
   }
   const alternatives = raw.anyOf as readonly unknown[] | undefined
   if (Array.isArray(alternatives) && alternatives.length > 0) {
-    return generateMockValue(alternatives[randomIndex(rand, alternatives.length)], fieldName, rand)
+    const first = randomIndex(rand, alternatives.length)
+    const { anyOf: _alternatives, ...siblings } = raw
+    if (!Object.keys(siblings).some((key) => !ANNOTATIONS.has(key)))
+      return generateMockValue(alternatives[first], fieldName, rand)
+    // The keywords beside `anyOf` bind whichever alternative is taken, so a value is generated from
+    // the two merged. An alternative they contradict is skipped; none left fails closed.
+    let refusal: UnsupportedMockSchemaError | undefined
+    for (let offset = 0; offset < alternatives.length; offset++) {
+      const alternative = alternatives[(first + offset) % alternatives.length]
+      try {
+        return generateMockValue(mergeIntersection([siblings, alternative]), fieldName, rand)
+      } catch (error) {
+        if (!(error instanceof UnsupportedMockSchemaError)) throw error
+        refusal = error
+      }
+    }
+    throw refusal
   }
   const intersections = raw.allOf as readonly unknown[] | undefined
   if (Array.isArray(intersections) && intersections.length > 0) {
