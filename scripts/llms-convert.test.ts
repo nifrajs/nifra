@@ -75,6 +75,16 @@ describe("jsxToMarkdown", () => {
       "Mark it with `// nifra-expect <code>: <reason>` or\n`client<typeof app>`, never **bare**.",
     )
   })
+
+  test("named and numeric entities decode to the ASCII the page shows", () => {
+    const md = convert(
+      page(
+        "",
+        "<p>\n  The app&apos;s <code>&#123; op &#125;</code> &ldquo;wins&rdquo; &rarr; done.\n</p>",
+      ),
+    )
+    expect(md).toBe('The app\'s `{ op }` "wins" -> done.')
+  })
 })
 
 describe("emptyFences", () => {

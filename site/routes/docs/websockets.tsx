@@ -79,7 +79,8 @@ app.ws("/room/:id", {
 })`
 
 const WORKERS = `// doc-check: skip - Workers entry: a Durable Object hub holds the connections.
-import { createWebSocketHub, toFetchHandler } from "@nifrajs/workers"
+import { toFetchHandler } from "@nifrajs/core/server"
+import { createWebSocketHub } from "@nifrajs/workers"
 
 export const NifraWebSocketHub = createWebSocketHub(app) // bind as NIFRA_WS_HUB in wrangler.toml
 export default toFetchHandler(app, { webSocketHub: (env) => env.NIFRA_WS_HUB })`

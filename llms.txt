@@ -30,7 +30,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra - Edge & bindings](/docs/edge): Typed platform bindings in Nifra: c.env, Platform<Env>, c.waitUntil, KV/D1 on the edge.
 - [Nifra - WebSockets](/docs/websockets): app.ws(path, handler) registers a typed WebSocket route - an upgrade guard, a portable socket, contract-validated messages, and topic pub/sub - served on Bun, Deno, Node, and Cloudflare Workers.
 - [Nifra - Deployment](/docs/deployment): One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
-- [Nifra - CLI](/docs/cli): The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR and complete target-specific deploy builds.
+- [Nifra - CLI](/docs/cli): Every Nifra CLI command: dev, build and start, the check and contract gates, code generation, the agent and dev-server tools, and upgrades.
 - [Nifra - Coding agents](/docs/agents): Nifra's agent layer: live MCP tools, bounded repairable turns, native approvals, resumable evidence, content-free browser views, capability registry, decision inbox, Run Studio, A2A, and AG-UI.
 - [Nifra - Dev & HMR](/docs/dev): Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native HMR loop with no Vite dependency. Production builds use Bun.
 - [Nifra - Troubleshooting](/docs/troubleshooting): Fixes keyed on the literal error strings Nifra prints: `may not ship to a browser` (backend code, a node: built-in or a server package reached a browser build), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).

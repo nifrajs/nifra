@@ -661,6 +661,10 @@ const css = `
     .wrap { width: min(calc(100% - 32px), 1140px); }
     table { font-size: 12px; }
     th, td { padding: 12px; }
+    /* A command beside its description leaves the command a third of a phone: stack them. */
+    .cmd-table thead { display: none; }
+    .cmd-table tr, .cmd-table td { display: block; }
+    .cmd-table td:first-child { padding-bottom: 6px; border-bottom: none; }
     footer.site .wrap { flex-direction: column; }
     .mult-grid { grid-template-columns: minmax(0, 1fr); }
   }
