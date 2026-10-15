@@ -44,8 +44,9 @@ const RULES: readonly Rule[] = [
       },
       "packages/web/src/dev.ts": { count: 1, reason: "the fixed dev directory under the app root" },
       "packages/web/src/build.ts": {
-        count: 5,
-        reason: "a mkdtemp entry directory, and outDir/workDir after assertDisposableDir",
+        count: 6,
+        reason:
+          "a mkdtemp entry directory, and outDir/workDir (or _prerendered inside outDir) after assertDisposableDir",
       },
       "packages/web/src/server-components/build.ts": {
         count: 2,

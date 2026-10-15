@@ -10,6 +10,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve, sep } from "node:path"
+import { prerenderedDocumentHeaders } from "./internal/prerendered-pages.ts"
 import { assertNoSecrets, buildEnvironment, type SecretExemption } from "./internal/secret-scan.ts"
 import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
 import { DATA_HEADER, PRERENDERED_GLOBAL, PRERENDERED_LIST_PATH } from "./router.ts"
@@ -52,6 +53,10 @@ export interface PrerenderEntry {
   /** The loader-data file written alongside (`<path>/_data.json`) so a client soft-nav INTO this
    * route skips the worker. Absent when the data-mode response is NDJSON (a deferred loader). */
   readonly dataFile?: string
+  /** The document headers a self-hosted server sends with this file (its `content-language` and CSP).
+   * Absent when the render was specific to its request - it set a cookie, was private or no-store, or
+   * varied on a request header - so a server keeps rendering this path on demand. */
+  readonly serveHeaders?: Readonly<Record<string, string>>
 }
 
 export interface PrerenderResult {
@@ -184,7 +189,14 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) - release the stream
     }
 
-    prerendered.push({ path, file, bytes: html.length, ...(dataFile ? { dataFile } : {}) })
+    const serveHeaders = prerenderedDocumentHeaders(res.status, res.headers)
+    prerendered.push({
+      path,
+      file,
+      bytes: html.length,
+      ...(dataFile ? { dataFile } : {}),
+      ...(serveHeaders ? { serveHeaders } : {}),
+    })
   }
 
   for (const route of options.routes) {

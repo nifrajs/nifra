@@ -482,7 +482,8 @@ export default function Contract() {
         <li>
           <strong>Prerender.</strong> A prerendered page is a static file: it is served without the
           loader's headers or cookies. Set those on the host that serves the file, or keep the route
-          on-demand.
+          on-demand. A <code>bun</code> or <code>node</code> build serves the file itself, after{" "}
+          <code>use</code> middleware, with the page's <code>content-language</code> and CSP.
         </li>
       </ul>
 

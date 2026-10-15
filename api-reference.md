@@ -5282,6 +5282,9 @@ _No named exports (side-effect entrypoint)._
   A dynamic load that has started but is not part of the initial render barrier.
 - **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
   When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
+- **PrerenderedPageReaderOptions** _(interface)_ - `interface PrerenderedPageReaderOptions`
+- **PrerenderedPages** _(interface)_ - `interface PrerenderedPages`
+  Pages a self-hosted build prerendered, which `createWebApp` answers from their file instead of rendering them. The file is served from inside the app, after `use` middleware, so a gate in front of the pages still runs.
 - **PreviewEndpointOptions** _(interface)_ - `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
 - **PublicDirCache** _(interface)_ - `interface PublicDirCache`
@@ -5460,6 +5463,8 @@ _No named exports (side-effect entrypoint)._
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **pageLocaleIn** _(function)_ - `pageLocaleIn: (config: PageLocales, path: string) => PageLocale | undefined`
   The locale a path is in, by the rule `@nifrajs/i18n/routing`'s `localeOf` follows: a first path segment that names a served locale, ignoring ASCII case, or else the default.
+- **prerenderedPageReader** _(function)_ - `prerenderedPageReader: (options: PrerenderedPageReaderOptions) => (pathname: string) => Promise<string | undefined>`
+  Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so…
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => ResponseResult`
@@ -5573,6 +5578,8 @@ _No named exports (side-effect entrypoint)._
   Each importable option mapped to the specifier of the module that exports it.
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
+- **ServerPrerenderedPage** _(interface)_ - `interface ServerPrerenderedPage`
+  One page a self-hosting build prerendered: its file under `_prerendered/` and the headers it is served with (a prerender entry's `file` and `serveHeaders`).
 - **SizeReport** _(interface)_ - `interface SizeReport`
   A whole build's size report - every chunk (largest first) + the totals.
 - **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`

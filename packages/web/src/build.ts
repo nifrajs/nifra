@@ -71,6 +71,7 @@ import {
   originName,
   publicScanFiles,
   type SecretExemption,
+  SecretScanError,
   scanForSecrets,
   textOf,
 } from "./internal/secret-scan.ts"
@@ -94,7 +95,7 @@ import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { assertNoImportGlob, importGlobPlugin } from "./plugins/import-glob.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
-import { prerenderRoutes } from "./prerender.ts"
+import { type PrerenderOptions, prerenderRoutes } from "./prerender.ts"
 import { CONTENT_TYPES, IMMUTABLE, ONE_DAY } from "./public-dir.ts"
 import { createZoneClassifier } from "./zones.ts"
 
@@ -1299,6 +1300,16 @@ const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>>
   vercel: "x-real-ip",
 }
 
+/** Where a self-hosting build writes its prerendered pages, beside `server.js`. */
+const PRERENDERED_DIR = "_prerendered"
+
+/** One page a self-hosting build prerendered: its file under `_prerendered/` and the headers it is
+ * served with (a prerender entry's `file` and `serveHeaders`). */
+export interface ServerPrerenderedPage {
+  readonly file: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
 /**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
@@ -1335,6 +1346,9 @@ export function generateServerEntry(options: {
   readonly clientIp?: ServerEntryClientIp
   /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */
   readonly copyChunks?: boolean
+  /** `bun` / `node` only: the pages the build prerendered into `_prerendered/`, by request path, which
+   * the app answers from their file (see `createWebApp`'s `prerenderedPages`). */
+  readonly prerenderedPages?: Readonly<Record<string, ServerPrerenderedPage>>
 }): string {
   const {
     target,
@@ -1369,10 +1383,18 @@ export function generateServerEntry(options: {
   // Bun and Node serve the client bundle through `servePublicDir`. Deno bundles for the browser
   // condition, where `node:fs` is a stub, so its entry runs the same checks on Deno's own file API.
   const nodeFs = target === "bun" || target === "node"
+  const prerendered = Object.entries(options.prerenderedPages ?? {})
+  if (prerendered.length > 0 && !nodeFs) {
+    throw new Error(
+      `[nifra/web] generateServerEntry: prerendered pages are served by the bun and node targets, not ${target}`,
+    )
+  }
   const lines: string[] = [
-    nodeFs
-      ? 'import { createWebApp, servePublicDir } from "@nifrajs/web"'
-      : 'import { createWebApp } from "@nifrajs/web"',
+    !nodeFs
+      ? 'import { createWebApp } from "@nifrajs/web"'
+      : prerendered.length > 0
+        ? 'import { createWebApp, prerenderedPageReader, servePublicDir } from "@nifrajs/web"'
+        : 'import { createWebApp, servePublicDir } from "@nifrajs/web"',
   ]
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
@@ -1393,11 +1415,27 @@ export function generateServerEntry(options: {
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
   if (target === "deno") lines.push('import { parseByteRange } from "@nifrajs/core/range"')
+  if (prerendered.length > 0) {
+    const headers = Object.fromEntries(prerendered.map(([path, page]) => [path, page.headers]))
+    const files = Object.fromEntries(prerendered.map(([path, page]) => [path, page.file]))
+    lines.push(
+      "",
+      `// The pages the build prerendered into ${PRERENDERED_DIR}/, answered from their file after \`use\`.`,
+      "const prerenderedPages = {",
+      `  pages: ${JSON.stringify(headers)},`,
+      "  read: prerenderedPageReader({",
+      `    dir: fileURLToPath(new URL(${JSON.stringify(`./${PRERENDERED_DIR}/`)}, import.meta.url)),`,
+      `    files: ${JSON.stringify(files)},`,
+      "  }),",
+      "}",
+    )
+  }
   lines.push(
     "",
     "const app = createWebApp({",
     "  adapter,",
     ...(useImport !== undefined ? ["  use,"] : []),
+    ...(prerendered.length > 0 ? ["  prerenderedPages,"] : []),
     ...importedOptions.map((name) => `  ${name},`),
     "  manifest,",
     "  clientEntry,",
@@ -1675,7 +1713,9 @@ export interface BuildTargetOptions {
    * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same
    * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known
    * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never
-   * hydrate. Required for `target: "static"` (SSG drives `app.fetch`); ignored otherwise. */
+   * hydrate. Required for `target: "static"` (SSG drives `app.fetch`). For `bun` and `node` it is
+   * optional: given, the opted-in routes are prerendered into `_prerendered/` and the server answers
+   * them from their file; the other targets ignore it. */
   readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>
   /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */
   readonly clientPlugins?: readonly BunPlugin[]
@@ -1804,6 +1844,56 @@ function assertNoPublicCollision(
   }
 }
 
+/** Prerender a self-hosting build's opted-in routes into `dir` and return the pages its server may
+ * answer from their file: those whose render was not specific to its request. */
+async function prerenderForServer(
+  prerenderApp: NonNullable<BuildTargetOptions["prerenderApp"]>,
+  client: BuildManifest,
+  routesDir: string,
+  dir: string,
+  publicFiles: readonly string[],
+  secrets: NonNullable<PrerenderOptions["secrets"]>,
+): Promise<Record<string, ServerPrerenderedPage>> {
+  const owned = `/${PRERENDERED_DIR}/`
+  const clashes = publicFiles.filter((file) => file.toLowerCase().startsWith(owned))
+  if (clashes.length > 0) {
+    throw new Error(
+      `[nifra/web] public file(s) ${clashes.join(", ")} sit under ${owned}, where the build writes its ` +
+        "prerendered pages. Rename or move them out of the public directory.",
+    )
+  }
+  let result: Awaited<ReturnType<typeof prerenderRoutes>>
+  try {
+    result = await prerenderRoutes({
+      app: await prerenderApp(client),
+      routes: discoverRoutes(routesDir).routes,
+      outDir: dir,
+      secrets,
+    })
+  } catch (error) {
+    // Prerendering loads every route module at build time, which a server build never needed before:
+    // one that cannot load there (a connection opened on import, an env var only production sets) costs
+    // the speedup, not the build. A secret in a page still fails it.
+    if (error instanceof SecretScanError) throw error
+    rmSync(dir, { recursive: true, force: true })
+    console.warn(
+      `[nifra/web] prerendering failed, so the server renders every page on demand: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+    return {}
+  }
+  const pages: Record<string, ServerPrerenderedPage> = {}
+  for (const entry of result.prerendered) {
+    if (entry.serveHeaders === undefined) continue
+    pages[new URL(entry.path, "http://localhost").pathname] = {
+      file: entry.file,
+      headers: entry.serveHeaders,
+    }
+  }
+  return pages
+}
+
 /** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */
 export async function buildTarget(
   target: BuildTarget,
@@ -1904,6 +1994,21 @@ export async function buildTargetWith(
     writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
   }
 
+  // A self-hosting server answers its prerendered pages from their file. The static target is all
+  // prerendered pages; the edge targets keep rendering them on demand.
+  const prerenderedPages =
+    options.prerenderApp !== undefined &&
+    (targetPlan.target === "bun" || targetPlan.target === "node")
+      ? await prerenderForServer(
+          options.prerenderApp,
+          client,
+          routesDir,
+          `${staticRoot}/${PRERENDERED_DIR}`,
+          publicFiles,
+          secretScan,
+        )
+      : undefined
+
   if (targetPlan.kind === "static") {
     if (options.prerenderApp === undefined) {
       throw new Error(
@@ -1959,6 +2064,7 @@ export async function buildTargetWith(
       hashedFiles: client.assets,
       ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
       ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
+      ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
     }),
   )
   const { worker } = await bundler.buildServer({

@@ -145,7 +145,8 @@ Usage:
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cloudflare | vercel | static. Packages
-                                         buildClient + buildServer (+ prerender for static) so an app
+                                         buildClient + buildServer (+ prerender for static, bun and
+                                         node, whose server answers those pages from file) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
@@ -913,8 +914,12 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
-    // The static target needs a built app to drive prerendering - only build it when targeting static.
-    ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
+    // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
+    // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
+    // transforms the prerender pass (Bun's runtime) does not apply: those pages keep rendering on demand.
+    ...(target === "static" || (!useVite && (target === "bun" || target === "node"))
+      ? { prerenderApp: await buildPrerenderApp(app) }
+      : {}),
   })
   // A production build must not certify itself green while a workspace-linked dependency ships a dist
   // artifact older than (or absent next to) its source: the `bun`->src condition let this compile read
@@ -928,7 +933,7 @@ async function buildForTarget(
   if (flags.report) console.log(`\n${renderSizeReport(result.size)}`)
 }
 
-/** Build the app FACTORY for the `static` target's prerender pass. Registers the
+/** Build the app FACTORY for the prerender pass of the `static`, `bun` and `node` targets. Registers the
  * framework's SSR Bun plugins (so `.vue`/`.svelte`/Solid routes import) once, then return a factory that
  * `createWebApp`s the app for the client build's manifest. The client entry MUST be the real content-hashed
  * bundle (`client.entry`) - it's the hydration `<script src>` the prerendered HTML emits, so a placeholder

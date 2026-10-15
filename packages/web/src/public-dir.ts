@@ -315,3 +315,68 @@ export function servePublicDir(
     }
   }
 }
+
+export interface PrerenderedPageReaderOptions {
+  /** Absolute path of the directory the build wrote the prerendered pages into. */
+  readonly dir: string
+  /** Each page path mapped to its file, relative to `dir`. */
+  readonly files: Readonly<Record<string, string>>
+  /** Bytes of HTML kept in memory once read (default 32 MiB); a page past the budget is read per request. */
+  readonly cacheBytes?: number
+}
+
+/**
+ * Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's
+ * own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the
+ * deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so a page
+ * is kept after its first read; `undefined` (a missing or refused file) renders the page on demand.
+ */
+export function prerenderedPageReader(
+  options: PrerenderedPageReaderOptions,
+): (pathname: string) => Promise<string | undefined> {
+  const root = resolve(options.dir)
+  const rootReal = realpath(root).catch(() => undefined)
+  const files = new Map(Object.entries(options.files))
+  const budget = options.cacheBytes ?? 32 * 1024 * 1024
+  const cache = new Map<string, string>()
+  let cachedBytes = 0
+  return async (pathname) => {
+    const cached = cache.get(pathname)
+    if (cached !== undefined) return cached
+    const rel = files.get(pathname)
+    if (rel === undefined) return undefined
+    const abs = resolve(root, rel)
+    if (!abs.startsWith(root + sep) || isHiddenPath(root, abs)) return undefined
+    const [resolvedRoot, resolvedFile] = await Promise.all([
+      rootReal,
+      realpath(abs).catch(() => undefined),
+    ])
+    if (
+      resolvedRoot === undefined ||
+      resolvedFile === undefined ||
+      !resolvedFile.startsWith(resolvedRoot + sep)
+    ) {
+      return undefined
+    }
+    let handle: FileHandle
+    try {
+      handle = await openResolved(resolvedFile)
+    } catch {
+      return undefined
+    }
+    try {
+      if (!(await handle.stat()).isFile()) return undefined
+      const bytes = await handle.readFile()
+      const html = bytes.toString("utf8")
+      if (!cache.has(pathname) && cachedBytes + bytes.byteLength <= budget) {
+        cache.set(pathname, html)
+        cachedBytes += bytes.byteLength
+      }
+      return html
+    } catch {
+      return undefined
+    } finally {
+      await handle.close().catch(() => undefined)
+    }
+  }
+}

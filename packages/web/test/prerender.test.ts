@@ -87,7 +87,13 @@ describe("prerenderRoutes", () => {
     const written = readFileSync(join(dir, "index.html"), "utf8")
     expect(written).toContain("HOME")
     expect(result.prerendered).toEqual([
-      { path: "/", file: "index.html", bytes: written.length, dataFile: "_data.json" },
+      {
+        path: "/",
+        file: "index.html",
+        bytes: written.length,
+        dataFile: "_data.json",
+        serveHeaders: {},
+      },
     ])
     expect(result.skipped).toEqual([])
   })
@@ -273,6 +279,7 @@ describe("prerenderRoutes", () => {
         file: "blog/café au lait/index.html",
         bytes: expect.any(Number),
         dataFile: "blog/café au lait/_data.json",
+        serveHeaders: {},
       },
     ])
     expect(existsSync(join(dir, "blog/café au lait/index.html"))).toBe(true)

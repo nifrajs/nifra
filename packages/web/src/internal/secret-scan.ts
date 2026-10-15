@@ -694,10 +694,15 @@ export function createRedactor(
 export const buildEnvironment = (): Readonly<Record<string, string | undefined>> =>
   (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
 
+/** A build artifact holds a secret. Its own class so a step that tolerates other failures still stops. */
+export class SecretScanError extends Error {
+  override name = "SecretScanError"
+}
+
 /** Scan and throw the build-failing message on any finding. */
 export function assertNoSecrets(input: SecretScanInput): void {
   const message = formatSecretFindings(scanForSecrets(input))
-  if (message !== undefined) throw new Error(message)
+  if (message !== undefined) throw new SecretScanError(message)
 }
 
 /** The build-failing message for secret findings, or `undefined` when there are none. */
