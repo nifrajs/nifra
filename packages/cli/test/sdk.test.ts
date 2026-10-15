@@ -5,7 +5,12 @@ import { join } from "node:path"
 import { server } from "@nifrajs/core/server"
 import { type OpenAPIDocument, toOpenAPI } from "@nifrajs/schema/openapi"
 import { renderSdk, runSdk, SdkGenerationError } from "../src/sdk.ts"
-import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
+import {
+  createFixtureRoot,
+  removeFixtureRoot,
+  removeReleasedDirectory,
+  writeAppFile,
+} from "./fixture-root.ts"
 
 const document = toOpenAPI(server().get("/users/:id", () => ({ ok: true }))) as OpenAPIDocument
 
@@ -309,6 +314,9 @@ describe("SDK generation", () => {
 
   if (Bun.which("go") !== null) {
     const goCompileTimeout = process.platform === "win32" ? 90_000 : 30_000
+    // The build gets its own deadline inside the test's, so a slow build is killed and its directory
+    // removed here rather than by the runner while `go` still holds it.
+    const goBuildDeadline = goCompileTimeout - 15_000
 
     test(
       "generated Go compiles with the standard library",
@@ -321,18 +329,22 @@ describe("SDK generation", () => {
             cwd: dir,
             stdout: "ignore",
             stderr: "pipe",
+            timeout: goBuildDeadline,
           })
           const stderr = goProcess.stderr
             ? new Response(goProcess.stderr).text()
             : Promise.resolve("")
           const [exitCode, errorOutput] = await Promise.all([goProcess.exited, stderr])
+          if (goProcess.signalCode !== null) {
+            throw new Error(`go build did not finish within ${goBuildDeadline} ms`)
+          }
           if (exitCode !== 0) {
             throw new Error(
               `go build failed with exit code ${exitCode}${errorOutput.trim() ? `: ${errorOutput.trim()}` : ""}`,
             )
           }
         } finally {
-          await rm(dir, { recursive: true, force: true })
+          await removeReleasedDirectory(dir)
         }
       },
       { timeout: goCompileTimeout },
