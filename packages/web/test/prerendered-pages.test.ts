@@ -303,7 +303,7 @@ describe("prerenderedPageReader", () => {
 
   test("a page is served when its file fails to close", async () => {
     const probe = await open(join(dir, "index.html"))
-    const proto = Object.getPrototypeOf(probe) as FileHandle
+    const proto: FileHandle = Object.getPrototypeOf(probe)
     await probe.close()
     const close = proto.close
     const spy = spyOn(proto, "close").mockImplementationOnce(async function (this: FileHandle) {
