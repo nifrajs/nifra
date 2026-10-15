@@ -72,11 +72,12 @@ describe("negotiateLocale", () => {
     const header = `${ranges.join(",").slice(0, 16_000)},l39-r39;q=0.01`
     const options = { locales, defaultLocale: "l0-R0" }
     const started = performance.now()
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 1000; i++) {
       expect(negotiateLocale(req({ "accept-language": header }), options)).toBe("l39-R39")
     }
-    // 100 negotiations took 445 ms when every range was sorted and matched against every locale.
-    expect(performance.now() - started).toBeLessThan(200)
+    // 1000 negotiations took 4.8 s when every range was sorted and matched against every locale, and
+    // take about 0.3 s with a lookup per range.
+    expect(performance.now() - started).toBeLessThan(2_000)
   })
 })
 
