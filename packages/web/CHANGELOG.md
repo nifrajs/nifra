@@ -54,6 +54,7 @@
 - 3318232: `servePublicDir` reads a body of up to 256 KiB whole through its pinned descriptor and closes it before the response leaves. A larger body still streams. On Bun, a 200 KB public file is served in 0.17 ms where a `node:fs` stream took 0.28 ms; a 10 KB file takes 0.12-0.14 ms instead of 0.16 ms. The self-hosted Bun, Node and Deno entries serve static files through this handler.
 - 7e5cd65: The self-hosted Deno entry's static handler applies `servePublicDir`'s hidden-file rule to the real path, so `/assets/<name>` linking to a `.env` inside the deploy directory is 404 rather than served. It also checks that the file it opened is still the one at the checked real path. `Deno.open` follows links, so a directory swapped for a link after the containment check used to redirect the open outside the deploy directory.
 - d874102: No behavior change: the error a secret in a build artifact throws sets its name in a constructor, and the prerendered page reader's failure paths are tested.
+- 80bf986: Page documents render with less work per request. Loader data that a closed output schema has settled skips the scan for deferred values. The request origin is parsed once per host. An empty query string skips search parsing. The render options are assembled without a copy per optional field. On the SSR bench apps this measured 6 to 10% more requests per second on Bun and Node.
 - Updated dependencies [7ab9692]
 - Updated dependencies [808bac8]
 - Updated dependencies [d4bae56]
