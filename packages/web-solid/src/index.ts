@@ -34,10 +34,10 @@ function redactedError(): Error {
 /**
  * Render `app` with every Error that Solid serializes for hydration replaced. An `<ErrorBoundary>` that
  * caught on the server, or a failed resource, otherwise ships the message and stack in an inline script.
- * Nested contexts copy this one, so they keep the wrapped `serialize`.
+ * Nested contexts copy this one, so they keep the wrapped `serialize`. NODE_ENV is read only when an
+ * Error is serialized: on Node every `process.env` read is a native call, and this runs every render.
  */
 function redactingErrors<T>(app: () => T): () => T {
-  if (showsErrors()) return app
   return () => {
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Solid's server renderers set a context with serialize; the check below handles its absence.
     const context = sharedConfig.context as
@@ -46,7 +46,7 @@ function redactingErrors<T>(app: () => T): () => T {
     const serialize = context?.serialize
     if (context !== undefined && serialize !== undefined) {
       context.serialize = (id, value) =>
-        serialize(id, value instanceof Error ? redactedError() : value)
+        serialize(id, value instanceof Error && !showsErrors() ? redactedError() : value)
     }
     return app()
   }
