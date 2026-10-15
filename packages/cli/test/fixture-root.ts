@@ -25,11 +25,14 @@ export function removeFixtureRoot(root: string): void {
  * Remove a directory a killed tool may still hold. On Windows its child processes (a killed `go`
  * leaves `compile` running) keep their handles for a moment, and removal fails with EBUSY until then.
  */
-export async function removeReleasedDirectory(directory: string): Promise<void> {
+export async function removeReleasedDirectory(
+  directory: string,
+  remove: (directory: string) => void = (path) => rmSync(path, { recursive: true, force: true }),
+): Promise<void> {
   const deadline = Date.now() + 10_000
   for (;;) {
     try {
-      rmSync(directory, { recursive: true, force: true })
+      remove(directory)
       return
     } catch (error) {
       const code = error instanceof Error ? Reflect.get(error, "code") : undefined
