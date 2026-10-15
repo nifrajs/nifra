@@ -696,7 +696,10 @@ export const buildEnvironment = (): Readonly<Record<string, string | undefined>>
 
 /** A build artifact holds a secret. Its own class so a step that tolerates other failures still stops. */
 export class SecretScanError extends Error {
-  override name = "SecretScanError"
+  constructor(message: string) {
+    super(message)
+    this.name = "SecretScanError"
+  }
 }
 
 /** Scan and throw the build-failing message on any finding. */

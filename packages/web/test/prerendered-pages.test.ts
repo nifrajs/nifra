@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { type FileHandle, open } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DRAFT_COOKIE, enableDraft } from "../src/draft.ts"
@@ -293,5 +294,28 @@ describe("prerenderedPageReader", () => {
     expect(await read("/escape")).toBeUndefined()
     expect(await read("/hidden")).toBeUndefined()
     expect(await read("/dir")).toBeUndefined()
+  })
+
+  test("a directory that is not there reads no page", async () => {
+    const read = prerenderedPageReader({ dir: join(dir, "gone"), files: { "/": "index.html" } })
+    expect(await read("/")).toBeUndefined()
+  })
+
+  test("a page is served when its file fails to close", async () => {
+    const probe = await open(join(dir, "index.html"))
+    const proto = Object.getPrototypeOf(probe) as FileHandle
+    await probe.close()
+    const close = proto.close
+    const spy = spyOn(proto, "close").mockImplementationOnce(async function (this: FileHandle) {
+      await close.call(this)
+      throw new Error("EIO")
+    })
+    try {
+      const read = prerenderedPageReader({ dir, files: { "/": "index.html" } })
+      expect(await read("/")).toBe("home")
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
