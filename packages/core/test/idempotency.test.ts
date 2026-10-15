@@ -454,6 +454,18 @@ describe("idempotency primitives", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a refused response whose cancel fails still reports the size error", async () => {
+    const original = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          throw new Error("producer already closed")
+        },
+      }),
+      { headers: { "content-length": "1000000" } },
+    )
+    await expect(serializeResponse(original, { maxBytes: 10 })).rejects.toThrow(/response exceeds/i)
+  })
+
   test("replay enforces the configured response bound before decoding store data", () => {
     expect(() =>
       responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: 2 }),

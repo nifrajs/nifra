@@ -19,6 +19,7 @@ import {
   unlink,
 } from "node:fs/promises"
 import { basename, dirname, join, posix, resolve, sep } from "node:path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
   type ListOptions,
@@ -90,19 +91,21 @@ const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => 
 const WINDOWS_RENAME_BUSY: ReadonlySet<unknown> = new Set(["EPERM", "EACCES", "EBUSY"])
 const RENAME_RETRY_DELAYS_MS = [1, 2, 4, 8, 16, 32, 64, 100, 100, 100, 100, 100]
 
-async function renameOver(from: string, to: string): Promise<void> {
+/** `move(from, to)`, retried while `retryBusy` and the target is busy. Exported for its test. */
+export async function renameOver(
+  from: string,
+  to: string,
+  move: (from: string, to: string) => Promise<void> = rename,
+  retryBusy: boolean = process.platform === "win32",
+): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await rename(from, to)
+      return await move(from, to)
     } catch (error) {
       const delay = RENAME_RETRY_DELAYS_MS[attempt]
-      if (
-        process.platform !== "win32" ||
-        delay === undefined ||
-        !WINDOWS_RENAME_BUSY.has(errorCode(error))
-      )
+      if (!retryBusy || delay === undefined || !WINDOWS_RENAME_BUSY.has(errorCode(error)))
         throw error
-      await new Promise((resolve) => setTimeout(resolve, delay))
+      await sleep(delay)
     }
   }
 }

@@ -136,6 +136,25 @@ test("expiry during a marker read cannot revive a held session", async () => {
   expect((await sessions.get(context(cookie).c)).isEmpty).toBe(true)
 })
 
+test("a logout that lands after a renewal's write leaves no session and no cookie", async () => {
+  const { sessions, kv } = setup()
+  const cookie = await login(sessions)
+  const held = context(cookie)
+  const live = await sessions.get(held.c)
+  let markerReads = 0
+  // The commit reads the marker before its write and again after it; the logout lands in between.
+  kv.beforeMarkerRead = async () => {
+    if (++markerReads < 2) return
+    kv.beforeMarkerRead = undefined
+    await sessions.destroy(context(cookie).c)
+  }
+  await sessions.commit(held.c, live)
+
+  expect(markerReads).toBe(2)
+  expect(held.writes).toEqual([])
+  expect((await sessions.get(context(cookie).c)).isEmpty).toBe(true)
+})
+
 test("rotation cannot bypass a live revocation marker", async () => {
   const { sessions } = setup()
   const cookie = await login(sessions)
