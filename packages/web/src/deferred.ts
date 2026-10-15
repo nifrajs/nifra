@@ -6,6 +6,7 @@
  * resolution scripts settle. The per-adapter `<Await>` lives in `@nifrajs/web-{solid,react}/client`.
  */
 import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-codec"
+import { isDeferredFree } from "./internal/deferred-free.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 
 /**
@@ -65,6 +66,7 @@ export function prepareDeferred(
   readonly deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>
 } {
   const deferred: Array<{ id: number; promise: Promise<unknown> }> = []
+  if (isDeferredFree(data)) return { forComponent: data, forClient: data, deferred }
   // Structural sharing: a subtree with no deferred value returns the ORIGINAL node for
   // both sides (`fc`/`cl` identical to the input), so a deferred-free result - the common case - is
   // returned by reference with no persisted clone, no downstream copy, and no throwaway clone

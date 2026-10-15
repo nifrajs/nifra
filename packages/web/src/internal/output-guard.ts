@@ -14,6 +14,7 @@
  * its own `validate` output, as zod and valibot objects do by default.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
+import { markDeferredFree } from "./deferred-free.ts"
 import { wireDate } from "./wire-date.ts"
 
 // Registry symbols shared with core and `@nifrajs/schema`, so two copies of either still agree.
@@ -84,6 +85,8 @@ interface CompiledGuard {
   readonly validate: StandardSchemaV1["~standard"]["validate"]
   /** Dev only: name the keys the guard dropped, so a schema missing a field is not a silent blank. */
   readonly warnDropped: boolean
+  /** No value this guard passes can hold a `defer()` marker (see internal/deferred-free.ts). */
+  readonly deferredFree: boolean
 }
 
 interface Deferred {
@@ -200,6 +203,8 @@ function shapeOf(
 }
 
 class Compiler {
+  /** Some node may pass a `defer()` marker on: a deferred node, or one that lets any value through. */
+  mayPassMarker = false
   private readonly memo = new Map<Node, Project>()
   private readonly issueFree = new WeakSet<Project>([LEAF, LEAF_ARRAY, DATE])
   private readonly ids = new Map<string, Node>()
@@ -264,14 +269,22 @@ class Compiler {
       case "array":
         return this.array(node, where)
       case "leaf":
+        // `not` (or an object `const`) without a `type` can accept an object.
+        if (node.type === undefined) this.mayPassMarker = true
         return LEAF
       default:
-        return UNKNOWN
+        return this.unknown()
     }
   }
 
+  private unknown(): Project {
+    this.mayPassMarker = true
+    return UNKNOWN
+  }
+
   private extra(schema: unknown, where: string): Project | undefined {
-    if (schema === true || (isNode(schema) && Object.keys(schema).length === 0)) return UNKNOWN
+    if (schema === true || (isNode(schema) && Object.keys(schema).length === 0))
+      return this.unknown()
     return isNode(schema) ? this.compile(schema, `${where}/*`) : undefined
   }
 
@@ -359,10 +372,10 @@ class Compiler {
         ? node.items
         : []
     const head = prefixNodes.map((sub, i) =>
-      isNode(sub) ? this.compile(sub, `${where}/${i}`) : UNKNOWN,
+      isNode(sub) ? this.compile(sub, `${where}/${i}`) : this.unknown(),
     )
     const restSchema = Array.isArray(node.items) ? node.additionalItems : node.items
-    const rest = this.extra(restSchema, where) ?? UNKNOWN
+    const rest = this.extra(restSchema, where) ?? this.unknown()
     // An array of scalars is the validator's alone: no key to drop, and walking it here would cost
     // every `string[]` a loop. A `Date` inside one reaches the validator as it is.
     if (rest === LEAF && head.every((projector) => projector === LEAF)) return LEAF_ARRAY
@@ -446,7 +459,7 @@ class Compiler {
     const branches: Node[] = []
     this.branches(node, where, branches, new Set())
     const kinds = branches.map(shapeOf)
-    if (kinds.includes("unknown")) return UNKNOWN
+    if (kinds.includes("unknown")) return this.unknown()
     const deferreds = branches.filter((_, i) => kinds[i] === "deferred")
     if (deferreds.length > 1) {
       throw new OutputGuardError(
@@ -485,6 +498,7 @@ class Compiler {
   }
 
   private deferred(node: Node, where: string): Project {
+    this.mayPassMarker = true
     const validate = (node as { readonly [DEFERRED_VALIDATE]?: unknown })[DEFERRED_VALIDATE]
     if (!isNode(node.inner) || typeof validate !== "function") {
       throw new OutputGuardError(
@@ -495,6 +509,7 @@ class Compiler {
       project: this.compile(node.inner, where),
       validate: validate as CompiledGuard["validate"],
       warnDropped: inDevelopment(),
+      deferredFree: false,
     }
     return (value, state) => {
       if (!isDeferred(value)) return value
@@ -613,9 +628,11 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
   const standard = schema as StandardSchemaV1
   const json = jsonSchemaOf(standard)
   let project: Project | undefined
+  let deferredFree = false
   if (json !== undefined) {
     const compiler = new Compiler(json)
     project = compiler.compile(json, "")
+    deferredFree = !compiler.mayPassMarker
     if (compiler.sensitive.length > 0) {
       throw new OutputGuardError(
         `${owner} declares sensitive field(s) ${compiler.sensitive.join(", ")} in ${exportName}. Remove them, or mark a field that must reach the browser with t.declassified("why it may", schema)`,
@@ -627,6 +644,7 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
     project,
     validate: standard["~standard"].validate,
     warnDropped: inDevelopment(),
+    deferredFree,
   }
   compiled.set(schema, guard)
   return guard
@@ -697,6 +715,8 @@ function settle(
     // No JSON Schema to project by: the schema's own validate stripped what it does not declare.
     if (guard.warnDropped) warnDropped(label, input, result.value)
   }
+  // Only the projected value itself: a validator that returns a new value (a transform) may add a marker.
+  if (guard.deferredFree && result.value === input) markDeferredFree(result.value)
   return result.value
 }
 

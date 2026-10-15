@@ -58,6 +58,7 @@ import {
   notFound,
   type RenderAssemblyCache,
   type RenderedPage,
+  type RenderPageOptions,
   type RevalidateResult,
   redirect,
   renderPageResult,
@@ -68,7 +69,7 @@ import {
   tagLayoutError,
   withDuplicateInstanceHint,
 } from "./render-document.ts"
-import { urlPartsFor } from "./request-url.ts"
+import { originFor, urlPartsFor } from "./request-url.ts"
 import {
   ACTION_SCOPE,
   type CoreResponseControls,
@@ -298,6 +299,12 @@ type LayoutChain = {
  */
 type LayoutChainSource = (page: RouteModule, count: number) => Promise<LayoutChain | undefined>
 
+/** A document's render input, filled in field by field. */
+type DocumentInput = { -readonly [K in keyof RenderPageOptions]: RenderPageOptions[K] } & {
+  readonly clientEntry: string
+  readonly hydrate: boolean
+}
+
 /**
  * Own the page request program behind one private seam.
  *
@@ -333,6 +340,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ? { prerenderedPaths: options.prerenderedPaths ?? [] }
       : { prerenderedListUrl: options.prerenderedListUrl }
   const copyOption = options.copyChunks === undefined ? {} : { copyChunks: options.copyChunks }
+  const appDocumentOptions = { ...prerenderedHandover, ...copyOption, ...cspOption, ...titleOption }
   const { i18n } = options
   const pageLocales = new Map(i18n?.locales.locales.map((locale) => [locale.key, locale]))
   /** The request's locale for a document, with the served locales the client names locales from. */
@@ -784,14 +792,6 @@ export function createPageRequestExecutor<Env = unknown>(
     return undefined
   }
 
-  const originOf = (req: Request): string => {
-    try {
-      return new URL(req.url).origin
-    } catch {
-      return ""
-    }
-  }
-
   const pathOf = (req: Request): string => {
     try {
       const parts = urlPartsFor(req)
@@ -804,8 +804,8 @@ export function createPageRequestExecutor<Env = unknown>(
   /** What a status or error page's `meta` receives: no route params, and its own data. */
   const statusMetaArgs = (req: Request, data: unknown, nonce: string | undefined): MetaArgs =>
     nonce === undefined
-      ? { data, pageData: data, params: {}, origin: originOf(req) }
-      : { data, pageData: data, params: {}, origin: originOf(req), nonce }
+      ? { data, pageData: data, params: {}, origin: originFor(req) }
+      : { data, pageData: data, params: {}, origin: originFor(req), nonce }
 
   const renderError = async (
     req: Request,
@@ -1131,13 +1131,15 @@ export function createPageRequestExecutor<Env = unknown>(
         data,
         pageData: data,
         params,
-        origin: originOf(req),
+        origin: originFor(req),
         ...(nonce === undefined ? {} : { nonce }),
       },
       serverLeafOf(route, mod),
     )
     try {
-      return await renderPageResult({
+      // Optional fields are assigned, not spread in: a conditional spread per field cost every
+      // document request about 1us on Bun.
+      const page: DocumentInput = {
         adapter,
         chain,
         data,
@@ -1148,38 +1150,32 @@ export function createPageRequestExecutor<Env = unknown>(
         path: pathOf(req),
         search: searchChainOf(layoutModules, mod, req),
         matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
-        ...(serverComponents === undefined ? {} : { serverComponents }),
-        ...(progressiveActionData.has(req) ? { actionData: progressiveActionData.get(req) } : {}),
         hydrate: mod.hydrate !== false,
-        ...(layoutData !== undefined ? { layoutData } : {}),
-        ...(boundaryStates !== undefined ? { boundaries: boundaryStates } : {}),
         ...preloadOf(route.id),
         ...stylesOf(route.id),
-        ...prerenderedHandover,
-        ...copyOption,
+        ...appDocumentOptions,
         ...localeOption(req),
-        ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
-        // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
-        ...(mod.revalidate !== undefined && !personalized && options.cacheChannel?.enabled === true
-          ? { revalidate: mod.revalidate }
-          : {}),
-        ...(mod.revalidateTags !== undefined &&
-        !personalized &&
-        options.cacheChannel?.enabled === true
-          ? {
-              revalidateTags: routeTags(
-                mod.revalidateTags,
-                { params, url: new URL(req.url) },
-                route.id,
-              ),
-            }
-          : {}),
-        ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
-        ...(nonce === undefined ? {} : { nonce }),
-        ...cspOption,
-        ...titleOption,
-        ...(assemblyCache === undefined ? {} : { assemblyCache }),
-      })
+      }
+      if (serverComponents !== undefined) page.serverComponents = serverComponents
+      if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
+      if (layoutData !== undefined) page.layoutData = layoutData
+      if (boundaryStates !== undefined) page.boundaries = boundaryStates
+      if (responseHeaders !== undefined) page.headers = responseHeaders
+      // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
+      if (!personalized && options.cacheChannel?.enabled === true) {
+        if (mod.revalidate !== undefined) page.revalidate = mod.revalidate
+        if (mod.revalidateTags !== undefined) {
+          page.revalidateTags = routeTags(
+            mod.revalidateTags,
+            { params, url: new URL(req.url) },
+            route.id,
+          )
+        }
+      }
+      if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
+      if (nonce !== undefined) page.nonce = nonce
+      if (assemblyCache !== undefined) page.assemblyCache = assemblyCache
+      return await renderPageResult(page)
     } catch (err) {
       if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized, settled)
       if (isControlFlow(err)) throw err
@@ -1262,7 +1258,7 @@ export function createPageRequestExecutor<Env = unknown>(
       data: null,
       pageData: null,
       params,
-      origin: originOf(req),
+      origin: originFor(req),
       ...(nonce === undefined ? {} : { nonce }),
     })
     let headers: Headers | undefined
@@ -1822,7 +1818,7 @@ export function createPageRequestExecutor<Env = unknown>(
             data,
             pageData: data,
             params: c.params,
-            origin: originOf(c.req),
+            origin: originFor(c.req),
             ...(nonce === undefined ? {} : { nonce }),
           },
           serverLeafOf(route, mod),
