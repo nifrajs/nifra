@@ -64,11 +64,18 @@ interface StoredMetadata {
 }
 
 interface FileIdentity {
-  readonly dev: number
-  readonly ino: number
+  /** Read as bigints, kept as decimal strings: an NTFS file ID passes 2^53, where two live files can
+   * round to one double. */
+  readonly dev: string
+  readonly ino: string
   /** The body's SHA-256 (base64) when it was written in place: its inode never changes there, so
    * only the content tells one put's body from another's. */
   readonly sha256?: string
+}
+
+const identityOf = async (handle: FileHandle): Promise<FileIdentity> => {
+  const { dev, ino } = await handle.stat({ bigint: true })
+  return { dev: String(dev), ino: String(ino) }
 }
 
 const sha256 = (data: Uint8Array | string): string =>
@@ -433,7 +440,7 @@ export class FileStorage implements StorageAdapter {
   private async stage(
     key: string,
     data: Uint8Array | string,
-  ): Promise<{ readonly path: string; readonly dev: number; readonly ino: number }> {
+  ): Promise<FileIdentity & { readonly path: string }> {
     await mkdir(this.stagingRoot, { recursive: true, mode: 0o755 })
     await this.pinHolder(key)
     const path = join(this.stagingRoot, `${crypto.randomUUID()}.tmp`)
@@ -451,8 +458,7 @@ export class FileStorage implements StorageAdapter {
     }
     try {
       await handle.writeFile(data)
-      const info = await handle.stat()
-      return { path, dev: info.dev, ino: info.ino }
+      return { path, ...(await identityOf(handle)) }
     } catch (error) {
       await discardStaged(path)
       throw error
@@ -503,7 +509,7 @@ export class FileStorage implements StorageAdapter {
 
         await handle.truncate(0)
         await handle.writeFile(data)
-        return { dev: opened.dev, ino: opened.ino, sha256: sha256(data) }
+        return { ...(await identityOf(handle)), sha256: sha256(data) }
       } finally {
         await handle.close()
       }
@@ -559,7 +565,7 @@ export class FileStorage implements StorageAdapter {
     let body: Uint8Array
     let identity: FileIdentity
     try {
-      identity = await bodyHandle.stat()
+      identity = await identityOf(bodyHandle)
       body = new Uint8Array(await bodyHandle.readFile())
     } finally {
       await bodyHandle.close()

@@ -265,6 +265,9 @@ describe("FileStorage filesystem containment", () => {
     const first = new FileStorage(root)
     await first.put("object.txt", "A", { contentType: "text/a", metadata: { v: "a" } })
     const firstSidecar = await readFile(sidecar)
+    // Exact IDs: an NTFS file ID passes 2^53, where two live files can round to one number.
+    const { dev, ino } = await stat(join(root, "object.txt"), { bigint: true })
+    expect(JSON.parse(firstSidecar.toString()).body).toEqual({ dev: String(dev), ino: String(ino) })
     // Another process's put lands its body, then the first put's sidecar lands after it.
     await new FileStorage(root).put("object.txt", "B", {
       contentType: "text/b",
