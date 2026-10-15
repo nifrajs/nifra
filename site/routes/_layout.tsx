@@ -72,15 +72,22 @@ const css = `
     /* rules */
     --color-rule: oklch(92.9% 0.013 255);
     --color-rule-2: oklch(86.9% 0.022 253);
-    /* accent: indigo, paired with cyan in the gradient that marks the primary action */
-    --color-accent: oklch(58.5% 0.233 277);
-    --color-accent-ink: oklch(51.1% 0.262 277);
-    --color-accent-hover: oklch(45.7% 0.24 277);
-    --color-accent-soft: oklch(96.2% 0.018 272);
-    --color-accent-2: oklch(71.5% 0.143 215);
-    --color-accent-2-ink: oklch(52% 0.105 223);
+    /* accent: the logo's blue (hue 243-258 in logo-mark.png), with its ice highlight as the second */
+    --color-accent: oklch(57% 0.165 253);
+    --color-accent-ink: oklch(50% 0.17 256);
+    --color-accent-hover: oklch(44% 0.16 258);
+    --color-accent-soft: oklch(96.5% 0.02 245);
+    --color-accent-2: oklch(76% 0.11 230);
+    --color-accent-2-ink: oklch(54% 0.11 236);
     --color-on-accent: oklch(100% 0 0);
-    --color-focus: oklch(58.5% 0.233 277);
+    --color-focus: oklch(57% 0.165 253);
+    /* the primary button: one blue in both themes, lit from the top. White text stays above 4.5:1. */
+    --color-button: oklch(51% 0.165 257);
+    --color-button-top: oklch(58% 0.155 251);
+    --color-button-hover: oklch(46% 0.16 258);
+    --color-button-top-hover: oklch(53% 0.16 254);
+    --color-button-edge: oklch(42% 0.15 259);
+    --color-on-button: oklch(100% 0 0);
     --color-ok: oklch(52% 0.13 155);
     --color-warn: oklch(55% 0.13 70);
     --color-danger: oklch(53% 0.19 25);
@@ -91,8 +98,8 @@ const css = `
     --color-graphite-rule: oklch(25% 0.033 262);
     --color-graphite-ink: oklch(92.8% 0.006 265);
     --color-graphite-muted: oklch(70.7% 0.022 261);
-    --color-graphite-accent: oklch(70.2% 0.183 294);
-    --color-graphite-accent-2: oklch(78.9% 0.154 212);
+    --color-graphite-accent: oklch(72% 0.13 247);
+    --color-graphite-accent-2: oklch(82% 0.09 226);
     --color-graphite-ok: oklch(76.5% 0.177 163);
     --color-graphite-danger: oklch(71.2% 0.194 13);
     --color-graphite-warn: oklch(82.8% 0.189 84);
@@ -165,14 +172,15 @@ const css = `
     --color-ink-3: oklch(70.7% 0.022 261);
     --color-rule: oklch(23% 0.034 265);
     --color-rule-2: oklch(29.5% 0.033 258);
-    --color-accent: oklch(70.2% 0.183 294);
-    --color-accent-ink: oklch(74% 0.16 294);
-    --color-accent-hover: oklch(81.1% 0.111 294);
-    --color-accent-soft: oklch(24% 0.07 285);
-    --color-accent-2: oklch(78.9% 0.154 212);
-    --color-accent-2-ink: oklch(78.9% 0.154 212);
+    --color-accent: oklch(70% 0.13 248);
+    --color-accent-ink: oklch(76% 0.11 243);
+    --color-accent-hover: oklch(84% 0.08 238);
+    --color-accent-soft: oklch(25% 0.06 255);
+    --color-accent-2: oklch(83% 0.09 228);
+    --color-accent-2-ink: oklch(83% 0.09 228);
     --color-on-accent: oklch(13% 0.028 262);
-    --color-focus: oklch(70.2% 0.183 294);
+    --color-focus: oklch(72% 0.13 247);
+    --color-button-edge: oklch(60% 0.15 251);
     --color-ok: oklch(76.5% 0.177 163);
     --color-warn: oklch(82.8% 0.189 84);
     --color-danger: oklch(71.2% 0.194 13);
@@ -306,21 +314,29 @@ const css = `
     transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease,
       transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
   }
-  .button:hover { text-decoration: none; transform: translateY(-2px); }
+  .button:hover { text-decoration: none; transform: translateY(-1px); }
   .button:active { transform: translateY(0); }
   .button:disabled, .button[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; transform: none; }
   .button.primary {
-    color: var(--color-on-accent); background: var(--gradient-accent);
-    border-color: color-mix(in oklch, var(--color-on-accent) 14%, transparent);
+    color: var(--color-on-button);
+    background: linear-gradient(180deg, var(--color-button-top), var(--color-button));
+    border-color: var(--color-button-edge);
     box-shadow:
-      0 8px 24px -6px color-mix(in oklch, var(--color-accent) 50%, transparent),
-      inset 0 1px 0 color-mix(in oklch, var(--color-surface) 28%, transparent);
+      inset 0 1px 0 color-mix(in oklch, var(--color-on-button) 24%, transparent),
+      0 1px 2px color-mix(in oklch, var(--color-shadow) 24%, transparent),
+      0 10px 24px -12px color-mix(in oklch, var(--color-button) 70%, transparent);
   }
   .button.primary:hover {
-    color: var(--color-on-accent); filter: brightness(1.07);
+    color: var(--color-on-button);
+    background: linear-gradient(180deg, var(--color-button-top-hover), var(--color-button-hover));
     box-shadow:
-      0 14px 32px -6px color-mix(in oklch, var(--color-accent) 62%, transparent),
-      inset 0 1px 0 color-mix(in oklch, var(--color-surface) 28%, transparent);
+      inset 0 1px 0 color-mix(in oklch, var(--color-on-button) 24%, transparent),
+      0 1px 2px color-mix(in oklch, var(--color-shadow) 24%, transparent),
+      0 14px 28px -12px color-mix(in oklch, var(--color-button) 80%, transparent);
+  }
+  .button.primary:active {
+    background: var(--color-button-hover);
+    box-shadow: inset 0 1px 2px color-mix(in oklch, var(--color-shadow) 40%, transparent);
   }
   .button.ghost {
     color: var(--fg); border-color: var(--line-2);
