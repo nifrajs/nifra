@@ -19,6 +19,7 @@
 - 0f31edf: A raw `^` in a request path now routes as `%5E` on Deno too, as it already did on Bun, Node and workerd. Deno's URL parser keeps a `^` in a path as written, so `GET /vault/^` reached `/vault/:id` there and the static `/vault/%5E` everywhere else. The cross-runtime request-target matrix gains the case.
 - 4877137: No behavior change: a resolved request path encodes `^` with one unconditional replace, which costs fewer bytes in every server bundle.
 - b2ec456: An idempotent route's response refused by its `content-length` alone now has its body cancelled. The lane replaces it with a 507 and never reads it, so a streaming handler or a proxied upstream stayed open; a response refused while it streams was already cancelled.
+- 365ba87: A tool call whose executor throws or rejects now keeps its idempotency key: a retry with the same key answers `idempotency_duplicate` instead of running the executor again. The key was released on a throw, so an executor that committed its effect and then failed (a lost response, an error after the write) ran that effect a second time on retry. Pre-execution refusals (budget, cancellation before the call) and dry runs still release the key. To retry a failure known to have committed nothing, use a new key.
 
 ## 5.2.1
 

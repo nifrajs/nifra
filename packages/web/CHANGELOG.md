@@ -55,6 +55,7 @@
 - 7e5cd65: The self-hosted Deno entry's static handler applies `servePublicDir`'s hidden-file rule to the real path, so `/assets/<name>` linking to a `.env` inside the deploy directory is 404 rather than served. It also checks that the file it opened is still the one at the checked real path. `Deno.open` follows links, so a directory swapped for a link after the containment check used to redirect the open outside the deploy directory.
 - d874102: No behavior change: the error a secret in a build artifact throws sets its name in a constructor, and the prerendered page reader's failure paths are tested.
 - 80bf986: Page documents render with less work per request. Loader data that a closed output schema has settled skips the scan for deferred values. The request origin is parsed once per host. An empty query string skips search parsing. The render options are assembled without a copy per optional field. On the SSR bench apps this measured 6 to 10% more requests per second on Bun and Node.
+- d890695: `MemoryCacheStore` no longer stores a render that began before a purge whose record it has since evicted. Purge records are bounded by `max`; once a page's or tag's record was evicted, a slow render that began before that purge was accepted and served the purged page again (one purge followed by 500 others was enough at the default `max`). Such a render is now served but not cached; a render that began after the purge is cached as before.
 - Updated dependencies [7ab9692]
 - Updated dependencies [808bac8]
 - Updated dependencies [d4bae56]
