@@ -53,6 +53,7 @@
 - 6826956: The Vite dev bridge cancels a non-HTML response body when the client left before piping began, or while a write was refused. It waited for a `drain` that never came, so an SSE source or a streamed body from the app stayed open for every aborted request.
 - 3318232: `servePublicDir` reads a body of up to 256 KiB whole through its pinned descriptor and closes it before the response leaves. A larger body still streams. On Bun, a 200 KB public file is served in 0.17 ms where a `node:fs` stream took 0.28 ms; a 10 KB file takes 0.12-0.14 ms instead of 0.16 ms. The self-hosted Bun, Node and Deno entries serve static files through this handler.
 - 7e5cd65: The self-hosted Deno entry's static handler applies `servePublicDir`'s hidden-file rule to the real path, so `/assets/<name>` linking to a `.env` inside the deploy directory is 404 rather than served. It also checks that the file it opened is still the one at the checked real path. `Deno.open` follows links, so a directory swapped for a link after the containment check used to redirect the open outside the deploy directory.
+- d874102: No behavior change: the error a secret in a build artifact throws sets its name in a constructor, and the prerendered page reader's failure paths are tested.
 - Updated dependencies [7ab9692]
 - Updated dependencies [808bac8]
 - Updated dependencies [d4bae56]
