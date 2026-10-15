@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { getEventListeners } from "node:events"
 import { server } from "@nifrajs/core"
 import { sse, streaming } from "@nifrajs/core/sse"
 import { t } from "@nifrajs/schema"
@@ -209,20 +210,10 @@ describe("api.route.subscribe()", () => {
   })
   test("a closed subscription leaves no abort listener on a long-lived caller signal", async () => {
     const parent = new AbortController()
-    const live = new Set<unknown>()
-    const add = parent.signal.addEventListener.bind(parent.signal)
-    const remove = parent.signal.removeEventListener.bind(parent.signal)
-    parent.signal.addEventListener = ((type: string, listener: unknown, options: unknown) => {
-      if (type === "abort") live.add(listener)
-      add(type, listener as EventListener, options as AddEventListenerOptions)
-    }) as typeof parent.signal.addEventListener
-    parent.signal.removeEventListener = ((type: string, listener: unknown) => {
-      if (type === "abort") live.delete(listener)
-      remove(type, listener as EventListener)
-    }) as typeof parent.signal.removeEventListener
+    const listeners = (): number => getEventListeners(parent.signal, "abort").length
     const subscribe = eventsOver(() => new Promise<Response>(() => {}))
     for (let i = 0; i < 100; i++) subscribe(() => {}, { signal: parent.signal }).close()
-    expect(live.size).toBe(0)
+    expect(listeners()).toBe(0)
 
     // A finite stream that completes on its own releases its listener too.
     const app = server()
@@ -241,7 +232,7 @@ describe("api.route.subscribe()", () => {
       onClose: finished,
     })
     await ended
-    expect(live.size).toBe(0)
+    expect(listeners()).toBe(0)
 
     // The parent still closes every live subscription, once each.
     let closes = 0
@@ -253,7 +244,7 @@ describe("api.route.subscribe()", () => {
         },
       })
     }
-    expect(live.size).toBe(3)
+    expect(listeners()).toBe(3)
     parent.abort()
     expect(closes).toBe(3)
   })
