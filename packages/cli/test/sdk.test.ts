@@ -313,10 +313,11 @@ describe("SDK generation", () => {
   })
 
   if (Bun.which("go") !== null) {
-    const goCompileTimeout = process.platform === "win32" ? 90_000 : 30_000
-    // The build gets its own deadline inside the test's, so a slow build is killed and its directory
-    // removed here rather than by the runner while `go` still holds it.
-    const goBuildDeadline = goCompileTimeout - 15_000
+    // A cold Go cache takes about 15 s on a Linux runner. The test's timeout sits past the build's own
+    // deadline, so a slow build is killed and its directory removed here rather than by the runner
+    // while `go` still holds it.
+    const goBuildDeadline = process.platform === "win32" ? 90_000 : 30_000
+    const goCompileTimeout = goBuildDeadline + 15_000
 
     test(
       "generated Go compiles with the standard library",
