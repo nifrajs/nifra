@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { median, pairedRatio, roundOrder, rowKind, type SsrBenchTarget } from "./harness.ts"
+import {
+  clientScriptUrls,
+  measureHydrationPayload,
+  median,
+  pairedRatio,
+  roundOrder,
+  rowKind,
+  type SsrBenchTarget,
+} from "./harness.ts"
 import { frontendSlice, heroSsrSlice, multipliersSlice, ssrTablesSlice } from "./site-slice.ts"
 import { staticFileFor } from "./static-path.ts"
 import { ALL_TABLE_SECTIONS } from "./targets.ts"
@@ -120,6 +128,61 @@ describe("site slices", () => {
     expect(bNames).toContain("Nifra + Vue SSG (Node)")
     expect(bNames).toContain("Nifra + React ISR (Node)")
     expect(bNames).toContain("Nifra + Svelte SSG files on a static host")
+  })
+})
+
+describe("hydration payload", () => {
+  const base = "http://127.0.0.1:4300/"
+  // SvelteKit's SSR response when not prerendering: an inline boot script and a `Link` header.
+  const svelteKitHtml = `<html><head></head><body><div style="display: contents"></div>
+<script>{ Promise.all([import("./_app/immutable/entry/start.js"), import("./_app/immutable/entry/app.js")]) }</script>
+</body></html>`
+  const svelteKitLink = [
+    '<./_app/immutable/entry/start.js>; rel="modulepreload"; nopush',
+    '<./_app/immutable/chunks/a.js>; rel="modulepreload"; nopush',
+    '<./_app/immutable/entry/app.js>; rel="modulepreload"; nopush',
+    '<./_app/immutable/nodes/0.js>; rel="modulepreload"; nopush',
+    '<./_app/immutable/assets/0.css>; rel="preload"; as="style"; nopush',
+  ].join(", ")
+
+  test("SvelteKit's scripts are read from the Link header", () => {
+    expect(clientScriptUrls(svelteKitHtml, base, null)).toEqual([])
+    expect(clientScriptUrls(svelteKitHtml, base, svelteKitLink)).toEqual([
+      `${base}_app/immutable/entry/start.js`,
+      `${base}_app/immutable/chunks/a.js`,
+      `${base}_app/immutable/entry/app.js`,
+      `${base}_app/immutable/nodes/0.js`,
+    ])
+  })
+
+  test("script tags and script preloads count once, styles never", () => {
+    const html = `<link rel="stylesheet" href="/s.css"><link rel="preload" as="style" href="/p.css">
+<link rel="modulepreload" href="/m.js"><link rel="preload" href="/p.js" as="script">
+<script type="module" src="/m.js"></script><script src="/e.js"></script>`
+    expect(
+      clientScriptUrls(html, base, "</m.js>; rel=modulepreload, </l.js>; rel=preload; as=script"),
+    ).toEqual([`${base}m.js`, `${base}e.js`, `${base}p.js`, `${base}l.js`])
+  })
+
+  test("the payload sums the bytes of every script the Link header names", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req) => new Response("x".repeat(new URL(req.url).pathname.length * 100)),
+    })
+    try {
+      const payload = await measureHydrationPayload(
+        svelteKitHtml,
+        `http://127.0.0.1:${server.port}/`,
+        svelteKitLink,
+      )
+      const paths = ["entry/start.js", "chunks/a.js", "entry/app.js", "nodes/0.js"]
+      const expected = paths.reduce((sum, p) => sum + `/_app/immutable/${p}`.length * 100, 0)
+      expect(payload.raw).toBe(expected)
+      expect(payload.gzip).toBeGreaterThan(0)
+    } finally {
+      server.stop(true)
+    }
   })
 })
 

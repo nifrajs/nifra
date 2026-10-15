@@ -131,27 +131,39 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
   return parseOha(out)
 }
 
+const isScriptPreload = (attrs: string): boolean =>
+  /\brel="?modulepreload\b/.test(attrs) ||
+  (/\brel="?preload\b/.test(attrs) && /\bas="?script\b/.test(attrs))
+
 /**
- * Client JS the page ships: fetch SSR HTML, sum every script src + modulepreload (raw + gzip).
+ * Every client script a page loads: script src, script preload links, and the `Link` response
+ * header. SvelteKit writes its modulepreloads only to that header unless it is prerendering, and
+ * boots through an inline `import()`, so its HTML alone names no script.
  */
-export async function measureHydrationPayload(
-  html: string,
-  base: string,
-): Promise<{ raw: number; gzip: number }> {
+export function clientScriptUrls(html: string, base: string, linkHeader: string | null): string[] {
   const srcs = new Set<string>()
   const add = (u: string | undefined): void => {
     if (u !== undefined) srcs.add(new URL(u, base).href)
   }
   for (const m of html.matchAll(/<script[^>]+src="([^"]+)"/g)) add(m[1])
   for (const m of html.matchAll(/<link\b[^>]*\bhref="([^"]+)"[^>]*>/g)) {
-    const tag = m[0]
-    const isScript =
-      /rel="modulepreload"/.test(tag) || (/rel="preload"/.test(tag) && /as="script"/.test(tag))
-    if (isScript) add(m[1])
+    if (isScriptPreload(m[0])) add(m[1])
   }
+  for (const m of (linkHeader ?? "").matchAll(/<([^>]+)>([^<]*)/g)) {
+    if (isScriptPreload(m[2] ?? "")) add(m[1])
+  }
+  return [...srcs]
+}
+
+/** Client JS the page ships, raw + gzip, summed over {@link clientScriptUrls}. */
+export async function measureHydrationPayload(
+  html: string,
+  base: string,
+  linkHeader: string | null,
+): Promise<{ raw: number; gzip: number }> {
   let raw = 0
   let gzip = 0
-  for (const url of srcs) {
+  for (const url of clientScriptUrls(html, base, linkHeader)) {
     const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer())
     raw += bytes.byteLength
     gzip += Bun.gzipSync(bytes).byteLength
@@ -316,9 +328,12 @@ export async function measureOnce(
     if (target.warmupCache === true) {
       await warmupCacheHits(base, SSR_BENCH_ISR_WARMUP_REQUESTS)
     }
-    const html = await (await fetch(base)).text()
+    const res = await fetch(base)
+    const html = await res.text()
     validateSsrHtml(html, target)
-    const payload = withPayload ? await measureHydrationPayload(html, base) : undefined
+    const payload = withPayload
+      ? await measureHydrationPayload(html, base, res.headers.get("link"))
+      : undefined
     await runOha(base, SSR_BENCH_WARMUP_S)
     const m = await runOha(base, SSR_BENCH_DURATION_S)
     return payload === undefined ? m : { ...m, payload }
