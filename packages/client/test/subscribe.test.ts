@@ -207,6 +207,56 @@ describe("api.route.subscribe()", () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(closed).toBe(true)
   })
+  test("a closed subscription leaves no abort listener on a long-lived caller signal", async () => {
+    const parent = new AbortController()
+    const live = new Set<unknown>()
+    const add = parent.signal.addEventListener.bind(parent.signal)
+    const remove = parent.signal.removeEventListener.bind(parent.signal)
+    parent.signal.addEventListener = ((type: string, listener: unknown, options: unknown) => {
+      if (type === "abort") live.add(listener)
+      add(type, listener as EventListener, options as AddEventListenerOptions)
+    }) as typeof parent.signal.addEventListener
+    parent.signal.removeEventListener = ((type: string, listener: unknown) => {
+      if (type === "abort") live.delete(listener)
+      remove(type, listener as EventListener)
+    }) as typeof parent.signal.removeEventListener
+    const subscribe = eventsOver(() => new Promise<Response>(() => {}))
+    for (let i = 0; i < 100; i++) subscribe(() => {}, { signal: parent.signal }).close()
+    expect(live.size).toBe(0)
+
+    // A finite stream that completes on its own releases its listener too.
+    const app = server()
+      .use(streaming())
+      .sse("/once", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "x" })
+        stream.close()
+      })
+    let finished!: () => void
+    const ended = new Promise<void>((resolve) => {
+      finished = resolve
+    })
+    testClient<typeof app>(app).once.subscribe(() => {}, {
+      signal: parent.signal,
+      reconnect: false,
+      onClose: finished,
+    })
+    await ended
+    expect(live.size).toBe(0)
+
+    // The parent still closes every live subscription, once each.
+    let closes = 0
+    for (let i = 0; i < 3; i++) {
+      subscribe(() => {}, {
+        signal: parent.signal,
+        onClose: () => {
+          closes += 1
+        },
+      })
+    }
+    expect(live.size).toBe(3)
+    parent.abort()
+    expect(closes).toBe(3)
+  })
   test("parses the id and retry frame fields alongside the data payload", async () => {
     // `retry:` re-times the client's own reconnect and `id:` seeds Last-Event-ID, so both are read
     // off the wire even though neither reaches the event callback.

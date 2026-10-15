@@ -898,14 +898,18 @@ function subscribeSse(
   const maxDelayMs =
     (typeof reconnectConfig === "object" ? reconnectConfig.maxDelayMs : undefined) ?? 15_000
 
-  if (callOptions?.signal !== undefined) {
-    if (callOptions.signal.aborted) closed = true
-    else callOptions.signal.addEventListener("abort", () => close(), { once: true })
+  const signal = callOptions?.signal
+  const onAbort = (): void => close()
+  if (signal !== undefined) {
+    if (signal.aborted) closed = true
+    else signal.addEventListener("abort", onAbort, { once: true })
   }
 
   const close = (): void => {
     if (closed) return
     closed = true
+    // A long-lived caller signal would otherwise hold every closed subscription's callbacks.
+    signal?.removeEventListener("abort", onAbort)
     controller.abort()
     callOptions?.onClose?.()
   }
