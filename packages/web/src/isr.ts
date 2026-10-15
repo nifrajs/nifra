@@ -161,6 +161,8 @@ export class MemoryCacheStore implements CacheStore {
   private order = 0
   private readonly purgedKeys = new Map<string, number>()
   private readonly purgedTags = new Map<string, number>()
+  // The newest purge order whose mark was evicted. A render fenced before it may predate that purge.
+  private purgeFloor = 0
 
   constructor(options: MemoryCacheStoreOptions = {}) {
     const isProd = typeof process !== "undefined" && process.env?.NODE_ENV === "production"
@@ -246,8 +248,8 @@ export class MemoryCacheStore implements CacheStore {
   }
 
   private purgedAfter(key: string, tags: readonly string[], fence: number): boolean {
-    if ((this.purgedKeys.get(key) ?? 0) > fence) return true
-    return tags.some((tag) => (this.purgedTags.get(tag) ?? 0) > fence)
+    if ((this.purgedKeys.get(key) ?? this.purgeFloor) > fence) return true
+    return tags.some((tag) => (this.purgedTags.get(tag) ?? this.purgeFloor) > fence)
   }
 
   private markPurged(marks: Map<string, number>, name: string): void {
@@ -255,9 +257,10 @@ export class MemoryCacheStore implements CacheStore {
     marks.set(name, ++this.order)
     // Bounded like the entries: a mark matters only to a render still in flight.
     while (marks.size > this.max) {
-      const oldest = marks.keys().next().value
+      const oldest = marks.entries().next().value
       if (oldest === undefined) break
-      marks.delete(oldest)
+      marks.delete(oldest[0])
+      this.purgeFloor = Math.max(this.purgeFloor, oldest[1])
     }
   }
 

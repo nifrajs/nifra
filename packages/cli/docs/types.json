@@ -8688,7 +8688,7 @@
     "name": "MemoryCacheStore",
     "kind": "class",
     "package": "@nifrajs/web",
-    "signature": "export declare class MemoryCacheStore implements CacheStore {\n    private readonly cache;\n    private readonly max;\n    private readonly tagEpoch;\n    private order;\n    private readonly purgedKeys;\n    private readonly purgedTags;\n    constructor(options?: MemoryCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    fence(): number;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private purgedAfter;\n    private markPurged;\n    private pruneTagEpochs;\n}",
+    "signature": "export declare class MemoryCacheStore implements CacheStore {\n    private readonly cache;\n    private readonly max;\n    private readonly tagEpoch;\n    private order;\n    private readonly purgedKeys;\n    private readonly purgedTags;\n    private purgeFloor;\n    constructor(options?: MemoryCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    fence(): number;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private purgedAfter;\n    private markPurged;\n    private pruneTagEpochs;\n}",
     "doc": "/**\n * In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the\n * rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a\n * read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read\n * page survives a burst of new pages).\n */"
   },
   {
