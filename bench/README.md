@@ -81,3 +81,7 @@ baseline row. `bridge-fetch.ts` (Bun or Node) is the in-process `app.fetch()` co
 bridge's `around()` plugin, and `bridge-http.ts` runs the same comparison over TCP with count-bounded
 `oha` on Bun and Node. Node loads the built dist: run `bun run build && bun run
 scripts/link-for-node.ts` first.
+
+The SSR suite's Table B includes Nifra SSG on Bun and Node for every UI adapter, plus React ISR
+on both runtimes. SSG rows serve prerendered files from disk; ISR rows measure a warmed in-memory
+cache. Their runtime and mode labels stay explicit in the website tables.

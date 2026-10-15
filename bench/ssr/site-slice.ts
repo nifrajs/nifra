@@ -52,7 +52,7 @@ const DISPLAY: Record<string, string> = {
 }
 
 /** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */
-const NIFRA_MODE = /\((SSG|ISR)\)$/
+const NIFRA_MODE = /\((SSG|ISR)(?:, node)?\)$/
 
 /** The rival each framework's multiplier compares nifra's NODE row against (same-runtime, fair). */
 const RIVAL: Record<string, { target: string; label: string }> = {

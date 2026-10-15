@@ -14,19 +14,27 @@ const CATALOG_HTML = { rootId: "root", text: "Item 50", liCount: 50 } as const
 // every row - nifra and meta-framework alike - proves it server-rendered the same 50-item catalog.
 const CATALOG_DOC = { text: "Item 50", liCount: 50 } as const
 
-const staticServe = (dist: string, port: number): SsrBenchTarget => ({
+const staticServe = (dist: string, port: number, runtime: "bun" | "node"): SsrBenchTarget => ({
   name: "",
-  runtime: "bun",
+  runtime,
   build: [],
-  serve: ["bun", "run", `${BENCH_DIR}/static-server.ts`],
+  serve:
+    runtime === "node"
+      ? ["node", `${BENCH_DIR}/static-node-server.ts`]
+      : ["bun", "run", `${BENCH_DIR}/static-server.ts`],
   serveEnv: { DIST: dist },
   port,
   validate: CATALOG_HTML,
 })
 
-function nifraStatic(name: string, subdir: string, port: number): SsrBenchTarget {
+function nifraStatic(
+  name: string,
+  subdir: string,
+  port: number,
+  runtime: "bun" | "node" = "bun",
+): SsrBenchTarget {
   return {
-    ...staticServe(`${BENCH_DIR}/${subdir}/dist`, port),
+    ...staticServe(`${BENCH_DIR}/${subdir}/dist`, port, runtime),
     name,
     build: ["bun", "run", `${BENCH_DIR}/${subdir}/build.ts`],
   }
@@ -93,6 +101,7 @@ export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
 
 export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
   nifraStatic("nifra+react (SSG)", "nifra-static", 4310),
+  nifraStatic("nifra+react (SSG, node)", "nifra-static", 4314, "node"),
   {
     name: "next (static)",
     runtime: "node",
@@ -123,6 +132,10 @@ export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
     serveEnv: NODE_HOST,
     warmupCache: true,
   },
+  {
+    ...nifraNode("nifra+react (ISR, node)", "nifra-isr", 4315),
+    warmupCache: true,
+  },
 ]
 
 /** Solid - nifra vs SolidStart. */
@@ -143,6 +156,7 @@ export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
 
 export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
   nifraStatic("nifra+solid (SSG)", "nifra-solid-static", 4330),
+  nifraStatic("nifra+solid (SSG, node)", "nifra-solid-static", 4360, "node"),
   {
     name: "solidstart (static)",
     runtime: "node",
@@ -173,6 +187,7 @@ export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
 
 export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
   nifraStatic("nifra+vue (SSG)", "nifra-vue-static", 4332),
+  nifraStatic("nifra+vue (SSG, node)", "nifra-vue-static", 4361, "node"),
   {
     name: "nuxt (static)",
     runtime: "node",
@@ -203,6 +218,7 @@ export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
 
 export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
   nifraStatic("nifra+svelte (SSG)", "nifra-svelte-static", 4333),
+  nifraStatic("nifra+svelte (SSG, node)", "nifra-svelte-static", 4362, "node"),
   {
     name: "sveltekit (static)",
     runtime: "node",
@@ -234,6 +250,7 @@ export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
 
 export const PREACT_TABLE_B: readonly SsrBenchTarget[] = [
   nifraStatic("nifra+preact (SSG)", "nifra-preact-static", 4337),
+  nifraStatic("nifra+preact (SSG, node)", "nifra-preact-static", 4363, "node"),
 ]
 
 export const ALL_TABLE_SECTIONS: readonly {
