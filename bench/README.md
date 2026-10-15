@@ -82,6 +82,5 @@ bridge's `around()` plugin, and `bridge-http.ts` runs the same comparison over T
 `oha` on Bun and Node. Node loads the built dist: run `bun run build && bun run
 scripts/link-for-node.ts` first.
 
-The SSR suite's Table B includes Nifra SSG on Bun and Node for every UI adapter, plus React ISR
-on both runtimes. SSG rows serve prerendered files from disk; ISR rows measure a warmed in-memory
-cache. Their runtime and mode labels stay explicit in the website tables.
+`bench/ssr/README.md` says what each SSR row runs. Every headline row is a real app built and served
+the way its framework ships it, measured in interleaved rounds against the comparator.

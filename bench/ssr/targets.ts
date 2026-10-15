@@ -1,10 +1,11 @@
 /**
- * SSR benchmark targets - grouped by UI runtime. Each group has Table A (uncached) and Table B
- * (cacheable SSG; React also has ISR). See SSR-BENCHMARKS.md before comparing across tables.
+ * SSR benchmark targets - grouped by UI runtime. Each group has Table A (dynamic SSR, no caching) and
+ * Table B (SSG; React also has ISR). bench/ssr/README.md says what each row kind measures.
  */
 import type { SsrBenchTarget } from "./harness.ts"
 
 const BENCH_DIR = import.meta.dir
+const NIFRA_CLI = `${BENCH_DIR}/../../packages/cli/src/cli.ts`
 
 const INSTALL = "(test -d node_modules || bun install --silent)"
 const NEXT_STANDALONE_BUILD = `${INSTALL} && bunx next build && rm -rf .next/standalone/.next/static && cp -r .next/static .next/standalone/.next/static`
@@ -14,69 +15,74 @@ const CATALOG_HTML = { rootId: "root", text: "Item 50", liCount: 50 } as const
 // every row - nifra and meta-framework alike - proves it server-rendered the same 50-item catalog.
 const CATALOG_DOC = { text: "Item 50", liCount: 50 } as const
 
-const staticServe = (dist: string, port: number, runtime: "bun" | "node"): SsrBenchTarget => ({
-  name: "",
-  runtime,
-  build: [],
-  serve:
-    runtime === "node"
-      ? ["node", `${BENCH_DIR}/static-node-server.ts`]
-      : ["bun", "run", `${BENCH_DIR}/static-server.ts`],
-  serveEnv: { DIST: dist },
-  port,
-  validate: CATALOG_HTML,
-})
-
-function nifraStatic(
+/**
+ * A nifra app (`routes/` + a `.backend.ts` loader + `nifra.config.ts`) built by `nifra build --target
+ * <runtime>` and served by the server.js it generates - what `nifra start` runs.
+ */
+function nifraApp(
   name: string,
   subdir: string,
+  runtime: "bun" | "node",
   port: number,
-  runtime: "bun" | "node" = "bun",
 ): SsrBenchTarget {
   return {
-    ...staticServe(`${BENCH_DIR}/${subdir}/dist`, port, runtime),
     name,
-    build: ["bun", "run", `${BENCH_DIR}/${subdir}/build.ts`],
-  }
-}
-
-/** Same nifra app on Node (@nifrajs/node) - fair same-runtime row vs meta-frameworks on Node. */
-function nifraNode(name: string, subdir: string, port: number): SsrBenchTarget {
-  return {
-    name,
-    runtime: "node",
-    build: ["bun", "run", `${BENCH_DIR}/${subdir}/build-node.ts`],
-    serve: ["node", `${BENCH_DIR}/${subdir}/dist-node/server-node.js`],
+    runtime,
+    cwd: `${BENCH_DIR}/${subdir}`,
+    build: ["bun", NIFRA_CLI, "build", "--target", runtime, "--out", `dist-${runtime}`],
+    serve: [runtime, `dist-${runtime}/server.js`],
     port,
-    serveEnv: NODE_HOST,
     validate: CATALOG_HTML,
   }
 }
 
-/** Nifra on Bun, served as a production bundle so it is comparable to the Node bundle rows. */
-function nifraBun(name: string, subdir: string, port: number): SsrBenchTarget {
+/** `renderPage` from a hand-written server: a raw Bun.serve handler, or the same handler on Node. */
+function ownServer(
+  name: string,
+  subdir: string,
+  runtime: "bun" | "node",
+  port: number,
+): SsrBenchTarget {
+  return runtime === "bun"
+    ? {
+        name,
+        runtime,
+        kind: "own-server",
+        build: ["bun", "run", `${BENCH_DIR}/${subdir}/build.ts`],
+        serve: ["bun", `${BENCH_DIR}/${subdir}/server-bun.js`],
+        port,
+        validate: CATALOG_HTML,
+      }
+    : {
+        name,
+        runtime,
+        kind: "own-server",
+        build: ["bun", "run", `${BENCH_DIR}/${subdir}/build-node.ts`],
+        serve: ["node", `${BENCH_DIR}/${subdir}/dist-node/server-node.js`],
+        port,
+        validate: CATALOG_HTML,
+      }
+}
+
+/** The `nifra build --target static` output on a plain file server: what a CDN or static host does. */
+function staticHost(name: string, subdir: string, port: number): SsrBenchTarget {
   return {
     name,
     runtime: "bun",
-    build: ["bun", "run", `${BENCH_DIR}/${subdir}/build.ts`],
-    serve: ["bun", `${BENCH_DIR}/${subdir}/server-bun.js`],
+    kind: "static-host",
+    cwd: `${BENCH_DIR}/${subdir}`,
+    build: ["bun", NIFRA_CLI, "build", "--target", "static", "--out", "dist"],
+    serve: ["bun", "run", `${BENCH_DIR}/static-server.ts`],
+    serveEnv: { DIST: `${BENCH_DIR}/${subdir}/dist` },
     port,
     validate: CATALOG_HTML,
   }
 }
 
-/** React - uncached SSR + meta-frameworks. */
+/** React - nifra vs Next.js and React Router (Remix). */
 export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+react", "nifra", 4300),
-  {
-    name: "nifra+react (node)",
-    runtime: "node",
-    build: ["bun", "run", `${BENCH_DIR}/nifra/build-node.ts`],
-    serve: ["node", `${BENCH_DIR}/nifra/dist-node/server-node.js`],
-    port: 4304,
-    serveEnv: NODE_HOST,
-    validate: CATALOG_HTML,
-  },
+  nifraApp("nifra+react", "nifra-app", "bun", 4300),
+  nifraApp("nifra+react (node)", "nifra-app", "node", 4304),
   {
     name: "next (dynamic)",
     runtime: "node",
@@ -97,11 +103,13 @@ export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  ownServer("nifra+react (own server)", "nifra", "bun", 4305),
+  ownServer("nifra+react (own server, node)", "nifra", "node", 4306),
 ]
 
 export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
-  nifraStatic("nifra+react (SSG)", "nifra-static", 4310),
-  nifraStatic("nifra+react (SSG, node)", "nifra-static", 4314, "node"),
+  nifraApp("nifra+react (SSG)", "nifra-static", "bun", 4310),
+  nifraApp("nifra+react (SSG, node)", "nifra-static", "node", 4314),
   {
     name: "next (static)",
     runtime: "node",
@@ -116,8 +124,17 @@ export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
     name: "nifra+react (ISR)",
     runtime: "bun",
     build: ["bun", "run", `${BENCH_DIR}/nifra-isr/build.ts`],
-    serve: ["bun", `${BENCH_DIR}/nifra-isr/server-bun.js`],
+    serve: ["bun", `${BENCH_DIR}/nifra-isr/dist/server-bun.js`],
     port: 4313,
+    warmupCache: true,
+    validate: CATALOG_HTML,
+  },
+  {
+    name: "nifra+react (ISR, node)",
+    runtime: "node",
+    build: ["bun", "run", `${BENCH_DIR}/nifra-isr/build.ts`],
+    serve: ["node", `${BENCH_DIR}/nifra-isr/dist/server-node.js`],
+    port: 4315,
     warmupCache: true,
     validate: CATALOG_HTML,
   },
@@ -132,16 +149,13 @@ export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
     serveEnv: NODE_HOST,
     warmupCache: true,
   },
-  {
-    ...nifraNode("nifra+react (ISR, node)", "nifra-isr", 4315),
-    warmupCache: true,
-  },
+  staticHost("nifra+react (SSG files, static host)", "nifra-static", 4316),
 ]
 
 /** Solid - nifra vs SolidStart. */
 export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+solid", "nifra-solid", 4320),
-  nifraNode("nifra+solid (node)", "nifra-solid", 4350),
+  nifraApp("nifra+solid", "nifra-solid-app", "bun", 4320),
+  nifraApp("nifra+solid (node)", "nifra-solid-app", "node", 4350),
   {
     name: "solidstart",
     runtime: "node",
@@ -152,11 +166,13 @@ export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  ownServer("nifra+solid (own server)", "nifra-solid", "bun", 4354),
+  ownServer("nifra+solid (own server, node)", "nifra-solid", "node", 4355),
 ]
 
 export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
-  nifraStatic("nifra+solid (SSG)", "nifra-solid-static", 4330),
-  nifraStatic("nifra+solid (SSG, node)", "nifra-solid-static", 4360, "node"),
+  nifraApp("nifra+solid (SSG)", "nifra-solid-static", "bun", 4330),
+  nifraApp("nifra+solid (SSG, node)", "nifra-solid-static", "node", 4360),
   {
     name: "solidstart (static)",
     runtime: "node",
@@ -167,12 +183,13 @@ export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  staticHost("nifra+solid (SSG files, static host)", "nifra-solid-static", 4364),
 ]
 
 /** Vue - nifra vs Nuxt. */
 export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+vue", "nifra-vue", 54321),
-  nifraNode("nifra+vue (node)", "nifra-vue", 4351),
+  nifraApp("nifra+vue", "nifra-vue-app", "bun", 4345),
+  nifraApp("nifra+vue (node)", "nifra-vue-app", "node", 4351),
   {
     name: "nuxt",
     runtime: "node",
@@ -183,11 +200,13 @@ export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  ownServer("nifra+vue (own server)", "nifra-vue", "bun", 4346),
+  ownServer("nifra+vue (own server, node)", "nifra-vue", "node", 4347),
 ]
 
 export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
-  nifraStatic("nifra+vue (SSG)", "nifra-vue-static", 4332),
-  nifraStatic("nifra+vue (SSG, node)", "nifra-vue-static", 4361, "node"),
+  nifraApp("nifra+vue (SSG)", "nifra-vue-static", "bun", 4332),
+  nifraApp("nifra+vue (SSG, node)", "nifra-vue-static", "node", 4361),
   {
     name: "nuxt (static)",
     runtime: "node",
@@ -198,12 +217,13 @@ export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  staticHost("nifra+vue (SSG files, static host)", "nifra-vue-static", 4365),
 ]
 
 /** Svelte - nifra vs SvelteKit. */
 export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+svelte", "nifra-svelte", 54322),
-  nifraNode("nifra+svelte (node)", "nifra-svelte", 4352),
+  nifraApp("nifra+svelte", "nifra-svelte-app", "bun", 4348),
+  nifraApp("nifra+svelte (node)", "nifra-svelte-app", "node", 4352),
   {
     name: "sveltekit",
     runtime: "node",
@@ -214,11 +234,13 @@ export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  ownServer("nifra+svelte (own server)", "nifra-svelte", "bun", 4349),
+  ownServer("nifra+svelte (own server, node)", "nifra-svelte", "node", 4356),
 ]
 
 export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
-  nifraStatic("nifra+svelte (SSG)", "nifra-svelte-static", 4333),
-  nifraStatic("nifra+svelte (SSG, node)", "nifra-svelte-static", 4362, "node"),
+  nifraApp("nifra+svelte (SSG)", "nifra-svelte-static", "bun", 4333),
+  nifraApp("nifra+svelte (SSG, node)", "nifra-svelte-static", "node", 4362),
   {
     name: "sveltekit (static)",
     runtime: "node",
@@ -229,12 +251,13 @@ export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
+  staticHost("nifra+svelte (SSG files, static host)", "nifra-svelte-static", 4366),
 ]
 
 /** Preact - nifra only (no maintained Preact meta-framework exists to bench). */
 export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+preact", "nifra-preact", 4323),
-  nifraNode("nifra+preact (node)", "nifra-preact", 4353),
+  nifraApp("nifra+preact", "nifra-preact-app", "bun", 4323),
+  nifraApp("nifra+preact (node)", "nifra-preact-app", "node", 4353),
   {
     // The renderer ceiling: preact-render-to-string on a bare node server - no framework.
     name: "preact-ssr",
@@ -246,67 +269,85 @@ export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
     serveEnv: NODE_HOST,
     validate: CATALOG_HTML,
   },
+  ownServer("nifra+preact (own server)", "nifra-preact", "bun", 4357),
+  ownServer("nifra+preact (own server, node)", "nifra-preact", "node", 4358),
 ]
 
 export const PREACT_TABLE_B: readonly SsrBenchTarget[] = [
-  nifraStatic("nifra+preact (SSG)", "nifra-preact-static", 4337),
-  nifraStatic("nifra+preact (SSG, node)", "nifra-preact-static", 4363, "node"),
+  nifraApp("nifra+preact (SSG)", "nifra-preact-static", "bun", 4337),
+  nifraApp("nifra+preact (SSG, node)", "nifra-preact-static", "node", 4363),
+  staticHost("nifra+preact (SSG files, static host)", "nifra-preact-static", 4367),
 ]
 
-export const ALL_TABLE_SECTIONS: readonly {
+export interface SsrTableSection {
   readonly label: string
   readonly blurb: string
+  /** Every row's paired ratio is against this one, measured in the same rounds. */
+  readonly baseline: string
   readonly targets: readonly SsrBenchTarget[]
-}[] = [
+}
+
+export const ALL_TABLE_SECTIONS: readonly SsrTableSection[] = [
   {
     label: "React - Table A (uncached SSR)",
-    blurb: "Per-request render. nifra+react (Bun + Node) vs next (dynamic) vs remix.",
+    blurb:
+      "Per-request render. nifra app (Bun + Node) vs Next.js (dynamic) and React Router on Node. Compare Node rows to Node rows.",
+    baseline: "next (dynamic)",
     targets: REACT_TABLE_A,
   },
   {
     label: "React - Table B (cacheable)",
     blurb: "SSG + ISR (ISR rows cache-warmed before oha).",
+    baseline: "next (static)",
     targets: REACT_TABLE_B,
   },
   {
     label: "Solid - Table A (uncached SSR)",
-    blurb: "nifra+solid (Bun + Node) vs SolidStart. Compare Node rows to Node rows only.",
+    blurb: "nifra app (Bun + Node) vs SolidStart. Compare Node rows to Node rows only.",
+    baseline: "solidstart",
     targets: SOLID_TABLE_A,
   },
   {
     label: "Solid - Table B (SSG)",
     blurb: "Build-time catalog; nifra prerender vs SolidStart prerender.",
+    baseline: "solidstart (static)",
     targets: SOLID_TABLE_B,
   },
   {
     label: "Vue - Table A (uncached SSR)",
-    blurb: "nifra+vue (Bun + Node) vs Nuxt. Compare Node rows to Node rows only.",
+    blurb: "nifra app (Bun + Node) vs Nuxt. Compare Node rows to Node rows only.",
+    baseline: "nuxt",
     targets: VUE_TABLE_A,
   },
   {
     label: "Vue - Table B (SSG)",
     blurb: "nifra prerender vs Nuxt prerender route.",
+    baseline: "nuxt (static)",
     targets: VUE_TABLE_B,
   },
   {
     label: "Svelte - Table A (uncached SSR)",
-    blurb: "nifra+svelte (Bun + Node) vs SvelteKit. Compare Node rows to Node rows only.",
+    blurb: "nifra app (Bun + Node) vs SvelteKit. Compare Node rows to Node rows only.",
+    baseline: "sveltekit",
     targets: SVELTE_TABLE_A,
   },
   {
     label: "Svelte - Table B (SSG)",
     blurb: "nifra prerender vs SvelteKit prerender=true.",
+    baseline: "sveltekit (static)",
     targets: SVELTE_TABLE_B,
   },
   {
     label: "Preact - Table A (uncached SSR)",
     blurb:
-      "nifra+preact (Bun + Node) - Bun vs Node on the same app; no Preact meta-framework exists to bench against. preact-ssr is the raw render-to-string ceiling (no framework).",
+      "nifra app (Bun + Node); no Preact meta-framework exists to bench against. preact-ssr is the raw render-to-string ceiling (no framework).",
+    baseline: "preact-ssr",
     targets: PREACT_TABLE_A,
   },
   {
     label: "Preact - Table B (SSG)",
     blurb: "nifra prerender only (no Preact meta-framework baseline).",
+    baseline: "nifra+preact (SSG files, static host)",
     targets: PREACT_TABLE_B,
   },
 ]

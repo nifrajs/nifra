@@ -4,7 +4,7 @@
  */
 
 // Shares the HTTP bench's env knobs so ONE preset speeds both: `BENCH_DURATION_S=2 BENCH_WARMUP_S=1
-// BENCH_RUNS=1 …`. Defaults are the credible-numbers set used for the published tables.
+// BENCH_ROUNDS=1 …`. Defaults are the credible-numbers set used for the published tables.
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
   return Number.isInteger(n) && n >= min ? n : dflt
@@ -13,13 +13,25 @@ export const SSR_BENCH_HOST = "127.0.0.1"
 export const SSR_BENCH_CONNECTIONS = envInt("BENCH_CONNS", 50)
 export const SSR_BENCH_DURATION_S = envInt("BENCH_DURATION_S", 5)
 export const SSR_BENCH_WARMUP_S = envInt("BENCH_WARMUP_S", 3, 0)
-export const SSR_BENCH_RUNS = envInt("BENCH_RUNS", 3)
+/** Interleaved rounds per table: every target is measured once per round, in a rotated order. */
+export const SSR_BENCH_ROUNDS = envInt("BENCH_ROUNDS", 5)
 /** Extra requests before measuring ISR targets so oha hits a warm cache, not a cold render. */
 export const SSR_BENCH_ISR_WARMUP_REQUESTS = 500
 
+/**
+ * What a row measures (bench/ssr/README.md). Only `app` rows are like for like with each other.
+ * - `app`: a framework app built and served the way that framework ships it.
+ * - `own-server`: nifra's `renderPage` called from a server written by hand. No router or file
+ *   routes, so it is never a headline.
+ * - `static-host`: prerendered files from a plain file server, no framework code per request.
+ */
+export type SsrRowKind = "app" | "own-server" | "static-host"
+
 export interface SsrBenchTarget {
   readonly name: string
-  readonly runtime: string
+  readonly runtime: "bun" | "node"
+  /** Defaults to `app`. */
+  readonly kind?: SsrRowKind
   readonly build: readonly string[]
   readonly serve: readonly string[]
   readonly cwd?: string
@@ -117,15 +129,6 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
   ])
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
   return parseOha(out)
-}
-
-export async function sampleMedian(url: string): Promise<SsrBenchMeasure> {
-  const runs: SsrBenchMeasure[] = []
-  for (let i = 0; i < SSR_BENCH_RUNS; i++) {
-    runs.push(await runOha(url, SSR_BENCH_DURATION_S))
-  }
-  const sorted = [...runs].sort((a, b) => a.rps - b.rps)
-  return sorted[sorted.length >> 1] ?? runs[0] ?? { rps: 0, p50ms: 0, p99ms: 0 }
 }
 
 /**
@@ -243,8 +246,39 @@ export async function warmupCacheHits(base: string, count: number): Promise<void
   }
 }
 
-export async function measureTarget(target: SsrBenchTarget): Promise<SsrBenchResult> {
-  const base = `http://${SSR_BENCH_HOST}:${target.port}/`
+export function rowKind(target: SsrBenchTarget): SsrRowKind {
+  return target.kind ?? "app"
+}
+
+/**
+ * The order of round `round`: rotated by one each round and reversed on odd rounds, so every target
+ * runs early and late, before and after each neighbour, as the host's load drifts.
+ */
+export function roundOrder<T>(items: readonly T[], round: number): T[] {
+  if (items.length === 0) return []
+  const k = round % items.length
+  const order = [...items.slice(k), ...items.slice(0, k)]
+  return round % 2 === 1 ? order.reverse() : order
+}
+
+export function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  const upper = sorted[mid] ?? 0
+  return sorted.length % 2 === 1 ? upper : ((sorted[mid - 1] ?? 0) + upper) / 2
+}
+
+/** The median of the per-round ratios a/b: each round's pair ran minutes apart, not hours. */
+export function pairedRatio(a: readonly number[], b: readonly number[]): number {
+  return median(
+    a.flatMap((value, i) => {
+      const denominator = b[i]
+      return denominator !== undefined && denominator > 0 ? [value / denominator] : []
+    }),
+  )
+}
+
+export async function buildTarget(target: SsrBenchTarget): Promise<void> {
   // Capture build stderr and surface it only on failure: comparator builds emit cosmetic warnings
   // (rollup treeshake notices, empty-chunk messages) that would otherwise interleave with the
   // result tables, while a failing build still prints everything it said.
@@ -258,7 +292,14 @@ export async function measureTarget(target: SsrBenchTarget): Promise<SsrBenchRes
     process.stderr.write(await buildStderr)
     throw new Error("build failed")
   }
+}
 
+/** One sample of a built target: a fresh server process, validated HTML, warmup, one oha window. */
+export async function measureOnce(
+  target: SsrBenchTarget,
+  withPayload: boolean,
+): Promise<SsrBenchMeasure & { readonly payload?: { raw: number; gzip: number } }> {
+  const base = `http://${SSR_BENCH_HOST}:${target.port}/`
   const proc = Bun.spawn([...target.serve], {
     stdout: "ignore",
     stderr: "inherit",
@@ -277,10 +318,10 @@ export async function measureTarget(target: SsrBenchTarget): Promise<SsrBenchRes
     }
     const html = await (await fetch(base)).text()
     validateSsrHtml(html, target)
-    const payload = await measureHydrationPayload(html, base)
+    const payload = withPayload ? await measureHydrationPayload(html, base) : undefined
     await runOha(base, SSR_BENCH_WARMUP_S)
-    const m = await sampleMedian(base)
-    return { ...m, payloadRaw: payload.raw, payloadGzip: payload.gzip }
+    const m = await runOha(base, SSR_BENCH_DURATION_S)
+    return payload === undefined ? m : { ...m, payload }
   } finally {
     proc.kill()
     await proc.exited
@@ -300,10 +341,10 @@ export function nodeVersion(): string {
   }
 }
 
-export function printResultRow(target: SsrBenchTarget, r: SsrBenchResult): void {
+export function printResultRow(target: SsrBenchTarget, r: SsrBenchResult, ratio: string): void {
   console.log(
-    `  ${target.name.padEnd(22)} [${target.runtime.padEnd(4)}]  ${r.rps.toLocaleString().padStart(7)} req/s   ` +
+    `  ${target.name.padEnd(38)} [${target.runtime.padEnd(4)}]  ${r.rps.toLocaleString().padStart(7)} req/s   ` +
       `p50 ${r.p50ms.toFixed(2).padStart(6)}ms   p99 ${r.p99ms.toFixed(2).padStart(7)}ms   ` +
-      `JS ${formatKb(r.payloadRaw).padStart(9)} (${formatKb(r.payloadGzip)} gz)`,
+      `JS ${formatKb(r.payloadGzip).padStart(8)} gz   ${ratio}`,
   )
 }

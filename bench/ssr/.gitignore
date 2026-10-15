@@ -34,3 +34,8 @@ bench-ssr.log
 bench-ssr.pid
 solidstart/.output
 solidstart-static/.output
+*/dist-bun
+*/.nifra
+*/.nifra-build
+*/.nifra-client-*
+nifra-isr/server-manifest.ts

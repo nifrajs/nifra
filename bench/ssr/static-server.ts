@@ -1,8 +1,8 @@
 /**
- * Minimal static-file server for the prerendered-TTFB benchmark: serves a built SSG `dist/` the way a
- * CDN would - `/` → `dist/index.html`, any other path → the file under `dist` (or 404). This is the
- * "served a prerendered file" side of the SSG-vs-SSR comparison (see prerender-ttfb.ts).
- *   DIST=examples/routing-react/dist PORT=4400 bun run bench/ssr/static-server.ts
+ * Minimal static-file server: serves a prerendered `dist/` the way a static host or CDN would - `/` →
+ * `dist/index.html`, any other path → the file under `dist` (or 404). No nifra code runs per request.
+ * The "static host" rows of Table B and the SSG side of prerender-ttfb.ts use it.
+ *   DIST=bench/ssr/nifra-static/dist PORT=4400 bun run bench/ssr/static-server.ts
  */
 import { staticFileFor } from "./static-path.ts"
 
