@@ -11904,7 +11904,7 @@
     "kind": "const",
     "package": "@nifrajs/web-vue",
     "signature": "export declare const RenderPropsProvider: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    value: {\n        type: ObjectConstructor;\n        required: true;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>[] | undefined, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    value: {\n        type: ObjectConstructor;\n        required: true;\n    };\n}>> & Readonly<{}>, {}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
-    "doc": "/** The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value`\n * prop, so the injected ref follows each navigation's props. Renders its default slot. */"
+    "doc": "/** Provides {@link useMatches}' render props to its subtree: a `computed` view of its `value` prop, so\n * the injected ref follows each navigation's props. Renders its default slot. `compose` provides the\n * same key through its single route-context component. */"
   },
   {
     "name": "RenderStreamOptions",
@@ -13879,7 +13879,7 @@
     "kind": "const",
     "package": "@nifrajs/web-vue",
     "signature": "export declare const SearchProvider: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    value: {\n        type: ObjectConstructor;\n        required: true;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>[] | undefined, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    value: {\n        type: ObjectConstructor;\n        required: true;\n    };\n}>> & Readonly<{}>, {}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
-    "doc": "/**\n * The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop,\n * so as the mount re-renders with each navigation's search the injected ref updates reactively (setup\n * runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).\n */"
+    "doc": "/**\n * Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop,\n * so as the mount re-renders with each navigation's search the injected ref updates reactively (setup\n * runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides the\n * same key through its single route-context component.\n */"
   },
   {
     "name": "SearchSchemaOf",

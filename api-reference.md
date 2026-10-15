@@ -7168,9 +7168,9 @@ _No named exports (side-effect entrypoint)._
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **RenderPropsProvider** _(const)_ - `RenderPropsProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererEl…`
-  The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot.
+  Provides {@link useMatches}' render props to its subtree: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot. `compose` provides the same key through its single route-context component.
 - **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
-  The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
+  Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides th…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`

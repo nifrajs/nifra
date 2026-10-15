@@ -32,7 +32,6 @@ import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import {
   computed,
   defineComponent,
-  type InjectionKey,
   inject,
   onScopeDispose,
   provide,
@@ -40,6 +39,7 @@ import {
   type ShallowRef,
   shallowRef,
 } from "vue"
+import { PROPS_KEY, SEARCH_KEY } from "./route-context.ts"
 
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
@@ -47,17 +47,11 @@ export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch 
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 const EMPTY_SEARCH_REF: Ref<Record<string, unknown>> = shallowRef(EMPTY_SEARCH)
 
-// `Symbol.for`, not `Symbol()`: in dev this module is evaluated twice in one process (the app's
-// server code under Bun provides; route modules through Vite's SSR runner inject), and `provide`/
-// `inject` match by key identity - a per-evaluation symbol makes `useSearch` SSR-render `{}` in dev.
-const SEARCH_KEY: InjectionKey<Ref<Record<string, unknown>>> = Symbol.for(
-  "nifra.web-vue.search",
-) as InjectionKey<Ref<Record<string, unknown>>>
-
 /**
- * The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop,
+ * Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop,
  * so as the mount re-renders with each navigation's search the injected ref updates reactively (setup
- * runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
+ * runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides the
+ * same key through its single route-context component.
  */
 export const SearchProvider = defineComponent({
   name: "NifraSearchProvider",
@@ -71,14 +65,9 @@ export const SearchProvider = defineComponent({
   },
 })
 
-// The props `compose` rendered the chain with - what `useMatches` reads. `Symbol.for` for the same
-// reason as the search key.
-const PROPS_KEY: InjectionKey<Readonly<Ref<RenderProps>>> = Symbol.for(
-  "nifra.web-vue.render-props",
-) as InjectionKey<Readonly<Ref<RenderProps>>>
-
-/** The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value`
- * prop, so the injected ref follows each navigation's props. Renders its default slot. */
+/** Provides {@link useMatches}' render props to its subtree: a `computed` view of its `value` prop, so
+ * the injected ref follows each navigation's props. Renders its default slot. `compose` provides the
+ * same key through its single route-context component. */
 export const RenderPropsProvider = defineComponent({
   name: "NifraRenderPropsProvider",
   props: { value: { type: Object, required: true } },
