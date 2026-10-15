@@ -12,6 +12,7 @@
 
 - 7ab9692: `nifra check` reports NF-C044, a warning, for a `createWebApp` call that passes a `clientEntry` and no `copyChunks` in an app with copy tables (`@nifrajs/i18n/copy`). A production client build moves the tables into one chunk per locale that a page loads from the `copyChunks` its server lists, so such a server fails on the first page that renders copy, while `nifra dev` (which never splits) and e2e pass. The finding names the server manifest the module already imports from, which exports `copyChunks`; `// nifra-expect NF-C044: <reason>` on the call accepts a server that never serves those pages. An app on TypeScript 7, whose build keeps tables whole, is not reported.
 - 7ab9692: Add build-time schema compilation that emits typed static validators without runtime code generation. Generated modules preserve strict validation and structured issues while avoiding the schema builder and dynamic compiler in deployed bundles.
+- 84acf41: A `nifra` server that takes SIGTERM or Ctrl+C waits for the warm worker it had to SIGKILL to exit before it ends, so the worker is gone when the server is, instead of lingering in the process table until its new parent reaps it.
   
   A schema whose property key, `format` name or custom kind holds a quote, backslash or line break, or whose literal holds a backslash or line break, now validates on the eval-free checker and is refused by build-time compilation. TypeBox splices that text into generated source unescaped, so a quote could end the string and run the rest as code.
   
