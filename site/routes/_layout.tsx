@@ -79,15 +79,22 @@ const css = `
     /* rules */
     --color-rule: oklch(92.9% 0.013 255);
     --color-rule-2: oklch(86.9% 0.022 253);
-    /* accent: indigo, paired with cyan in the gradient that marks the primary action */
-    --color-accent: oklch(58.5% 0.233 277);
-    --color-accent-ink: oklch(51.1% 0.262 277);
-    --color-accent-hover: oklch(45.7% 0.24 277);
-    --color-accent-soft: oklch(96.2% 0.018 272);
-    --color-accent-2: oklch(71.5% 0.143 215);
-    --color-accent-2-ink: oklch(52% 0.105 223);
+    /* accent: the logo's blue (hue 243-258 in logo-mark.png), with its ice highlight as the second */
+    --color-accent: oklch(57% 0.165 253);
+    --color-accent-ink: oklch(50% 0.17 256);
+    --color-accent-hover: oklch(44% 0.16 258);
+    --color-accent-soft: oklch(96.5% 0.02 245);
+    --color-accent-2: oklch(76% 0.11 230);
+    --color-accent-2-ink: oklch(54% 0.11 236);
     --color-on-accent: oklch(100% 0 0);
-    --color-focus: oklch(58.5% 0.233 277);
+    --color-focus: oklch(57% 0.165 253);
+    /* the primary button: one blue in both themes, lit from the top. White text stays above 4.5:1. */
+    --color-button: oklch(51% 0.165 257);
+    --color-button-top: oklch(58% 0.155 251);
+    --color-button-hover: oklch(46% 0.16 258);
+    --color-button-top-hover: oklch(53% 0.16 254);
+    --color-button-edge: oklch(42% 0.15 259);
+    --color-on-button: oklch(100% 0 0);
     --color-ok: oklch(52% 0.13 155);
     --color-warn: oklch(55% 0.13 70);
     --color-danger: oklch(53% 0.19 25);
@@ -98,8 +105,8 @@ const css = `
     --color-graphite-rule: oklch(25% 0.033 262);
     --color-graphite-ink: oklch(92.8% 0.006 265);
     --color-graphite-muted: oklch(70.7% 0.022 261);
-    --color-graphite-accent: oklch(70.2% 0.183 294);
-    --color-graphite-accent-2: oklch(78.9% 0.154 212);
+    --color-graphite-accent: oklch(72% 0.13 247);
+    --color-graphite-accent-2: oklch(82% 0.09 226);
     --color-graphite-ok: oklch(76.5% 0.177 163);
     --color-graphite-danger: oklch(71.2% 0.194 13);
     --color-graphite-warn: oklch(82.8% 0.189 84);
@@ -172,14 +179,15 @@ const css = `
     --color-ink-3: oklch(70.7% 0.022 261);
     --color-rule: oklch(23% 0.034 265);
     --color-rule-2: oklch(29.5% 0.033 258);
-    --color-accent: oklch(70.2% 0.183 294);
-    --color-accent-ink: oklch(74% 0.16 294);
-    --color-accent-hover: oklch(81.1% 0.111 294);
-    --color-accent-soft: oklch(24% 0.07 285);
-    --color-accent-2: oklch(78.9% 0.154 212);
-    --color-accent-2-ink: oklch(78.9% 0.154 212);
+    --color-accent: oklch(70% 0.13 248);
+    --color-accent-ink: oklch(76% 0.11 243);
+    --color-accent-hover: oklch(84% 0.08 238);
+    --color-accent-soft: oklch(25% 0.06 255);
+    --color-accent-2: oklch(83% 0.09 228);
+    --color-accent-2-ink: oklch(83% 0.09 228);
     --color-on-accent: oklch(13% 0.028 262);
-    --color-focus: oklch(70.2% 0.183 294);
+    --color-focus: oklch(72% 0.13 247);
+    --color-button-edge: oklch(60% 0.15 251);
     --color-ok: oklch(76.5% 0.177 163);
     --color-warn: oklch(82.8% 0.189 84);
     --color-danger: oklch(71.2% 0.194 13);
@@ -320,21 +328,29 @@ const css = `
     transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease,
       transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
   }
-  .button:hover { text-decoration: none; transform: translateY(-2px); }
+  .button:hover { text-decoration: none; transform: translateY(-1px); }
   .button:active { transform: translateY(0); }
   .button:disabled, .button[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; transform: none; }
   .button.primary {
-    color: var(--color-on-accent); background: var(--gradient-accent);
-    border-color: color-mix(in oklch, var(--color-on-accent) 14%, transparent);
+    color: var(--color-on-button);
+    background: linear-gradient(180deg, var(--color-button-top), var(--color-button));
+    border-color: var(--color-button-edge);
     box-shadow:
-      0 8px 24px -6px color-mix(in oklch, var(--color-accent) 50%, transparent),
-      inset 0 1px 0 color-mix(in oklch, var(--color-surface) 28%, transparent);
+      inset 0 1px 0 color-mix(in oklch, var(--color-on-button) 24%, transparent),
+      0 1px 2px color-mix(in oklch, var(--color-shadow) 24%, transparent),
+      0 10px 24px -12px color-mix(in oklch, var(--color-button) 70%, transparent);
   }
   .button.primary:hover {
-    color: var(--color-on-accent); filter: brightness(1.07);
+    color: var(--color-on-button);
+    background: linear-gradient(180deg, var(--color-button-top-hover), var(--color-button-hover));
     box-shadow:
-      0 14px 32px -6px color-mix(in oklch, var(--color-accent) 62%, transparent),
-      inset 0 1px 0 color-mix(in oklch, var(--color-surface) 28%, transparent);
+      inset 0 1px 0 color-mix(in oklch, var(--color-on-button) 24%, transparent),
+      0 1px 2px color-mix(in oklch, var(--color-shadow) 24%, transparent),
+      0 14px 28px -12px color-mix(in oklch, var(--color-button) 80%, transparent);
+  }
+  .button.primary:active {
+    background: var(--color-button-hover);
+    box-shadow: inset 0 1px 2px color-mix(in oklch, var(--color-shadow) 40%, transparent);
   }
   .button.ghost {
     color: var(--fg); border-color: var(--line-2);
@@ -679,146 +695,209 @@ const css = `
     .wrap { width: min(calc(100% - 32px), 1140px); }
     table { font-size: 12px; }
     th, td { padding: 12px; }
+    /* A command beside its description leaves the command a third of a phone: stack them. */
+    .cmd-table thead { display: none; }
+    .cmd-table tr, .cmd-table td { display: block; }
+    .cmd-table td:first-child { padding-bottom: 6px; border-bottom: none; }
     footer.site .wrap { flex-direction: column; }
     .mult-grid { grid-template-columns: minmax(0, 1fr); }
   }
 
-  /* ---- /play playground - one editor, the responses beside it, the requests folded under it ---- */
-  .play-head { max-width: 760px; margin-bottom: 24px; }
+  /* ---- /play playground - the steps, one dark workbench, then the reference ---- */
+  .play-head { max-width: 760px; margin-bottom: 32px; }
+  .play-head h1.page { margin-top: 56px; }
 
-  /* Sticky controls bar (presets + Run) - never lost under an editor, always reachable. */
-  .play-controls {
-    position: sticky; top: 64px; z-index: 6;
-    display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
-    margin-bottom: 16px; padding: 12px 16px;
-    background: var(--header-bg);
-    border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  /* The three steps double as the legend for the numbered panes in the workbench. */
+  .play-steps {
+    list-style: none; margin: 0 0 32px; padding: 0;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px;
   }
-  .play-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-  .play-presets-label { font-size: 13px; color: var(--muted); }
-  .play-preset {
-    font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--soft);
-    background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--radius);
-    padding: 4px 12px; cursor: pointer; white-space: nowrap;
-    transition: border-color .15s, color .15s, background .15s;
+  .play-steps li {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start;
+    padding-top: 16px; border-top: 1px solid var(--line-2);
   }
-  .play-preset:hover { color: var(--fg); border-color: var(--green); }
-  .play-segment {
-    display: inline-flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 4px; min-inline-size: 0;
-    background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--radius);
-  }
-  .play-segment .play-preset { border: 1px solid transparent; background: transparent; }
-  .play-segment .play-preset:hover { color: var(--fg); border-color: transparent; background: var(--hover); }
-  .play-preset.active, .play-segment .play-preset.active:hover {
-    color: var(--color-on-accent); border-color: transparent;
-    background: var(--color-accent-ink);
-  }
-  .play-run-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .play-run { min-height: 40px; }
-  .play-kbd-hint { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
-  .play-share { min-height: 40px; margin-left: auto; }
-  .play-share-msg { font-size: 12px; color: var(--muted); min-height: 1em; }
-  /* Embed mode (/play?embed=1): strip site chrome so /play drops cleanly into an <iframe>.
-     No viewport units in here: the host sizes the frame from this page's own height. */
-  .play-embed header.site, .play-embed footer.site, .play-embed .site-atmosphere,
-  .play-embed .nifra-bot-container, .play-embed .play-head,
-  .play-embed .play-share, .play-embed .play-share-msg { display: none; }
-  .play-embed main.wrap { width: 100%; padding: 16px; }
-  .play-embed .play-controls { position: static; box-shadow: none; }
-  .play-embed .play-grid { margin-bottom: 0; }
-  .play-embed .play-pane, .play-embed .play-requests { box-shadow: none; }
-  .play-embed .play-editor-code { min-height: 300px; }
-  .play-kbd {
-    font-family: var(--font-mono); font-size: 11px; color: var(--soft);
-    background: var(--surface); border: 1px solid var(--line-2); border-bottom-width: 2px;
-    border-radius: 5px; padding: 1px 8px; min-width: 18px; text-align: center; line-height: 1.5;
+  .play-steps strong { display: block; margin-bottom: 4px; font-family: var(--font-display); font-size: 16px; color: var(--fg); }
+  .play-steps p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--soft); }
+  .play-steps code { font-size: 0.92em; color: var(--fg); }
+  .play-step-n {
+    display: inline-grid; place-items: center; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 99px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700; line-height: 1;
+    color: var(--color-on-accent); background: var(--color-accent-ink);
   }
 
-  .play-grid {
-    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-    gap: 16px; align-items: stretch; margin-bottom: 32px;
-  }
-  .play-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-  .play-pane--code { flex: 1 1 auto; }
-  .play-pane {
+  /* The workbench: one dark surface, divided by hairlines. Nothing inside it draws a box of its own. */
+  .play-bench {
     display: flex; flex-direction: column; min-width: 0; overflow: hidden;
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
+    color: var(--color-graphite-ink); background: var(--color-graphite);
+    border: 1px solid var(--code-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
   }
-  /* The response pane takes its height from the editor column and scrolls inside it, so a long
-     response never pushes the editor around. */
-  .play-pane--results { contain: size; min-height: 320px; border-color: var(--line-2); }
-  /* The requests a run sends. Folded: the examples fill it in, so most visitors never open it. */
-  .play-requests {
-    flex: 0 0 auto; min-width: 0; overflow: hidden;
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
+  .play-bench .play-step-n { color: var(--color-graphite); background: var(--color-graphite-muted); }
+  .play-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 0 12px 0 8px; background: var(--color-graphite-2); border-bottom: 1px solid var(--code-border);
   }
-  .play-requests > summary {
-    display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px;
-    background: var(--panel-2); cursor: pointer; user-select: none; list-style: none;
-    transition: background 0.15s ease;
+  .play-examples {
+    display: flex; min-width: 0; margin: 0; padding: 0; border: 0; min-inline-size: 0;
+    overflow-x: auto; scrollbar-width: none;
   }
-  .play-requests > summary::-webkit-details-marker { display: none; }
-  .play-requests > summary:hover { background: var(--hover); }
-  .play-requests > summary:active { background: var(--panel); }
-  .play-requests > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-  .play-requests[open] > summary { border-bottom: 1px solid var(--line); }
-  .play-requests-toggle { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--color-accent-ink); white-space: nowrap; }
-  .play-requests-toggle::after { content: "Edit"; }
-  .play-requests[open] .play-requests-toggle::after { content: "Hide"; }
-  .play-pane-head {
-    display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
-    padding: 8px 16px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+  .play-examples::-webkit-scrollbar { display: none; }
+  .play-example {
+    flex: 0 0 auto; padding: 16px 12px 14px; border: 0; border-bottom: 2px solid transparent;
+    background: none; color: var(--color-graphite-muted); cursor: pointer; white-space: nowrap;
+    font-size: 14px; font-weight: 600; transition: color 0.15s ease, border-color 0.15s ease;
   }
-  .play-window-title { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.02em; }
-  .play-pane-hint { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); opacity: 0.75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .play-lang-badge {
-    margin-left: auto; font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em;
-    color: var(--green-2); background: var(--green-soft); border: 1px solid color-mix(in oklch, var(--color-accent) 18%, transparent);
-    border-radius: 5px; padding: 1px 8px;
+  .play-example:hover { color: var(--color-graphite-ink); }
+  .play-example[aria-pressed="true"] { color: var(--color-graphite-ink); border-bottom-color: var(--color-graphite-accent); }
+  .play-bench button:focus-visible, .play-bench textarea:focus-visible {
+    outline: 2px solid var(--color-graphite-accent); outline-offset: -2px; border-radius: 6px;
   }
-  .play-live-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); margin-left: auto; }
-  .play-editor {
-    flex: 1 1 auto; width: 100%; box-sizing: border-box; resize: none; tab-size: 2;
-    font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6; color: var(--code-fg);
-    background: var(--code-bg); border: 0; border-radius: 0; padding: 16px; outline: none;
+  .play-actions { display: flex; align-items: center; gap: 8px; padding: 8px 0; margin-left: auto; }
+  .play-run { min-height: 36px; padding: 0 14px; font-size: 14px; }
+  .play-run:hover { transform: none; }
+  .play-kbd { font-family: var(--font-mono); font-size: 12px; font-weight: 600; opacity: 0.72; }
+  .play-quiet {
+    min-height: 36px; padding: 0 12px; border: 1px solid var(--code-border); border-radius: var(--radius);
+    background: transparent; color: var(--color-graphite-ink); cursor: pointer; white-space: nowrap;
+    font-size: 14px; font-weight: 600; transition: border-color 0.15s ease, background-color 0.15s ease;
   }
-  .play-editor:focus { box-shadow: inset 0 0 0 2px var(--green); }
-  .play-editor::selection { background: var(--green-soft); }
-  .play-editor-code { min-height: clamp(260px, 50vh, 540px); }
-  .play-editor-requests { display: block; min-height: 150px; }
-  .play-results {
-    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px;
-    padding: 16px; overflow: auto;
+  .play-quiet:hover { border-color: var(--color-graphite-muted); background: color-mix(in oklch, var(--color-graphite-ink) 6%, transparent); }
+  .play-quiet:active { background: color-mix(in oklch, var(--color-graphite-ink) 10%, transparent); }
+
+  /* What the selected example shows, and one edit to try. */
+  .play-explain {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 24px;
+    padding: 12px 16px; border-bottom: 1px solid var(--code-border);
+    font-size: 14px; line-height: 1.55;
   }
-  .play-running { color: var(--muted); font-family: var(--font-mono); font-size: 13px; padding: 8px 2px; }
-  .play-card { border: 1px solid var(--line-2); border-radius: var(--radius); overflow: hidden; }
-  .play-card-head {
-    display: flex; align-items: center; gap: 12px; padding: 8px 12px;
-    background: var(--panel-2); border-bottom: 1px solid var(--line);
+  .play-explain p { margin: 0; }
+  .play-explain #play-shows { flex: 1 1 380px; min-width: 0; }
+  .play-explain code { font-size: 0.92em; color: var(--color-graphite-accent-2); }
+  .play-try { display: flex; gap: 8px; align-items: baseline; flex: 1 1 260px; min-width: 0; color: var(--color-graphite-muted); }
+  .play-try-label {
+    flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--color-graphite-warn);
   }
-  .play-method { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--green-2); }
-  .play-path { font-family: var(--font-mono); font-size: 12px; color: var(--soft); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .play-badge { font-family: var(--font-mono); font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius); }
-  .play-badge-ok { color: var(--color-ok); background: var(--green-soft); }
-  .play-badge-warn { color: var(--color-warn); background: color-mix(in oklch, var(--color-warn) 12%, transparent); }
-  .play-badge-err { color: var(--color-danger); background: color-mix(in oklch, var(--color-danger) 12%, transparent); }
-  .play-body { margin: 0; padding: 12px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; color: var(--fg); white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
-  .play-body-err { color: var(--color-danger); }
+  .play-reset { min-height: 30px; font-size: 13px; }
+
+  .play-split {
+    display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+    height: clamp(380px, 60vh, 600px);
+  }
+  .play-src { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--code-border); }
+  .play-files, .play-out-head {
+    display: flex; align-items: center; gap: 4px; flex: 0 0 auto; min-height: 42px;
+    padding: 0 8px; border-bottom: 1px solid var(--code-border);
+  }
+  .play-file {
+    display: inline-flex; align-items: center; gap: 8px; align-self: stretch;
+    padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer;
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--color-graphite-muted);
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .play-file:hover { color: var(--color-graphite-ink); }
+  .play-file[aria-selected="true"] { color: var(--color-graphite-ink); border-bottom-color: var(--color-graphite-accent); }
+  .play-file[aria-selected="true"] .play-step-n, .play-out-head .play-step-n { background: var(--color-graphite-accent); }
+  .play-count {
+    min-width: 18px; padding: 1px 6px; border-radius: 99px; text-align: center; font-size: 11px;
+    color: var(--color-graphite-ink); background: var(--color-graphite-rule);
+  }
+
+  /* The editor: a transparent-glyph textarea over a highlighted layer with identical metrics. */
+  .play-editor { position: relative; flex: 1 1 auto; min-height: 0; }
+  .play-editor[hidden] { display: none; }
+  .play-hl, .play-input {
+    position: absolute; inset: 0; box-sizing: border-box; width: 100%; height: 100%; margin: 0; padding: 16px;
+    border: 0; border-radius: 0; font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6;
+    font-weight: 400; letter-spacing: normal; tab-size: 2; white-space: pre; overflow-wrap: normal;
+  }
+  .play-hl { overflow: hidden; pointer-events: none; color: var(--code-fg); background: transparent; }
+  .play-hl .k, .play-response .k { color: var(--code-keyword); }
+  .play-hl .s, .play-response .s { color: var(--code-string); }
+  .play-hl .c { color: var(--code-comment); }
+  .play-hl .l, .play-response .l { color: var(--code-literal); }
+  .play-input {
+    overflow: auto; resize: none; outline: none; background: transparent;
+    color: transparent; caret-color: var(--color-graphite-ink);
+  }
+  .play-input::selection { color: transparent; background: color-mix(in oklch, var(--color-graphite-accent) 35%, transparent); }
+  .play-bench .play-input:focus-visible { outline: 0; box-shadow: inset 2px 0 0 var(--color-graphite-accent); border-radius: 0; }
+
+  .play-out { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .play-out-head { gap: 8px; padding: 0 16px; }
+  .play-out-title { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
+  .play-out-meta { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; color: var(--color-graphite-muted); }
+  .play-results { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .play-result, .play-problem { padding: 14px 16px; border-bottom: 1px solid var(--code-border); }
+  .play-result { animation: play-in 0.18s ease-out; }
+  .play-result-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-family: var(--font-mono); font-size: 12.5px; }
+  .play-method { flex: 0 0 auto; font-weight: 700; color: var(--color-graphite-accent-2); }
+  .play-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-graphite-ink); }
+  .play-status { flex: 0 0 auto; font-weight: 700; white-space: nowrap; }
+  .play-status--ok { color: var(--color-graphite-ok); }
+  .play-status--warn { color: var(--color-graphite-warn); }
+  .play-status--err { color: var(--color-graphite-danger); }
+  .play-note { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--color-graphite-muted); }
+  .play-response {
+    margin: 10px 0 0; padding: 0; background: none; border: 0; box-shadow: none;
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; color: var(--code-fg);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .play-response--err { color: var(--color-graphite-danger); }
+  .play-problem-title { margin: 0; font-weight: 700; color: var(--color-graphite-danger); }
+  .play-idle { margin: 0; padding: 16px; font-size: 14px; color: var(--color-graphite-muted); }
+  @keyframes play-in { from { opacity: 0.35; } }
+
+  /* Below the workbench: what each name in scope does, then the way out. */
+  .play-ref { margin-top: 64px; }
+  .play-ref h2 { margin: 0 0 8px; font-size: clamp(22px, 3vw, 28px); }
+  .play-ref dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 48px; margin: 0; }
+  .play-ref dl > div {
+    display: grid; grid-template-columns: 10.5rem minmax(0, 1fr); gap: 16px;
+    padding: 14px 0; border-bottom: 1px solid var(--line);
+  }
+  .play-ref dt code { font-size: 13px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+  .play-ref dd { margin: 0; font-size: 14px; line-height: 1.55; color: var(--soft); }
+  .play-ref dd code { font-size: 0.92em; color: var(--fg); }
+  .play-next {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+    margin: 48px 0 32px; padding-top: 24px; border-top: 1px solid var(--line-2);
+  }
+  .play-next p { margin: 0; color: var(--soft); }
   .play-noscript { color: var(--muted); margin-top: 16px; }
 
-  @media (max-width: 900px) {
-    .play-grid { grid-template-columns: minmax(0, 1fr); }
-    .play-pane--results { contain: none; min-height: 0; }
-    .play-results { min-height: 200px; }
-    .play-embed .play-results { max-height: 260px; }
+  /* Embed mode (/play?embed=1): only the workbench, so it drops cleanly into the home page's <iframe>.
+     No viewport units in here: the host sizes the frame from this page's own height. */
+  .play-embed header.site, .play-embed footer.site, .play-embed .site-atmosphere,
+  .play-embed .nifra-bot-container, .play-embed .play-head, .play-embed .play-steps,
+  .play-embed .play-ref, .play-embed .play-next, .play-embed #play-share { display: none; }
+  .play-embed body { background: transparent; }
+  .play-embed main.wrap { width: 100%; padding: 0; }
+  .play-embed .play-bench { box-shadow: none; }
+  .play-embed .play-split { height: 440px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .play-result { animation: none; }
   }
-  @media (max-width: 640px) {
-    .play-controls { position: static; }
-    .play-presets-label, .play-kbd-hint { display: none; }
-    .play-editor-code, .play-embed .play-editor-code { min-height: 220px; }
-    .play-results { min-height: 160px; }
+  @media (max-width: 900px) {
+    .play-steps { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .play-steps li { padding: 12px 0; }
+    .play-split { grid-template-columns: minmax(0, 1fr); height: auto; }
+    .play-src { height: 340px; border-right: 0; border-bottom: 1px solid var(--code-border); }
+    .play-results { overflow: visible; }
+    .play-embed .play-split { height: auto; }
+    .play-ref dl { grid-template-columns: minmax(0, 1fr); }
+    /* Nira floats over the stacked responses at this width; the page explains itself below. */
+    body:has(.play-bench) .nifra-bot-container { display: none; }
+  }
+  @media (max-width: 620px) {
+    .play-head h1.page { margin-top: 32px; }
+    .play-kbd { display: none; }
+    .play-example { padding: 14px 8px 12px; }
+    .play-actions { width: 100%; padding-top: 0; }
+    .play-actions .play-run { flex: 1 1 auto; }
+    .play-src { height: 300px; }
+    .play-hl, .play-input { font-size: 13px; padding: 12px; }
+    .play-ref dl > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   }
 
   /* ---- /frameworks live demo - one app, five renderers, real measured bundle sizes ---- */
@@ -1704,12 +1783,9 @@ ${demoAutoplay("demo-auto", "a")}${demoAutoplay("demo-auto-b", "b")}${demoManual
   }
 
   /* ---- the embedded playground ---- */
-  .home-play {
-    overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg);
-    background: var(--bg); box-shadow: var(--shadow-lg);
-  }
+  .home-play { overflow: hidden; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
   /* The height is a first guess; the frame reports its real height once it has loaded. */
-  .home-play iframe { display: block; width: 100%; height: 520px; border: 0; }
+  .home-play iframe { display: block; width: 100%; height: 600px; border: 0; }
 
   /* ---- measured bars + the compare row ---- */
   .home-bars-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }

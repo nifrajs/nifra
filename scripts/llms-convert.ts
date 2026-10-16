@@ -11,8 +11,11 @@ function decodeEntities(s: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&(?:#39|apos|lsquo|rsquo);/g, "'")
+    .replace(/&[lr]dquo;/g, '"')
+    .replace(/&rarr;/g, "->")
     .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
     .replace(/&amp;/g, "&")
 }
 

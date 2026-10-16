@@ -77,8 +77,9 @@ export default function Onboard() {
                   style={{
                     padding: "12px",
                     borderRadius: "var(--radius)",
-                    background: adapter === a ? "rgba(16, 185, 129, 0.08)" : "var(--panel)",
-                    border: adapter === a ? "2px solid var(--green)" : "1px solid var(--line-2)",
+                    background: adapter === a ? "var(--color-accent-soft)" : "var(--panel)",
+                    border: adapter === a ? "1px solid var(--green)" : "1px solid var(--line-2)",
+                    boxShadow: adapter === a ? "inset 0 0 0 1px var(--green)" : "none",
                     color: adapter === a ? "var(--green-2)" : "var(--fg)",
                     fontWeight: "600",
                     cursor: "pointer",
@@ -117,8 +118,9 @@ export default function Onboard() {
                   style={{
                     padding: "12px",
                     borderRadius: "var(--radius)",
-                    background: env === e.id ? "rgba(16, 185, 129, 0.08)" : "var(--panel)",
-                    border: env === e.id ? "2px solid var(--green)" : "1px solid var(--line-2)",
+                    background: env === e.id ? "var(--color-accent-soft)" : "var(--panel)",
+                    border: env === e.id ? "1px solid var(--green)" : "1px solid var(--line-2)",
+                    boxShadow: env === e.id ? "inset 0 0 0 1px var(--green)" : "none",
                     color: env === e.id ? "var(--green-2)" : "var(--fg)",
                     fontWeight: "600",
                     cursor: "pointer",
@@ -156,8 +158,9 @@ export default function Onboard() {
                   style={{
                     padding: "12px",
                     borderRadius: "var(--radius)",
-                    background: db === d.id ? "rgba(16, 185, 129, 0.08)" : "var(--panel)",
-                    border: db === d.id ? "2px solid var(--green)" : "1px solid var(--line-2)",
+                    background: db === d.id ? "var(--color-accent-soft)" : "var(--panel)",
+                    border: db === d.id ? "1px solid var(--green)" : "1px solid var(--line-2)",
+                    boxShadow: db === d.id ? "inset 0 0 0 1px var(--green)" : "none",
                     color: db === d.id ? "var(--green-2)" : "var(--fg)",
                     fontWeight: "600",
                     cursor: "pointer",
@@ -195,7 +198,7 @@ export default function Onboard() {
             <span
               style={{
                 fontSize: "11px",
-                fontFamily: "JetBrains Mono, monospace",
+                fontFamily: "var(--font-mono)",
                 fontWeight: "700",
                 color: "var(--muted)",
               }}
@@ -210,10 +213,9 @@ export default function Onboard() {
                 minHeight: "30px",
                 padding: "0 12px",
                 fontSize: "12px",
-                background: copied ? "var(--green-2)" : "var(--green)",
               }}
             >
-              {copied ? "Copied! ✓" : "Copy Rules"}
+              {copied ? "Copied" : "Copy rules"}
             </button>
           </div>
           <pre
@@ -222,11 +224,11 @@ export default function Onboard() {
               margin: 0,
               padding: "16px",
               fontSize: "12.5px",
-              fontFamily: "JetBrains Mono, monospace",
+              fontFamily: "var(--font-mono)",
               lineHeight: "1.6",
               color: "var(--fg)",
               whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
+              overflowWrap: "anywhere",
               overflowY: "auto",
               background: "var(--panel)",
             }}

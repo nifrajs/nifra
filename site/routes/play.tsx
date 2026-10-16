@@ -1,4 +1,9 @@
-import { PLAYGROUND_STARTER_CODE, PLAYGROUND_STARTER_REQUESTS } from "../shared/islands/entries"
+import { highlight } from "../shared/highlight"
+import {
+  codeRuns,
+  PLAYGROUND_FIRST,
+  PLAYGROUND_PRESETS,
+} from "../shared/islands/playground-presets"
 import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
@@ -7,109 +12,257 @@ export const meta = pageMeta(
   "/play",
 )
 
-// The starter's request count, so the folded "Requests" row is right before the island runs.
-const STARTER_REQUEST_COUNT = (JSON.parse(PLAYGROUND_STARTER_REQUESTS) as readonly unknown[]).length
+const FIRST_REQUESTS: unknown = JSON.parse(PLAYGROUND_FIRST.requests)
+const FIRST_REQUEST_COUNT = Array.isArray(FIRST_REQUESTS) ? FIRST_REQUESTS.length : 0
+
+const REFERENCE: ReadonlyArray<readonly [term: string, description: string]> = [
+  [
+    "server()",
+    "Creates an app. Chain `.get`, `.post`, `.put`, `.patch`, and `.delete` to add routes.",
+  ],
+  ["c.params", "The values of `:name` segments in the route path."],
+  [
+    "c.query, c.body",
+    "The query string and the parsed JSON body. Declare a `t` schema on the route and they arrive validated and typed.",
+  ],
+  [
+    "t",
+    "The schema builder: `t.object`, `t.string`, `t.number`, `t.boolean`, `t.array`, `t.optional`, and `t.query` for query strings. Input that fails gets a 422.",
+  ],
+  ["status(code, body)", "Responds with any status code and a JSON body."],
+  [".derive(fn)", "Runs before every route. Whatever it returns is merged into `c`."],
+  [
+    "return app",
+    "The playground calls `app.fetch` on the app you return. In a project you export it: `export default { fetch: app.fetch }`.",
+  ],
+  [
+    "requests.json",
+    "An array of `{ method?, path, headers?, body?, label? }`, sent in order. A `label` is shown above its response.",
+  ],
+]
+
+function Prose({ text }: { text: string }) {
+  return (
+    <>
+      {codeRuns(text).map((run, index) =>
+        // biome-ignore lint/suspicious/noArrayIndexKey: runs of a fixed string never reorder
+        run.code ? <code key={index}>{run.text}</code> : run.text,
+      )}
+    </>
+  )
+}
+
+/** A textarea over a highlighted copy of its own text: the textarea takes the typing (its glyphs are
+ * transparent), the layer underneath shows the colors. The island keeps the two in step. */
+function Editor(props: { id: string; label: string; value: string; hidden?: boolean }) {
+  return (
+    <div
+      className="play-editor"
+      id={`${props.id}-panel`}
+      role="tabpanel"
+      aria-labelledby={`${props.id}-tab`}
+      hidden={props.hidden}
+    >
+      <pre
+        className="play-hl"
+        aria-hidden="true"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight() escapes every character it emits
+        dangerouslySetInnerHTML={{ __html: highlight(props.value) }}
+      />
+      <textarea
+        id={props.id}
+        className="play-input"
+        aria-label={props.label}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        autoComplete="off"
+        wrap="off"
+        defaultValue={props.value}
+      />
+    </div>
+  )
+}
 
 export default function Play() {
   return (
     <div className="play">
       <header className="play-head">
-        <span className="kicker">Playground</span>
-        <h1 className="page">Run a real Nifra app, in your browser.</h1>
+        <h1 className="page">Run a real Nifra app in your browser.</h1>
         <p className="lead">
-          This is the real <code>@nifrajs/core</code>, running in this tab. Nothing is sent to a
-          server. Pick an example or edit the code, press Run, and read the responses.
+          The real <code>@nifrajs/core</code> runs in this tab. Nothing is installed and nothing is
+          sent to a server.
         </p>
       </header>
 
-      {/* Sticky controls - presets + Run stay reachable above the editor. */}
-      <div className="play-controls">
-        <div className="play-presets">
-          <span className="play-presets-label">Examples</span>
-          <fieldset className="play-segment" aria-label="Example presets">
-            <button type="button" className="play-preset active" data-preset="hello">
-              Typed API
-            </button>
-            <button type="button" className="play-preset" data-preset="validation">
-              Validation
-            </button>
-            <button type="button" className="play-preset" data-preset="responses">
-              Status &amp; Response
-            </button>
-          </fieldset>
-        </div>
-        <div className="play-run-row">
-          <button type="button" id="play-run" className="button primary play-run">
-            Run ▸
-          </button>
-          <span className="play-kbd-hint">
-            <kbd className="play-kbd">⌘</kbd>
-            <kbd className="play-kbd">↵</kbd> to run
+      <ol className="play-steps" aria-label="How the playground works">
+        <li>
+          <span className="play-step-n" aria-hidden="true">
+            1
           </span>
-          <button type="button" id="play-share" className="button ghost play-share">
-            Copy share link
+          <div>
+            <strong>Write the app</strong>
+            <p>
+              <code>server()</code> declares routes and <code>t</code> declares what each one
+              accepts. The code returns the app.
+            </p>
+          </div>
+        </li>
+        <li>
+          <span className="play-step-n" aria-hidden="true">
+            2
+          </span>
+          <div>
+            <strong>Send requests</strong>
+            <p>
+              Each entry in <code>requests.json</code> becomes a real <code>Request</code> passed to{" "}
+              <code>app.fetch</code>, the same call Bun, Node, and Deno make.
+            </p>
+          </div>
+        </li>
+        <li>
+          <span className="play-step-n" aria-hidden="true">
+            3
+          </span>
+          <div>
+            <strong>Read the responses</strong>
+            <p>The status and body each request got back, exactly as a client would see them.</p>
+          </div>
+        </li>
+      </ol>
+
+      <section className="play-bench" aria-label="Playground">
+        <div className="play-toolbar">
+          <fieldset className="play-examples" aria-label="Examples">
+            {PLAYGROUND_PRESETS.map((preset, index) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="play-example"
+                data-preset={preset.id}
+                aria-pressed={index === 0}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </fieldset>
+          <div className="play-actions">
+            <button type="button" id="play-share" className="play-quiet">
+              Share
+            </button>
+            <button type="button" id="play-run" className="button primary play-run">
+              Run
+              <kbd id="play-kbd" className="play-kbd" aria-label="Command Enter">
+                ⌘↵
+              </kbd>
+            </button>
+          </div>
+        </div>
+
+        <div className="play-explain">
+          <p id="play-shows">
+            <Prose text={PLAYGROUND_FIRST.shows} />
+          </p>
+          <p className="play-try">
+            <span className="play-try-label">Try</span>
+            <span id="play-try">
+              <Prose text={PLAYGROUND_FIRST.tryThis} />
+            </span>
+          </p>
+          <button type="button" id="play-reset" className="play-quiet play-reset" hidden>
+            Reset example
           </button>
-          <span id="play-share-msg" className="play-share-msg" aria-live="polite" />
         </div>
-      </div>
 
-      {/* One place to type (the app), the responses beside it. The requests the run sends are
-          folded under the editor: the examples fill them in, so most visitors never open it. */}
-      <div className="play-grid">
-        <div className="play-col">
-          <section className="play-pane play-pane--code" aria-label="Code editor">
-            <div className="play-pane-head">
-              <span className="play-window-title">app.ts</span>
-              <span className="play-pane-hint">server &amp; t in scope - return the app</span>
-              <span className="play-lang-badge">TS</span>
+        <div className="play-split">
+          <div className="play-src">
+            <div className="play-files" role="tablist" aria-label="Files">
+              <button
+                type="button"
+                role="tab"
+                id="play-code-tab"
+                className="play-file"
+                aria-controls="play-code-panel"
+                aria-selected="true"
+              >
+                <span className="play-step-n" aria-hidden="true">
+                  1
+                </span>
+                app.ts
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="play-requests-tab"
+                className="play-file"
+                aria-controls="play-requests-panel"
+                aria-selected="false"
+                tabIndex={-1}
+              >
+                <span className="play-step-n" aria-hidden="true">
+                  2
+                </span>
+                requests.json
+                <span id="play-requests-count" className="play-count">
+                  {FIRST_REQUEST_COUNT}
+                </span>
+              </button>
             </div>
-            <textarea
-              id="play-code"
-              className="play-editor play-editor-code"
-              aria-label="App source code"
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              defaultValue={PLAYGROUND_STARTER_CODE}
-            />
-          </section>
-
-          <details id="play-requests-box" className="play-requests">
-            <summary>
-              <span className="play-window-title">Requests</span>
-              <span id="play-requests-count" className="play-pane-hint">
-                {STARTER_REQUEST_COUNT} sent on Run
-              </span>
-              <span className="play-requests-toggle" aria-hidden="true" />
-            </summary>
-            <textarea
+            <Editor id="play-code" label="App source code" value={PLAYGROUND_FIRST.code} />
+            <Editor
               id="play-requests"
-              className="play-editor play-editor-requests"
-              aria-label="Requests, as a JSON array of { method?, path, body? }"
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              defaultValue={PLAYGROUND_STARTER_REQUESTS}
+              label="Requests, as a JSON array of { method?, path, headers?, body?, label? }"
+              value={PLAYGROUND_FIRST.requests}
+              hidden
             />
-          </details>
-        </div>
+          </div>
 
-        <section className="play-pane play-pane--results" aria-label="Response">
-          <div className="play-pane-head">
-            <span className="play-window-title">Response</span>
-            <span className="play-live-dot" aria-hidden="true" />
+          <div className="play-out">
+            <div className="play-out-head">
+              <span className="play-step-n" aria-hidden="true">
+                3
+              </span>
+              <span className="play-out-title">Responses</span>
+              <span id="play-out-meta" className="play-out-meta" />
+            </div>
+            <div id="play-results" className="play-results" aria-live="polite">
+              <p className="play-idle">Loading the playground…</p>
+            </div>
           </div>
-          <div id="play-results" className="play-results">
-            <div className="play-running">Loading the playground…</div>
-          </div>
-        </section>
-      </div>
+        </div>
+        <span id="play-share-msg" className="sr-only" aria-live="polite" />
+      </section>
 
       <noscript>
         <p className="play-noscript">
           The playground runs in the browser, so it needs JavaScript enabled.
         </p>
       </noscript>
+
+      <section className="play-ref" aria-labelledby="play-ref-title">
+        <h2 id="play-ref-title">What each piece does</h2>
+        <dl>
+          {REFERENCE.map(([term, description]) => (
+            <div key={term}>
+              <dt>
+                <code>{term}</code>
+              </dt>
+              <dd>
+                <Prose text={description} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section className="play-next">
+        <p>
+          Same code, on your machine: <code className="inline">bun create nifra my-app</code>
+        </p>
+        <a className="button ghost" href="/docs">
+          Read the docs
+        </a>
+      </section>
     </div>
   )
 }

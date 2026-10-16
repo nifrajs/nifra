@@ -3,7 +3,7 @@ import { breadcrumbs, FEED_LINK, pageMeta } from "../../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - Blog",
-  "Engineering notes from building nifra: agent-native framework design, SSR performance, and honest benchmarking.",
+  "Engineering notes from building Nifra: agent-native framework design, SSR performance, and honest benchmarking.",
   "/blog",
   {
     link: [FEED_LINK],
@@ -14,7 +14,7 @@ export const meta = pageMeta(
         "@context": "https://schema.org",
         "@type": "Blog",
         name: "Nifra Blog",
-        description: "Engineering notes from building nifra.",
+        description: "Engineering notes from building Nifra.",
         url: "https://nifra.dev/blog",
         blogPost: POSTS.map((post) => ({
           "@type": "BlogPosting",
@@ -34,7 +34,7 @@ export default function BlogIndex() {
     <div className="prose">
       <h1 className="page">Blog</h1>
       <p className="lead">
-        Engineering notes from building nifra. <a href="/rss.xml">RSS</a>
+        Engineering notes from building Nifra. <a href="/rss.xml">RSS</a>
       </p>
       {POSTS.map((post) => (
         <section key={post.slug}>

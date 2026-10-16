@@ -1159,7 +1159,7 @@ A strict `t.object` here would reject real traffic. A signed cookie arrives as i
 
 A `headers` schema is validated before the handler like the other slots: a missing
 or malformed header is a `422` (`onValidationError` receives the kind
-`"headers"`), and `c.headers` becomes the schema&rsquo;s typed output.
+`"headers"`), and `c.headers` becomes the schema's typed output.
 Every client sends headers no route declares - `host`, `user-agent`,
 `accept` - so a closed `t.object` validates only the names it declares,
 each read case-insensitively, which is also how the OpenAPI document lists them: one
@@ -2042,7 +2042,7 @@ export default {
 A store outage never fails a page. A read that throws, rejects, or outlives
 `storeTimeoutMs` is a miss and the page renders; a failed write still returns the
 rendered page; a failed background regeneration keeps the stale entry. Each failure goes to
-`onStoreError(error, &#123; op &#125;)`, which by default logs one line per operation
+`onStoreError(error, { op })`, which by default logs one line per operation
 per minute without the cache key. Set `storeTimeoutMs` for a network store, so a
 hung connection costs a miss rather than the request.
 
@@ -2135,7 +2135,7 @@ A purge is sent after the origin store is purged, coalesced for 250 ms, chunked 
 provider's per-call limit, and retried on 429 or 5xx honoring `Retry-After`. The
 endpoint never reports a purge that did not happen: `202` while it is queued,
 `502` with `retryable` when the CDN refused it. After a mutation in app
-code, `createInvalidator(&#123; store, cdn, origin &#125;).invalidate(&#123; tags &#125;)`
+code, `createInvalidator({ store, cdn, origin }).invalidate({ tags })`
 does the same. Staleness compounds: a page can be up to the CDN's
 `stale-while-revalidate` older than ISR's own window.
 
@@ -2318,7 +2318,7 @@ else document.addEventListener("nifra:hydrated", start, { once: true })
 > Add interactivity to a zero-runtime vanilla page with islands - imperative DOM enhancers, no framework runtime, no hydration. Explicit code an AI (or a human) gets right first try: mount, coordinate over a typed bus, always return cleanup.
 
 A `@nifrajs/web-vanilla` page ships zero framework runtime. When one corner needs
-to be interactive, you don&apos;t turn on hydration - you mount an **island**: a
+to be interactive, you don't turn on hydration - you mount an **island**: a
 small, plain-DOM enhancer over a server-rendered element. Explicit imperative code with no
 hidden reactivity - the shape an AI agent (or a human) gets right on the first try.
 
@@ -2337,7 +2337,7 @@ islands for widgets on an otherwise-static page.
 
 Render a `<nifra-island>` marker in your page (props are inline JSON), then
 bundle one entry (in `frontend/`) that calls `mountIslands`. Load it
-with the `islandScripts` export of the route&apos;s `.backend.ts` half.
+with the `islandScripts` export of the route's `.backend.ts` half.
 
 ```ts
 // doc-check: skip - server-rendered island marker (HTML, not a checkable module).
@@ -2375,7 +2375,7 @@ function runs on soft-nav teardown; forget it and every navigation leaks the lis
 ### Coordinate islands with a typed bus
 
 Islands are isolated by design - each enhances one element and shares no state. When two must
-talk (an &ldquo;add to cart&rdquo; button and a cart badge), use a
+talk (an "add to cart" button and a cart badge), use a
 `createIslandBus`: one typed channel, created once and closed over by each
 enhancer. No implicit global, so concurrent renders and tests never cross-talk.
 
@@ -2425,7 +2425,7 @@ mountIslands({ addButton, badge })
 
 ### Pattern: filter drives results
 
-The same shape scales to any &ldquo;one island changes, another reacts&rdquo; case. Each
+The same shape scales to any "one island changes, another reacts" case. Each
 island owns only its own DOM; they meet on the channel, never in a shared store.
 
 ```ts
@@ -2457,7 +2457,7 @@ mountIslands({ filter, results })
 
 ### Load strategies
 
-A marker&apos;s `data-strategy` defers its enhancer: `load` (default),
+A marker's `data-strategy` defers its enhancer: `load` (default),
 `idle`, `visible` (mount when it scrolls into view), or a
 `media` query. An island with no matching enhancer, or an invalid strategy, stays
 inert server-rendered HTML - forward-compatible, never a runtime error.
@@ -2511,7 +2511,7 @@ The deps array is the whole contract, and its one failure mode is catchable: a
 `computed` whose body reads a signal the array omits will never recompute when that
 signal changes. `nifra check` flags exactly that as `NF-C023` - the
 check reads which signals the body calls `.get()` on and compares them to the
-array. A framework&apos;s auto-tracked effect gives a tool nothing to compare, which is why
+array. A framework's auto-tracked effect gives a tool nothing to compare, which is why
 the equivalent lint elsewhere is a best-effort warning, not a gate.
 
 ### Bind a signal to the DOM
@@ -2536,8 +2536,8 @@ label.set("world") // the <h1> updates synchronously
 
 ### Keyed lists with bindList
 
-`bindList` keeps a container&apos;s children in sync with an array by key - a keyed
-reconcile like a framework&apos;s list diff, but you spell the key out. Add, remove, and
+`bindList` keeps a container's children in sync with an array by key - a keyed
+reconcile like a framework's list diff, but you spell the key out. Add, remove, and
 reorder reuse the matching node (preserving focus and scroll) instead of rebuilding the list.
 Key by a **stable id** on the item; keying by the array index reuses the wrong
 node on reorder, and `nifra check` flags it as `NF-C022`.
@@ -2563,8 +2563,8 @@ todos.set([...todos.get(), { id: crypto.randomUUID(), text: "buy milk", done: fa
 
 ### Async state with resource
 
-`resource(fetcher, [deps])` is nano&apos;s answer to &ldquo;suspense&rdquo; - an
-async cell whose value is an explicit `&#123; status, value, error &#125;` union.
+`resource(fetcher, [deps])` is nano's answer to "suspense" - an
+async cell whose value is an explicit `{ status, value, error }` union.
 It runs the fetcher immediately and again whenever a declared dep changes, and it handles the
 two things people get wrong by hand: the fetcher receives an `AbortSignal`, and a
 superseded request is aborted with its late result dropped, so the newest fetch always wins -
@@ -2593,7 +2593,7 @@ userId.set(2) // refetches; the deps array is what NF-C023 checks against the fe
 ```
 
 The deps array is checked exactly like `computed`: a `resource` whose
-fetcher reads a signal the array omits won&apos;t refetch when it changes, and
+fetcher reads a signal the array omits won't refetch when it changes, and
 `nifra check` flags it as `NF-C023`. Bind it to the DOM with
 `bindResource`, which dispatches on `status` - one handler per state,
 `ready` required, so a still-loading value can never render as a stray
@@ -2624,7 +2624,7 @@ const off = bindResource(document.querySelector("[data-user]")!, user, {
 nano owns state and DOM edges; an [island](/docs/islands) owns mount and teardown.
 Put the signals in the enhancer, collect every disposer, and return one cleanup that calls
 them all. Scaffold this shape with
-`nifra_scaffold &#123; path, variant: "stateful" &#125;` on a vanilla
+`nifra_scaffold { path, variant: "stateful" }` on a vanilla
 project - it emits the golden pattern below.
 
 ```ts
@@ -2662,9 +2662,9 @@ mountIslands({ todos })
 
 ### The three checks
 
-nano&apos;s explicitness is the whole point: because each reactive edge is a visible call, its
+nano's explicitness is the whole point: because each reactive edge is a visible call, its
 three mistakes are static lints with a fix recipe - the same closed loop (`scaffold`
-&rarr; `check` &rarr; `fix` &rarr; `verify`) that makes the
+-> `check` -> `fix` -> `verify`) that makes the
 backend AI-safe, now on the frontend.
 
 -
@@ -2741,7 +2741,7 @@ NDJSON stream settles the deferred values), and it's framework-agnostic - React
 
 For server push - live feeds, progress, notifications - `sse(c, run)` returns a
 `text/event-stream` response a handler returns directly. Push frames with
-`stream.send(&#123;&#125;)`; the connection stays open until `run`
+`stream.send({})`; the connection stays open until `run`
 resolves, you call `stream.close()`, or the client disconnects (
 `stream.signal`). It's a Web `ReadableStream` too, so it runs on Bun,
 Node, Deno, and the edge - no `new Function`, no per-runtime API.
@@ -2785,9 +2785,9 @@ read, or pass `Infinity` to turn the limit off.
 `stream.send()` is type-checked and the typed client grows
 `.subscribe(onEvent)` with the same event type. A route whose schema declares a
 `body` is a POST stream: the body validates as on any POST, and
-`.subscribe(onEvent, &#123; body &#125;)` sends it. A GET stream reconnects after a
+`.subscribe(onEvent, { body })` sends it. A GET stream reconnects after a
 drop and resumes with `Last-Event-ID`; a POST stream does not reconnect unless you
-pass `reconnect: true`, since a reconnect sends the body again. The client&apos;s
+pass `reconnect: true`, since a reconnect sends the body again. The client's
 `onRequest` hook runs before each connect, so a refreshed token reaches the stream.
 
 ```ts
@@ -3035,8 +3035,8 @@ deferred boundary. Put critical page data in the route `loader`; use
 
 ### Markup outside the page
 
-Svelte&apos;s `<svelte:head>` renders into the document&apos;s
-`<head>`, after the tags from the route&apos;s `meta`. The document
+Svelte's `<svelte:head>` renders into the document's
+`<head>`, after the tags from the route's `meta`. The document
 always has a `<title>` of its own and a browser uses the first one, so set the
 title in `meta`.
 
@@ -3050,7 +3050,7 @@ the client, with a warning in development.
 ### Dev HMR support
 
 Dev HMR works for all five adapters through `createViteDevServer` and the
-framework&apos;s Vite plugin. React, Preact, and Vue preserve edited component state. Solid
+framework's Vite plugin. React, Preact, and Vue preserve edited component state. Solid
 and Svelte update live without a full page reload, and the edited component may remount. Full
 matrix in [Dev & HMR](/docs/dev).
 
@@ -3092,9 +3092,9 @@ app
 app.use((a) => a.decorate("db", db).derive((c) => ({ now: Date.now() })))
 ```
 
-### What a parent&rsquo;s use() covers
+### What a parent's use() covers
 
-A `group()` scope inherits the parent&rsquo;s chain as it stands at the call. A
+A `group()` scope inherits the parent's chain as it stands at the call. A
 `merge()`d server was compiled on its own, so its routes keep _their_ chain. Only
 what the parent installed **before** the `group()` or `merge()` counts.
 
@@ -3130,14 +3130,14 @@ yes, when the route declares capabilities and has no ledger of its own
 
 yes
 
-the merged server&rsquo;s own - a route declaring `idempotency` without one is
+the merged server's own - a route declaring `idempotency` without one is
 refused at registration
 
 Two checks catch the silent cases. In development and tests, `unusedScopedHooks`
 reports a hook followed only by `merge()` calls, and a `responseContract()`
 or `effectLedger()` installed after routes it would have covered.
 `nifra check` reports a `merge()` whose server authenticates none of its
-routes while this server&rsquo;s `authenticate()` or auth plugin covers its own
+routes while this server's `authenticate()` or auth plugin covers its own
 (NF-C043); a module that is public on purpose takes
 `// nifra-expect NF-C043: <reason>` on the merge line.
 
@@ -3227,7 +3227,7 @@ A **WebSocket** route, listed as `WS /path`, runs the request hooks, then the
 authentication stages, `derive`s, `beforeHandle`s and
 `onError` declared before it. Its handshake runs no `around`,
 `afterHandle` or response hooks, but a refused handshake carries the
-app&rsquo;s `responseHeaders()`.
+app's `responseHeaders()`.
 
 `nifra routes --hooks --json` writes the report; `--since <file>`
 prints what runs differently from a saved one. `nifra upgrade --write` saves the
@@ -3607,10 +3607,10 @@ Express, and Elysia, see [security posture, compared](/docs/security-comparison)
 
 ### Responses that cannot leak more than they declare
 
-A `response` schema is a **lower** bound: it says &ldquo;at least these
-fields&rdquo;, never &ldquo;only these&rdquo;. A handler returning a database row that satisfies
-it also ships every other column, and nothing points at it - TypeScript&rsquo;s
-excess-property check does not reach a handler&rsquo;s return position, and the client&rsquo;s
+A `response` schema is a **lower** bound: it says "at least these
+fields", never "only these". A handler returning a database row that satisfies
+it also ships every other column, and nothing points at it - TypeScript's
+excess-property check does not reach a handler's return position, and the client's
 type reports the contract rather than the bytes. So the leak is invisible from both ends, and it
 can appear with no code change at all: add a column, and the next deploy ships it to browsers.
 
@@ -3639,7 +3639,7 @@ export const app = server().use(responseContract("enforce", { extra: "strip" }))
 // enforce, { extra: "strip" }  -> 200 {"id":"u1","name":"Ada"}
 ```
 
-Not installing the plugin is &ldquo;off&rdquo;, which is exactly today&rsquo;s behaviour and
+Not installing the plugin is "off", which is exactly today's behaviour and
 keeps the lane out of your bundle rather than shipping a disabled branch to everyone.
 `"warn"` checks every response, logs the undeclared fields by name, and
 serves the payload **unchanged** - so turning it on in staging can never be the
@@ -3651,10 +3651,10 @@ returns it early, or `onError` answers with it; only a hand-built
 should cover: like
 `idempotency()`, the decision is made per route at registration.
 
-By default, enforcement follows your schema&rsquo;s own semantics, because Standard Schema
+By default, enforcement follows your schema's own semantics, because Standard Schema
 exposes `validate` and no way to enumerate declared keys. A _stripping_ schema
 (Zod, Valibot) yields a cleaned value, so the extra fields are dropped. A _strict_ one
-(`@nifrajs/schema`&rsquo;s `t.object`) reports them as issues, so the
+(`@nifrajs/schema`'s `t.object`) reports them as issues, so the
 response becomes a 500 and the detail goes to the logger, never to the caller.
 `{ extra: "strip" }` changes that for `t` schemas: they carry their
 JSON Schema, which does list the declared keys, so the payload is projected onto them - nested
@@ -3674,8 +3674,8 @@ For a metric or an alert, pass `onReport`. It receives every response the
 contract has something to say about: `violation` (enforce mode, a 500 went out
 instead), `warn` (warn mode, sent anyway, with the undeclared keys in
 `fields` when they are the reason) and `stripped` (enforce mode, sent
-without `fields`). Each report carries the route&rsquo;s method and pattern and
-the log line&rsquo;s message, never a value. A hook that throws or rejects is logged once and
+without `fields`). Each report carries the route's method and pattern and
+the log line's message, never a value. A hook that throws or rejects is logged once and
 changes no response.
 
 ```ts
@@ -3696,14 +3696,14 @@ export const app = server().use(
 )
 ```
 
-A `merge()`d server&rsquo;s routes are covered by a contract the parent installed
+A `merge()`d server's routes are covered by a contract the parent installed
 before the merge, as long as the route declares a response and its own server installed none.
-See [what a parent&rsquo;s use() covers](/docs/plugins#parent-use).
+See [what a parent's use() covers](/docs/plugins#parent-use).
 
 The check itself is essentially free: with a compiled validator it measures in the
 ~100ns-per-response range, and a realistic middleware-carrying route benchmarks within noise
 of the same route with no contract at all, on Bun and Node alike. What a contracted route
-does give up is the bare-route fused lane - the check needs the handler&rsquo;s value before
+does give up is the bare-route fused lane - the check needs the handler's value before
 it becomes bytes - and a route with any middleware, derive, or lifecycle hook has already
 left that lane. If a route looks like production, the contract costs nothing: declare it.
 
@@ -3843,14 +3843,14 @@ app.post(
 ```
 
 `t.file` checks the size before it reads a byte, and `accept` is matched
-against the file&rsquo;s **leading bytes**, never the type the client claimed: a script renamed
+against the file's **leading bytes**, never the type the client claimed: a script renamed
 `photo.png` fails validation. With `accept` set, the file the handler
 receives carries the detected type. A type that has no signature to check (`text/csv`,
 `image/svg+xml`) is refused when the schema is built, not silently let through. Text
 fields are coerced from their string form, a repeated field becomes a list, and a field the form
 does not declare fails validation unless `additionalProperties` is set.
 
-The body is bounded before any of it is validated. The route&rsquo;s `bodyLimit` caps
+The body is bounded before any of it is validated. The route's `bodyLimit` caps
 the whole request; `maxFields` (100), `maxFiles` (10),
 `maxFieldBytes` (64 KiB) and `maxFileBytes` cap what it may carry. A request
 over one is answered `413` with the limit it crossed (`payload_too_large`,
@@ -3903,14 +3903,14 @@ format behind it, and `application/zip` is also what a `.docx` or
 
 -
 **
-`file.name` is the client&rsquo;s.
+`file.name` is the client's.
 **
 Path separators and control characters are removed, and that is all. Generate the storage key;
 never build a path from the name.
 
 -
 **
-Without `accept`, `file.type` is the client&rsquo;s too.
+Without `accept`, `file.type` is the client's too.
 **
 Some runtimes derive it from the file extension. Only a type that `accept` matched is
 one the bytes proved.
@@ -3922,9 +3922,9 @@ one the bytes proved.
 -
 **A form post is a simple cross-origin request.** A browser sends
 `multipart/form-data`, urlencoded and `text/plain` with cookies and no
-preflight. A body-schema route refuses one whose `Origin` is another site&rsquo;s
+preflight. A body-schema route refuses one whose `Origin` is another site's
 with `403` before reading it; list a site that must post forms to the app in the
-server&rsquo;s `formOrigins`. A request without an `Origin` passes, so
+server's `formOrigins`. A request without an `Origin` passes, so
 a cookie-authenticated upload route still needs `csrf()` like any other state
 change.
 
@@ -3975,14 +3975,14 @@ app.post(
 ```
 
 The route opts in, not the app: a parser registered once for every route would widen what each
-of them accepts. Before `parse` runs, the request&rsquo;s media type has matched one
+of them accepts. Before `parse` runs, the request's media type has matched one
 of `types` in full (case folded, parameters set aside) and the body has been read
-under the route&rsquo;s `bodyLimit`, counted on the bytes delivered. After it, and
+under the route's `bodyLimit`, counted on the bytes delivered. After it, and
 before the schema:
 
 -
 **A parser that throws is a `400`.** The answer is `invalid_body`; the
-parser&rsquo;s own message is not sent.
+parser's own message is not sent.
 
 -
 **The value must be a tree.** An object or array reached twice is what an alias or a cycle
@@ -3998,15 +3998,15 @@ and an object whose prototype the decoder replaced with data are rejected or str
 JSON. An instance of a class, such as a `Date` or a `Uint8Array`, is
 passed through without being looked into.
 
-What stays yours is the decoder&rsquo;s own limits: nesting depth, alias expansion, and the size
+What stays yours is the decoder's own limits: nesting depth, alias expansion, and the size
 of a number or a string are spent inside `parse`, before anything above can look.
 Configure it for untrusted input.
 
 `types` takes full media types only, and refuses four: JSON, urlencoded and multipart
 already have readers, and `text/plain` is a body a browser sends from any site with
-the user&rsquo;s cookies and no preflight. Every type it does accept is one a browser must
+the user's cookies and no preflight. Every type it does accept is one a browser must
 preflight, so your CORS policy sees the request first. The generated OpenAPI document lists
-each type under the operation&rsquo;s request body. The typed client keeps sending JSON, which
+each type under the operation's request body. The typed client keeps sending JSON, which
 the route still reads; send another format with `fetch`.
 
 ### File uploads - `@nifrajs/uploads`
@@ -4233,20 +4233,20 @@ const app = server().use(securityHeaders({
 Every value is fixed at construction, so the headers are declared statically rather than
 written by a response hook - an app whose response middleware is only this keeps the fused
 native response lanes. A route that sets one of these names itself keeps its own value. A
-group can apply its own configuration over the app&apos;s - `admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`
-inside `app.group("/admin", ...)` - and each header it sets replaces the app&apos;s
-value on the group&apos;s routes only.
+group can apply its own configuration over the app's - `admin.use(securityHeaders({ contentSecurityPolicy: "default-src 'none'" }))`
+inside `app.group("/admin", ...)` - and each header it sets replaces the app's
+value on the group's routes only.
 
-A fixed `Content-Security-Policy` here cannot allow nifra&apos;s inline scripts by
+A fixed `Content-Security-Policy` here cannot allow nifra's inline scripts by
 nonce. For a strict `script-src` on web pages, give `createWebApp` a
-`csp` from `createCspPolicy`: it allows the framework&apos;s constant
+`csp` from `createCspPolicy`: it allows the framework's constant
 scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
 same header and stays cacheable under `withISR` or a CDN. See
 [A strict CSP that still caches](/docs/contract#strict-csp).
 
 ### Route assurance - prove every route is guarded
 
-Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
+Installing security middleware is not the same as proving it covers every route. Nifra's
 official auth, CSRF, body-limit, rate-limit, idempotency, IP-restriction, and security-header
 modules publish reflection-safe evidence at the hook where they enforce it. A policy then
 classifies every route and fails closed when evidence is missing or forbidden.
@@ -4288,7 +4288,7 @@ runs only through reflection or `nifra assure`, so requests pay no assurance cos
 
 WebSocket routes are reflected under the pseudo-method `"WS"`, so a policy classifies
 every socket too. A handshake runs the auth guards registered before the socket and the
-app&apos;s request hooks, so a socket carries authentication and rate-limit evidence from them.
+app's request hooks, so a socket carries authentication and rate-limit evidence from them.
 It never claims evidence whose enforcement its message handlers bypass, such as a durable
 command journal. A socket declares its effects with
 `app.ws(path, { capabilities })`, and capability assurance checks them against
@@ -4297,7 +4297,7 @@ the module that registers it.
 ### Effect assurance - declared capability versus provenance
 
 Authentication does not reveal what a route can do. Capability assurance compares an exact
-route declaration against every approved effect import reachable through that route&apos;s local
+route declaration against every approved effect import reachable through that route's local
 module graph. Static, dynamic, `require`, and re-export edges are scanned; raw provider
 imports fail `nifra check`. Runtime beacons add denial at owned adapters, but are never
 treated as a substitute for static provenance.
@@ -4596,8 +4596,8 @@ this way. So when `nifra.assurance.ts` loads the app, Nifra also records, in
 development, the module whose call registered each route, and the walk starts there too: a
 computed path, or a route on a server a helper builds, is still covered.
 `nifra check` still names such an expression in an NF-C036 finding, since the
-route lints read the source alone. When the registering module is not where the route&apos;s
-code lives, such as a shared helper that registers other modules&apos; handlers, list the
+route lints read the source alone. When the registering module is not where the route's
+code lives, such as a shared helper that registers other modules' handlers, list the
 right module in `provenance.routeModules`.
 
 ### Runtime beacons
@@ -6150,7 +6150,8 @@ every other runtime.
 
 ```ts
 // doc-check: skip - Workers entry: a Durable Object hub holds the connections.
-import { createWebSocketHub, toFetchHandler } from "@nifrajs/workers"
+import { toFetchHandler } from "@nifrajs/core/server"
+import { createWebSocketHub } from "@nifrajs/workers"
 
 export const NifraWebSocketHub = createWebSocketHub(app) // bind as NIFRA_WS_HUB in wrangler.toml
 export default toFetchHandler(app, { webSocketHub: (env) => env.NIFRA_WS_HUB })
@@ -6522,12 +6523,13 @@ function under `.vercel/output`.
 
 ## Nifra - CLI
 
-> The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR and complete target-specific deploy builds.
+> Every Nifra CLI command: dev, build and start, the check and contract gates, code generation, the agent and dev-server tools, and upgrades.
 
-`Nifra` is zero-config: it reads `routes/`, `framework.ts`, and
-(optionally) `backend.ts` from your project and wires the right
-`@nifrajs/web` entrypoint - no `dev.ts`/`build.ts`/
-`server.ts` to hand-write. (`create-nifra` scaffolds the conventions.)
+`nifra` runs, builds, checks and upgrades an app from its project root. It reads
+`routes/`, `backend/framework.ts`, `backend/app.ts` and
+`nifra.config.ts` and wires the right `@nifrajs/web` entrypoint, so there
+is no `dev.ts`, `build.ts` or `server.ts` to write.
+`create-nifra` scaffolds the layout.
 
 ```ts
 nifra dev      # true-HMR dev server (Bun native HMR + Nifra SSR) - http://localhost:4321
@@ -6541,13 +6543,13 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 #        --vite | --bun (dev/build) force the pipeline
 ```
 
-### The conventions
+### The layout the CLI reads
 
-Four conventions at the project root. `nifra dev` runs the Bun-native
-[HMR dev server](/docs/dev); `nifra build` runs the Bun-native production
-build (content-hashed client assets plus a target-specific server); `nifra start`
-runs the default Bun output. The generated server serves assets and SSR with matched-route
-chunks preloaded and route CSS linked in each `<head>`.
+`nifra dev` runs the Bun-native [HMR dev server](/docs/dev);
+`nifra build` runs the production build (content-hashed client assets plus a
+target-specific server); `nifra start` runs the default Bun output. The generated
+server serves assets and SSR with matched-route chunks preloaded and route CSS linked in each
+`<head>`.
 
 **One rule picks the bundler, and it is the same rule in both phases** - so a
 project can never be bundled by one toolchain in dev and the other in production. Bun runs
@@ -6561,47 +6563,274 @@ answers the same question without starting a server - see
 
 ```ts
 my-app/
-  routes/            # file-based routes (index.tsx, _layout.tsx, [id].tsx, …)
-  framework.ts       # deploy-safe render adapter
-  nifra.config.ts    # CLI-only client module + dev/build plugins
-  backend.ts         # export const backend = server()...   (optional - the typed contract)
+  routes/            # the URL tree: index.tsx, _layout.tsx, [id].tsx, each with an optional x.backend.ts half
+  backend/
+    framework.ts     # the render adapter and server options - deploy-safe
+    app.ts           # export const backend = server()...   (optional - the typed API)
+  frontend/          # components and browser code
+  shared/            # schemas, types and helpers both sides import
+  nifra.config.ts    # CLI-only: client module, deploy target, dev/build plugins
 ```
 
-These paths are **fixed**, not configurable: the CLI resolves all four from the
-project root, so `backend.ts` cannot move into `src/` or be renamed -
-if the file is not at the root, `nifra dev|build` simply run without a backend
-(it is optional, so nothing errors). Only the entry file is pinned; the feature modules it
-`.merge()`s can live in any directory. Keep `backend.ts` a pure
-composition root - merging modules, registering no routes of its own - so each route's
-capability reach stays its own module's (see
-[Backends & API](/docs/backends) and
-[Verification](/docs/verification)).
+These paths are **fixed**: the CLI resolves them from the project root.
+`backend/app.ts` is optional; without it `nifra dev` and
+`nifra build` run the pages alone. A root `backend.ts` or
+`framework.ts`, the layout before 4.0, is refused with the command that moves it,
+and `nifra check` reports it as NF-C038: run
+`nifra migrate layout`. Only the entry file is pinned; the feature modules it
+`.merge()`s can live anywhere under `backend/`. Keep
+`backend/app.ts` a composition root - merging modules, registering no routes of
+its own - so each route's capability reach stays its own module's. What goes in each
+zone, and what the builds refuse to cross, is on
+[Project structure](/docs/structure).
 
-### framework.ts - naming the framework once
+### backend/framework.ts and nifra.config.ts
 
-Keep the render `adapter` in deploy-safe `framework.ts`. Put
-`clientModule`, Vite plugins, compiler plugins, conditions, and defines in CLI-only
-`nifra.config.ts`. This prevents build tooling and native dependencies from entering
-generated server bundles.
+Keep the render `adapter` and the server options (`apiPrefix`,
+`mounts`, `csp`, `i18n`) in deploy-safe
+`backend/framework.ts`: the generated server entry imports it. Put
+`clientModule`, the deploy `target`, Vite plugins, compiler plugins,
+conditions, and defines in CLI-only `nifra.config.ts`, which re-exports the
+adapter. This keeps build tooling and native dependencies out of generated server bundles.
 
 ```ts
-// framework.ts - deploy-safe; generated server entries import this file.
+// backend/framework.ts - deploy-safe; the generated server entry imports this file.
 import { reactAdapter } from "@nifrajs/web-react"
 
 export const adapter = reactAdapter
+export const apiPrefix = "" // "" keeps backend/app.ts loader-only; "/api" also serves it over HTTP
 
 // nifra.config.ts - CLI-only build/dev tooling; never imported by a deployed server.
 // doc-check: skip - needs the third-party @vitejs/plugin-react; install it to run this.
 import react from "@vitejs/plugin-react"
-export { adapter } from "./framework"
+export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-react/client"
-export const vitePlugins = [react()]          // dev HMR (Fast Refresh)
+export const target = "bun"                   // what nifra build emits; nifra target <t> switches it
+export const vitePlugins = [react()]          // only if you want Vite's dev pipeline
 // Vue/Svelte/Solid also export:
 //   clientPlugins = [vueBunPlugin("dom")]     // compile routes for the client build
 //   serverPlugins = [vueBunPlugin("ssr")]     // compile routes into the target's server bundle
 //   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags
 ```
+
+### Command reference
+
+Every command `nifra --help` lists, by what it is for. Most take
+`--json` for agents and CI. `--env-file <path>` works on every
+command and may repeat (a later file wins; a variable already set in the environment is never
+overwritten), which matters because commands that reflect your app import it. A dry run is
+the default wherever a command edits files.
+
+#### Run and build
+
+Develop, build a deploy directory, and run it.
+
+Command
+What it does
+
+`nifra dev [--port <n>] [--vite | --bun] [--poll]`
+
+The dev server with true HMR, on port 4321. Bun runs it unless `vitePlugins` are the app's only transforms. `--no-indicator` hides the in-page issues badge.
+
+`nifra build [--target <t>] [--out <dir>] [--report]`
+
+A complete deploy directory for `bun`, `node`, `deno`, `cloudflare`, `vercel` or `static`. The server entry is generated from `backend/framework.ts`, `backend/app.ts` and `routes/`. `--report` prints each chunk's size.
+
+`nifra start [--port <n>] [--out <dir>]`
+
+Run the Bun build at `<out>/server.js`.
+
+`nifra target [<target>]`
+
+Show the deploy target kept in `nifra.config.ts`, or switch it. `nifra build` emits that target when no `--target` is given.
+
+#### Check and gate
+
+The gates to run before calling a change done, locally and in CI.
+
+Command
+What it does
+
+`nifra check [--lints-only] [--json] [--sarif]`
+
+Typecheck plus contract lints: a hand-rolled `fetch()` to your own API, an untyped client, backend code reached from browser code. `--lints-only` skips tsc; `--sarif` emits SARIF 2.1.0.
+
+`nifra review [--diff <ref>] [--strict] [--fix] [--write]`
+
+A deterministic, evidence-backed review of the project or a diff. `--fix` plans the recipes it can apply; `--fix --write` applies them.
+
+`nifra fix [--code <NF-code>]`
+
+Apply the registered recipe for a diagnostic, then print the diagnostics that remain.
+
+`nifra doctor [--strict] [--auto-fix] [--target <t>]`
+
+Find undeclared imports and duplicate copies of `@nifrajs/core`, React and other identity-sensitive packages, and print production readiness. `--auto-fix` writes the safe dependency fixes.
+
+`nifra port [--target <t>] [--ci] [--strict]`
+
+A feature-by-deploy-target matrix (in-memory stores, in-process cron and WebSockets, runtime globals, `node:` built-ins) with file:line evidence. `--ci` fails on a feature the target lacks.
+
+`nifra routes [--json] [--modes] [--hooks] [--graph]`
+
+Every page and API route with its methods. `--modes` shows each page's render mode and fails against `--target`; `--hooks` lists the hooks each route runs; `--graph` draws the routes as Mermaid.
+
+`nifra smoke [--fixture <file>] [--in-process]`
+
+The declared production smoke checks: SSR, the mounted API, 404s, headers, auth, contracts and hydration.
+
+`nifra cdn-check <url>`
+
+Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations getting page data rather than the cached document.
+
+`nifra i18n check [entry] [--strict]`
+
+Check i18n catalogs: coverage, missing and unused keys, ICU syntax, placeholder parity and plural cases. It imports the entry module.
+
+`nifra verify [--release]`
+
+Run the verification gate plan against the project's `package.json` scripts; a gate with no script is reported, not run. `--release` adds the build, test, coverage and cross-runtime gates.
+
+#### Contracts and assurance
+
+Lock the API contract, prove the security posture, and fail CI when either regresses. See Verification for the ladder these build.
+
+Command
+What it does
+
+`nifra snapshot [--out <file>]`
+
+Write the backend's API contract (routes and schemas) as JSON, `api-snapshot.json` by default: the baseline for `nifra diff`.
+
+`nifra diff [<baseline>]`
+
+The breaking-change gate. A new required request field or a removed response field breaks; a new response field does not. Exits non-zero on a break.
+
+`nifra contracts snapshot | check`
+
+Write the deterministic route contract lock, `contracts.lock.json`, or check the current routes against it.
+
+`nifra assure [--config <file>]`
+
+Classify every route against `nifra.assurance.ts` and list the evidence each one is missing.
+
+`nifra assure --bundle [--strict] [--hydration] [--interact]`
+
+One JSON verdict over every applicable gate, each recorded as pass, fail or skip. Exits non-zero unless the verdict is green.
+
+`nifra levels [--min <n>]`
+
+The verification ladder: L0 typed contract, L1 route assurance, L2 capability lockfile, L3 route manifest, L4 invariant-tested. `--min` fails below a level.
+
+`nifra prove [--file <path>] [--min <n>]`
+
+Plan the cheapest proofs for the changed files and report a machine-checkable stop condition. Needs a fresh build.
+
+`nifra capabilities snapshot | check | explain`
+
+Write the capability lockfile once provenance and idempotency assurance pass; fail CI on an effect import that bypasses it, drift, a GET that writes, or an idempotency gap; explain one route's tokens with `explain <METHOD> <path>`.
+
+`nifra manifest emit | diff`
+
+Emit the hash-verified route trust manifest, signed with `--sign <key-ref>` through the configured KMS signer, or compare two manifests and fail on a regression.
+
+`nifra replay <file>`
+
+Validate a token-only verification metadata file and run it against its gate.
+
+#### Generate
+
+Write the files the types and clients come from.
+
+Command
+What it does
+
+`nifra types [--check]`
+
+Each route's `./+types` module under `.nifra/types`: params, schema-typed data, and `api` typed by `backend/app.ts`. `dev`, `build` and `check` refresh them too.
+
+`nifra schemas [--write] [--check]`
+
+Draft `loaderOutput` and `actionOutput` from each loader's and action's return type. `--write` adds the missing ones; it also lists returned fields a hand-written schema drops.
+
+`nifra sync-routes`
+
+Regenerate `nifra-routes.d.ts` so `navigate({ to, search })` is typed by each route's search schema.
+
+`nifra sync-manifest`
+
+Regenerate a committed `server-manifest.ts` from `routes/` without a full build.
+
+`nifra openapi [--format json | yaml] [--path <prefix>]`
+
+The backend's OpenAPI document, including response types inferred at build time.
+
+`nifra sdk --lang python | go [--out <file>]`
+
+A deterministic Python or Go SDK generated from `backend/app.ts`.
+
+#### Agents and the dev server
+
+What a coding agent reads and runs. nifra mcp serves the same information as tools; see Coding agents.
+
+Command
+What it does
+
+`nifra mcp [dir]`
+
+Start the project's MCP server over stdio: the route index, scaffolding, `nifra_check`, SSR rendering, the dev server's errors and logs, and the declared dev database.
+
+`nifra docs-mcp [--port <n>]`
+
+Serve the public docs MCP (`nifra_docs`, `nifra_example`) over HTTP, on port 8787 by default.
+
+`nifra context`
+
+Print the project's route index and conventions for an agent's prompt.
+
+`nifra learn [<step>]`
+
+Print the guided build-an-app path, or one step's goal, actions and check.
+
+`nifra init-agents [--force] [--sync-mcp]`
+
+Add the agent files a new app ships (`.mcp.json`, the `AGENTS.md` sections, each agent's pointer) to an existing app. `--sync-mcp` re-pins the MCP launch to the installed nifra.
+
+`nifra errors [--since <n>] [--category <c>]`
+
+What the running dev server caught (SSR, loader, API, build, browser and hydration errors), each a structured diagnostic. Exits 1 while errors are open.
+
+`nifra logs [--level <l>] [--grep <s>]`
+
+The dev server's console, server and browser, each line tagged with its request.
+
+`nifra explain [<message> | <NF-code>]`
+
+A structured diagnostic for an error, or what a check rule reports and how to fix it.
+
+`nifra db schema | query | role | audit`
+
+Read the development database declared as `devDatabase` in `nifra.config.ts`: its tables, one read-only `SELECT` (rows capped, secrets masked), the SQL for a read-only Postgres role, and a log of what ran.
+
+#### Migrate and upgrade
+
+Move an app between layouts and releases. Each one is a dry run until --write.
+
+Command
+What it does
+
+`nifra migrate layout [--write] [--zones]`
+
+Move an app onto the 4.0 layout: split each route into `x.tsx` and `x.backend.ts`, fold `_middleware.ts` into `_layout.backend.ts`, move `backend.ts` and `framework.ts` under `backend/`, and zone the other modules.
+
+`nifra migrate --from tailwind --to stylex`
+
+Move static Tailwind classes to StyleX; see below.
+
+`nifra upgrade <version> [--write] [--list]`
+
+Run every release recipe between the installed version and the target; see below.
 
 ### Tailwind to StyleX
 
@@ -6621,7 +6850,7 @@ expressions, arbitrary values, parent-dependent variants, and unknown utilities 
 and are reported with file/line evidence. A non-zero exit status means manual migration issues
 remain.
 
-StyleX compilation is native to Nifra&apos;s Bun pipeline. Install the runtime and compiler peers,
+StyleX compilation is native to Nifra's Bun pipeline. Install the runtime and compiler peers,
 then register both the browser and SSR transforms:
 
 ```sh
@@ -6640,7 +6869,7 @@ export const serverPlugins = [stylexBunPlugin("ssr")]
 ```
 
 If the project intentionally uses Vite, add the Vite adapter alongside its existing Vite
-transforms. Nifra will use Vite when `vitePlugins` are the app&apos;s only transforms:
+transforms. Nifra will use Vite when `vitePlugins` are the app's only transforms:
 
 ```ts
 // doc-check: skip - requires the third-party Vite React plugin
@@ -6664,7 +6893,7 @@ The pins in `overrides`, `resolutions` and
 `pnpm.overrides` move with them, since an override decides what installs. A
 `peerDependencies` range is what a library accepts, not a pin: it is raised only
 when it excludes the target (keeping its operator, even with `--exact`), and a
-library&apos;s `">=3.1.0"` floor never sets the version the upgrade
+library's `">=3.1.0"` floor never sets the version the upgrade
 starts from unless nothing else, installed or declared, names one.
 
 ```bash
@@ -6679,7 +6908,7 @@ nifra doctor                  # afterwards: no "mixed nifra versions" advisory l
 It is a dry-run until `--write`, and the same run twice makes no further edits. An
 unknown version or a target below what is installed is refused (`--allow-downgrade`
 when the rollback is intended); a target newer than the running CLI prints the command for
-that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
+that release's CLI. It edits files under the workspace root only: a symlinked package
 directory or `package.json` is never followed, and a group package installed by a
 link from outside the root is listed under "Left alone" for you to upgrade in its
 own repository. The MCP launch pin in `.mcp.json`, `.cursor/mcp.json`,
@@ -6688,7 +6917,7 @@ the project declares `@nifrajs/cli` so the launch runs that install from then on
 the edit `nifra init-agents --sync-mcp` makes. Another version pinned outside
 `package.json` is listed with its line: the rest of an agent file, an MCP config
 elsewhere, a Dockerfile or compose file, a CI workflow, and a lockfile other than the
-workspace&apos;s own (an image build&apos;s frozen lockfile, say), which you regenerate after
+workspace's own (an image build's frozen lockfile, say), which you regenerate after
 installing. `nifra check` reads the installed packages, so `--write`
 runs it (`--no-verify` skips that) only once they match the target: until the new
 pins are installed it would judge the release you are leaving, and the command prints the
@@ -7965,7 +8194,7 @@ start - they are the edges you can hit later, collected in one place.
 
 #### Keep the adapter out of your config file
 
-Split `framework.ts` (the adapter, imported by your server and edge entries) from
+Split `backend/framework.ts` (the adapter, imported by your server and edge entries) from
 `nifra.config.ts` (the CLI's config, where the Vite plugins and SFC compilers live).
 If your server entry reaches the adapter _through_ the config, everything the config
 imports is bundled into your production server - the Vite plugin, the framework compiler, and
@@ -7974,7 +8203,7 @@ native binding, which reads like a broken install rather than a config-shape pro
 
 ```ts
 // doc-check: skip - fragment: two files from one app, shown together.
-// framework.ts - imported by your SERVER and edge entries. Adapter only, nothing else.
+// backend/framework.ts - imported by your SERVER and edge entries. Adapter only, nothing else.
 import { svelteAdapter } from "@nifrajs/web-svelte"
 export const adapter = svelteAdapter
 
@@ -7982,7 +8211,7 @@ export const adapter = svelteAdapter
 // belong here. Re-export the adapter; never define it here, or the dev toolchain it pulls in
 // (Vite, the SFC compiler, their native bindings) is bundled into your production server.
 import { svelte } from "@sveltejs/vite-plugin-svelte"
-export { adapter } from "./framework"
+export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-svelte/client"
 export const vitePlugins = [svelte()]
 ```
@@ -8288,7 +8517,7 @@ routes added after it stay typed. See
 ####
 Call site rejects `{ query: {…} }`
 
-If `api.thing.get(&#123; query: &#123; … &#125; &#125;)` errors, the route declares no
+If `api.thing.get({ query: { … } })` errors, the route declares no
 `query` schema - its query types as `never`, so the client can't accept query
 params. The error reads out the fix; add a schema to the route:
 `.get("/thing", { query: z.object({ page: z.string() }) }, h)`. Then
@@ -8656,14 +8885,14 @@ each other. Each domain therefore owns its full absolute paths (`/api/listings`,
 `routes()`, OpenAPI, capability events and the effect ledger. The builder
 inherits this server's middleware chain as it stands at the call; what it adds stays in the
 group, and its `onRequest`/`onResponse` hooks run only for requests at
-or under the prefix. A static header the group declares replaces the parent&apos;s value
-of that name on the group&apos;s routes, so `securityHeaders()` with the group&apos;s
-own configuration applies over the app&apos;s there. Any other plugin the parent already
-applied stays the parent&apos;s: the group&apos;s `use()` of that same instance
+or under the prefix. A static header the group declares replaces the parent's value
+of that name on the group's routes, so `securityHeaders()` with the group's
+own configuration applies over the app's there. Any other plugin the parent already
+applied stays the parent's: the group's `use()` of that same instance
 does nothing, and its `use()` of another instance under the same name (another
 `cors()` policy) throws a `RouteConfigError` when the group is
 declared, rather than being dropped. A plugin the group applies still shares the
-parent&apos;s copy of a plugin it `use()`s itself. The prefix is plain text (no
+parent's copy of a plugin it `use()`s itself. The prefix is plain text (no
 params or wildcards), and a collision throws before any group route is added.
 
 -
@@ -10434,7 +10663,7 @@ then up to 127 of `A-Z a-z 0-9 . _ : / -`), more than 32 tags, or something othe
 an array. Those tags were dropped, so a purge by them reaches nothing. The warning names the
 route, never the tag.
 
-**Fix:** build tags from route params (`product:$&#123;params.id&#125;`),
+**Fix:** build tags from route params (`product:${params.id}`),
 keep to the allowed characters, and return at most 32.
 
 #### NIFRA_CDN_RATE_LIMITED
@@ -11268,7 +11497,7 @@ keeps the 4.x behavior for each.
 Past 5.0, 5.1 adds one change a frontend on another origin sees. A route with a
 `body` schema answers a urlencoded, multipart or `text/plain` body whose
 `Origin` names another site with `403 forbidden_origin`, before reading
-it. List that frontend&rsquo;s origin, or an identity provider&rsquo;s for a
+it. List that frontend's origin, or an identity provider's for a
 `form_post` callback, in the `formOrigins` server option (an array of
 exact origins or a function; `@nifrajs/edge` takes it too). JSON bodies are
 unchanged. [Security](/docs/security) covers what the check leaves to
@@ -11512,7 +11741,7 @@ mount small and temporary, and use typed routes for every migrated endpoint.
 The platform object is forwarded as the second argument when the runtime supplies one.
 
 A mounted fetch handler carries HTTP only. A WebSocket upgrade under the mount reaches it as
-an ordinary request and never becomes a socket, so keep the legacy app&apos;s sockets on its own
+an ordinary request and never becomes a socket, so keep the legacy app's sockets on its own
 server until they move to `app.ws()` routes (see
 [WebSockets in a composed app](/docs/websockets#composed)).
 
@@ -11634,7 +11863,7 @@ and a `process <job>` consumer span per attempt. The process span is a child
 of the send span, plus a link to it, so one trace runs from the request to the worker even when
 the worker is another process. Retries are separate spans, and the attempt that dead-letters a
 job says so. A job store persists the trace context as an optional field;
-`jobStoreCertificationProfile(&#123; traceparent: true &#125;)` checks it.
+`jobStoreCertificationProfile({ traceparent: true })` checks it.
 
 ### Event consumers
 
@@ -11729,7 +11958,7 @@ reads, no events, no extra frames.
 
 > A dimension-by-dimension security comparison of Nifra against the current releases of Hono, Fastify, Express, and Elysia - which hardening each framework ships by default, which is opt-in, and which is left to third-party packages.
 
-Which hardening each framework actually ships. A dimension-by-dimension read of Nifra&rsquo;s
+Which hardening each framework actually ships. A dimension-by-dimension read of Nifra's
 security defaults against the **current releases** of Hono, Fastify, Express, and Elysia -
 what is on by default, what is opt-in, and what is left to a third-party package. For how each
 Nifra primitive works, see [Security & hardening](/docs/security).
@@ -11749,10 +11978,10 @@ verification, env-independent error responses, client-IP trust model.
 **Par with the best-in-class:** body limits (Fastify class), JSON prototype-poisoning
 rejection (par Fastify, default-on), schema validation (par Fastify/Elysia), CSRF (par
 Fastify), security headers (par Hono, first-party), cookie prefixes (par Hono), sessions,
-JWT hardening, static serving, supply chain (par Hono&rsquo;s zero-dependency core).
+JWT hardening, static serving, supply chain (par Hono's zero-dependency core).
 
 **One caveat no capability table removes.** Hono, Fastify, and Express have orders of
-magnitude more production exposure and more external researchers looking at them. Nifra&rsquo;s
+magnitude more production exposure and more external researchers looking at them. Nifra's
 protections are implementation-verified and unit-tested, but have not had that volume of
 adversarial attention or a third-party audit. Ongoing scrutiny is the part only time buys.
 
@@ -12027,10 +12256,10 @@ body is drained through a true streaming byte counter that cancels at the cap. T
 charged on the bytes actually **delivered**, never on the number a caller wrote in the
 header - so an adapter that rebuilds a request from an event envelope cannot smuggle a large
 payload behind a small declared length. Fastify enforces its 1 MiB default on real bytes and
-is the gold standard among the four; Nifra matches it. Hono&rsquo;s `bodyLimit` is
+is the gold standard among the four; Nifra matches it. Hono's `bodyLimit` is
 an opt-in middleware that keys on `Content-Length`; Express relies on
-body-parser&rsquo;s 100 KB default only if you mount it; Elysia inherits the runtime cap
-(Bun&rsquo;s 128 MB).
+body-parser's 100 KB default only if you mount it; Elysia inherits the runtime cap
+(Bun's 128 MB).
 
 #### Prototype pollution
 
@@ -12040,7 +12269,7 @@ JSON body lane **rejects** the poisoning shape by default - an own `__proto__`
 key, or a `constructor` carrying a `prototype` - answering the same flat
 400 as malformed JSON, with `"strip"` and `"ignore"`
 as alternatives. That matches Fastify, whose `onProtoPoisoning` and
-`onConstructorPoisoning` both default to `&apos;error&apos;`. Hono and
+`onConstructorPoisoning` both default to `'error'`. Hono and
 Express do not reject proto keys in the JSON body; Elysia strips undeclared keys only on a
 validated route via its schema normalization.
 
@@ -12050,38 +12279,38 @@ Nifra does per-route Standard Schema validation for body/query/params, and - the
 differentiating half - **response** schemas as an enforced upper bound:
 `"warn"` logs undeclared fields, `"enforce"` strips
 them. That kills the `passwordHash`-in-the-response class at the framework layer.
-Fastify offers the same protection through a declared response schema (opt-in); Elysia&rsquo;s
+Fastify offers the same protection through a declared response schema (opt-in); Elysia's
 exactMirror normalization strips undeclared response fields and is its strongest default.
-Hono&rsquo;s validator is opt-in with no response-side story, and Express ships nothing.
+Hono's validator is opt-in with no response-side story, and Express ships nothing.
 
 #### CORS, CSRF, and error handling
 
-Nifra&rsquo;s `cors()` throws at construction when `credentials: true`
+Nifra's `cors()` throws at construction when `credentials: true`
 meets `origin: "*"`, never reflects an origin by default with credentials,
 and lands headers on error responses too - it is **the only one of the five where the
 dangerous configuration is a construction-time error**. The other four leave
 reflect-with-credentials configurable. CSRF is two independent layers (Origin/Referer check
-plus a signed double-submit token, timing-safe); Hono&rsquo;s CSRF is an Origin /
-Sec-Fetch-Site heuristic, Fastify&rsquo;s official token package is comparable, Express&rsquo;s
+plus a signed double-submit token, timing-safe); Hono's CSRF is an Origin /
+Sec-Fetch-Site heuristic, Fastify's official token package is comparable, Express's
 csurf is deprecated, and Elysia ships none in-tree. Uncaught errors become a flat 500
-unconditionally - not env-gated - so no configuration leaks a stack to the wire; Express&rsquo;s
+unconditionally - not env-gated - so no configuration leaks a stack to the wire; Express's
 dev handler printing stacks when `NODE_ENV` is unset is the perennial
 counter-example.
 
 #### Headers, cookies, sessions, JWT
 
 Both Nifra and Hono ship a first-party security-headers middleware you add with
-`use()`. Nifra&rsquo;s turns on nosniff, `X-Frame-Options: DENY`, and
+`use()`. Nifra's turns on nosniff, `X-Frame-Options: DENY`, and
 `Referrer-Policy: no-referrer`, and keeps the headers that can break a working app
-(COOP/COEP/CORP, Permissions-Policy, CSP, HSTS) opt-in by design; Hono&rsquo;s covers a broader
+(COOP/COEP/CORP, Permissions-Policy, CSP, HSTS) opt-in by design; Hono's covers a broader
 list on by default once added, HSTS included. Cookie serialization enforces RFC 6265 name
 tokens, caps at 4096 bytes, and enforces `__Host-`/`__Secure-` prefix
-preconditions at serialization time, throwing on a violation - the same behavior Hono&rsquo;s
+preconditions at serialization time, throwing on a violation - the same behavior Hono's
 cookie helper has, and stricter than a silent browser drop. Sessions are always HMAC-signed,
 HttpOnly, SameSite=Lax, fail-closed, with `regenerate()` for fixation - no
 competitor ships sessions in-tree. JWT verification demands an algorithm allowlist, rejects
 `alg: none`, blocks algorithm confusion at the key level, and requires
-`exp` by default; Hono&rsquo;s JWT middleware takes a single required algorithm with
+`exp` by default; Hono's JWT middleware takes a single required algorithm with
 no enforced allowlist and treats `exp` as optional, so Nifra is stricter there.
 
 #### Static serving, redirects, uploads, proxying
@@ -12099,12 +12328,12 @@ bytes and strip EXIF/GPS by re-encode, where the others do size limits at best.
 #### Rate limiting, IP trust, load shedding
 
 The rate limiter keys on the caller IP the server resolved, never on a client-sent header, so
-the &ldquo;trust proxy = spoofable keys&rdquo; footgun has no default path; with no resolvable
+the "trust proxy = spoofable keys" footgun has no default path; with no resolvable
 IP it fails closed instead of sharing one bucket.
 `X-Forwarded-For` is ignored at the default and counted from the right only when you
 declare trusted proxies. `c.clientIp` is the socket peer unless you pass an explicit
 trust config, and short chains fail closed. Admission sheds on live capacity evidence
-(in-flight count plus event-loop lag). Fastify&rsquo;s under-pressure is the only peer for load
+(in-flight count plus event-loop lag). Fastify's under-pressure is the only peer for load
 shedding; nothing else in the field defaults to an unspoofable key or fails closed on IP trust.
 
 ### Beyond parity - what none of the four ship
@@ -12132,10 +12361,10 @@ third-party add-on for the others; Nifra ships them first-party with assurance i
 
 ### Where each alternative is still the right call
 
-This is a security read, not a blanket &ldquo;pick Nifra&rdquo;. Hono&rsquo;s run-anywhere
-minimalism and its zero-dependency core are genuinely excellent; Fastify&rsquo;s maturity,
+This is a security read, not a blanket "pick Nifra". Hono's run-anywhere
+minimalism and its zero-dependency core are genuinely excellent; Fastify's maturity,
 ecosystem, and years of adversarial attention are real advantages a young framework cannot
-claim; Express&rsquo;s ubiquity means every hire already knows it. Nifra&rsquo;s argument is
+claim; Express's ubiquity means every hire already knows it. Nifra's argument is
 narrower and honest: it makes the dangerous configurations _unrepresentable_, ships the
 hardening primitives first-party, and lets `nifra assure` prove in CI that every
 route is guarded. For the full capability and throughput comparison, see
@@ -12447,7 +12676,7 @@ test("the API contract withstands hostile inputs", async () => {
 For every selected route, the laboratory synthesizes a valid **contract witness**. It then
 changes types, removes required fields, crosses numeric and length bounds, inserts unknown
 properties, and descends into nested objects and arrays. A mutation is sent only after the
-route&apos;s own Standard Schema validator proves it invalid. Query values are proved after URL
+route's own Standard Schema validator proves it invalid. Query values are proved after URL
 serialization, exactly as the server receives them.
 
 Invalid inputs must produce 422 by default. A valid witness is also executed for every
@@ -12457,7 +12686,7 @@ has a different validation response.
 
 ### Assert the server keeps its own contract
 
-A route&rsquo;s `response` schema types the handler and the client, but nothing
+A route's `response` schema types the handler and the client, but nothing
 re-checks the bytes that actually leave the app. `validateResponses` closes that gap
 in tests: every JSON response is validated against the schema declared for its status, and a
 mismatch throws `ResponseContractViolation` straight through the
@@ -12476,7 +12705,7 @@ const res = await api.me.get()   // ResponseContractViolation if the payload dri
 ```
 
 Whether it catches _undeclared extra_ fields depends on your validator, not on nifra: a
-strict schema (`@nifrajs/schema`&rsquo;s `t.object`) reports them and the
+strict schema (`@nifrajs/schema`'s `t.object`) reports them and the
 test fails, while a stripping one (Zod, Valibot) accepts them silently. To catch extras
 regardless, or to stop them reaching the wire in production, use
 [
@@ -12486,7 +12715,7 @@ regardless, or to stop them reaching the wire in production, use
 
 ### Opaque schemas stay validator-neutral
 
-Nifra&apos;s `t` schemas carry inspectable JSON Schema, so witness generation is
+Nifra's `t` schemas carry inspectable JSON Schema, so witness generation is
 automatic. Other Standard Schema libraries do not have to expose structure. Supply a known-good
 witness; their own validator still proves every hostile mutation.
 
@@ -12764,7 +12993,7 @@ The tooling reads the backend `backend/app.ts` exports. An app that
 factory, is invisible to the contract lock and the route lints until that file serves it.
 `nifra check` names each implemented operation the backend does not serve
 (NF-C039), and counts them when there is no `backend/app.ts` at all. It reads a
-contract imported from a workspace package through that package&apos;s
+contract imported from a workspace package through that package's
 `exports`; a package installed from a registry is never read, and the check says
 so rather than passing it. Export the same app built with stand-in dependencies:
 
