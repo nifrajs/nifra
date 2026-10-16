@@ -861,6 +861,9 @@ interface HookAuditState {
   checked: boolean
 }
 const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
+// Audits begun and not yet sealed. Zero outside development, so a request tests it before the
+// NODE_ENV literal and never reads `process.env` (a native call of ~130 ns on Node).
+let unsealedHookAudits = 0
 
 /** Whether `from` reaches `target` through mounts that keep the path and take a request under `path`.
  * Module-level, not a `Server` method, so a production bundle drops it with its dev-only caller. */
@@ -892,6 +895,7 @@ const beginHookAudit = (
   policy: "warn" | "error" | "off",
   hasCustomLogger: boolean,
 ): void => {
+  unsealedHookAudits++
   hookAudit.set(key, {
     policy,
     hasCustomLogger,
@@ -1007,6 +1011,7 @@ const sealHookAudit = (
   const state = hookAudit.get(key)
   if (state === undefined || state.checked) return
   state.checked = true
+  unsealedHookAudits--
   if (state.policy === "off" || total + sockets === 0) return
   const own = total - state.merged
   const dead = state.sites.filter(
@@ -3193,8 +3198,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<Response> {
     // Seal once on the first request so test servers (no `listen()`) still get the dead-hook check.
-    // After that it is a single boolean read - the per-request cost the option promises to keep at zero.
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    // After that it is one integer compare; the literal stays so a production define drops the branch.
+    if (unsealedHookAudits !== 0 && process.env.NODE_ENV !== "production")
       sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
@@ -3378,7 +3383,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     suppliedRuntime?: NodeOutcomeRuntime,
   ): MaybePromise<NodeServeOutcome> {
     // Seal once on the Node-direct lane too - it can bypass `fetchSource` entirely (hookless outcome).
-    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+    if (unsealedHookAudits !== 0 && process.env.NODE_ENV !== "production")
       sealHookAudit(this, this.catalog.size, this.wsRoutes.length, this.logger)
     // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
