@@ -1,0 +1,4 @@
+{
+  "extends": "../../examples/tsconfig.vue.json",
+  "include": ["nifra-vue*/**/*.ts", "nifra-vue*/**/*.tsx", "nifra-vue*/**/*.vue"]
+}

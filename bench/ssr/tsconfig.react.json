@@ -1,0 +1,13 @@
+{
+  "extends": "../../examples/tsconfig.react.json",
+  "include": [
+    "nifra/**/*.ts",
+    "nifra/**/*.tsx",
+    "nifra-app/**/*.ts",
+    "nifra-app/**/*.tsx",
+    "nifra-isr/**/*.ts",
+    "nifra-isr/**/*.tsx",
+    "nifra-static/**/*.ts",
+    "nifra-static/**/*.tsx"
+  ]
+}

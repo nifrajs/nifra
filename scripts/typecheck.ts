@@ -22,6 +22,13 @@
  *
  * The docs site is excluded from the root program too and checked the same way. Its server entries
  * import the build's generated `server-manifest.ts`, so that is written first as well.
+ *
+ * The nifra SSR bench apps under `bench/ssr` are excluded as well, and are checked one
+ * program per framework, extending the example configs, plus one for the harness: no bench app imports
+ * generated route types, so a framework's apps share a program without colliding.
+ * {@link uncheckedBenchSources} fails on any tracked bench source no program includes, skipping the
+ * comparison apps (Next, Nuxt, SvelteKit, ...) that install and build with their own toolchain. Like the
+ * site, the ISR app imports the `server-manifest.ts` its build generates, so that is written first.
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { availableParallelism } from "node:os"
@@ -51,8 +58,9 @@ export function exampleTypecheckConfigs(): readonly string[] {
 /**
  * Every project `tsc --noEmit` runs against: the root corpus, then each DOM/JSX package's own checker,
  * then standalone apps outside the root corpus (`apps/*`, which the root `include` does not cover), then
- * the repository's tooling and docs site, then each web example. Package tsconfigs are kept in sync with
- * disk by {@link uncoveredTypecheckConfigs}; app entries are asserted to exist by typecheck.test.ts.
+ * the repository's tooling and docs site, then each web example, then the SSR bench. Package tsconfigs
+ * are kept in sync with disk by {@link uncoveredTypecheckConfigs}; app entries are asserted to exist by
+ * typecheck.test.ts.
  */
 export const TYPECHECK_PROJECTS: readonly string[] = [
   "tsconfig.json",
@@ -70,6 +78,12 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "scripts/tsconfig.json",
   "site/tsconfig.json",
   ...exampleTypecheckConfigs(),
+  "bench/ssr/tsconfig.json",
+  "bench/ssr/tsconfig.react.json",
+  "bench/ssr/tsconfig.preact.json",
+  "bench/ssr/tsconfig.solid.json",
+  "bench/ssr/tsconfig.svelte.json",
+  "bench/ssr/tsconfig.vue.json",
 ]
 
 /**
@@ -148,26 +162,44 @@ export function uncheckedScriptSources(): readonly string[] {
   return uncheckedTrackedSources(["scripts/*.ts"], (file) => file.startsWith("scripts/fixtures/"))
 }
 
+/**
+ * Tracked sources under `bench/ssr/` that no project's program includes. A comparison app with its own
+ * `package.json` installs and builds with its own toolchain, so its sources are not this gate's.
+ */
+export function uncheckedBenchSources(): readonly string[] {
+  return uncheckedTrackedSources(
+    ["ts", "tsx", "svelte", "vue"].map((ext) => `bench/ssr/*.${ext}`),
+    (file) => {
+      const app = file.split("/").slice(0, 3).join("/")
+      return existsSync(join(ROOT, app, "package.json"))
+    },
+  )
+}
+
+/** Apps whose server entry imports the `server-manifest.ts` their build generates (gitignored) beside it. */
+const SERVER_MANIFEST_APPS: readonly string[] = ["site", "bench/ssr/nifra-isr"]
+
+/**
+ * Bring each such app's `server-manifest.ts` up to date with its routes, as `buildServer` would. A build's
+ * copy keeps its baked asset URLs; without one there is no client entry to bake, which the types never read.
+ */
+function writeServerManifests(): void {
+  for (const app of SERVER_MANIFEST_APPS) {
+    const file = join(ROOT, app, "server-manifest.ts")
+    const routes = discoverRoutes(join(ROOT, app, "routes"))
+    const source = existsSync(file)
+      ? resyncServerManifestSource(readFileSync(file, "utf8"), routes, "./routes/")
+      : generateServerManifest(routes, { resolve: (route) => `./routes/${route}`, clientEntry: "" })
+    writeFileSync(file, source)
+  }
+}
+
 /** Bring each example app's generated route types up to date, so its `./+types` imports resolve. */
 function writeExampleRouteTypes(): void {
   for (const config of exampleTypecheckConfigs()) {
     const appRoot = join(ROOT, dirname(config))
     if (existsSync(join(appRoot, "routes"))) writeRouteTypes({ appRoot })
   }
-}
-
-const SITE_MANIFEST = join(ROOT, "site/server-manifest.ts")
-
-/**
- * Bring the site's `server-manifest.ts` up to date with its routes, as `buildServer` would. A build's copy
- * keeps its baked asset URLs; without one there is no client entry to bake, which the types never read.
- */
-function writeSiteServerManifest(): void {
-  const routes = discoverRoutes(join(ROOT, "site/routes"))
-  const source = existsSync(SITE_MANIFEST)
-    ? resyncServerManifestSource(readFileSync(SITE_MANIFEST, "utf8"), routes, "./routes/")
-    : generateServerManifest(routes, { resolve: (file) => `./routes/${file}`, clientEntry: "" })
-  writeFileSync(SITE_MANIFEST, source)
 }
 
 interface CheckResult {
@@ -188,16 +220,20 @@ function bin(name: string, path: string): string {
   return found
 }
 
-/** The checker command for a project: svelte-check or vue-tsc for those examples, else `tsc`. */
+const SVELTE_CONFIG = join(ROOT, "examples/tsconfig.svelte.json")
+const VUE_CONFIG = join(ROOT, "examples/tsconfig.vue.json")
+
+/** The checker for a project: svelte-check or vue-tsc if it extends that example config, else `tsc`. */
 function command(project: string): readonly string[] {
   const { config } = ts.readConfigFile(join(ROOT, project), ts.sys.readFile)
   const base: unknown = config?.extends
-  if (base === "../tsconfig.svelte.json") {
+  const extended = typeof base === "string" ? join(ROOT, dirname(project), base) : undefined
+  if (extended === SVELTE_CONFIG) {
     return [bin("svelte-check", EXAMPLE_BIN), "--tsconfig", project, "--threshold", "error"]
   }
   const pretty = process.stdout.isTTY ? ["--pretty"] : []
   const args = ["--noEmit", "-p", project, "--tsBuildInfoFile", buildInfoFile(project), ...pretty]
-  if (base === "../tsconfig.vue.json") return [bin("vue-tsc", EXAMPLE_BIN), ...args]
+  if (extended === VUE_CONFIG) return [bin("vue-tsc", EXAMPLE_BIN), ...args]
   return [Bun.which("tsc") ?? join(ROOT, "node_modules/.bin/tsc"), ...args]
 }
 
@@ -236,8 +272,16 @@ if (import.meta.main) {
     )
     process.exit(1)
   }
+  const uncheckedBench = uncheckedBenchSources()
+  if (uncheckedBench.length > 0) {
+    console.error(
+      `✗ bench source(s) no typecheck project includes: ${uncheckedBench.join(", ")}\n` +
+        "  widen the `include` of the app's bench/ssr/tsconfig.<framework>.json (or give a comparison app its own package.json).",
+    )
+    process.exit(1)
+  }
   writeExampleRouteTypes()
-  writeSiteServerManifest()
+  writeServerManifests()
   const queue = [...TYPECHECK_PROJECTS]
   const results = new Map<string, CheckResult>()
   const workers = Array.from(
