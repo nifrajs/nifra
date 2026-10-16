@@ -182,6 +182,30 @@ test("a Host name with an underscore is served, as a container service name ofte
   expect(bad.status).toBe(400)
 })
 
+test("Host is matched in any case, the first of a repeat wins, and none means localhost", async () => {
+  const app = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const port = running.port
+  const exchange = (head: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1")
+      let received = ""
+      socket.on("error", reject)
+      socket.on("data", (chunk: Buffer) => {
+        received += chunk.toString("latin1")
+      })
+      socket.on("end", () => resolve(received))
+      socket.write(`${head}Connection: close\r\n\r\n`)
+    })
+
+  const repeated = await exchange(
+    "GET /host HTTP/1.1\r\nHOST: first.example\r\nhost: second.example\r\n",
+  )
+  expect(repeated).toContain('{"origin":"http://first.example"}')
+  const missing = await exchange("GET /host HTTP/1.0\r\n")
+  expect(missing).toContain('{"origin":"http://localhost"}')
+})
+
 test("canonicalHost controls request URL construction and the default remains Host-derived", async () => {
   const canonicalApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
   running = await serve(canonicalApp, {
@@ -1178,20 +1202,73 @@ test("SECURITY: an UNDERSTATED Content-Length cannot smuggle a body past the cap
   expect(handlerRan).toBe(false)
 })
 
-test("parser errors release a response that closes before finish", async () => {
+test("a malformed request with nothing in flight answers 400 and closes", async () => {
+  running = await serve(
+    server().get("/", () => ({ ok: true })),
+    { hostname: "127.0.0.1", port: 0 },
+  )
+  const socket = connect(running.port, "127.0.0.1")
+  socket.on("error", () => {})
+  let received = ""
+  socket.on("data", (chunk: Buffer) => {
+    received += chunk.toString("latin1")
+  })
+  const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()))
+  socket.write("GET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n")
+  await closed
+  expect(received.startsWith("HTTP/1.1 400 Bad Request\r\n")).toBe(true)
+  expect(received).toContain("\r\nConnection: close\r\n")
+})
+
+test("a parser error behind pipelined requests closes the socket after their responses, in order", async () => {
+  const release = new Map<string, () => void>()
+  let allEntered: () => void = () => {}
+  const entered = new Promise<void>((resolve) => {
+    allEntered = resolve
+  })
+  const app = server().get("/p/:n", async (c) => {
+    await new Promise<void>((resolve) => {
+      release.set(c.params.n, resolve)
+      if (release.size === 3) allEntered()
+    })
+    return { n: c.params.n }
+  })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const socket = connect(running.port, "127.0.0.1")
+  socket.on("error", () => {})
+  await new Promise<void>((resolve) => socket.once("connect", () => resolve()))
+  let received = ""
+  socket.on("data", (chunk: Buffer) => {
+    received += chunk.toString("latin1")
+  })
+  const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()))
+  const get = (n: string): string => `GET /p/${n} HTTP/1.1\r\nHost: x\r\n\r\n`
+  socket.write(`${get("a")}${get("b")}${get("c")}GET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n`)
+  // Node dispatches all three before its parser reaches the bad header, in the same read.
+  await entered
+
+  // Finish them in reverse: Node still has to write a, then b, then c.
+  for (const n of ["c", "b", "a"]) release.get(n)?.()
+  await closed
+  const order = ["a", "b", "c"].map((n) => received.indexOf(`{"n":"${n}"}`))
+  expect(order.every((at) => at > 0)).toBe(true)
+  expect(order).toEqual([...order].sort((x, y) => x - y))
+  expect(received.match(/HTTP\/1\.1 200 /g)).toHaveLength(3)
+  // Bun raises the parser error only once those responses are out, so it can still answer 400 -
+  // after them, never in place of one. Node raises it first; test-node pins that no 400 follows.
+  const badRequest = received.indexOf("HTTP/1.1 400 ")
+  if (badRequest !== -1) expect(badRequest).toBeGreaterThan(Math.max(...order))
+})
+
+test("a parser error stops waiting on a response that closes without finishing", async () => {
   const originalWrite = NodeServerResponse.prototype.write
-  let emittedClose = false
+  let streaming: NodeServerResponse | undefined
   NodeServerResponse.prototype.write = function (
     this: NodeServerResponse,
     ...args: Parameters<typeof originalWrite>
   ): boolean {
-    const wrote = originalWrite.apply(this, args)
-    if (!emittedClose) {
-      emittedClose = true
-      this.emit("close")
-      return false
-    }
-    return wrote
+    streaming = this
+    return originalWrite.apply(this, args)
   } as typeof originalWrite
 
   let socket: ReturnType<typeof connect> | undefined
@@ -1214,17 +1291,16 @@ test("parser errors release a response that closes before finish", async () => {
     await new Promise<void>((resolve) => socket?.once("connect", resolve))
     const responseStarted = new Promise<void>((resolve) => socket?.once("data", () => resolve()))
     const socketClosed = new Promise<void>((resolve) => socket?.once("close", () => resolve()))
-    socket.write("GET /slow HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+    // The parser fails in the same read that dispatched /slow, so the server is already waiting on
+    // /slow's response by the time its first bytes arrive.
+    socket.write(
+      "GET /slow HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n",
+    )
     await responseStarted
-
-    // A malformed pipelined request must close the socket once the already-dispatched response has
-    // emitted `close`; waiting for `finish` alone leaves the active counter stuck at one.
-    socket.write("GET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n")
-    const closed = await Promise.race([
-      socketClosed.then(() => true),
-      Bun.sleep(250).then(() => false),
-    ])
-    expect(closed).toBe(true)
+    // Neither runtime does this to a response whose socket is open; a `close` listener is what
+    // keeps a response that ends any other way than `finish` from holding the socket forever.
+    streaming?.emit("close")
+    await socketClosed
   } finally {
     socket?.destroy()
     NodeServerResponse.prototype.write = originalWrite

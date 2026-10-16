@@ -18,7 +18,8 @@
 
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { connect, type Socket } from "node:net"
+import { Server, ServerResponse } from "node:http"
+import { connect, Socket } from "node:net"
 import { after, before, test } from "node:test"
 import { server } from "@nifrajs/core"
 import { responseContract } from "@nifrajs/core/response-contract"
@@ -188,6 +189,78 @@ test("pipelined requests on one socket are each answered in order", async () => 
   const transcript = await rawExchange(get + post + close, { keepOpen: true })
   assert.equal(transcript.match(/HTTP\/1\.1 200/g)?.length, 3, transcript)
   assert.ok(transcript.indexOf("hello") < transcript.indexOf('{"text":"hi"}'), transcript)
+})
+
+test("a parser error behind pipelined requests waits for their responses, then closes", async () => {
+  // Node raises `clientError` again for every chunk that follows a parser error. Each one is
+  // recorded with the listener count on the response the socket is waiting for.
+  const finishListeners: number[] = []
+  let secondClientError: () => void = () => {}
+  const reEmitted = new Promise<void>((resolve) => {
+    secondClientError = resolve
+  })
+  const originalEmit = Server.prototype.emit
+  Server.prototype.emit = new Proxy(originalEmit, {
+    apply(emit, emitter: Server, args: unknown[]) {
+      const handled = Reflect.apply(emit, emitter, args)
+      const [event, , socket] = args
+      if (event === "clientError" && socket instanceof Socket) {
+        const waitingOn: unknown = Reflect.get(socket, "_httpMessage")
+        finishListeners.push(
+          waitingOn instanceof ServerResponse ? waitingOn.listenerCount("finish") : -1,
+        )
+        if (finishListeners.length === 2) secondClientError()
+      }
+      return handled
+    },
+  })
+
+  const release = new Map<string, () => void>()
+  let allEntered: () => void = () => {}
+  const entered = new Promise<void>((resolve) => {
+    allEntered = resolve
+  })
+  const app = server().get("/p/:n", async (c) => {
+    await new Promise<void>((resolve) => {
+      release.set(c.params.n, resolve)
+      if (release.size === 3) allEntered()
+    })
+    return { n: c.params.n }
+  })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const socket = connect(running.port, "127.0.0.1")
+    socket.on("error", () => {})
+    const chunks: Buffer[] = []
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk))
+    const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()))
+    const get = (n: string): string => `GET /p/${n} HTTP/1.1\r\nHost: x\r\n\r\n`
+    socket.write(`${get("a")}${get("b")}${get("c")}GET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n`)
+    await entered
+    socket.write("more garbage\r\n\r\n")
+    await reEmitted
+
+    // Finished in reverse, written in order.
+    for (const n of ["c", "b", "a"]) release.get(n)?.()
+    await closed
+    const transcript = Buffer.concat(chunks).toString("latin1")
+    const order = ["a", "b", "c"].map((n) => transcript.indexOf(`{"n":"${n}"}`))
+    assert.ok(
+      order.every((at) => at > 0),
+      transcript,
+    )
+    assert.deepEqual(
+      order,
+      [...order].sort((x, y) => x - y),
+      transcript,
+    )
+    assert.equal(transcript.match(/HTTP\/1\.1 /g)?.length, 3, transcript)
+    // Node's own listener plus one wait - the repeat must not stack a second.
+    assert.deepEqual(finishListeners, [2, 2])
+  } finally {
+    Server.prototype.emit = originalEmit
+    await running.stop({ drainMs: 0 })
+  }
 })
 
 test("Expect: 100-continue is answered and the body that follows is read", async () => {
