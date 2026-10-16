@@ -408,7 +408,7 @@ jobs:
         run: bun scripts/verify-published.ts --wait 900
 
   # The smoke test installs from the registry and the deploy runs wrangler: third-party code, kept out
-  # of the job that can publish.
+  # of the job that can publish. site.yml deploys from main without a release, with the same steps.
   deploy-site:
     name: deploy-site
     needs: [prove-release, publish]

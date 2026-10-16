@@ -1,0 +1,103 @@
+name: Site
+
+# Deploys nifra.dev from main without a release. Use it for a site-only change merged to main (copy,
+# styles, docs pages, the playground); release.yml's deploy-site redeploys the site with every release.
+# The site build reads the packages' dist and corpora built from this commit, so while main carries
+# package changes npm does not serve yet, wait for the release instead: their docs would go live first.
+#
+# Run it by hand from main (Actions > Site > Run workflow). It deploys the commit main pointed at when
+# dispatched, once that commit's push CI passed. A release's deploy-site ships the release merge, so if
+# one lands after a run of this on a newer commit, run this again.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# release.yml's publish queue, with its settings: a site deploy never runs beside its deploy-site, and
+# neither cancels the other's pending run, which a group without `queue: max` would do.
+concurrency:
+  group: release-publish
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  # Twin of release.yml's deploy-site from "Set up Bun" on, without the npm wait and registry smoke:
+  # nothing is published here. scripts/release-branch.test.ts keeps the shared steps identical.
+  deploy-site:
+    name: deploy-site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      # Before the checkout, so a refused run executes nothing from the repository.
+      - name: Require main and its passing push CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "This workflow deploys main only, not ${REF}; refusing to deploy." >&2
+            exit 1
+          fi
+          ci_passed="$(gh api \
+            "repos/${REPOSITORY}/actions/runs?head_sha=${SHA}&event=push&branch=main" \
+            --jq 'any(.workflow_runs[]; (.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success")')"
+          if [[ "$ci_passed" != "true" ]]; then
+            echo "CI did not pass on ${SHA} as pushed to main; refusing to deploy." >&2
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+          no-cache: true
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # The site build reads the packages' dist and the corpora gen:llms writes.
+      - name: Build the packages
+        run: bun run build && bun run gen:llms
+
+      # Two deployments can serve identical pages, so each carries its own stamp for the probe to look for.
+      # Pages serves /assets/* statically, without the Worker.
+      - name: Deploy site to Cloudflare Pages
+        working-directory: site
+        run: |
+          bun run build
+          printf '%s\n' "$DEPLOYMENT" > dist/assets/deployment.txt
+          bunx wrangler pages deploy --branch main
+        env:
+          DEPLOYMENT: ${{ github.run_id }}.${{ github.run_attempt }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Probe production site
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            if home="$(curl --fail --silent --show-error https://nifra.dev/)" &&
+              [[ "$home" == *"<title>Nifra - "* ]] &&
+              [[ "$(curl --fail --silent --show-error https://nifra.dev/assets/deployment.txt)" == "$DEPLOYMENT" ]]; then
+              echo "nifra.dev serves deployment ${DEPLOYMENT}."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "nifra.dev does not serve deployment ${DEPLOYMENT} after 5 minutes." >&2
+          exit 1
+        env:
+          DEPLOYMENT: ${{ github.run_id }}.${{ github.run_attempt }}
