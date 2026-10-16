@@ -19,10 +19,16 @@
  * includes. Svelte and Vue examples run through svelte-check and vue-tsc, since `tsc` cannot read their
  * components. Each example's route types are written first, so a fresh clone needs no `nifra` command;
  * like a consumer, an example resolves `@nifrajs/*` to the built declarations, so run the build first.
+ *
+ * The docs site is excluded from the root program too and checked the same way. Its server entries
+ * import the build's generated `server-manifest.ts`, so that is written first as well.
  */
-import { existsSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { availableParallelism } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { generateServerManifest } from "@nifrajs/web"
+import { resyncServerManifestSource } from "@nifrajs/web/build"
+import { discoverRoutes } from "@nifrajs/web/fs"
 import { writeRouteTypes } from "@nifrajs/web/route-types"
 import ts from "typescript"
 
@@ -45,8 +51,8 @@ export function exampleTypecheckConfigs(): readonly string[] {
 /**
  * Every project `tsc --noEmit` runs against: the root corpus, then each DOM/JSX package's own checker,
  * then standalone apps outside the root corpus (`apps/*`, which the root `include` does not cover), then
- * each web example. Package tsconfigs are kept in sync with disk by {@link uncoveredTypecheckConfigs};
- * app entries are asserted to exist by typecheck.test.ts.
+ * the repository's tooling and docs site, then each web example. Package tsconfigs are kept in sync with
+ * disk by {@link uncoveredTypecheckConfigs}; app entries are asserted to exist by typecheck.test.ts.
  */
 export const TYPECHECK_PROJECTS: readonly string[] = [
   "tsconfig.json",
@@ -62,6 +68,7 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "packages/island-trigger/tsconfig.json",
   "apps/workbench/tsconfig.json",
   "scripts/tsconfig.json",
+  "site/tsconfig.json",
   ...exampleTypecheckConfigs(),
 ]
 
@@ -149,6 +156,20 @@ function writeExampleRouteTypes(): void {
   }
 }
 
+const SITE_MANIFEST = join(ROOT, "site/server-manifest.ts")
+
+/**
+ * Bring the site's `server-manifest.ts` up to date with its routes, as `buildServer` would. A build's copy
+ * keeps its baked asset URLs; without one there is no client entry to bake, which the types never read.
+ */
+function writeSiteServerManifest(): void {
+  const routes = discoverRoutes(join(ROOT, "site/routes"))
+  const source = existsSync(SITE_MANIFEST)
+    ? resyncServerManifestSource(readFileSync(SITE_MANIFEST, "utf8"), routes, "./routes/")
+    : generateServerManifest(routes, { resolve: (file) => `./routes/${file}`, clientEntry: "" })
+  writeFileSync(SITE_MANIFEST, source)
+}
+
 interface CheckResult {
   readonly ok: boolean
   readonly output: string
@@ -216,6 +237,7 @@ if (import.meta.main) {
     process.exit(1)
   }
   writeExampleRouteTypes()
+  writeSiteServerManifest()
   const queue = [...TYPECHECK_PROJECTS]
   const results = new Map<string, CheckResult>()
   const workers = Array.from(
