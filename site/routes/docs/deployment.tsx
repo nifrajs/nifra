@@ -276,9 +276,11 @@ export default function Deployment() {
         gets a one-day policy.
       </p>
       <p>
-        <code>static</code> also takes an array of mounts; the first one whose prefix takes a path
-        answers it. Give a mount <code>files</code> to serve only those URL paths from a directory
-        that holds other things too. The generated Node server mounts <code>/assets</code> and, at
+        <code>static</code> also takes an array of mounts; a path goes to the first mount that
+        takes it, by its prefix and, when set, its <code>files</code>. Give a mount{" "}
+        <code>files</code> to serve only those URL paths from a directory that holds other things
+        too; any other path passes to the next mount, so a later mount over the same paths can still
+        serve it. The generated Node server mounts <code>/assets</code> and, at
         the root, only the <code>public/</code> files the build copied, so <code>server.js</code>{" "}
         beside them is never served. Dotfiles are refused, except <code>/.well-known</code>.
       </p>

@@ -8,8 +8,8 @@ The server entry `buildTarget` generates for `node` now passes the app itself to
 
 `serve`'s `static` option on `@nifrajs/node`:
 
-- takes an array of mounts; the first one whose prefix takes a path answers it.
-- `files` lists the only URL paths a mount serves; any other path runs the app without touching the disk.
+- takes an array of mounts; a path goes to the first mount that takes it, by its prefix and, when set, its `files`.
+- `files` lists the only URL paths a mount serves; any other path passes to the next mount, then the app, without that mount touching the disk.
 - `cacheControl` sets `cache-control` for files not served immutable.
 - types files from the same table as `servePublicDir`, so `.pdf`, `.mp4`, `.xml`, `.csv` and other common types are no longer sent as `application/octet-stream`; a link is typed by the file it resolves to.
 - serves `/.well-known` by default, as `servePublicDir` does, and refuses a visible name that links to a dotfile.

@@ -371,6 +371,27 @@ test("an array of mounts answers from the first one that takes the path", async 
   }
 })
 
+test("a path a mount's files leaves out passes to the next mount", async () => {
+  const other = await mkdtemp(join(tmpdir(), "nifra-static-other-"))
+  try {
+    await writeFile(join(other, "robots.txt"), "User-agent: *")
+    await writeFile(join(other, "app.js"), "unlisted")
+    running = await serve(app, {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: [
+        { dir: other, prefix: "/", files: ["/robots.txt"] },
+        { dir, prefix: "/" },
+      ],
+    })
+    const base = `http://127.0.0.1:${running.port}`
+    expect(await (await fetch(`${base}/robots.txt`)).text()).toBe("User-agent: *")
+    expect(await (await fetch(`${base}/app.js`)).text()).toBe("console.log('hi')")
+  } finally {
+    await rm(other, { recursive: true, force: true })
+  }
+})
+
 test("cacheControl applies to files not served immutable", async () => {
   const base = await startWithStatic(undefined, {
     hashedFiles: ["/assets/app.js"],

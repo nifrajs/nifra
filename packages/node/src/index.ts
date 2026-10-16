@@ -749,8 +749,9 @@ export interface ServeStaticOptions {
   readonly cacheControl?: string
   /**
    * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under
-   * `prefix` runs the app, without touching the filesystem - so a mount over a directory that also
-   * holds the server bundle can expose just the build's listed files.
+   * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so
+   * a mount over a directory that also holds the server bundle can expose just the build's listed
+   * files. A later mount over the same paths can still serve the rest.
    */
   readonly files?: Iterable<string>
   /** Extra headers merged onto every served file. */
