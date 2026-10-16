@@ -1257,7 +1257,7 @@ test("a parser error behind pipelined requests closes the socket after their res
   // Bun raises the parser error only once those responses are out, so it can still answer 400 -
   // after them, never in place of one. Node raises it first; test-node pins that no 400 follows.
   const badRequest = received.indexOf("HTTP/1.1 400 ")
-  if (badRequest !== -1) expect(badRequest).toBeGreaterThan(order[2] as number)
+  if (badRequest !== -1) expect(badRequest).toBeGreaterThan(Math.max(...order))
 })
 
 test("a parser error stops waiting on a response that closes without finishing", async () => {

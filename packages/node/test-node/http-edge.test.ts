@@ -18,8 +18,8 @@
 
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { Server, type ServerResponse } from "node:http"
-import { connect, type Socket } from "node:net"
+import { Server, ServerResponse } from "node:http"
+import { connect, Socket } from "node:net"
 import { after, before, test } from "node:test"
 import { server } from "@nifrajs/core"
 import { responseContract } from "@nifrajs/core/response-contract"
@@ -200,15 +200,20 @@ test("a parser error behind pipelined requests waits for their responses, then c
     secondClientError = resolve
   })
   const originalEmit = Server.prototype.emit
-  Server.prototype.emit = function (this: Server, event: string | symbol, ...args: unknown[]) {
-    const handled = Reflect.apply(originalEmit, this, [event, ...args])
-    if (event === "clientError") {
-      const socket = args[1] as { _httpMessage?: ServerResponse | null }
-      finishListeners.push(socket._httpMessage?.listenerCount("finish") ?? -1)
-      if (finishListeners.length === 2) secondClientError()
-    }
-    return handled
-  } as typeof originalEmit
+  Server.prototype.emit = new Proxy(originalEmit, {
+    apply(emit, emitter: Server, args: unknown[]) {
+      const handled = Reflect.apply(emit, emitter, args)
+      const [event, , socket] = args
+      if (event === "clientError" && socket instanceof Socket) {
+        const waitingOn: unknown = Reflect.get(socket, "_httpMessage")
+        finishListeners.push(
+          waitingOn instanceof ServerResponse ? waitingOn.listenerCount("finish") : -1,
+        )
+        if (finishListeners.length === 2) secondClientError()
+      }
+      return handled
+    },
+  })
 
   const release = new Map<string, () => void>()
   let allEntered: () => void = () => {}

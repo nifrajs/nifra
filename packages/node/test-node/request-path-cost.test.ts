@@ -8,7 +8,7 @@
  */
 
 import assert from "node:assert/strict"
-import { createServer, IncomingMessage, Server, type ServerResponse } from "node:http"
+import { createServer, IncomingMessage, Server, ServerResponse } from "node:http"
 import { test } from "node:test"
 import { server } from "@nifrajs/core"
 import { serve } from "@nifrajs/node"
@@ -19,37 +19,46 @@ interface Observed {
   listenersAtEnd: string | undefined
 }
 
+/** Counts `req.headers` reads and records the response's listeners when the handler ends it. */
+function watch(req: IncomingMessage, res: ServerResponse): Observed {
+  const observed: Observed = { headerReads: 0, listenersAtEnd: undefined }
+  // The prototype's `headers` accessor is non-configurable, so each request gets its own.
+  Object.defineProperty(req, "headers", {
+    configurable: true,
+    get() {
+      observed.headerReads++
+      return Reflect.get(IncomingMessage.prototype, "headers", req)
+    },
+    set(value: unknown) {
+      Reflect.set(IncomingMessage.prototype, "headers", value, req)
+    },
+  })
+  res.end = new Proxy(res.end, {
+    apply(end, response: ServerResponse, endArgs: unknown[]) {
+      observed.listenersAtEnd ??= res
+        .eventNames()
+        .map((name) => `${String(name)}:${res.listenerCount(name)}`)
+        .sort()
+        .join(" ")
+      return Reflect.apply(end, response, endArgs)
+    },
+  })
+  return observed
+}
+
 /** Watches each request an `http.Server` dispatches while `run` is in progress. */
 async function observe(run: () => Promise<void>): Promise<Observed[]> {
   const seen: Observed[] = []
   const originalEmit = Server.prototype.emit
-  Server.prototype.emit = function (this: Server, event: string | symbol, ...args: unknown[]) {
-    if (event === "request") {
-      const [req, res] = args as [IncomingMessage, ServerResponse]
-      const observed: Observed = { headerReads: 0, listenersAtEnd: undefined }
-      seen.push(observed)
-      Object.defineProperty(req, "headers", {
-        configurable: true,
-        get() {
-          observed.headerReads++
-          return Reflect.get(IncomingMessage.prototype, "headers", req)
-        },
-        set(value: unknown) {
-          Reflect.set(IncomingMessage.prototype, "headers", value, req)
-        },
-      })
-      const end = res.end
-      res.end = function (this: ServerResponse, ...endArgs: unknown[]) {
-        observed.listenersAtEnd ??= res
-          .eventNames()
-          .map((name) => `${String(name)}:${res.listenerCount(name)}`)
-          .sort()
-          .join(" ")
-        return Reflect.apply(end, this, endArgs)
-      } as typeof res.end
-    }
-    return Reflect.apply(originalEmit, this, [event, ...args])
-  } as typeof originalEmit
+  Server.prototype.emit = new Proxy(originalEmit, {
+    apply(emit, emitter: Server, args: unknown[]) {
+      const [event, req, res] = args
+      if (event === "request" && req instanceof IncomingMessage && res instanceof ServerResponse) {
+        seen.push(watch(req, res))
+      }
+      return Reflect.apply(emit, emitter, args)
+    },
+  })
   try {
     await run()
   } finally {
@@ -76,8 +85,9 @@ async function viaBare(
   const bare = createServer(handler)
   await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", resolve))
   try {
-    const { port } = bare.address() as { port: number }
-    const res = await fetch(`http://127.0.0.1:${port}/users/123`, init)
+    const address = bare.address()
+    assert.ok(address !== null && typeof address === "object")
+    const res = await fetch(`http://127.0.0.1:${address.port}/users/123`, init)
     assert.equal(res.status, 200)
     await res.text()
   } finally {
@@ -107,7 +117,7 @@ test("a GET whose route reads no header never builds req.headers", async () => {
 test("serve() leaves a response's listeners as bare node:http has them", async () => {
   const app = server()
     .get("/users/:id", (c) => ({ id: c.params.id }))
-    .post("/users/:id", async (c) => ({ id: c.params.id, ...((await c.req.json()) as object) }))
+    .post("/users/:id", async (c) => ({ id: c.params.id, user: await c.req.json() }))
   const post: RequestInit = {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -124,7 +134,7 @@ test("serve() leaves a response's listeners as bare node:http has them", async (
       req.on("data", (chunk: Buffer) => {
         body += chunk.toString()
       })
-      req.on("end", () => json(res, { id: "123", ...JSON.parse(body) }))
+      req.on("end", () => json(res, { id: "123", user: JSON.parse(body) }))
     }, post)
   })
   assert.equal(nifra.length, 2)
