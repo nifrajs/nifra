@@ -1040,11 +1040,12 @@ function weakEtag(value: string): string {
 }
 
 /** `If-None-Match` uses the weak comparison (RFC 9110 section 13.1.2): a `W/` prefix is ignored. */
-function etagListMatches(header: string, etag: string): boolean {
-  const comparable = weakEtag(etag)
+function etagListMatches(header: string, etag: string | undefined): boolean {
+  const comparable = etag === undefined ? undefined : weakEtag(etag)
   for (const raw of header.split(",")) {
     const candidate = raw.trim()
-    if (candidate === "*" || weakEtag(candidate) === comparable) return true
+    if (candidate === "*" || (comparable !== undefined && weakEtag(candidate) === comparable))
+      return true
   }
   return false
 }
@@ -1053,7 +1054,7 @@ function etagListMatches(header: string, etag: string): boolean {
  * HTTP-date only carries whole seconds. */
 function staticNotModified(
   headers: IncomingHttpHeaders,
-  etag: string,
+  etag: string | undefined,
   lastModified: number | undefined,
 ): boolean {
   const ifNoneMatch = headers["if-none-match"]
@@ -1067,12 +1068,12 @@ function staticNotModified(
 
 function staticIfRangeMatches(
   value: string,
-  etag: string,
+  etag: string | undefined,
   lastModified: number | undefined,
 ): boolean {
   const item = value.trim()
   if (item.startsWith('"') || item.startsWith("W/")) {
-    return !item.startsWith("W/") && !etag.startsWith("W/") && item === etag
+    return etag !== undefined && !item.startsWith("W/") && !etag.startsWith("W/") && item === etag
   }
   return ifRangeAllowsPartial(item, lastModified)
 }
@@ -1085,7 +1086,7 @@ function staticIfRangeMatches(
 function staticByteRange(
   headers: IncomingHttpHeaders,
   size: number,
-  etag: string,
+  etag: string | undefined,
   lastModified: number | undefined,
 ): ByteRange | "unsatisfiable" | undefined {
   const range = headers.range
@@ -1151,11 +1152,14 @@ async function readStatic(
       const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
       if (cacheControl !== undefined) headers["cache-control"] = cacheControl
     }
-    headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
-    headers["last-modified"] ??= stat.mtime.toUTCString()
+    // A missing/normalized timestamp cannot distinguish deploys, even for equal-sized replacements.
+    if (Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0) {
+      headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
+      headers["last-modified"] ??= stat.mtime.toUTCString()
+    }
     // Custom validators are response headers, not decoration: compare the exact values the client saw.
     const etag = headers.etag
-    const parsedLastModified = Date.parse(headers["last-modified"])
+    const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
     const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
     // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
     if (staticNotModified(requestHeaders, etag, lastModified)) {

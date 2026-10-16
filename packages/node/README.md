@@ -61,8 +61,11 @@ the check there only makes it need repeated swaps. Mutable or attacker-writable 
 therefore outside the adapter's guarantee on those platforms. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
-Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
-`Accept-Ranges: bytes`. `If-None-Match` and `If-Modified-Since` get a bodyless 304. `Range` on GET
+Every file carries `Accept-Ranges: bytes`. A known, positive modification time also supplies a strong
+`ETag` (from mtime and size) and `Last-Modified`; unknown or zero times supply neither, so normalizing
+deployment timestamps cannot validate an obsolete file. Explicit validator headers still apply.
+`If-None-Match` takes precedence over `If-Modified-Since`; a matching condition gets a bodyless 304.
+`Range` on GET
 is parsed by a copy of `@nifrajs/core/range`, the parser `servePublicDir` uses, and gated by `If-Range`: one
 range (overlapping or adjacent ones merge into one) gets 206, a range-set that selects nothing gets
 416, and several disjoint ranges get the whole file.

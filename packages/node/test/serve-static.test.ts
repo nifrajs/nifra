@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
@@ -158,6 +158,34 @@ test("a weak custom ETag revalidates but never satisfies If-Range", async () => 
   })
   expect(ranged.status).toBe(200)
   expect(await ranged.text()).toBe("console.log('hi')")
+})
+
+test("custom validators still apply to a file with no usable modification time", async () => {
+  const path = join(dir, "undated.txt")
+  await writeFile(path, "first")
+  await utimes(path, 0, 0)
+  const lastModified = "Wed, 01 Jan 2020 00:00:00 GMT"
+  const base = await startWithStatic(undefined, {
+    headers: { ETag: '"custom"', "Last-Modified": lastModified },
+  })
+  const conditions: Record<string, string>[] = [
+    { "if-none-match": 'W/"custom"' },
+    { "if-modified-since": lastModified },
+  ]
+  for (const headers of conditions) {
+    const response = await fetch(`${base}/assets/undated.txt`, { headers })
+    expect(response.status).toBe(304)
+    expect(response.headers.get("etag")).toBe('"custom"')
+    expect(response.headers.get("last-modified")).toBe(lastModified)
+    expect(await response.text()).toBe("")
+  }
+  for (const validator of ['"custom"', lastModified]) {
+    const response = await fetch(`${base}/assets/undated.txt`, {
+      headers: { range: "bytes=1-3", "if-range": validator },
+    })
+    expect(response.status).toBe(206)
+    expect(await response.text()).toBe("irs")
+  }
 })
 
 test("byte ranges answer 206, 416, or the whole file", async () => {

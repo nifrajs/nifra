@@ -164,6 +164,8 @@ beforeAll(async () => {
   writeFileSync(join(dir, "assets/manifest.json"), "{}")
   writeFileSync(join(dir, "assets/guide.pdf"), "%PDF")
   writeFileSync(join(dir, "assets/theme.css"), "body{}")
+  writeFileSync(join(dir, "assets/undated.txt"), "first")
+  utimesSync(join(dir, "assets/undated.txt"), 0, 0)
   symlinkSync(join(dir, "assets/theme.css"), join(dir, "assets/alias.js"))
   writeFileSync(join(dir, "assets/.cache/x.js"), "cached")
   writeFileSync(join(dir, ".env"), "SECRET=1")
@@ -307,6 +309,60 @@ const REVALIDATED = ["content-type", "content-length", "cache-control", "last-mo
 
 const REFUSED = ["/assets/leak.js", "/assets/env.js", "/assets/.cache/x.js", "/assets/missing.js"]
 const TO_THE_APP = ["/server.js", "/.env", "/about"]
+
+for (const [runtime, base] of [
+  ["Bun", () => bunBase],
+  ["Node", () => nodeBase],
+  ["Deno", () => denoBase],
+] as const) {
+  describe.skipIf(runtime === "Deno" && DENO === null)(`${runtime} static cache validators`, () => {
+    test("a nonmatching tag suppresses the date condition, for GET and HEAD", async () => {
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(base() + PAGE, {
+          method,
+          headers: { "if-none-match": '"stale"', "if-modified-since": FUTURE },
+        })
+        expect(response.status).toBe(200)
+        expect(await response.text()).toBe(method === "HEAD" ? "" : "x".repeat(100))
+      }
+    })
+
+    test("the wildcard matches an existing file before date and range conditions", async () => {
+      const response = await fetch(base() + PAGE, {
+        headers: { "if-none-match": "*", "if-modified-since": EARLIER, range: "bytes=500-" },
+      })
+      expect(response.status).toBe(304)
+      expect(await response.text()).toBe("")
+    })
+
+    test("a zero timestamp cannot validate a replaced file or a resumed download", async () => {
+      const file = join(dir, "assets/undated.txt")
+      const url = `${base()}/assets/undated.txt`
+      writeFileSync(file, "first")
+      utimesSync(file, 0, 0)
+      const first = await fetch(url)
+      expect(first.headers.get("etag")).toBeNull()
+      expect(first.headers.get("last-modified")).toBeNull()
+      expect(await first.text()).toBe("first")
+      writeFileSync(file, "other")
+      utimesSync(file, 0, 0)
+      const conditions: Record<string, string>[] = [
+        { "if-none-match": '"0-5"' },
+        { "if-modified-since": new Date(0).toUTCString() },
+        { range: "bytes=1-3", "if-range": new Date(0).toUTCString() },
+        { range: "bytes=1-3", "if-range": '"0-5"' },
+      ]
+      for (const headers of conditions) {
+        const response = await fetch(url, { headers })
+        expect(response.status).toBe(200)
+        expect(await response.text()).toBe("other")
+      }
+      const wildcard = await fetch(url, { headers: { "if-none-match": "*" } })
+      expect(wildcard.status).toBe(304)
+      expect(await wildcard.text()).toBe("")
+    })
+  })
+}
 
 describe("static-file parity: Bun entry (servePublicDir) and Node entry (@nifrajs/node reader)", () => {
   for (const [name, path, init] of CASES) {

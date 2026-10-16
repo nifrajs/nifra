@@ -191,8 +191,13 @@ export function servePublicDir(
       }
       const head = request.method === "HEAD"
 
-      // Last-Modified is the only validator published, so no If-None-Match takes precedence.
-      if (isNotModifiedSince(request.headers.get("if-modified-since"), lastModified)) {
+      // A tag condition takes precedence even when this reader publishes no ETag; only `*` matches.
+      const ifNoneMatch = request.headers.get("if-none-match")
+      if (
+        ifNoneMatch === "*" ||
+        (ifNoneMatch === null &&
+          isNotModifiedSince(request.headers.get("if-modified-since"), lastModified))
+      ) {
         headers.delete("content-type")
         return new Response(null, { status: 304, headers })
       }
