@@ -4,7 +4,7 @@
 "@nifrajs/web": patch
 ---
 
-The server entry `buildTarget` generates for `node` now passes the app itself to `@nifrajs/node`'s `serve` and serves files with the adapter's own reader. It used to wrap `app.fetch` in a plain `{ fetch }` handler. That wrapper hid the node-direct lane, so every page built an undici `Request` and drained a `Response`, and every file went through one too. The entry mounts `/assets` and, at the root, only the `public/` files the build copied, with the same type, cache, range, HEAD and hidden-file answers the Bun entry gives.
+The server entry `buildTarget` generates for `node` now passes the app itself to `@nifrajs/node`'s `serve` and serves files with the adapter's own reader. The entry needs the `@nifrajs/node` of the same release, so a `node` build with an older one installed stops before bundling, names both versions and leaves the last deploy dir in place. A 5.3 adapter used to build cleanly and then throw when the server started. It used to wrap `app.fetch` in a plain `{ fetch }` handler. That wrapper hid the node-direct lane, so every page built an undici `Request` and drained a `Response`, and every file went through one too. The entry mounts `/assets` and, at the root, only the `public/` files the build copied, with the same type, cache, range, HEAD and hidden-file answers the Bun entry gives.
 
 `serve`'s `static` option on `@nifrajs/node`:
 

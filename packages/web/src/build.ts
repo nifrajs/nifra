@@ -56,6 +56,7 @@ import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
+import { nodeAdapterRefusal } from "./internal/node-adapter.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
@@ -1957,6 +1958,11 @@ export async function buildTargetWith(
   ]
   assertDisposableDir("outDir", outDir, sources)
   assertDisposableDir("workDir", workDir, sources)
+  // Before anything is cleared, so a refused build leaves the last deploy dir in place.
+  if (targetPlan.target === "node") {
+    const refusal = nodeAdapterRefusal(workDir)
+    if (refusal !== undefined) throw new Error(refusal)
+  }
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
