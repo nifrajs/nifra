@@ -73,7 +73,8 @@ function replaceOnce(text: string, from: string, to: string): string {
 
 /**
  * The generated Deno entry from its static section on, as a module for Deno itself: core's subpaths
- * from source, a stub app, the root at `dir`, and a loopback listener on a free port.
+ * from source, a stub app answering its first argument, the root at `dir`, and a loopback listener
+ * on a free port.
  */
 function denoModule(src: string): string {
   const core = new URL("../../../packages/core/src/", import.meta.url)
@@ -98,7 +99,8 @@ function denoModule(src: string): string {
   )
   return [
     ...imports,
-    `const app = { fetch: () => new Response(${JSON.stringify(APP)}) }`,
+    // The stub's answer arrives as an argument, so no value is spliced into the module's code.
+    "const app = { fetch: () => new Response(Deno.args[0]) }",
     section,
   ].join("\n")
 }
@@ -117,6 +119,7 @@ async function startDeno(binary: string, src: string): Promise<void> {
       `--allow-read=${root},${realpathSync(root)}`,
       "--allow-net=127.0.0.1",
       script,
+      APP,
     ],
     {
       stdin: "ignore",
