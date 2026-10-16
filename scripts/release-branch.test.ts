@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -371,6 +379,93 @@ test.skipIf(process.platform === "win32")(
   },
 )
 
+const SITE_GATE = "Require main and its passing push CI"
+const CI_PASSED =
+  '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"'
+
+test("site.yml deploys main by hand, in release.yml's publish queue, with deploy-site's steps", () => {
+  const site: unknown = Bun.YAML.parse(workflowText("site.yml"))
+  expect(site).toHaveProperty(["on"], { workflow_dispatch: null })
+  expect(site).toHaveProperty(["permissions"], { contents: "read" })
+  // The group release.yml evaluates to for every run but a pull request's.
+  expect(Bun.YAML.parse(workflowText("release.yml"))).toHaveProperty(
+    ["concurrency", "group"],
+    `release-\${{ github.event_name != 'pull_request' && 'publish' || github.run_id }}`,
+  )
+  expect(site).toHaveProperty(["concurrency"], {
+    group: "release-publish",
+    queue: "max",
+    "cancel-in-progress": false,
+  })
+  const job = workflowJobs("site.yml")["deploy-site"]
+  const twin = workflowJobs("release.yml")["deploy-site"]
+  expect(job?.permissions).toEqual({ actions: "read", contents: "read" })
+  expect(job?.steps?.map((step) => step.name)).toEqual([
+    SITE_GATE,
+    "Checkout main",
+    "Set up Bun",
+    "Install",
+    "Build the packages",
+    DEPLOY,
+    PROBE,
+  ])
+  const checkout = (steps: readonly WorkflowStep[] | undefined) =>
+    steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
+  expect(checkout(job?.steps)?.uses).toBe(checkout(twin?.steps)?.uses ?? "missing from release.yml")
+  expect(checkout(job?.steps)?.with?.["persist-credentials"]).toBe(false)
+  const shared = job?.steps?.slice(2) ?? []
+  expect(shared).toEqual(
+    twin?.steps?.filter((step) => shared.some(({ name }) => name === step.name)) ?? [],
+  )
+})
+
+test.skipIf(process.platform === "win32")(
+  "site.yml refuses any ref but main, and a commit whose push CI did not pass",
+  () => {
+    const gate =
+      workflowJobs("site.yml")["deploy-site"]?.steps?.find((step) => step.name === SITE_GATE)
+        ?.run ?? ""
+    expect(gate).toContain(CI_PASSED)
+    const dir = mkdtempSync(join(tmpdir(), "site-gate-"))
+    try {
+      const log = join(dir, "gh.log")
+      const PATH = fakeBin(dir, {
+        gh: [
+          "#!/bin/sh",
+          `echo "$*" >> "${log}"`,
+          'case "$*" in',
+          '  *"/actions/runs?head_sha=$GREEN_SHA&event=push&branch=main"*) echo true ;;',
+          "  *) echo false ;;",
+          "esac",
+          "",
+        ].join("\n"),
+      })
+      const sha = "a".repeat(40)
+      const run = (env: Record<string, string>) =>
+        Bun.spawnSync(["bash", "-c", gate], {
+          cwd: dir,
+          env: {
+            HOME: dir,
+            PATH,
+            GH_TOKEN: "test",
+            REPOSITORY: "nifrajs/nifra",
+            REF: "refs/heads/main",
+            SHA: sha,
+            GREEN_SHA: sha,
+            ...env,
+          },
+        }).exitCode
+      expect(run({})).toBe(0)
+      expect(run({ GREEN_SHA: "b".repeat(40) })).toBe(1)
+      rmSync(log)
+      expect(run({ REF: "refs/heads/feature" })).toBe(1)
+      expect(existsSync(log)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
+
 test("a failed publish is retried from main for a merged release SHA, under the same proofs", () => {
   const release = workflowText("release.yml")
   expect(release).toContain("  workflow_dispatch:\n    inputs:\n      merge_sha:")
@@ -386,7 +481,7 @@ test("a failed publish is retried from main for a merged release SHA, under the 
   const proof = prove?.steps?.find((step) => step.name === "Prove this is a merged release PR")?.run
   for (const check of [
     `compare/\${PUBLISH_SHA}...main`,
-    '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"',
+    CI_PASSED,
     '.name == "release-verification"',
   ])
     expect(proof).toContain(check)
