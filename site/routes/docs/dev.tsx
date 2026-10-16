@@ -127,7 +127,7 @@ declare module "*.css" {}
 // (#page[data-v-…] for Vue, .page.svelte-… for Svelte) and folds them into the same app stylesheet.`
 
 const CONFIG_SPLIT = `// doc-check: skip - fragment: two files from one app, shown together.
-// framework.ts - imported by your SERVER and edge entries. Adapter only, nothing else.
+// backend/framework.ts - imported by your SERVER and edge entries. Adapter only, nothing else.
 import { svelteAdapter } from "@nifrajs/web-svelte"
 export const adapter = svelteAdapter
 
@@ -135,7 +135,7 @@ export const adapter = svelteAdapter
 // belong here. Re-export the adapter; never define it here, or the dev toolchain it pulls in
 // (Vite, the SFC compiler, their native bindings) is bundled into your production server.
 import { svelte } from "@sveltejs/vite-plugin-svelte"
-export { adapter } from "./framework"
+export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-svelte/client"
 export const vitePlugins = [svelte()]`
 
@@ -583,7 +583,7 @@ export default function Dev() {
 
       <h3>Keep the adapter out of your config file</h3>
       <p>
-        Split <code>framework.ts</code> (the adapter, imported by your server and edge entries) from{" "}
+        Split <code>backend/framework.ts</code> (the adapter, imported by your server and edge entries) from{" "}
         <code>nifra.config.ts</code> (the CLI's config, where the Vite plugins and SFC compilers live).
         If your server entry reaches the adapter <em>through</em> the config, everything the config
         imports is bundled into your production server - the Vite plugin, the framework compiler, and

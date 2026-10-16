@@ -68,7 +68,7 @@ const DEMO_FRAMES: readonly DemoFrame[] = [
         kind: "ask",
         text: "Rename title to heading on the note route, and add a route that creates notes.",
       },
-      { kind: "ctx", text: '.get("/notes/:id", async (c) => {', file: "src/server.ts" },
+      { kind: "ctx", text: '.get("/notes/:id", async (c) => {', file: "backend/app.ts" },
       { kind: "ctx", text: "const note = await notes.find(c.params.id)", indent: 2 },
       { kind: "del", text: "return { id: note.id, title: note.title }", indent: 2 },
       { kind: "add", text: "return { id: note.id, heading: note.title }", indent: 2 },
@@ -87,7 +87,7 @@ const DEMO_FRAMES: readonly DemoFrame[] = [
       { kind: "err", text: "✗ typecheck failed - the frontend/backend contract is broken" },
       {
         kind: "out",
-        text: "routes/note.tsx:14  Property 'title' does not exist on type '{ id: string; heading: string; }'.",
+        text: "routes/notes/[id].tsx:14  Property 'title' does not exist on type '{ id: string; heading: string; }'.",
         indent: 4,
       },
       { kind: "dim", text: "..." },
@@ -101,7 +101,7 @@ const DEMO_FRAMES: readonly DemoFrame[] = [
     caption:
       "Client fixed, write declared. Now policy objects: a domain write with no authentication.",
     lines: [
-      { kind: "ctx", text: '.post("/notes", {', file: "src/server.ts" },
+      { kind: "ctx", text: '.post("/notes", {', file: "backend/app.ts" },
       { kind: "ctx", text: "body: NoteInput,", indent: 2 },
       { kind: "add", text: 'capabilities: ["db.write"],', indent: 2 },
       { kind: "ctx", text: "}, (c) => notes.insert(c.body))" },
@@ -114,7 +114,7 @@ const DEMO_FRAMES: readonly DemoFrame[] = [
     label: "Ship",
     caption: "One middleware supplies the evidence. Every gate agrees, and the change ships.",
     lines: [
-      { kind: "add", text: ".use(jwt({", file: "src/server.ts" },
+      { kind: "add", text: ".use(jwt({", file: "backend/app.ts" },
       { kind: "add", text: "key: env.JWT_SECRET,", indent: 2 },
       { kind: "add", text: 'algorithms: ["HS256"],', indent: 2 },
       { kind: "add", text: "}))" },
