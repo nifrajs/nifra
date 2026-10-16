@@ -293,12 +293,13 @@ export function contentTags(
       }
       const pending = reading.get(path)
       if (pending !== undefined && sameVersion(pending.version, version)) return pending.tag
-      const tag = readWhole(path, version, read)
-      reading.set(path, { version, tag })
+      const entry = { version, tag: readWhole(path, version, read) }
+      reading.set(path, entry)
       try {
-        return await tag
+        return await entry.tag
       } finally {
-        if (reading.get(path)?.tag === tag) reading.delete(path)
+        // A read of a newer version may have replaced this entry; leave that one in place.
+        if (reading.get(path) === entry) reading.delete(path)
       }
     },
   }
