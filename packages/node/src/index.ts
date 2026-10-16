@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url"
 import { FastResponse } from "srvx/node"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
+import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import { contentTypeOf, isHiddenPath } from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
@@ -1075,8 +1076,8 @@ function staticIfRangeMatches(
 }
 
 /**
- * One `bytes=` range as inclusive offsets, `"unsatisfiable"` (416), or `undefined` to send the whole
- * file: no header, a malformed or multi-range one (RFC 9110 lets a server ignore Range), or an
+ * The one range to send, `"unsatisfiable"` (416), or `undefined` to send the whole file: no header,
+ * one core's parser ignores, several disjoint ranges (RFC 9110 lets a server ignore Range), or an
  * `If-Range` validator that no longer matches the file.
  */
 function staticByteRange(
@@ -1084,26 +1085,16 @@ function staticByteRange(
   size: number,
   etag: string,
   lastModified: number | undefined,
-): readonly [number, number] | "unsatisfiable" | undefined {
+): ByteRange | "unsatisfiable" | undefined {
   const range = headers.range
   if (typeof range !== "string") return undefined
   const ifRange = headers["if-range"]
   if (typeof ifRange === "string" && !staticIfRangeMatches(ifRange, etag, lastModified)) {
     return undefined
   }
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
-  if (match === null) return undefined
-  const first = match[1] as string
-  const last = match[2] as string
-  if (first === "") {
-    if (last === "") return undefined
-    const suffix = Number(last)
-    return suffix === 0 || size === 0 ? "unsatisfiable" : [Math.max(0, size - suffix), size - 1]
-  }
-  const start = Number(first)
-  if (start >= size) return "unsatisfiable"
-  const end = last === "" ? size - 1 : Math.min(Number(last), size - 1)
-  return end < start ? undefined : [start, end]
+  const parsed = parseByteRange(range, size)
+  if (parsed.kind === "unsatisfiable") return "unsatisfiable"
+  return parsed.kind === "satisfiable" && parsed.ranges.length === 1 ? parsed.ranges[0] : undefined
 }
 
 // Up to this many bytes are read whole through the pinned descriptor and written in one call, with
@@ -1189,8 +1180,8 @@ async function readStatic(
     let status = 200
     if (range !== undefined) {
       status = 206
-      headers["content-range"] = `bytes ${range[0]}-${range[1]}/${stat.size}`
-      headers["content-length"] = String(range[1] - range[0] + 1)
+      headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`
+      headers["content-length"] = String(range.end - range.start + 1)
     } else {
       headers["content-length"] = String(stat.size)
     }
@@ -1198,8 +1189,8 @@ async function readStatic(
       await handle.close()
       return { kind: "body", status, headers, body: "" }
     }
-    const start = range === undefined ? 0 : range[0]
-    const length = range === undefined ? stat.size : range[1] - range[0] + 1
+    const start = range === undefined ? 0 : range.start
+    const length = range === undefined ? stat.size : range.end - range.start + 1
     if (length <= STATIC_BUFFERED_MAX) {
       const body = await readPinned(handle, start, length)
       await handle.close()
@@ -1209,7 +1200,7 @@ async function readStatic(
     const stream =
       range === undefined
         ? handle.createReadStream()
-        : handle.createReadStream({ start: range[0], end: range[1] })
+        : handle.createReadStream({ start: range.start, end: range.end })
     return {
       kind: "response",
       // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this

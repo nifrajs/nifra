@@ -157,6 +157,26 @@ const CASES: readonly (readonly [string, string, RequestInit?])[] = [
     "/assets/page-1a2b3c.js",
     { headers: { range: "bytes=0-1,4-5" } },
   ],
+  // Every entry parses Range with @nifrajs/core/range; each case below once had a second answer.
+  ["malformed range", "/assets/page-1a2b3c.js", { headers: { range: "bytes=1-x" } }],
+  ["another unit", "/assets/page-1a2b3c.js", { headers: { range: "items=0-9" } }],
+  ["inverted range", "/assets/page-1a2b3c.js", { headers: { range: "bytes=9-0" } }],
+  ["spaced, upper-case unit", "/assets/page-1a2b3c.js", { headers: { range: "Bytes = 2-4" } }],
+  ["overlapping ranges", "/assets/page-1a2b3c.js", { headers: { range: "bytes=0-5,3-9" } }],
+  ["adjacent ranges", "/assets/page-1a2b3c.js", { headers: { range: "bytes=5-9,0-4" } }],
+  [
+    "one satisfiable range among unsatisfiable ones",
+    "/assets/page-1a2b3c.js",
+    { headers: { range: "bytes=500-,0-1" } },
+  ],
+  [
+    "too many ranges",
+    "/assets/page-1a2b3c.js",
+    { headers: { range: `bytes=${Array.from({ length: 17 }, (_, i) => `${i}-${i}`).join(",")}` } },
+  ],
+  ["zero suffix", "/assets/page-1a2b3c.js", { headers: { range: "bytes=-0" } }],
+  ["suffix past the start", "/assets/page-1a2b3c.js", { headers: { range: "bytes=-500" } }],
+  ["suffix and a range", "/assets/page-1a2b3c.js", { headers: { range: "bytes=-3,0-1" } }],
 ]
 
 describe("static-file parity: Bun entry (servePublicDir) and Node entry (@nifrajs/node reader)", () => {

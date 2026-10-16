@@ -188,8 +188,16 @@ test("byte ranges answer 206, 416, or the whole file", async () => {
   expect(unsatisfiable.headers.get("content-range")).toBe("bytes */17")
   await unsatisfiable.arrayBuffer()
 
-  // Multi-range, malformed, and inverted specs are ignored: the whole file, 200.
-  for (const range of ["bytes=0-1,4-5", "items=0-1", "bytes=5-2"]) {
+  // Parsed by core's parser: an inverted spec selects nothing, and overlapping specs coalesce.
+  const inverted = await get("bytes=5-2")
+  expect(inverted.status).toBe(416)
+  await inverted.arrayBuffer()
+  const overlapping = await get("bytes=0-3, 2-6")
+  expect(overlapping.headers.get("content-range")).toBe("bytes 0-6/17")
+  expect(await overlapping.text()).toBe("console")
+
+  // Disjoint ranges, another unit, and a zero suffix are ignored: the whole file, 200.
+  for (const range of ["bytes=0-1,4-5", "items=0-1", "bytes=-0"]) {
     const whole = await get(range)
     expect(whole.status).toBe(200)
     expect(await whole.text()).toBe("console.log('hi')")

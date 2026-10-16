@@ -62,9 +62,10 @@ therefore outside the adapter's guarantee on those platforms. Store user-control
 an application or object-storage path with its own validation policy.
 
 Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
-`Accept-Ranges: bytes`. `If-None-Match` and `If-Modified-Since` get a bodyless 304; a single
-`Range` on GET gets 206 (or 416 when unsatisfiable), gated by `If-Range`. Multi-range requests get
-the whole file.
+`Accept-Ranges: bytes`. `If-None-Match` and `If-Modified-Since` get a bodyless 304. `Range` on GET
+is parsed by a copy of `@nifrajs/core/range`, the parser `servePublicDir` uses, and gated by `If-Range`: one
+range (overlapping or adjacent ones merge into one) gets 206, a range-set that selects nothing gets
+416, and several disjoint ranges get the whole file.
 
 ## Graceful shutdown on signals
 
