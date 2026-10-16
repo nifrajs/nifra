@@ -60,8 +60,12 @@ function hiddenUnder(root: string, abs: string): boolean {
 
 // Up to this many bytes are read whole through the pinned descriptor, which then closes before the
 // response leaves: on Bun a 200 KB asset is served in 0.17 ms against 0.28 ms through a node:fs
-// stream. A larger body streams, so a video holds 64 KiB per request rather than the file.
+// stream. A larger body streams, so a video holds a stream's buffer per request rather than the file.
 const BUFFERED_BODY_MAX = 256 * 1024
+// Bun.serve drops the declared length of any stream body and sends it chunked, and a Bun.file body
+// would need this descriptor open for a send nothing reports the end of. So on Bun a body up to 1 MiB
+// is read whole as well: a slow client then holds ~1 MB, against ~0.6 MB through Bun's stream sink.
+const BUN_BUFFERED_BODY_MAX = 1024 * 1024
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
 async function readPinned(
@@ -148,6 +152,7 @@ export function servePublicDir(
   const hashedFiles = options.hashedFiles
   const hashed = options.cache?.hashed ?? IMMUTABLE
   const assets = options.cache?.assets ?? ONE_DAY
+  const bufferedMax = typeof Bun === "undefined" ? BUFFERED_BODY_MAX : BUN_BUFFERED_BODY_MAX
 
   return async (request: Request): Promise<Response | undefined> => {
     if (request.method !== "GET" && request.method !== "HEAD") return undefined
@@ -233,7 +238,7 @@ export function servePublicDir(
         end: number,
       ): Promise<Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>> => {
         const length = end - start + 1
-        if (length <= BUFFERED_BODY_MAX) {
+        if (length <= bufferedMax) {
           const bytes = await readPinned(handle!, start, length)
           headers.set("content-length", String(bytes.byteLength))
           return bytes

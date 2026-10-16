@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
-import { createServer } from "node:net"
+import { connect, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
@@ -356,8 +356,8 @@ test("multiple ranges fall back to the full body rather than buffering multipart
 
 test("small bodies are read whole and large ones streamed, with the same bytes either way", async () => {
   await withDir(async (dir) => {
-    // 256 KiB is where the handler stops reading a body whole and streams it instead.
-    const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024 + 7]
+    // The handler streams a body past 256 KiB instead of reading it whole, or past 1 MiB on Bun.
+    const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 7]
     const files = sizes.map((size) => Uint8Array.from({ length: size }, (_, i) => (i * 31) % 251))
     await Promise.all(files.map((bytes, i) => writeFile(join(dir, `f${i}.bin`), bytes)))
     const serve = servePublicDir({ dir })
@@ -373,6 +373,63 @@ test("small bodies are read whole and large ones streamed, with the same bytes e
       expect(part?.status).toBe(206)
       expect(part?.headers.get("content-length")).toBe(String(end))
       expect(new Uint8Array(await part!.arrayBuffer())).toEqual(bytes.subarray(1, end + 1))
+    }
+  })
+})
+
+/** A GET as Bun.serve answers it on the socket, so chunked framing is visible. */
+const onTheWire = (port: number, path: string, range?: string) =>
+  new Promise<{ head: string; body: Buffer }>((resolve, reject) => {
+    const chunks: Buffer[] = []
+    const socket = connect(port, "127.0.0.1", () => {
+      const rangeLine = range === undefined ? "" : `range: ${range}\r\n`
+      socket.write(`GET ${path} HTTP/1.1\r\nhost: x\r\nconnection: close\r\n${rangeLine}\r\n`)
+    })
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk))
+    socket.on("error", reject)
+    socket.on("close", () => {
+      const raw = Buffer.concat(chunks)
+      const split = raw.indexOf("\r\n\r\n")
+      resolve({
+        head: raw.subarray(0, split).toString("latin1").toLowerCase(),
+        body: raw.subarray(split + 4),
+      })
+    })
+  })
+
+test("over Bun.serve, a body up to 1 MiB declares its length whole and ranged", async () => {
+  await withDir(async (dir) => {
+    const sizes = [256 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 1]
+    for (const [i, size] of sizes.entries()) {
+      await writeFile(join(dir, `w${i}.bin`), new Uint8Array(size).fill(i + 1))
+    }
+    const serve = servePublicDir({ dir })
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => (await serve(request)) ?? new Response(null, { status: 404 }),
+    })
+    try {
+      for (const [i, size] of sizes.entries()) {
+        const whole = await onTheWire(server.port!, `/w${i}.bin`)
+        const part = await onTheWire(server.port!, `/w${i}.bin`, `bytes=1-${size - 2}`)
+        expect(whole.head).toStartWith("http/1.1 200")
+        expect(part.head).toStartWith("http/1.1 206")
+        if (size > 1024 * 1024) {
+          // Bun.serve drops a stream body's declared length. Once it keeps it, the Bun cap can go.
+          expect(whole.head).toContain("\r\ntransfer-encoding: chunked")
+          expect(whole.head).not.toContain("\r\ncontent-length:")
+          continue
+        }
+        expect(whole.head).toContain(`\r\ncontent-length: ${size}`)
+        expect(whole.head).not.toContain("transfer-encoding")
+        expect(whole.body.byteLength).toBe(size)
+        expect(part.head).toContain(`\r\ncontent-length: ${size - 2}`)
+        expect(part.head).toContain(`\r\ncontent-range: bytes 1-${size - 2}/${size}`)
+        expect(part.body.byteLength).toBe(size - 2)
+      }
+    } finally {
+      await server.stop(true)
     }
   })
 })

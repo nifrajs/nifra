@@ -190,16 +190,16 @@ describe("static-file parity: Bun entry (servePublicDir) and Node entry (@nifraj
     })
   }
 
-  test("a file above the buffered size: the same bytes, and Node declares its length", async () => {
-    const bun = await fetch(`${bunBase}/assets/big-9f8e7d.bin`)
-    const nodeAnswer = await fetch(`${nodeBase}/assets/big-9f8e7d.bin`)
-    expect(nodeAnswer.headers.get("content-type")).toBe(bun.headers.get("content-type"))
-    expect(nodeAnswer.headers.get("cache-control")).toBe(bun.headers.get("cache-control"))
-    // Bun.serve frames a stream body chunked and drops the declared length; Node keeps it.
-    expect(nodeAnswer.headers.get("content-length")).toBe(String(BIG))
-    expect(Buffer.from(await nodeAnswer.arrayBuffer())).toEqual(
-      Buffer.from(await bun.arrayBuffer()),
-    )
+  test("a file the Node entry streams declares its length on both, whole and ranged", async () => {
+    for (const [init, status, length] of [
+      [undefined, 200, BIG],
+      [{ headers: { range: `bytes=1-${BIG - 2}` } }, 206, BIG - 2],
+    ] as const) {
+      const bun = await read(await fetch(`${bunBase}/assets/big-9f8e7d.bin`, init))
+      const nodeAnswer = await read(await fetch(`${nodeBase}/assets/big-9f8e7d.bin`, init))
+      expect([bun.status, bun.headers["content-length"]]).toEqual([status, String(length)])
+      expect(nodeAnswer).toEqual(bun)
+    }
   })
 
   test("a current cached copy is a 304 on both", async () => {
