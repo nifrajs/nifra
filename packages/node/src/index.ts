@@ -926,9 +926,26 @@ function normalizeHostCached(value: string): string | undefined {
   return normalized
 }
 
+/** `headers.host` read from `rawHeaders`: the `headers` getter builds every header into an object,
+ * a cost a request that reads no other header would otherwise pay just for Host. Node keeps the
+ * first Host when one repeats, and so does this. */
+function rawHost(req: IncomingMessage): string | undefined {
+  const raw = req.rawHeaders
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i] as string
+    if (
+      name === "host" ||
+      name === "Host" ||
+      (name.length === 4 && name.toLowerCase() === "host")
+    ) {
+      return raw[i + 1]
+    }
+  }
+  return undefined
+}
+
 function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefined {
-  const inbound = typeof req.headers.host === "string" ? req.headers.host : "localhost"
-  const normalized = normalizeHostCached(inbound)
+  const normalized = normalizeHostCached(rawHost(req) ?? "localhost")
   if (normalized === undefined) return undefined
   if (policy.allowedHosts !== undefined) {
     try {
@@ -1243,43 +1260,36 @@ function activateAsyncContextFrame(): void {
   new AsyncLocalStorage()
 }
 
-interface ActiveResponseState {
-  readonly socket: { readonly destroyed: boolean; destroy(): void }
-  active: number
-  parserError: boolean
-  /** The served app's own error log, when it has one. */
-  readonly report: ((error: unknown) => void) | undefined
-}
+/** The served app's own error log, kept on the server so a response carries no per-request state. */
+const ERROR_REPORTER = Symbol("nifra.node.error-reporter")
+type ReportingServer = { [ERROR_REPORTER]?: (error: unknown) => void }
 
-const ACTIVE_RESPONSE_STATE = Symbol("nifra.node.active-response-state")
-const ACTIVE_RESPONSE_RELEASED = Symbol("nifra.node.active-response-released")
-const ACTIVE_SOCKET_STATE = Symbol("nifra.node.active-socket-state")
-type TrackedSocket = {
-  readonly destroyed: boolean
-  destroy(): void
-  once(event: "close", listener: (this: TrackedSocket) => void): unknown
-  [ACTIVE_SOCKET_STATE]?: ActiveResponseState
-}
-type TrackedServerResponse = ServerResponse & {
-  [ACTIVE_RESPONSE_STATE]?: ActiveResponseState
-  [ACTIVE_RESPONSE_RELEASED]?: boolean
-}
+/** Node's record of the response it is writing on a socket - its own `socketOnError` reads it. */
+type ResponseSocket = Duplex & { readonly _httpMessage?: ServerResponse | null }
 
-/** Shared finish/close listener - response state carries the per-response release bit. */
-function releaseActiveResponse(this: ServerResponse): void {
-  const response = this as TrackedServerResponse
-  const state = response[ACTIVE_RESPONSE_STATE]
-  if (state === undefined || response[ACTIVE_RESPONSE_RELEASED]) return
-  response[ACTIVE_RESPONSE_RELEASED] = true
-  state.active -= 1
-  if (state.parserError && state.active === 0 && !state.socket.destroyed) {
-    state.socket.destroy()
+/** Node raises `clientError` again for every chunk that follows a parser error; one wait each. */
+const closingAfterResponses = new WeakSet<Duplex>()
+
+/**
+ * Close a socket whose HTTP parser failed once every response already dispatched on it is out.
+ * Node queues pipelined responses and hands the socket to the next one as each finishes, so waiting
+ * on whichever holds it walks the queue in order. One that closes without finishing never hands the
+ * socket on, so nothing behind it can be written either.
+ */
+function closeAfterResponses(socket: ResponseSocket): void {
+  const response = socket._httpMessage
+  if (response == null) {
+    socket.destroy()
+    return
   }
-}
-
-function clearActiveResponseState(this: TrackedSocket): void {
-  const state = this[ACTIVE_SOCKET_STATE]
-  if (state !== undefined) state.active = 0
+  const next = (): void => {
+    response.removeListener("finish", next)
+    response.removeListener("close", next)
+    if (socket._httpMessage === response) socket.destroy()
+    else closeAfterResponses(socket)
+  }
+  response.on("finish", next)
+  response.on("close", next)
 }
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
@@ -1309,23 +1319,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     staticOption === undefined
       ? undefined
       : ("dir" in staticOption ? [staticOption] : staticOption).map(staticStateOf)
-  // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can
-  // discard the response for an already-dispatched request when an understated Content-Length
-  // leaves surplus bytes that look like a malformed pipelined request. Keep the parser error
-  // connection-scoped and close only after active responses finish, preserving response ordering.
   const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
-    const socket = nodeReq.socket as TrackedSocket
-    let responseState = socket[ACTIVE_SOCKET_STATE]
-    if (responseState === undefined) {
-      responseState = { socket, active: 0, parserError: false, report }
-      socket[ACTIVE_SOCKET_STATE] = responseState
-      socket.once("close", clearActiveResponseState)
-    }
-    responseState.active += 1
-    ;(nodeRes as TrackedServerResponse)[ACTIVE_RESPONSE_STATE] = responseState
-    ;(nodeRes as TrackedServerResponse)[ACTIVE_RESPONSE_RELEASED] = false
-    nodeRes.once("finish", releaseActiveResponse)
-    nodeRes.once("close", releaseActiveResponse)
     inFlight += 1
     try {
       const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
@@ -1357,13 +1351,18 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     options.tls === undefined
       ? createServer(upgradeOptions, onRequest)
       : createHttpsServer({ ...options.tls, ...upgradeOptions }, onRequest)
+  if (report !== undefined) (server as ReportingServer)[ERROR_REPORTER] = report
 
-  server.on("clientError", (_error, socket) => {
+  // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can
+  // discard the response for an already-dispatched request when an understated Content-Length
+  // leaves surplus bytes that look like a malformed pipelined request.
+  server.on("clientError", (_error, socket: ResponseSocket) => {
     if (socket.destroyed) return
-    const responseState = (socket as TrackedSocket)[ACTIVE_SOCKET_STATE]
-    if (responseState !== undefined && responseState.active > 0) {
-      if (responseState.parserError) return
-      responseState.parserError = true
+    if (socket._httpMessage != null) {
+      if (!closingAfterResponses.has(socket)) {
+        closingAfterResponses.add(socket)
+        closeAfterResponses(socket)
+      }
       return
     }
     const body = "Bad Request"
@@ -1726,8 +1725,8 @@ function failWrite(nodeRes: ServerResponse): void {
 
 /** {@link failWrite} for a failure the app never answered, logged through the app's own logger. */
 function failAndReport(nodeRes: ServerResponse, error: unknown): void {
-  const state: ActiveResponseState | undefined = Reflect.get(nodeRes, ACTIVE_RESPONSE_STATE)
-  const report = state?.report
+  const socket = nodeRes.req?.socket as { readonly server?: ReportingServer } | null | undefined
+  const report = socket?.server?.[ERROR_REPORTER]
   try {
     report?.(error)
   } catch {
