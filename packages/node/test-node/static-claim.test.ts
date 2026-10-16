@@ -60,15 +60,16 @@ test("zero modification times cannot validate replaced files", async () => {
   await writeFile(file, "first")
   await utimes(file, 0, 0)
   const first = await fetch(url)
-  assert.equal(first.headers.get("etag"), null)
+  const etag = first.headers.get("etag") ?? ""
+  assert.match(etag, /^"[\w-]{22}"$/)
   assert.equal(first.headers.get("last-modified"), null)
   assert.equal(await first.text(), "first")
   await writeFile(file, "other")
   await utimes(file, 0, 0)
   const conditions: Record<string, string>[] = [
-    { "if-none-match": '"0-5"' },
+    { "if-none-match": etag },
     { "if-modified-since": new Date(0).toUTCString() },
-    { range: "bytes=1-3", "if-range": '"0-5"' },
+    { range: "bytes=1-3", "if-range": etag },
     { range: "bytes=1-3", "if-range": new Date(0).toUTCString() },
   ]
   for (const headers of conditions) {

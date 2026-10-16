@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { open, realpath, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -234,6 +235,7 @@ const denoFiles = {
           isFile: opened.isFile(),
           size: opened.size,
           mtime: opened.mtime,
+          ctime: opened.ctime,
           dev: opened.dev,
           ino: opened.ino,
         }
@@ -247,7 +249,7 @@ const denoFiles = {
         return bytesRead === 0 ? null : bytesRead
       },
       get readable() {
-        return Readable.toWeb(handle.createReadStream())
+        return Readable.toWeb(handle.createReadStream({ start: position }))
       },
       close: () => {
         handle.close().catch(() => {})
@@ -282,6 +284,7 @@ async function staticHandler(src: string, dir: string, deno = denoFiles): Promis
     "servePublicDir",
     "fileURLToPath",
     "parseByteRange",
+    "createHash",
     "Deno",
     "ROOT_URL",
     ...Object.keys(staticFile),
@@ -290,6 +293,7 @@ async function staticHandler(src: string, dir: string, deno = denoFiles): Promis
     servePublicDir,
     fileURLToPath,
     parseByteRange,
+    createHash,
     deno,
     pathToFileURL(`${dir}/`),
     ...Object.values(staticFile),

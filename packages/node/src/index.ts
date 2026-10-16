@@ -11,6 +11,7 @@
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
+import { createHash } from "node:crypto"
 import { type FileHandle, realpath } from "node:fs/promises"
 import {
   createServer,
@@ -31,10 +32,12 @@ import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import {
+  contentTags,
   contentTypeOf,
   ifRangeAllowsPartial,
   isHiddenPath,
-  isNotModifiedSince,
+  isNotModified,
+  lastModifiedOf,
 } from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
@@ -1030,52 +1033,12 @@ function staticMatch(
   return { file, immutable }
 }
 
-/** Strong validator from mtime + size (the nginx scheme): rewriting a file changes at least one. */
-function staticEtag(size: number, mtimeMs: number): string {
-  return `"${Math.floor(mtimeMs).toString(16)}-${size.toString(16)}"`
-}
+// One per process: the tag of a file served from any mount is remembered by its real path.
+const STATIC_TAGS = contentTags(createHash)
 
-function weakEtag(value: string): string {
-  return value.startsWith("W/") ? value.slice(2) : value
-}
-
-/** `If-None-Match` uses the weak comparison (RFC 9110 section 13.1.2): a `W/` prefix is ignored. */
-function etagListMatches(header: string, etag: string | undefined): boolean {
-  const comparable = etag === undefined ? undefined : weakEtag(etag)
-  for (const raw of header.split(",")) {
-    const candidate = raw.trim()
-    if (candidate === "*" || (comparable !== undefined && weakEtag(candidate) === comparable))
-      return true
-  }
-  return false
-}
-
-/** Whether the client's cached copy is current. `If-None-Match` wins over `If-Modified-Since`, whose
- * HTTP-date only carries whole seconds. */
-function staticNotModified(
-  headers: IncomingHttpHeaders,
-  etag: string | undefined,
-  lastModified: number | undefined,
-): boolean {
-  const ifNoneMatch = headers["if-none-match"]
-  if (typeof ifNoneMatch === "string") return etagListMatches(ifNoneMatch, etag)
-  const ifModifiedSince = headers["if-modified-since"]
-  return isNotModifiedSince(
-    typeof ifModifiedSince === "string" ? ifModifiedSince : null,
-    lastModified,
-  )
-}
-
-function staticIfRangeMatches(
-  value: string,
-  etag: string | undefined,
-  lastModified: number | undefined,
-): boolean {
-  const item = value.trim()
-  if (item.startsWith('"') || item.startsWith("W/")) {
-    return etag !== undefined && !item.startsWith("W/") && !etag.startsWith("W/") && item === etag
-  }
-  return ifRangeAllowsPartial(item, lastModified)
+function headerOf(headers: IncomingHttpHeaders, name: string): string | null {
+  const value = headers[name]
+  return typeof value === "string" ? value : null
 }
 
 /**
@@ -1091,10 +1054,7 @@ function staticByteRange(
 ): ByteRange | "unsatisfiable" | undefined {
   const range = headers.range
   if (typeof range !== "string") return undefined
-  const ifRange = headers["if-range"]
-  if (typeof ifRange === "string" && !staticIfRangeMatches(ifRange, etag, lastModified)) {
-    return undefined
-  }
+  if (!ifRangeAllowsPartial(headerOf(headers, "if-range"), etag, lastModified)) return undefined
   const parsed = parseByteRange(range, size)
   if (parsed.kind === "unsatisfiable") return "unsatisfiable"
   return parsed.kind === "satisfiable" && parsed.ranges.length === 1 ? parsed.ranges[0] : undefined
@@ -1141,10 +1101,11 @@ async function readStatic(
     if (state.denyDotfiles && isHiddenPath(realFile.slice(realRoot.length + 1))) {
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
-    handle = await openResolved(realFile)
-    const stat = await handle.stat()
+    const opened = await openResolved(realFile)
+    handle = opened
+    const stat = await opened.stat()
     if (!stat.isFile()) {
-      await handle.close()
+      await opened.close()
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
     const headers: Record<string, string> = { ...state.headers }
@@ -1152,17 +1113,29 @@ async function readStatic(
       const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
       if (cacheControl !== undefined) headers["cache-control"] = cacheControl
     }
-    // A missing/normalized timestamp cannot distinguish deploys, even for equal-sized replacements.
-    if (Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0) {
-      headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
-      headers["last-modified"] ??= stat.mtime.toUTCString()
+    // The whole file, when tagging it had to read it: the response is then served from these bytes.
+    let whole: Uint8Array | undefined
+    if (headers.etag === undefined) {
+      let tag = STATIC_TAGS.cached(realFile, stat)
+      if (tag === undefined && stat.size <= STATIC_BUFFERED_MAX) {
+        whole = await readPinned(opened, 0, stat.size)
+        tag = STATIC_TAGS.ofBytes(realFile, stat, whole)
+      }
+      tag ??= await STATIC_TAGS.ofFile(realFile, stat, async (bytes, position) => {
+        return (await opened.read(bytes, 0, bytes.byteLength, position)).bytesRead
+      })
+      if (tag !== undefined) headers.etag = tag
     }
+    const modified = lastModifiedOf(stat)
+    if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
     // Custom validators are response headers, not decoration: compare the exact values the client saw.
     const etag = headers.etag
     const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
     const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
     // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
-    if (staticNotModified(requestHeaders, etag, lastModified)) {
+    const ifNoneMatch = headerOf(requestHeaders, "if-none-match")
+    const ifModifiedSince = headerOf(requestHeaders, "if-modified-since")
+    if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
       await handle.close()
       delete headers["content-length"]
       delete headers["content-type"]
@@ -1198,7 +1171,10 @@ async function readStatic(
     const start = range === undefined ? 0 : range.start
     const length = range === undefined ? stat.size : range.end - range.start + 1
     if (length <= STATIC_BUFFERED_MAX) {
-      const body = await readPinned(handle, start, length)
+      const body =
+        whole === undefined
+          ? await readPinned(handle, start, length)
+          : whole.subarray(start, start + length)
       await handle.close()
       headers["content-length"] = String(body.byteLength)
       return { kind: "body", status, headers, body }
