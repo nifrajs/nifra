@@ -17,7 +17,12 @@ import { normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
-import { contentTypeOf, isHiddenPath } from "@nifrajs/core/static-file"
+import {
+  contentTypeOf,
+  ifRangeAllowsPartial,
+  isHiddenPath,
+  isNotModifiedSince,
+} from "@nifrajs/core/static-file"
 import { openResolved } from "./open-resolved.ts"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
@@ -81,35 +86,6 @@ async function readPinned(
     offset += bytesRead
   }
   return offset === length ? bytes : bytes.subarray(0, offset)
-}
-
-/** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
-function seconds(time: number): number {
-  return Math.floor(time / 1000)
-}
-
-/**
- * `If-Range` decides whether a range request is still safe to answer partially. The only validator
- * this handler publishes is `last-modified`, so an entity-tag form can never match and the whole
- * representation is sent instead - which is the conformant outcome, not a fallback. Dates use strong
- * comparison (RFC 9110 13.1.5): a file modified since the client's copy invalidates its byte offsets.
- */
-function ifRangeMatches(value: string | null, lastModified: number | undefined): boolean {
-  if (value === null) return true
-  if (lastModified === undefined) return false
-  const item = value.trim()
-  if (item.startsWith('"') || item.startsWith("W/")) return false
-  const parsed = Date.parse(item)
-  return Number.isFinite(parsed) && seconds(parsed) === seconds(lastModified)
-}
-
-/** `If-Modified-Since` freshness. No ETag is published, so there is no `If-None-Match` precedence. */
-function isNotModified(request: Request, lastModified: number | undefined): boolean {
-  if (lastModified === undefined) return false
-  const since = request.headers.get("if-modified-since")
-  if (since === null) return false
-  const parsed = Date.parse(since)
-  return Number.isFinite(parsed) && seconds(parsed) >= seconds(lastModified)
 }
 
 /**
@@ -215,7 +191,8 @@ export function servePublicDir(
       }
       const head = request.method === "HEAD"
 
-      if (isNotModified(request, lastModified)) {
+      // Last-Modified is the only validator published, so no If-None-Match takes precedence.
+      if (isNotModifiedSince(request.headers.get("if-modified-since"), lastModified)) {
         headers.delete("content-type")
         return new Response(null, { status: 304, headers })
       }
@@ -223,7 +200,7 @@ export function servePublicDir(
       // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
       const rangeHeader = head ? null : request.headers.get("range")
       const range =
-        rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
+        rangeHeader !== null && ifRangeAllowsPartial(request.headers.get("if-range"), lastModified)
           ? parseByteRange(rangeHeader, size)
           : ({ kind: "none" } as const)
 

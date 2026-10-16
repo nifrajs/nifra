@@ -3148,8 +3148,12 @@ _No named exports (side-effect entrypoint)._
   Media types by extension. A table rather than the runtime's own file typing, which Node and Deno lack. Unknown extensions, and extensionless files such as ACME tokens, are `application/octet-stream`, which together with `nosniff` keeps a browser from guessing a more dangerous type.
 - **contentTypeOf** _(function)_ - `contentTypeOf: (path: string) => string`
   The media type for a file path or name by its extension, case-insensitively.
+- **ifRangeAllowsPartial** _(function)_ - `ifRangeAllowsPartial: (ifRange: string | null, lastModified: number | undefined) => boolean`
+  Whether `If-Range` (the header, or `null`) lets a range request be answered partially when the file's Last-Modified date is its only validator. An entity tag cannot match a tag never sent, so it means the whole file - the conformant answer, not a fallback. A date must equal Last-Modified to the sec…
 - **isHiddenPath** _(function)_ - `isHiddenPath: (rel: string) => boolean`
   Whether a relative path crosses a dot-segment other than `.well-known` (RFC 8615, public by definition). Serving, the build's `public/` copy and the parity listing all apply it, so an editor or VCS artifact (`.env`, `.git/`, `.DS_Store`) is neither served nor shipped. Both separators split: a reque…
+- **isNotModifiedSince** _(function)_ - `isNotModifiedSince: (ifModifiedSince: string | null, lastModified: number | undefined) => boolean`
+  Whether a client's copy dated `ifModifiedSince` (the header, or `null`) is still current for a file last modified at `lastModified` (epoch milliseconds), compared at the whole seconds an HTTP date carries. An unparseable date, or a file with no known time, is never current.
 
 ### `@nifrajs/core/tool-catalog`
 

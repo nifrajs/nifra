@@ -30,7 +30,12 @@ import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
-import { contentTypeOf, isHiddenPath } from "./generated/static-file.ts"
+import {
+  contentTypeOf,
+  ifRangeAllowsPartial,
+  isHiddenPath,
+  isNotModifiedSince,
+} from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 
@@ -1053,11 +1058,11 @@ function staticNotModified(
 ): boolean {
   const ifNoneMatch = headers["if-none-match"]
   if (typeof ifNoneMatch === "string") return etagListMatches(ifNoneMatch, etag)
-  if (lastModified === undefined) return false
   const ifModifiedSince = headers["if-modified-since"]
-  if (typeof ifModifiedSince !== "string") return false
-  const since = Date.parse(ifModifiedSince)
-  return Number.isFinite(since) && Math.floor(lastModified / 1000) * 1000 <= since
+  return isNotModifiedSince(
+    typeof ifModifiedSince === "string" ? ifModifiedSince : null,
+    lastModified,
+  )
 }
 
 function staticIfRangeMatches(
@@ -1069,11 +1074,7 @@ function staticIfRangeMatches(
   if (item.startsWith('"') || item.startsWith("W/")) {
     return !item.startsWith("W/") && !etag.startsWith("W/") && item === etag
   }
-  // A date validator must match Last-Modified exactly (RFC 9110 section 13.1.5), not merely be later:
-  // a file swapped for one with an older mtime would otherwise splice foreign bytes into a resume.
-  if (lastModified === undefined) return false
-  const date = Date.parse(item)
-  return Number.isFinite(date) && Math.floor(lastModified / 1000) === Math.floor(date / 1000)
+  return ifRangeAllowsPartial(item, lastModified)
 }
 
 /**

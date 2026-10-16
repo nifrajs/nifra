@@ -2,14 +2,15 @@
 // Copied so @nifrajs/node types and hides served files exactly as core does, without depending on it.
 
 /**
- * What a file served from disk is typed as, and which files are never served - the shared owner for
- * every static-file surface.
+ * What a file served from disk is typed as, which files are never served, and when a client's copy of
+ * one is still current - the shared owner for every static-file surface.
  *
- * `@nifrajs/web`'s `servePublicDir` (dev, the Bun entry, the Deno entry's embedded table) and
- * `@nifrajs/node`'s `static` reader (the Node entry) answer the same deployed files. Two copies that
- * drift serve a `.pdf` as a download on one runtime and inline on the other, or a `.well-known` file
- * on one and a 404 on the other, so both read this module. The Node adapter runs a generated copy
- * (scripts/gen-node-outcome.ts), so this module imports nothing.
+ * `@nifrajs/web`'s `servePublicDir` (dev, the Bun entry), the Deno entry's handler and
+ * `@nifrajs/node`'s `static` reader (the Node entry) answer the same deployed files. Copies that drift
+ * serve a `.pdf` as a download on one runtime and inline on the other, a `.well-known` file on one and
+ * a 404 on the other, or a resumed download spliced from two versions of a file on one, so all three
+ * read this module. The Node adapter runs a generated copy (scripts/gen-node-outcome.ts), so this
+ * module imports nothing.
  */
 
 /**
@@ -79,4 +80,42 @@ export function isHiddenPath(rel: string): boolean {
     if (segment.charCodeAt(0) === 46 /* '.' */ && segment !== ".well-known") return true
   }
   return false
+}
+
+/** HTTP dates carry whole seconds; comparing raw milliseconds makes every file look stale. */
+function seconds(time: number): number {
+  return Math.floor(time / 1000)
+}
+
+/**
+ * Whether a client's copy dated `ifModifiedSince` (the header, or `null`) is still current for a file
+ * last modified at `lastModified` (epoch milliseconds), compared at the whole seconds an HTTP date
+ * carries. An unparseable date, or a file with no known time, is never current.
+ */
+export function isNotModifiedSince(
+  ifModifiedSince: string | null,
+  lastModified: number | undefined,
+): boolean {
+  if (ifModifiedSince === null || lastModified === undefined) return false
+  const since = Date.parse(ifModifiedSince)
+  return Number.isFinite(since) && seconds(since) >= seconds(lastModified)
+}
+
+/**
+ * Whether `If-Range` (the header, or `null`) lets a range request be answered partially when the
+ * file's Last-Modified date is its only validator. An entity tag cannot match a tag never sent, so it
+ * means the whole file - the conformant answer, not a fallback. A date must equal Last-Modified to the
+ * second (RFC 9110 section 13.1.5), not merely be later: a file replaced by one with an older time
+ * would otherwise splice foreign bytes into a resumed download.
+ */
+export function ifRangeAllowsPartial(
+  ifRange: string | null,
+  lastModified: number | undefined,
+): boolean {
+  if (ifRange === null) return true
+  if (lastModified === undefined) return false
+  const item = ifRange.trim()
+  if (item.startsWith('"') || item.startsWith("W/")) return false
+  const date = Date.parse(item)
+  return Number.isFinite(date) && seconds(date) === seconds(lastModified)
 }

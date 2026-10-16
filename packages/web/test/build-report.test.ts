@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { Readable } from "node:stream"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { parseByteRange } from "@nifrajs/core/range"
+import * as staticFile from "@nifrajs/core/static-file"
 import {
   aggregateSizeReport,
   BUILD_TARGETS,
@@ -229,7 +230,13 @@ const denoFiles = {
     return {
       stat: async () => {
         const opened = await handle.stat()
-        return { isFile: opened.isFile(), size: opened.size, dev: opened.dev, ino: opened.ino }
+        return {
+          isFile: opened.isFile(),
+          size: opened.size,
+          mtime: opened.mtime,
+          dev: opened.dev,
+          ino: opened.ino,
+        }
       },
       seek: async (offset: number) => {
         position = offset
@@ -277,8 +284,16 @@ async function staticHandler(src: string, dir: string, deno = denoFiles): Promis
     "parseByteRange",
     "Deno",
     "ROOT_URL",
+    ...Object.keys(staticFile),
     `${new Bun.Transpiler({ loader: "ts" }).transformSync(section)}; return { staticPath, staticResponse }`,
-  )(servePublicDir, fileURLToPath, parseByteRange, deno, pathToFileURL(`${dir}/`))) as StaticHandler
+  )(
+    servePublicDir,
+    fileURLToPath,
+    parseByteRange,
+    deno,
+    pathToFileURL(`${dir}/`),
+    ...Object.values(staticFile),
+  )) as StaticHandler
 }
 
 /** The options a generated Node entry passes to `serve`, evaluated with its folder at `dir`. */

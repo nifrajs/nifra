@@ -19775,6 +19775,13 @@
     "doc": "/** The idle state, shared so a server render and the first client render agree by reference. */"
   },
   {
+    "name": "ifRangeAllowsPartial",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function ifRangeAllowsPartial(ifRange: string | null, lastModified: number | undefined): boolean;",
+    "doc": "/**\n * Whether `If-Range` (the header, or `null`) lets a range request be answered partially when the\n * file's Last-Modified date is its only validator. An entity tag cannot match a tag never sent, so it\n * means the whole file - the conformant answer, not a fallback. A date must equal Last-Modified to the\n * second (RFC 9110 section 13.1.5), not merely be later: a file replaced by one with an older time\n * would otherwise splice foreign bytes into a resumed download.\n */"
+  },
+  {
     "name": "imageDimensions",
     "kind": "function",
     "package": "@nifrajs/image",
@@ -20052,6 +20059,13 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function isNativeServerView(value: unknown): value is NativeServerView;"
+  },
+  {
+    "name": "isNotModifiedSince",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function isNotModifiedSince(ifModifiedSince: string | null, lastModified: number | undefined): boolean;",
+    "doc": "/**\n * Whether a client's copy dated `ifModifiedSince` (the header, or `null`) is still current for a file\n * last modified at `lastModified` (epoch milliseconds), compared at the whole seconds an HTTP date\n * carries. An unparseable date, or a file with no known time, is never current.\n */"
   },
   {
     "name": "isProcessAlive",

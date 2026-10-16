@@ -25,7 +25,7 @@ import {
   singleCopyPlugin as declaredSingleCopyPlugin,
   readSingleCopyDeclaration,
 } from "@nifrajs/core/single-copy"
-import { CONTENT_TYPES, isHiddenPath } from "@nifrajs/core/static-file"
+import { isHiddenPath } from "@nifrajs/core/static-file"
 import { type BunPlugin, Glob } from "bun"
 import {
   aggregateSizeReport,
@@ -1412,7 +1412,12 @@ export function generateServerEntry(options: {
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
-  if (target === "deno") lines.push('import { parseByteRange } from "@nifrajs/core/range"')
+  if (target === "deno") {
+    lines.push(
+      'import { parseByteRange } from "@nifrajs/core/range"',
+      'import { contentTypeOf, ifRangeAllowsPartial, isHiddenPath, isNotModifiedSince } from "@nifrajs/core/static-file"',
+    )
+  }
   if (prerendered.length > 0) {
     const headers = Object.fromEntries(prerendered.map(([path, page]) => [path, page.headers]))
     const files = Object.fromEntries(prerendered.map(([path, page]) => [path, page.file]))
@@ -1589,34 +1594,33 @@ export function generateServerEntry(options: {
 }
 
 /**
- * The Deno entry's static handler: `servePublicDir`'s checks on Deno's file API. The real path must sit
- * inside the root and cross no hidden segment, and the opened file must still be the one that path
- * names, so a link planted in the deployed tree cannot reach a file outside it or a `.env` inside it.
- * HEAD answers from `stat` without reading; one byte range is served from a seek, several as the
- * whole file.
+ * The Deno entry's static handler: `servePublicDir`'s checks and answers on Deno's file API. The real
+ * path must sit inside the root and cross no hidden segment, and the opened file must still be the one
+ * that path names, so a link planted in the deployed tree cannot reach a file outside it or a `.env`
+ * inside it. The file is typed by its real path and dated by its own mtime: a current cached copy is
+ * a 304, and a range survives only an `If-Range` naming that date. HEAD answers from `stat` without
+ * reading; one byte range is served from a seek, several as the whole file.
  */
 function denoStaticResponse(hashed: boolean): string[] {
   return [
-    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
-    "const staticHeaders = (pathname: string): Record<string, string> => ({",
-    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
+    "const staticHeaders = (pathname: string, file: string): Record<string, string> => ({",
+    '  "content-type": contentTypeOf(file),',
     `  "cache-control": ${hashed ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
     '  "x-content-type-options": "nosniff",',
     '  "accept-ranges": "bytes",',
     "})",
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
-    "const hiddenSegment = (rel: string): boolean =>",
-    '  rel.split(/[\\\\/]/).some((segment) => segment.startsWith(".") && segment !== ".well-known")',
     "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
     '  const missing = () => new Response("not found", { status: 404 })',
     '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
     "  let file, info",
+    '  let real = ""',
     "  try {",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    const real: string = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
+    "    real = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
     '    if (!real.startsWith(STATIC_REAL + (STATIC_REAL.includes("\\\\") ? "\\\\" : "/"))) return missing()',
-    "    if (hiddenSegment(real.slice(STATIC_REAL.length + 1))) return missing()",
+    "    if (isHiddenPath(real.slice(STATIC_REAL.length + 1))) return missing()",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "    file = await Deno.open(real)",
     "    // Deno.open follows links, so a directory swapped for one after the check above redirects it.",
@@ -1634,12 +1638,28 @@ function denoStaticResponse(hashed: boolean): string[] {
     "    file?.close()",
     "    return missing()",
     "  }",
-    "  const size: number = info.size",
-    "  const headers = new Headers(staticHeaders(pathname))",
-    '  const range = req.method === "GET" ? parseByteRange(req.headers.get("range"), size) : { kind: "none" as const }',
-    '  if (!info.isFile || req.method === "HEAD" || range.kind === "unsatisfiable") {',
+    "  if (!info.isFile) {",
     "    file.close()",
-    "    if (!info.isFile) return missing()",
+    "    return missing()",
+    "  }",
+    "  const size: number = info.size",
+    "  const headers = new Headers(staticHeaders(pathname, real))",
+    "  // Deno reports no mtime where the platform keeps none; an epoch time would match every copy.",
+    "  const modified: number = info.mtime?.getTime() ?? 0",
+    "  const lastModified = modified > 0 ? modified : undefined",
+    '  if (lastModified !== undefined) headers.set("last-modified", new Date(lastModified).toUTCString())',
+    '  if (isNotModifiedSince(req.headers.get("if-modified-since"), lastModified)) {',
+    "    file.close()",
+    '    headers.delete("content-type")',
+    "    return new Response(null, { status: 304, headers })",
+    "  }",
+    '  const rangeHeader = req.method === "GET" ? req.headers.get("range") : null',
+    "  const range =",
+    '    rangeHeader !== null && ifRangeAllowsPartial(req.headers.get("if-range"), lastModified)',
+    "      ? parseByteRange(rangeHeader, size)",
+    '      : { kind: "none" as const }',
+    '  if (req.method === "HEAD" || range.kind === "unsatisfiable") {',
+    "    file.close()",
     '    if (range.kind !== "unsatisfiable") {',
     '      headers.set("content-length", String(size))',
     "      return new Response(null, { headers })",
