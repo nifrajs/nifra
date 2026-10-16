@@ -400,6 +400,18 @@ test("a visible name linking to a dotfile inside the root is denied", async () =
   }
 })
 
+test("a link is typed by the file it resolves to, not by its own name", async () => {
+  await symlink(join(dir, "style.css"), join(dir, "alias.js"))
+  try {
+    const base = await startWithStatic()
+    const res = await fetch(`${base}/assets/alias.js`)
+    expect(res.headers.get("content-type")).toBe("text/css; charset=utf-8")
+    expect(await res.text()).toBe("body{}")
+  } finally {
+    await rm(join(dir, "alias.js"), { force: true })
+  }
+})
+
 test("a link inside the root that points outside it is a 404, like a missing file", async () => {
   const outside = await mkdtemp(join(tmpdir(), "nifra-static-outside-"))
   await writeFile(join(outside, "secret.txt"), "outside")

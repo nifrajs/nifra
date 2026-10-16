@@ -60,6 +60,8 @@ beforeAll(async () => {
   writeFileSync(join(dir, "assets/big-9f8e7d.bin"), Buffer.alloc(BIG, 1))
   writeFileSync(join(dir, "assets/manifest.json"), "{}")
   writeFileSync(join(dir, "assets/guide.pdf"), "%PDF")
+  writeFileSync(join(dir, "assets/theme.css"), "body{}")
+  symlinkSync(join(dir, "assets/theme.css"), join(dir, "assets/alias.js"))
   writeFileSync(join(dir, "assets/.cache/x.js"), "cached")
   writeFileSync(join(dir, ".env"), "SECRET=1")
   writeFileSync(join(root, "outside.txt"), "outside")
@@ -145,6 +147,7 @@ const CASES: readonly (readonly [string, string, RequestInit?])[] = [
   ["hashed asset", "/assets/page-1a2b3c.js"],
   ["unhashed asset", "/assets/manifest.json"],
   ["pdf", "/assets/guide.pdf"],
+  ["a link is typed by its target", "/assets/alias.js"],
   ["HEAD", "/assets/page-1a2b3c.js", { method: "HEAD" }],
   ["range", "/assets/page-1a2b3c.js", { headers: { range: "bytes=0-9" } }],
   ["suffix range", "/assets/big-9f8e7d.bin", { headers: { range: "bytes=-5" } }],

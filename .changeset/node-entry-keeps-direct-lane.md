@@ -11,7 +11,7 @@ The server entry `buildTarget` generates for `node` now passes the app itself to
 - takes an array of mounts; the first one whose prefix takes a path answers it.
 - `files` lists the only URL paths a mount serves; any other path runs the app without touching the disk.
 - `cacheControl` sets `cache-control` for files not served immutable.
-- types files from the same table as `servePublicDir`, so `.pdf`, `.mp4`, `.xml`, `.csv` and other common types are no longer sent as `application/octet-stream`.
+- types files from the same table as `servePublicDir`, so `.pdf`, `.mp4`, `.xml`, `.csv` and other common types are no longer sent as `application/octet-stream`; a link is typed by the file it resolves to.
 - serves `/.well-known` by default, as `servePublicDir` does, and refuses a visible name that links to a dotfile.
 - answers a link that leaves the directory with `404`, the same as a missing file, instead of `403`.
 - sends files up to 256 KiB, and HEAD, `304` and `416` answers, in one write with no `Response` or stream.

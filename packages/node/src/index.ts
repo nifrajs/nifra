@@ -1171,7 +1171,8 @@ async function readStatic(
       delete headers["content-type"]
       return { kind: "body", status: 304, headers, body: "" }
     }
-    headers["content-type"] = contentTypeOf(file)
+    // The file served, not the name asked for: a link is typed by its target, as servePublicDir does.
+    headers["content-type"] = contentTypeOf(realFile)
     // Never let a client sniff a served file into a more dangerous type (e.g. an .svg as active content).
     headers["x-content-type-options"] = "nosniff"
     headers["accept-ranges"] = "bytes"
