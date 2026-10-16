@@ -165,7 +165,7 @@ function answer(
   try {
     return parse(value, size)
   } catch (error) {
-    return { threw: `${(error as Error).name}: ${(error as Error).message}` }
+    return { threw: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }
   }
 }
 
