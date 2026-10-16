@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { appendFileSync, cpSync, mkdtempSync, rmSync } from "node:fs"
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { staleArtifacts } from "./gen-node-outcome.ts"
@@ -9,9 +9,13 @@ const FILES = [
   "packages/core/src/server/node-outcome.ts",
   "packages/core/src/server/bridge-markers.ts",
   "packages/core/src/server/request-target.ts",
+  "packages/core/src/static-file.ts",
+  "packages/core/src/range.ts",
   "packages/node/src/generated/node-outcome.ts",
   "packages/node/src/generated/bridge-markers.ts",
   "packages/node/src/generated/request-target.ts",
+  "packages/node/src/generated/static-file.ts",
+  "packages/node/src/generated/range.ts",
 ]
 const roots: string[] = []
 
@@ -33,9 +37,22 @@ test("control: the committed copies are current", () => {
 test("a generated copy that drifts from core, or is missing, is stale", () => {
   const root = fixture()
   appendFileSync(join(root, "packages/core/src/server/request-target.ts"), "\n// drift\n")
+  appendFileSync(join(root, "packages/core/src/static-file.ts"), "\n// drift\n")
+  appendFileSync(join(root, "packages/core/src/range.ts"), "\n// drift\n")
   rmSync(join(root, "packages/node/src/generated/bridge-markers.ts"))
   expect(staleArtifacts(root)).toEqual([
     "packages/node/src/generated/bridge-markers.ts",
     "packages/node/src/generated/request-target.ts",
+    "packages/node/src/generated/static-file.ts",
+    "packages/node/src/generated/range.ts",
   ])
+})
+
+test("a copied module that gains an import is refused, not copied", () => {
+  const root = fixture()
+  const range = join(root, "packages/core/src/range.ts")
+  writeFileSync(range, `import { x } from "./x.ts"\n${readFileSync(range, "utf8")}`)
+  expect(() => staleArtifacts(root)).toThrow(
+    "packages/core/src/range.ts must not import anything - @nifrajs/node runs a copy of it",
+  )
 })

@@ -1,5 +1,6 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { afterAll, afterEach, beforeAll, expect, setSystemTime, test } from "bun:test"
+import { createHash } from "node:crypto"
+import { mkdir, mkdtemp, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
@@ -29,6 +30,9 @@ afterAll(async () => {
 })
 
 const app = server().get("/", () => ({ page: true }))
+
+const tagOf = (text: string) =>
+  `"${createHash("sha256").update(text).digest("base64url").slice(0, 22)}"`
 
 async function startWithStatic(
   prefix?: string,
@@ -78,7 +82,7 @@ test("revalidation answers 304 from If-None-Match or If-Modified-Since", async (
   const first = await fetch(`${base}/assets/app.js`)
   const etag = first.headers.get("etag")
   const lastModified = first.headers.get("last-modified")
-  expect(etag).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/)
+  expect(etag).toBe(tagOf("console.log('hi')"))
   expect(lastModified).not.toBeNull()
   expect(first.headers.get("accept-ranges")).toBe("bytes")
   await first.arrayBuffer()
@@ -130,13 +134,30 @@ test("custom validator headers drive revalidation and ranges", async () => {
   })
   expect(byDate.status).toBe(304)
 
-  for (const validator of ['"custom"', lastModified]) {
-    const range = await fetch(`${base}/assets/app.js`, {
-      headers: { range: "bytes=0-6", "if-range": validator },
-    })
-    expect(range.status).toBe(206)
-    expect(await range.text()).toBe("console")
-  }
+  const range = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": '"custom"' },
+  })
+  expect(range.status).toBe(206)
+  expect(await range.text()).toBe("console")
+
+  // With a strong tag to resume by, a date does not stand in for it.
+  const byDateRange = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": lastModified },
+  })
+  expect(byDateRange.status).toBe(200)
+  expect(await byDateRange.text()).toBe("console.log('hi')")
+})
+
+test("a custom date with a weak custom tag resumes by that exact date", async () => {
+  const lastModified = "Wed, 01 Jan 2020 00:00:00 GMT"
+  const base = await startWithStatic(undefined, {
+    headers: { ETag: 'W/"custom"', "Last-Modified": lastModified },
+  })
+  const range = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": lastModified },
+  })
+  expect(range.status).toBe(206)
+  expect(await range.text()).toBe("console")
 
   // A date If-Range is an exact match, not a freshness check: a later date is a different validator.
   const later = await fetch(`${base}/assets/app.js`, {
@@ -158,6 +179,32 @@ test("a weak custom ETag revalidates but never satisfies If-Range", async () => 
   })
   expect(ranged.status).toBe(200)
   expect(await ranged.text()).toBe("console.log('hi')")
+})
+
+test("custom validators still apply to a file with no usable modification time", async () => {
+  const path = join(dir, "undated.txt")
+  await writeFile(path, "first")
+  await utimes(path, 0, 0)
+  const lastModified = "Wed, 01 Jan 2020 00:00:00 GMT"
+  const base = await startWithStatic(undefined, {
+    headers: { ETag: '"custom"', "Last-Modified": lastModified },
+  })
+  const conditions: Record<string, string>[] = [
+    { "if-none-match": 'W/"custom"' },
+    { "if-modified-since": lastModified },
+  ]
+  for (const headers of conditions) {
+    const response = await fetch(`${base}/assets/undated.txt`, { headers })
+    expect(response.status).toBe(304)
+    expect(response.headers.get("etag")).toBe('"custom"')
+    expect(response.headers.get("last-modified")).toBe(lastModified)
+    expect(await response.text()).toBe("")
+  }
+  const response = await fetch(`${base}/assets/undated.txt`, {
+    headers: { range: "bytes=1-3", "if-range": '"custom"' },
+  })
+  expect(response.status).toBe(206)
+  expect(await response.text()).toBe("irs")
 })
 
 test("byte ranges answer 206, 416, or the whole file", async () => {
@@ -188,8 +235,16 @@ test("byte ranges answer 206, 416, or the whole file", async () => {
   expect(unsatisfiable.headers.get("content-range")).toBe("bytes */17")
   await unsatisfiable.arrayBuffer()
 
-  // Multi-range, malformed, and inverted specs are ignored: the whole file, 200.
-  for (const range of ["bytes=0-1,4-5", "items=0-1", "bytes=5-2"]) {
+  // Parsed by core's parser: an inverted spec selects nothing, and overlapping specs coalesce.
+  const inverted = await get("bytes=5-2")
+  expect(inverted.status).toBe(416)
+  await inverted.arrayBuffer()
+  const overlapping = await get("bytes=0-3, 2-6")
+  expect(overlapping.headers.get("content-range")).toBe("bytes 0-6/17")
+  expect(await overlapping.text()).toBe("console")
+
+  // Disjoint ranges, another unit, and a zero suffix are ignored: the whole file, 200.
+  for (const range of ["bytes=0-1,4-5", "items=0-1", "bytes=-0"]) {
     const whole = await get(range)
     expect(whole.status).toBe(200)
     expect(await whole.text()).toBe("console.log('hi')")
@@ -307,6 +362,200 @@ test("serves large static files with content-length", async () => {
   expect(res.status).toBe(200)
   expect(res.headers.get("content-length")).toBe(String(256 * 1024))
   expect((await res.text()).length).toBe(256 * 1024)
+})
+
+test("content types come from core's shared table", async () => {
+  await writeFile(join(dir, "guide.pdf"), "%PDF")
+  await writeFile(join(dir, "clip.mp4"), "mp4")
+  await writeFile(join(dir, "feed.xml"), "<rss/>")
+  const base = await startWithStatic()
+  for (const [file, type] of [
+    ["guide.pdf", "application/pdf"],
+    ["clip.mp4", "video/mp4"],
+    ["feed.xml", "application/xml"],
+  ] as const) {
+    const res = await fetch(`${base}/assets/${file}`)
+    expect(res.headers.get("content-type")).toBe(type)
+    await res.text()
+  }
+})
+
+test("files serves only the listed paths; any other path under the prefix runs the app", async () => {
+  const base = await startWithStatic("/", { files: ["/app.js"] })
+  const listed = await fetch(`${base}/app.js`)
+  expect(listed.status).toBe(200)
+  expect(await listed.text()).toBe("console.log('hi')")
+  // On disk but unlisted: the app answers, so a mount over a folder holding server code exposes none of it.
+  const unlisted = await fetch(`${base}/style.css`)
+  expect(unlisted.status).toBe(404)
+  expect(await unlisted.text()).not.toBe("body{}")
+  const page = await fetch(`${base}/`)
+  expect(await page.json()).toEqual({ page: true })
+})
+
+test("an array of mounts answers from the first one that takes the path", async () => {
+  const other = await mkdtemp(join(tmpdir(), "nifra-static-other-"))
+  try {
+    await writeFile(join(other, "robots.txt"), "User-agent: *")
+    running = await serve(app, {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: [
+        { dir, prefix: "/assets" },
+        { dir: other, prefix: "/", files: ["/robots.txt"], immutable: false },
+      ],
+    })
+    const base = `http://127.0.0.1:${running.port}`
+    const asset = await fetch(`${base}/assets/app.js`)
+    expect(await asset.text()).toBe("console.log('hi')")
+    const robots = await fetch(`${base}/robots.txt`)
+    expect(await robots.text()).toBe("User-agent: *")
+    expect(robots.headers.get("cache-control")).toBeNull()
+    const page = await fetch(`${base}/`)
+    expect(await page.json()).toEqual({ page: true })
+  } finally {
+    await rm(other, { recursive: true, force: true })
+  }
+})
+
+test("a path a mount's files leaves out passes to the next mount", async () => {
+  const other = await mkdtemp(join(tmpdir(), "nifra-static-other-"))
+  try {
+    await writeFile(join(other, "robots.txt"), "User-agent: *")
+    await writeFile(join(other, "app.js"), "unlisted")
+    running = await serve(app, {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: [
+        { dir: other, prefix: "/", files: ["/robots.txt"] },
+        { dir, prefix: "/" },
+      ],
+    })
+    const base = `http://127.0.0.1:${running.port}`
+    expect(await (await fetch(`${base}/robots.txt`)).text()).toBe("User-agent: *")
+    expect(await (await fetch(`${base}/app.js`)).text()).toBe("console.log('hi')")
+  } finally {
+    await rm(other, { recursive: true, force: true })
+  }
+})
+
+test("cacheControl applies to files not served immutable", async () => {
+  const base = await startWithStatic(undefined, {
+    hashedFiles: ["/assets/app.js"],
+    cacheControl: "public, max-age=86400",
+  })
+  const hashed = await fetch(`${base}/assets/app.js`)
+  expect(hashed.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+  await hashed.text()
+  const other = await fetch(`${base}/assets/style.css`)
+  expect(other.headers.get("cache-control")).toBe("public, max-age=86400")
+  await other.text()
+})
+
+test("/.well-known is served by default, as servePublicDir serves it", async () => {
+  await mkdir(join(dir, ".well-known"), { recursive: true })
+  await writeFile(join(dir, ".well-known", "security.txt"), "Contact: x")
+  const base = await startWithStatic()
+  const res = await fetch(`${base}/assets/.well-known/security.txt`)
+  expect(res.status).toBe(200)
+  expect(await res.text()).toBe("Contact: x")
+})
+
+test("a visible name linking to a dotfile inside the root is denied", async () => {
+  await symlink(join(dir, ".env"), join(dir, "config.txt"))
+  try {
+    const denied = await startWithStatic()
+    const res = await fetch(`${denied}/assets/config.txt`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain("hunter2")
+    await running?.stop({ drainMs: 0 })
+    const allowed = await startWithStatic(undefined, { dotfiles: "allow" })
+    expect(await (await fetch(`${allowed}/assets/config.txt`)).text()).toBe("SECRET=hunter2")
+  } finally {
+    await rm(join(dir, "config.txt"), { force: true })
+  }
+})
+
+test("a link is typed by the file it resolves to, not by its own name", async () => {
+  await symlink(join(dir, "style.css"), join(dir, "alias.js"))
+  try {
+    const base = await startWithStatic()
+    const res = await fetch(`${base}/assets/alias.js`)
+    expect(res.headers.get("content-type")).toBe("text/css; charset=utf-8")
+    expect(await res.text()).toBe("body{}")
+  } finally {
+    await rm(join(dir, "alias.js"), { force: true })
+  }
+})
+
+test("a link inside the root that points outside it is a 404, like a missing file", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "nifra-static-outside-"))
+  await writeFile(join(outside, "secret.txt"), "outside")
+  await symlink(join(outside, "secret.txt"), join(dir, "escape.txt"))
+  try {
+    const base = await startWithStatic()
+    const res = await fetch(`${base}/assets/escape.txt`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain("outside")
+  } finally {
+    await rm(join(dir, "escape.txt"), { force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test("a file above the buffered size streams with its length, whole and as a range", async () => {
+  const size = 256 * 1024 + 1
+  await writeFile(join(dir, "stream.bin"), Buffer.alloc(size, 7))
+  const base = await startWithStatic()
+  const whole = await fetch(`${base}/assets/stream.bin`)
+  expect(whole.headers.get("content-length")).toBe(String(size))
+  expect(whole.headers.get("etag")).toBe(tagOf("\u0007".repeat(size)))
+  expect((await whole.arrayBuffer()).byteLength).toBe(size)
+  const tail = await fetch(`${base}/assets/stream.bin`, { headers: { range: "bytes=1-" } })
+  expect(tail.status).toBe(206)
+  expect(tail.headers.get("content-length")).toBe(String(size - 1))
+  expect((await tail.arrayBuffer()).byteLength).toBe(size - 1)
+})
+
+test("a remembered tag gives way to a same-size replacement that keeps its mtime", async () => {
+  // Ten seconds on, the files written here look settled, so their tags are remembered.
+  setSystemTime(new Date(Date.now() + 10_000))
+  try {
+    const base = await startWithStatic()
+    for (const [name, body] of [
+      ["kept.txt", "first"],
+      ["kept.bin", "f".repeat(256 * 1024 + 1)],
+    ] as const) {
+      const path = join(dir, name)
+      await writeFile(path, body)
+      await utimes(path, 1, 1)
+      const first = await fetch(`${base}/assets/${name}`)
+      const etag = first.headers.get("etag") ?? ""
+      expect([etag, await first.text()]).toEqual([tagOf(body), body])
+      const remembered = await fetch(`${base}/assets/${name}`, {
+        headers: { "if-none-match": etag },
+      })
+      expect(remembered.status).toBe(304)
+      for (const replace of ["in place", "renamed over"]) {
+        const next = (replace === "in place" ? "o" : "r").repeat(body.length)
+        const target = replace === "in place" ? path : join(dir, `.${name}`)
+        await writeFile(target, next)
+        await utimes(target, 1, 1)
+        if (target !== path) await rename(target, path)
+        const replaced = await fetch(`${base}/assets/${name}`, {
+          headers: { "if-none-match": etag },
+        })
+        expect([replace, replaced.status, replaced.headers.get("etag")]).toEqual([
+          replace,
+          200,
+          tagOf(next),
+        ])
+        await replaced.arrayBuffer()
+      }
+    }
+  } finally {
+    setSystemTime()
+  }
 })
 
 // Cleanup the temp dir last (afterEach handles servers; this removes the fixture).

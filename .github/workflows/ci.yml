@@ -58,6 +58,12 @@ jobs:
       - name: Test with coverage ratchet (no file may lose coverage against the committed baseline)
         run: bun run test:coverage && bun run check:coverage
 
+      # The static-file invariants run the generated Deno entry on Deno; on CI they fail without it.
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+
       - name: Test the suites outside the coverage run (MCP stdio servers, scripts, invariants)
         run: bun run test:rest
 

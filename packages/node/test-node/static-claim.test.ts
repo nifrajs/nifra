@@ -12,7 +12,7 @@
 
 import assert from "node:assert/strict"
 import { readdirSync } from "node:fs"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, before, test } from "node:test"
@@ -52,6 +52,34 @@ test("a claimed static body is served whole", async () => {
   const bytes = Buffer.from(await response.arrayBuffer())
   assert.equal(bytes.length, CONTENT.length)
   assert.equal(bytes.equals(CONTENT), true)
+})
+
+test("zero modification times cannot validate replaced files", async () => {
+  const file = join(dir, "undated.txt")
+  const url = `http://127.0.0.1:${port}/assets/undated.txt`
+  await writeFile(file, "first")
+  await utimes(file, 0, 0)
+  const first = await fetch(url)
+  const etag = first.headers.get("etag") ?? ""
+  assert.match(etag, /^"[\w-]{22}"$/)
+  assert.equal(first.headers.get("last-modified"), null)
+  assert.equal(await first.text(), "first")
+  await writeFile(file, "other")
+  await utimes(file, 0, 0)
+  const conditions: Record<string, string>[] = [
+    { "if-none-match": etag },
+    { "if-modified-since": new Date(0).toUTCString() },
+    { range: "bytes=1-3", "if-range": etag },
+    { range: "bytes=1-3", "if-range": new Date(0).toUTCString() },
+  ]
+  for (const headers of conditions) {
+    const response = await fetch(url, { headers })
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), "other")
+  }
+  const wildcard = await fetch(url, { headers: { "if-none-match": "*" } })
+  assert.equal(wildcard.status, 304)
+  assert.equal(await wildcard.text(), "")
 })
 
 test("serving the same file many times does not leak file descriptors", async () => {

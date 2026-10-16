@@ -11,7 +11,8 @@
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
-import { realpath } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { type FileHandle, realpath } from "node:fs/promises"
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -20,7 +21,7 @@ import {
   STATUS_CODES,
 } from "node:http"
 import { createServer as createHttpsServer } from "node:https"
-import { extname, isAbsolute, relative, resolve, sep } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import type { Duplex, Readable } from "node:stream"
 import type { TlsOptions } from "node:tls"
 import { fileURLToPath } from "node:url"
@@ -28,7 +29,16 @@ import { fileURLToPath } from "node:url"
 import { FastResponse } from "srvx/node"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
+import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
+import {
+  contentTags,
+  contentTypeOf,
+  ifRangeAllowsPartial,
+  isHiddenPath,
+  isNotModified,
+  lastModifiedOf,
+} from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 
@@ -740,6 +750,18 @@ export interface ServeStaticOptions {
    * `cache-control`, so a file that keeps its name across deploys still revalidates.
    */
   readonly hashedFiles?: Iterable<string>
+  /**
+   * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside
+   * `hashedFiles`). Unset, such a file carries only its validators.
+   */
+  readonly cacheControl?: string
+  /**
+   * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under
+   * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so
+   * a mount over a directory that also holds the server bundle can expose just the build's listed
+   * files. A later mount over the same paths can still serve the rest.
+   */
+  readonly files?: Iterable<string>
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
   /**
@@ -747,7 +769,9 @@ export interface ServeStaticOptions {
    * served. Default `"deny"`: answered `404` - the same response as a missing file, so probing
    * can't distinguish "hidden" from "absent". Dotfiles land in build output by accident, not by
    * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.
-   * Set `"allow"` if the directory deliberately contains them (e.g. `/.well-known`).
+   * `/.well-known` is public by definition (RFC 8615) and always served, as `servePublicDir` does.
+   * The rule applies to the requested path and again to the file it resolves to, so a visible name
+   * linking to `.env` is denied too. Set `"allow"` if the directory deliberately holds dotfiles.
    */
   readonly dotfiles?: "deny" | "allow"
 }
@@ -790,9 +814,11 @@ export interface ServeOptions {
   /**
    * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
    * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
-   * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries.
+   * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries. An array
+   * serves several directories; the first mount whose prefix (and `files`, when set) takes a path
+   * answers it.
    */
-  readonly static?: ServeStaticOptions
+  readonly static?: ServeStaticOptions | readonly ServeStaticOptions[]
   /**
    * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping
    * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no
@@ -918,35 +944,13 @@ function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefin
   return policy.canonicalHost ?? normalized
 }
 
-const STATIC_CONTENT_TYPES: Readonly<Record<string, string>> = {
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".avif": "image/avif",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".otf": "font/otf",
-  ".wasm": "application/wasm",
-  ".txt": "text/plain; charset=utf-8",
-  ".webmanifest": "application/manifest+json",
-}
-
 interface StaticState {
   readonly root: string
   readonly prefix: string // normalized: "/assets" (no trailing slash) or "/"
   readonly immutable: boolean
   readonly hashedFiles: ReadonlySet<string> | undefined
+  readonly cacheControl: string | undefined
+  readonly files: ReadonlySet<string> | undefined
   readonly headers: Readonly<Record<string, string>> | undefined
   readonly denyDotfiles: boolean
 }
@@ -974,6 +978,8 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
     prefix,
     immutable: options.immutable !== false,
     hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
+    cacheControl: options.cacheControl,
+    files: options.files === undefined ? undefined : new Set(options.files),
     headers: staticHeadersOf(options.headers),
     denyDotfiles: options.dotfiles !== "allow",
   }
@@ -992,7 +998,7 @@ function staticMatch(
   const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
   const underPrefix =
     state.prefix === "/" ? true : path === state.prefix || path.startsWith(`${state.prefix}/`)
-  if (!underPrefix) return "pass"
+  if (!underPrefix || (state.files !== undefined && !state.files.has(path))) return "pass"
   let rel: string
   try {
     rel = decodeURIComponent(state.prefix === "/" ? path : path.slice(state.prefix.length))
@@ -1013,12 +1019,8 @@ function staticMatch(
   if (segments.includes("..") || rel.includes("\\")) {
     return { reject: new Response("Forbidden", { status: 403 }) }
   }
-  if (state.denyDotfiles) {
-    for (const segment of segments) {
-      if (segment.charCodeAt(0) === 46 /* '.' */) {
-        return { reject: new Response("Not Found", { status: 404 }) }
-      }
-    }
+  if (state.denyDotfiles && isHiddenPath(rel)) {
+    return { reject: new Response("Not Found", { status: 404 }) }
   }
   const file = resolve(state.root, rel)
   // Confine to the served directory - the resolved path must sit at or below root.
@@ -1031,87 +1033,47 @@ function staticMatch(
   return { file, immutable }
 }
 
-/** Strong validator from mtime + size (the nginx scheme): rewriting a file changes at least one. */
-function staticEtag(size: number, mtimeMs: number): string {
-  return `"${Math.floor(mtimeMs).toString(16)}-${size.toString(16)}"`
-}
+// One per process: the tag of a file served from any mount is remembered by its real path.
+const STATIC_TAGS = contentTags(createHash)
 
-function weakEtag(value: string): string {
-  return value.startsWith("W/") ? value.slice(2) : value
-}
-
-/** `If-None-Match` uses the weak comparison (RFC 9110 section 13.1.2): a `W/` prefix is ignored. */
-function etagListMatches(header: string, etag: string): boolean {
-  const comparable = weakEtag(etag)
-  for (const raw of header.split(",")) {
-    const candidate = raw.trim()
-    if (candidate === "*" || weakEtag(candidate) === comparable) return true
-  }
-  return false
-}
-
-/** Whether the client's cached copy is current. `If-None-Match` wins over `If-Modified-Since`, whose
- * HTTP-date only carries whole seconds. */
-function staticNotModified(
-  headers: IncomingHttpHeaders,
-  etag: string,
-  lastModified: number | undefined,
-): boolean {
-  const ifNoneMatch = headers["if-none-match"]
-  if (typeof ifNoneMatch === "string") return etagListMatches(ifNoneMatch, etag)
-  if (lastModified === undefined) return false
-  const ifModifiedSince = headers["if-modified-since"]
-  if (typeof ifModifiedSince !== "string") return false
-  const since = Date.parse(ifModifiedSince)
-  return Number.isFinite(since) && Math.floor(lastModified / 1000) * 1000 <= since
-}
-
-function staticIfRangeMatches(
-  value: string,
-  etag: string,
-  lastModified: number | undefined,
-): boolean {
-  const item = value.trim()
-  if (item.startsWith('"') || item.startsWith("W/")) {
-    return !item.startsWith("W/") && !etag.startsWith("W/") && item === etag
-  }
-  // A date validator must match Last-Modified exactly (RFC 9110 section 13.1.5), not merely be later:
-  // a file swapped for one with an older mtime would otherwise splice foreign bytes into a resume.
-  if (lastModified === undefined) return false
-  const date = Date.parse(item)
-  return Number.isFinite(date) && Math.floor(lastModified / 1000) === Math.floor(date / 1000)
+function headerOf(headers: IncomingHttpHeaders, name: string): string | null {
+  const value = headers[name]
+  return typeof value === "string" ? value : null
 }
 
 /**
- * One `bytes=` range as inclusive offsets, `"unsatisfiable"` (416), or `undefined` to send the whole
- * file: no header, a malformed or multi-range one (RFC 9110 lets a server ignore Range), or an
+ * The one range to send, `"unsatisfiable"` (416), or `undefined` to send the whole file: no header,
+ * one core's parser ignores, several disjoint ranges (RFC 9110 lets a server ignore Range), or an
  * `If-Range` validator that no longer matches the file.
  */
 function staticByteRange(
   headers: IncomingHttpHeaders,
   size: number,
-  etag: string,
+  etag: string | undefined,
   lastModified: number | undefined,
-): readonly [number, number] | "unsatisfiable" | undefined {
+): ByteRange | "unsatisfiable" | undefined {
   const range = headers.range
   if (typeof range !== "string") return undefined
-  const ifRange = headers["if-range"]
-  if (typeof ifRange === "string" && !staticIfRangeMatches(ifRange, etag, lastModified)) {
-    return undefined
+  if (!ifRangeAllowsPartial(headerOf(headers, "if-range"), etag, lastModified)) return undefined
+  const parsed = parseByteRange(range, size)
+  if (parsed.kind === "unsatisfiable") return "unsatisfiable"
+  return parsed.kind === "satisfiable" && parsed.ranges.length === 1 ? parsed.ranges[0] : undefined
+}
+
+// Up to this many bytes are read whole through the pinned descriptor and written in one call, with
+// no Response or stream; a larger body streams from the descriptor. The same cut as servePublicDir.
+const STATIC_BUFFERED_MAX = 256 * 1024
+
+/** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
+async function readPinned(handle: FileHandle, start: number, length: number): Promise<Uint8Array> {
+  const bytes = Buffer.allocUnsafe(length)
+  let filled = 0
+  while (filled < length) {
+    const { bytesRead } = await handle.read(bytes, filled, length - filled, start + filled)
+    if (bytesRead === 0) break
+    filled += bytesRead
   }
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
-  if (match === null) return undefined
-  const first = match[1] as string
-  const last = match[2] as string
-  if (first === "") {
-    if (last === "") return undefined
-    const suffix = Number(last)
-    return suffix === 0 || size === 0 ? "unsatisfiable" : [Math.max(0, size - suffix), size - 1]
-  }
-  const start = Number(first)
-  if (start >= size) return "unsatisfiable"
-  const end = last === "" ? size - 1 : Math.min(Number(last), size - 1)
-  return end < start ? undefined : [start, end]
+  return filled === length ? bytes : bytes.subarray(0, filled)
 }
 
 async function readStatic(
@@ -1131,34 +1093,56 @@ async function readStatic(
     // contained path. openResolved closes the remainder - `realpath` returned a name with no links
     // left in it, so one appearing in any component before the open is an attack, not a layout.
     const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
+    // A link out of root, or a visible name linking to a dotfile inside it, answers as a missing file
+    // does: unlike a `..` in the request, the name exists, and a distinct status would say so.
     if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
-      return { kind: "response", response: new Response("Forbidden", { status: 403 }) }
+      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
-    handle = await openResolved(realFile)
-    const stat = await handle.stat()
+    if (state.denyDotfiles && isHiddenPath(realFile.slice(realRoot.length + 1))) {
+      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
+    }
+    const opened = await openResolved(realFile)
+    handle = opened
+    const stat = await opened.stat()
     if (!stat.isFile()) {
-      await handle.close()
+      await opened.close()
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
     const headers: Record<string, string> = { ...state.headers }
-    if (immutable && headers["cache-control"] === undefined) {
-      headers["cache-control"] = "public, max-age=31536000, immutable"
+    if (headers["cache-control"] === undefined) {
+      const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
+      if (cacheControl !== undefined) headers["cache-control"] = cacheControl
     }
-    headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
-    headers["last-modified"] ??= stat.mtime.toUTCString()
+    // The whole file, when tagging it had to read it: the response is then served from these bytes.
+    let whole: Uint8Array | undefined
+    if (headers.etag === undefined) {
+      let tag = STATIC_TAGS.cached(realFile, stat)
+      if (tag === undefined && stat.size <= STATIC_BUFFERED_MAX) {
+        whole = await readPinned(opened, 0, stat.size)
+        tag = STATIC_TAGS.ofBytes(realFile, stat, whole)
+      }
+      tag ??= await STATIC_TAGS.ofFile(realFile, stat, async (bytes, position) => {
+        return (await opened.read(bytes, 0, bytes.byteLength, position)).bytesRead
+      })
+      if (tag !== undefined) headers.etag = tag
+    }
+    const modified = lastModifiedOf(stat)
+    if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
     // Custom validators are response headers, not decoration: compare the exact values the client saw.
     const etag = headers.etag
-    const parsedLastModified = Date.parse(headers["last-modified"])
+    const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
     const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
     // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
-    if (staticNotModified(requestHeaders, etag, lastModified)) {
+    const ifNoneMatch = headerOf(requestHeaders, "if-none-match")
+    const ifModifiedSince = headerOf(requestHeaders, "if-modified-since")
+    if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
       await handle.close()
       delete headers["content-length"]
       delete headers["content-type"]
-      return { kind: "response", response: new Response(null, { status: 304, headers }) }
+      return { kind: "body", status: 304, headers, body: "" }
     }
-    headers["content-type"] =
-      STATIC_CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream"
+    // The file served, not the name asked for: a link is typed by its target, as servePublicDir does.
+    headers["content-type"] = contentTypeOf(realFile)
     // Never let a client sniff a served file into a more dangerous type (e.g. an .svg as active content).
     headers["x-content-type-options"] = "nosniff"
     headers["accept-ranges"] = "bytes"
@@ -1170,24 +1154,35 @@ async function readStatic(
       headers["content-range"] = `bytes */${stat.size}`
       delete headers["content-length"]
       delete headers["content-type"]
-      return { kind: "response", response: new Response(null, { status: 416, headers }) }
+      return { kind: "body", status: 416, headers, body: "" }
     }
     let status = 200
     if (range !== undefined) {
       status = 206
-      headers["content-range"] = `bytes ${range[0]}-${range[1]}/${stat.size}`
-      headers["content-length"] = String(range[1] - range[0] + 1)
+      headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`
+      headers["content-length"] = String(range.end - range.start + 1)
     } else {
       headers["content-length"] = String(stat.size)
     }
     if (method === "HEAD") {
       await handle.close()
-      return { kind: "response", response: new Response(null, { headers }) }
+      return { kind: "body", status, headers, body: "" }
+    }
+    const start = range === undefined ? 0 : range.start
+    const length = range === undefined ? stat.size : range.end - range.start + 1
+    if (length <= STATIC_BUFFERED_MAX) {
+      const body =
+        whole === undefined
+          ? await readPinned(handle, start, length)
+          : whole.subarray(start, start + length)
+      await handle.close()
+      headers["content-length"] = String(body.byteLength)
+      return { kind: "body", status, headers, body }
     }
     const stream =
       range === undefined
         ? handle.createReadStream()
-        : handle.createReadStream({ start: range[0], end: range[1] })
+        : handle.createReadStream({ start: range.start, end: range.end })
     return {
       kind: "response",
       // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this
@@ -1309,7 +1304,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     options.protocol ?? (options.tls === undefined ? undefined : "https"),
   )
   const hostPolicy = hostPolicyOf(options)
-  const staticState = options.static !== undefined ? staticStateOf(options.static) : undefined
+  const staticOption = options.static
+  const staticState =
+    staticOption === undefined
+      ? undefined
+      : ("dir" in staticOption ? [staticOption] : staticOption).map(staticStateOf)
   // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can
   // discard the response for an already-dispatched request when an understated Content-Length
   // leaves surplus bytes that look like a malformed pipelined request. Keep the parser error
@@ -1538,7 +1537,7 @@ function handle(
   nodeReq: IncomingMessage,
   nodeRes: ServerResponse,
   getProtocol: RequestProtocolResolver,
-  staticState: StaticState | undefined,
+  staticState: readonly StaticState[] | undefined,
   hostPolicy: HostPolicy,
 ): void | Promise<void> {
   resolveTarget(nodeReq)
@@ -1572,13 +1571,14 @@ function handle(
   // Static files first (GET/HEAD). The match is synchronous, so a non-asset request never leaves the
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
   if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
-    const matched = staticMatch(staticState, nodeReq.url ?? "/")
-    if (matched !== "pass") {
+    for (const mount of staticState) {
+      const matched = staticMatch(mount, nodeReq.url ?? "/")
+      if (matched === "pass") continue
       if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
       return readStatic(
         matched.file,
         matched.immutable,
-        staticState,
+        mount,
         nodeReq.method ?? "GET",
         nodeReq.headers,
       ).then(

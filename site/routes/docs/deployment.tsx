@@ -269,10 +269,21 @@ export default function Deployment() {
         Every file under the mount is cached as immutable by default. If the directory also holds
         files that keep their name across deploys, pass the build manifest's <code>assets</code> as{" "}
         <code>hashedFiles</code>: only those URL paths stay immutable, and every other file is sent
-        with its validators so the browser revalidates it. The server that{" "}
-        <code>nifra build --target bun</code> or <code>node</code> generates does this already. It
-        caches only the client build's own content-hashed outputs as immutable. A file copied from{" "}
-        <code>public/</code>, even under <code>public/assets/</code>, gets a one-day policy.
+        with its validators so the browser revalidates it, plus <code>cacheControl</code> when you
+        set one. Its <code>ETag</code> comes from its bytes, so a deploy that keeps timestamps (a
+        container image, <code>rsync -a</code>, the Nix store) still revalidates a changed file. The server that <code>nifra build --target bun</code> or <code>node</code>{" "}
+        generates does this already. It caches only the client build's own content-hashed outputs as
+        immutable. A file copied from <code>public/</code>, even under <code>public/assets/</code>,
+        gets a one-day policy.
+      </p>
+      <p>
+        <code>static</code> also takes an array of mounts; a path goes to the first mount that
+        takes it, by its prefix and, when set, its <code>files</code>. Give a mount{" "}
+        <code>files</code> to serve only those URL paths from a directory that holds other things
+        too; any other path passes to the next mount, so a later mount over the same paths can still
+        serve it. The generated Node server mounts <code>/assets</code> and, at
+        the root, only the <code>public/</code> files the build copied, so <code>server.js</code>{" "}
+        beside them is never served. Dotfiles are refused, except <code>/.well-known</code>.
       </p>
 
       <h2>HTTPS without a proxy</h2>

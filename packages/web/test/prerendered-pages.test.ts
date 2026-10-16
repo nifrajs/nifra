@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import * as fsp from "node:fs/promises"
 import { type FileHandle, open } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -314,6 +315,35 @@ describe("prerenderedPageReader", () => {
       const read = prerenderedPageReader({ dir, files: { "/": "index.html" } })
       expect(await read("/")).toBe("home")
       expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("a page whose file will not open renders on demand, and is read again next time", async () => {
+    const spy = spyOn(fsp, "open").mockRejectedValueOnce(
+      Object.assign(new Error("EMFILE"), { code: "EMFILE" }),
+    )
+    try {
+      const read = prerenderedPageReader({ dir, files: { "/": "index.html" } })
+      expect(await read("/")).toBeUndefined()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(await read("/")).toBe("home")
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("a page whose file fails to read renders on demand, and is read again next time", async () => {
+    const probe = await open(join(dir, "index.html"))
+    const proto: FileHandle = Object.getPrototypeOf(probe)
+    await probe.close()
+    const spy = spyOn(proto, "readFile").mockRejectedValueOnce(new Error("EIO"))
+    try {
+      const read = prerenderedPageReader({ dir, files: { "/": "index.html" } })
+      expect(await read("/")).toBeUndefined()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(await read("/")).toBe("home")
     } finally {
       spy.mockRestore()
     }

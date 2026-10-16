@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
-import { createServer } from "node:net"
+import { expect, setSystemTime, test } from "bun:test"
+import { createHash } from "node:crypto"
+import { mkdir, mkdtemp, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import { connect, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
@@ -18,6 +19,8 @@ const withDir = async (fn: (dir: string) => Promise<void>): Promise<void> => {
 }
 
 const get = (path: string, method = "GET") => new Request(`http://x${path}`, { method })
+const tagOf = (text: string) =>
+  `"${createHash("sha256").update(text).digest("base64url").slice(0, 22)}"`
 
 test("serves a public file and falls through on a miss", async () => {
   await withDir(async (dir) => {
@@ -356,8 +359,8 @@ test("multiple ranges fall back to the full body rather than buffering multipart
 
 test("small bodies are read whole and large ones streamed, with the same bytes either way", async () => {
   await withDir(async (dir) => {
-    // 256 KiB is where the handler stops reading a body whole and streams it instead.
-    const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024 + 7]
+    // The handler streams a body past 256 KiB instead of reading it whole, or past 1 MiB on Bun.
+    const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 7]
     const files = sizes.map((size) => Uint8Array.from({ length: size }, (_, i) => (i * 31) % 251))
     await Promise.all(files.map((bytes, i) => writeFile(join(dir, `f${i}.bin`), bytes)))
     const serve = servePublicDir({ dir })
@@ -373,6 +376,63 @@ test("small bodies are read whole and large ones streamed, with the same bytes e
       expect(part?.status).toBe(206)
       expect(part?.headers.get("content-length")).toBe(String(end))
       expect(new Uint8Array(await part!.arrayBuffer())).toEqual(bytes.subarray(1, end + 1))
+    }
+  })
+})
+
+/** A GET as Bun.serve answers it on the socket, so chunked framing is visible. */
+const onTheWire = (port: number, path: string, range?: string) =>
+  new Promise<{ head: string; body: Buffer }>((resolve, reject) => {
+    const chunks: Buffer[] = []
+    const socket = connect(port, "127.0.0.1", () => {
+      const rangeLine = range === undefined ? "" : `range: ${range}\r\n`
+      socket.write(`GET ${path} HTTP/1.1\r\nhost: x\r\nconnection: close\r\n${rangeLine}\r\n`)
+    })
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk))
+    socket.on("error", reject)
+    socket.on("close", () => {
+      const raw = Buffer.concat(chunks)
+      const split = raw.indexOf("\r\n\r\n")
+      resolve({
+        head: raw.subarray(0, split).toString("latin1").toLowerCase(),
+        body: raw.subarray(split + 4),
+      })
+    })
+  })
+
+test("over Bun.serve, a body up to 1 MiB declares its length whole and ranged", async () => {
+  await withDir(async (dir) => {
+    const sizes = [256 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 1]
+    for (const [i, size] of sizes.entries()) {
+      await writeFile(join(dir, `w${i}.bin`), new Uint8Array(size).fill(i + 1))
+    }
+    const serve = servePublicDir({ dir })
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => (await serve(request)) ?? new Response(null, { status: 404 }),
+    })
+    try {
+      for (const [i, size] of sizes.entries()) {
+        const whole = await onTheWire(server.port!, `/w${i}.bin`)
+        const part = await onTheWire(server.port!, `/w${i}.bin`, `bytes=1-${size - 2}`)
+        expect(whole.head).toStartWith("http/1.1 200")
+        expect(part.head).toStartWith("http/1.1 206")
+        if (size > 1024 * 1024) {
+          // Bun.serve drops a stream body's declared length. Once it keeps it, the Bun cap can go.
+          expect(whole.head).toContain("\r\ntransfer-encoding: chunked")
+          expect(whole.head).not.toContain("\r\ncontent-length:")
+          continue
+        }
+        expect(whole.head).toContain(`\r\ncontent-length: ${size}`)
+        expect(whole.head).not.toContain("transfer-encoding")
+        expect(whole.body.byteLength).toBe(size)
+        expect(part.head).toContain(`\r\ncontent-length: ${size - 2}`)
+        expect(part.head).toContain(`\r\ncontent-range: bytes 1-${size - 2}/${size}`)
+        expect(part.body.byteLength).toBe(size - 2)
+      }
+    } finally {
+      await server.stop(true)
     }
   })
 })
@@ -404,26 +464,94 @@ test("If-Modified-Since produces a 304 and If-Range guards partial answers", asy
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.bin"), "0123456789")
     const serve = servePublicDir({ dir })
-    const lastModified = (await serve(get("/clip.bin")))?.headers.get("last-modified")
-    expect(lastModified).not.toBeNull()
+    const first = await serve(get("/clip.bin"))
+    const lastModified = first?.headers.get("last-modified") ?? ""
+    const etag = first?.headers.get("etag") ?? ""
+    expect(lastModified).not.toBe("")
+    expect(etag).toBe(tagOf("0123456789"))
 
-    const fresh = await serve(ranged("/clip.bin", { "if-modified-since": lastModified! }))
+    const fresh = await serve(ranged("/clip.bin", { "if-modified-since": lastModified }))
     expect(fresh?.status).toBe(304)
+    expect(fresh?.headers.get("etag")).toBe(etag)
     expect(await fresh?.text()).toBe("")
 
-    // A matching validator keeps the 206.
-    const matched = await serve(
-      ranged("/clip.bin", { range: "bytes=0-1", "if-range": lastModified! }),
-    )
+    // The file's tag keeps the 206.
+    const matched = await serve(ranged("/clip.bin", { range: "bytes=0-1", "if-range": etag }))
     expect(matched?.status).toBe(206)
 
-    // A stale one means the client's byte offsets may no longer describe this file: send all of it.
-    const stale = await serve(
-      ranged("/clip.bin", { range: "bytes=0-1", "if-range": "Tue, 01 Jan 2019 00:00:00 GMT" }),
-    )
-    expect(stale?.status).toBe(200)
-    expect(await stale?.text()).toBe("0123456789")
+    // A stale validator means the client's byte offsets may no longer describe this file, and with a
+    // strong tag to resume by, even the file's own date does not stand in for it: send all of it.
+    for (const validator of ["Tue, 01 Jan 2019 00:00:00 GMT", lastModified, '"stale"']) {
+      const stale = await serve(ranged("/clip.bin", { range: "bytes=0-1", "if-range": validator }))
+      expect(stale?.status).toBe(200)
+      expect(await stale?.text()).toBe("0123456789")
+    }
   })
+})
+
+test("a file a copy dated is tagged, not dated, and a same-size replacement changes its tag", async () => {
+  await withDir(async (dir) => {
+    const path = join(dir, "kept.txt")
+    await writeFile(path, "first")
+    await utimes(path, 1, 1)
+    const serve = servePublicDir({ dir })
+    const first = await serve(get("/kept.txt"))
+    const etag = first?.headers.get("etag") ?? ""
+    expect([etag, first?.headers.get("last-modified")]).toEqual([tagOf("first"), null])
+    await writeFile(path, "other")
+    await utimes(path, 1, 1)
+    for (const headers of [
+      { "if-none-match": etag },
+      { "if-modified-since": new Date(1000).toUTCString() },
+      { range: "bytes=0-1", "if-range": etag },
+      { range: "bytes=0-1", "if-range": new Date(1000).toUTCString() },
+    ]) {
+      const response = await serve(ranged("/kept.txt", headers))
+      expect([headers, response?.status, await response?.text()]).toEqual([headers, 200, "other"])
+    }
+  })
+})
+
+test("a remembered tag is served without reading, and gives way to a same-size replacement", async () => {
+  // Ten seconds on, the files written here look settled, so their tags are remembered.
+  setSystemTime(new Date(Date.now() + 10_000))
+  try {
+    await withDir(async (dir) => {
+      const serve = servePublicDir({ dir })
+      // Past the buffered size the tag is read in a pass of its own; below it, from the body's bytes.
+      for (const [name, body] of [
+        ["small.txt", "first"],
+        ["large.bin", "f".repeat(1024 * 1024 + 1)],
+      ] as const) {
+        const path = join(dir, name)
+        await writeFile(path, body)
+        await utimes(path, 1, 1)
+        const first = await serve(get(`/${name}`))
+        const etag = first?.headers.get("etag") ?? ""
+        expect([etag, (await first?.text())?.length]).toEqual([tagOf(body), body.length])
+        const remembered = await serve(ranged(`/${name}`, { "if-none-match": etag }))
+        expect(remembered?.status).toBe(304)
+        const again = await serve(ranged(`/${name}`, { range: "bytes=1-3", "if-range": etag }))
+        expect([again?.status, await again?.text()]).toEqual([206, body.slice(1, 4)])
+        for (const replace of ["in place", "renamed over"]) {
+          const next = (replace === "in place" ? "o" : "r").repeat(body.length)
+          const target = replace === "in place" ? path : join(dir, `.${name}`)
+          await writeFile(target, next)
+          await utimes(target, 1, 1)
+          if (target !== path) await rename(target, path)
+          const replaced = await serve(ranged(`/${name}`, { "if-none-match": etag }))
+          expect([replace, replaced?.status, replaced?.headers.get("etag")]).toEqual([
+            replace,
+            200,
+            tagOf(next),
+          ])
+          await replaced?.arrayBuffer()
+        }
+      }
+    })
+  } finally {
+    setSystemTime()
+  }
 })
 
 test("hides dot-segments other than .well-known", async () => {
