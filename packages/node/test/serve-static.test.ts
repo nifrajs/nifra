@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
@@ -307,6 +307,125 @@ test("serves large static files with content-length", async () => {
   expect(res.status).toBe(200)
   expect(res.headers.get("content-length")).toBe(String(256 * 1024))
   expect((await res.text()).length).toBe(256 * 1024)
+})
+
+test("content types come from core's shared table", async () => {
+  await writeFile(join(dir, "guide.pdf"), "%PDF")
+  await writeFile(join(dir, "clip.mp4"), "mp4")
+  await writeFile(join(dir, "feed.xml"), "<rss/>")
+  const base = await startWithStatic()
+  for (const [file, type] of [
+    ["guide.pdf", "application/pdf"],
+    ["clip.mp4", "video/mp4"],
+    ["feed.xml", "application/xml"],
+  ] as const) {
+    const res = await fetch(`${base}/assets/${file}`)
+    expect(res.headers.get("content-type")).toBe(type)
+    await res.text()
+  }
+})
+
+test("files serves only the listed paths; any other path under the prefix runs the app", async () => {
+  const base = await startWithStatic("/", { files: ["/app.js"] })
+  const listed = await fetch(`${base}/app.js`)
+  expect(listed.status).toBe(200)
+  expect(await listed.text()).toBe("console.log('hi')")
+  // On disk but unlisted: the app answers, so a mount over a folder holding server code exposes none of it.
+  const unlisted = await fetch(`${base}/style.css`)
+  expect(unlisted.status).toBe(404)
+  expect(await unlisted.text()).not.toBe("body{}")
+  const page = await fetch(`${base}/`)
+  expect(await page.json()).toEqual({ page: true })
+})
+
+test("an array of mounts answers from the first one that takes the path", async () => {
+  const other = await mkdtemp(join(tmpdir(), "nifra-static-other-"))
+  try {
+    await writeFile(join(other, "robots.txt"), "User-agent: *")
+    running = await serve(app, {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: [
+        { dir, prefix: "/assets" },
+        { dir: other, prefix: "/", files: ["/robots.txt"], immutable: false },
+      ],
+    })
+    const base = `http://127.0.0.1:${running.port}`
+    const asset = await fetch(`${base}/assets/app.js`)
+    expect(await asset.text()).toBe("console.log('hi')")
+    const robots = await fetch(`${base}/robots.txt`)
+    expect(await robots.text()).toBe("User-agent: *")
+    expect(robots.headers.get("cache-control")).toBeNull()
+    const page = await fetch(`${base}/`)
+    expect(await page.json()).toEqual({ page: true })
+  } finally {
+    await rm(other, { recursive: true, force: true })
+  }
+})
+
+test("cacheControl applies to files not served immutable", async () => {
+  const base = await startWithStatic(undefined, {
+    hashedFiles: ["/assets/app.js"],
+    cacheControl: "public, max-age=86400",
+  })
+  const hashed = await fetch(`${base}/assets/app.js`)
+  expect(hashed.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+  await hashed.text()
+  const other = await fetch(`${base}/assets/style.css`)
+  expect(other.headers.get("cache-control")).toBe("public, max-age=86400")
+  await other.text()
+})
+
+test("/.well-known is served by default, as servePublicDir serves it", async () => {
+  await mkdir(join(dir, ".well-known"), { recursive: true })
+  await writeFile(join(dir, ".well-known", "security.txt"), "Contact: x")
+  const base = await startWithStatic()
+  const res = await fetch(`${base}/assets/.well-known/security.txt`)
+  expect(res.status).toBe(200)
+  expect(await res.text()).toBe("Contact: x")
+})
+
+test("a visible name linking to a dotfile inside the root is denied", async () => {
+  await symlink(join(dir, ".env"), join(dir, "config.txt"))
+  try {
+    const denied = await startWithStatic()
+    const res = await fetch(`${denied}/assets/config.txt`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain("hunter2")
+    await running?.stop({ drainMs: 0 })
+    const allowed = await startWithStatic(undefined, { dotfiles: "allow" })
+    expect(await (await fetch(`${allowed}/assets/config.txt`)).text()).toBe("SECRET=hunter2")
+  } finally {
+    await rm(join(dir, "config.txt"), { force: true })
+  }
+})
+
+test("a link inside the root that points outside it is a 404, like a missing file", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "nifra-static-outside-"))
+  await writeFile(join(outside, "secret.txt"), "outside")
+  await symlink(join(outside, "secret.txt"), join(dir, "escape.txt"))
+  try {
+    const base = await startWithStatic()
+    const res = await fetch(`${base}/assets/escape.txt`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain("outside")
+  } finally {
+    await rm(join(dir, "escape.txt"), { force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test("a file above the buffered size streams with its length, whole and as a range", async () => {
+  const size = 256 * 1024 + 1
+  await writeFile(join(dir, "stream.bin"), Buffer.alloc(size, 7))
+  const base = await startWithStatic()
+  const whole = await fetch(`${base}/assets/stream.bin`)
+  expect(whole.headers.get("content-length")).toBe(String(size))
+  expect((await whole.arrayBuffer()).byteLength).toBe(size)
+  const tail = await fetch(`${base}/assets/stream.bin`, { headers: { range: "bytes=1-" } })
+  expect(tail.status).toBe(206)
+  expect(tail.headers.get("content-length")).toBe(String(size - 1))
+  expect((await tail.arrayBuffer()).byteLength).toBe(size - 1)
 })
 
 // Cleanup the temp dir last (afterEach handles servers; this removes the fixture).

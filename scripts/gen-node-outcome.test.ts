@@ -9,9 +9,11 @@ const FILES = [
   "packages/core/src/server/node-outcome.ts",
   "packages/core/src/server/bridge-markers.ts",
   "packages/core/src/server/request-target.ts",
+  "packages/core/src/static-file.ts",
   "packages/node/src/generated/node-outcome.ts",
   "packages/node/src/generated/bridge-markers.ts",
   "packages/node/src/generated/request-target.ts",
+  "packages/node/src/generated/static-file.ts",
 ]
 const roots: string[] = []
 
@@ -33,9 +35,11 @@ test("control: the committed copies are current", () => {
 test("a generated copy that drifts from core, or is missing, is stale", () => {
   const root = fixture()
   appendFileSync(join(root, "packages/core/src/server/request-target.ts"), "\n// drift\n")
+  appendFileSync(join(root, "packages/core/src/static-file.ts"), "\n// drift\n")
   rmSync(join(root, "packages/node/src/generated/bridge-markers.ts"))
   expect(staleArtifacts(root)).toEqual([
     "packages/node/src/generated/bridge-markers.ts",
     "packages/node/src/generated/request-target.ts",
+    "packages/node/src/generated/static-file.ts",
   ])
 })

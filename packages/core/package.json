@@ -200,6 +200,11 @@
       "types": "./dist/range.d.ts",
       "default": "./dist/range.js"
     },
+    "./static-file": {
+      "bun": "./src/static-file.ts",
+      "types": "./dist/static-file.d.ts",
+      "default": "./dist/static-file.js"
+    },
     "./contract": {
       "bun": "./src/server/contract.ts",
       "types": "./dist/server/contract.d.ts",

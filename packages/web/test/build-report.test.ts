@@ -281,6 +281,27 @@ async function staticHandler(src: string, dir: string, deno = denoFiles): Promis
   )(servePublicDir, fileURLToPath, parseByteRange, deno, pathToFileURL(`${dir}/`))) as StaticHandler
 }
 
+/** The options a generated Node entry passes to `serve`, evaluated with its folder at `dir`. */
+async function nodeServeOptions(src: string, dir: string): Promise<Record<string, unknown>> {
+  const start = src.indexOf("const STATIC_ROOT")
+  const section = src
+    .slice(start)
+    .replace('new URL("./", import.meta.url)', "ROOT_URL")
+    .replace('new URL("./assets/", import.meta.url)', 'new URL("./assets/", ROOT_URL)')
+    .replace("await serve(app,", "return capture(")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an async function's constructor is AsyncFunction, which TS does not name.
+  const AsyncFunction = (async () => {}).constructor as new (
+    ...source: string[]
+  ) => (...args: unknown[]) => Promise<unknown>
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section returns the options object it passed to the capture stub.
+  return (await new AsyncFunction(
+    "fileURLToPath",
+    "ROOT_URL",
+    "capture",
+    new Bun.Transpiler({ loader: "ts" }).transformSync(section),
+  )(fileURLToPath, pathToFileURL(dir), (options: unknown) => options)) as Record<string, unknown>
+}
+
 describe("generateServerEntry", () => {
   test("cloudflare → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
     const src = generateServerEntry({
@@ -312,7 +333,9 @@ describe("generateServerEntry", () => {
     expect(src).not.toContain("api:")
   })
 
-  test("every self-hosting entry serves static files as dev does: type, cache, HEAD, ranges, no escaping link", async () => {
+  // The Node entry hands these files to @nifrajs/node's reader; internal/invariants/test/static-files.test.ts
+  // runs the same tree through it and through this handler and requires the same answers.
+  test("the Bun and Deno entries serve static files as dev does: type, cache, HEAD, ranges, no escaping link", async () => {
     const root = mkdtempSync(join(tmpdir(), "nifra-static-entry-"))
     const dir = join(root, "static")
     mkdirSync(join(dir, "assets"), { recursive: true })
@@ -330,7 +353,7 @@ describe("generateServerEntry", () => {
     mkdirSync(join(dir, "assets/.cache"))
     writeFileSync(join(dir, "assets/.cache/x.js"), "cached")
     try {
-      for (const target of ["bun", "node", "deno"] as const) {
+      for (const target of ["bun", "deno"] as const) {
         const src = generateServerEntry({
           target,
           adapterImport: "../framework.ts",
@@ -408,21 +431,45 @@ describe("generateServerEntry", () => {
     }
   })
 
-  test("node → @nifrajs/node serve + the shared static handler", () => {
+  test("node → the app itself on @nifrajs/node, files through the adapter's reader", async () => {
     const src = generateServerEntry({
       target: "node",
       adapterImport: "../framework.ts",
       backendImport: "../backend.ts",
       publicFiles: ["/robots.txt", "/.well-known/acme-challenge/token"],
+      hashedFiles: ["/assets/page-1a2b3c.js"],
     })
     expect(src).toContain('import { serve } from "@nifrajs/node"')
-    expect(src).toContain('import { createWebApp, servePublicDir } from "@nifrajs/web"')
-    expect(src).not.toContain("readFile")
-    expect(src).toContain("await serve(")
-    expect(src).toContain('new Set(["/robots.txt","/.well-known/acme-challenge/token"])')
-    expect(src).toContain("PUBLIC_FILES.has(pathname)")
-    expect(src).toContain("dir: fileURLToPath(STATIC_ROOT)")
-    expect(src).toContain("return app.fetch(req, platform)")
+    expect(src).toContain('import { createWebApp } from "@nifrajs/web"')
+    // A `{ fetch }` wrapper around app.fetch would hide the node-direct lane from the adapter.
+    expect(src).toContain("await serve(app, {")
+    expect(src).not.toContain("app.fetch(")
+    expect(src).not.toContain("servePublicDir")
+    const root = "/srv/app/"
+    const options = await nodeServeOptions(src, root)
+    expect(options.port).toBe(3000)
+    expect(options.static).toEqual([
+      {
+        dir: "/srv/app/assets/",
+        prefix: "/assets",
+        hashedFiles: new Set(["/assets/page-1a2b3c.js"]),
+        cacheControl: "public, max-age=86400",
+      },
+      {
+        dir: root,
+        prefix: "/",
+        // The root mount also holds server.js: only the build's listed files are served from it.
+        files: new Set(["/robots.txt", "/.well-known/acme-challenge/token"]),
+        immutable: false,
+        cacheControl: "public, max-age=86400",
+      },
+    ])
+    // No manifest list: every /assets/ file is content-hashed output, as servePublicDir assumes.
+    const unlisted = await nodeServeOptions(
+      generateServerEntry({ target: "node", adapterImport: "../framework.ts" }),
+      root,
+    )
+    expect((unlisted.static as Record<string, unknown>[])[0]).not.toHaveProperty("hashedFiles")
   })
 
   test("deno → Deno.serve passing the peer address", () => {

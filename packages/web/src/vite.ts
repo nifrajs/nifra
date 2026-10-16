@@ -19,6 +19,7 @@ import {
 } from "node:http"
 import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
 import { singleCopyPackageNames } from "@nifrajs/core/single-copy"
+import { isHiddenPath } from "@nifrajs/core/static-file"
 import { CLIENT_BATCH_MAX_BYTES } from "./dev-client.ts"
 import { DEV_REQUEST_ID_HEADER, DEV_SERVER_FILES } from "./dev-feed.ts"
 import { listenOrExplain } from "./dev-port.ts"
@@ -33,7 +34,6 @@ import {
   formatIdentityParityFindings,
   identityParityHeadline,
 } from "./internal/parity.ts"
-import { isHiddenPublicPath } from "./internal/public-url.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { normalizeRolldownPlugins } from "./internal/vite-plugin-compat.ts"
@@ -473,12 +473,12 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     }
     const file = resolvePath(publicDir, rel)
     if (!file.startsWith(publicDir + sep) || !existsSync(file)) return false
-    if (isHiddenPublicPath(rel)) return true
+    if (isHiddenPath(rel)) return true
     // A visible name linking to a hidden file is refused too, as `servePublicDir` refuses it.
     try {
       const real = realpathSync(file)
       const realRoot = realpathSync(publicDir)
-      return real.startsWith(realRoot + sep) && isHiddenPublicPath(real.slice(realRoot.length + 1))
+      return real.startsWith(realRoot + sep) && isHiddenPath(real.slice(realRoot.length + 1))
     } catch {
       return false
     }

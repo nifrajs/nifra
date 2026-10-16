@@ -3142,6 +3142,15 @@ _No named exports (side-effect entrypoint)._
 - **typedSSEStream** _(function)_ - `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 
+### `@nifrajs/core/static-file`
+
+- **CONTENT_TYPES** _(const)_ - `CONTENT_TYPES: Readonly<Record<string, string>>`
+  Media types by extension. A table rather than the runtime's own file typing, which Node and Deno lack. Unknown extensions, and extensionless files such as ACME tokens, are `application/octet-stream`, which together with `nosniff` keeps a browser from guessing a more dangerous type.
+- **contentTypeOf** _(function)_ - `contentTypeOf: (path: string) => string`
+  The media type for a file path or name by its extension, case-insensitively.
+- **isHiddenPath** _(function)_ - `isHiddenPath: (rel: string) => boolean`
+  Whether a relative path crosses a dot-segment other than `.well-known` (RFC 8615, public by definition). Serving, the build's `public/` copy and the parity listing all apply it, so an editor or VCS artifact (`.env`, `.git/`, `.DS_Store`) is neither served nor shipped. Both separators split: a reque…
+
 ### `@nifrajs/core/tool-catalog`
 
 - **ToolCatalogEntry** _(interface)_ - `interface ToolCatalogEntry`
