@@ -12,12 +12,20 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
+import { createHash } from "node:crypto"
 import { type FileHandle, realpath } from "node:fs/promises"
-import { extname, normalize, resolve, sep } from "node:path"
+import { normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
-import { isHiddenPublicPath } from "./internal/public-url.ts"
+import {
+  contentTags,
+  contentTypeOf,
+  ifRangeAllowsPartial,
+  isHiddenPath,
+  isNotModified,
+  lastModifiedOf,
+} from "@nifrajs/core/static-file"
 import { openResolved } from "./open-resolved.ts"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
@@ -50,65 +58,25 @@ export const IMMUTABLE = "public, max-age=31536000, immutable"
 export const ONE_DAY = "public, max-age=86400"
 
 /**
- * Media types by extension. A table rather than `Bun.file(path).type`: this handler also runs on the
- * Node and Deno adapters, where `Bun` does not exist and every hit would throw. Unknown extensions
- * (and extensionless files such as ACME tokens) are served as `application/octet-stream`, which
- * together with `nosniff` keeps the browser from guessing a more dangerous type.
- */
-export const CONTENT_TYPES: Readonly<Record<string, string>> = {
-  ".html": "text/html; charset=utf-8",
-  ".htm": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".cjs": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".webmanifest": "application/manifest+json",
-  ".txt": "text/plain; charset=utf-8",
-  ".md": "text/markdown; charset=utf-8",
-  ".csv": "text/csv; charset=utf-8",
-  ".xml": "application/xml",
-  ".rss": "application/rss+xml",
-  ".atom": "application/atom+xml",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".avif": "image/avif",
-  ".ico": "image/x-icon",
-  ".bmp": "image/bmp",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".otf": "font/otf",
-  ".wasm": "application/wasm",
-  ".pdf": "application/pdf",
-  ".zip": "application/zip",
-  ".mp4": "video/mp4",
-  ".webm": "video/webm",
-  ".ogg": "audio/ogg",
-  ".mp3": "audio/mpeg",
-  ".wav": "audio/wav",
-  ".m4a": "audio/mp4",
-  ".vtt": "text/vtt; charset=utf-8",
-}
-
-/**
- * Whether a confined path crosses a hidden segment ({@link isHiddenPublicPath}). Checked on the
+ * Whether a confined path crosses a hidden segment ({@link isHiddenPath}). Checked on the
  * resolved path, so `%2e` encodings are covered, and again on the real target, so a visible name
  * linking to `.env` is refused too.
  */
-function isHiddenPath(root: string, abs: string): boolean {
-  return abs !== root && isHiddenPublicPath(abs.slice(root.length + 1))
+function hiddenUnder(root: string, abs: string): boolean {
+  return abs !== root && isHiddenPath(abs.slice(root.length + 1))
 }
 
 // Up to this many bytes are read whole through the pinned descriptor, which then closes before the
 // response leaves: on Bun a 200 KB asset is served in 0.17 ms against 0.28 ms through a node:fs
-// stream. A larger body streams, so a video holds 64 KiB per request rather than the file.
+// stream. A larger body streams, so a video holds a stream's buffer per request rather than the file.
 const BUFFERED_BODY_MAX = 256 * 1024
+// Bun.serve drops the declared length of any stream body and sends it chunked, and a Bun.file body
+// would need this descriptor open for a send nothing reports the end of. So on Bun a body up to 1 MiB
+// is read whole as well: a slow client then holds ~1 MB, against ~0.6 MB through Bun's stream sink.
+const BUN_BUFFERED_BODY_MAX = 1024 * 1024
+
+// One per process: the tag of a file served by any handler is remembered by its real path.
+const TAGS = contentTags(createHash)
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
 async function readPinned(
@@ -124,35 +92,6 @@ async function readPinned(
     offset += bytesRead
   }
   return offset === length ? bytes : bytes.subarray(0, offset)
-}
-
-/** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
-function seconds(time: number): number {
-  return Math.floor(time / 1000)
-}
-
-/**
- * `If-Range` decides whether a range request is still safe to answer partially. The only validator
- * this handler publishes is `last-modified`, so an entity-tag form can never match and the whole
- * representation is sent instead - which is the conformant outcome, not a fallback. Dates use strong
- * comparison (RFC 9110 13.1.5): a file modified since the client's copy invalidates its byte offsets.
- */
-function ifRangeMatches(value: string | null, lastModified: number | undefined): boolean {
-  if (value === null) return true
-  if (lastModified === undefined) return false
-  const item = value.trim()
-  if (item.startsWith('"') || item.startsWith("W/")) return false
-  const parsed = Date.parse(item)
-  return Number.isFinite(parsed) && seconds(parsed) === seconds(lastModified)
-}
-
-/** `If-Modified-Since` freshness. No ETag is published, so there is no `If-None-Match` precedence. */
-function isNotModified(request: Request, lastModified: number | undefined): boolean {
-  if (lastModified === undefined) return false
-  const since = request.headers.get("if-modified-since")
-  if (since === null) return false
-  const parsed = Date.parse(since)
-  return Number.isFinite(parsed) && seconds(parsed) >= seconds(lastModified)
 }
 
 /**
@@ -185,6 +124,10 @@ export function resolvePublicPath(root: string, pathname: string): string | unde
  * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a
  * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the
  * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.
+ *
+ * A file is sent with a strong `ETag` from its bytes, the tag `@nifrajs/node`'s `static` reader and
+ * the Deno entry send, and with `Last-Modified` only while its mtime is that of its own last change,
+ * so a replacement that keeps a file's size and timestamps is never judged current or resumed into.
  */
 export function servePublicDir(
   options: ServePublicDirOptions,
@@ -195,6 +138,7 @@ export function servePublicDir(
   const hashedFiles = options.hashedFiles
   const hashed = options.cache?.hashed ?? IMMUTABLE
   const assets = options.cache?.assets ?? ONE_DAY
+  const bufferedMax = typeof Bun === "undefined" ? BUFFERED_BODY_MAX : BUN_BUFFERED_BODY_MAX
 
   return async (request: Request): Promise<Response | undefined> => {
     if (request.method !== "GET" && request.method !== "HEAD") return undefined
@@ -205,7 +149,7 @@ export function servePublicDir(
     // A production manifest can reject page routes without touching the filesystem.
     if (options.files !== undefined && !options.files.has(pathname)) return undefined
     const abs = resolvePublicPath(root, pathname)
-    if (abs === undefined || isHiddenPath(root, abs)) return undefined
+    if (abs === undefined || hiddenUnder(root, abs)) return undefined
     const [resolvedRoot, resolvedFile] = await Promise.all([
       rootReal,
       realpath(abs).catch(() => undefined),
@@ -214,7 +158,7 @@ export function servePublicDir(
       resolvedRoot === undefined ||
       resolvedFile === undefined ||
       (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + sep)) ||
-      isHiddenPath(resolvedRoot, resolvedFile)
+      hiddenUnder(resolvedRoot, resolvedFile)
     ) {
       return undefined
     }
@@ -224,13 +168,15 @@ export function servePublicDir(
     // symlink; the descriptor then pins the bytes for the lifetime of the response.
     let handle: Awaited<ReturnType<typeof openResolved>> | undefined
     try {
+      let file: FileHandle
       try {
-        handle = await openResolved(resolvedFile)
+        file = await openResolved(resolvedFile)
       } catch {
         // A name refused or gone since realpath falls through, as a failed realpath does.
         return undefined
       }
-      const stat = await handle.stat()
+      handle = file
+      const stat = await file.stat()
       if (!stat.isFile()) return undefined
       const size = stat.size
       const headers = new Headers({
@@ -248,17 +194,33 @@ export function servePublicDir(
         // rendered as HTML, say). The declared type below is authoritative.
         "x-content-type-options": "nosniff",
         // Set explicitly rather than inferred from the body, so HEAD (a null body) carries it too.
-        "content-type":
-          CONTENT_TYPES[extname(resolvedFile).toLowerCase()] ?? "application/octet-stream",
+        "content-type": contentTypeOf(resolvedFile),
       })
-      const lastModified =
-        Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0 ? stat.mtimeMs : undefined
+      // The whole file, when tagging it had to read it: the response is then served from these bytes.
+      let whole: Uint8Array<ArrayBuffer> | undefined
+      let etag = TAGS.cached(resolvedFile, stat)
+      if (etag === undefined && size <= bufferedMax) {
+        whole = await readPinned(file, 0, size)
+        etag = TAGS.ofBytes(resolvedFile, stat, whole)
+      }
+      etag ??= await TAGS.ofFile(resolvedFile, stat, async (bytes, position) => {
+        return (await file.read(bytes, 0, bytes.byteLength, position)).bytesRead
+      })
+      if (etag !== undefined) headers.set("etag", etag)
+      const lastModified = lastModifiedOf(stat)
       if (lastModified !== undefined) {
         headers.set("last-modified", new Date(lastModified).toUTCString())
       }
       const head = request.method === "HEAD"
 
-      if (isNotModified(request, lastModified)) {
+      if (
+        isNotModified(
+          request.headers.get("if-none-match"),
+          request.headers.get("if-modified-since"),
+          etag,
+          lastModified,
+        )
+      ) {
         headers.delete("content-type")
         return new Response(null, { status: 304, headers })
       }
@@ -266,7 +228,8 @@ export function servePublicDir(
       // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
       const rangeHeader = head ? null : request.headers.get("range")
       const range =
-        rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
+        rangeHeader !== null &&
+        ifRangeAllowsPartial(request.headers.get("if-range"), etag, lastModified)
           ? parseByteRange(rangeHeader, size)
           : ({ kind: "none" } as const)
 
@@ -281,12 +244,15 @@ export function servePublicDir(
         end: number,
       ): Promise<Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>> => {
         const length = end - start + 1
-        if (length <= BUFFERED_BODY_MAX) {
-          const bytes = await readPinned(handle!, start, length)
+        if (length <= bufferedMax) {
+          const bytes =
+            whole === undefined
+              ? await readPinned(file, start, length)
+              : whole.subarray(start, start + length)
           headers.set("content-length", String(bytes.byteLength))
           return bytes
         }
-        const stream = handle!.createReadStream({ start, end })
+        const stream = file.createReadStream({ start, end })
         // FileHandle.createReadStream owns closing the descriptor after EOF/abort.
         handle = undefined
         return Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>
@@ -346,7 +312,7 @@ export function prerenderedPageReader(
     const rel = files.get(pathname)
     if (rel === undefined) return undefined
     const abs = resolve(root, rel)
-    if (!abs.startsWith(root + sep) || isHiddenPath(root, abs)) return undefined
+    if (!abs.startsWith(root + sep) || hiddenUnder(root, abs)) return undefined
     const [resolvedRoot, resolvedFile] = await Promise.all([
       rootReal,
       realpath(abs).catch(() => undefined),

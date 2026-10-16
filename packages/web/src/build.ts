@@ -25,6 +25,7 @@ import {
   singleCopyPlugin as declaredSingleCopyPlugin,
   readSingleCopyDeclaration,
 } from "@nifrajs/core/single-copy"
+import { isHiddenPath } from "@nifrajs/core/static-file"
 import { type BunPlugin, Glob } from "bun"
 import {
   aggregateSizeReport,
@@ -55,6 +56,7 @@ import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
+import { nodeAdapterRefusal } from "./internal/node-adapter.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
@@ -65,7 +67,7 @@ import {
   servablePrerenderedPages,
 } from "./internal/prerendered-pages.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
-import { isHiddenPublicPath, publicUrlPath } from "./internal/public-url.ts"
+import { publicUrlPath } from "./internal/public-url.ts"
 import {
   assertNoSecrets,
   buildEnvironment,
@@ -100,7 +102,7 @@ import { assertNoImportGlob, importGlobPlugin } from "./plugins/import-glob.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { type PrerenderOptions, prerenderRoutes } from "./prerender.ts"
-import { CONTENT_TYPES, IMMUTABLE, ONE_DAY } from "./public-dir.ts"
+import { IMMUTABLE, ONE_DAY } from "./public-dir.ts"
 import { createZoneClassifier } from "./zones.ts"
 
 export * from "./build-plan.ts"
@@ -360,7 +362,7 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
   const sourceReal = await realpath(source)
   const copied: string[] = []
   for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: false })) {
-    if (isHiddenPublicPath(rel)) continue
+    if (isHiddenPath(rel)) continue
     const candidate = join(source, rel)
     const candidateStat = await lstat(candidate)
     if (candidateStat.isSymbolicLink()) {
@@ -1379,8 +1381,9 @@ export function generateServerEntry(options: {
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
-  // Bun and Node serve the client bundle through `servePublicDir`. Deno bundles for the browser
-  // condition, where `node:fs` is a stub, so its entry runs the same checks on Deno's own file API.
+  // Bun serves the client bundle through `servePublicDir` and Node through @nifrajs/node's own reader,
+  // both on core's static-file policy. Deno bundles for the browser condition, where `node:fs` is a
+  // stub, so its entry runs the same checks on Deno's own file API.
   const nodeFs = target === "bun" || target === "node"
   const prerendered = Object.entries(options.prerenderedPages ?? {})
   if (prerendered.length > 0 && !nodeFs) {
@@ -1388,13 +1391,10 @@ export function generateServerEntry(options: {
       `[nifra/web] generateServerEntry: prerendered pages are served by the bun and node targets, not ${target}`,
     )
   }
-  const lines: string[] = [
-    !nodeFs
-      ? 'import { createWebApp } from "@nifrajs/web"'
-      : prerendered.length > 0
-        ? 'import { createWebApp, prerenderedPageReader, servePublicDir } from "@nifrajs/web"'
-        : 'import { createWebApp, servePublicDir } from "@nifrajs/web"',
-  ]
+  const webImports = ["createWebApp"]
+  if (prerendered.length > 0) webImports.push("prerenderedPageReader")
+  if (target === "bun") webImports.push("servePublicDir")
+  const lines: string[] = [`import { ${webImports.join(", ")} } from "@nifrajs/web"`]
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
   if (useImport !== undefined) lines.push(`import { use } from ${JSON.stringify(useImport)}`)
@@ -1413,7 +1413,13 @@ export function generateServerEntry(options: {
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
-  if (target === "deno") lines.push('import { parseByteRange } from "@nifrajs/core/range"')
+  if (target === "deno") {
+    lines.push(
+      'import { parseByteRange } from "@nifrajs/core/range"',
+      'import { contentTags, contentTypeOf, ifRangeAllowsPartial, isHiddenPath, isNotModified, lastModifiedOf } from "@nifrajs/core/static-file"',
+      'import { createHash } from "node:crypto"',
+    )
+  }
   if (prerendered.length > 0) {
     const headers = Object.fromEntries(prerendered.map(([path, page]) => [path, page.headers]))
     const files = Object.fromEntries(prerendered.map(([path, page]) => [path, page.file]))
@@ -1494,6 +1500,34 @@ export function generateServerEntry(options: {
     ...(hashedFiles !== undefined
       ? [`const HASHED_FILES = new Set(${JSON.stringify(hashedFiles)})`]
       : []),
+  )
+  if (target === "node") {
+    // The app itself with the adapter's own reader, not a `{ fetch }` wrapper around app.fetch: the
+    // wrapper hid the node-direct lane, so every page built an undici Request and drained a Response,
+    // and every file went through one too. The root mount serves only the files the build listed.
+    lines.push(
+      "await serve(app, {",
+      "  port: Number(process.env.PORT ?? 3000),",
+      "  static: [",
+      "    {",
+      '      dir: fileURLToPath(new URL("./assets/", import.meta.url)),',
+      '      prefix: "/assets",',
+      ...(hashedFiles !== undefined ? ["      hashedFiles: HASHED_FILES,"] : []),
+      `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
+      "    },",
+      "    {",
+      "      dir: fileURLToPath(STATIC_ROOT),",
+      '      prefix: "/",',
+      "      files: PUBLIC_FILES,",
+      "      immutable: false,",
+      `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
+      "    },",
+      "  ],",
+      "})",
+    )
+    return `${lines.join("\n")}\n`
+  }
+  lines.push(
     "const staticPath = (pathname: string): string | undefined => {",
     "  if (PUBLIC_FILES.has(pathname)) return '.' + pathname",
     '  if (!pathname.startsWith("/assets/")) return undefined',
@@ -1505,11 +1539,10 @@ export function generateServerEntry(options: {
     '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
     "  return segments.every(safe) ? '.' + pathname : undefined",
     "}",
-    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, HEAD
-    // answered without reading the file, byte ranges and conditional requests, and a descriptor opened
-    // only once the real path is inside the root, so a link planted in the deployed tree cannot reach
-    // a file outside it.
-    ...(nodeFs
+    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, content
+    // tags, byte ranges and conditional requests, and a descriptor opened only once the real path is
+    // inside the root, so a link planted in the deployed tree cannot reach a file outside it.
+    ...(target === "bun"
       ? [
           "const serveStatic = servePublicDir({",
           "  dir: fileURLToPath(STATIC_ROOT),",
@@ -1545,21 +1578,6 @@ export function generateServerEntry(options: {
     )
     return `${lines.join("\n")}\n`
   }
-  if (target === "node") {
-    lines.push(
-      "await serve(",
-      "  {",
-      "    async fetch(req, platform) {",
-      "      const { pathname } = new URL(req.url)",
-      "      if (staticPath(pathname) !== undefined) return staticResponse(req)",
-      "      return app.fetch(req, platform)",
-      "    },",
-      "  },",
-      "  { port: Number(process.env.PORT ?? 3000) },",
-      ")",
-    )
-    return `${lines.join("\n")}\n`
-  }
   // deno
   lines.push(
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
@@ -1577,34 +1595,39 @@ export function generateServerEntry(options: {
 }
 
 /**
- * The Deno entry's static handler: `servePublicDir`'s checks on Deno's file API. The real path must sit
- * inside the root and cross no hidden segment, and the opened file must still be the one that path
- * names, so a link planted in the deployed tree cannot reach a file outside it or a `.env` inside it.
- * HEAD answers from `stat` without reading; one byte range is served from a seek, several as the
- * whole file.
+ * The Deno entry's static handler: `servePublicDir`'s checks and answers on Deno's file API. The real
+ * path must sit inside the root and cross no hidden segment, and the opened file must still be the one
+ * that path names, so a link planted in the deployed tree cannot reach a file outside it or a `.env`
+ * inside it. The file is typed by its real path, tagged by its content and dated only by an mtime its
+ * own last write set, through the same policy as servePublicDir: a current cached copy is a 304, and a
+ * range survives only an `If-Range` naming that tag. A file is read once to tag it, and one small
+ * enough is then served from those bytes; otherwise one byte range is served from a seek, several as
+ * the whole file.
  */
 function denoStaticResponse(hashed: boolean): string[] {
   return [
-    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
-    "const staticHeaders = (pathname: string): Record<string, string> => ({",
-    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
+    "const staticHeaders = (pathname: string, file: string): Record<string, string> => ({",
+    '  "content-type": contentTypeOf(file),',
     `  "cache-control": ${hashed ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
     '  "x-content-type-options": "nosniff",',
     '  "accept-ranges": "bytes",',
     "})",
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
-    "const hiddenSegment = (rel: string): boolean =>",
-    '  rel.split(/[\\\\/]/).some((segment) => segment.startsWith(".") && segment !== ".well-known")',
+    "// One per process: the tag of a file is remembered by its real path.",
+    "const STATIC_TAGS = contentTags(createHash)",
+    "// Up to this many bytes are read whole to tag a file, and the response is then served from them.",
+    "const STATIC_INLINE_MAX = 256 * 1024",
     "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
     '  const missing = () => new Response("not found", { status: 404 })',
     '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
     "  let file, info",
+    '  let real = ""',
     "  try {",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    const real: string = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
+    "    real = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
     '    if (!real.startsWith(STATIC_REAL + (STATIC_REAL.includes("\\\\") ? "\\\\" : "/"))) return missing()',
-    "    if (hiddenSegment(real.slice(STATIC_REAL.length + 1))) return missing()",
+    "    if (isHiddenPath(real.slice(STATIC_REAL.length + 1))) return missing()",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "    file = await Deno.open(real)",
     "    // Deno.open follows links, so a directory swapped for one after the check above redirects it.",
@@ -1622,12 +1645,61 @@ function denoStaticResponse(hashed: boolean): string[] {
     "    file?.close()",
     "    return missing()",
     "  }",
-    "  const size: number = info.size",
-    "  const headers = new Headers(staticHeaders(pathname))",
-    '  const range = req.method === "GET" ? parseByteRange(req.headers.get("range"), size) : { kind: "none" as const }',
-    '  if (!info.isFile || req.method === "HEAD" || range.kind === "unsatisfiable") {',
+    "  if (!info.isFile) {",
     "    file.close()",
-    "    if (!info.isFile) return missing()",
+    "    return missing()",
+    "  }",
+    "  const size: number = info.size",
+    "  const headers = new Headers(staticHeaders(pathname, real))",
+    "  // Deno reports a field the platform does not keep as null; NaN never matches a remembered version.",
+    "  const version = {",
+    "    dev: info.dev,",
+    "    ino: info.ino ?? Number.NaN,",
+    "    size,",
+    "    mtimeMs: info.mtime?.getTime() ?? Number.NaN,",
+    "    ctimeMs: info.ctime?.getTime() ?? Number.NaN,",
+    "  }",
+    "  let whole: Uint8Array<ArrayBuffer> | undefined",
+    "  let moved = false",
+    "  let etag: string | undefined",
+    "  try {",
+    "    etag = STATIC_TAGS.cached(real, version)",
+    "    if (etag === undefined && size <= STATIC_INLINE_MAX) {",
+    "      whole = new Uint8Array(size)",
+    "      let filled = 0",
+    "      while (filled < size) {",
+    "        const read: number | null = await file.read(whole.subarray(filled))",
+    "        if (read === null || read === 0) break",
+    "        filled += read",
+    "      }",
+    "      if (filled < size) whole = whole.subarray(0, filled)",
+    "      etag = STATIC_TAGS.ofBytes(real, version, whole)",
+    "    }",
+    "    etag ??= await STATIC_TAGS.ofFile(real, version, async (bytes: Uint8Array, position: number) => {",
+    "      moved = true",
+    "      // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "      await file.seek(position, Deno.SeekMode.Start)",
+    "      return (await file.read(bytes)) ?? 0",
+    "    })",
+    "  } catch {",
+    "    file.close()",
+    "    return missing()",
+    "  }",
+    '  if (etag !== undefined) headers.set("etag", etag)',
+    "  const lastModified = lastModifiedOf(version)",
+    '  if (lastModified !== undefined) headers.set("last-modified", new Date(lastModified).toUTCString())',
+    '  if (isNotModified(req.headers.get("if-none-match"), req.headers.get("if-modified-since"), etag, lastModified)) {',
+    "    file.close()",
+    '    headers.delete("content-type")',
+    "    return new Response(null, { status: 304, headers })",
+    "  }",
+    '  const rangeHeader = req.method === "GET" ? req.headers.get("range") : null',
+    "  const range =",
+    '    rangeHeader !== null && ifRangeAllowsPartial(req.headers.get("if-range"), etag, lastModified)',
+    "      ? parseByteRange(rangeHeader, size)",
+    '      : { kind: "none" as const }',
+    '  if (req.method === "HEAD" || range.kind === "unsatisfiable") {',
+    "    file.close()",
     '    if (range.kind !== "unsatisfiable") {',
     '      headers.set("content-length", String(size))',
     "      return new Response(null, { headers })",
@@ -1638,10 +1710,16 @@ function denoStaticResponse(hashed: boolean): string[] {
     "  }",
     '  if (range.kind === "satisfiable" && range.ranges.length === 1) {',
     "    const { start, end } = range.ranges[0]!",
+    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
+    "    if (whole !== undefined) {",
+    "      file.close()",
+    "      const part = whole.subarray(start, end + 1)",
+    '      headers.set("content-length", String(part.byteLength))',
+    "      return new Response(part, { status: 206, headers })",
+    "    }",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "    await file.seek(start, Deno.SeekMode.Start)",
     "    let left = end - start + 1",
-    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
     '    headers.set("content-length", String(left))',
     "    const body = new ReadableStream<Uint8Array>({",
     "      async pull(controller) {",
@@ -1663,6 +1741,13 @@ function denoStaticResponse(hashed: boolean): string[] {
     "    })",
     "    return new Response(body, { status: 206, headers })",
     "  }",
+    "  if (whole !== undefined) {",
+    "    file.close()",
+    '    headers.set("content-length", String(whole.byteLength))',
+    "    return new Response(whole, { headers })",
+    "  }",
+    "  // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "  if (moved) await file.seek(0, Deno.SeekMode.Start)",
     '  headers.set("content-length", String(size))',
     "  return new Response(file.readable, { headers })",
     "}",
@@ -1924,6 +2009,11 @@ export async function buildTargetWith(
   ]
   assertDisposableDir("outDir", outDir, sources)
   assertDisposableDir("workDir", workDir, sources)
+  // Before anything is cleared, so a refused build leaves the last deploy dir in place.
+  if (targetPlan.target === "node") {
+    const refusal = nodeAdapterRefusal(workDir)
+    if (refusal !== undefined) throw new Error(refusal)
+  }
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })

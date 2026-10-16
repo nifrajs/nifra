@@ -33,6 +33,63 @@ function validSize(size: number): void {
 }
 
 /**
+ * `bytes=<digits>-<digits>`, the one form clients send, answered with a single scan; `undefined`
+ * for anything else, which the general path below answers. The answers must stay the general path's:
+ * test/range.test.ts compares both against a frozen copy of it.
+ */
+function parseSingleRange(value: string, size: number): ByteRangeResult | undefined {
+  const length = value.length
+  // `| 0x20` folds only ASCII case, which is all the general path's /bytes/i matches.
+  if (
+    length < 7 ||
+    value.charCodeAt(5) !== 0x3d ||
+    (value.charCodeAt(0) | 0x20) !== 0x62 ||
+    (value.charCodeAt(1) | 0x20) !== 0x79 ||
+    (value.charCodeAt(2) | 0x20) !== 0x74 ||
+    (value.charCodeAt(3) | 0x20) !== 0x65 ||
+    (value.charCodeAt(4) | 0x20) !== 0x73
+  ) {
+    return undefined
+  }
+  let dash = -1
+  for (let index = 6; index < length; index++) {
+    const code = value.charCodeAt(index)
+    if (code === 0x2d) {
+      if (dash !== -1) return undefined
+      dash = index
+    } else if (code < 0x30 || code > 0x39) {
+      return undefined
+    }
+  }
+  if (dash === -1) return undefined
+  const leftDigits = dash - 6
+  const rightDigits = length - dash - 1
+  // INTEGER: no leading zero.
+  if (
+    (leftDigits > 1 && value.charCodeAt(6) === 0x30) ||
+    (rightDigits > 1 && value.charCodeAt(dash + 1) === 0x30)
+  ) {
+    return { kind: "none" }
+  }
+  let start: number
+  let end: number
+  if (leftDigits === 0) {
+    // A suffix with no length, or a zero one, is ignored.
+    if (rightDigits === 0 || (rightDigits === 1 && value.charCodeAt(dash + 1) === 0x30)) {
+      return { kind: "none" }
+    }
+    const suffix = Number(value.slice(dash + 1))
+    start = suffix >= size ? 0 : size - suffix
+    end = size - 1
+  } else {
+    start = Number(value.slice(6, dash))
+    end = rightDigits === 0 ? size - 1 : Math.min(Number(value.slice(dash + 1)), size - 1)
+  }
+  if (start > end || start >= size || size === 0) return { kind: "unsatisfiable" }
+  return { kind: "satisfiable", ranges: [{ start, end }] }
+}
+
+/**
  * Parse an HTTP `Range: bytes=...` header against a known representation size.
  *
  * Three outcomes, and the distinction matters to the caller's status code: `none` means the header
@@ -45,12 +102,14 @@ export function parseByteRange(value: string | null, size: number): ByteRangeRes
   // Bound the input before the regex runs, not after: an oversized header must never reach the
   // matcher in the first place.
   if (value.length > MAX_RANGE_HEADER_LENGTH) return { kind: "none" }
+  const single = parseSingleRange(value, size)
+  if (single !== undefined) return single
   const match = /^bytes\s*=\s*(.+)$/i.exec(value)
   if (match === null) return { kind: "none" }
   const source = match[1]!
   let separators = 0
-  for (const character of source) {
-    if (character === "," && ++separators >= MAX_RANGE_SPECIFIERS) return { kind: "none" }
+  for (let comma = source.indexOf(","); comma !== -1; comma = source.indexOf(",", comma + 1)) {
+    if (++separators >= MAX_RANGE_SPECIFIERS) return { kind: "none" }
   }
 
   const ranges: ByteRange[] = []

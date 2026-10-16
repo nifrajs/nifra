@@ -2417,10 +2417,24 @@
     "doc": "/**\n * The stable URL every SSR'd page points its client entry at.\n *\n * It has to be stable, and Bun's own URL is not: that one is a content hash over the entire client graph,\n * so it changes whenever anything the entry imports changes. This path redirects to whichever hashed\n * chunk Bun is serving at the moment the browser asks, which is the only formulation that stays correct\n * across a rebuild.\n */"
   },
   {
+    "name": "CONTENT_TAG_MAX",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const CONTENT_TAG_MAX: number;",
+    "doc": "/**\n * Largest file tagged by its content. Its first request waits for one read of the whole file, ~0.1 s\n * per 256 MiB with hardware SHA-256 and several times that on a slow disk or CPU, so a larger file -\n * a long video that is only ever fetched by ranges, say - is tagged by its device, inode, size and\n * times. That tag is still strong and changes with any replacement, but differs between instances.\n */"
+  },
+  {
     "name": "CONTENT_TYPE",
     "kind": "const",
     "package": "@nifrajs/image",
     "signature": "export declare const CONTENT_TYPE: Record<OutputFormat, string>;"
+  },
+  {
+    "name": "CONTENT_TYPES",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const CONTENT_TYPES: Readonly<Record<string, string>>;",
+    "doc": "/**\n * Media types by extension. A table rather than the runtime's own file typing, which Node and Deno\n * lack. Unknown extensions, and extensionless files such as ACME tokens, are\n * `application/octet-stream`, which together with `nosniff` keeps a browser from guessing a more\n * dangerous type.\n */"
   },
   {
     "name": "COPILOT_INSTRUCTIONS_PATH",
@@ -3694,6 +3708,13 @@
     "doc": "/** A string frontmatter field name accepted by the index APIs. */"
   },
   {
+    "name": "ContentHash",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContentHash {\n    update(bytes: Uint8Array): unknown;\n    digest(encoding: \"base64url\"): string;\n}",
+    "doc": "/** What node:crypto's `createHash` returns; Bun, Node and Deno all provide it. */"
+  },
+  {
     "name": "ContentPreference",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -3723,6 +3744,19 @@
     "package": "@nifrajs/web-svelte",
     "signature": "export interface ContentProps {\n  /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n  html: TrustedHtml\n  /** Wrapper element (default `\"div\"`). */\n  as?: string\n  /** DOM passthrough (`class`, `style`, `id`, `data-*`, …). */\n  [key: string]: unknown\n}",
     "doc": "/**\n * Hand-written types for `Content.svelte` (svelte-package would generate this). Consumers resolve this\n * through the `./content` export's `types` condition.\n */"
+  },
+  {
+    "name": "ContentTagOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContentTagOptions {\n    /** Most tags remembered at once (default 8192); past it the earliest is forgotten. */\n    readonly limit?: number;\n    /** The clock compared with a file's ctime (default `Date.now`). */\n    readonly now?: () => number;\n}"
+  },
+  {
+    "name": "ContentTags",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContentTags {\n    /** The tag remembered for this version of the file at `path`, if any. */\n    cached(path: string, version: FileVersion): string | undefined;\n    /** The tag of `bytes`, read whole from this version of the file at `path`. */\n    ofBytes(path: string, version: FileVersion, bytes: Uint8Array): string;\n    /**\n     * The tag of this version of the file at `path`, read whole through `read`; requests for a version\n     * already being read wait for that read. A file over {@link CONTENT_TAG_MAX} is not read: its tag\n     * names its identity on this host instead, or is `undefined` where the runtime reports none.\n     */\n    ofFile(path: string, version: FileVersion, read: ReadAt): Promise<string | undefined>;\n}",
+    "doc": "/**\n * Strong entity tags from what a file holds, the same for the same bytes on every instance and\n * runtime, so a replacement that keeps a file's size and timestamps still changes its tag. A tag is\n * remembered per real path for the version it was computed from, so serving a known file reads no\n * more than before.\n */"
   },
   {
     "name": "Context",
@@ -6273,6 +6307,13 @@
     "package": "@nifrajs/uploads",
     "signature": "export interface FileType {\n    /** Detected MIME type, e.g. `\"image/png\"`. */\n    readonly mime: string;\n    /** Canonical extension (no dot), e.g. `\"png\"`. */\n    readonly ext: string;\n}",
     "doc": "/**\n * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client\n * sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload\n * types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic\n * number - handle those explicitly if you accept them).\n */"
+  },
+  {
+    "name": "FileVersion",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface FileVersion {\n    readonly dev: number;\n    readonly ino: number;\n    readonly size: number;\n    readonly mtimeMs: number;\n    readonly ctimeMs: number;\n}",
+    "doc": "/**\n * The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is,\n * or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.\n */"
   },
   {
     "name": "FixOption",
@@ -11558,6 +11599,13 @@
     "signature": "export interface ReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
   },
   {
+    "name": "ReadAt",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>;",
+    "doc": "/** Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end). */"
+  },
+  {
     "name": "Readable",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -14008,7 +14056,7 @@
     "name": "ServeOptions",
     "kind": "interface",
     "package": "@nifrajs/node",
-    "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Protocol used when the adapter constructs `Request.url`.\n     *\n     * The default is `\"https\"` when {@link ServeOptions.tls} is set and `\"http\"` otherwise. Deployments\n     * behind TLS termination can set `\"https\"` (or a trusted infra-aware function) so app code that reads\n     * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.\n     */\n    readonly protocol?: RequestProtocolOption;\n    /**\n     * Serve HTTPS directly, with no proxy in front: `{ cert, key }` as PEM text or the files' bytes\n     * (`readFileSync(\"cert.pem\")`), plus any other `node:tls` server option (`passphrase`, `ca`,\n     * `requestCert` for client certificates, `minVersion`, `SNICallback`, ...). Unset, the server speaks\n     * plain HTTP, which is what a proxy or platform that terminates TLS expects.\n     */\n    readonly tls?: TlsOptions;\n    /** Reject requests whose normalized Host authority is not in this allowlist or callback result. */\n    readonly allowedHosts?: readonly string[] | ((host: string) => boolean);\n    /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */\n    readonly canonicalHost?: string;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,\n     * mirroring nifra's Bun `listen({ gracefulSignals })`.\n     * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed\n     * (default 10_000).\n     *\n     * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap\n     * are *not* set here - they live inside `app.fetch`, so they already apply through\n     * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /\n     * `headersTimeout` (60s) defaults.\n     */\n    readonly signals?: boolean | {\n        readonly drainMs?: number;\n    };\n    /**\n     * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching\n     * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on\n     * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries.\n     */\n    readonly static?: ServeStaticOptions;\n    /**\n     * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping\n     * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no\n     * `statusText`, no headers or a plain header record) the way `c.text` / `c.json` already do.\n     *\n     * Off by default: prefer `c.text` / `c.json`, which get this without a global swap. Reach for the\n     * flag only when handlers construct `Response` by hand on the hot path. It patches a process-global\n     * builtin, so every `new Response(...)` anywhere in the process goes through the stand-in -\n     * transparent (non-simple bodies build a real `Response`, and simple ones stay `instanceof\n     * Response`), but a broad enough change to be opt-in.\n     */\n    readonly fastResponse?: boolean;\n}"
+    "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Protocol used when the adapter constructs `Request.url`.\n     *\n     * The default is `\"https\"` when {@link ServeOptions.tls} is set and `\"http\"` otherwise. Deployments\n     * behind TLS termination can set `\"https\"` (or a trusted infra-aware function) so app code that reads\n     * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.\n     */\n    readonly protocol?: RequestProtocolOption;\n    /**\n     * Serve HTTPS directly, with no proxy in front: `{ cert, key }` as PEM text or the files' bytes\n     * (`readFileSync(\"cert.pem\")`), plus any other `node:tls` server option (`passphrase`, `ca`,\n     * `requestCert` for client certificates, `minVersion`, `SNICallback`, ...). Unset, the server speaks\n     * plain HTTP, which is what a proxy or platform that terminates TLS expects.\n     */\n    readonly tls?: TlsOptions;\n    /** Reject requests whose normalized Host authority is not in this allowlist or callback result. */\n    readonly allowedHosts?: readonly string[] | ((host: string) => boolean);\n    /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */\n    readonly canonicalHost?: string;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,\n     * mirroring nifra's Bun `listen({ gracefulSignals })`.\n     * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed\n     * (default 10_000).\n     *\n     * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap\n     * are *not* set here - they live inside `app.fetch`, so they already apply through\n     * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /\n     * `headersTimeout` (60s) defaults.\n     */\n    readonly signals?: boolean | {\n        readonly drainMs?: number;\n    };\n    /**\n     * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching\n     * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on\n     * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries. An array\n     * serves several directories; the first mount whose prefix (and `files`, when set) takes a path\n     * answers it.\n     */\n    readonly static?: ServeStaticOptions | readonly ServeStaticOptions[];\n    /**\n     * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping\n     * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no\n     * `statusText`, no headers or a plain header record) the way `c.text` / `c.json` already do.\n     *\n     * Off by default: prefer `c.text` / `c.json`, which get this without a global swap. Reach for the\n     * flag only when handlers construct `Response` by hand on the hot path. It patches a process-global\n     * builtin, so every `new Response(...)` anywhere in the process goes through the stand-in -\n     * transparent (non-simple bodies build a real `Response`, and simple ones stay `instanceof\n     * Response`), but a broad enough change to be opt-in.\n     */\n    readonly fastResponse?: boolean;\n}"
   },
   {
     "name": "ServePublicDirOptions",
@@ -14020,7 +14068,7 @@
     "name": "ServeStaticOptions",
     "kind": "interface",
     "package": "@nifrajs/node",
-    "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,\n     * `immutable` applies only to these; any other file is sent with its validators and no\n     * `cache-control`, so a file that keeps its name across deploys still revalidates.\n     */\n    readonly hashedFiles?: Iterable<string>;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered `404` - the same response as a missing file, so probing\n     * can't distinguish \"hidden\" from \"absent\". Dotfiles land in build output by accident, not by\n     * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.\n     * Set `\"allow\"` if the directory deliberately contains them (e.g. `/.well-known`).\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n}",
+    "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,\n     * `immutable` applies only to these; any other file is sent with its validators and no\n     * `cache-control`, so a file that keeps its name across deploys still revalidates.\n     */\n    readonly hashedFiles?: Iterable<string>;\n    /**\n     * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside\n     * `hashedFiles`). Unset, such a file carries only its validators.\n     */\n    readonly cacheControl?: string;\n    /**\n     * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under\n     * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so\n     * a mount over a directory that also holds the server bundle can expose just the build's listed\n     * files. A later mount over the same paths can still serve the rest.\n     */\n    readonly files?: Iterable<string>;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered `404` - the same response as a missing file, so probing\n     * can't distinguish \"hidden\" from \"absent\". Dotfiles land in build output by accident, not by\n     * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.\n     * `/.well-known` is public by definition (RFC 8615) and always served, as `servePublicDir` does.\n     * The rule applies to the requested path and again to the file it resolves to, so a visible name\n     * linking to `.env` is denied too. Set `\"allow\"` if the directory deliberately holds dotfiles.\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n}",
     "doc": "/**\n * Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted\n * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the\n * platform serves assets; this is for `node server.js`.)\n */"
   },
   {
@@ -17631,6 +17679,20 @@
     "doc": "/**\n * The parts of a mixed segment when at least one of its parameters has a constraint, else\n * `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.\n */"
   },
   {
+    "name": "contentTags",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function contentTags(createHash: (algorithm: \"sha256\") => ContentHash, options?: ContentTagOptions): ContentTags;",
+    "doc": "/** Tags from `createHash` - node:crypto's, which every runtime nifra serves files on provides. */"
+  },
+  {
+    "name": "contentTypeOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function contentTypeOf(path: string): string;",
+    "doc": "/** The media type for a file path or name by its extension, case-insensitively. */"
+  },
+  {
     "name": "contextStorage",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -19761,6 +19823,13 @@
     "doc": "/** The idle state, shared so a server render and the first client render agree by reference. */"
   },
   {
+    "name": "ifRangeAllowsPartial",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function ifRangeAllowsPartial(ifRange: string | null, etag: string | undefined, lastModified: number | undefined): boolean;",
+    "doc": "/**\n * Whether `If-Range` (the header, or `null`) lets a range request be answered partially; otherwise the\n * whole file is the conformant answer, not a fallback. An entity tag must equal the file's strong\n * `etag` (RFC 9110 section 13.1.5). A date must equal `lastModified` to the second, and counts only\n * for a file with no strong tag: a client holding the tag sends it, and a date cannot tell apart two\n * versions dated in the same second - here or on another instance - so resuming by one could splice\n * them.\n */"
+  },
+  {
     "name": "imageDimensions",
     "kind": "function",
     "package": "@nifrajs/image",
@@ -19986,6 +20055,13 @@
     "doc": "/**\n * Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via\n * `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for\n * editors. A missing, forged, tampered, or expired cookie returns `false`.\n */"
   },
   {
+    "name": "isHiddenPath",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function isHiddenPath(rel: string): boolean;",
+    "doc": "/**\n * Whether a relative path crosses a dot-segment other than `.well-known` (RFC 8615, public by\n * definition). Serving, the build's `public/` copy and the parity listing all apply it, so an editor\n * or VCS artifact (`.env`, `.git/`, `.DS_Store`) is neither served nor shipped. Both separators split:\n * a request path uses `/`, a relative file path the OS separator.\n */"
+  },
+  {
     "name": "isHydrationMismatch",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -20031,6 +20107,13 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function isNativeServerView(value: unknown): value is NativeServerView;"
+  },
+  {
+    "name": "isNotModified",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function isNotModified(ifNoneMatch: string | null, ifModifiedSince: string | null, etag: string | undefined, lastModified: number | undefined): boolean;",
+    "doc": "/**\n * Whether the client's copy is current, so the answer is a bodyless 304. `If-None-Match` (the header,\n * or `null`) decides whenever it is sent (RFC 9110 section 13.2.2), by weak comparison with `etag`, and\n * `*` matches any file. Otherwise an `If-Modified-Since` at or after `lastModified` (epoch\n * milliseconds), compared at the whole seconds an HTTP date carries; an unparseable date, or a file\n * with no date, is never current.\n */"
   },
   {
     "name": "isProcessAlive",
@@ -20240,6 +20323,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function language<const L extends readonly string[]>(options: LanguageOptions<L>): ContextPlugin<{\n    language: L[number];\n    languageMatch: LanguageMatch;\n}>;",
     "doc": "/**\n * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.\n *\n * Header-only by design. For the full detector - `?lang=` query parameter → cookie →\n * `Accept-Language`, with optional cookie persistence - use `localeDetector()` from\n * `@nifrajs/i18n/detector`; use one or the other, not both.\n */"
+  },
+  {
+    "name": "lastModifiedOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function lastModifiedOf(version: FileVersion): number | undefined;",
+    "doc": "/**\n * The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is\n * the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`,\n * `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a\n * same-size replacement the old file's date, so its files are left undated and their content tag\n * validates them alone.\n */"
   },
   {
     "name": "lintPostgresStatement",
@@ -22794,7 +22884,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function servePublicDir(options: ServePublicDirOptions): (request: Request) => Promise<Response | undefined>;",
-    "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n */"
+    "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n *\n * A file is sent with a strong `ETag` from its bytes, the tag `@nifrajs/node`'s `static` reader and\n * the Deno entry send, and with `Last-Modified` only while its mtime is that of its own last change,\n * so a replacement that keeps a file's size and timestamps is never judged current or resumed into.\n */"
   },
   {
     "name": "serveTestApp",

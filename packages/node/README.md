@@ -61,10 +61,22 @@ the check there only makes it need repeated swaps. Mutable or attacker-writable 
 therefore outside the adapter's guarantee on those platforms. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
-Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
-`Accept-Ranges: bytes`. `If-None-Match` and `If-Modified-Since` get a bodyless 304; a single
-`Range` on GET gets 206 (or 416 when unsatisfiable), gated by `If-Range`. Multi-range requests get
-the whole file.
+Every file carries `Accept-Ranges: bytes` and a strong `ETag` from its content: 128 bits of its
+SHA-256, the same for the same bytes on every instance and on `servePublicDir`. A replacement that
+keeps a file's size and timestamps - `cp -p`, `rsync -a`, tar, a container image layer,
+SOURCE_DATE_EPOCH, the Nix store - still changes its tag. The tag is remembered per file version
+(device, inode, size, mtime and ctime), so a known file costs no extra read; the first request for a
+file reads it once (a file up to 256 KiB is then served from those bytes), and one changed in the last
+2 s is read again until its ctime settles. A file over 256 MiB is tagged by that identity instead of
+its bytes: still strong, but different on each instance.
+
+`Last-Modified` is sent only while the file's mtime is the time of its own last change (it matches its
+ctime), since a copy that keeps or normalizes mtimes gives a changed file the old date. Explicit
+validator headers still apply. `If-None-Match` takes precedence over `If-Modified-Since`; a matching
+condition gets a bodyless 304. `Range` on GET is parsed by a copy of `@nifrajs/core/range`, the parser
+`servePublicDir` uses, and gated by `If-Range`: it must name the file's strong tag, or its exact date
+when the file has no strong tag. One range (overlapping or adjacent ones merge into one) gets 206, a
+range-set that selects nothing gets 416, and several disjoint ranges get the whole file.
 
 ## Graceful shutdown on signals
 

@@ -390,9 +390,7 @@ test("the node entry reads prerendered pages; the edge and deno entries refuse t
     adapterImport: "./framework.ts",
     prerenderedPages,
   })
-  expect(node).toContain(
-    'import { createWebApp, prerenderedPageReader, servePublicDir } from "@nifrajs/web"',
-  )
+  expect(node).toContain('import { createWebApp, prerenderedPageReader } from "@nifrajs/web"')
   expect(node).toContain('pages: {"/":{"content-language":"en"}},')
   expect(node).toContain('files: {"/":"index.html"},')
   expect(node).toContain("  prerenderedPages,")
