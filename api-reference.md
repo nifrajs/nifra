@@ -3144,16 +3144,31 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/core/static-file`
 
+- **CONTENT_TAG_MAX** _(const)_ - `CONTENT_TAG_MAX: number`
+  Largest file tagged by its content. Its first request waits for one read of the whole file, ~0.1 s per 256 MiB with hardware SHA-256 and several times that on a slow disk or CPU, so a larger file - a long video that is only ever fetched by ranges, say - is tagged by its device, inode, size and time…
 - **CONTENT_TYPES** _(const)_ - `CONTENT_TYPES: Readonly<Record<string, string>>`
   Media types by extension. A table rather than the runtime's own file typing, which Node and Deno lack. Unknown extensions, and extensionless files such as ACME tokens, are `application/octet-stream`, which together with `nosniff` keeps a browser from guessing a more dangerous type.
+- **ContentHash** _(interface)_ - `interface ContentHash`
+  What node:crypto's `createHash` returns; Bun, Node and Deno all provide it.
+- **ContentTagOptions** _(interface)_ - `interface ContentTagOptions`
+- **ContentTags** _(interface)_ - `interface ContentTags`
+  Strong entity tags from what a file holds, the same for the same bytes on every instance and runtime, so a replacement that keeps a file's size and timestamps still changes its tag. A tag is remembered per real path for the version it was computed from, so serving a known file reads no more than be…
+- **FileVersion** _(interface)_ - `interface FileVersion`
+  The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is, or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.
+- **ReadAt** _(type)_ - `type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>`
+  Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end).
+- **contentTags** _(function)_ - `contentTags: (createHash: (algorithm: "sha256") => ContentHash, options?: ContentTagOptions) => ContentTags`
+  Tags from `createHash` - node:crypto's, which every runtime nifra serves files on provides.
 - **contentTypeOf** _(function)_ - `contentTypeOf: (path: string) => string`
   The media type for a file path or name by its extension, case-insensitively.
-- **ifRangeAllowsPartial** _(function)_ - `ifRangeAllowsPartial: (ifRange: string | null, lastModified: number | undefined) => boolean`
-  Whether `If-Range` (the header, or `null`) lets a range request be answered partially when the file's Last-Modified date is its only validator. An entity tag cannot match a tag never sent, so it means the whole file - the conformant answer, not a fallback. A date must equal Last-Modified to the sec…
+- **ifRangeAllowsPartial** _(function)_ - `ifRangeAllowsPartial: (ifRange: string | null, etag: string | undefined, lastModified: number | undefined) => boolean`
+  Whether `If-Range` (the header, or `null`) lets a range request be answered partially; otherwise the whole file is the conformant answer, not a fallback. An entity tag must equal the file's strong `etag` (RFC 9110 section 13.1.5). A date must equal `lastModified` to the second, and counts only for …
 - **isHiddenPath** _(function)_ - `isHiddenPath: (rel: string) => boolean`
   Whether a relative path crosses a dot-segment other than `.well-known` (RFC 8615, public by definition). Serving, the build's `public/` copy and the parity listing all apply it, so an editor or VCS artifact (`.env`, `.git/`, `.DS_Store`) is neither served nor shipped. Both separators split: a reque…
-- **isNotModifiedSince** _(function)_ - `isNotModifiedSince: (ifModifiedSince: string | null, lastModified: number | undefined) => boolean`
-  Whether a client's copy dated `ifModifiedSince` (the header, or `null`) is still current for a file last modified at `lastModified` (epoch milliseconds), compared at the whole seconds an HTTP date carries. An unparseable date, or a file with no known time, is never current.
+- **isNotModified** _(function)_ - `isNotModified: (ifNoneMatch: string | null, ifModifiedSince: string | null, etag: string | undefined, lastModified: number | undefined) => boolean`
+  Whether the client's copy is current, so the answer is a bodyless 304. `If-None-Match` (the header, or `null`) decides whenever it is sent (RFC 9110 section 13.2.2), by weak comparison with `etag`, and `*` matches any file. Otherwise an `If-Modified-Since` at or after `lastModified` (epoch millisec…
+- **lastModifiedOf** _(function)_ - `lastModifiedOf: (version: FileVersion) => number | undefined`
+  The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`, `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a same-size replac…
 
 ### `@nifrajs/core/tool-catalog`
 

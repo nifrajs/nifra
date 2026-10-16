@@ -1416,7 +1416,8 @@ export function generateServerEntry(options: {
   if (target === "deno") {
     lines.push(
       'import { parseByteRange } from "@nifrajs/core/range"',
-      'import { contentTypeOf, ifRangeAllowsPartial, isHiddenPath, isNotModifiedSince } from "@nifrajs/core/static-file"',
+      'import { contentTags, contentTypeOf, ifRangeAllowsPartial, isHiddenPath, isNotModified, lastModifiedOf } from "@nifrajs/core/static-file"',
+      'import { createHash } from "node:crypto"',
     )
   }
   if (prerendered.length > 0) {
@@ -1538,10 +1539,9 @@ export function generateServerEntry(options: {
     '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
     "  return segments.every(safe) ? '.' + pathname : undefined",
     "}",
-    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, HEAD
-    // answered without reading the file, byte ranges and conditional requests, and a descriptor opened
-    // only once the real path is inside the root, so a link planted in the deployed tree cannot reach
-    // a file outside it.
+    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, content
+    // tags, byte ranges and conditional requests, and a descriptor opened only once the real path is
+    // inside the root, so a link planted in the deployed tree cannot reach a file outside it.
     ...(target === "bun"
       ? [
           "const serveStatic = servePublicDir({",
@@ -1598,9 +1598,11 @@ export function generateServerEntry(options: {
  * The Deno entry's static handler: `servePublicDir`'s checks and answers on Deno's file API. The real
  * path must sit inside the root and cross no hidden segment, and the opened file must still be the one
  * that path names, so a link planted in the deployed tree cannot reach a file outside it or a `.env`
- * inside it. The file is typed by its real path and dated by its own mtime: a current cached copy is
- * a 304, and a range survives only an `If-Range` naming that date. HEAD answers from `stat` without
- * reading; one byte range is served from a seek, several as the whole file.
+ * inside it. The file is typed by its real path, tagged by its content and dated only by an mtime its
+ * own last write set, through the same policy as servePublicDir: a current cached copy is a 304, and a
+ * range survives only an `If-Range` naming that tag. A file is read once to tag it, and one small
+ * enough is then served from those bytes; otherwise one byte range is served from a seek, several as
+ * the whole file.
  */
 function denoStaticResponse(hashed: boolean): string[] {
   return [
@@ -1612,6 +1614,10 @@ function denoStaticResponse(hashed: boolean): string[] {
     "})",
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
+    "// One per process: the tag of a file is remembered by its real path.",
+    "const STATIC_TAGS = contentTags(createHash)",
+    "// Up to this many bytes are read whole to tag a file, and the response is then served from them.",
+    "const STATIC_INLINE_MAX = 256 * 1024",
     "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
     '  const missing = () => new Response("not found", { status: 404 })',
     '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
@@ -1645,19 +1651,51 @@ function denoStaticResponse(hashed: boolean): string[] {
     "  }",
     "  const size: number = info.size",
     "  const headers = new Headers(staticHeaders(pathname, real))",
-    "  // Deno reports no mtime where the platform keeps none; an epoch time would match every copy.",
-    "  const modified: number = info.mtime?.getTime() ?? 0",
-    "  const lastModified = modified > 0 ? modified : undefined",
+    "  // Deno reports a field the platform does not keep as null; NaN never matches a remembered version.",
+    "  const version = {",
+    "    dev: info.dev,",
+    "    ino: info.ino ?? Number.NaN,",
+    "    size,",
+    "    mtimeMs: info.mtime?.getTime() ?? Number.NaN,",
+    "    ctimeMs: info.ctime?.getTime() ?? Number.NaN,",
+    "  }",
+    "  let whole: Uint8Array<ArrayBuffer> | undefined",
+    "  let moved = false",
+    "  let etag: string | undefined",
+    "  try {",
+    "    etag = STATIC_TAGS.cached(real, version)",
+    "    if (etag === undefined && size <= STATIC_INLINE_MAX) {",
+    "      whole = new Uint8Array(size)",
+    "      let filled = 0",
+    "      while (filled < size) {",
+    "        const read: number | null = await file.read(whole.subarray(filled))",
+    "        if (read === null || read === 0) break",
+    "        filled += read",
+    "      }",
+    "      if (filled < size) whole = whole.subarray(0, filled)",
+    "      etag = STATIC_TAGS.ofBytes(real, version, whole)",
+    "    }",
+    "    etag ??= await STATIC_TAGS.ofFile(real, version, async (bytes: Uint8Array, position: number) => {",
+    "      moved = true",
+    "      // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "      await file.seek(position, Deno.SeekMode.Start)",
+    "      return (await file.read(bytes)) ?? 0",
+    "    })",
+    "  } catch {",
+    "    file.close()",
+    "    return missing()",
+    "  }",
+    '  if (etag !== undefined) headers.set("etag", etag)',
+    "  const lastModified = lastModifiedOf(version)",
     '  if (lastModified !== undefined) headers.set("last-modified", new Date(lastModified).toUTCString())',
-    '  const ifNoneMatch = req.headers.get("if-none-match")',
-    '  if (ifNoneMatch === "*" || (ifNoneMatch === null && isNotModifiedSince(req.headers.get("if-modified-since"), lastModified))) {',
+    '  if (isNotModified(req.headers.get("if-none-match"), req.headers.get("if-modified-since"), etag, lastModified)) {',
     "    file.close()",
     '    headers.delete("content-type")',
     "    return new Response(null, { status: 304, headers })",
     "  }",
     '  const rangeHeader = req.method === "GET" ? req.headers.get("range") : null',
     "  const range =",
-    '    rangeHeader !== null && ifRangeAllowsPartial(req.headers.get("if-range"), lastModified)',
+    '    rangeHeader !== null && ifRangeAllowsPartial(req.headers.get("if-range"), etag, lastModified)',
     "      ? parseByteRange(rangeHeader, size)",
     '      : { kind: "none" as const }',
     '  if (req.method === "HEAD" || range.kind === "unsatisfiable") {',
@@ -1672,10 +1710,16 @@ function denoStaticResponse(hashed: boolean): string[] {
     "  }",
     '  if (range.kind === "satisfiable" && range.ranges.length === 1) {',
     "    const { start, end } = range.ranges[0]!",
+    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
+    "    if (whole !== undefined) {",
+    "      file.close()",
+    "      const part = whole.subarray(start, end + 1)",
+    '      headers.set("content-length", String(part.byteLength))',
+    "      return new Response(part, { status: 206, headers })",
+    "    }",
     "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     "    await file.seek(start, Deno.SeekMode.Start)",
     "    let left = end - start + 1",
-    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
     '    headers.set("content-length", String(left))',
     "    const body = new ReadableStream<Uint8Array>({",
     "      async pull(controller) {",
@@ -1697,6 +1741,13 @@ function denoStaticResponse(hashed: boolean): string[] {
     "    })",
     "    return new Response(body, { status: 206, headers })",
     "  }",
+    "  if (whole !== undefined) {",
+    "    file.close()",
+    '    headers.set("content-length", String(whole.byteLength))',
+    "    return new Response(whole, { headers })",
+    "  }",
+    "  // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    "  if (moved) await file.seek(0, Deno.SeekMode.Start)",
     '  headers.set("content-length", String(size))',
     "  return new Response(file.readable, { headers })",
     "}",

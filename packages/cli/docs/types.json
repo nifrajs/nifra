@@ -2417,6 +2417,13 @@
     "doc": "/**\n * The stable URL every SSR'd page points its client entry at.\n *\n * It has to be stable, and Bun's own URL is not: that one is a content hash over the entire client graph,\n * so it changes whenever anything the entry imports changes. This path redirects to whichever hashed\n * chunk Bun is serving at the moment the browser asks, which is the only formulation that stays correct\n * across a rebuild.\n */"
   },
   {
+    "name": "CONTENT_TAG_MAX",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const CONTENT_TAG_MAX: number;",
+    "doc": "/**\n * Largest file tagged by its content. Its first request waits for one read of the whole file, ~0.1 s\n * per 256 MiB with hardware SHA-256 and several times that on a slow disk or CPU, so a larger file -\n * a long video that is only ever fetched by ranges, say - is tagged by its device, inode, size and\n * times. That tag is still strong and changes with any replacement, but differs between instances.\n */"
+  },
+  {
     "name": "CONTENT_TYPE",
     "kind": "const",
     "package": "@nifrajs/image",
@@ -3701,6 +3708,13 @@
     "doc": "/** A string frontmatter field name accepted by the index APIs. */"
   },
   {
+    "name": "ContentHash",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContentHash {\n    update(bytes: Uint8Array): unknown;\n    digest(encoding: \"base64url\"): string;\n}",
+    "doc": "/** What node:crypto's `createHash` returns; Bun, Node and Deno all provide it. */"
+  },
+  {
     "name": "ContentPreference",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -3730,6 +3744,19 @@
     "package": "@nifrajs/web-svelte",
     "signature": "export interface ContentProps {\n  /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n  html: TrustedHtml\n  /** Wrapper element (default `\"div\"`). */\n  as?: string\n  /** DOM passthrough (`class`, `style`, `id`, `data-*`, …). */\n  [key: string]: unknown\n}",
     "doc": "/**\n * Hand-written types for `Content.svelte` (svelte-package would generate this). Consumers resolve this\n * through the `./content` export's `types` condition.\n */"
+  },
+  {
+    "name": "ContentTagOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContentTagOptions {\n    /** Most tags remembered at once (default 8192); past it the earliest is forgotten. */\n    readonly limit?: number;\n    /** The clock compared with a file's ctime (default `Date.now`). */\n    readonly now?: () => number;\n}"
+  },
+  {
+    "name": "ContentTags",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ContentTags {\n    /** The tag remembered for this version of the file at `path`, if any. */\n    cached(path: string, version: FileVersion): string | undefined;\n    /** The tag of `bytes`, read whole from this version of the file at `path`. */\n    ofBytes(path: string, version: FileVersion, bytes: Uint8Array): string;\n    /**\n     * The tag of this version of the file at `path`, read whole through `read`; requests for a version\n     * already being read wait for that read. A file over {@link CONTENT_TAG_MAX} is not read: its tag\n     * names its identity on this host instead, or is `undefined` where the runtime reports none.\n     */\n    ofFile(path: string, version: FileVersion, read: ReadAt): Promise<string | undefined>;\n}",
+    "doc": "/**\n * Strong entity tags from what a file holds, the same for the same bytes on every instance and\n * runtime, so a replacement that keeps a file's size and timestamps still changes its tag. A tag is\n * remembered per real path for the version it was computed from, so serving a known file reads no\n * more than before.\n */"
   },
   {
     "name": "Context",
@@ -6280,6 +6307,13 @@
     "package": "@nifrajs/uploads",
     "signature": "export interface FileType {\n    /** Detected MIME type, e.g. `\"image/png\"`. */\n    readonly mime: string;\n    /** Canonical extension (no dot), e.g. `\"png\"`. */\n    readonly ext: string;\n}",
     "doc": "/**\n * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client\n * sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload\n * types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic\n * number - handle those explicitly if you accept them).\n */"
+  },
+  {
+    "name": "FileVersion",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface FileVersion {\n    readonly dev: number;\n    readonly ino: number;\n    readonly size: number;\n    readonly mtimeMs: number;\n    readonly ctimeMs: number;\n}",
+    "doc": "/**\n * The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is,\n * or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.\n */"
   },
   {
     "name": "FixOption",
@@ -11563,6 +11597,13 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface ReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
+  },
+  {
+    "name": "ReadAt",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>;",
+    "doc": "/** Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end). */"
   },
   {
     "name": "Readable",
@@ -17638,6 +17679,13 @@
     "doc": "/**\n * The parts of a mixed segment when at least one of its parameters has a constraint, else\n * `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.\n */"
   },
   {
+    "name": "contentTags",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function contentTags(createHash: (algorithm: \"sha256\") => ContentHash, options?: ContentTagOptions): ContentTags;",
+    "doc": "/** Tags from `createHash` - node:crypto's, which every runtime nifra serves files on provides. */"
+  },
+  {
     "name": "contentTypeOf",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -19778,8 +19826,8 @@
     "name": "ifRangeAllowsPartial",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function ifRangeAllowsPartial(ifRange: string | null, lastModified: number | undefined): boolean;",
-    "doc": "/**\n * Whether `If-Range` (the header, or `null`) lets a range request be answered partially when the\n * file's Last-Modified date is its only validator. An entity tag cannot match a tag never sent, so it\n * means the whole file - the conformant answer, not a fallback. A date must equal Last-Modified to the\n * second (RFC 9110 section 13.1.5), not merely be later: a file replaced by one with an older time\n * would otherwise splice foreign bytes into a resumed download.\n */"
+    "signature": "export declare function ifRangeAllowsPartial(ifRange: string | null, etag: string | undefined, lastModified: number | undefined): boolean;",
+    "doc": "/**\n * Whether `If-Range` (the header, or `null`) lets a range request be answered partially; otherwise the\n * whole file is the conformant answer, not a fallback. An entity tag must equal the file's strong\n * `etag` (RFC 9110 section 13.1.5). A date must equal `lastModified` to the second, and counts only\n * for a file with no strong tag: a client holding the tag sends it, and a date cannot tell apart two\n * versions dated in the same second - here or on another instance - so resuming by one could splice\n * them.\n */"
   },
   {
     "name": "imageDimensions",
@@ -20061,11 +20109,11 @@
     "signature": "export declare function isNativeServerView(value: unknown): value is NativeServerView;"
   },
   {
-    "name": "isNotModifiedSince",
+    "name": "isNotModified",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function isNotModifiedSince(ifModifiedSince: string | null, lastModified: number | undefined): boolean;",
-    "doc": "/**\n * Whether a client's copy dated `ifModifiedSince` (the header, or `null`) is still current for a file\n * last modified at `lastModified` (epoch milliseconds), compared at the whole seconds an HTTP date\n * carries. An unparseable date, or a file with no known time, is never current.\n */"
+    "signature": "export declare function isNotModified(ifNoneMatch: string | null, ifModifiedSince: string | null, etag: string | undefined, lastModified: number | undefined): boolean;",
+    "doc": "/**\n * Whether the client's copy is current, so the answer is a bodyless 304. `If-None-Match` (the header,\n * or `null`) decides whenever it is sent (RFC 9110 section 13.2.2), by weak comparison with `etag`, and\n * `*` matches any file. Otherwise an `If-Modified-Since` at or after `lastModified` (epoch\n * milliseconds), compared at the whole seconds an HTTP date carries; an unparseable date, or a file\n * with no date, is never current.\n */"
   },
   {
     "name": "isProcessAlive",
@@ -20275,6 +20323,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function language<const L extends readonly string[]>(options: LanguageOptions<L>): ContextPlugin<{\n    language: L[number];\n    languageMatch: LanguageMatch;\n}>;",
     "doc": "/**\n * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.\n *\n * Header-only by design. For the full detector - `?lang=` query parameter → cookie →\n * `Accept-Language`, with optional cookie persistence - use `localeDetector()` from\n * `@nifrajs/i18n/detector`; use one or the other, not both.\n */"
+  },
+  {
+    "name": "lastModifiedOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function lastModifiedOf(version: FileVersion): number | undefined;",
+    "doc": "/**\n * The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is\n * the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`,\n * `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a\n * same-size replacement the old file's date, so its files are left undated and their content tag\n * validates them alone.\n */"
   },
   {
     "name": "lintPostgresStatement",
@@ -22829,7 +22884,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function servePublicDir(options: ServePublicDirOptions): (request: Request) => Promise<Response | undefined>;",
-    "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n */"
+    "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n *\n * A file is sent with a strong `ETag` from its bytes, the tag `@nifrajs/node`'s `static` reader and\n * the Deno entry send, and with `Last-Modified` only while its mtime is that of its own last change,\n * so a replacement that keeps a file's size and timestamps is never judged current or resumed into.\n */"
   },
   {
     "name": "serveTestApp",

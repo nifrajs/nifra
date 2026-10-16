@@ -79,40 +79,227 @@ export function isHiddenPath(rel: string): boolean {
   return false
 }
 
+/**
+ * The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is,
+ * or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.
+ */
+export interface FileVersion {
+  readonly dev: number
+  readonly ino: number
+  readonly size: number
+  readonly mtimeMs: number
+  readonly ctimeMs: number
+}
+
+// A write sets a file's mtime and ctime together (a chmod or rename right after adds well under a
+// millisecond), and Deno truncates the ctime it reports to the second. No tool can set a ctime, so a
+// larger gap means the mtime came from somewhere else.
+const MODIFIED_LAG_MS = 1000
+
+/**
+ * The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is
+ * the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`,
+ * `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a
+ * same-size replacement the old file's date, so its files are left undated and their content tag
+ * validates them alone.
+ */
+export function lastModifiedOf(version: FileVersion): number | undefined {
+  const lag = Math.abs(version.ctimeMs - version.mtimeMs)
+  return version.mtimeMs > 0 && lag < MODIFIED_LAG_MS ? version.mtimeMs : undefined
+}
+
 /** HTTP dates carry whole seconds; comparing raw milliseconds makes every file look stale. */
 function seconds(time: number): number {
   return Math.floor(time / 1000)
 }
 
+function opaqueTag(tag: string): string {
+  return tag.startsWith("W/") ? tag.slice(2) : tag
+}
+
 /**
- * Whether a client's copy dated `ifModifiedSince` (the header, or `null`) is still current for a file
- * last modified at `lastModified` (epoch milliseconds), compared at the whole seconds an HTTP date
- * carries. An unparseable date, or a file with no known time, is never current.
+ * Whether the client's copy is current, so the answer is a bodyless 304. `If-None-Match` (the header,
+ * or `null`) decides whenever it is sent (RFC 9110 section 13.2.2), by weak comparison with `etag`, and
+ * `*` matches any file. Otherwise an `If-Modified-Since` at or after `lastModified` (epoch
+ * milliseconds), compared at the whole seconds an HTTP date carries; an unparseable date, or a file
+ * with no date, is never current.
  */
-export function isNotModifiedSince(
+export function isNotModified(
+  ifNoneMatch: string | null,
   ifModifiedSince: string | null,
+  etag: string | undefined,
   lastModified: number | undefined,
 ): boolean {
+  if (ifNoneMatch !== null) {
+    const current = etag === undefined ? undefined : opaqueTag(etag)
+    for (const raw of ifNoneMatch.split(",")) {
+      const candidate = raw.trim()
+      if (candidate === "*" || (current !== undefined && opaqueTag(candidate) === current)) {
+        return true
+      }
+    }
+    return false
+  }
   if (ifModifiedSince === null || lastModified === undefined) return false
   const since = Date.parse(ifModifiedSince)
   return Number.isFinite(since) && seconds(since) >= seconds(lastModified)
 }
 
 /**
- * Whether `If-Range` (the header, or `null`) lets a range request be answered partially when the
- * file's Last-Modified date is its only validator. An entity tag cannot match a tag never sent, so it
- * means the whole file - the conformant answer, not a fallback. A date must equal Last-Modified to the
- * second (RFC 9110 section 13.1.5), not merely be later: a file replaced by one with an older time
- * would otherwise splice foreign bytes into a resumed download.
+ * Whether `If-Range` (the header, or `null`) lets a range request be answered partially; otherwise the
+ * whole file is the conformant answer, not a fallback. An entity tag must equal the file's strong
+ * `etag` (RFC 9110 section 13.1.5). A date must equal `lastModified` to the second, and counts only
+ * for a file with no strong tag: a client holding the tag sends it, and a date cannot tell apart two
+ * versions dated in the same second - here or on another instance - so resuming by one could splice
+ * them.
  */
 export function ifRangeAllowsPartial(
   ifRange: string | null,
+  etag: string | undefined,
   lastModified: number | undefined,
 ): boolean {
   if (ifRange === null) return true
-  if (lastModified === undefined) return false
   const item = ifRange.trim()
-  if (item.startsWith('"') || item.startsWith("W/")) return false
+  const strong = etag !== undefined && !etag.startsWith("W/")
+  if (item.startsWith('"') || item.startsWith("W/")) return strong && item === etag
+  if (strong || lastModified === undefined) return false
   const date = Date.parse(item)
   return Number.isFinite(date) && seconds(date) === seconds(lastModified)
+}
+
+/** What node:crypto's `createHash` returns; Bun, Node and Deno all provide it. */
+export interface ContentHash {
+  update(bytes: Uint8Array): unknown
+  digest(encoding: "base64url"): string
+}
+
+/** Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end). */
+export type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>
+
+/**
+ * Strong entity tags from what a file holds, the same for the same bytes on every instance and
+ * runtime, so a replacement that keeps a file's size and timestamps still changes its tag. A tag is
+ * remembered per real path for the version it was computed from, so serving a known file reads no
+ * more than before.
+ */
+export interface ContentTags {
+  /** The tag remembered for this version of the file at `path`, if any. */
+  cached(path: string, version: FileVersion): string | undefined
+  /** The tag of `bytes`, read whole from this version of the file at `path`. */
+  ofBytes(path: string, version: FileVersion, bytes: Uint8Array): string
+  /**
+   * The tag of this version of the file at `path`, read whole through `read`; requests for a version
+   * already being read wait for that read. A file over {@link CONTENT_TAG_MAX} is not read: its tag
+   * names its identity on this host instead, or is `undefined` where the runtime reports none.
+   */
+  ofFile(path: string, version: FileVersion, read: ReadAt): Promise<string | undefined>
+}
+
+export interface ContentTagOptions {
+  /** Most tags remembered at once (default 8192); past it the earliest is forgotten. */
+  readonly limit?: number
+  /** The clock compared with a file's ctime (default `Date.now`). */
+  readonly now?: () => number
+}
+
+/**
+ * Largest file tagged by its content. Its first request waits for one read of the whole file, ~0.1 s
+ * per 256 MiB with hardware SHA-256 and several times that on a slow disk or CPU, so a larger file -
+ * a long video that is only ever fetched by ranges, say - is tagged by its device, inode, size and
+ * times. That tag is still strong and changes with any replacement, but differs between instances.
+ */
+export const CONTENT_TAG_MAX = 256 * 1024 * 1024
+
+const READ_CHUNK = 1024 * 1024
+// A file changed this recently can change again within its ctime's granularity (a jiffy on ext4, a
+// second on HFS+ and as Deno reports it) without its stat showing it, so it is not tagged by version.
+const RACY_MS = 2000
+
+function sameVersion(a: FileVersion, b: FileVersion): boolean {
+  return (
+    a.ctimeMs === b.ctimeMs &&
+    a.mtimeMs === b.mtimeMs &&
+    a.size === b.size &&
+    a.ino === b.ino &&
+    a.dev === b.dev
+  )
+}
+
+function quoted(hash: ContentHash): string {
+  return `"${hash.digest("base64url").slice(0, 22)}"`
+}
+
+/** Tags from `createHash` - node:crypto's, which every runtime nifra serves files on provides. */
+export function contentTags(
+  createHash: (algorithm: "sha256") => ContentHash,
+  options: ContentTagOptions = {},
+): ContentTags {
+  const limit = options.limit ?? 8192
+  const now = options.now ?? Date.now
+  const known = new Map<string, FileVersion & { readonly tag: string }>()
+  const reading = new Map<
+    string,
+    { readonly version: FileVersion; readonly tag: Promise<string> }
+  >()
+
+  const remember = (path: string, version: FileVersion, tag: string): void => {
+    if (!(now() - version.ctimeMs >= RACY_MS)) return
+    const { dev, ino, size, mtimeMs, ctimeMs } = version
+    known.delete(path)
+    known.set(path, { dev, ino, size, mtimeMs, ctimeMs, tag })
+    for (const earliest of known.keys()) {
+      if (known.size <= limit) break
+      known.delete(earliest)
+    }
+  }
+
+  const readWhole = async (path: string, version: FileVersion, read: ReadAt): Promise<string> => {
+    const hash = createHash("sha256")
+    const chunk = new Uint8Array(Math.min(version.size, READ_CHUNK))
+    let position = 0
+    while (position < version.size) {
+      const count = await read(
+        chunk.subarray(0, Math.min(chunk.length, version.size - position)),
+        position,
+      )
+      if (count === 0) break
+      hash.update(chunk.subarray(0, count))
+      position += count
+    }
+    const tag = quoted(hash)
+    if (position === version.size) remember(path, version, tag)
+    return tag
+  }
+
+  return {
+    cached(path, version) {
+      const entry = known.get(path)
+      return entry !== undefined && sameVersion(entry, version) ? entry.tag : undefined
+    },
+    ofBytes(path, version, bytes) {
+      const hash = createHash("sha256")
+      hash.update(bytes)
+      const tag = quoted(hash)
+      if (bytes.byteLength === version.size) remember(path, version, tag)
+      return tag
+    },
+    async ofFile(path, version, read) {
+      if (version.size > CONTENT_TAG_MAX) {
+        const { dev, ino, size, mtimeMs, ctimeMs } = version
+        if (!Number.isFinite(ino) || !(now() - ctimeMs >= RACY_MS)) return undefined
+        const hash = createHash("sha256")
+        hash.update(new TextEncoder().encode(`${dev}:${ino}:${size}:${mtimeMs}:${ctimeMs}`))
+        return quoted(hash)
+      }
+      const pending = reading.get(path)
+      if (pending !== undefined && sameVersion(pending.version, version)) return pending.tag
+      const tag = readWhole(path, version, read)
+      reading.set(path, { version, tag })
+      try {
+        return await tag
+      } finally {
+        if (reading.get(path)?.tag === tag) reading.delete(path)
+      }
+    },
+  }
 }

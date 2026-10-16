@@ -1,5 +1,6 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import { afterAll, afterEach, beforeAll, expect, setSystemTime, test } from "bun:test"
+import { createHash } from "node:crypto"
+import { mkdir, mkdtemp, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
@@ -29,6 +30,9 @@ afterAll(async () => {
 })
 
 const app = server().get("/", () => ({ page: true }))
+
+const tagOf = (text: string) =>
+  `"${createHash("sha256").update(text).digest("base64url").slice(0, 22)}"`
 
 async function startWithStatic(
   prefix?: string,
@@ -78,7 +82,7 @@ test("revalidation answers 304 from If-None-Match or If-Modified-Since", async (
   const first = await fetch(`${base}/assets/app.js`)
   const etag = first.headers.get("etag")
   const lastModified = first.headers.get("last-modified")
-  expect(etag).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/)
+  expect(etag).toBe(tagOf("console.log('hi')"))
   expect(lastModified).not.toBeNull()
   expect(first.headers.get("accept-ranges")).toBe("bytes")
   await first.arrayBuffer()
@@ -130,13 +134,30 @@ test("custom validator headers drive revalidation and ranges", async () => {
   })
   expect(byDate.status).toBe(304)
 
-  for (const validator of ['"custom"', lastModified]) {
-    const range = await fetch(`${base}/assets/app.js`, {
-      headers: { range: "bytes=0-6", "if-range": validator },
-    })
-    expect(range.status).toBe(206)
-    expect(await range.text()).toBe("console")
-  }
+  const range = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": '"custom"' },
+  })
+  expect(range.status).toBe(206)
+  expect(await range.text()).toBe("console")
+
+  // With a strong tag to resume by, a date does not stand in for it.
+  const byDateRange = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": lastModified },
+  })
+  expect(byDateRange.status).toBe(200)
+  expect(await byDateRange.text()).toBe("console.log('hi')")
+})
+
+test("a custom date with a weak custom tag resumes by that exact date", async () => {
+  const lastModified = "Wed, 01 Jan 2020 00:00:00 GMT"
+  const base = await startWithStatic(undefined, {
+    headers: { ETag: 'W/"custom"', "Last-Modified": lastModified },
+  })
+  const range = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": lastModified },
+  })
+  expect(range.status).toBe(206)
+  expect(await range.text()).toBe("console")
 
   // A date If-Range is an exact match, not a freshness check: a later date is a different validator.
   const later = await fetch(`${base}/assets/app.js`, {
@@ -179,13 +200,11 @@ test("custom validators still apply to a file with no usable modification time",
     expect(response.headers.get("last-modified")).toBe(lastModified)
     expect(await response.text()).toBe("")
   }
-  for (const validator of ['"custom"', lastModified]) {
-    const response = await fetch(`${base}/assets/undated.txt`, {
-      headers: { range: "bytes=1-3", "if-range": validator },
-    })
-    expect(response.status).toBe(206)
-    expect(await response.text()).toBe("irs")
-  }
+  const response = await fetch(`${base}/assets/undated.txt`, {
+    headers: { range: "bytes=1-3", "if-range": '"custom"' },
+  })
+  expect(response.status).toBe(206)
+  expect(await response.text()).toBe("irs")
 })
 
 test("byte ranges answer 206, 416, or the whole file", async () => {
@@ -490,11 +509,53 @@ test("a file above the buffered size streams with its length, whole and as a ran
   const base = await startWithStatic()
   const whole = await fetch(`${base}/assets/stream.bin`)
   expect(whole.headers.get("content-length")).toBe(String(size))
+  expect(whole.headers.get("etag")).toBe(tagOf("\u0007".repeat(size)))
   expect((await whole.arrayBuffer()).byteLength).toBe(size)
   const tail = await fetch(`${base}/assets/stream.bin`, { headers: { range: "bytes=1-" } })
   expect(tail.status).toBe(206)
   expect(tail.headers.get("content-length")).toBe(String(size - 1))
   expect((await tail.arrayBuffer()).byteLength).toBe(size - 1)
+})
+
+test("a remembered tag gives way to a same-size replacement that keeps its mtime", async () => {
+  // Ten seconds on, the files written here look settled, so their tags are remembered.
+  setSystemTime(new Date(Date.now() + 10_000))
+  try {
+    const base = await startWithStatic()
+    for (const [name, body] of [
+      ["kept.txt", "first"],
+      ["kept.bin", "f".repeat(256 * 1024 + 1)],
+    ] as const) {
+      const path = join(dir, name)
+      await writeFile(path, body)
+      await utimes(path, 1, 1)
+      const first = await fetch(`${base}/assets/${name}`)
+      const etag = first.headers.get("etag") ?? ""
+      expect([etag, await first.text()]).toEqual([tagOf(body), body])
+      const remembered = await fetch(`${base}/assets/${name}`, {
+        headers: { "if-none-match": etag },
+      })
+      expect(remembered.status).toBe(304)
+      for (const replace of ["in place", "renamed over"]) {
+        const next = (replace === "in place" ? "o" : "r").repeat(body.length)
+        const target = replace === "in place" ? path : join(dir, `.${name}`)
+        await writeFile(target, next)
+        await utimes(target, 1, 1)
+        if (target !== path) await rename(target, path)
+        const replaced = await fetch(`${base}/assets/${name}`, {
+          headers: { "if-none-match": etag },
+        })
+        expect([replace, replaced.status, replaced.headers.get("etag")]).toEqual([
+          replace,
+          200,
+          tagOf(next),
+        ])
+        await replaced.arrayBuffer()
+      }
+    }
+  } finally {
+    setSystemTime()
+  }
 })
 
 // Cleanup the temp dir last (afterEach handles servers; this removes the fixture).

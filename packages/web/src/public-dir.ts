@@ -12,16 +12,19 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
+import { createHash } from "node:crypto"
 import { type FileHandle, realpath } from "node:fs/promises"
 import { normalize, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
 import {
+  contentTags,
   contentTypeOf,
   ifRangeAllowsPartial,
   isHiddenPath,
-  isNotModifiedSince,
+  isNotModified,
+  lastModifiedOf,
 } from "@nifrajs/core/static-file"
 import { openResolved } from "./open-resolved.ts"
 
@@ -72,6 +75,9 @@ const BUFFERED_BODY_MAX = 256 * 1024
 // is read whole as well: a slow client then holds ~1 MB, against ~0.6 MB through Bun's stream sink.
 const BUN_BUFFERED_BODY_MAX = 1024 * 1024
 
+// One per process: the tag of a file served by any handler is remembered by its real path.
+const TAGS = contentTags(createHash)
+
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
 async function readPinned(
   handle: FileHandle,
@@ -118,6 +124,10 @@ export function resolvePublicPath(root: string, pathname: string): string | unde
  * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a
  * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the
  * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.
+ *
+ * A file is sent with a strong `ETag` from its bytes, the tag `@nifrajs/node`'s `static` reader and
+ * the Deno entry send, and with `Last-Modified` only while its mtime is that of its own last change,
+ * so a replacement that keeps a file's size and timestamps is never judged current or resumed into.
  */
 export function servePublicDir(
   options: ServePublicDirOptions,
@@ -158,13 +168,15 @@ export function servePublicDir(
     // symlink; the descriptor then pins the bytes for the lifetime of the response.
     let handle: Awaited<ReturnType<typeof openResolved>> | undefined
     try {
+      let file: FileHandle
       try {
-        handle = await openResolved(resolvedFile)
+        file = await openResolved(resolvedFile)
       } catch {
         // A name refused or gone since realpath falls through, as a failed realpath does.
         return undefined
       }
-      const stat = await handle.stat()
+      handle = file
+      const stat = await file.stat()
       if (!stat.isFile()) return undefined
       const size = stat.size
       const headers = new Headers({
@@ -184,19 +196,30 @@ export function servePublicDir(
         // Set explicitly rather than inferred from the body, so HEAD (a null body) carries it too.
         "content-type": contentTypeOf(resolvedFile),
       })
-      const lastModified =
-        Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0 ? stat.mtimeMs : undefined
+      // The whole file, when tagging it had to read it: the response is then served from these bytes.
+      let whole: Uint8Array<ArrayBuffer> | undefined
+      let etag = TAGS.cached(resolvedFile, stat)
+      if (etag === undefined && size <= bufferedMax) {
+        whole = await readPinned(file, 0, size)
+        etag = TAGS.ofBytes(resolvedFile, stat, whole)
+      }
+      etag ??= await TAGS.ofFile(resolvedFile, stat, async (bytes, position) => {
+        return (await file.read(bytes, 0, bytes.byteLength, position)).bytesRead
+      })
+      if (etag !== undefined) headers.set("etag", etag)
+      const lastModified = lastModifiedOf(stat)
       if (lastModified !== undefined) {
         headers.set("last-modified", new Date(lastModified).toUTCString())
       }
       const head = request.method === "HEAD"
 
-      // A tag condition takes precedence even when this reader publishes no ETag; only `*` matches.
-      const ifNoneMatch = request.headers.get("if-none-match")
       if (
-        ifNoneMatch === "*" ||
-        (ifNoneMatch === null &&
-          isNotModifiedSince(request.headers.get("if-modified-since"), lastModified))
+        isNotModified(
+          request.headers.get("if-none-match"),
+          request.headers.get("if-modified-since"),
+          etag,
+          lastModified,
+        )
       ) {
         headers.delete("content-type")
         return new Response(null, { status: 304, headers })
@@ -205,7 +228,8 @@ export function servePublicDir(
       // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
       const rangeHeader = head ? null : request.headers.get("range")
       const range =
-        rangeHeader !== null && ifRangeAllowsPartial(request.headers.get("if-range"), lastModified)
+        rangeHeader !== null &&
+        ifRangeAllowsPartial(request.headers.get("if-range"), etag, lastModified)
           ? parseByteRange(rangeHeader, size)
           : ({ kind: "none" } as const)
 
@@ -221,11 +245,14 @@ export function servePublicDir(
       ): Promise<Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>> => {
         const length = end - start + 1
         if (length <= bufferedMax) {
-          const bytes = await readPinned(handle!, start, length)
+          const bytes =
+            whole === undefined
+              ? await readPinned(file, start, length)
+              : whole.subarray(start, start + length)
           headers.set("content-length", String(bytes.byteLength))
           return bytes
         }
-        const stream = handle!.createReadStream({ start, end })
+        const stream = file.createReadStream({ start, end })
         // FileHandle.createReadStream owns closing the descriptor after EOF/abort.
         handle = undefined
         return Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>
