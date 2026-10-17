@@ -24,7 +24,8 @@ export const DATA_HEADER = "x-nifra-data"
 /**
  * Global the server injects (`createWebApp({ prerenderedPaths })`) listing the SSG-prerendered paths.
  * The client's default data fetch reads it: a soft-nav INTO a prerendered route fetches its static
- * `<path>/_data.json` (a CDN file - no worker round-trip) instead of the dynamic header-GET.
+ * `<path>/_data.json` (a CDN file - no worker round-trip) instead of the dynamic header-GET, unless
+ * the target carries a query string.
  */
 export const PRERENDERED_GLOBAL = "__NIFRA_PRERENDERED__"
 
@@ -422,13 +423,13 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
   const prerendered = await prerenderedOf()
-  if (Array.isArray(prerendered)) {
-    const query = path.indexOf("?")
-    const hash = path.indexOf("#")
-    // `indexOf` rather than `replace(/[?#].*$/)`: no regex allocation or backtracking on a
-    // caller-controlled navigation path.
-    const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
-    const pathname = cut === -1 ? path : path.slice(0, cut)
+  // `indexOf` rather than a regex: no allocation or backtracking on a caller-controlled path.
+  const query = path.indexOf("?")
+  const hash = path.indexOf("#")
+  // The file was rendered without a query, so a query-bearing path renders on demand, exactly as
+  // `servePrerenderedPages` answers the same URL on a hard request.
+  if (Array.isArray(prerendered) && (query === -1 || (hash !== -1 && hash < query))) {
+    const pathname = hash === -1 ? path : path.slice(0, hash)
     if (prerenderedSetOf(prerendered).has(pathname)) {
       const staticRes = await fetch(appUrl(dataUrlFor(pathname)), { signal: signal ?? null })
       if (staticRes.ok) return readResponseData(staticRes, signal)
