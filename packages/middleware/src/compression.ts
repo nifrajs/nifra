@@ -127,15 +127,37 @@ function compressRawResponse(
   if (response.status === 204 || response.status === 205 || response.status === 304) {
     return response
   }
-  if (!acceptsGzip(req.headers.get("accept-encoding"))) return response
   if (response.headers.has("content-encoding")) return response
   if (response.status === 206 || response.headers.has("content-range")) return response
   if (hasNoTransform(response.headers.get("cache-control"))) return response
   if (!isCompressible(response.headers.get("content-type") ?? "")) return response
   const declared = response.headers.get("content-length")
   if (declared !== null && Number(declared) < threshold) return response
+  // From here the representation depends on Accept-Encoding. A length-less body is not peeked for a
+  // client that takes no gzip, so it is marked as varying whatever its size.
+  if (!acceptsGzip(req.headers.get("accept-encoding"))) return varyingOnEncoding(response)
 
   return compressRawBody(response, body, threshold)
+}
+
+/** The identity representation of a response that a gzip-accepting client would get compressed. */
+function varyingOnEncoding(response: Response): Response {
+  const headers = new Headers(response.headers)
+  addGzipVary(headers)
+  if (headers.get("vary") === response.headers.get("vary")) return response
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+/** Whether `body` encodes to at least `threshold` bytes. UTF-8 spends 1 to 3 bytes per UTF-16 unit,
+ * so the length alone settles most strings without encoding them. */
+function reachesThreshold(body: string | Uint8Array, threshold: number): boolean {
+  if (typeof body !== "string") return body.byteLength >= threshold
+  if (body.length >= threshold) return true
+  return body.length * 3 >= threshold && GZIP_ENCODER.encode(body).byteLength >= threshold
 }
 
 async function compressRawBody(
@@ -306,7 +328,8 @@ function replayRawResponse(
  * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,
  * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible
  * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds
- * `Vary: Accept-Encoding`.
+ * `Vary: Accept-Encoding` to every response it would compress for a gzip-accepting client, the
+ * identity one sent to any other client included.
  *
  * **Security (BREACH).** Compression makes the response length depend on its content, so a response
  * that mixes a secret with attacker-reflected input leaks the secret through the compressed size
@@ -329,17 +352,18 @@ export function compression(options: CompressionOptions = {}) {
     app.use(
       withResponseObserver<Middleware>({
         onResponseBody(body, headers, req, status) {
-          if (!acceptsGzip(req.header("accept-encoding"))) return undefined
           if (headers.has("content-encoding")) return undefined
           if (status === 206 || headers.has("content-range")) return undefined
           if (hasNoTransform(headers.get("cache-control"))) return undefined
           if (!isCompressible(headers.get("content-type") ?? "")) return undefined
+          if (!reachesThreshold(body, threshold)) return undefined
+          // Both representations name the header they vary on, so a shared cache keeps them apart.
+          addGzipVary(headers)
+          if (!acceptsGzip(req.header("accept-encoding"))) return undefined
           const bytes = typeof body === "string" ? GZIP_ENCODER.encode(body) : body
-          if (bytes.byteLength < threshold) return undefined
           return gzipBytes(bytes).then((compressed) => {
             headers.set("content-encoding", "gzip")
             headers.delete("content-length")
-            addGzipVary(headers)
             weakenEtag(headers)
             return compressed
           })

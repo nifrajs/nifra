@@ -172,6 +172,46 @@ describe("compression()", () => {
     expect(await res.text()).toBe(big)
   })
 
+  test("the identity representation of a compressible response varies on Accept-Encoding too", async () => {
+    const app = server()
+      .use(compression())
+      .get("/json", () => ({ data: big }))
+      .get("/raw", () => new Response(big, { headers: { "content-type": "text/plain" } }))
+      .get(
+        "/stream",
+        () => new Response(streamOf(big), { headers: { "content-type": "text/plain" } }),
+      )
+      .get("/tiny", () => ({ data: "tiny" }))
+      .get("/png", () => new Response(big, { headers: { "content-type": "image/png" } }))
+    const vary = async (path: string, headers: Record<string, string> = {}) => {
+      const res = await app.fetch(new Request(`http://x${path}`, { headers }))
+      return { encoding: res.headers.get("content-encoding"), vary: res.headers.get("vary") }
+    }
+    for (const path of ["/json", "/raw", "/stream"]) {
+      expect(await vary(path)).toEqual({ encoding: null, vary: "Accept-Encoding" })
+      expect(await vary(path, GZIP)).toEqual({ encoding: "gzip", vary: "Accept-Encoding" })
+    }
+    // One representation for every client: nothing to vary on.
+    for (const path of ["/tiny", "/png"]) {
+      expect(await vary(path)).toEqual({ encoding: null, vary: null })
+      expect(await vary(path, GZIP)).toEqual({ encoding: null, vary: null })
+    }
+  })
+
+  test("a multi-byte body is measured in UTF-8 bytes against the threshold", async () => {
+    // {"s":"..."}: 8 framing bytes plus 2 bytes per é - 36 and 38 bytes, either side of 37.
+    const app = server()
+      .use(compression({ threshold: 37 }))
+      .get("/short", () => ({ s: "\u00e9".repeat(14) }))
+      .get("/long", () => ({ s: "\u00e9".repeat(15) }))
+    const encodingOf = async (path: string) =>
+      (await app.fetch(new Request(`http://x${path}`, { headers: GZIP }))).headers.get(
+        "content-encoding",
+      )
+    expect(await encodingOf("/short")).toBeNull()
+    expect(await encodingOf("/long")).toBe("gzip")
+  })
+
   test("honors an explicit gzip q=0 exclusion", async () => {
     const app = server()
       .use(compression())
