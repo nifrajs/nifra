@@ -198,6 +198,51 @@ describe("batch", () => {
     expect(runs).toBe(2) // the write before the throw still flushed
   })
 
+  test("an effect sees a computed in step with its input, once per write, batched or not", () => {
+    const n = signal(1)
+    const twice = computed(() => n() * 2)
+    const seen: number[][] = []
+    effect(() => seen.push([n(), twice()]))
+    batch(() => n.set(2))
+    n.set(3)
+    expect(seen).toEqual([
+      [1, 2],
+      [2, 4],
+      [3, 6],
+    ])
+  })
+
+  test("a diamond settles before its effect runs", () => {
+    const n = signal(1)
+    const left = computed(() => n() + 1)
+    const right = computed(() => n() * 10)
+    const sum = computed(() => left() + right())
+    const seen: number[] = []
+    effect(() => seen.push(sum()))
+    n.set(2)
+    batch(() => {
+      n.set(3)
+      expect(sum()).toBe(34) // a computed read inside the batch is already current
+    })
+    expect(seen).toEqual([12, 23, 34])
+  })
+
+  test("an effect that writes during the flush queues its subscribers instead of nesting them", () => {
+    const source = signal(0)
+    const mirror = signal(0)
+    const runs: string[] = []
+    effect(() => {
+      runs.push(`mirror ${mirror()}`)
+    })
+    effect(() => mirror.set(source() * 2))
+    effect(() => {
+      runs.push(`source ${source()}`)
+    })
+    runs.length = 0
+    source.set(1)
+    expect(runs).toEqual(["source 1", "mirror 2"])
+  })
+
   test("an effect disposed while pending does not run on flush", () => {
     const s = signal(0)
     let runs = 0

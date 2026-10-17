@@ -3,14 +3,17 @@
  * per-run re-tracking (a branch switch drops the stale branch's subscriptions), `Object.is`
  * equality skips, and an explicit synchronous {@link batch} that coalesces effect re-runs.
  *
- * Deliberately tiny and synchronous: writes outside `batch` re-run subscribers immediately -
- * predictable for island-scale code (a counter, a filter drawer), and the whole core stays well
- * under a kilobyte. This is NOT a general app framework - just island-scale reactivity.
+ * Deliberately tiny and synchronous: a write recomputes the computeds it feeds at once and runs its
+ * effects before `set` returns, each once, after every computed has settled - predictable for
+ * island-scale code (a counter, a filter drawer), and the whole core stays well under a kilobyte.
+ * This is NOT a general app framework - just island-scale reactivity.
  */
 
 interface EffectNode {
   run: () => void
   readonly deps: Set<Set<EffectNode>>
+  /** Set on a computed's node: it recomputes on the write instead of queueing. */
+  readonly c?: boolean | undefined
 }
 
 let currentEffect: EffectNode | undefined
@@ -49,13 +52,15 @@ export function batch<T>(fn: () => T): T {
   try {
     return fn()
   } finally {
-    batchDepth--
-    if (batchDepth === 0) {
-      while (pendingEffects.size > 0) {
+    try {
+      // The flush still counts as a batch: a write an effect makes here queues, so none runs twice.
+      while (batchDepth === 1 && pendingEffects.size) {
         const [next] = pendingEffects
         pendingEffects.delete(next as EffectNode)
         ;(next as EffectNode).run()
       }
+    } finally {
+      batchDepth--
     }
   }
 }
@@ -69,10 +74,9 @@ export function signal<T>(initial: T): Signal<T> {
 function readable<T>(initial: T, subs: Set<EffectNode>): Signal<T> {
   let value = initial
   const read = (() => {
-    const e = currentEffect
-    if (e !== undefined) {
-      subs.add(e)
-      e.deps.add(subs)
+    if (currentEffect) {
+      subs.add(currentEffect)
+      currentEffect.deps.add(subs)
     }
     return value
   }) as Signal<T>
@@ -80,11 +84,10 @@ function readable<T>(initial: T, subs: Set<EffectNode>): Signal<T> {
     const resolved = typeof next === "function" ? (next as (prev: T) => T)(value) : next
     if (Object.is(resolved, value)) return
     value = resolved
-    // Snapshot: an effect re-run may resubscribe; iterating the live set would loop.
-    for (const e of [...subs]) {
-      if (batchDepth > 0) pendingEffects.add(e)
-      else e.run()
-    }
+    // Snapshot: a computed re-run resubscribes; iterating the live set would loop.
+    batch(() => {
+      for (const e of [...subs]) e.c ? e.run() : pendingEffects.add(e)
+    })
   }
   return read
 }
@@ -108,10 +111,11 @@ export function computed<T>(fn: () => T): Computed<T> {
   let stop: (() => void) | undefined
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `dispose` is assigned below
   const read = (() => {
-    stop ??= effect(() => {
-      if (stop === undefined || subs.size > 0) out.set(fn())
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the implementation takes the computed flag its public overload hides
+    stop ??= (effect as (fn: () => void, c: boolean) => () => void)(() => {
+      if (!stop || subs.size) out.set(fn())
       else read.dispose()
-    })
+    }, true)
     return out()
   }) as Computed<T>
   read.dispose = () => {
@@ -125,13 +129,15 @@ export function computed<T>(fn: () => T): Computed<T> {
  * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies
  * re-track on every run, so conditional reads subscribe to exactly the live branch.
  */
-export function effect(fn: () => void): () => void {
+export function effect(fn: () => void): () => void
+export function effect(fn: () => void, c?: boolean): () => void {
   const stop = (): void => {
     for (const subs of e.deps) subs.delete(e)
     e.deps.clear()
     pendingEffects.delete(e)
   }
   const e: EffectNode = {
+    c,
     deps: new Set(),
     run: () => {
       stop()
