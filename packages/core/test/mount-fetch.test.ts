@@ -1,9 +1,25 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "../../schema/src/index.ts"
 import { RouteConfigError, server } from "../src/index.ts"
+import { RESOLVE_NODE_MOUNT } from "../src/server/install.ts"
 import { responseContract } from "../src/server/response-contract-lane.ts"
 
 describe("mountFetch", () => {
+  test("an app without mounts declines the native lane without inspecting the request", () => {
+    const app = server().get("/users/:id", (c) => ({ id: c.params.id }))
+    let urlReads = 0
+    const request = new Request("http://test/users/123")
+    Object.defineProperty(request, "url", {
+      get() {
+        urlReads++
+        return "http://test/users/123"
+      },
+    })
+
+    expect(app[RESOLVE_NODE_MOUNT](request)).toBeUndefined()
+    expect(urlReads).toBe(0)
+  })
+
   test("composed mounts run before parent catch-all routes", async () => {
     const app = server()
       .mount({
