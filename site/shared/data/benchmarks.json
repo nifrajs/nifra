@@ -894,11 +894,24 @@
       ]
     }
   ],
-  "captured": {
+  "httpWorkloadsCaptured": {
     "date": "2026-10-17",
     "bun": "1.4.3",
     "node": "26.12.0",
     "deno": "2.9.7",
+    "oha": "1.16.0"
+  },
+  "httpRealworldCaptured": {
+    "date": "2026-10-17",
+    "bun": "1.4.3",
+    "node": "26.12.0",
+    "deno": "2.9.7",
+    "oha": "1.16.0"
+  },
+  "ssrCaptured": {
+    "date": "2026-10-17",
+    "bun": "1.4.3",
+    "node": "26.12.0",
     "oha": "1.16.0"
   }
 }

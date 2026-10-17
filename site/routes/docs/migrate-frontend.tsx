@@ -1,4 +1,4 @@
-import { MULTIPLIERS } from "../../shared/data/benchmarks"
+import { ssrMultiplier } from "../../shared/data/benchmarks"
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
 
@@ -7,10 +7,6 @@ export const meta = docsMeta(
   "Nifra - Migrating from Next.js, Nuxt, SvelteKit & SolidStart",
   "Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).",
 )
-
-function ssrMultiplier(framework: string): string {
-  return MULTIPLIERS.find((item) => item.fw === framework)?.mult ?? "n/a"
-}
 
 const NEXT = `// Next.js - app/users/[id]/page.tsx
 export default async function Page({ params }) {

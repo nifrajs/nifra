@@ -145,10 +145,9 @@ export default function FullstackBunGuide() {
             httpWorkloadRps("Bun", "Elysia", "getUsers"),
           ),
         )}{" "}
-        of Elysia, the fastest backend-only Bun framework we measure, on GET - the full-stack layer
-        costs no backend speed. And because runtimes are adapters, the same app deploys to Node,
-        Deno, or edge workers unchanged if your infrastructure demands it. Numbers and methodology:{" "}
-        <a href="/benchmarks">benchmarks</a>.
+        of Elysia, a backend-only Bun framework, on GET. And because runtimes are adapters, the same
+        app deploys to Node, Deno, or edge workers unchanged if your infrastructure demands it.
+        Numbers and methodology: <a href="/benchmarks">benchmarks</a>.
       </p>
 
       <h2>Where to go next</h2>

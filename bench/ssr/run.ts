@@ -11,7 +11,7 @@
  *   BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
  */
 import { loadavg } from "node:os"
-import { writeSiteBench } from "../site-bench.ts"
+import { capturedMeta, ohaVersion, writeSiteBench } from "../site-bench.ts"
 import {
   buildTarget,
   measureOnce,
@@ -175,6 +175,7 @@ if (tableARows.length === expectedA && tableBRows.length === expectedB) {
     multipliers: multipliersSlice(tableARows, ssrTargetVersion),
     ssrTables: ssrTablesSlice(tableARows, ssrTargetVersion),
     ssrTablesB: ssrTablesSlice(tableBRows, ssrTargetVersion),
+    ssrCaptured: capturedMeta({ bun: Bun.version, node: nodeVersion(), oha: ohaVersion() }),
   })
 } else {
   console.log(

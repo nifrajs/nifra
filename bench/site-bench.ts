@@ -37,12 +37,12 @@ export interface ProofStat {
   readonly label: string
 }
 
-/** When and with which toolchain the published numbers were measured. */
+/** When and with which toolchain a slice was measured; `deno` is absent for a suite that skips it. */
 export interface CapturedMeta {
   readonly date: string
   readonly bun: string
   readonly node: string
-  readonly deno: string
+  readonly deno?: string
   readonly oha: string
 }
 
@@ -104,7 +104,11 @@ export interface SsrSiteTable {
 
 export interface SiteBench {
   readonly _note?: string
-  readonly captured?: CapturedMeta
+  // One record per slice, not one for the file: the suites run at different times, and a shared
+  // record would attribute every table to whichever suite wrote last.
+  readonly httpWorkloadsCaptured?: CapturedMeta
+  readonly httpRealworldCaptured?: CapturedMeta
+  readonly ssrCaptured?: CapturedMeta
   readonly heroSsr: readonly BenchRow[]
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]
@@ -174,16 +178,29 @@ export interface RuntimeVersions {
   readonly deno: string
 }
 
-/** The `captured` slice for a run on `versions`, dated today (UTC). */
-export function capturedMeta(versions: RuntimeVersions & { readonly oha: string }): CapturedMeta {
+/** The capture record for a run on `versions`, dated today (UTC). */
+export function capturedMeta(versions: {
+  readonly bun: string
+  readonly node: string
+  readonly deno?: string
+  readonly oha: string
+}): CapturedMeta {
   const bare = (version: string): string => version.trim().replace(/^v/, "")
-  return {
+  const captured: CapturedMeta = {
     date: new Date().toISOString().slice(0, 10),
     bun: bare(versions.bun),
     node: bare(versions.node),
-    deno: bare(versions.deno),
     oha: bare(versions.oha),
   }
+  return versions.deno === undefined ? captured : { ...captured, deno: bare(versions.deno) }
+}
+
+/** The installed `oha`'s version; a published slice names it, so a missing `oha` throws. */
+export function ohaVersion(): string {
+  const result = Bun.spawnSync(["oha", "--version"])
+  const version = /\d+(?:\.\d+)+/.exec(new TextDecoder().decode(result.stdout))?.[0]
+  if (!result.success || version === undefined) throw new Error("oha --version gave no version")
+  return version
 }
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */

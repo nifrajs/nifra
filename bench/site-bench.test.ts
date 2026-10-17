@@ -71,13 +71,20 @@ describe("published HTTP slices", () => {
     expect(() => packageVersion("nifra-no-such-package-installed")).toThrow("no installed")
   })
 
-  test("the captured slice names bare versions and today's date", () => {
-    const captured = capturedMeta({ ...runtimes, oha: "1.16.0" })
-    expect(captured).toEqual({
-      date: new Date().toISOString().slice(0, 10),
+  test("a capture record names bare versions and today's date", () => {
+    const today = new Date().toISOString().slice(0, 10)
+    expect(capturedMeta({ ...runtimes, oha: "1.16.0" })).toEqual({
+      date: today,
       bun: "1.4.3",
       node: "26.12.0",
       deno: "2.9.7",
+      oha: "1.16.0",
+    })
+    // The SSR suite runs no Deno target, so its record names none.
+    expect(capturedMeta({ bun: "1.4.3", node: "v26.12.0", oha: "1.16.0" })).toEqual({
+      date: today,
+      bun: "1.4.3",
+      node: "26.12.0",
       oha: "1.16.0",
     })
   })
@@ -126,5 +133,23 @@ describe("the committed site dataset", () => {
       }
     }
     expect(data).not.toHaveProperty("httpRuntime")
+  })
+
+  test("each measured slice carries its own capture record", () => {
+    const records = [
+      [data.httpWorkloads, data.httpWorkloadsCaptured],
+      [data.httpRealworld, data.httpRealworldCaptured],
+      [data.ssrTables, data.ssrCaptured],
+    ] as const
+    for (const [slice, captured] of records) {
+      if (slice === undefined) continue
+      expect(captured?.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      for (const version of [captured?.bun, captured?.node, captured?.oha]) {
+        expect(version).toMatch(/^\d+\.\d+\.\d+/)
+      }
+    }
+    expect(data.httpWorkloadsCaptured?.deno).toMatch(/^\d+\.\d+\.\d+/)
+    expect(data.httpRealworldCaptured?.deno).toMatch(/^\d+\.\d+\.\d+/)
+    expect(data).not.toHaveProperty("captured")
   })
 })

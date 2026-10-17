@@ -1,8 +1,8 @@
 import {
-  CAPTURED,
   formatPercent,
   formatRatio,
   formatRps,
+  HTTP_WORKLOADS_CAPTURED,
   httpWorkloadRps,
   percentOf,
   ssrRps,
@@ -41,8 +41,8 @@ export default function BunVsNode() {
         <thead>
           <tr>
             <th>Workload (identical app)</th>
-            <th>Node {CAPTURED.node}</th>
-            <th>Bun {CAPTURED.bun}</th>
+            <th>Node {HTTP_WORKLOADS_CAPTURED.node}</th>
+            <th>Bun {HTTP_WORKLOADS_CAPTURED.bun}</th>
             <th>Bun advantage</th>
           </tr>
         </thead>
@@ -128,8 +128,7 @@ export default function BunVsNode() {
             httpWorkloadRps("Bun", "Elysia", "getUsers"),
           ),
         )}{" "}
-        of Elysia on GET - level with the fastest framework on either side, so the move costs you no
-        framework speed.
+        of Elysia on GET - level with the strongest rival on either runtime.
       </p>
 
       <h2>Verdict</h2>

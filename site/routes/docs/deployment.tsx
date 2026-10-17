@@ -237,8 +237,8 @@ export default function Deployment() {
 
       <h2>Bun (its home)</h2>
       <p>
-        <code>app.listen(3000)</code> - the native Bun server, and the fastest way to serve a Nifra
-        app (see <a href="/benchmarks">benchmarks</a>).
+        <code>app.listen(3000)</code> - the native Bun server. Bun is the runtime where Nifra measures
+        fastest (see <a href="/benchmarks">benchmarks</a>).
       </p>
       <p>
         <strong>Every core:</strong> Bun is single-threaded per process - for multi-core boxes,

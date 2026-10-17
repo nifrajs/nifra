@@ -3,6 +3,7 @@
  * files when it is imported, so the conversion can be tested on its own.
  */
 import { type DocConsts, evaluateDocConsts } from "./doc-code-consts.ts"
+import { type DocData, evaluateDataCalls } from "./doc-data.ts"
 
 function decodeEntities(s: string): string {
   // `&amp;` decodes LAST: decoding it first turns `&amp;lt;` into `&lt;` which the next pass then
@@ -78,7 +79,12 @@ function codeBlockSource(
 /** Convert a doc page's JSX component body to markdown. Code blocks are pulled out as placeholders
  * BEFORE prose transforms so their raw `<`/`>`/`&`/`{}` survive untouched, then restored as fences.
  * A `<CodeBlock>` whose code cannot be evaluated throws, naming the page and the const. */
-export function jsxToMarkdown(file: string, src: string, consts: DocConsts): string {
+export function jsxToMarkdown(
+  file: string,
+  src: string,
+  consts: DocConsts,
+  data: DocData = new Map(),
+): string {
   // Blank the code consts FIRST - their example snippets contain `export default function` /
   // `return (` that would otherwise be mistaken for the real component.
   let blanked = src
@@ -99,6 +105,7 @@ export function jsxToMarkdown(file: string, src: string, consts: DocConsts): str
   })
   if (body.includes("<CodeBlock"))
     throw new Error(`${file}: a <CodeBlock> is written in a form the converter cannot read`)
+  body = evaluateDataCalls(file, body, data)
   // Inline code is text, never markup: `<reason>` inside it must survive the leftover-tag pass.
   const spans: string[] = []
   body = body.replace(/<code>([\s\S]*?)<\/code>/g, (_, t: string) => {
