@@ -1,10 +1,11 @@
 /**
  * Repeatable HTTP-benchmark aggregator. Runs the full `run.ts` matrix N times in fresh subprocesses
- * (so each run is independent - no JIT carryover), takes the **median across runs** for every
+ * (so each run is independent - no JIT carryover), pools every run's interleaved rounds per
  * framework × workload cell, and regenerates the results tables in BENCHMARKS.md between markers.
  *
- * The single sample is already a median-of-3 oha runs; this medians *across whole-matrix runs* on top,
- * which is what tames the box's run-to-run swing. Read the same-run ratios, not the absolutes.
+ * A ratio (% of ceiling, nifra vs Elysia) is the median of per-round ratios across all runs, each
+ * round paired only inside the run that measured it; req/s is the median round. Read the ratios,
+ * not the absolutes.
  *
  *   bun run bench/http/aggregate.ts                  # 3 runs, print tables to stdout
  *   bun run bench/http/aggregate.ts --runs 7 --write # 7 runs, rewrite BENCHMARKS.md in place
@@ -15,6 +16,7 @@
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { assertBenchmarkPublishable } from "../publish-guard.ts"
+import { type Matrix, type MatrixCell, mergeRuns, pooledRatio } from "../rounds.ts"
 import {
   httpRuntimeFromResults,
   httpSliceFromNode,
@@ -52,21 +54,16 @@ not absolutes. See [bench/README.md](bench/README.md).
 <!-- BENCH:deno:END -->
 `
 
-interface Measure {
-  readonly rps: number
-  readonly p50ms: number
-  readonly p99ms: number
-}
 interface Meta {
   readonly bun: string
   readonly node: string
   readonly deno: string
   readonly oha: string
-  readonly runs: number
+  readonly rounds: number
   readonly scalePct: number
   readonly connections: number
 }
-type Results = Record<string, Record<string, Record<string, Measure>>>
+type Results = Matrix<MatrixCell>
 
 // Must match run.ts's selected workloads (default = core read + write; `--full` = all four).
 const FULL = process.argv.includes("--full")
@@ -94,15 +91,9 @@ function parseArgs(argv: readonly string[]): { runtime?: string; runs: number; w
   return runtime !== undefined ? { runtime, runs, write } : { runs, write }
 }
 
-function median(nums: number[]): number {
-  if (nums.length === 0) return 0
-  const sorted = [...nums].sort((a, b) => a - b)
-  return sorted[sorted.length >> 1] ?? 0
-}
-
 async function runOnce(
   runtime: string | undefined,
-  targetOrderOffset: number,
+  run: number,
 ): Promise<{ meta: Meta; results: Results }> {
   const args = ["run", RUN]
   if (runtime !== undefined) args.push(runtime)
@@ -111,7 +102,8 @@ async function runOnce(
   const proc = Bun.spawn(["bun", ...args], {
     stdout: "pipe",
     stderr: "inherit",
-    env: { ...Bun.env, BENCH_TARGET_OFFSET: String(targetOrderOffset) },
+    // An even offset keeps each run's rounds in forward/reversed pairs (bench/rounds.ts).
+    env: { ...Bun.env, BENCH_ROUND_OFFSET: String(2 * run) },
   })
   const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
   if (code !== 0) throw new Error(`run.ts exited ${code}`)
@@ -124,17 +116,18 @@ function fmt(n: number): string {
   return Math.round(n).toLocaleString("en-US")
 }
 
-/** Render one workload's table, rows sorted by rps desc, nifra bolded, vs the runtime ceiling. */
-function table(runtime: string, workload: string, cells: Record<string, Measure>): string {
-  const ceilRps = cells[CEILING[runtime] ?? ""]?.rps ?? 0
+/** Render one workload's table, rows sorted by paired % of ceiling, nifra bolded. */
+function table(runtime: string, workload: string, cells: Record<string, MatrixCell>): string {
   const rows = (FRAMEWORKS[runtime] ?? Object.keys(cells))
-    .map((f) => ({ f, m: cells[f] ?? { rps: 0, p50ms: 0, p99ms: 0 } }))
-    .filter((r) => r.m.rps > 0)
-    .sort((a, b) => b.m.rps - a.m.rps)
+    .flatMap((f) => {
+      const m = cells[f]
+      return m !== undefined && m.rps > 0 ? [{ f, m }] : []
+    })
+    .sort((a, b) => (b.m.ofCeiling ?? 0) - (a.m.ofCeiling ?? 0) || b.m.rps - a.m.rps)
   const head = `| \`${workload}\` | req/s | p50 | p99 | % of ceiling |\n| --- | ---: | ---: | ---: | ---: |`
   const body = rows
     .map(({ f, m }) => {
-      const pct = ceilRps > 0 ? `${Math.round((m.rps / ceilRps) * 100)}%` : "-"
+      const pct = m.ofCeiling !== undefined ? `${Math.round(m.ofCeiling * 100)}%` : "-"
       const cellVals = [
         f,
         `${fmt(m.rps)}`,
@@ -149,9 +142,9 @@ function table(runtime: string, workload: string, cells: Record<string, Measure>
   return `${head}\n${body}`
 }
 
-function sectionBlock(runtime: string, results: Results): string {
-  const cellsFor = (w: string): Record<string, Measure> => {
-    const out: Record<string, Measure> = {}
+function sectionBlock(runtime: string, results: Results, runs: readonly Results[]): string {
+  const cellsFor = (w: string): Record<string, MatrixCell> => {
+    const out: Record<string, MatrixCell> = {}
     for (const f of Object.keys(results[runtime] ?? {})) {
       const m = results[runtime]?.[f]?.[w]
       if (m) out[f] = m
@@ -162,12 +155,11 @@ function sectionBlock(runtime: string, results: Results): string {
   if (runtime !== "bun") return tables
   // Bun gets the explicit nifra-vs-Elysia ratio line (nifra's home-runtime competitor).
   const ratio = (w: string): string => {
-    const nifra = results.bun?.nifra?.[w]?.rps ?? 0
-    const elysia = results.bun?.elysia?.[w]?.rps ?? 0
-    return nifra > 0 && elysia > 0 ? `${Math.round((nifra / elysia) * 100)}%` : "-"
+    const r = pooledRatio(runs, "bun", "nifra", "elysia", w)
+    return r !== undefined ? `${Math.round(r * 100)}%` : "-"
   }
   const ratios = WORKLOADS.map((w) => `**${ratio(w)}** (\`${w}\`)`).join(", ")
-  return `${tables}\n\nnifra vs Elysia (median): ${ratios}.`
+  return `${tables}\n\nnifra vs Elysia (median of per-round ratios): ${ratios}.`
 }
 
 function splice(doc: string, marker: string, content: string): string {
@@ -204,40 +196,20 @@ for (let i = 0; i < runs; i++) {
 if (meta === undefined) throw new Error("no successful runs")
 if (write) await assertBenchmarkPublishable(meta)
 
-// Median across runs for every runtime/framework/workload cell.
-const merged: Results = {}
-for (const rt of runtimes) {
-  merged[rt] = {}
-  const frameworks = new Set<string>()
-  for (const s of samples) for (const f of Object.keys(s[rt] ?? {})) frameworks.add(f)
-  for (const f of frameworks) {
-    const wl: Record<string, Measure> = {}
-    for (const w of WORKLOADS) {
-      const got = samples.map((s) => s[rt]?.[f]?.[w]).filter((m): m is Measure => m !== undefined)
-      if (got.length > 0) {
-        wl[w] = {
-          rps: median(got.map((m) => m.rps)),
-          p50ms: median(got.map((m) => m.p50ms)),
-          p99ms: median(got.map((m) => m.p99ms)),
-        }
-      }
-    }
-    ;(merged[rt] as Record<string, Record<string, Measure>>)[f] = wl
-  }
-}
+const merged = mergeRuns(samples, (rt) => CEILING[rt])
 
-const metaLine = `_Median of **${runs}** full-matrix runs (each a median of ${meta.runs} count-bounded oha samples @ ${meta.connections} connections) · Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno} · oha ${meta.oha}. Read the same-run ratios, not the absolutes._`
+const metaLine = `_**${runs}** full-matrix runs × ${meta.rounds} interleaved rounds of count-bounded oha samples @ ${meta.connections} connections · Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno} · oha ${meta.oha}. % of ceiling and nifra vs Elysia are medians of per-round ratios; req/s is the median round. Read the ratios, not the absolutes._`
 
 if (!write) {
   console.log(`\n${metaLine}\n`)
-  for (const rt of runtimes) console.log(`### ${rt}\n\n${sectionBlock(rt, merged)}\n`)
+  for (const rt of runtimes) console.log(`### ${rt}\n\n${sectionBlock(rt, merged, samples)}\n`)
   process.exit(0)
 }
 
 const benchFile = Bun.file(BENCHMARKS)
 let doc = (await benchFile.exists()) ? await benchFile.text() : BENCHMARKS_TEMPLATE
 doc = splice(doc, "META", metaLine)
-for (const rt of runtimes) doc = splice(doc, rt, sectionBlock(rt, merged))
+for (const rt of runtimes) doc = splice(doc, rt, sectionBlock(rt, merged, samples))
 await Bun.write(BENCHMARKS, doc)
 process.stderr.write(`updated ${BENCHMARKS}\n`)
 

@@ -1,21 +1,33 @@
 /**
  * HTTP throughput matrix - nifra vs the field - driven by `oha` (a real Rust load
- * tool), sectioned by runtime. For each framework: spawn its server in an isolated
- * subprocess, wait until ready, warm the JIT, then take N timed oha runs and keep
- * the MEDIAN (robust to box noise; best is reported too). Servers run ONE AT A TIME
- * - no cross-contention. Identical routes + payloads across every framework.
+ * tool), sectioned by runtime. A section boots every framework's server at once, each
+ * in its own subprocess on its own port, and warms each one per workload. It then
+ * measures in interleaved rounds: a round takes one count-bounded oha sample of every
+ * server, one server at a time, in the order bench/rounds.ts gives that round. Only the
+ * sampled server carries load; the others sit idle. Identical routes + payloads across
+ * every framework.
  *
  * READ THE RATIOS, NOT THE ABSOLUTES. This shares one (likely virtualized) box with
- * the load client, so absolute req/s is noisy and not publication-grade - but every
- * framework pays that tax equally in the SAME run, so the same-run ratio (nifra vs
- * Elysia vs the runtime ceiling) is the trustworthy signal. See BENCHMARKS.md.
+ * the load client, so absolute req/s moves with host load. A row's "% of ceiling" is
+ * the median of its per-round ratios to the runtime's raw server, sampled seconds
+ * apart in the same round, so drift that moves both samples cancels out of the ratio
+ * even when it moves the absolutes. See BENCHMARKS.md.
  *
  *   bun run bench/http/run.ts            # every section this build knows
  *   bun run bench/http/run.ts bun        # one section only (bun | node | deno)
  */
+import { loadavg } from "node:os"
+import {
+  type Matrix,
+  type Measure,
+  mergeRuns,
+  pooledRatio,
+  pushRounds,
+  roundOrder,
+} from "../rounds.ts"
 
-// Scale/warmup/run knobs are env-overridable for a fast pass (noisier, but the same-run RATIO
-// holds): `BENCH_SCALE=10 BENCH_WARMUP=0 BENCH_RUNS=1 …`. Defaults are the credible-numbers set.
+// Scale/warmup/round knobs are env-overridable for a fast pass (noisier, but the paired RATIO
+// holds): `BENCH_SCALE=10 BENCH_WARMUP=0 BENCH_ROUNDS=2 …`. Defaults are the credible-numbers set.
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
   return Number.isInteger(n) && n >= min ? n : dflt
@@ -24,9 +36,10 @@ const CONNECTIONS = envInt("BENCH_CONNS", 50)
 /** Scales every workload's request count (percent). `BENCH_SCALE=10` → a fast smoke pass. */
 const SCALE_PCT = envInt("BENCH_SCALE", 100)
 const WARMUP = envInt("BENCH_WARMUP", 1, 0) // 0 skips the warmup run
-const RUNS = envInt("BENCH_RUNS", 3)
-/** Rotates framework order within each runtime section to balance host-load drift. */
-const TARGET_ORDER_OFFSET = envInt("BENCH_TARGET_OFFSET", 0, 0)
+/** Rounded up to even: an unpaired round favours one end of its order (bench/rounds.ts). */
+const ROUNDS = Math.ceil(envInt("BENCH_ROUNDS", 4) / 2) * 2
+/** Shifts the round rotation, so repeated aggregate runs start from different rows. */
+const ROUND_OFFSET = envInt("BENCH_ROUND_OFFSET", 0, 0)
 const BASE_PORT = 3400
 
 interface Workload {
@@ -158,13 +171,8 @@ const SECTIONS: readonly Section[] = [
   },
 ]
 
-interface Measure {
-  readonly rps: number
-  readonly p50ms: number
-  readonly p99ms: number
-}
-
-const ZERO: Measure = { rps: 0, p50ms: 0, p99ms: 0 }
+const ceilingOf = (runtime: string): string | undefined =>
+  SECTIONS.find((s) => s.runtime === runtime)?.targets.find((t) => t.isCeiling)?.framework
 
 function finiteNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
@@ -242,21 +250,6 @@ async function runOha(url: string, w: Workload, requests: number): Promise<Measu
   return parseOha(out, requests)
 }
 
-/** Median req/s across N runs (best reported too). The median resists outliers; a
- *  single slow run from a background CPU spike can't drag the reported number down. */
-async function sample(
-  url: string,
-  w: Workload,
-  requests: number,
-): Promise<{ median: Measure; best: Measure }> {
-  const runs: Measure[] = []
-  for (let i = 0; i < RUNS; i++) runs.push(await runOha(url, w, requests))
-  const sorted = [...runs].sort((a, b) => a.rps - b.rps)
-  const median = sorted[sorted.length >> 1] ?? ZERO
-  const best = sorted[sorted.length - 1] ?? ZERO
-  return { median, best }
-}
-
 async function waitReady(base: string, timeoutMs: number): Promise<void> {
   const deadline = performance.now() + timeoutMs
   while (performance.now() < deadline) {
@@ -274,9 +267,8 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
   throw new Error(`server at ${base} did not become ready within ${timeoutMs}ms`)
 }
 
-// results[runtime][framework][workload] = median Measure
-type Results = Record<string, Record<string, Record<string, Measure>>>
-const results: Results = {}
+// sampled[runtime][framework][workload].rounds - one Measure per round, in round order.
+const sampled: Matrix<{ rounds: Measure[] }> = {}
 const failures: string[] = []
 
 const argv = process.argv.slice(2)
@@ -291,47 +283,88 @@ if (sections.length === 0) {
   )
 }
 
+const pct = (ratio: number): string => String(Math.round(ratio * 100))
+
+interface Server {
+  readonly target: Target
+  readonly base: string
+  readonly proc: ReturnType<typeof Bun.spawn>
+}
+
 for (const section of sections) {
-  const sectionResults: Record<string, Record<string, Measure>> = {}
-  results[section.runtime] = sectionResults
-  let port = BASE_PORT
-  const offset = section.targets.length > 0 ? TARGET_ORDER_OFFSET % section.targets.length : 0
-  const targetOrder = [...section.targets.slice(offset), ...section.targets.slice(0, offset)]
-  for (const target of targetOrder) {
-    port += 1
-    // Pin IPv4 loopback. `localhost` can resolve to ::1 first; Deno's default listener is IPv4-only on
-    // this box, which made oha report connection-refused errors even though a browser/curl fallback
-    // succeeded. A benchmark should not include DNS/address-family variance.
-    const base = `http://127.0.0.1:${port}`
-    const fwResults: Record<string, Measure> = {}
-    sectionResults[target.framework] = fwResults
-    let proc: ReturnType<typeof Bun.spawn> | undefined
-    try {
-      if (target.prepare) await target.prepare()
-      proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
-      await waitReady(base, 8000)
-      for (const w of WORKLOADS) {
-        const requests = Math.max(500, Math.round((w.requests * SCALE_PCT) / 100))
-        // warm the JIT for this workload
-        if (WARMUP > 0) await runOha(`${base}${w.path}`, w, Math.round(requests / 5))
-        const { median } = await sample(`${base}${w.path}`, w, requests)
-        fwResults[w.name] = median
+  const ceiling = ceilingOf(section.runtime)
+  const servers: Server[] = []
+  const failed = new Set<Target>()
+  const fail = (target: Target, e: unknown): void => {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`  ${section.runtime}/${target.framework}: ${msg}`)
+    failures.push(`${section.runtime}/${target.framework}: ${msg}`)
+    failed.add(target)
+  }
+  const live = (): Server[] => servers.filter((s) => !failed.has(s.target))
+  try {
+    let port = BASE_PORT
+    for (const target of section.targets) {
+      port += 1
+      // Pin IPv4 loopback. `localhost` can resolve to ::1 first; Deno's default listener is IPv4-only on
+      // this box, which made oha report connection-refused errors even though a browser/curl fallback
+      // succeeded. A benchmark should not include DNS/address-family variance.
+      const base = `http://127.0.0.1:${port}`
+      try {
+        if (target.prepare) await target.prepare()
+        const proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
+        servers.push({ target, base, proc })
+        await waitReady(base, 8000)
+      } catch (e) {
+        fail(target, e)
       }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error(`  ${section.runtime}/${target.framework}: ${msg}`)
-      failures.push(`${section.runtime}/${target.framework}: ${msg}`)
-    } finally {
-      proc?.kill()
-      await proc?.exited
-      await Bun.sleep(1500) // allow CPU to cool down and ports to clear
     }
+    for (const w of WORKLOADS) {
+      const requests = Math.max(500, Math.round((w.requests * SCALE_PCT) / 100))
+      // warm the JIT for this workload
+      if (WARMUP > 0) {
+        for (const s of live()) {
+          try {
+            await runOha(`${s.base}${w.path}`, w, Math.round(requests / 5))
+          } catch (e) {
+            fail(s.target, e)
+          }
+        }
+      }
+      for (let round = 0; round < ROUNDS; round++) {
+        for (const s of roundOrder(live(), round + ROUND_OFFSET)) {
+          try {
+            const m = await runOha(`${s.base}${w.path}`, w, requests)
+            pushRounds(sampled, section.runtime, s.target.framework, w.name, m)
+          } catch (e) {
+            fail(s.target, e)
+          }
+        }
+        // A failed row stops sampling, so a live row's rounds are indexed by round number.
+        const inRound = (f: string | undefined): Measure | undefined =>
+          f === undefined ? undefined : sampled[section.runtime]?.[f]?.[w.name]?.rounds[round]
+        const ceil = inRound(ceiling)
+        const line = live().map(({ target: { framework: f } }) => {
+          const m = inRound(f)
+          return `${f} ${m?.rps.toLocaleString() ?? "-"}${m && ceil ? ` (${pct(m.rps / ceil.rps)}%)` : ""}`
+        })
+        console.error(
+          `  ${section.runtime} ${w.name}  round ${round + 1}/${ROUNDS}  load ${loadavg()[0]?.toFixed(1)}  ${line.join(" · ")}`,
+        )
+      }
+    }
+  } finally {
+    for (const s of servers) s.proc.kill()
+    await Promise.all(servers.map((s) => s.proc.exited))
+    await Bun.sleep(1500) // allow CPU to cool down and ports to clear
   }
 }
 
 if (failures.length > 0) {
   throw new Error(`benchmark results are invalid; ${failures.join("; ")}`)
 }
+
+const results = mergeRuns([sampled], ceilingOf)
 
 function pad(s: string, n: number): string {
   return s.padStart(n)
@@ -356,13 +389,13 @@ const meta = {
   node: toolVersion("node", "--version"),
   deno: toolVersion("deno", "--version"),
   oha: toolVersion("oha", "--version"),
-  runs: RUNS,
+  rounds: ROUNDS,
   scalePct: SCALE_PCT,
   connections: CONNECTIONS,
 }
 
-// `--json`: one line of machine-readable results for aggregate.ts. No device/host/path info - only
-// tool versions + the run knobs + the measured numbers.
+// `--json`: one line of machine-readable results for aggregate.ts, every round included so it can
+// pool runs. No device/host/path info - only tool versions + the run knobs + the measured numbers.
 if (jsonMode) {
   console.log(JSON.stringify({ meta, results }))
   process.exit(0)
@@ -370,38 +403,25 @@ if (jsonMode) {
 
 const versions = `Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno}`
 console.log(
-  `\nHTTP throughput - oha, median-of-${RUNS} count-bounded runs @ ${CONNECTIONS} conns  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
+  `\nHTTP throughput - oha, ${ROUNDS} interleaved rounds of count-bounded samples @ ${CONNECTIONS} conns  (${versions})\n% of ceiling is the median of per-round ratios to the runtime's raw server; req/s is the median round, indicative only.\n`,
 )
 
 for (const section of sections) {
   const got = results[section.runtime] ?? {}
-  const ceiling = section.targets.find((t) => t.isCeiling)?.framework
   console.log(`## ${section.runtime}\n`)
   for (const w of WORKLOADS) {
     console.log(`  ${w.name}`)
-    const rows = section.targets.map((t) => ({
-      f: t.framework,
-      m: got[t.framework]?.[w.name] ?? ZERO,
-    }))
-    const top = Math.max(1, ...rows.map((r) => r.m.rps))
-    const ceil = ceiling ? (got[ceiling]?.[w.name]?.rps ?? 0) : 0
-    for (const { f, m } of rows) {
-      const ofTop = Math.round((m.rps / top) * 100)
-      const ofCeil =
-        ceil > 0 ? `${pad(String(Math.round((m.rps / ceil) * 100)), 3)}% of ceiling` : ""
+    for (const { framework: f } of section.targets) {
+      const m = got[f]?.[w.name]
+      if (m === undefined) continue
+      const ofCeil = m.ofCeiling === undefined ? "" : `${pad(pct(m.ofCeiling), 3)}% of ceiling`
       console.log(
-        `    ${f.padEnd(9)} ${pad(m.rps.toLocaleString(), 9)} req/s   ` +
-          `p50 ${pad(m.p50ms.toFixed(2), 6)}ms   p99 ${pad(m.p99ms.toFixed(2), 7)}ms   ` +
-          `${pad(String(ofTop), 3)}% of top   ${ofCeil}`,
+        `    ${f.padEnd(10)} ${pad(Math.round(m.rps).toLocaleString(), 9)} req/s   ` +
+          `p50 ${pad(m.p50ms.toFixed(2), 6)}ms   p99 ${pad(m.p99ms.toFixed(2), 7)}ms   ${ofCeil}`,
       )
     }
-    const nifra = got.nifra?.[w.name]?.rps ?? 0
-    const elysia = got.elysia?.[w.name]?.rps ?? 0
-    if (nifra > 0 && elysia > 0) {
-      console.log(`    → nifra is ${Math.round((nifra / elysia) * 100)}% of Elysia`)
-    }
+    const vsElysia = pooledRatio([sampled], section.runtime, "nifra", "elysia", w.name)
+    if (vsElysia !== undefined) console.log(`    → nifra is ${pct(vsElysia)}% of Elysia (paired)`)
     console.log("")
   }
 }
-
-export {}

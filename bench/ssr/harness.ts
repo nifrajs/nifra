@@ -262,33 +262,7 @@ export function rowKind(target: SsrBenchTarget): SsrRowKind {
   return target.kind ?? "app"
 }
 
-/**
- * The order of round `round`: rotated by one each round and reversed on odd rounds, so every target
- * runs early and late, before and after each neighbour, as the host's load drifts.
- */
-export function roundOrder<T>(items: readonly T[], round: number): T[] {
-  if (items.length === 0) return []
-  const k = round % items.length
-  const order = [...items.slice(k), ...items.slice(0, k)]
-  return round % 2 === 1 ? order.reverse() : order
-}
-
-export function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = sorted.length >> 1
-  const upper = sorted[mid] ?? 0
-  return sorted.length % 2 === 1 ? upper : ((sorted[mid - 1] ?? 0) + upper) / 2
-}
-
-/** The median of the per-round ratios a/b: each round's pair ran minutes apart, not hours. */
-export function pairedRatio(a: readonly number[], b: readonly number[]): number {
-  return median(
-    a.flatMap((value, i) => {
-      const denominator = b[i]
-      return denominator !== undefined && denominator > 0 ? [value / denominator] : []
-    }),
-  )
-}
+export { median, pairedRatio, roundOrder } from "../rounds.ts"
 
 export async function buildTarget(target: SsrBenchTarget): Promise<void> {
   // Capture build stderr and surface it only on failure: comparator builds emit cosmetic warnings

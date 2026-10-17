@@ -16,8 +16,9 @@ Knobs: `BENCH_ROUNDS` (default 5), `BENCH_DURATION_S` (5), `BENCH_WARMUP_S` (3),
 ## How a table is measured
 
 Each table builds its rows, then runs interleaved rounds. A round starts each row's server as a fresh
-process, warms it, and takes one `oha` sample. The order rotates every round and reverses on odd
-rounds, so each row runs early and late.
+process, warms it, and takes one `oha` sample. Rounds run in pairs, one order forward and then
+reversed, so any two rows swap places within a pair; the rotation advances each pair, so every row
+also runs first (`bench/rounds.ts`).
 
 A row's **ratio** is the median of its per-round ratios to the table's baseline, a comparator measured
 in the same rounds. On a busy host the absolute req/s moves with the load, but within a round both

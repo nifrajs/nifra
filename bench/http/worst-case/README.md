@@ -43,8 +43,8 @@ Use the existing component matrices to isolate individual costs before interpret
 case:
 
 ```sh
-BENCH_SCALE=10 BENCH_WARMUP=1 BENCH_RUNS=3 bun run bench/http/run.ts deno --full
-BENCH_SCALE=10 BENCH_WARMUP_S=1 BENCH_DURATION_S=3 BENCH_RUNS=3 bun run bench/http-realworld/run.ts deno
+BENCH_SCALE=10 BENCH_WARMUP=1 BENCH_ROUNDS=4 bun run bench/http/run.ts deno --full
+BENCH_SCALE=10 BENCH_WARMUP=1 BENCH_ROUNDS=4 bun run bench/http-realworld/run.ts deno
 ```
 
 The first suite isolates bare routing, dynamic routing, query validation, and body validation. The

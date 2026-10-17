@@ -140,13 +140,21 @@ export function httpSliceFromNode(
  * more about the runtime than about nifra. "How much of this runtime's own ceiling does the
  * framework keep" is comparable, and it is what the landing claims.
  *
+ * The interleaved matrices carry `ofCeiling`, the median of per-round ratios to the raw row, and
+ * that is what gets published: a ratio of two medians measured apart moves with host load.
+ *
  * A runtime missing either cell is dropped rather than published at a percentage computed from a
  * hole. Rows are ordered by throughput, matching how the landing renders them.
  */
 export function httpRuntimeFromResults(
   results: Record<
     string,
-    Record<string, Record<string, { readonly rps: number } | undefined> | undefined> | undefined
+    | Record<
+        string,
+        | Record<string, { readonly rps: number; readonly ofCeiling?: number } | undefined>
+        | undefined
+      >
+    | undefined
   >,
   workload = "GET /users/:id",
 ): readonly HttpRuntimeRow[] {
@@ -161,13 +169,13 @@ export function httpRuntimeFromResults(
   for (const runtime of runtimeConfig) {
     const source = results[runtime.key]
     if (source === undefined) continue
-    const nifra = source.nifra?.[workload]?.rps
+    const nifra = source.nifra?.[workload]
     const raw = source[runtime.ceiling]?.[workload]?.rps
-    if (!ok(nifra) || !ok(raw)) continue
+    if (nifra === undefined || !ok(nifra.rps) || !ok(raw)) continue
     rows.push({
       runtime: runtime.title,
-      reqs: Math.round(nifra),
-      pctOfRaw: Math.round((nifra / raw) * 100),
+      reqs: Math.round(nifra.rps),
+      pctOfRaw: Math.round((nifra.ofCeiling ?? nifra.rps / raw) * 100),
       you: true,
     })
   }
