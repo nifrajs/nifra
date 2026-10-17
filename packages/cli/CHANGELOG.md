@@ -1,5 +1,28 @@
 # @nifrajs/cli
 
+## 5.4.0
+
+### Patch Changes
+
+- 19e16be: `nifra upgrade 5.4.0` prints what changes for a 5.3 app: a `node` build needs the adapter of the same release, static files carry content `ETag`s and drop `Last-Modified` for copied mtimes, the Deno entry answers validators, and `@nifrajs/node`'s `static` reader changes its types, ranges and link answers.
+- Updated dependencies [e7d43ca]
+- Updated dependencies [5183c00]
+- Updated dependencies [01b97ec]
+- Updated dependencies [e589893]
+- Updated dependencies [ff66db6]
+- Updated dependencies [02ac072]
+- Updated dependencies [529f8d2]
+  - @nifrajs/web@5.4.0
+  - @nifrajs/core@5.4.0
+  - @nifrajs/client@5.4.0
+  - @nifrajs/i18n@5.4.0
+  - @nifrajs/mcp@5.4.0
+  - @nifrajs/schema@5.4.0
+  - @nifrajs/testing@5.4.0
+  - @nifrajs/agent-review@5.4.0
+  - @nifrajs/mcp-db@5.4.0
+  - @nifrajs/runner@5.4.0
+
 ## 5.3.0
 
 ### Minor Changes

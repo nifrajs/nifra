@@ -1,5 +1,16 @@
 # @nifrajs/workers
 
+## 5.4.0
+
+### Patch Changes
+
+- Updated dependencies [5183c00]
+- Updated dependencies [01b97ec]
+- Updated dependencies [e589893]
+- Updated dependencies [ff66db6]
+- Updated dependencies [529f8d2]
+  - @nifrajs/core@5.4.0
+
 ## 5.3.0
 
 ### Patch Changes

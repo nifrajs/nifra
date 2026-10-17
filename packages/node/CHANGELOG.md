@@ -1,5 +1,52 @@
 # @nifrajs/node
 
+## 5.4.0
+
+### Minor Changes
+
+- e589893: The server entry `buildTarget` generates for `node` now passes the app itself to `@nifrajs/node`'s `serve` and serves files with the adapter's own reader. The entry needs the `@nifrajs/node` of the same release, so a `node` build with an older one installed stops before bundling, names both versions and leaves the last deploy dir in place. A 5.3 adapter used to build cleanly and then throw when the server started. It used to wrap `app.fetch` in a plain `{ fetch }` handler. That wrapper hid the node-direct lane, so every page built an undici `Request` and drained a `Response`, and every file went through one too. The entry mounts `/assets` and, at the root, only the `public/` files the build copied, with the same type, cache, range, HEAD and hidden-file answers the Bun entry gives.
+  
+  `serve`'s `static` option on `@nifrajs/node`:
+  
+  - takes an array of mounts; a path goes to the first mount that takes it, by its prefix and, when set, its `files`.
+  - `files` lists the only URL paths a mount serves; any other path passes to the next mount, then the app, without that mount touching the disk.
+  - `cacheControl` sets `cache-control` for files not served immutable.
+  - types files from the same table as `servePublicDir`, so `.pdf`, `.mp4`, `.xml`, `.csv` and other common types are no longer sent as `application/octet-stream`; a link is typed by the file it resolves to.
+  - serves `/.well-known` by default, as `servePublicDir` does, and refuses a visible name that links to a dotfile.
+  - answers a link that leaves the directory with `404`, the same as a missing file, instead of `403`.
+  - sends files up to 256 KiB, and HEAD, `304` and `416` answers, in one write with no `Response` or stream.
+  
+  `@nifrajs/core/static-file` exports `CONTENT_TYPES`, `contentTypeOf` and `isHiddenPath`, which both readers now use.
+
+### Patch Changes
+
+- 5183c00: The server entry `buildTarget` generates for `deno` now answers static files with the validators the Bun and Node entries send:
+  
+  - an `etag` and `last-modified`, and a `304` with no body for a current copy, HEAD included.
+  - `Range` honored only when `If-Range` is absent or names the file's current validator; anything else gets the whole file.
+  - a link is typed by the file it resolves to, as on Bun and Node.
+  
+  `@nifrajs/core/static-file` holds the comparisons `servePublicDir`, the Deno entry and `@nifrajs/node`'s `static` reader now share.
+- 7b4b678: `serve()` does less work per request on Node. In nifra's Node benchmark on Node 26.12 it was 3-4% behind fastify and is now within 2% of it. It reads `Host` from `req.rawHeaders`, so a request whose app reads no header never builds Node's `req.headers` object. When `Host` repeats, the first one wins, as it does in `req.headers`. It also no longer adds `finish` and `close` listeners to every response. A parser error behind pipelined requests still closes the connection only after the responses already dispatched on it are written, in order. The adapter now waits on those responses only when that error happens.
+- 4de6b1e: `serve`'s `static` reader parses `Range` with the same parser as `@nifrajs/core/range`, `servePublicDir` and the Deno entry, so a seek lands on the same byte on every runtime. Answers that differ from before:
+  
+  - overlapping or adjacent ranges (`bytes=0-5,3-9`) are served as the one range they cover, `206`.
+  - a satisfiable range listed with unsatisfiable ones (`bytes=500-,0-1`) is served, `206`.
+  - the unit is matched case-insensitively and may have spaces around `=` (`Bytes = 2-4`).
+  - an inverted range (`bytes=9-0`) is `416`; it used to be ignored.
+  - a zero-length suffix (`bytes=-0`) is ignored and the whole file is sent; it used to be `416`.
+  - a `Range` longer than 16 KiB is ignored.
+  
+  `If-Range` is still checked first, so a stale validator still gets the whole file.
+- ff66db6: `parseByteRange` from `@nifrajs/core/range` answers a single `bytes=<first>-<last>` range with one scan of the header, about 5x faster on Node and 4x on Bun. Every answer is unchanged. Range sets, spaces around `=` and anything else still go through the full parser. `@nifrajs/node`'s `static` reader runs the same parser.
+- 02ac072: Static files on Bun and Deno evaluate `If-None-Match` before `If-Modified-Since`, including the wildcard condition for an existing file. A stale entity tag can no longer produce a `304` from its accompanying date.
+- 529f8d2: Static files are tagged by their content on every self-hosting entry: `servePublicDir` (the Bun entry and `nifra dev`), `@nifrajs/node`'s `static` reader and the generated Deno entry. Each sends a strong `ETag` of 128 bits of the file's SHA-256, the same for the same bytes on every instance and runtime. A replacement that keeps a file's size and modification time (`cp -p`, `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s) is no longer answered with a `304` for the old copy, and a resumed download is no longer spliced from two versions. The Node reader's `"<mtime>-<size>"` tag is gone; the Bun and Deno entries send a tag for the first time.
+  
+  - A tag is remembered per process for the file version it was read from (device, inode, size, mtime and ctime), so a known file costs no extra read. The first request for a file reads it once, and a file within the buffered size is then served from those bytes. Concurrent first requests share one read. A file changed in the last 2 s is read again until its ctime settles. A file over 256 MiB (`CONTENT_TAG_MAX`) is tagged by that identity instead: still strong, but different on each instance.
+  - `Last-Modified` is sent only while the file's mtime is the time of its own last change (within 1 s of its ctime). A file whose mtime a copy or build set, such as every file in a container image, is sent without it, so `If-Modified-Since` cannot validate it.
+  - An `If-Range` date no longer keeps a range for a file with a strong tag; a client resumes by the tag. On Node a configured strong `ETag` likewise sends the whole file for a date, while a configured weak one still lets a configured `Last-Modified` resume by its exact date.
+  - `@nifrajs/core/static-file` exports `contentTags`, `CONTENT_TAG_MAX`, `lastModifiedOf` and `isNotModified`, the `If-None-Match` and `If-Modified-Since` check all three readers share. `ifRangeAllowsPartial` now takes the file's tag.
+
 ## 5.3.0
 
 ### Patch Changes
