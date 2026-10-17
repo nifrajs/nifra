@@ -23,6 +23,11 @@ The shell also discovers workflow extensions and controlled UI manifests through
 the same RPC connection. Workflow execution remains bounded by the host, and
 the navigation, approval, and security surfaces stay owned by the stable shell.
 
+Workbench loads `.nifra/extensions/**` from `--cwd` only when started with
+`--extensions`, as `nifra-agent` does. An extension module's top-level code runs
+as soon as it is imported, before its declared `capabilities` are checked, so
+pass the flag only for a repository you trust.
+
 ## Capability registry and decision inbox
 
 The inspector surfaces two host-owned control planes, both driven only by the
