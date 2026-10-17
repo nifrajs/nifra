@@ -19,11 +19,17 @@ const app = server()
     for (let i = 0; i < p; i++) app.publish("room", MSG)
     return { fired: p, ms: performance.now() - t0 }
   })
-  .sse("/feed", { sse: t.object({ n: t.integer() }) }, (c, stream) => {
-    const n = Number(new URL(c.req.url).searchParams.get("n") ?? "0")
-    for (let i = 0; i < n; i++) stream.send({ n: i })
-    stream.close()
-  })
+  .sse(
+    "/feed",
+    { sse: t.object({ n: t.integer() }) },
+    (c, stream) => {
+      const n = Number(new URL(c.req.url).searchParams.get("n") ?? "0")
+      for (let i = 0; i < n; i++) stream.send({ n: i })
+      stream.close()
+    },
+    // The 200,000-event fixture queues roughly 4 MiB before the client can read; budget that burst.
+    { maxBufferedBytes: 8 * 1024 * 1024 },
+  )
 
 app.listen(port) // listen() is the Bun adapter binding on the built server
 console.log(`READY ${port}`)

@@ -6,13 +6,14 @@
  * read bench/ssr/README.md warns against. The landing bar chart and multipliers stay Table A only.
  */
 import { type BenchRow, type Multiplier, NIFRA_VERSION, packageVersion } from "../site-bench.ts"
-import { rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
+import { pairedRatio, rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
 
 /** One measured Table A row: the target it ran plus the framework section it ran under. */
 export interface SsrRunRow {
   readonly framework: string
   readonly target: SsrBenchTarget
   readonly result: SsrBenchResult
+  readonly samples?: readonly number[]
 }
 
 /** A /benchmarks table row - display-ready, one per target. */
@@ -204,7 +205,11 @@ export function multipliersSlice(
     if (nifraNode === undefined || rivalRow === undefined || rivalRow.result.rps === 0) continue
     out.push({
       fw,
-      mult: formatMultiplier(nifraNode.result.rps / rivalRow.result.rps),
+      mult: formatMultiplier(
+        nifraNode.samples !== undefined && rivalRow.samples !== undefined
+          ? pairedRatio(nifraNode.samples, rivalRow.samples)
+          : nifraNode.result.rps / rivalRow.result.rps,
+      ),
       rival: rival.label,
       rivalVersion: versionOf(rivalRow.target),
     })

@@ -4,6 +4,7 @@ import {
   measureHydrationPayload,
   median,
   pairedRatio,
+  parseOha,
   roundOrder,
   rowKind,
   type SsrBenchTarget,
@@ -91,6 +92,26 @@ describe("interleaved rounds", () => {
   })
 })
 
+describe("successful SSR samples", () => {
+  const sample = (successRate: number, statuses: Record<string, number>) =>
+    JSON.stringify({
+      summary: { requestsPerSec: 1000, successRate },
+      latencyPercentiles: { p50: 0.001, p99: 0.005 },
+      statusCodeDistribution: statuses,
+    })
+
+  test("accepts a fully successful HTTP 200 sample", () => {
+    expect(parseOha(sample(1, { "200": 1000 }))).toEqual({ rps: 1000, p50ms: 1, p99ms: 5 })
+  })
+
+  test("rejects partial success, HTTP errors, and empty status counts", () => {
+    expect(() => parseOha(sample(0.995, { "200": 995 }))).toThrow("invalid sample")
+    expect(() => parseOha(sample(1, { "200": 999, "500": 1 }))).toThrow("invalid sample")
+    expect(() => parseOha(sample(1, { "200": 0 }))).toThrow("invalid sample")
+    expect(() => parseOha(sample(1, {}))).toThrow("unexpected JSON shape")
+  })
+})
+
 describe("site slices", () => {
   const result = { rps: 100, p50ms: 1, p99ms: 2, payloadRaw: 1024, payloadGzip: 512 }
   const react = tables("A").find((section) => section.label.startsWith("React"))?.targets ?? []
@@ -114,6 +135,16 @@ describe("site slices", () => {
     }
     expect(multipliersSlice(rows, versionOf)).toEqual([
       { fw: "React", mult: "3×", rival: "Next.js", rivalVersion: "16.0.0" },
+    ])
+  })
+
+  test("website multipliers use the same paired-round statistic as the console", () => {
+    const measured = rows.map((row) => ({
+      ...row,
+      samples: row.target.name === "nifra+react (node)" ? [100, 1000, 100] : [10, 100, 1000],
+    }))
+    expect(multipliersSlice(measured, versionOf)).toEqual([
+      { fw: "React", mult: "10×", rival: "Next.js", rivalVersion: "16.0.0" },
     ])
   })
 

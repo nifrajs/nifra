@@ -1,4 +1,4 @@
-import { catalogItems } from "$lib/catalog"
+import { catalogItems } from "#lib/catalog.js"
 
 /** Per-request SSR - same workload as the nifra bench (no static cache). */
 export function load() {

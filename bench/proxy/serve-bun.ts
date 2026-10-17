@@ -60,9 +60,13 @@ if (framework === "nifra") {
     port,
     fetch(req) {
       const url = new URL(req.url)
-      // `new Request(url, req)` is the clone-with-a-new-URL idiom - passing the Request as the
-      // `init` bag instead throws a DOMException on a body-bearing method.
-      return fetch(new Request(`${upstream}${url.pathname}${url.search}`, req))
+      // Cloning an incoming Bun Request churns upstream POST sockets; explicit forwarding reuses them.
+      return fetch(`${upstream}${url.pathname}${url.search}`, {
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
+        signal: req.signal,
+      })
     },
   })
 } else {

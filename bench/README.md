@@ -61,6 +61,9 @@ the framework comparison.
 `bench:http:realworld` (`bench/http-realworld/`) runs the same GET/POST split on a route with what a
 real API route actually has - security headers, CORS, a request-id hook, bearer-token auth, a cookie
 read - which on nifra disqualifies every fused fast lane, so it measures the general lifecycle path.
+Its Bun runner preloads `dist-core-preload.ts` so workspace middleware shares the app's built core;
+otherwise Bun's source export condition loads a second core beside the explicit dist app imports.
+The preload is scoped to the local checkout; `BENCH_APP_DIR` keeps its own package resolution.
 A third workload adds one body-observing middleware (an `x-body-hash` over the final serialized
 body) through each framework's own idiomatic body tier (nifra `onResponseBody`, Fastify `onSend`,
 Elysia `mapResponse`, Hono drain-and-rebuild, Express `res.json` wrap, inline for the raw ceilings) -
