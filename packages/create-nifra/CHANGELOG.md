@@ -1,5 +1,11 @@
 # create-nifra
 
+## 5.4.0
+
+### Patch Changes
+
+- dd8ebf5: New projects now use Bun 1.4.3 in their deploy workflow.
+
 ## 5.3.0
 
 ### Patch Changes

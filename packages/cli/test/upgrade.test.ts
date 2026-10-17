@@ -719,8 +719,8 @@ describe("computeUpgrade / runUpgrade", () => {
     ).toBe(true)
   })
 
-  test("an upgrade from 5.0 to 5.3 carries the notes of every minor, in order", () => {
-    const notes = chainRecipes("5.3.0", "5.0.0").notes ?? []
+  test("an upgrade from 5.0 to 5.4 carries the notes of every minor, in order", () => {
+    const notes = chainRecipes("5.4.0", "5.0.0").notes ?? []
     const at = (prefix: string) => notes.findIndex((note) => note.startsWith(prefix))
     const order = [
       at("5.1.0: "),
@@ -730,6 +730,9 @@ describe("computeUpgrade / runUpgrade", () => {
       at("5.3.0: A route answering `status(code, body)`"),
       at("5.3.0: `nifra check` adds NF-C045"),
       at("5.3.0: `nifra upgrade` leaves a `peerDependencies` range"),
+      at("5.4.0: The server entry a `node` build generates"),
+      at("5.4.0: Static files carry a strong `ETag`"),
+      at("5.4.0: On Bun, `servePublicDir`"),
     ]
     expect(order.every((index) => index >= 0)).toBe(true)
     expect(order.toSorted((a, b) => a - b)).toEqual(order)

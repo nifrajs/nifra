@@ -5,13 +5,13 @@
       "name": "Nifra + React (Bun)",
       "reqs": 34143,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nifra + React (Node)",
       "reqs": 28899,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Next.js (Node)",
@@ -29,13 +29,13 @@
       "name": "Nifra + React (Bun)",
       "reqs": 34143,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nifra + React (Node)",
       "reqs": 28899,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Next.js (Node)",
@@ -51,13 +51,13 @@
       "name": "Nifra + Solid (Bun)",
       "reqs": 34120,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nifra + Solid (Node)",
       "reqs": 30031,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "SolidStart (Node)",
@@ -68,13 +68,13 @@
       "name": "Nifra + Vue (Bun)",
       "reqs": 36609,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nifra + Vue (Node)",
       "reqs": 25191,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nuxt (Node)",
@@ -85,13 +85,13 @@
       "name": "Nifra + Svelte (Bun)",
       "reqs": 46720,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nifra + Svelte (Node)",
       "reqs": 31385,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "SvelteKit (Node)",
@@ -102,13 +102,13 @@
       "name": "Nifra + Preact (Bun)",
       "reqs": 36285,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     },
     {
       "name": "Nifra + Preact (Node)",
       "reqs": 30247,
       "you": true,
-      "version": "5.3.0"
+      "version": "5.4.0"
     }
   ],
   "multipliers": [
@@ -146,7 +146,7 @@
     },
     {
       "name": "Nifra",
-      "version": "5.3.0",
+      "version": "5.4.0",
       "reqs": 93311,
       "you": true
     },
@@ -170,7 +170,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.3.0",
+          "version": "5.4.0",
           "getUsers": "121,813",
           "postUsers": "100,940",
           "nifra": true
@@ -195,7 +195,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.3.0",
+          "version": "5.4.0",
           "getUsers": "93,311",
           "postUsers": "68,454",
           "nifra": true
@@ -232,7 +232,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.3.0",
+          "version": "5.4.0",
           "getUsers": "104,519",
           "postUsers": "93,144",
           "nifra": true
@@ -260,7 +260,7 @@
     },
     {
       "name": "Nifra",
-      "version": "5.3.0",
+      "version": "5.4.0",
       "kb": 34.8,
       "you": true
     },
@@ -292,7 +292,7 @@
           "p99ms": 3.02,
           "jsGzKb": 76.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + React (Node)",
@@ -302,7 +302,7 @@
           "p99ms": 3.4,
           "jsGzKb": 76.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Next.js (Node)",
@@ -330,7 +330,7 @@
           "p99ms": 2.56,
           "jsGzKb": 60.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + React render API in your own server (Node)",
@@ -340,7 +340,7 @@
           "p99ms": 3.65,
           "jsGzKb": 60.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -355,7 +355,7 @@
           "p99ms": 2.85,
           "jsGzKb": 16.4,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Solid (Node)",
@@ -365,7 +365,7 @@
           "p99ms": 3.19,
           "jsGzKb": 16.4,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "SolidStart (Node)",
@@ -384,7 +384,7 @@
           "p99ms": 2.5,
           "jsGzKb": 6.3,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Solid render API in your own server (Node)",
@@ -394,7 +394,7 @@
           "p99ms": 3.48,
           "jsGzKb": 6.3,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -409,7 +409,7 @@
           "p99ms": 2.89,
           "jsGzKb": 19.2,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Vue (Node)",
@@ -419,7 +419,7 @@
           "p99ms": 3.71,
           "jsGzKb": 19.2,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nuxt (Node)",
@@ -438,7 +438,7 @@
           "p99ms": 2.49,
           "jsGzKb": 27.5,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Vue render API in your own server (Node)",
@@ -448,7 +448,7 @@
           "p99ms": 4,
           "jsGzKb": 27.5,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -463,7 +463,7 @@
           "p99ms": 2.24,
           "jsGzKb": 16.9,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Svelte (Node)",
@@ -473,7 +473,7 @@
           "p99ms": 3.03,
           "jsGzKb": 16.9,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "SvelteKit (Node)",
@@ -492,7 +492,7 @@
           "p99ms": 1.84,
           "jsGzKb": 20.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Svelte render API in your own server (Node)",
@@ -502,7 +502,7 @@
           "p99ms": 3.24,
           "jsGzKb": 20.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -517,7 +517,7 @@
           "p99ms": 2.83,
           "jsGzKb": 19.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Preact (Node)",
@@ -527,7 +527,7 @@
           "p99ms": 3.19,
           "jsGzKb": 19.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Preact render API in your own server (Bun)",
@@ -537,7 +537,7 @@
           "p99ms": 2.51,
           "jsGzKb": 7.4,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Preact render API in your own server (Node)",
@@ -547,7 +547,7 @@
           "p99ms": 3.55,
           "jsGzKb": 7.4,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     }
@@ -564,7 +564,7 @@
           "p99ms": 1.03,
           "jsGzKb": 76.5,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + React SSG (Node)",
@@ -574,7 +574,7 @@
           "p99ms": 1.6,
           "jsGzKb": 76.5,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Next.js static (Node)",
@@ -593,7 +593,7 @@
           "p99ms": 1.07,
           "jsGzKb": 76.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + React ISR (Node)",
@@ -603,7 +603,7 @@
           "p99ms": 1.9,
           "jsGzKb": 76.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Next.js ISR (Node)",
@@ -622,7 +622,7 @@
           "p99ms": 2.38,
           "jsGzKb": 76.5,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -637,7 +637,7 @@
           "p99ms": 1.04,
           "jsGzKb": 16.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Solid SSG (Node)",
@@ -647,7 +647,7 @@
           "p99ms": 1.62,
           "jsGzKb": 16.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "SolidStart static (Node)",
@@ -666,7 +666,7 @@
           "p99ms": 2.43,
           "jsGzKb": 16.7,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -681,7 +681,7 @@
           "p99ms": 1.02,
           "jsGzKb": 19.6,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Vue SSG (Node)",
@@ -691,7 +691,7 @@
           "p99ms": 1.59,
           "jsGzKb": 19.6,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nuxt static (Node)",
@@ -710,7 +710,7 @@
           "p99ms": 2.39,
           "jsGzKb": 19.6,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -725,7 +725,7 @@
           "p99ms": 1.04,
           "jsGzKb": 17.2,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Svelte SSG (Node)",
@@ -735,7 +735,7 @@
           "p99ms": 1.6,
           "jsGzKb": 17.2,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "SvelteKit static (Node)",
@@ -754,7 +754,7 @@
           "p99ms": 2.39,
           "jsGzKb": 17.2,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     },
@@ -769,7 +769,7 @@
           "p99ms": 1.03,
           "jsGzKb": 20.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Preact SSG (Node)",
@@ -779,7 +779,7 @@
           "p99ms": 1.61,
           "jsGzKb": 20.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         },
         {
           "name": "Nifra + Preact SSG files on a static host",
@@ -789,7 +789,7 @@
           "p99ms": 2.46,
           "jsGzKb": 20.1,
           "nifra": true,
-          "version": "5.3.0"
+          "version": "5.4.0"
         }
       ]
     }
@@ -801,7 +801,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.3.0",
+          "version": "5.4.0",
           "get": "80,861",
           "post": "77,831",
           "body": "64,548",
@@ -829,7 +829,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.3.0",
+          "version": "5.4.0",
           "get": "74,209",
           "post": "65,925",
           "body": "66,669",
@@ -871,7 +871,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.3.0",
+          "version": "5.4.0",
           "get": "57,489",
           "post": "66,897",
           "body": "49,908",
