@@ -1,4 +1,4 @@
-import { server, status } from "@nifrajs/core"
+import { type StandardSchemaV1, server, status } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
@@ -603,6 +603,117 @@ Deno.test("a Host that is not an authority never steers the routed path", async 
       const served = await rawExchange(running.port, "GET", "/posts", undefined, host)
       assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
     }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+const named: StandardSchemaV1<unknown, { name: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "deno-test",
+    validate: (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      "name" in value &&
+      typeof value.name === "string"
+        ? { value: { name: value.name } }
+        : { issues: [{ message: "expected { name: string }" }] },
+  },
+}
+
+// Deno's own cache slot for a request's `Headers`, read so a release that renames it fails here.
+function headersCacheSlot(): symbol {
+  const slot = Object.getOwnPropertySymbols(new Request("http://localhost/")).find(
+    (key) => key.description === "headers cache",
+  )
+  if (slot === undefined) throw new Error("this Deno has no `headers cache` slot on a Request")
+  return slot
+}
+
+// The Host check, the upgrade probe and the JSON body lane read single headers: going through
+// `req.headers` makes Deno build every header of the request, which cost a route that reads none ~4%
+// of its throughput. The socket route makes the adapter probe every plain request for an upgrade.
+Deno.test("the Host check, upgrade probe and JSON body lane leave the header list unbuilt", async () => {
+  const headersCache = headersCacheSlot()
+  const seen: Request[] = []
+  const app = server()
+    .use(websocket())
+    .ws("/socket", { message: (ws, data) => ws.send(data) })
+    .get("/bare", (c) => {
+      seen.push(c.req)
+      return { ok: true }
+    })
+    .post("/users", { body: named }, (c) => {
+      seen.push(c.req)
+      return { name: c.body.name }
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const base = `http://127.0.0.1:${running.port}`
+    assertEquals(await (await fetch(`${base}/bare`)).json(), { ok: true })
+    const created = await fetch(`${base}/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"name":"Ada"}',
+    })
+    assertEquals(await created.json(), { name: "Ada" })
+    assertEquals(seen.length, 2)
+    for (const request of seen) {
+      assertEquals(Reflect.get(request, headersCache), undefined)
+    }
+    const refused = await rawExchange(running.port, "GET", "/nope", undefined, "x/bare#")
+    assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// A request a hook rebuilt carries the hook's headers, not the ones that arrived on the wire.
+Deno.test("the body lane reads the headers of a request a hook rebuilt", async () => {
+  const app = server()
+    .onRequest((req) =>
+      req.headers.get("x-body") === "json"
+        ? new Request(req, { headers: { "content-type": "application/json" } })
+        : undefined,
+    )
+    .post("/users", { body: named }, (c) => ({ name: c.body.name }))
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const created = await fetch(`http://127.0.0.1:${running.port}/users`, {
+      method: "POST",
+      headers: { "content-type": "text/plain", "x-body": "json" },
+      body: '{"name":"Ada"}',
+    })
+    assertEquals(created.status, 200)
+    assertEquals(await created.json(), { name: "Ada" })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// A request Deno did not parse off the wire has no single-header reader; its Host is still checked.
+Deno.test("a constructed request's Host is checked through its headers", async () => {
+  const app = requestTargetApp(server())
+  const refused = await app.fetch(
+    new Request("http://127.0.0.1/posts", { headers: { host: "x/users/7#" } }),
+  )
+  assertEquals(refused.status, 400)
+  assertEquals(await refused.json(), { ok: false, error: "invalid_host" })
+  const served = await app.fetch(
+    new Request("http://127.0.0.1/posts", { headers: { host: "127.0.0.1:8080" } }),
+  )
+  assertEquals(await served.json(), { route: "GET /posts" })
+})
+
+Deno.test("a handshake whose Host is not an authority is refused", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/echo", { message: (ws, data) => ws.send(data) })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await rawUpgradeStatus(running.port, "/nope", {}, "127.0.0.1/echo#"), 400)
+    assertEquals(await rawUpgradeStatus(running.port, "/echo", {}, "127.0.0.1:8080"), 101)
   } finally {
     await running.stop({ drainMs: 0 })
   }
