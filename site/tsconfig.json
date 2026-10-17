@@ -1,0 +1,22 @@
+{
+  // The docs site: excluded from the root (DOM-free) program, so it is checked as its own project. Like
+  // the web examples it resolves `@nifrajs/*` to the built declarations, so run the build first.
+  // `server-manifest.ts` is build output; scripts/typecheck.ts writes it before checking.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["bun", "react", "react-dom", "mdx"]
+  },
+  "include": ["./**/*.ts", "./**/*.tsx"],
+  "exclude": [
+    "./node_modules",
+    "./public",
+    "./dist*",
+    "./.build-*",
+    "./.vercel",
+    // Calls the `Deno` global, which no lib here declares - the same exclusion the root program applies
+    // to every Deno-only entry. Its app wiring is the same as server-node.ts, which is checked.
+    "./server-deno.ts"
+  ]
+}

@@ -31,7 +31,7 @@ function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
-function fromBase64Url(text: string): Uint8Array {
+function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
   const b64 = text.replace(/-/g, "+").replace(/_/g, "/")
   const padded = b64.length % 4 === 0 ? b64 : b64 + "=".repeat(4 - (b64.length % 4))
   const binary = atob(padded)
@@ -40,13 +40,13 @@ function fromBase64Url(text: string): Uint8Array {
   return bytes
 }
 
-async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
+async function gzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
 /** Decompress with a hard output cap - a small gzip can expand to gigabytes, so abort past the limit. */
-async function gunzipBounded(bytes: Uint8Array, max: number): Promise<Uint8Array> {
+async function gunzipBounded(bytes: Uint8Array<ArrayBuffer>, max: number): Promise<Uint8Array> {
   const ds = new DecompressionStream("gzip")
   const writer = ds.writable.getWriter()
   // Bad (non-gzip) input rejects on BOTH ends; the reader-side error below is the one we act on, so

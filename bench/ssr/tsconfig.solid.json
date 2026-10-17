@@ -1,0 +1,4 @@
+{
+  "extends": "../../examples/tsconfig.solid.json",
+  "include": ["nifra-solid*/**/*.ts", "nifra-solid*/**/*.tsx"]
+}

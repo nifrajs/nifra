@@ -33,7 +33,7 @@ function isPageFile(name: string): boolean {
   return name.endsWith(".tsx") || name.endsWith(".mdx")
 }
 
-interface Route {
+export interface Route {
   /** Site-root-relative URL, e.g. `/blog/bun-vs-node` (the home page is `/`). */
   readonly url: string
   /** Repo-relative path of the route file, for the git lastmod lookup. */
@@ -162,7 +162,8 @@ function urlsOf(xml: string): string[] {
   return [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1] ?? "").sort()
 }
 
-function routesUnder(root: string): Route[] {
+/** Every page route under `root`'s `site/routes`, sorted by URL (`isPageFile` says which count). */
+export function routesUnder(root: string): Route[] {
   const routes: Route[] = []
   collect(`${root}/site/routes`, "", routes, root)
   return routes.sort((a, b) => (a.url < b.url ? -1 : 1))

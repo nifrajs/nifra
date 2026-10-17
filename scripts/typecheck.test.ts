@@ -4,6 +4,7 @@ import { join, resolve } from "node:path"
 import {
   exampleTypecheckConfigs,
   TYPECHECK_PROJECTS,
+  uncheckedBenchSources,
   uncheckedExampleSources,
   uncheckedScriptSources,
   uncoveredTypecheckConfigs,
@@ -40,6 +41,12 @@ test("every tracked example source is in some typecheck project", () => {
 // errors reach no checker at all.
 test("every tracked script is in some typecheck project", () => {
   expect(uncheckedScriptSources()).toEqual([])
+})
+
+// `bench/ssr` is outside the root program; a nifra bench app no framework project includes would only
+// show its type errors when the bench is built.
+test("every tracked nifra bench source is in some typecheck project", () => {
+  expect(uncheckedBenchSources()).toEqual([])
 })
 
 test("every web example with routes has its own project", () => {

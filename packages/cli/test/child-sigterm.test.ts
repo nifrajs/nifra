@@ -16,6 +16,13 @@ import {
 const root = createFixtureRoot("child-sigterm-")
 afterAll(() => removeFixtureRoot(root))
 
+// Fixture source that writes `value` to `file` under a temporary name, then renames it into place.
+// `fileAppears` wakes on the create event, and a plain write's content can land after it.
+const publish = (dir: string, file: string, value: string): string[] => [
+  `writeFileSync(${JSON.stringify(join(dir, `${file}.partial`))}, ${value})`,
+  `renameSync(${JSON.stringify(join(dir, `${file}.partial`))}, ${JSON.stringify(join(dir, file))})`,
+]
+
 /** Resolves once `file` exists in `dir`: the project has installed its SIGTERM handler. */
 async function fileAppears(dir: string, file: string): Promise<void> {
   const watcher = new AbortController()
@@ -36,9 +43,9 @@ function ignoringApp(): string {
     dir,
     "backend/app.ts",
     [
-      'import { writeFileSync } from "node:fs"',
+      'import { renameSync, writeFileSync } from "node:fs"',
       "process.on('SIGTERM', () => {})",
-      `writeFileSync(${JSON.stringify(join(dir, "ready"))}, String(process.pid))`,
+      ...publish(dir, "ready", "String(process.pid)"),
       "export const backend = { fetch: () => new Promise(() => {}) }",
       "",
     ].join("\n"),
@@ -90,9 +97,9 @@ test.skipIf(process.platform === "win32")(
       dir,
       "backend/app.ts",
       [
-        'import { writeFileSync } from "node:fs"',
+        'import { renameSync, writeFileSync } from "node:fs"',
         "const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'])",
-        `writeFileSync(${JSON.stringify(join(dir, "ready"))}, String(child.pid))`,
+        ...publish(dir, "ready", "String(child.pid)"),
         "export const backend = { fetch: () => new Promise(() => {}) }",
         "",
       ].join("\n"),

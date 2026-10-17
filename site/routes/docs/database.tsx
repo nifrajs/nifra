@@ -33,17 +33,6 @@ export const app = server().get("/users/:id", async (c) => {
   return user ?? new Response("Not found", { status: 404 })
 })`
 
-const EDGE = `// doc-check: skip - uses the Workers \`D1Database\` global (from @cloudflare/workers-types).
-import { server } from "@nifrajs/core/server"
-
-// On Workers there's no raw TCP, so use an HTTP-based driver. D1 is a typed platform binding:
-interface Env { DB: D1Database }
-
-const app = server<Env>().get("/users/:id", async (c) => {
-  const user = await c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(c.params.id).first()
-  return user ?? new Response("Not found", { status: 404 })
-})`
-
 const DRIZZLE = `// backend/db/schema.ts - define your schema (source of truth)
 import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core"
 export const users = pgTable("users", {

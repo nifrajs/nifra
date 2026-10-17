@@ -102,6 +102,17 @@ writeFileSync(
   )}\n`,
 )
 
+// (5) Render every page through the assembled worker: a page that throws while rendering still builds.
+// A child process: this one already holds @nifrajs/core from the build, and the worker bundles its own.
+const pages = Bun.spawnSync(
+  [process.execPath, `${dir}/../scripts/site-pages.ts`, `${dist}/_worker.js`],
+  {
+    stdout: "inherit",
+    stderr: "inherit",
+  },
+)
+if (pages.exitCode !== 0) process.exit(1)
+
 console.log(
   `Cloudflare Pages output: site/dist (_worker.js + _routes.json + client ${client.entry})`,
 )
