@@ -34,6 +34,7 @@ import {
   multipliersSlice,
   type SsrRunRow,
   ssrTablesSlice,
+  ssrTargetVersion,
 } from "./site-slice.ts"
 import { ALL_TABLE_SECTIONS, type SsrTableSection } from "./targets.ts"
 
@@ -169,11 +170,11 @@ const expectedB = expected("Table B")
 if (tableARows.length === expectedA && tableBRows.length === expectedB) {
   // writeSiteBench logs the update itself.
   await writeSiteBench({
-    heroSsr: heroSsrSlice(tableARows),
-    frontend: frontendSlice(tableARows),
-    multipliers: multipliersSlice(tableARows),
-    ssrTables: ssrTablesSlice(tableARows),
-    ssrTablesB: ssrTablesSlice(tableBRows),
+    heroSsr: heroSsrSlice(tableARows, ssrTargetVersion),
+    frontend: frontendSlice(tableARows, ssrTargetVersion),
+    multipliers: multipliersSlice(tableARows, ssrTargetVersion),
+    ssrTables: ssrTablesSlice(tableARows, ssrTargetVersion),
+    ssrTablesB: ssrTablesSlice(tableBRows, ssrTargetVersion),
   })
 } else {
   console.log(

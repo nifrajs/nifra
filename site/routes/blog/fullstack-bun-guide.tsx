@@ -1,4 +1,4 @@
-import { formatPercent, runtimeCeilingPercent } from "../../shared/data/benchmarks"
+import { formatPercent, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { CodeBlock } from "../../shared/highlight"
 import { postMeta } from "../../shared/meta"
 
@@ -138,10 +138,17 @@ export default function FullstackBunGuide() {
       <h2>Deploying - and the runtime escape hatch</h2>
       <p>
         <code>nifra build</code> produces the production server. On Bun, our published benchmarks
-        put the framework at {formatPercent(runtimeCeilingPercent("Bun"))} of a hand-rolled{" "}
-        <code>Bun.serve</code> baseline on GET - the layer costs nothing measurable. And because
-        runtimes are adapters, the same app deploys to Node, Deno, or edge workers unchanged if your
-        infrastructure demands it. Numbers and methodology: <a href="/benchmarks">benchmarks</a>.
+        put the framework at{" "}
+        {formatPercent(
+          percentOf(
+            httpWorkloadRps("Bun", "Nifra", "getUsers"),
+            httpWorkloadRps("Bun", "Elysia", "getUsers"),
+          ),
+        )}{" "}
+        of Elysia, the fastest backend-only Bun framework we measure, on GET - the full-stack layer
+        costs no backend speed. And because runtimes are adapters, the same app deploys to Node,
+        Deno, or edge workers unchanged if your infrastructure demands it. Numbers and methodology:{" "}
+        <a href="/benchmarks">benchmarks</a>.
       </p>
 
       <h2>Where to go next</h2>

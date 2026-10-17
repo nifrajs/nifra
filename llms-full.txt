@@ -235,23 +235,34 @@ to full-stack later without a rewrite.
 -
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
-context, and serialization. In the current matrix (median of 5 full runs) Nifra
-**tops the framework field on Bun** - level with Elysia on `GET /users/:id` at
+context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
+percentOf(
+httpWorkloadRps("Bun", "Nifra", "getUsers"),
+httpWorkloadRps("Bun", "Elysia", "getUsers"),
+)} of Elysia on `GET /users/:id` and
 percentOf(
 httpWorkloadRps("Bun", "Nifra", "postUsers"),
 httpWorkloadRps("Bun", "Elysia", "postUsers"),
-of Elysia on the validated `POST` - and
-**leads every framework on Deno** on both workloads. On **Node** it
-**leads the framework field too** - at
+)} on the validated `POST` - and
+**level with Fastify on Node** ({formatPercent(
+percentOf(
+httpWorkloadRps("Node", "Nifra", "getUsers"),
+httpWorkloadRps("Node", "Fastify", "getUsers"),
+)} of Fastify on GET,
 percentOf(
 httpWorkloadRps("Node", "Nifra", "postUsers"),
 httpWorkloadRps("Node", "Fastify", "postUsers"),
-of Fastify on the validated `POST` ({formatPercent(
+)} on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at {formatPercent(
 percentOf(
-httpWorkloadRps("Node", "Nifra", "postUsers"),
-httpWorkloadRps("Node", "node-raw", "postUsers"),
-)} of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
-and Express behind. In the realistic shape (security headers + CORS +
+httpWorkloadRps("Deno", "Nifra", "getUsers"),
+httpWorkloadRps("Deno", "Elysia", "getUsers"),
+)} of Elysia on
+GET and {formatPercent(
+percentOf(
+httpWorkloadRps("Deno", "Nifra", "postUsers"),
+httpWorkloadRps("Deno", "Elysia", "postUsers"),
+)} on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured with
 `oha`) Nifra runs at **{formatPercent(
 percentOf(
@@ -6420,8 +6431,8 @@ host-specific deploy step for you to fill in (Fly, a registry push, SSH, …).
 
 ### Bun (its home)
 
-`app.listen(3000)` - the native Bun server. Sits at the raw `Bun.serve`
-ceiling (see [benchmarks](/benchmarks)).
+`app.listen(3000)` - the native Bun server, and the fastest way to serve a Nifra
+app (see [benchmarks](/benchmarks)).
 
 **Every core:** Bun is single-threaded per process - for multi-core boxes,
 spawn one process per core, each binding the same port with

@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url"
 import { assertBenchmarkPublishable } from "../publish-guard.ts"
 import { type Matrix, type MatrixCell, mergeRuns, pooledRatio } from "../rounds.ts"
 import {
-  httpRuntimeFromResults,
+  capturedMeta,
   httpSliceFromNode,
   httpWorkloadsFromResults,
   writeSiteBench,
@@ -217,13 +217,13 @@ process.stderr.write(`updated ${BENCHMARKS}\n`)
 // published bars never drift from the latest run. Skipped when this run had no Node section - so a
 // `bench:http bun` run leaves the site's Node slice intact rather than wiping it.
 const httpSlice = httpSliceFromNode(merged.node as never)
-const httpWorkloads = httpWorkloadsFromResults(merged)
-const httpRuntime = httpRuntimeFromResults(merged)
+const httpWorkloads = httpWorkloadsFromResults(merged, meta)
 if (httpSlice.length > 0) {
   await writeSiteBench({
     http: httpSlice,
     // A single-runtime run must not erase the other runtime tables in the canonical dataset.
-    ...(runtimes.length === 3 && httpWorkloads.length === 3 ? { httpWorkloads } : {}),
-    ...(runtimes.length === 3 && httpRuntime.length === 3 ? { httpRuntime } : {}),
+    ...(runtimes.length === 3 && httpWorkloads.length === 3
+      ? { httpWorkloads, captured: capturedMeta(meta) }
+      : {}),
   })
 }

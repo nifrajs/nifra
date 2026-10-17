@@ -32,8 +32,7 @@ export default function BestNodeFrameworks() {
 
       <h2>Throughput, measured</h2>
       <p>
-        From our published run (oha @ 50 conns, identical route semantics, raw{" "}
-        <code>node:http</code> ceiling row included; harness in the repo):
+        From our published run (oha @ 50 conns, identical route semantics; harness in the repo):
       </p>
       <table>
         <thead>
@@ -107,7 +106,7 @@ export default function BestNodeFrameworks() {
       <h2>Hono - portability first</h2>
       <p>
         One tiny API across every runtime. On Node specifically it gives up substantial throughput
-        (see table) - its natural homes are Workers and small services where portability beats raw
+        (see table) - its natural homes are Workers and small services where portability beats peak
         speed.
       </p>
 

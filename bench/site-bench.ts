@@ -5,17 +5,24 @@
  *
  * Each suite writes only the result slices it measured; partial updates leave other published
  * slices intact. The website tables and comparison articles consume this same dataset.
+ *
+ * Every published row names the version it measured. The raw-runtime and raw-renderer rows the
+ * suites measure against stay in the local reports only: on the site a framework row above a "raw"
+ * one reads as a measurement error rather than as the ratio it is.
  */
 
-import { join } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 
 export interface BenchRow {
   readonly name: string
+  readonly version: string
   readonly reqs: number
   readonly you?: boolean
 }
 export interface BundleRow {
   readonly name: string
+  readonly version: string
   readonly kb: number
   readonly you?: boolean
 }
@@ -23,20 +30,25 @@ export interface Multiplier {
   readonly fw: string
   readonly mult: string
   readonly rival: string
+  readonly rivalVersion: string
 }
 export interface ProofStat {
   readonly value: string
   readonly label: string
 }
-export interface HttpRuntimeRow {
-  readonly runtime: string
-  readonly reqs: number
-  readonly pctOfRaw: number
-  readonly you?: boolean
+
+/** When and with which toolchain the published numbers were measured. */
+export interface CapturedMeta {
+  readonly date: string
+  readonly bun: string
+  readonly node: string
+  readonly deno: string
+  readonly oha: string
 }
 
 export interface HttpWorkloadRow {
   readonly name: string
+  readonly version: string
   readonly getUsers: string
   readonly postUsers: string
   readonly nifra?: boolean
@@ -44,6 +56,8 @@ export interface HttpWorkloadRow {
 
 export interface HttpWorkloadTable {
   readonly title: string
+  /** The runtime's version. */
+  readonly version: string
   readonly rows: readonly HttpWorkloadRow[]
 }
 
@@ -56,6 +70,7 @@ export interface HttpWorkloadTable {
  */
 export interface HttpRealworldRow {
   readonly name: string
+  readonly version: string
   readonly get: string
   readonly post: string
   readonly body: string
@@ -64,12 +79,15 @@ export interface HttpRealworldRow {
 
 export interface HttpRealworldTable {
   readonly title: string
+  /** The runtime's version. */
+  readonly version: string
   readonly rows: readonly HttpRealworldRow[]
 }
 
 /** A /benchmarks SSR table row (display-ready; `jsGzKb` = gzipped client JS in KB). */
 export interface SsrSiteRow {
   readonly name: string
+  readonly version: string
   readonly runtime: "bun" | "node"
   readonly rps: number
   readonly p50ms: number
@@ -86,13 +104,13 @@ export interface SsrSiteTable {
 
 export interface SiteBench {
   readonly _note?: string
+  readonly captured?: CapturedMeta
   readonly heroSsr: readonly BenchRow[]
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]
   readonly ssrTables?: readonly SsrSiteTable[]
   /** Table B - cacheable modes (SSG/ISR), rendered as separately-labelled tables, never blended into ssrTables. */
   readonly ssrTablesB?: readonly SsrSiteTable[]
-  readonly httpRuntime?: readonly HttpRuntimeRow[]
   readonly http: readonly BenchRow[]
   /** Core GET/POST workload comparison used by the benchmarks page and articles. */
   readonly httpWorkloads?: readonly HttpWorkloadTable[]
@@ -103,6 +121,70 @@ export interface SiteBench {
 }
 
 const SITE_DATA = join(import.meta.dir, "..", "site", "shared", "data", "benchmarks.json")
+
+function manifestVersion(path: string): string {
+  const manifest: unknown = JSON.parse(readFileSync(path, "utf8"))
+  if (
+    typeof manifest === "object" &&
+    manifest !== null &&
+    "version" in manifest &&
+    typeof manifest.version === "string"
+  )
+    return manifest.version
+  throw new Error(`${path} names no version`)
+}
+
+/**
+ * The installed version of `name`, found the way Node resolves it: the nearest `node_modules` at or
+ * above `from`. A row without a version is never published, so a package that cannot be found throws.
+ */
+export function packageVersion(name: string, from: string = import.meta.dir): string {
+  for (let dir = from; ; dir = dirname(dir)) {
+    const manifest = join(dir, "node_modules", name, "package.json")
+    if (existsSync(manifest)) return manifestVersion(manifest)
+    if (dirname(dir) === dir) throw new Error(`no installed ${name} at or above ${from}`)
+  }
+}
+
+/** The nifra version under benchmark: the workspace's own core package, not an installed copy. */
+export const NIFRA_VERSION = manifestVersion(
+  join(import.meta.dir, "..", "packages", "core", "package.json"),
+)
+
+/** The package each HTTP framework key measures; nifra is the workspace build. */
+const HTTP_PACKAGES: Readonly<Record<string, string>> = {
+  elysia: "elysia",
+  fastify: "fastify",
+  express: "express",
+  hono: "hono",
+}
+
+/** The version a published HTTP row carries. */
+export function httpFrameworkVersion(framework: string): string {
+  if (framework === "nifra") return NIFRA_VERSION
+  const pkg = HTTP_PACKAGES[framework]
+  if (pkg === undefined) throw new Error(`no package recorded for HTTP framework ${framework}`)
+  return packageVersion(pkg)
+}
+
+/** The runtime versions an HTTP matrix ran on, keyed like its results. */
+export interface RuntimeVersions {
+  readonly bun: string
+  readonly node: string
+  readonly deno: string
+}
+
+/** The `captured` slice for a run on `versions`, dated today (UTC). */
+export function capturedMeta(versions: RuntimeVersions & { readonly oha: string }): CapturedMeta {
+  const bare = (version: string): string => version.trim().replace(/^v/, "")
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    bun: bare(versions.bun),
+    node: bare(versions.node),
+    deno: bare(versions.deno),
+    oha: bare(versions.oha),
+  }
+}
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
 export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
@@ -126,58 +208,12 @@ export function httpSliceFromNode(
   for (const [key, label] of Object.entries(DISPLAY)) {
     const rps = node?.[key]?.[workload]?.rps
     if (rps !== undefined && rps > 0)
-      rows.push({ name: label, reqs: Math.round(rps), you: key === "nifra" })
-  }
-  return rows.sort((a, b) => b.reqs - a.reqs)
-}
-
-/**
- * The landing's per-runtime slice: nifra's `GET /users/:id` throughput on each runtime, alongside
- * that runtime's own raw-server ceiling as `pctOfRaw`.
- *
- * The percentage is the point. Raw req/s is NOT comparable across runtimes - Bun's, Node's and
- * Deno's servers, HTTP parsers and thread pools differ enough that a cross-runtime absolute says
- * more about the runtime than about nifra. "How much of this runtime's own ceiling does the
- * framework keep" is comparable, and it is what the landing claims.
- *
- * The interleaved matrices carry `ofCeiling`, the median of per-round ratios to the raw row, and
- * that is what gets published: a ratio of two medians measured apart moves with host load.
- *
- * A runtime missing either cell is dropped rather than published at a percentage computed from a
- * hole. Rows are ordered by throughput, matching how the landing renders them.
- */
-export function httpRuntimeFromResults(
-  results: Record<
-    string,
-    | Record<
-        string,
-        | Record<string, { readonly rps: number; readonly ofCeiling?: number } | undefined>
-        | undefined
-      >
-    | undefined
-  >,
-  workload = "GET /users/:id",
-): readonly HttpRuntimeRow[] {
-  const runtimeConfig: ReadonlyArray<{ key: string; title: string; ceiling: string }> = [
-    { key: "bun", title: "Bun", ceiling: "bun-native" },
-    { key: "deno", title: "Deno", ceiling: "deno-raw" },
-    { key: "node", title: "Node", ceiling: "node-raw" },
-  ]
-  const ok = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n) && n > 0
-
-  const rows: HttpRuntimeRow[] = []
-  for (const runtime of runtimeConfig) {
-    const source = results[runtime.key]
-    if (source === undefined) continue
-    const nifra = source.nifra?.[workload]
-    const raw = source[runtime.ceiling]?.[workload]?.rps
-    if (nifra === undefined || !ok(nifra.rps) || !ok(raw)) continue
-    rows.push({
-      runtime: runtime.title,
-      reqs: Math.round(nifra.rps),
-      pctOfRaw: Math.round((nifra.ofCeiling ?? nifra.rps / raw) * 100),
-      you: true,
-    })
+      rows.push({
+        name: label,
+        version: httpFrameworkVersion(key),
+        reqs: Math.round(rps),
+        you: key === "nifra",
+      })
   }
   return rows.sort((a, b) => b.reqs - a.reqs)
 }
@@ -189,26 +225,20 @@ export function httpWorkloadsFromResults(
     string,
     Record<string, Record<string, { readonly rps: number } | undefined> | undefined> | undefined
   >,
+  runtimeVersions: RuntimeVersions,
 ): readonly HttpWorkloadTable[] {
   const runtimeConfig: ReadonlyArray<{
-    key: string
+    key: keyof RuntimeVersions
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "bun-native", "hono"] },
-    {
-      key: "node",
-      title: "Node",
-      frameworks: ["nifra", "node-raw", "fastify", "elysia", "express", "hono"],
-    },
-    { key: "deno", title: "Deno", frameworks: ["deno-raw", "nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
     elysia: "Elysia",
-    "bun-native": "bun-native",
-    "node-raw": "node-raw",
-    "deno-raw": "deno-raw",
     fastify: "Fastify",
     express: "Express",
     hono: "Hono",
@@ -233,12 +263,18 @@ export function httpWorkloadsFromResults(
         continue
       rows.push({
         name: display[framework] ?? framework,
+        version: httpFrameworkVersion(framework),
         getUsers: format(get),
         postUsers: format(post),
         ...(framework === "nifra" ? { nifra: true } : {}),
       })
     }
-    if (rows.length > 0) tables.push({ title: runtime.title, rows })
+    if (rows.length > 0)
+      tables.push({
+        title: runtime.title,
+        version: runtimeVersions[runtime.key].replace(/^v/, ""),
+        rows,
+      })
   }
   return tables
 }
@@ -254,26 +290,20 @@ export function httpRealworldFromResults(
     Record<string, Record<string, { readonly rps: number } | undefined> | undefined> | undefined
   >,
   workloads: { readonly get: string; readonly post: string; readonly body: string },
+  runtimeVersions: RuntimeVersions,
 ): readonly HttpRealworldTable[] {
   const runtimeConfig: ReadonlyArray<{
-    key: string
+    key: keyof RuntimeVersions
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "bun-native", "hono"] },
-    {
-      key: "node",
-      title: "Node",
-      frameworks: ["nifra", "node-raw", "fastify", "elysia", "express", "hono"],
-    },
-    { key: "deno", title: "Deno", frameworks: ["deno-raw", "nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
     elysia: "Elysia",
-    "bun-native": "bun-native",
-    "node-raw": "node-raw",
-    "deno-raw": "deno-raw",
     fastify: "Fastify",
     express: "Express",
     hono: "Hono",
@@ -293,13 +323,19 @@ export function httpRealworldFromResults(
       if (!ok(get) || !ok(post) || !ok(body)) continue
       rows.push({
         name: display[framework] ?? framework,
+        version: httpFrameworkVersion(framework),
         get: format(get),
         post: format(post),
         body: format(body),
         ...(framework === "nifra" ? { nifra: true } : {}),
       })
     }
-    if (rows.length > 0) tables.push({ title: runtime.title, rows })
+    if (rows.length > 0)
+      tables.push({
+        title: runtime.title,
+        version: runtimeVersions[runtime.key].replace(/^v/, ""),
+        rows,
+      })
   }
   return tables
 }

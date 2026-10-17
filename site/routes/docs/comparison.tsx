@@ -1,4 +1,4 @@
-import { formatPercent, httpRealworldRps, httpWorkloadRps, percentOf, runtimeCeilingPercent } from "../../shared/data/benchmarks"
+import { formatPercent, httpRealworldRps, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
@@ -116,31 +116,43 @@ export default function Comparison() {
         <li>
           <b>Throughput - the realistic case.</b> Router micro-benchmarks flatter Hono (a single compiled
           regex), but a real request also pays for middleware and validation,
-          context, and serialization. In the current matrix (median of 5 full runs) Nifra{" "}
-          <b>tops the framework field on Bun</b> - level with Elysia on <code>GET /users/:id</code> at{" "}
-          {formatPercent(runtimeCeilingPercent("Bun"))} of the raw-runtime ceiling and{" "}
+          context, and serialization. In the current matrix Nifra runs <b>level with Elysia on Bun</b> -{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Bun", "Nifra", "getUsers"),
+              httpWorkloadRps("Bun", "Elysia", "getUsers"),
+            ),
+          )} of Elysia on <code>GET /users/:id</code> and{" "}
           {formatPercent(
             percentOf(
               httpWorkloadRps("Bun", "Nifra", "postUsers"),
               httpWorkloadRps("Bun", "Elysia", "postUsers"),
             ),
-          )}{" "}
-          of Elysia on the validated <code>POST</code> - and{" "}
-          <b>leads every framework on Deno</b> on both workloads. On <b>Node</b> it{" "}
-          <b>leads the framework field too</b> - at{" "}
+          )} on the validated <code>POST</code> - and{" "}
+          <b>level with Fastify on Node</b> ({formatPercent(
+            percentOf(
+              httpWorkloadRps("Node", "Nifra", "getUsers"),
+              httpWorkloadRps("Node", "Fastify", "getUsers"),
+            ),
+          )} of Fastify on GET,{" "}
           {formatPercent(
             percentOf(
               httpWorkloadRps("Node", "Nifra", "postUsers"),
               httpWorkloadRps("Node", "Fastify", "postUsers"),
             ),
-          )}{" "}
-          of Fastify on the validated <code>POST</code> ({formatPercent(
+          )} on the validated <code>POST</code>), with Elysia, Hono,
+          and Express behind. On <b>Deno</b> it runs at {formatPercent(
             percentOf(
-              httpWorkloadRps("Node", "Nifra", "postUsers"),
-              httpWorkloadRps("Node", "node-raw", "postUsers"),
+              httpWorkloadRps("Deno", "Nifra", "getUsers"),
+              httpWorkloadRps("Deno", "Elysia", "getUsers"),
             ),
-          )} of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
-          and Express behind. In the realistic shape (security headers + CORS +
+          )} of Elysia on
+          GET and {formatPercent(
+            percentOf(
+              httpWorkloadRps("Deno", "Nifra", "postUsers"),
+              httpWorkloadRps("Deno", "Elysia", "postUsers"),
+            ),
+          )} on the validated <code>POST</code>. In the realistic shape (security headers + CORS +
           bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON response, measured with{" "}
           <code>oha</code>) Nifra runs at <b>{formatPercent(
             percentOf(

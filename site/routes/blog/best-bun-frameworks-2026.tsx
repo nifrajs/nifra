@@ -1,9 +1,4 @@
-import {
-  formatPercent,
-  httpWorkloadRps,
-  percentOf,
-  runtimeCeilingPercent,
-} from "../../shared/data/benchmarks"
+import { formatPercent, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
@@ -47,7 +42,13 @@ export default function BestBunFrameworks() {
             <td>Full-stack: API + SSR for React/Vue/Svelte/Solid/Preact</td>
             <td>Inferred from server, zero codegen, reaches loaders/pages</td>
             <td>
-              {formatPercent(runtimeCeilingPercent("Bun"))} of a raw Bun.serve baseline on GET;{" "}
+              {formatPercent(
+                percentOf(
+                  httpWorkloadRps("Bun", "Nifra", "getUsers"),
+                  httpWorkloadRps("Bun", "Elysia", "getUsers"),
+                ),
+              )}{" "}
+              of Elysia on GET;{" "}
               {formatPercent(
                 percentOf(
                   httpWorkloadRps("Bun", "Nifra", "postUsers"),
@@ -62,7 +63,7 @@ export default function BestBunFrameworks() {
             <td>Elysia</td>
             <td>Backend framework</td>
             <td>Eden treaty, typed end-to-end (backend only)</td>
-            <td>Level with Nifra on GET; behind on validated POST</td>
+            <td>Same speed class as Nifra on both workloads</td>
             <td>Backend-only on Bun with a mature plugin ecosystem</td>
           </tr>
           <tr>
@@ -76,7 +77,7 @@ export default function BestBunFrameworks() {
       </table>
       <p>
         Throughput numbers are from our published two-workload matrix (oha, identical route
-        semantics per framework, raw-runtime ceiling rows included) - the{" "}
+        semantics per framework, every row naming the version it measured) - the{" "}
         <a href="/benchmarks">benchmarks page</a> carries every row and the harness is in the repo.
         Treat single-digit margins as ties; the structural differences below matter more.
       </p>

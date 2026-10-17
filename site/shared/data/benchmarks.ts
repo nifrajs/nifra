@@ -3,6 +3,8 @@
  * (machine-readable) so the bench suite can update it on every run - see `bench/site-bench.ts`, which
  * `bun run bench:http:update` / `bench:ssr` / `bench:size` call to merge their slice. The site imports
  * the typed slices below, so a fresh run flows straight to the landing + /benchmarks with no hand-edit.
+ * Every row names the version it measured; the raw-runtime rows the suites measure against are not
+ * published (bench/site-bench.ts).
  */
 
 import data from "./benchmarks.json"
@@ -10,6 +12,7 @@ import data from "./benchmarks.json"
 /** A bar-chart row: a framework's req/s (higher is better); `you` flags Nifra's rows. */
 export interface BenchRow {
   readonly name: string
+  readonly version: string
   readonly reqs: number
   readonly you?: boolean
 }
@@ -19,19 +22,22 @@ export interface Multiplier {
   readonly fw: string
   readonly mult: string
   readonly rival: string
+  readonly rivalVersion: string
 }
 
-/** Nifra HTTP throughput on one runtime (GET / JSON). */
-export interface HttpRuntimeRow {
-  readonly runtime: string
-  readonly reqs: number
-  readonly pctOfRaw: number
-  readonly you?: boolean
+/** When and with which toolchain the published numbers were measured. */
+export interface CapturedMeta {
+  readonly date: string
+  readonly bun: string
+  readonly node: string
+  readonly deno: string
+  readonly oha: string
 }
 
 /** One measured HTTP workload row, shared by the benchmarks page and comparison articles. */
 export interface HttpWorkloadRow {
   readonly name: string
+  readonly version: string
   readonly getUsers: string
   readonly postUsers: string
   readonly nifra?: boolean
@@ -40,12 +46,15 @@ export interface HttpWorkloadRow {
 /** Per-runtime HTTP workload table from the canonical benchmark dataset. */
 export interface HttpWorkloadTable {
   readonly title: string
+  /** The runtime's version. */
+  readonly version: string
   readonly rows: readonly HttpWorkloadRow[]
 }
 
 /** A realistic-shape HTTP row: the same route carrying what a real API route carries. */
 export interface HttpRealworldRow {
   readonly name: string
+  readonly version: string
   readonly get: string
   readonly post: string
   /** The GET again, plus one body-observing middleware. */
@@ -56,12 +65,15 @@ export interface HttpRealworldRow {
 /** Per-runtime realistic-shape HTTP table from the canonical benchmark dataset. */
 export interface HttpRealworldTable {
   readonly title: string
+  /** The runtime's version. */
+  readonly version: string
   readonly rows: readonly HttpRealworldRow[]
 }
 
 /** A gzipped server-bundle size row (lower is better). */
 export interface BundleRow {
   readonly name: string
+  readonly version: string
   readonly kb: number
   readonly you?: boolean
 }
@@ -75,6 +87,7 @@ export interface ProofStat {
 /** A /benchmarks SSR table row (display-ready; `jsGzKb` = gzipped client JS in KB). */
 export interface SsrTableRow {
   readonly name: string
+  readonly version: string
   readonly runtime: "bun" | "node"
   readonly rps: number
   readonly p50ms: number
@@ -96,7 +109,6 @@ export const SSR_TABLES_B = ((data as { ssrTablesB?: readonly SsrTable[] }).ssrT
   []) as readonly SsrTable[]
 export const FRONTEND = data.frontend as readonly BenchRow[]
 export const MULTIPLIERS = data.multipliers as readonly Multiplier[]
-export const HTTP_RUNTIME = data.httpRuntime as readonly HttpRuntimeRow[]
 export const HTTP_BENCH = data.http as readonly BenchRow[]
 export const HTTP_WORKLOADS = data.httpWorkloads as readonly HttpWorkloadTable[]
 // The realistic-shape slice. Defaulted like SSR_TABLES_B: the aggregate only writes it when all
@@ -105,6 +117,7 @@ export const HTTP_REALWORLD = ((data as { httpRealworld?: readonly HttpRealworld
   .httpRealworld ?? []) as readonly HttpRealworldTable[]
 export const BUNDLE = data.bundle as readonly BundleRow[]
 export const PROOF = data.proof as readonly ProofStat[]
+export const CAPTURED = data.captured as CapturedMeta
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"
 export type HttpRealworldMetric = "get" | "post" | "body"
@@ -115,16 +128,20 @@ function parseRps(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+/** A framework's bare HTTP row on a runtime, with the version it measured. */
+export function httpWorkloadRow(runtime: string, framework: string): HttpWorkloadRow | undefined {
+  return HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
+    (row) => row.name === framework,
+  )
+}
+
 /** Read a measured bare HTTP workload from the canonical benchmark dataset. */
 export function httpWorkloadRps(
   runtime: string,
   framework: string,
   workload: HttpWorkloadMetric,
 ): number | undefined {
-  const value = HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
-    (row) => row.name === framework,
-  )?.[workload]
-  return parseRps(value)
+  return parseRps(httpWorkloadRow(runtime, framework)?.[workload])
 }
 
 /** Read a measured HTTP workload with auth and middleware from the same dataset. */
@@ -153,11 +170,6 @@ export function ssrFrameworkRps(name: string, runtime: "bun" | "node"): number |
     if (result) return result.rps
   }
   return undefined
-}
-
-/** The runtime-ceiling percentage reported by the HTTP suite. */
-export function runtimeCeilingPercent(runtime: string): number | undefined {
-  return HTTP_RUNTIME.find((row) => row.runtime === runtime)?.pctOfRaw
 }
 
 /** Round a measured value against its comparison value to a whole percentage. */

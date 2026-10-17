@@ -5,7 +5,7 @@
  * as separately-labelled tables - never blended into one, which is exactly the apples-to-oranges
  * read bench/ssr/README.md warns against. The landing bar chart and multipliers stay Table A only.
  */
-import type { BenchRow, Multiplier } from "../site-bench.ts"
+import { type BenchRow, type Multiplier, NIFRA_VERSION, packageVersion } from "../site-bench.ts"
 import { rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
 
 /** One measured Table A row: the target it ran plus the framework section it ran under. */
@@ -18,6 +18,7 @@ export interface SsrRunRow {
 /** A /benchmarks table row - display-ready, one per target. */
 export interface SsrTableRow {
   readonly name: string
+  readonly version: string
   readonly runtime: "bun" | "node"
   readonly rps: number
   readonly p50ms: number
@@ -36,7 +37,8 @@ export interface SsrTable {
 /** The website display name for a bench target name. */
 const DISPLAY: Record<string, string> = {
   "next (dynamic)": "Next.js (Node)",
-  remix: "Remix (Node)",
+  // The Remix row runs React Router's framework mode, so the version it carries is React Router's.
+  remix: "Remix / React Router (Node)",
   solidstart: "SolidStart (Node)",
   nuxt: "Nuxt (Node)",
   sveltekit: "SvelteKit (Node)",
@@ -46,9 +48,35 @@ const DISPLAY: Record<string, string> = {
   "solidstart (static)": "SolidStart static (Node)",
   "nuxt (static)": "Nuxt static (Node)",
   "sveltekit (static)": "SvelteKit static (Node)",
-  // Renderer ceiling - a hand-rolled single-route server, no framework. Labelled so a reader can
-  // see how close the framework rows run to the physical limit of the renderer itself.
-  "preact-ssr": "Raw Preact render (Node, ceiling)",
+}
+
+/** Renderer ceilings: the local report keeps them as a reference, the site never shows them. */
+const CEILINGS: ReadonlySet<string> = new Set(["preact-ssr"])
+
+function published(rows: readonly SsrRunRow[]): readonly SsrRunRow[] {
+  return rows.filter((row) => !CEILINGS.has(row.target.name))
+}
+
+/** The version a published row carries, by target; the run passes `ssrTargetVersion`. */
+export type SsrVersionOf = (target: SsrBenchTarget) => string
+
+/** The package each rival app measures, by bench target name prefix. */
+const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
+  ["next", "next"],
+  ["remix", "react-router"],
+  ["solidstart", "@solidjs/start"],
+  ["nuxt", "nuxt"],
+  ["sveltekit", "@sveltejs/kit"],
+]
+
+/** nifra rows carry the workspace version; a rival row the version installed in its own app. */
+export function ssrTargetVersion(target: SsrBenchTarget): string {
+  if (target.name.startsWith("nifra")) return NIFRA_VERSION
+  const pkg = RIVAL_PACKAGES.find(([prefix]) => target.name.startsWith(prefix))?.[1]
+  if (pkg === undefined || target.cwd === undefined) {
+    throw new Error(`no package recorded for SSR target ${target.name}`)
+  }
+  return packageVersion(pkg, target.cwd)
 }
 
 /** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */
@@ -63,17 +91,21 @@ const RIVAL: Record<string, { target: string; label: string }> = {
 }
 
 function displayName(row: SsrRunRow): string {
-  const mapped = DISPLAY[row.target.name]
+  return ssrRowName(row.framework, row.target)
+}
+
+/** The website name of `target` measured under the `framework` section. */
+export function ssrRowName(fw: string, target: SsrBenchTarget): string {
+  const mapped = DISPLAY[target.name]
   if (mapped !== undefined) return mapped
-  const fw = row.framework
-  const runtime = row.target.runtime === "node" ? "Node" : "Bun"
+  const runtime = target.runtime === "node" ? "Node" : "Bun"
   // Spelled out so neither row can be read as an app served like the meta-frameworks are.
-  if (rowKind(row.target) === "own-server") {
+  if (rowKind(target) === "own-server") {
     return `Nifra + ${fw} render API in your own server (${runtime})`
   }
-  if (rowKind(row.target) === "static-host") return `Nifra + ${fw} SSG files on a static host`
+  if (rowKind(target) === "static-host") return `Nifra + ${fw} SSG files on a static host`
   // nifra Table B rows: "nifra+react (SSG)" → "Nifra + React SSG (Bun)"
-  const mode = NIFRA_MODE.exec(row.target.name)
+  const mode = NIFRA_MODE.exec(target.name)
   if (mode !== null) return `Nifra + ${fw} ${mode[1]} (${runtime})`
   // nifra rows: "nifra+react" → "Nifra + React (Bun)", "nifra+react (node)" → "Nifra + React (Node)"
   return `Nifra + ${fw} (${runtime})`
@@ -83,9 +115,10 @@ function isNifra(row: SsrRunRow): boolean {
   return row.target.name.startsWith("nifra")
 }
 
-function toTableRow(row: SsrRunRow): SsrTableRow {
+function toTableRow(row: SsrRunRow, versionOf: SsrVersionOf): SsrTableRow {
   return {
     name: displayName(row),
+    version: versionOf(row.target),
     runtime: row.target.runtime,
     rps: row.result.rps,
     p50ms: Math.round(row.result.p50ms * 100) / 100,
@@ -96,17 +129,20 @@ function toTableRow(row: SsrRunRow): SsrTableRow {
 }
 
 /** Group Table A rows per framework, in run order - the /benchmarks `ssrTables` slice. */
-export function ssrTablesSlice(rows: readonly SsrRunRow[]): readonly SsrTable[] {
+export function ssrTablesSlice(
+  rows: readonly SsrRunRow[],
+  versionOf: SsrVersionOf,
+): readonly SsrTable[] {
   const order: string[] = []
   const byFw = new Map<string, SsrTableRow[]>()
-  for (const row of rows) {
+  for (const row of published(rows)) {
     let group = byFw.get(row.framework)
     if (group === undefined) {
       group = []
       byFw.set(row.framework, group)
       order.push(row.framework)
     }
-    group.push(toTableRow(row))
+    group.push(toTableRow(row, versionOf))
   }
   return order.map((framework) => ({ framework, rows: byFw.get(framework) ?? [] }))
 }
@@ -117,23 +153,33 @@ function likeForLike(row: SsrRunRow): boolean {
 }
 
 /** The landing bar chart: the React story (Bun + Node vs Next + Remix) - the `heroSsr` slice. */
-export function heroSsrSlice(rows: readonly SsrRunRow[]): readonly BenchRow[] {
-  return rows
+export function heroSsrSlice(
+  rows: readonly SsrRunRow[],
+  versionOf: SsrVersionOf,
+): readonly BenchRow[] {
+  return published(rows)
     .filter((r) => r.framework === "React" && likeForLike(r))
     .map((r) => ({
       name: displayName(r),
+      version: versionOf(r.target),
       reqs: r.result.rps,
       ...(isNifra(r) ? { you: true } : {}),
     }))
 }
 
 /** Every Table A row as a flat bar list (grouped by framework order) - the `frontend` slice. */
-export function frontendSlice(rows: readonly SsrRunRow[]): readonly BenchRow[] {
-  return rows.filter(likeForLike).map((r) => ({
-    name: displayName(r),
-    reqs: r.result.rps,
-    ...(isNifra(r) ? { you: true } : {}),
-  }))
+export function frontendSlice(
+  rows: readonly SsrRunRow[],
+  versionOf: SsrVersionOf,
+): readonly BenchRow[] {
+  return published(rows)
+    .filter(likeForLike)
+    .map((r) => ({
+      name: displayName(r),
+      version: versionOf(r.target),
+      reqs: r.result.rps,
+      ...(isNifra(r) ? { you: true } : {}),
+    }))
 }
 
 /** "N×" with one decimal under 10 ("3.8×"), integers above ("26×"); trailing .0 dropped. */
@@ -145,7 +191,10 @@ export function formatMultiplier(ratio: number): string {
 }
 
 /** Same-runtime headline ratios: nifra's NODE row vs each framework's meta-framework on Node. */
-export function multipliersSlice(rows: readonly SsrRunRow[]): readonly Multiplier[] {
+export function multipliersSlice(
+  rows: readonly SsrRunRow[],
+  versionOf: SsrVersionOf,
+): readonly Multiplier[] {
   const out: Multiplier[] = []
   for (const [fw, rival] of Object.entries(RIVAL)) {
     const nifraNode = rows.find(
@@ -157,6 +206,7 @@ export function multipliersSlice(rows: readonly SsrRunRow[]): readonly Multiplie
       fw,
       mult: formatMultiplier(nifraNode.result.rps / rivalRow.result.rps),
       rival: rival.label,
+      rivalVersion: versionOf(rivalRow.target),
     })
   }
   return out

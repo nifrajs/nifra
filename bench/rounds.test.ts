@@ -10,7 +10,6 @@ import {
   roundOrder,
   roundRatios,
 } from "./rounds.ts"
-import { httpRuntimeFromResults } from "./site-bench.ts"
 
 const rows = (n: number): string[] => Array.from({ length: n }, (_, i) => `row${i}`)
 
@@ -138,24 +137,5 @@ describe("pooling whole-matrix runs", () => {
     })
     expect(merged.node?.nifra?.get).not.toHaveProperty("ofCeiling")
     expect(merged.node?.x).toEqual({})
-  })
-})
-
-describe("site slice", () => {
-  test("the published % of raw is the paired ratio, not a ratio of medians", () => {
-    const merged = mergeRuns(
-      [{ bun: { nifra: { get: cell(100, 50, 80) }, "bun-native": { get: cell(100, 50, 90) } } }],
-      () => "bun-native",
-    )
-    expect(httpRuntimeFromResults(merged, "get")).toEqual([
-      { runtime: "Bun", reqs: 80, pctOfRaw: 100, you: true },
-    ])
-    // Results without per-round data keep the old ratio of the two cells.
-    expect(
-      httpRuntimeFromResults(
-        { bun: { nifra: { get: m(80) }, "bun-native": { get: m(90) } } },
-        "get",
-      ),
-    ).toEqual([{ runtime: "Bun", reqs: 80, pctOfRaw: 89, you: true }])
   })
 })

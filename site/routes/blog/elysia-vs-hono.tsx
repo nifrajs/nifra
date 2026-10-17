@@ -1,10 +1,4 @@
-import {
-  formatPercent,
-  formatRps,
-  httpWorkloadRps,
-  percentOf,
-  runtimeCeilingPercent,
-} from "../../shared/data/benchmarks"
+import { formatPercent, formatRps, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
@@ -73,9 +67,9 @@ export default function ElysiaVsHono() {
         </tbody>
       </table>
       <p>
-        (oha @ 50 conns, identical route semantics, medians; every row incl. ceilings on{" "}
-        <a href="/benchmarks">benchmarks</a>.) On raw speed Elysia wins everywhere we measure -
-        Hono's design trades peak throughput for reach.
+        (oha @ 50 conns, identical route semantics, medians; every row on{" "}
+        <a href="/benchmarks">benchmarks</a>.) On throughput Elysia leads on Bun and Node, and the
+        two trade wins on Deno - Hono's design trades peak throughput for reach.
       </p>
 
       <h2>The real differences</h2>
@@ -110,9 +104,14 @@ export default function ElysiaVsHono() {
       <p>
         Both stop at the API boundary. If you also own the frontend, Nifra extends the typed
         contract through SSR loaders, pages, and server functions (React/Vue/Svelte/Solid/Preact),
-        matches or beats Elysia's throughput in our published Bun runs ({" "}
-        {formatPercent(runtimeCeilingPercent("Bun"))} of the raw <code>Bun.serve</code> ceiling on
-        GET,{" "}
+        matches Elysia's throughput in our published Bun runs ({" "}
+        {formatPercent(
+          percentOf(
+            httpWorkloadRps("Bun", "Nifra", "getUsers"),
+            httpWorkloadRps("Bun", "Elysia", "getUsers"),
+          ),
+        )}{" "}
+        of Elysia on GET,{" "}
         {formatPercent(
           percentOf(
             httpWorkloadRps("Bun", "Nifra", "postUsers"),
