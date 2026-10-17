@@ -148,6 +148,55 @@ describe("unused order-scoped hooks", () => {
     expect(warnings[0]).toContain("derive()")
   })
 
+  describe("NODE_ENV reads per request", () => {
+    // A child process holds this app's audit alone, as a deployed server does. In the test runner,
+    // servers that other tests never serve keep the module-wide pending count above zero.
+    const readsInProcess = async (nodeEnv: string): Promise<unknown> => {
+      const script = `
+        import { server } from ${JSON.stringify(new URL("../src/index.ts", import.meta.url).href)}
+        import { nodeDirect } from ${JSON.stringify(new URL("../src/node-direct.ts", import.meta.url).href)}
+        const app = server().use(nodeDirect()).get("/a", () => "ok")
+        const env = process.env
+        let reads = 0
+        process.env = new Proxy(env, {
+          get(target, key) {
+            if (key === "NODE_ENV") reads++
+            return Reflect.get(target, key)
+          },
+        })
+        const both = async () => {
+          await app.fetch(new Request("http://x/a"))
+          await app.resolveNode(new Request("http://x/a"))
+        }
+        await both()
+        const first = reads
+        for (let i = 0; i < 5; i++) await both()
+        process.env = env
+        console.log(JSON.stringify([first, reads - first]))
+      `
+      const proc = Bun.spawn([process.execPath, "--eval", script], {
+        env: { ...process.env, NODE_ENV: nodeEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      expect(stderr).toBe("")
+      expect(await proc.exited).toBe(0)
+      return JSON.parse(stdout)
+    }
+
+    test("development reads it on the first request only, on both lanes", async () => {
+      expect(await readsInProcess("development")).toEqual([1, 0])
+    })
+
+    test("production never reads it, on both lanes", async () => {
+      expect(await readsInProcess("production")).toEqual([0, 0])
+    })
+  })
+
   test("an app with zero routes and one derive is silent", async () => {
     const app = server()
     app.derive(() => ({ n: 1 }))
