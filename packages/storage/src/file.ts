@@ -7,7 +7,7 @@
  * Every write is staged beside the root and renamed into place, so a reader sees an object whole.
  */
 import { createHash } from "node:crypto"
-import { constants } from "node:fs"
+import { constants, type Dirent } from "node:fs"
 import {
   type FileHandle,
   lstat,
@@ -726,16 +726,22 @@ export class FileStorage implements StorageAdapter {
     limit: number,
     out: string[],
   ): Promise<void> {
-    let names: string[]
+    let listed: Dirent[]
     try {
-      names = await readdir(dir)
+      listed = await readdir(dir, { withFileTypes: true })
     } catch {
       return // missing root → empty listing
     }
     const entries: { readonly name: string; readonly order: string; readonly kind: string }[] = []
-    for (const name of names) {
+    for (const dirent of listed) {
+      const { name } = dirent
       if (!name.startsWith(namePrefix)) continue
-      const info = await lstat(join(dir, name))
+      // The type readdir reports is the entry's own, as lstat would give it, so a listing costs one
+      // readdir per directory it enters; only an entry of any other or unrecorded type is stat'ed.
+      const info =
+        dirent.isFile() || dirent.isDirectory() || dirent.isSymbolicLink()
+          ? dirent
+          : await lstat(join(dir, name))
       if (info.isSymbolicLink()) continue
       // A directory's keys all start with `name/`, so it sorts there among its siblings.
       if (info.isDirectory()) entries.push({ name, order: `${name}/`, kind: "dir" })

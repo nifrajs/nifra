@@ -16930,6 +16930,8 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 - `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket)`.
 - `put(key, data, { contentType?, metadata? })` - `data` is `Uint8Array | ArrayBuffer | string`.
 - `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
+  `FileStorage.list` reads and sorts each directory it enters, so even `limit: 1` costs time in
+  proportion to those directories' entries; split a very large store across key prefixes.
 - `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.
 - `assertStorageAdapterConformance({ createAdapter })` - dependency-free executable adapter contract.
 - Optional interfaces: `PagedStorageAdapter` · `PresignableStorageAdapter` · `MovableStorageAdapter`.
