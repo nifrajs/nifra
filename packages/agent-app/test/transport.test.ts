@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentEvent } from "@nifrajs/agent-protocol"
-import { AgentTransportError, HttpAgentTransport, parseEventStream } from "../src/transport.ts"
+import {
+  AgentTransportError,
+  AgentTurnError,
+  HttpAgentTransport,
+  parseEventStream,
+} from "../src/transport.ts"
 
 const event = (seq: number): Extract<AgentEvent, { type: "assistant.delta" }> => ({
   version: 1,
@@ -23,6 +28,47 @@ function sse(...events: AgentEvent[]): ReadableStream<Uint8Array> {
     },
   })
 }
+
+describe("a terminal error frame", () => {
+  const failing = (data: string): ReadableStream<Uint8Array> =>
+    new ReadableStream({
+      start(controller) {
+        const frames = `data: ${JSON.stringify(event(1))}\n\nevent: error\ndata: ${data}\n\n`
+        controller.enqueue(new TextEncoder().encode(frames))
+        controller.close()
+      },
+    })
+  const outcome = async (data: string) => {
+    const seqs: number[] = []
+    try {
+      for await (const value of parseEventStream(failing(data), "turn.attach")) seqs.push(value.seq)
+    } catch (error) {
+      if (!(error instanceof AgentTurnError)) throw error
+      return { seqs, method: error.method, code: error.code, message: error.message }
+    }
+    throw new Error("expected the turn to fail")
+  }
+
+  test("rejects the turn with the host's failure code after the events before it", async () => {
+    expect(await outcome(JSON.stringify({ code: "response_too_large" }))).toEqual({
+      seqs: [1],
+      method: "turn.attach",
+      code: "response_too_large",
+      message: "agent turn: turn.attach: response_too_large",
+    })
+  })
+
+  test("never carries a code it cannot trust", async () => {
+    for (const data of [
+      JSON.stringify({ code: "Leaked detail: /home/user/.env" }),
+      JSON.stringify({ code: 7 }),
+      JSON.stringify("text"),
+      "not json",
+      "",
+    ])
+      expect((await outcome(data)).code).toBe("turn_failed")
+  })
+})
 
 describe("HttpAgentTransport", () => {
   test("mints a bearer token per request and never persists it", async () => {

@@ -66,6 +66,21 @@ export class AgentTransportError extends Error {
   }
 }
 
+/**
+ * The host ended a streamed turn with its terminal `event: error` frame. The work failed; the
+ * connection did not, so it is never retried by attaching again. Carries the host's short failure
+ * `code` (`turn_failed` when the frame names none it can trust), never the host's diagnostic text.
+ */
+export class AgentTurnError extends Error {
+  constructor(
+    readonly method: string,
+    readonly code: string,
+  ) {
+    super(`agent turn: ${method}: ${code}`)
+    this.name = "AgentTurnError"
+  }
+}
+
 /** Web `fetch` + SSE transport. Browser- and Bun-compatible; depends on no Node or framework code. */
 export class HttpAgentTransport implements AgentTransport {
   private readonly url: string
@@ -182,7 +197,7 @@ export async function* parseEventStream(
         buffer = buffer.slice(boundary.end)
         if (completedBytes > maxFrameBytes)
           throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
-        const event = frameToEvent(frame)
+        const event = frameToEvent(frame, method)
         if (event !== undefined) yield event
         boundary = sseBoundary(buffer)
       }
@@ -190,7 +205,7 @@ export async function* parseEventStream(
         throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
       if (chunk.done) {
         appendFramePart(buffer)
-        const event = frameToEvent(frameParts.join(""))
+        const event = frameToEvent(frameParts.join(""), method)
         if (event !== undefined) yield event
         break
       }
@@ -203,7 +218,7 @@ export async function* parseEventStream(
       buffer = buffer.slice(scannedUntil)
     }
   } catch (error) {
-    if (error instanceof AgentTransportError) throw error
+    if (error instanceof AgentTransportError || error instanceof AgentTurnError) throw error
     throw new AgentTransportError(method, describe(error))
   } finally {
     if (!reachedEof) {
@@ -219,20 +234,31 @@ export async function* parseEventStream(
   }
 }
 
-function frameToEvent(frame: string): AgentEvent | undefined {
-  const data = frame
-    .split(/\r\n|\n|\r/)
+/** An event frame's protocol event; throws {@link AgentTurnError} for the host's terminal error. */
+function frameToEvent(frame: string, method: string): AgentEvent | undefined {
+  const lines = frame.split(/\r\n|\n|\r/)
+  const name = lines
+    .filter((line) => line.startsWith("event:"))
+    .map((line) => line.slice(6).trim())
+    .at(-1)
+  const data = lines
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).replace(/^ /, ""))
     .join("\n")
-  if (data.length === 0) return undefined
   let value: unknown
   try {
-    value = JSON.parse(data)
+    value = data.length === 0 ? undefined : JSON.parse(data)
   } catch {
-    return undefined
+    value = undefined
   }
+  if (name === "error") throw new AgentTurnError(method, failureCode(value))
   return isAgentEvent(value) ? value : undefined
+}
+
+function failureCode(value: unknown): string {
+  const code: unknown =
+    typeof value === "object" && value !== null ? Reflect.get(value, "code") : undefined
+  return typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "turn_failed"
 }
 
 function sseBoundary(value: string): { readonly index: number; readonly end: number } | undefined {

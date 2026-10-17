@@ -312,6 +312,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Thrown only for transport-level faults (network, malformed body) and for a stream the host refused, which carries the response `status`. Carries no credential.
 - **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
   One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request.
+- **AgentTurnError** _(class)_ - `class AgentTurnError`
+  The host ended a streamed turn with its terminal `event: error` frame. The work failed; the connection did not, so it is never retried by attaching again. Carries the host's short failure `code` (`turn_failed` when the frame names none it can trust), never the host's diagnostic text.
 - **ApprovalRequiredView** _(interface)_ - `interface ApprovalRequiredView`
 - **ApprovalResolvedView** _(interface)_ - `interface ApprovalResolvedView`
 - **AssistantChunkView** _(interface)_ - `interface AssistantChunkView`

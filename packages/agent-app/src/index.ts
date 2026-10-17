@@ -25,6 +25,7 @@ export {
   type AgentTransport,
   AgentTransportError,
   type AgentTransportRequest,
+  AgentTurnError,
   type AuthProvider,
   type CommandOutcome,
   HttpAgentTransport,

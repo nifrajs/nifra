@@ -1045,6 +1045,13 @@
     "signature": "export interface AgentTurnError {\n    readonly code: \"input_invalid\" | \"output_invalid\" | \"model_failed\";\n    readonly issues?: readonly StandardIssue[];\n}"
   },
   {
+    "name": "AgentTurnError",
+    "kind": "class",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare class AgentTurnError extends Error {\n    readonly method: string;\n    readonly code: string;\n    constructor(method: string, code: string);\n}",
+    "doc": "/**\n * The host ended a streamed turn with its terminal `event: error` frame. The work failed; the\n * connection did not, so it is never retried by attaching again. Carries the host's short failure\n * `code` (`turn_failed` when the frame names none it can trust), never the host's diagnostic text.\n */"
+  },
+  {
     "name": "AgentTurnInput",
     "kind": "interface",
     "package": "@nifrajs/agent",
