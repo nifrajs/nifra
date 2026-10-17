@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { open, realpath, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { parseByteRange } from "@nifrajs/core/range"
@@ -467,15 +467,17 @@ describe("generateServerEntry", () => {
     const root = "/srv/app/"
     const options = await nodeServeOptions(src, root)
     expect(options.port).toBe(3000)
+    // The entry resolves its dirs as the platform does: `D:\srv\app\` on Windows.
+    const rootDir = resolve(root) + sep
     expect(options.static).toEqual([
       {
-        dir: "/srv/app/assets/",
+        dir: join(rootDir, "assets") + sep,
         prefix: "/assets",
         hashedFiles: new Set(["/assets/page-1a2b3c.js"]),
         cacheControl: "public, max-age=86400",
       },
       {
-        dir: root,
+        dir: rootDir,
         prefix: "/",
         // The root mount also holds server.js: only the build's listed files are served from it.
         files: new Set(["/robots.txt", "/.well-known/acme-challenge/token"]),

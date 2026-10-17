@@ -1,5 +1,11 @@
 # @nifrajs/schema
 
+## 5.4.0
+
+### Patch Changes
+
+- @nifrajs/uploads@5.4.0
+
 ## 5.3.0
 
 ### Minor Changes

@@ -3322,6 +3322,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * a path whose registered route rejects this method.
    */
   [RESOLVE_NODE_MOUNT](source: RequestSource): NativeMountSelection | undefined {
+    // Node asks before every dispatch; an app with no mounts cannot select a native handler.
+    if (this.fetchMounts.length === 0) return undefined
     if (
       this.onRequestHooks.length > 0 ||
       this.onResponseHooks.length > 0 ||
