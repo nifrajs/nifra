@@ -16,6 +16,8 @@ Knobs: `BENCH_ROUNDS` (default 5), `BENCH_DURATION_S` (5), `BENCH_WARMUP_S` (3),
 `BENCH_SSR_RAW_DIR` preserves the oha JSON for each warmup and measurement sample.
 Every accepted sample must have a 100% success rate and only HTTP 200 responses.
 Duration-bounded samples finish outstanding requests instead of cancelling them at the deadline.
+A row that fails to build or to measure a round fails the run once every selected table has run:
+it exits non-zero and writes no results.
 
 Runtime versions are pinned in `.tool-versions`. Comparator apps have isolated installs;
 after changing their dependencies, run `bun install` in each changed app before measuring,
