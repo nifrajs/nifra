@@ -8,6 +8,7 @@ import {
   chainRecipes,
   compareSemverSpec,
   computeUpgrade,
+  groupSurface,
   installedGroupVersion,
   moveDependenciesText,
   pendingInstall,
@@ -16,6 +17,7 @@ import {
   runUpgrade,
   specIncludes,
   specVersion,
+  unaffectedReleases,
   upgradeTargets,
 } from "../src/upgrade.ts"
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
@@ -705,6 +707,52 @@ describe("computeUpgrade / runUpgrade", () => {
     const notes = Reflect.get(Object(parsed), "notes")
     expect(Reflect.get(notes, "5.1.0")).toEqual(getRecipe("5.1.0")?.notes ?? ["missing"])
     expect(Reflect.get(notes, "5.0.0")).toEqual(getRecipe("5.0.0")?.notes ?? ["missing"])
+  })
+
+  test("a release whose changes touch no package the project loads is marked as such", async () => {
+    const root = join(FIXTURES, "surface")
+    const install = async (name: string, deps: Record<string, string> = {}) => {
+      await mkdir(join(root, "node_modules", name), { recursive: true })
+      await writeFile(
+        join(root, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version: "5.3.0", dependencies: deps }),
+      )
+    }
+    const declare = (deps: Record<string, string>) =>
+      writeFile(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: deps }))
+    await mkdir(root, { recursive: true })
+    await declare({ "@nifrajs/client": "5.3.0" })
+    await install("@nifrajs/client", { "@nifrajs/core": "5.3.0" })
+    await install("@nifrajs/core")
+    await install("@nifrajs/cli", { "@nifrajs/web": "5.3.0" })
+    expect([...(groupSurface(root) ?? [])].sort()).toEqual(["@nifrajs/client", "@nifrajs/core"])
+    expect(unaffectedReleases(["5.3.0", "5.4.0"], groupSurface(root))).toEqual([
+      { version: "5.4.0", affects: ["@nifrajs/cli", "@nifrajs/node", "@nifrajs/web"] },
+    ])
+
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      expect(await runUpgrade(root, { list: true, cliVersion: "5.4.0" })).toBe(true)
+      expect(await runUpgrade(root, { version: "5.4.0", cliVersion: "5.4.0" })).toBe(true)
+    } finally {
+      log.mockRestore()
+    }
+    const quiet =
+      "5.4.0 changes only @nifrajs/cli, @nifrajs/node, @nifrajs/web, which this project does not load: no announced behaviour change for it"
+    expect(lines[0]).toContain(`  5.4.0\n    ${quiet}\n    - The server entry`)
+    expect(lines[1]).toContain(`From 5.3.0, applying the 5.4.0 recipe.\n${quiet}`)
+
+    // A tool is part of the surface when declared, without what it depends on.
+    await declare({ "@nifrajs/client": "5.3.0", "@nifrajs/cli": "5.3.0" })
+    expect(unaffectedReleases(["5.4.0"], groupSurface(root))).toEqual([])
+    // A declared package that is not installed makes the surface unknown: nothing is marked.
+    await declare({ "@nifrajs/client": "5.3.0", "@nifrajs/schema": "5.3.0" })
+    expect(groupSurface(root)).toBeUndefined()
+    expect(unaffectedReleases(["5.4.0"], undefined)).toEqual([])
+    // A release with no affects list is never marked.
+    await declare({ "@nifrajs/client": "5.3.0" })
+    expect(unaffectedReleases(["5.3.0"], groupSurface(root))).toEqual([])
   })
 
   test("every minor and major release this CLI offers has its own recipe", () => {

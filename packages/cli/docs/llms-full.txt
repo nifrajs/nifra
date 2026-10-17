@@ -6067,14 +6067,16 @@ Inbound frames arrive raw (`string | Uint8Array`) by default. Add a
 [Standard Schema](https://standardschema.dev) (`t`, zod, valibot) - and
 Nifra parses each frame as JSON, validates it, and hands `message` the typed
 value; anything that fails goes to `onInvalidMessage` instead (so a malformed
-frame can never reach your handler).
+frame can never reach your handler). `nifra check` reports
+`NF-S009` (info) for a route whose `message` calls
+`JSON.parse` itself with no `messageSchema`.
 
 ```ts
 // doc-check: skip - illustrative: validated inbound frames on an existing app.
 import { t } from "@nifrajs/schema"
 
 app.ws("/chat", {
-  messageSchema: t.Object({ kind: t.Literal("say"), text: t.String({ maxLength: 500 }) }),
+  messageSchema: t.object({ kind: t.literal("say"), text: t.string({ maxLength: 500 }) }),
   message(ws, msg) {
     // msg is typed { kind: "say"; text: string } - already parsed + validated.
     app.publish("room", msg.text)
@@ -6099,13 +6101,117 @@ contract check for your own output, not an inbound security boundary; the flag r
 import { t } from "@nifrajs/schema"
 
 app.ws("/events", {
-  sendSchema: t.Object({ kind: t.Literal("ready"), id: t.String() }),
+  sendSchema: t.object({ kind: t.literal("ready"), id: t.string() }),
   validateSend: true, // opt in; default remains type-level only
   open(ws) {
     ws.send(JSON.stringify({ kind: "ready", id: "evt-1" }))
   },
 })
 ```
+
+### Typed messages, end to end
+
+Put both schemas in a module the server and the client import, each a
+`t.union` discriminated on a literal `type`. The server's
+`message` then switches over what the client sent, and the typed client's
+`.ws()` handle types `send` from `messageSchema` and every
+received frame from `sendSchema`. A `default` branch that assigns the
+frame to `never` turns a new server frame into a compile error on the client
+instead of a silently ignored message.
+
+The client types received frames but does not check them unless asked: pass the
+route's `sendSchema` as `validateReceive` (the typed client
+carries the contract's types, not its schemas, so the schema is the import). A frame
+that fails is not delivered; `onError` gets a `TypeError` naming the
+issues, with the frame as its `cause`. Frames keep their arrival order, an async
+schema included.
+
+```ts
+import { client } from "@nifrajs/client"
+import { type InferOutput, server } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
+import { t } from "@nifrajs/schema"
+
+// The contract, in a module both sides import: one discriminated union per direction.
+export const ChatIn = t.union([
+  t.object({ type: t.literal("say"), text: t.string({ maxLength: 500 }) }),
+  t.object({ type: t.literal("pong"), id: t.integer() }),
+])
+export const ChatOut = t.union([
+  t.object({ type: t.literal("said"), from: t.string(), text: t.string() }),
+  t.object({ type: t.literal("ping"), id: t.integer() }),
+])
+type ChatFrame = InferOutput<typeof ChatOut>
+
+const frame = (value: ChatFrame): string => JSON.stringify(value)
+
+// Server: a ping every 30 s; a connection that leaves two unanswered is closed.
+const app = server()
+  .use(websocket())
+  .ws("/chat", {
+    messageSchema: ChatIn,
+    sendSchema: ChatOut,
+    upgrade: (c) => ({
+      user: c.cookies.user ?? "guest",
+      unanswered: 0,
+      timer: undefined as ReturnType<typeof setInterval> | undefined,
+    }),
+    open(ws) {
+      ws.subscribe("room")
+      let id = 0
+      ws.data.timer = setInterval(() => {
+        if (ws.data.unanswered >= 2) return ws.close(4000, "heartbeat timeout")
+        ws.data.unanswered += 1
+        ws.send(frame({ type: "ping", id: ++id }))
+      }, 30_000)
+    },
+    message(ws, msg) {
+      switch (msg.type) {
+        case "say":
+          app.publish("room", frame({ type: "said", from: ws.data.user, text: msg.text }))
+          break
+        case "pong":
+          ws.data.unanswered = 0
+          break
+      }
+    },
+    close: (ws) => clearInterval(ws.data.timer),
+  })
+
+// Client: frames are typed from sendSchema, and checked against it with validateReceive.
+export async function joinChat(baseUrl: string): Promise<void> {
+  const chat = client<typeof app>(baseUrl).chat.ws({
+    validateReceive: ChatOut,
+    onError: (error) => console.warn(error),
+  })
+  for await (const msg of chat.messages()) {
+    switch (msg.type) {
+      case "said":
+        console.log(`${msg.from}: ${msg.text}`)
+        break
+      case "ping":
+        chat.send({ type: "pong", id: msg.id }) // a frame the client must answer
+        break
+      default: {
+        const unhandled: never = msg // a new ChatOut variant fails to compile here
+        throw new Error(`unhandled frame ${JSON.stringify(unhandled)}`)
+      }
+    }
+  }
+}
+```
+
+### Frames the client must answer (heartbeats)
+
+A server heartbeat that the application can see is an ordinary frame in the contract: a
+`ping` variant in `sendSchema` and a `pong` variant in
+`messageSchema`. The client answers it from the same switch that handles every
+other frame, so the answer is typed and the exhaustiveness check covers it; the server
+counts unanswered pings in `ws.data` and closes a connection that stops
+answering, as above. Clear the timer in `close`. WebSocket protocol pings (the
+runtime's own keep-alive) are answered by the socket itself and never reach
+`messages()`; use them to keep a connection open through proxies, and a frame
+in the contract when the server needs to know the client is still running.
 
 ### Pub/sub - app.publish
 
@@ -6933,6 +7039,24 @@ the commands that move it to the target; upgrade those first, or pass
 `--allow-linked-skew` to go ahead. `nifra upgrade --list` shows the
 targets with the notes of every release after the one you declare: what an app can observe
 changing on the way up.
+
+A release recipe names the packages its notes change. When none of them is one the project
+loads (every group package a `package.json` names, and what those depend on as
+installed), the list and the plan say so beside the release: no announced behaviour change
+for this project, with the packages it does change. A tool such as `@nifrajs/cli`
+counts when it is declared, without its own dependencies, since a release that changes what
+a tool does names the tool. A release without that list, or a declared package that is not
+installed, is never marked.
+
+#### Release cadence and support
+
+Behaviour changes are batched into minor releases, at most one every two weeks; between
+them, fixes ship as patches of the latest minor and change nothing an app relies on. Pinning
+a minor with `~` and taking its patches is the supported way to stay still. The
+previous minor of the current major gets security fixes and fixes for data loss as patch
+releases for 90 days after the next minor ships; older minors get none, so move to the
+latest with `nifra upgrade`. `SECURITY.md` lists the supported
+versions.
 
 ### Scope
 
@@ -8638,8 +8762,11 @@ Every `@nifrajs/*` package, `nifra` and `create-nifra` ship
 together at one version. `nifra doctor` (and `nifra check`, as the
 `NF-D002` advisory) reads the versions your `package.json` files pin,
 the versions installed in `node_modules` - followed to their real location, so a
-linked repository reports its own - and the running CLI. When they disagree it names each
-version and where it came from. It only reads files, and it never fails the run.
+linked repository reports its own - the copies a `link:` or `file:`
+repository outside the root installs in its own `node_modules` (its imports load
+those, whatever the workspace installs, so two live-linked repositories that each pin one
+version still run two), and the running CLI. When they disagree it names each version and
+where it came from. It only reads files, and it never fails the run.
 
 The fix is [`nifra upgrade <highest>`](/docs/cli#upgrade), not a
 hand edit of the pins: it runs
@@ -10086,6 +10213,91 @@ await serve(app, {
   static: { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets },
   signals: { drainMs: 8_000 },
 })
+```
+
+A build script that calls `buildServer` itself passes it the manifest
+`buildClient` returned. The generated `server-manifest` then exports
+`buildAssets` (a `Set` of every file the build emitted, by request path:
+the bundle and the copied `public/` files) and `isBuildAsset(pathname)`, so
+a hand-written static handler or gate can allow exactly the files that exist.
+
+```ts
+// doc-check: skip - fragment: a build script; the routes and entry paths are your app's.
+import { buildClient, buildServer } from "@nifrajs/web/build"
+
+const client = await buildClient({ routesDir: "routes", outDir: "dist/assets", clientModule })
+// One option for the whole client build: entry, stylesheets, per-route CSS, copy chunks, and the
+// set of files it emitted. Forgetting `styles` used to ship unstyled pages; there is nothing to forget.
+await buildServer({ routesDir: "routes", serverEntry: "server.ts", outDir: ".build", target: "bun", client })
+```
+
+### Hosts that serve part of the app
+
+An app that also answers on domains other people point at it usually must not show all of
+itself there: such a domain should not render your sign-in page under its own certificate.
+`createHostPolicy` names, per host, the page routes it renders and the other paths
+it serves, and takes the build's own files by token, never by guessing their names. A gate that
+knows only page paths refuses the page's stylesheet and bundle, and the page answers 200 while
+rendering unstyled and never hydrating.
+
+```ts
+// doc-check: skip - fragment: adapter, manifest and build as above; ./server-manifest is generated by buildServer.
+import { createHostPolicy, createWebApp } from "@nifrajs/web"
+import { buildAssets } from "./server-manifest"
+
+const ownHosts = new Set(["app.example.com", "localhost"])
+
+// On every other host (a domain pointed at the app): the public pages, the API they call, and
+// exactly the files the build emitted. Nothing else renders there, the sign-in page included.
+export const hostPolicy = createHostPolicy({
+  rules: [{
+    hosts: (host) => !ownHosts.has(host),
+    pages: ["/", "/p/:id", "/share/*"],
+    paths: ["/api/public/*"],
+  }],
+})
+
+export const app = createWebApp({ adapter, manifest, clientEntry: build.entry, hostPolicy, buildAssets })
+```
+
+-
+**Order.** `createWebApp` checks the policy before everything it answers:
+`use` middleware, mounts, the API, prerendered pages and pages. A refused path
+gets a bare `404` with `cache-control: no-store`, or what
+`refuse` returns.
+
+-
+**The build's files.** `buildAssets: true` (the default) serves on that host
+every file the build emitted. Set it to `false` and list files in
+`paths` to serve only some.
+
+-
+**
+With `nifra build`.
+**
+Export `hostPolicy` from `backend/framework.ts`. The generated server
+entry passes it and `buildAssets` to `createWebApp`, and checks it
+before its own static files on Bun, Node and Deno, and before the Cloudflare worker's
+`ASSETS` fallback (the build then routes `public/` files through the
+worker). Vercel serves files from its CDN before the function runs, so there the policy
+governs pages and the API only.
+
+-
+**In development.** `nifra dev` serves the bundle and `public/`
+ahead of the app, so only pages and the API are checked there.
+
+-
+**Soft navigations.** A client-side navigation fetches the page's data from the
+server, which applies the policy, so a refused page fails there as it would on a full load.
+
+`nifra smoke` checks it end to end. For each entry in a fixture's `hosts`
+it renders the pages on that host, fetches every file they reference (scripts and their
+imports, stylesheets and their `url()`s, icons) on the same host and expects 200,
+then expects each `refused` path to answer 404.
+
+```ts
+// doc-check: skip - fragment: a nifra.smoke.ts fixture's hosts field.
+hosts: [{ id: "partner", host: "docs.partner.test", pages: ["/", "/p/demo"], refused: ["/login"] }]
 ```
 
 ### A strict CSP on nifra's nonce
@@ -12488,6 +12700,15 @@ single files, that count as that zone. A path inside another's folder overrides 
 most specific entry decides: above, `src/ui/mailer.ts` is backend code in a
 frontend folder. One path listed under two sides is refused. Builds, dev servers,
 `nifra check` and the editor plugin all read this setting.
+
+`frontend/` and `backend/` keep their own rules, with one exception: a
+module there that both sides import can be declared shared where it lives, by a
+`shared` entry naming it or by a `.shared` suffix. The entry changes no
+import; the suffix renames the file. Either way the module is then held to the shared rules
+(it may import only shared code and packages, and read no private environment variable), so
+the declaration narrows what it may reach and never widens it. When backend code imports a
+frontend module, NF-C028 says whether that module can be shared as it is, or names the import
+or environment read that stops it.
 
 A project that serves no pages has no browser, so the zones do not apply to it. Declare that
 in its `package.json` with `"nifra": { "kind": "api" }`:
@@ -17904,7 +18125,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

@@ -34,6 +34,49 @@ export {
 /** Shared endpoint name used by both dev pipelines and the agent-facing MCP tools. */
 export const LAST_ERROR_PATH = "/__nifra/last-error"
 
+/** `file` relative to `root` when it sits inside it (the bundler reports real paths, so a symlinked
+ * root is compared by its real path too), else `file` as given. */
+function pathUnder(root: string, file: string): string {
+  const inside = (base: string): string | undefined => {
+    const rel = relative(base, file).replaceAll("\\", "/")
+    return rel.startsWith("..") || isAbsolute(rel) ? undefined : rel
+  }
+  let real: string | undefined
+  try {
+    real = realpathSync(root)
+  } catch {
+    real = undefined
+  }
+  return inside(root) ?? (real === undefined ? undefined : inside(real)) ?? file
+}
+
+/**
+ * One bundler log as `file:line:column: message`, the source line it points at underneath. Bun's
+ * `BuildMessage`/`ResolveMessage` carry the place in `position`, which their `String()` drops: a
+ * failed build said "Could not resolve: ./db" without naming the module that imported it.
+ */
+export function formatBuildLog(log: unknown, root: string = process.cwd()): string {
+  const message =
+    typeof log === "object" && log !== null && "message" in log && typeof log.message === "string"
+      ? log.message
+      : String(log)
+  const position =
+    typeof log === "object" && log !== null && "position" in log ? log.position : undefined
+  if (typeof position !== "object" || position === null || !("file" in position)) return message
+  const file = typeof position.file === "string" ? position.file : ""
+  if (file === "") return message
+  const where = [
+    pathUnder(root, file),
+    "line" in position && typeof position.line === "number" ? position.line : undefined,
+    "column" in position && typeof position.column === "number" ? position.column : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(":")
+  const text =
+    "lineText" in position && typeof position.lineText === "string" ? position.lineText.trim() : ""
+  return text === "" ? `${where}: ${message}` : `${where}: ${message}\n    ${text}`
+}
+
 /** One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located. */
 export interface DiagnosticFrame {
   readonly raw: string

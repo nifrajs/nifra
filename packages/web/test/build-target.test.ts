@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { buildTarget, generateServerEntry } from "../src/build.ts"
+import { buildTarget, checkHostReach, generateServerEntry } from "../src/build.ts"
 import { discoverRoutes } from "../src/fs.ts"
 import type { RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
@@ -277,6 +277,90 @@ test("--target bun caches only the build's content-hashed files as immutable", a
     await proc.exited
   }
 }, 60_000)
+
+// The partner-domain shape: every host but the app's own renders only the public surface.
+const HOST_POLICY_MODULE =
+  'import { createHostPolicy } from "@nifrajs/web"\n' +
+  "const own = new Set(['app.test', 'localhost', '127.0.0.1'])\n" +
+  "export const hostPolicy = createHostPolicy({ rules: [{ hosts: (host) => !own.has(host), pages: ['/', '/p/:id'] }] })\n"
+
+function hostPolicyApp(): void {
+  writeFileSync(
+    join(routesDir, "index.tsx"),
+    'import "./index.css"\nexport default function Home() { return null }\n',
+  )
+  writeFileSync(join(routesDir, "index.css"), "p { color: teal }\n")
+  mkdirSync(join(routesDir, "p"), { recursive: true })
+  writeFileSync(join(routesDir, "p/[id].tsx"), "export default function Item() { return null }\n")
+  writeFileSync(join(routesDir, "login.tsx"), "export default function Login() { return null }\n")
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "sw.js"), "self.addEventListener('fetch', () => {})\n")
+  writeFileSync(join(projectRoot, "backend/policy.ts"), HOST_POLICY_MODULE)
+}
+
+test("--target bun with a host policy: a restricted host loads every file its pages reference, and no other page", async () => {
+  hostPolicyApp()
+  const outDir = join(projectRoot, "dist-bun-host-policy")
+  const result = await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-host-policy"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    optionImports: { hostPolicy: join(projectRoot, "backend/policy.ts") },
+  })
+  // The page must reference both halves of the bundle, or the check below proves nothing.
+  expect(result.client.css?.length).toBeGreaterThan(0)
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    const send = (path: string, host: string) => fetch(`${base}${path}`, { headers: { host } })
+    const report = await checkHostReach({
+      fetch: send,
+      host: "partner.example",
+      pages: ["/", "/p/7"],
+      refused: ["/login", "/assets/missing.js", "/server.js"],
+    })
+    expect(report.failures).toEqual([])
+    const fetched = report.results.filter((r) => r.kind === "asset").map((r) => r.path)
+    expect(fetched).toContain(result.client.entry)
+    for (const css of result.client.css ?? []) expect(fetched).toContain(css)
+    // The build's own public file is one of its files, so the restricted host gets it too.
+    expect((await send("/sw.js", "partner.example")).status).toBe(200)
+    // The app's own host is not restricted.
+    expect((await send("/login", "app.test")).status).toBe(200)
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
+
+test("the generated entries put a host policy ahead of their static files", () => {
+  const optionImports = { hostPolicy: "../backend/policy.ts" }
+  const entry = (target: "bun" | "node" | "deno" | "cloudflare") =>
+    generateServerEntry({ target, adapterImport: "../framework.ts", optionImports })
+  for (const target of ["bun", "deno", "cloudflare"] as const) {
+    const code = entry(target)
+    expect(code).toContain("import { buildAssets, clientEntry,")
+    expect(code).toContain("  hostPolicy,\n  buildAssets,\n")
+    expect(code).toContain("&& hostPolicy.allows(req")
+  }
+  expect(entry("cloudflare")).toContain(
+    'hostPolicy.allows(request.headers.get("host") ?? "", pathname, buildAssets)',
+  )
+  const node = entry("node")
+  expect(
+    node.match(/allow: \(host: string, pathname: string\) => hostPolicy\.allows/g)?.length,
+  ).toBe(2)
+  // Without a policy, nothing changes.
+  const plain = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
+  expect(plain).not.toContain("hostPolicy")
+  expect(plain).not.toContain("buildAssets")
+})
 
 const prerenderingApp = (client: { entry: string }) =>
   createWebApp({

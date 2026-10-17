@@ -762,6 +762,13 @@ export interface ServeStaticOptions {
    * files. A later mount over the same paths can still serve the rest.
    */
   readonly files?: Iterable<string>
+  /**
+   * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to
+   * `host` (its Host header). `false` passes the request on, without touching the filesystem, to the
+   * next mount and then the app - the seam a host policy uses so a host's refused file meets the
+   * app's own refusal instead of being served.
+   */
+  readonly allow?: (host: string, pathname: string) => boolean
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
   /**
@@ -968,6 +975,7 @@ interface StaticState {
   readonly hashedFiles: ReadonlySet<string> | undefined
   readonly cacheControl: string | undefined
   readonly files: ReadonlySet<string> | undefined
+  readonly allow: ((host: string, pathname: string) => boolean) | undefined
   readonly headers: Readonly<Record<string, string>> | undefined
   readonly denyDotfiles: boolean
 }
@@ -997,6 +1005,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
     hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
     cacheControl: options.cacheControl,
     files: options.files === undefined ? undefined : new Set(options.files),
+    allow: options.allow,
     headers: staticHeadersOf(options.headers),
     denyDotfiles: options.dotfiles !== "allow",
   }
@@ -1009,13 +1018,15 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
  */
 function staticMatch(
   state: StaticState,
-  rawUrl: string,
+  req: IncomingMessage,
 ): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
+  const rawUrl = req.url ?? "/"
   const query = rawUrl.indexOf("?")
   const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
   const underPrefix =
     state.prefix === "/" ? true : path === state.prefix || path.startsWith(`${state.prefix}/`)
   if (!underPrefix || (state.files !== undefined && !state.files.has(path))) return "pass"
+  if (state.allow !== undefined && !state.allow(rawHost(req) ?? "", path)) return "pass"
   let rel: string
   try {
     rel = decodeURIComponent(state.prefix === "/" ? path : path.slice(state.prefix.length))
@@ -1571,7 +1582,7 @@ function handle(
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
   if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
     for (const mount of staticState) {
-      const matched = staticMatch(mount, nodeReq.url ?? "/")
+      const matched = staticMatch(mount, nodeReq)
       if (matched === "pass") continue
       if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
       return readStatic(

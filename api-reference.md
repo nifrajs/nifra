@@ -5127,6 +5127,8 @@ _No named exports (side-effect entrypoint)._
 - **BoundaryStatus** _(type)_ - `type BoundaryStatus = "unresolved" | "pending" | "ready" | "error"`
 - **BrowserNavigate** _(type)_ - `type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void`
   A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1` forward), matching the browser's `history.go`. Registered by `installHistory`.
+- **BuildAssetSet** _(interface)_ - `interface BuildAssetSet`
+  The files a build emitted, by request path: the generated server manifest's `buildAssets`.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
@@ -5201,6 +5203,10 @@ _No named exports (side-effect entrypoint)._
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
 - **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
   `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
+- **HostPolicy** _(interface)_ - `interface HostPolicy`
+- **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
+- **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`
+  One host's surface. A request on a host no rule names is not restricted.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -5440,6 +5446,8 @@ _No named exports (side-effect entrypoint)._
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createCspPolicy** _(function)_ - `createCspPolicy: (options: CreateCspPolicyOptions) => CspPolicy`
   Create a hash-based Content-Security-Policy for nifra documents, so a page can carry a strict CSP and still be cached.
+- **createHostPolicy** _(function)_ - `createHostPolicy: (options: HostPolicyOptions) => HostPolicy`
+  Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })` (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads): it is evaluated before the build's static files, the prerendered pages, the mounts and every page. A …
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
@@ -5479,6 +5487,8 @@ _No named exports (side-effect entrypoint)._
   Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
+- **isHostPolicy** _(function)_ - `isHostPolicy: (value: unknown) => value is HostPolicy`
+  Whether `value` came from {@link createHostPolicy}.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
@@ -5581,6 +5591,10 @@ _No named exports (side-effect entrypoint)._
   A Cloudflare Pages `_routes.json` document. `exclude`d paths are served straight from the CDN (the Function/worker is NOT invoked); everything else in `include` hits the worker.
 - **CloudflarePagesRoutesOptions** _(interface)_ - `interface CloudflarePagesRoutesOptions`
 - **CloudflareRouteRules** _(interface)_ - `interface CloudflareRouteRules`
+- **HostReachOptions** _(interface)_ - `interface HostReachOptions`
+- **HostReachReport** _(interface)_ - `interface HostReachReport`
+- **HostReachResult** _(interface)_ - `interface HostReachResult`
+  One request the check made.
 - **ManifestDrift** _(interface)_ - `interface ManifestDrift`
   A drift finding between a committed server-manifest and the live `routes/` tree.
 - **NodeBuiltinFinding** _(interface)_ - `interface NodeBuiltinFinding`
@@ -5592,7 +5606,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
@@ -5617,6 +5631,8 @@ _No named exports (side-effect entrypoint)._
 - **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport`
   Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.
+- **buildAssetPaths** _(function)_ - `buildAssetPaths: (client: BuildManifest) => string[]`
+  Every file a client build emitted, by request path: its `assets` and the `public/` files it copied.
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>`
   Build the client bundle for a file-routed app. Writes the hashed assets + `manifest.json` to `outDir` and returns the manifest. Throws (with the bundler logs) on build failure - never silently ships a broken bundle.
 - **buildServer** _(function)_ - `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>`
@@ -5627,6 +5643,8 @@ _No named exports (side-effect entrypoint)._
   The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps, which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite` (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape, server-entry …
 - **bunBundler** _(const)_ - `bunBundler: Bundler`
   The default (Bun) strategy - `buildClient`/`buildServer` from this module.
+- **checkHostReach** _(function)_ - `checkHostReach: (options: HostReachOptions) => Promise<HostReachReport>`
+  Render each page on `host`, then fetch every same-origin file each page references, following scripts' imports and stylesheets' `url()`s, and expect 200 for all of them; then expect each `refused` path to answer `refusedStatus`. Cross-origin references are skipped: they are not this app's to serve.
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
@@ -5661,6 +5679,8 @@ _No named exports (side-effect entrypoint)._
   True when a drift report is clean (no missing + no extra routes).
 - **parseBuildTarget** _(function)_ - `parseBuildTarget: (value: string, label?: string) => BuildTarget`
   `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`).
+- **parseManifestBuildAssets** _(function)_ - `parseManifestBuildAssets: (source: string) => string[] | undefined`
+  The baked `buildAssets` set in a committed server-manifest, or `undefined` when it bakes none. Pure.
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
 - **parseManifestCopyChunks** _(function)_ - `parseManifestCopyChunks: (source: string) => Record<string, string> | undefined`
@@ -5812,6 +5832,7 @@ _No named exports (side-effect entrypoint)._
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string`
+  Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError whose message is just "Bundle failed" - the actionable part (which file, which import) lives in `.errors`. Surface it, or the guard reports a failure while hiding the reason.
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`
@@ -5934,6 +5955,8 @@ _No named exports (side-effect entrypoint)._
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
 - **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
+- **formatBuildLog** _(function)_ - `formatBuildLog: (log: unknown, root?: string) => string`
+  One bundler log as `file:line:column: message`, the source line it points at underneath. Bun's `BuildMessage`/`ResolveMessage` carry the place in `position`, which their `String()` drops: a failed build said "Could not resolve: ./db" without naming the module that imported it.
 - **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
   True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`

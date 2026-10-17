@@ -208,3 +208,42 @@ describe("version drift, installs", () => {
     )
   })
 })
+
+describe("version drift, linked repositories", () => {
+  test("a live-linked repository that resolves its own nifra is a second version", () => {
+    const root = scratch("nifra-drift-")
+    const other = scratch("nifra-linked-repo-")
+    writeAppFile(
+      root,
+      "package.json",
+      json({ dependencies: { "@nifrajs/core": "5.3.0", "linked-lib": `link:${other}` } }),
+    )
+    writeAppFile(root, "node_modules/@nifrajs/core/package.json", json({ version: "5.3.0" }))
+    writeAppFile(
+      other,
+      "package.json",
+      json({ name: "linked-lib", dependencies: { "@nifrajs/core": "5.2.0" } }),
+    )
+    writeAppFile(other, "node_modules/@nifrajs/core/package.json", json({ version: "5.2.0" }))
+    symlinkSync(other, join(root, "node_modules/linked-lib"), "dir")
+    const repo = realpathSync(other)
+
+    const drift = collectVersionDrift(root)
+    expect(drift?.versions.map((entry) => entry.version)).toEqual(["5.2.0", "5.3.0"])
+    expect(drift?.versions[0]?.sources).toEqual([
+      `installed @nifrajs/core by linked-lib (linked from ${repo}), which loads its own copy`,
+    ])
+    expect(drift?.linkedOutside).toEqual([
+      {
+        package: "@nifrajs/core",
+        path: join(repo, "node_modules/@nifrajs/core"),
+        version: "5.2.0",
+      },
+    ])
+    expect(versionDriftMessage(drift!)).toContain(`linked from outside the workspace root`)
+
+    // The same version on both sides is one version: nothing to report.
+    writeAppFile(other, "node_modules/@nifrajs/core/package.json", json({ version: "5.3.0" }))
+    expect(collectVersionDrift(root)).toBeUndefined()
+  })
+})

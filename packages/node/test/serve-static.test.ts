@@ -393,6 +393,28 @@ test("files serves only the listed paths; any other path under the prefix runs t
   expect(await page.json()).toEqual({ page: true })
 })
 
+test("allow passes a refused path to the app without serving it, given the Host and the bare path", async () => {
+  const asked: string[] = []
+  const base = await startWithStatic(undefined, {
+    allow: (host, pathname) => {
+      asked.push(`${host} ${pathname}`)
+      return host.startsWith("own.test")
+    },
+  })
+  const own = await fetch(`${base}/assets/app.js?v=1`, { headers: { host: "own.test" } })
+  expect(own.status).toBe(200)
+  expect(await own.text()).toBe("console.log('hi')")
+  const other = await fetch(`${base}/assets/app.js`, { headers: { host: "other.test" } })
+  expect(other.status).toBe(404)
+  expect(await other.text()).not.toBe("console.log('hi')")
+  expect(asked).toEqual(["own.test /assets/app.js", "other.test /assets/app.js"])
+  // Never consulted outside the mount's prefix.
+  expect(await (await fetch(`${base}/`, { headers: { host: "other.test" } })).json()).toEqual({
+    page: true,
+  })
+  expect(asked.length).toBe(2)
+})
+
 test("an array of mounts answers from the first one that takes the path", async () => {
   const other = await mkdtemp(join(tmpdir(), "nifra-static-other-"))
   try {

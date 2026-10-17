@@ -22,7 +22,7 @@ import {
   ZoneConfigError,
 } from "@nifrajs/web/zones"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
-import { COMPONENT_FILE, importSites, stripComments } from "../check-scan.ts"
+import { COMPONENT_FILE, importSites, isServerOnlySink, stripComments } from "../check-scan.ts"
 import { appDirs, clientModuleRoot } from "../client-module.ts"
 import { componentCheckReceipts } from "../component-check.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
@@ -242,6 +242,43 @@ export const zoneImportRule: CheckRule = {
         follow({ file: name, app, zone: "error" })
     }
 
+    /**
+     * What backend code that imports frontend module `target` can do about it. The module may be
+     * declared shared in place when what it imports and reads is shared-safe, which is exactly what
+     * the shared rules then hold it to; otherwise the first import or read that stops it is named.
+     */
+    const shareRemedy = (target: string, targetName: string, app: string): string => {
+      const content = ctx.sources.read(targetName)
+      if (content === undefined) return ""
+      let blocker: string | undefined
+      for (const { specifier } of importSites(content, targetName, facts)) {
+        const resolved = resolveSpecifier(target, specifier)
+        if (resolved === undefined) {
+          if (isServerOnlySink(specifier)) blocker = `it imports ${specifier}, a server package`
+        } else {
+          const zone = classifierFor(app).classify(resolved, specifier).zone
+          if (zone === "error" || !importAllowed("shared", zone))
+            blocker = `it imports ${display(ctx.root, resolved)} (${zone === "error" ? "in no zone" : `${zone} code`})`
+        }
+        if (blocker !== undefined) break
+      }
+      const reads =
+        blocker === undefined
+          ? privateEnvReads(targetName, content, publicPrefix(ctx.root, app))
+          : []
+      if (reads.length > 0) blocker = `it reads ${reads[0]}, which the browser may not`
+      if (blocker !== undefined)
+        return `. ${targetName} cannot be shared as it is: ${blocker}; move what both sides need into shared/`
+      const inApp = app === "" ? targetName : targetName.slice(app.length + 1)
+      const dot = inApp.lastIndexOf(".")
+      const renamed =
+        dot === -1 ? `${inApp}.shared` : `${inApp.slice(0, dot)}.shared${inApp.slice(dot)}`
+      return (
+        `. ${targetName} imports only shared code and packages, so it can be shared where it is: ` +
+        `rename it ${renamed.slice(renamed.lastIndexOf("/") + 1)}, or list "${inApp}" under ` +
+        `"nifra": { "zones": { "shared": [...] } } in ${app === "" ? "" : `${app}/`}package.json`
+      )
+    }
     // An undeclared package is one fact, however many files import it.
     const reportedPackages = new Set<string>()
     // An array iterator reads the length on every step, so files `follow` appends are visited too.
@@ -285,6 +322,8 @@ export const zoneImportRule: CheckRule = {
             (from === "shared" && !importAllowed(from, to.zone) && !BACKEND.has(to.zone)))
         ) {
           message = importRuleMessage(file, from, targetName, to.zone)
+          if (SERVER.has(from) && to.zone === "frontend" && to.entry === undefined)
+            message += shareRemedy(target, targetName, app)
         } else continue
         if (!inWebApp(app)) message = withApiKindHint(message)
         findings.push(

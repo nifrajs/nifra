@@ -157,6 +157,8 @@ export interface UpgradePlan {
   /** Whether `--write` dropped {@link linkLocks} from bun.lock, so `bun install` re-reads them. */
   readonly lockPruned: boolean
   readonly notes: readonly string[]
+  /** Releases on the way up that announce no behaviour change for the packages this project loads. */
+  readonly unaffected: readonly UnaffectedRelease[]
 }
 
 const DEP_FIELDS = [
@@ -674,6 +676,78 @@ export function groupDeclaredNames(cwd: string): ReadonlySet<string> {
   return names
 }
 
+/** The fixed-group packages the package installed at `dir` depends on. */
+export function groupDependenciesAt(dir: string): string[] {
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))
+    if (typeof manifest !== "object" || manifest === null) return []
+    return ["dependencies", "peerDependencies", "optionalDependencies"].flatMap((field) => {
+      const deps: unknown = Reflect.get(manifest, field)
+      return typeof deps === "object" && deps !== null ? Object.keys(deps).filter(isFixedGroup) : []
+    })
+  } catch {
+    return []
+  }
+}
+
+// Tools: what they depend on is not loaded by the app, so a release that changes what one does
+// names the tool itself in `affects`.
+const GROUP_TOOLS: ReadonlySet<string> = new Set(["@nifrajs/cli", "nifra", "create-nifra"])
+
+/**
+ * The fixed-group packages this project loads: every one a package.json under `cwd` names, and what
+ * those depend on, followed through their installed manifests. `undefined` when a package to follow
+ * is not installed at the root, since what it loads is then unknown.
+ */
+export function groupSurface(cwd: string): ReadonlySet<string> | undefined {
+  const surface = new Set(groupDeclaredNames(cwd))
+  const queue = [...surface]
+  for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
+    if (GROUP_TOOLS.has(name)) continue
+    let dir: string
+    try {
+      dir = realpathSync(join(cwd, "node_modules", name))
+    } catch {
+      return undefined
+    }
+    for (const dep of groupDependenciesAt(dir)) {
+      if (surface.has(dep)) continue
+      surface.add(dep)
+      queue.push(dep)
+    }
+  }
+  return surface
+}
+
+/** A release whose recipe names what it changes, none of which this project loads. */
+export interface UnaffectedRelease {
+  readonly version: string
+  readonly affects: readonly string[]
+}
+
+/**
+ * The `versions` whose recipe lists the packages its behaviour changes touch ({@link
+ * UpgradeRecipe.affects}) and none is in `surface`. A recipe without the list, or an unknown surface,
+ * is never reported unaffected.
+ */
+export function unaffectedReleases(
+  versions: readonly string[],
+  surface: ReadonlySet<string> | undefined,
+): readonly UnaffectedRelease[] {
+  if (surface === undefined) return []
+  return versions.flatMap((version) => {
+    const affects = getRecipe(version)?.affects
+    if (affects === undefined || affects.some((name) => surface.has(name))) return []
+    return [{ version, affects }]
+  })
+}
+
+function unaffectedLine(release: UnaffectedRelease): string {
+  return release.affects.length === 0
+    ? `${release.version} announces no behaviour change`
+    : `${release.version} changes only ${release.affects.join(", ")}, which this project does not load: no announced behaviour change for it`
+}
+
 /**
  * Every fixed-group version the package.json files under `cwd` declare with a plain semver spec, each
  * with the files that declare it. An override counts: it decides what installs. A peer range does
@@ -848,18 +922,18 @@ export interface LinkedSkew {
   readonly declaredIn: string
   /** The linked repository's real path. */
   readonly path: string
-  /** Each fixed-group package it installs itself, at a version other than the target. */
-  readonly installs: readonly { readonly package: string; readonly version: string }[]
+  /** Each fixed-group package it installs itself (for {@link linkedSkew}, at a version other than
+   * the target), at its real path. */
+  readonly installs: readonly LinkedGroupInstall[]
 }
 
 /**
- * Every `link:` or `file:` dependency whose installed folder resolves outside `cwd` and installs a
- * fixed-group package of its own at a version other than `target`. Its imports resolve from its real
- * path, so it keeps loading that copy after this project upgrades: a `server()` it builds can no longer
- * be merged here, and single-copy never redirects across versions. A copy that resolves back inside
- * `cwd` follows this project's install and is not counted.
+ * Every `link:` or `file:` dependency whose installed folder resolves outside `cwd` and installs
+ * fixed-group packages of its own, with those installs. Its imports resolve from its real path, so it
+ * loads its own copy whatever this project installs. A copy that resolves back inside `cwd` follows
+ * this project's install and is not counted.
  */
-export function linkedSkew(cwd: string, target: string): readonly LinkedSkew[] {
+export function linkedRepositories(cwd: string): readonly LinkedSkew[] {
   let root: string
   try {
     root = realpathSync(cwd)
@@ -893,13 +967,25 @@ export function linkedSkew(cwd: string, target: string): readonly LinkedSkew[] {
         if (path === undefined || inside(path) || seen.has(path)) continue
         seen.add(path)
         const installs = installedGroupPackages(path)
-          .filter((entry) => !inside(entry.path) && entry.version !== target)
-          .map((entry) => ({ package: entry.package, version: entry.version }))
+          .filter((entry) => !inside(entry.path))
+          .map((entry) => ({ package: entry.package, version: entry.version, path: entry.path }))
         if (installs.length > 0) found.push({ package: name, declaredIn: rel, path, installs })
       }
     }
   }
   return found
+}
+
+/**
+ * The {@link linkedRepositories} that install a fixed-group package at a version other than `target`:
+ * they keep loading that copy after this project upgrades, so a `server()` one builds can no longer be
+ * merged here, and single-copy never redirects across versions.
+ */
+export function linkedSkew(cwd: string, target: string): readonly LinkedSkew[] {
+  return linkedRepositories(cwd).flatMap((repo) => {
+    const installs = repo.installs.filter((entry) => entry.version !== target)
+    return installs.length === 0 ? [] : [{ ...repo, installs }]
+  })
 }
 
 /**
@@ -1107,6 +1193,10 @@ export function computeUpgrade(
     linkLocks,
     lockPruned,
     notes: recipe.notes ?? [],
+    unaffected: unaffectedReleases(
+      "steps" in recipe && Array.isArray(recipe.steps) ? recipe.steps : [recipe.version],
+      groupSurface(cwd),
+    ),
   }
 }
 
@@ -1126,6 +1216,7 @@ function renderPlan(
         : `From ${from}, applying the ${steps.join(", ")} recipe${steps.length === 1 ? "" : "s"}.`,
     )
   }
+  for (const release of plan.unaffected) lines.push(unaffectedLine(release))
   lines.push("")
   if (
     plan.pins.length === 0 &&
@@ -1406,6 +1497,7 @@ function renderUpgradeList(
   targets: readonly string[],
   installed: string | null,
   notes: Readonly<Record<string, readonly string[]>>,
+  unaffected: readonly UnaffectedRelease[] = [],
 ): string {
   const lines = [
     installed === null
@@ -1416,6 +1508,8 @@ function renderUpgradeList(
     const ahead = installed === null || compareSemverSpec(version, installed) > 0
     lines.push(`  ${version}${version === installed ? "  (declared)" : ""}`)
     if (!ahead) continue
+    const quiet = unaffected.find((release) => release.version === version)
+    if (quiet !== undefined) lines.push(`    ${unaffectedLine(quiet)}`)
     const list = notes[version] ?? []
     if (list.length === 0) lines.push("    no change an app can observe")
     for (const note of list) lines.push(`    - ${note}`)
@@ -1447,9 +1541,13 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   if (options.list) {
     const installed = installedGroupVersion(cwd)
     const notes = Object.fromEntries(targets.map((v) => [v, getRecipe(v)?.notes ?? []]))
-    if (options.json)
-      console.log(JSON.stringify({ versions: targets, cliVersion, installed, notes }, null, 2))
-    else console.log(renderUpgradeList(targets, installed, notes))
+    const ahead = targets.filter((v) => installed === null || compareSemverSpec(v, installed) > 0)
+    const unaffected = unaffectedReleases(ahead, groupSurface(cwd))
+    if (options.json) {
+      console.log(
+        JSON.stringify({ versions: targets, cliVersion, installed, notes, unaffected }, null, 2),
+      )
+    } else console.log(renderUpgradeList(targets, installed, notes, unaffected))
     return true
   }
 

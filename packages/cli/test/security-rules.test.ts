@@ -354,6 +354,39 @@ describe("configuration audit rules (NF-S004..007)", () => {
     expect(findings[0]?.severity).toBe("info")
   })
 
+  test("an app.ws() route that parses its own frames without a messageSchema is named", async () => {
+    const findings = await scan(
+      "backend/app.ts",
+      [
+        "app",
+        '  .ws("/raw", {',
+        "    message(ws, data) {",
+        "      const msg = JSON.parse(String(data))",
+        "      ws.send(msg.text)",
+        "    },",
+        "  })",
+        '  .ws("/arrow", { message: (ws, data) => ws.send(JSON.parse(String(data)).text) })',
+        '  .ws("/typed", { messageSchema: ChatIn, message: (ws, msg) => ws.send(JSON.parse(msg.raw)) })',
+        '  .ws("/spread", { ...shared, message: (ws, data) => JSON.parse(String(data)) })',
+        '  .ws("/echo", { message: (ws, data) => ws.send(data) })',
+        "// nifra-expect NF-S009: frames are forwarded to a validated queue",
+        'app.ws("/relay", { message: (ws, data) => queue.push(JSON.parse(String(data))) })',
+        "api.chat.ws({ onError: () => JSON.parse('{}') })",
+      ].join("\n"),
+    )
+    const s009 = findings
+      .filter((finding) => finding.code === "NF-S009")
+      .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
+    expect(s009.map((finding) => `${finding.line}:${finding.evidence?.[0]}`)).toEqual([
+      "2:/raw",
+      "8:/arrow",
+      "13:/relay",
+    ])
+    expect(s009.every((finding) => finding.severity === "info")).toBe(true)
+    expect(s009[0]?.message).toContain("declares no messageSchema")
+    expect(s009[2]?.message).toContain("is expected here")
+  })
+
   test("a nifra-expect comment downgrades the audit rules", async () => {
     const findings = await scan(
       "app.ts",

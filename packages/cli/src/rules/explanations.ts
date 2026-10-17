@@ -155,7 +155,7 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
   },
   "NF-C028": {
     why: "A file imports across a zone boundary the project declares, such as browser code reaching backend code, or the zone configuration itself is invalid.",
-    fix: "Import through the boundary's public entry, or move the code to the zone that may use it.",
+    fix: 'Import through the boundary\'s public entry, or move the code to the zone that may use it. A frontend module backend code needs can be declared shared where it lives (a .shared suffix, or a "nifra.zones" shared entry) when its own imports are shared-safe; the finding says whether they are.',
     docs: "/docs/structure",
   },
   "NF-C029": {
@@ -335,5 +335,10 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     why: "An authenticated route validates its input before it authenticates, so an unauthenticated caller reaches the body parser and reads the validation issues.",
     fix: 'Authenticate with app.authenticate(), which runs before validation, or set `validationOrder: "auth-before-validation"` on the route.',
     docs: "/docs/auth",
+  },
+  "NF-S009": {
+    why: "An app.ws() route parses frames itself in message() with no messageSchema, so a client's frame reaches the handler unvalidated and the typed client's send() is untyped.",
+    fix: "Declare messageSchema (a discriminated union for several frame kinds): message() receives the parsed, validated value and invalid frames go to onInvalidMessage.",
+    docs: "/docs/websockets",
   },
 })

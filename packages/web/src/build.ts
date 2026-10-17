@@ -1,3 +1,4 @@
+import { formatBuildLog } from "./diagnostic.ts"
 import { publicEnvDefines } from "./internal/public-env.ts"
 
 export { publicEnvDefines } from "./internal/public-env.ts"
@@ -33,12 +34,14 @@ import {
   type BuildTarget,
   type BuildTargetPlan,
   type Bundler,
+  buildAssetPaths,
   type ChunkSize,
   detectNodeBuiltinsInClient,
   detectServerOnlyInClient,
   formatNodeBuiltinLeak,
   formatServerOnlyLeak,
   parseBuildTarget,
+  parseManifestBuildAssets,
   parseManifestClientEntry,
   parseManifestCopyChunks,
   parseManifestCssLoading,
@@ -52,6 +55,7 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { missingClientEntry } from "./internal/codegen.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
@@ -396,6 +400,7 @@ export function resyncServerManifestSource(
 ): string {
   const cssLoading = parseManifestCssLoading(source)
   const copyChunks = parseManifestCopyChunks(source)
+  const buildAssets = parseManifestBuildAssets(source)
   return generateServerManifest(manifest, {
     resolve: (file) => `${routesPrefix}${file}`,
     clientEntry: parseManifestClientEntry(source) ?? "",
@@ -403,6 +408,7 @@ export function resyncServerManifestSource(
     routeStyles: parseManifestRouteStyles(source),
     ...(cssLoading !== undefined ? { cssLoading } : {}),
     ...(copyChunks !== undefined ? { copyChunks } : {}),
+    ...(buildAssets !== undefined ? { buildAssets } : {}),
     lazy: MANIFEST_IS_LAZY.test(source),
   })
 }
@@ -569,7 +575,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     if (verdict !== undefined) throw new Error(verdict)
     if (refused.size > 0) throw new Error(formatRefusedFiles(refused, root))
     throw new Error(
-      `[nifra/web] client build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
+      `[nifra/web] client build failed:\n${result.logs.map((l) => formatBuildLog(l, root)).join("\n")}`,
     )
   }
 
@@ -816,9 +822,16 @@ export interface BuildServerOptions {
   readonly serverEntry: string
   /** Output directory for the bundled worker (absolute path). */
   readonly outDir: string
+  /**
+   * The manifest `buildClient` returned. Supplies {@link clientEntry}, {@link styles},
+   * {@link routeStyles}, {@link copyChunks} and {@link buildAssets} at once, so none can be forgotten
+   * (a forgotten `styles` ships unstyled pages); an option given explicitly still wins.
+   */
+  readonly client?: BuildManifest
   /** The content-hashed client entry URL (from `buildClient`'s manifest) - **baked** into the generated
-   * server manifest, since a disk-less worker can't read `manifest.json` at runtime. */
-  readonly clientEntry: string
+   * server manifest, since a disk-less worker can't read `manifest.json` at runtime. Required unless
+   * {@link client} is given. */
+  readonly clientEntry?: string
   /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) - baked into the generated
    * manifest so the server entry hands them to `createWebApp` (→ `<link rel="stylesheet">`). Omit ⇒ no CSS
    * link (the built SSR page would otherwise render unstyled). */
@@ -827,6 +840,12 @@ export interface BuildServerOptions {
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
   /** Copy chunk URLs by locale (`buildClient`'s `BuildManifest.copyChunks`) - baked as `copyChunks`. */
   readonly copyChunks?: Readonly<Record<string, string>> | undefined
+  /**
+   * Every file the build emitted, by request path (`buildClient`'s `assets` plus its `publicFiles`):
+   * baked as `buildAssets` and `isBuildAsset(pathname)` for a host policy or a hand-written static
+   * handler. Defaults from {@link client}; without either, the manifest exports neither name.
+   */
+  readonly buildAssets?: readonly string[] | undefined
   /** How framework-owned stylesheet links should activate before hydration (default `"blocking"`). */
   readonly cssLoading?: CssLoadingMode
   /** Route/layout file → import specifier in the generated manifest (default: a relative path from the
@@ -1098,6 +1117,12 @@ function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string):
   return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
 }
 
+export {
+  checkHostReach,
+  type HostReachOptions,
+  type HostReachReport,
+  type HostReachResult,
+} from "./host-reach.ts"
 export { importGlobPlugin } from "./plugins/import-glob.ts"
 export { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 
@@ -1153,7 +1178,26 @@ const solidWebServerPlugin = (from: string): BunPlugin => ({
  * silently ships a broken worker.
  */
 export async function buildServer(options: BuildServerOptions): Promise<ServerBuild> {
-  const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles, cssLoading } = options
+  const { routesDir, serverEntry, outDir, client } = options
+  if (
+    client !== undefined &&
+    (typeof client !== "object" ||
+      client === null ||
+      typeof client.entry !== "string" ||
+      !Array.isArray(client.assets))
+  ) {
+    throw new TypeError(
+      "[nifra/web] buildServer `client` must be the manifest buildClient returned ({ entry, assets, ... })",
+    )
+  }
+  const clientEntry = options.clientEntry ?? client?.entry
+  if (clientEntry === undefined) throw missingClientEntry(clientEntry)
+  const styles = options.styles ?? client?.css
+  const routeStyles = options.routeStyles ?? client?.routeStyles
+  const copyChunks = options.copyChunks ?? client?.copyChunks
+  const cssLoading = options.cssLoading ?? client?.cssLoading
+  const buildAssets =
+    options.buildAssets ?? (client === undefined ? undefined : buildAssetPaths(client))
   const entryDir = dirname(serverEntry)
   const manifestFile = options.manifestFile ?? "server-manifest.ts"
   // Default: import routes relative from the generated manifest (next to serverEntry) to routesDir.
@@ -1178,7 +1222,8 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
       styles,
       routeStyles,
       ...(cssLoading !== undefined ? { cssLoading } : {}),
-      ...(options.copyChunks !== undefined ? { copyChunks: options.copyChunks } : {}),
+      ...(copyChunks !== undefined ? { copyChunks } : {}),
+      ...(buildAssets !== undefined ? { buildAssets } : {}),
       lazy,
     }),
   )
@@ -1214,8 +1259,9 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     ],
   })
   if (!result.success) {
+    const root = resolvePath(options.root ?? dirname(routesDir))
     throw new Error(
-      `[nifra/web] server build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
+      `[nifra/web] server build failed:\n${result.logs.map((l) => formatBuildLog(l, root)).join("\n")}`,
     )
   }
   // Named as the metafile names outputs: relative to `outdir`.
@@ -1284,6 +1330,7 @@ export const SERVER_ENTRY_OPTIONS = [
   "csp",
   "nonce",
   "i18n",
+  "hostPolicy",
 ] as const
 export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
 /** Each importable option mapped to the specifier of the module that exports it. */
@@ -1307,6 +1354,13 @@ const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>>
   cloudflare: "cf-connecting-ip",
   vercel: "x-real-ip",
 }
+
+// A static path a host's policy refuses is not answered from disk: it falls through to the app, whose
+// own copy of the policy refuses it the same way it refuses a page.
+const HOST_ALLOWS_STATIC =
+  ' && hostPolicy.allows(request.headers.get("host") ?? "", pathname, buildAssets)'
+const NODE_STATIC_ALLOW =
+  "      allow: (host: string, pathname: string) => hostPolicy.allows(host, pathname, buildAssets),"
 
 /** Where a self-hosting build writes its prerendered pages, beside `server.js`. */
 const PRERENDERED_DIR = "_prerendered"
@@ -1404,11 +1458,18 @@ export function generateServerEntry(options: {
   if (backendImport !== undefined) {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
-  lines.push(
-    options.copyChunks === true
-      ? 'import { clientEntry, copyChunks, cssLoading, manifest, styles, routeStyles } from "./server-manifest"'
-      : 'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
-  )
+  // A host policy is checked before the static files too, which takes the build's own file set.
+  const hostPolicy = importedOptions.includes("hostPolicy")
+  const manifestImports = [
+    ...(hostPolicy ? ["buildAssets"] : []),
+    "clientEntry",
+    ...(options.copyChunks === true ? ["copyChunks"] : []),
+    "cssLoading",
+    "manifest",
+    "styles",
+    "routeStyles",
+  ]
+  lines.push(`import { ${manifestImports.join(", ")} } from "./server-manifest"`)
   // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
@@ -1442,6 +1503,7 @@ export function generateServerEntry(options: {
     ...(useImport !== undefined ? ["  use,"] : []),
     ...(prerendered.length > 0 ? ["  prerenderedPages,"] : []),
     ...importedOptions.map((name) => `  ${name},`),
+    ...(hostPolicy ? ["  buildAssets,"] : []),
     "  manifest,",
     "  clientEntry,",
     "  styles,",
@@ -1474,7 +1536,7 @@ export function generateServerEntry(options: {
       "  fetch(request: Request, env: Assets, ctx: ExecutionContext) {",
       "    const { pathname } = new URL(request.url)",
       "    // Only the build's own outputs: the hashed bundle prefix and the files it copied.",
-      '    if (env?.ASSETS !== undefined && (pathname.startsWith("/assets/") || PUBLIC_FILES.has(pathname))) {',
+      `    if (env?.ASSETS !== undefined && (pathname.startsWith("/assets/") || PUBLIC_FILES.has(pathname))${hostPolicy ? HOST_ALLOWS_STATIC : ""}) {`,
       "      return env.ASSETS.fetch(request)",
       "    }",
       "    return handler.fetch(request, env as never, ctx)",
@@ -1514,6 +1576,7 @@ export function generateServerEntry(options: {
       '      prefix: "/assets",',
       ...(hashedFiles !== undefined ? ["      hashedFiles: HASHED_FILES,"] : []),
       `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
+      ...(hostPolicy ? [NODE_STATIC_ALLOW] : []),
       "    },",
       "    {",
       "      dir: fileURLToPath(STATIC_ROOT),",
@@ -1521,6 +1584,7 @@ export function generateServerEntry(options: {
       "      files: PUBLIC_FILES,",
       "      immutable: false,",
       `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
+      ...(hostPolicy ? [NODE_STATIC_ALLOW] : []),
       "    },",
       "  ],",
       "})",
@@ -1564,7 +1628,7 @@ export function generateServerEntry(options: {
       "  async fetch(req, server) {",
       "    const { pathname } = new URL(req.url)",
       // Braced: the next emitted line opens with `(`, which would otherwise call the returned value.
-      "    if (staticPath(pathname) !== undefined) {",
+      `    if (staticPath(pathname) !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}) {`,
       "      return staticResponse(req)",
       "    }",
       `    ${markFramed}`,
@@ -1584,7 +1648,7 @@ export function generateServerEntry(options: {
     'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req, info) => {',
     "  const { pathname } = new URL(req.url)",
     "  const filePath = staticPath(pathname)",
-    "  if (filePath !== undefined) {",
+    `  if (filePath !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}) {`,
     "    return staticResponse(req, filePath, pathname)",
     "  }",
     `  ${markFramed}`,
@@ -1899,6 +1963,7 @@ export const bunBundler: Bundler = {
       ...(input.styles !== undefined ? { styles: input.styles } : {}),
       ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
       ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
+      ...(input.buildAssets !== undefined ? { buildAssets: input.buildAssets } : {}),
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
@@ -2157,6 +2222,7 @@ export async function buildTargetWith(
     ...(client.css !== undefined ? { styles: client.css } : {}),
     ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
     ...(client.copyChunks !== undefined ? { copyChunks: client.copyChunks } : {}),
+    buildAssets: buildAssetPaths(client),
     ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
     ...(client.cssLoading !== undefined
@@ -2175,8 +2241,10 @@ export async function buildTargetWith(
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
     // The app's real patterns, so a directory is only collapsed into a glob once the route table
     // proves nothing can be served beneath it.
+    // A host policy must see a public file's request, which Pages answers from the CDN when the file
+    // is excluded from the worker. Only the hashed bundle stays excluded: `buildAssets` serves it.
     const rules = cloudflareRouteRules(
-      publicFiles,
+      options.optionImports?.hostPolicy === undefined ? publicFiles : [],
       discoverRoutes(routesDir).routes.map((route) => route.pattern),
     )
     writeFileSync(

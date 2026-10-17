@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   buildCodeframe,
   buildDiagnostic,
   classify,
   DIAGNOSTIC_CATALOG,
+  formatBuildLog,
   isHydrationMismatch,
   parseFrames,
   type SourceReader,
@@ -173,4 +177,34 @@ test("hydration reports from each framework classify, and a flag name that only 
       "Feature flags __VUE_OPTIONS_API__, __VUE_PROD_DEVTOOLS__, __VUE_PROD_HYDRATION_MISMATCH_DETAILS__ are not explicitly defined.",
     ),
   ).toBe(false)
+})
+
+test("formatBuildLog names the file, line and column a Bun build failure points at", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-build-log-"))
+  try {
+    await writeFile(join(root, "page.ts"), 'import { rows } from "./db"\nconsole.log(rows)\n')
+    await writeFile(join(root, "broken.ts"), "const x = (\n")
+    const resolved = await Bun.build({ entrypoints: [join(root, "page.ts")], throw: false })
+    expect(resolved.logs.map((log) => formatBuildLog(log, root))).toEqual([
+      'page.ts:1:22: Could not resolve: "./db"\n    import { rows } from "./db"',
+    ])
+    const parsed = await Bun.build({ entrypoints: [join(root, "broken.ts")], throw: false })
+    expect(formatBuildLog(parsed.logs[0], root)).toStartWith("broken.ts:1:")
+    // A thrown build carries the same messages in an AggregateError.
+    const thrown: unknown = await Bun.build({ entrypoints: [join(root, "page.ts")] }).catch(
+      (error: unknown) => error,
+    )
+    expect(thrown).toBeInstanceOf(AggregateError)
+    const errors: unknown[] = thrown instanceof AggregateError ? thrown.errors : []
+    expect(formatBuildLog(errors[0], root)).toStartWith("page.ts:1:22:")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("formatBuildLog keeps an absolute path outside the root, and a plain message without a position", () => {
+  const log = { message: "boom", position: { file: "/elsewhere/x.ts", line: 3, column: 1 } }
+  expect(formatBuildLog(log, "/app")).toBe("/elsewhere/x.ts:3:1: boom")
+  expect(formatBuildLog(new Error("plain"), "/app")).toBe("plain")
+  expect(formatBuildLog("text", "/app")).toBe("text")
 })

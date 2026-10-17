@@ -1,4 +1,4 @@
-import type { RequestPath, RouteInfo, Server } from "@nifrajs/core/server"
+import type { RequestPath, RouteInfo, Server, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { Jsonify } from "./jsonify.ts"
 import type { Result } from "./result.ts"
 
@@ -147,8 +147,15 @@ export interface WsCallOptions {
   protocols?: string | string[]
   /** Abort to close the socket (same effect as calling `close()`). */
   signal?: AbortSignal
-  /** Socket-level failures (connection refused, abnormal close). */
+  /** Socket-level failures (connection refused, abnormal close), and frames `validateReceive` refuses. */
   onError?: (error: unknown) => void
+  /**
+   * Check every received frame against this schema - the route's `sendSchema`, imported from the
+   * module that declares it (the typed client carries the contract's types, not its schemas). A frame
+   * that fails is not delivered: `onError` gets a `TypeError` naming the issues, with the frame as its
+   * `cause`. Frames are still delivered in the order they arrived, an async schema included.
+   */
+  validateReceive?: StandardSchemaV1
 }
 
 /**

@@ -377,3 +377,76 @@ describe("nifra migrate layout", () => {
     expect(await buildRefuses(root, "frontend/lib/client.tsx")).toEqual([])
   })
 })
+
+describe("a module both sides import may be declared shared where it lives", () => {
+  // A build-time script under backend/ evaluating an import-free table the pages also use.
+  const files = (rates: string, extra: Record<string, string> = {}): Record<string, string> => ({
+    "nifra.config.ts": 'export const clientModule = "./frontend/client.tsx"\n',
+    "frontend/client.tsx": "export function mountRouter() {}\n",
+    "frontend/lib/rates.ts": rates,
+    "frontend/lib/format.ts": "export const percent = (n: number) => String(n)\n",
+    "routes/index.tsx":
+      'import { rates } from "~/frontend/lib/rates"\nexport default () => rates.length\n',
+    "backend/check-rates.ts":
+      'import { rates } from "~/frontend/lib/rates"\nexport const ok = rates.every((r) => r > 0)\n',
+    ...extra,
+  })
+  const IMPORT_FREE = "export const rates = [5, 12, 18]\n"
+
+  test("NF-C028 says the module can be shared in place, and how", async () => {
+    const [finding] = await zoneFindings(app(files(IMPORT_FREE)))
+    expect(finding?.at).toBe("backend/check-rates.ts:1")
+    expect(finding?.message).toEndWith(
+      '. frontend/lib/rates.ts imports only shared code and packages, so it can be shared where it is: rename it rates.shared.ts, or list "frontend/lib/rates.ts" under "nifra": { "zones": { "shared": [...] } } in package.json',
+    )
+  })
+
+  test("NF-C028 names what stops a module from being shared", async () => {
+    const importing = 'import { percent } from "./format"\nexport const rates = [percent(5)]\n'
+    const [finding] = await zoneFindings(app(files(importing)))
+    expect(finding?.message).toEndWith(
+      ". frontend/lib/rates.ts cannot be shared as it is: it imports frontend/lib/format.ts (frontend code); move what both sides need into shared/",
+    )
+    const reading = "export const rates = [Number(process.env.RATE_SECRET)]\n"
+    const [envFinding] = await zoneFindings(app(files(reading)))
+    expect(envFinding?.message).toContain(
+      "cannot be shared as it is: it reads process.env.RATE_SECRET",
+    )
+  })
+
+  test("a shared zones entry inside frontend/ passes check and build, and changes no import", async () => {
+    const root = app(
+      files(IMPORT_FREE, {
+        "package.json": JSON.stringify({ nifra: { zones: { shared: ["frontend/lib/rates.ts"] } } }),
+      }),
+    )
+    expect(await zoneFindings(root)).toEqual([])
+    expect(await buildRefuses(root, "frontend/client.tsx")).toEqual([])
+  })
+
+  test("a .shared suffix inside frontend/ is the same declaration", async () => {
+    const root = app({
+      ...files(IMPORT_FREE),
+      "frontend/lib/rates.shared.ts": IMPORT_FREE,
+      "routes/index.tsx":
+        'import { rates } from "~/frontend/lib/rates.shared"\nexport default () => rates.length\n',
+      "backend/check-rates.ts":
+        'import { rates } from "~/frontend/lib/rates.shared"\nexport const ok = rates.length > 0\n',
+    })
+    expect(await zoneFindings(root)).toEqual([])
+  })
+
+  test("declared shared, the module is held to the shared rules: verified, not trusted", async () => {
+    const root = app(
+      files('import { percent } from "./format"\nexport const rates = [percent(5)]\n', {
+        "package.json": JSON.stringify({ nifra: { zones: { shared: ["frontend/lib/rates.ts"] } } }),
+      }),
+    )
+    const found = await zoneFindings(root)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.at).toBe("frontend/lib/rates.ts:1")
+    expect(found[0]?.message).toContain(
+      "shared code runs on both sides, so it may import only shared code",
+    )
+  })
+})

@@ -161,3 +161,87 @@ test("loadSmokeFixture refuses traversal and symlink escapes", async () => {
     await rm(outside, { recursive: true, force: true })
   }
 })
+
+// A partner-host app: the gate in front decides what `partner.example` may load.
+const partnerApp = (gate: (path: string) => boolean) => ({
+  fetch(request: Request): Response {
+    const path = new URL(request.url).pathname
+    if (request.headers.get("host") === "partner.example" && !gate(path))
+      return new Response("Not Found", { status: 404 })
+    if (path === "/" || path === "/login")
+      return new Response(
+        '<html><head><link rel="stylesheet" href="/assets/app-1.css"><script type="module" src="/assets/entry-1.js"></script></head><body>SSR_MARKER</body></html>',
+        { headers: { "content-type": "text/html; charset=utf-8" } },
+      )
+    if (path === "/assets/app-1.css")
+      return new Response("body{background:url(/assets/bg-1.png)}", {
+        headers: { "content-type": "text/css" },
+      })
+    if (path === "/assets/entry-1.js")
+      return new Response('import("./route-1.js")', {
+        headers: { "content-type": "text/javascript" },
+      })
+    if (path === "/assets/route-1.js" || path === "/assets/bg-1.png")
+      return new Response("x", { headers: { "content-type": "text/javascript" } })
+    if (path === "/api/ping") return Response.json({ ok: true })
+    return new Response("Not Found", { status: 404 })
+  },
+})
+const hosts = [{ id: "partner", host: "partner.example", pages: ["/"], refused: ["/login"] }]
+
+test("runSmoke hosts: a restricted host must load every file its pages reference", async () => {
+  const pages = new Set(["/"])
+  const exact = new Set([
+    "/assets/app-1.css",
+    "/assets/entry-1.js",
+    "/assets/route-1.js",
+    "/assets/bg-1.png",
+  ])
+  const ok = await runSmoke(
+    { ...fixture, app: partnerApp((path) => pages.has(path) || exact.has(path)), hosts },
+    { inProcess: true },
+  )
+  expect(ok.checks.find((check) => check.category === "hosts")).toEqual({
+    category: "hosts",
+    id: "partner",
+    status: "pass",
+  })
+  // A gate that knows the pages and guesses the bundle's names: the page still answers 200, the
+  // chunk it imports and the image its stylesheet loads do not.
+  const guessed = /^\/assets\/[a-z]+-\d\.(?:js|css)$/
+  const broken = await runSmoke(
+    {
+      ...fixture,
+      app: partnerApp((path) => pages.has(path) || (guessed.test(path) && !path.includes("route"))),
+      hosts,
+    },
+    { inProcess: true },
+  )
+  const check = broken.checks.find((entry) => entry.category === "hosts")
+  expect(check?.status).toBe("fail")
+  expect(check?.message).toBe(
+    "2 failed: /assets/bg-1.png 404 (from /assets/app-1.css), /assets/route-1.js 404 (from /assets/entry-1.js)",
+  )
+  // A refused page that renders is a failure too.
+  const open = await runSmoke(
+    { ...fixture, app: partnerApp(() => true), hosts },
+    { inProcess: true },
+  )
+  expect(open.checks.find((entry) => entry.category === "hosts")?.message).toBe(
+    "1 failed: /login 200",
+  )
+})
+
+test("runSmoke refuses a malformed host check", async () => {
+  const report = await runSmoke(
+    { ...fixture, hosts: [{ id: "x", host: "partner.example/evil", pages: ["/"] }] },
+    { inProcess: true },
+  )
+  expect(report.checks[0]).toEqual(
+    expect.objectContaining({
+      category: "start",
+      status: "fail",
+      message: "hosts[0].host must be a host name",
+    }),
+  )
+})

@@ -174,6 +174,7 @@ export const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-S006": "security",
   "NF-S007": "security",
   "NF-S008": "security",
+  "NF-S009": "security",
 }
 
 const REVIEW_INPUT_SCHEMA = {

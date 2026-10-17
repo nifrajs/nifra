@@ -6,6 +6,7 @@
  * read them off `raw`). Sends before the socket opens are queued, so the handle never throws.
  */
 
+import { formatStandardIssues } from "@nifrajs/core/schema"
 import {
   createTransportCodecRegistry,
   decodeTransportFrame,
@@ -102,6 +103,31 @@ export function openWebSocket(
   socket.addEventListener("close", () => {
     sendQueue.length = 0
   })
+  const deliver = (message: unknown): void => {
+    for (const listener of listeners) listener(message)
+  }
+  const schema = callOptions?.validateReceive
+  // One chain for every frame, so an async schema cannot reorder what it lets through.
+  let received = Promise.resolve()
+  const receive =
+    schema === undefined
+      ? deliver
+      : (frame: unknown): void => {
+          const next = received
+            .then(() => schema["~standard"].validate(frame))
+            .then((result) => {
+              if (result.issues === undefined) deliver(result.value)
+              else {
+                callOptions?.onError?.(
+                  new TypeError(
+                    `a received frame does not match validateReceive: ${formatStandardIssues(result.issues)}`,
+                    { cause: frame },
+                  ),
+                )
+              }
+            })
+          received = next.catch((error: unknown) => callOptions?.onError?.(error))
+        }
   socket.addEventListener("message", (event: MessageEvent) => {
     if (typeof event.data !== "string") return // binary frames live off the typed contract
     let parsed: unknown
@@ -115,7 +141,7 @@ export function openWebSocket(
     } catch {
       return // a non-JSON text frame is outside the contract too
     }
-    for (const listener of listeners) listener(parsed)
+    receive(parsed)
   })
 
   const signal = callOptions?.signal

@@ -286,6 +286,27 @@ describe("app zone settings", () => {
     )
   })
 
+  test("a module inside frontend/ or backend/ may be declared shared, by entry or by suffix", () => {
+    write("app/frontend/lib/rates.ts")
+    write("app/frontend/lib/rates.frontend.ts")
+    write("app/frontend/lib/units.shared.ts")
+    write("app/backend/lib/limits.shared.ts")
+    write("app/backend/lib/jobs.frontend.ts")
+    write("app/public/env.shared.js")
+    const classifier = configured({ shared: ["frontend/lib/rates.ts"] })
+    expect(classifier.classify(join(app, "frontend/lib/rates.ts")).zone).toBe("shared")
+    expect(classifier.classify(join(app, "frontend/lib/units.shared.ts")).zone).toBe("shared")
+    expect(classifier.classify(join(app, "backend/lib/limits.shared.ts")).zone).toBe("shared")
+    // Only shared, the side both may import: a file still cannot cross to the other side.
+    const crossed = classifier.classify(join(app, "backend/lib/jobs.frontend.ts"))
+    expect(crossed.zone === "error" && crossed.reason).toContain(
+      '".frontend" suffix says otherwise',
+    )
+    // public/ is served as it is, so nothing in it is code either side imports.
+    expect(classifier.classify(join(app, "public/env.shared.js")).zone).toBe("error")
+    expect(zoneOf("frontend/lib/rates.ts").zone).toBe("frontend")
+  })
+
   test("the app's package.json is read when no setting is passed", () => {
     const own = join(root, "own-config")
     mkdirSync(join(own, "jobs"), { recursive: true })
@@ -308,7 +329,13 @@ describe("app zone settings", () => {
     [{ backend: ["migrations/*.ts"] }, "must be a plain path"],
     [{ backend: ["../outside"] }, 'may not contain ".."'],
     [{ backend: ["/abs"] }, "must be a folder or file relative to the app"],
-    [{ shared: ["backend/util"] }, "inside backend/"],
+    [
+      { frontend: ["backend/util"] },
+      'inside backend/, which already has its own rules; only a "shared" entry',
+    ],
+    [{ shared: ["backend"] }, "inside backend/"],
+    [{ shared: ["routes/util.ts"] }, "inside routes/"],
+    [{ shared: ["public/env.js"] }, "inside public/"],
     [{ backend: ["jobs"], frontend: ["./jobs/"] }, "listed as both backend and frontend"],
   ] as const)("refuses %j", (zones, message) => {
     expect(() => parseZoneConfig(zones, "app/package.json")).toThrow(ZoneConfigError)

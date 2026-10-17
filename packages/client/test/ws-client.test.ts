@@ -71,6 +71,10 @@ function schema<O>(validate: (value: unknown) => StandardResult<O>): StandardSch
   }
 }
 
+/** One property of a frame, without trusting its shape. */
+const field = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
+
 const chatIn = schema<{ say: string }>((v) =>
   typeof v === "object" &&
   v !== null &&
@@ -160,6 +164,27 @@ describe("typed client .ws()", () => {
     chat.close()
   })
 
+  test("validateReceive on the typed handle checks frames against the route's sendSchema", async () => {
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
+    const strictOut = schema<{ echoed: string; at: number }>((v) => {
+      const echoed = field(v, "echoed")
+      const at = field(v, "at")
+      return typeof echoed === "string" && echoed !== "drifted" && typeof at === "number"
+        ? { value: { echoed, at } }
+        : { issues: [{ message: "echoed is not allowed", path: ["echoed"] }] }
+    })
+    const errors: unknown[] = []
+    const chat = api.chat.ws({ validateReceive: strictOut, onError: (error) => errors.push(error) })
+    const iterator = chat.messages()
+    chat.send({ say: "drifted" })
+    chat.send({ say: "fine" })
+    const first = await iterator.next()
+    expect(first.value).toEqual({ echoed: "fine", at: 1 })
+    expect(String(errors[0])).toContain("echoed: echoed is not allowed")
+    chat.close()
+  })
+
   test("the in-process client refuses .ws() with a real explanation", () => {
     const api = testClient<typeof app>(app)
     expect(() => api.chat.ws()).toThrow(/in-process client cannot open WebSockets/)
@@ -198,6 +223,63 @@ describe("WebSocket runtime behavior", () => {
 
     handle.close(1000, "done")
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: "done" }])
+  })
+
+  test("validateReceive delivers only frames the schema accepts, in arrival order", async () => {
+    useFakeWebSocket()
+    let releaseFirst: () => void = () => {}
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const tick = schema<{ n: number }>((v) => {
+      const n = field(v, "n")
+      if (n === "boom") throw new Error("schema crashed")
+      return typeof n === "number"
+        ? { value: { n: n * 10 } }
+        : { issues: [{ message: "n must be a number", path: ["n"] }] }
+    })
+    // The first frame validates asynchronously and slowly; the later ones synchronously.
+    const ordered: StandardSchemaV1<unknown, { n: number }> = {
+      "~standard": {
+        ...tick["~standard"],
+        validate: (v) =>
+          field(v, "n") === 1
+            ? firstHeld.then(() => tick["~standard"].validate(v))
+            : tick["~standard"].validate(v),
+      },
+    }
+    const errors: Error[] = []
+    const handle = openWebSocket(
+      "http://example.test",
+      "/ticks",
+      {
+        validateReceive: ordered,
+        onError: (error) => errors.push(error instanceof Error ? error : new Error(String(error))),
+      },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    socket.open()
+    const received: unknown[] = []
+    handle.onMessage((message) => received.push(message))
+    socket.message('{"n":1}')
+    socket.message('{"n":"two"}')
+    socket.message('{"n":"boom"}')
+    socket.message('{"n":3}')
+    await Promise.resolve()
+    expect(received).toEqual([])
+    releaseFirst()
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+
+    // The schema's output is what is delivered, so a transform shows.
+    expect(received).toEqual([{ n: 10 }, { n: 30 }])
+    expect(errors).toHaveLength(2)
+    expect(errors[0]).toBeInstanceOf(TypeError)
+    expect(errors[0]?.message).toBe(
+      "a received frame does not match validateReceive: n: n must be a number",
+    )
+    expect(errors[0]?.cause).toEqual({ n: "two" })
+    expect(errors[1]?.message).toBe("schema crashed")
   })
 
   test("encodes the handshake query the way an HTTP call does", () => {

@@ -976,6 +976,103 @@ export const inputBeforeAuthenticationRule: CheckRule = {
   },
 }
 
+function propertyName(ts: typeof TSApi, prop: TSApi.ObjectLiteralElementLike): string | undefined {
+  if (ts.isSpreadAssignment(prop)) return undefined
+  return ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : undefined
+}
+
+/** The `message` handler of an `app.ws()` handler object, when it is written inline. */
+function wsMessageHandler(
+  ts: typeof TSApi,
+  handler: TSApi.ObjectLiteralExpression,
+): TSApi.Node | undefined {
+  for (const prop of handler.properties) {
+    if (propertyName(ts, prop) !== "message") continue
+    if (ts.isMethodDeclaration(prop)) return prop.body
+    if (ts.isPropertyAssignment(prop)) {
+      const fn = prop.initializer
+      if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) return fn.body
+    }
+  }
+  return undefined
+}
+
+function callsJsonParse(ts: typeof TSApi, node: TSApi.Node): boolean {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "parse" &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === "JSON"
+  ) {
+    return true
+  }
+  return ts.forEachChild(node, (child) => (callsJsonParse(ts, child) ? true : undefined)) === true
+}
+
+/**
+ * An `app.ws()` route whose `message()` parses frames itself has no `messageSchema`, so a client's
+ * frame reaches the handler unvalidated and the typed client's `send()` is untyped. Only an inline
+ * handler object with no spread is judged: a spread may carry the schema.
+ */
+export const unvalidatedWsFrameRule: CheckRule = {
+  code: "NF-S009",
+  title: "WebSocket frames parsed without a messageSchema",
+  async scan(ctx) {
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
+    if (ts === undefined) return didNotRun("NF-S009", "WebSocket messageSchema scan")
+    const findings: Diagnostic[] = []
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
+      const visit = (node: TSApi.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "ws"
+        ) {
+          const [path, handler] = node.arguments
+          if (
+            path !== undefined &&
+            ts.isStringLiteralLike(path) &&
+            handler !== undefined &&
+            ts.isObjectLiteralExpression(handler) &&
+            !handler.properties.some(
+              (prop) => ts.isSpreadAssignment(prop) || propertyName(ts, prop) === "messageSchema",
+            )
+          ) {
+            const body = wsMessageHandler(ts, handler)
+            if (body !== undefined && callsJsonParse(ts, body)) {
+              const line =
+                tree.getLineAndCharacterOfPosition(node.expression.name.getStart(tree)).line + 1
+              const reviewed = expectedReason(lines, line, "NF-S009") !== undefined
+              findings.push(
+                diagnostic({
+                  code: "NF-S009",
+                  severity: "info",
+                  file,
+                  line,
+                  message: reviewed
+                    ? `ws("${path.text}") parsing its own frames is expected here`
+                    : `ws("${path.text}") parses frames with JSON.parse in message() and declares no messageSchema, so a client's frame reaches the handler unvalidated and the typed client's send() takes unknown. Declare messageSchema: message() then receives the parsed, validated value, invalid frames go to onInvalidMessage, and send() is typed from it`,
+                  evidence: [path.text, ...expectationEvidence(lines, line, "NF-S009")],
+                  verify: "nifra check --lints-only",
+                }),
+              )
+            }
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+    }
+    return findings
+  },
+}
+
 export const securityRules = Object.freeze([
   failOpenGateRule,
   secretComparisonRule,
@@ -985,4 +1082,5 @@ export const securityRules = Object.freeze([
   assuranceEscapeHatchRule,
   unprefixedSecureCookieRule,
   inputBeforeAuthenticationRule,
+  unvalidatedWsFrameRule,
 ])

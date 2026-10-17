@@ -1,29 +1,16 @@
-import { readFileSync } from "node:fs"
-import { join, sep } from "node:path"
+import { sep } from "node:path"
 import { bunLockDir, staleLinkLocks } from "./lock-links.ts"
 import {
   compareSemverSpec,
   groupDeclaredNames,
+  groupDependenciesAt,
   groupPinVersions,
   installedGroupPackages,
   isFixedGroup,
   type LinkedGroupInstall,
+  linkedRepositories,
   specVersion,
 } from "./upgrade.ts"
-
-/** The fixed-group packages the package installed at `dir` depends on. */
-function groupDependenciesAt(dir: string): string[] {
-  try {
-    const manifest: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))
-    if (typeof manifest !== "object" || manifest === null) return []
-    return ["dependencies", "peerDependencies", "optionalDependencies"].flatMap((field) => {
-      const deps: unknown = Reflect.get(manifest, field)
-      return typeof deps === "object" && deps !== null ? Object.keys(deps).filter(isFixedGroup) : []
-    })
-  } catch {
-    return []
-  }
-}
 
 /** One version of the fixed release group, and where the workspace carries it. */
 export interface GroupVersion {
@@ -34,7 +21,8 @@ export interface GroupVersion {
 /**
  * More than one version of the fixed release group (`@nifrajs/*`, `nifra`, `create-nifra`) in one
  * workspace. Read only: package.json pins, installed packages (followed to their real location, so a
- * linked repo reports its own version) and the running CLI. Nothing is spawned.
+ * linked repo reports its own version), the copies a `link:`/`file:` repository installs for itself,
+ * and the running CLI. Nothing is spawned.
  */
 export interface VersionDrift {
   /** Oldest first. */
@@ -64,6 +52,17 @@ export function collectVersionDrift(cwd: string, cliVersion?: string): VersionDr
     if (!declared.has(name)) continue
     add(version, `installed ${name}${inside ? "" : ` (linked from ${path})`}`)
     if (!inside) linkedOutside.push({ package: name, path, version })
+  }
+  // A repository linked in from outside loads nifra from its own node_modules, which the scan above
+  // never reads: two live-linked repos can each pin one version and still run two.
+  for (const repo of linkedRepositories(cwd)) {
+    for (const install of repo.installs) {
+      add(
+        install.version,
+        `installed ${install.package} by ${repo.package} (linked from ${repo.path}), which loads its own copy`,
+      )
+      linkedOutside.push(install)
+    }
   }
   if (cliVersion !== undefined) add(cliVersion, "the running nifra CLI")
   // A linked package's stale recorded pin is installed under that package, where the scan of

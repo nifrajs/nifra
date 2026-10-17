@@ -196,6 +196,16 @@ export default function Structure() {
         <code>nifra check</code> and the editor plugin all read this setting.
       </p>
       <p>
+        <code>frontend/</code> and <code>backend/</code> keep their own rules, with one exception: a
+        module there that both sides import can be declared shared where it lives, by a{" "}
+        <code>shared</code> entry naming it or by a <code>.shared</code> suffix. The entry changes no
+        import; the suffix renames the file. Either way the module is then held to the shared rules
+        (it may import only shared code and packages, and read no private environment variable), so
+        the declaration narrows what it may reach and never widens it. When backend code imports a
+        frontend module, NF-C028 says whether that module can be shared as it is, or names the import
+        or environment read that stops it.
+      </p>
+      <p>
         A project that serves no pages has no browser, so the zones do not apply to it. Declare that
         in its <code>package.json</code> with <code>{'"nifra": { "kind": "api" }'}</code>:{" "}
         <code>nifra check</code> then skips the zone checks and the server-only import check there,

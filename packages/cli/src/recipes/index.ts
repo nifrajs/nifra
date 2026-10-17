@@ -53,6 +53,13 @@ export interface UpgradeRecipe {
   readonly retiredMarkers?: readonly RetiredMarker[]
   /** Human notes printed after the plan - e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]
+  /**
+   * The fixed-group packages whose behaviour the notes describe changing (a tool such as
+   * `@nifrajs/cli` is listed itself when what it does changes). `nifra upgrade` marks the release as
+   * no announced behaviour change for a project that loads none of them. Omitted, every project is
+   * treated as affected.
+   */
+  readonly affects?: readonly string[]
 }
 
 const RECIPES: Record<string, UpgradeRecipe> = {

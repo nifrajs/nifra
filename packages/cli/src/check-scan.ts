@@ -148,7 +148,7 @@ const DB_MODULE = /^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
  * module, a bare builtin with no browser counterpart, or a package the browser build refuses
  * (`SERVER_PACKAGES` and the driver entries of `@nifrajs/web/zones`).
  */
-function isServerOnlySink(specifier: string): boolean {
+export function isServerOnlySink(specifier: string): boolean {
   return (
     /^(?:node:|bun:)/.test(specifier) ||
     SERVER_BUILTINS.has(specifier) ||
