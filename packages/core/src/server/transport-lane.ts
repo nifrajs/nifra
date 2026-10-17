@@ -1,5 +1,9 @@
 /** Opt-in versioned transport integration. Kept outside the server kernel's bare dependency graph. */
-import type { TransportCodec, TransportCodecRegistry } from "../transport-codec.ts"
+import {
+  encodeTransportResponse,
+  type TransportCodec,
+  type TransportCodecRegistry,
+} from "../transport-codec.ts"
 import { readBoundedBytes } from "./body.ts"
 import { jsonError } from "./http.ts"
 import { guardDecodedValue, type ProtoPoisoning } from "./proto-guard.ts"
@@ -157,13 +161,12 @@ export function transportCodecs(
     app.afterHandle((result, context) => {
       if (result === undefined || result instanceof Response || isResponseResult(result))
         return result
-      const codec = runtime.responseCodec(context.req.headers.get("accept"))
-      const headers = new Headers(context.set.headers)
-      headers.set("content-type", codec.mediaType)
-      return new Response(codec.encode(result), {
-        status: context.set.status ?? 200,
-        headers,
-      })
+      // The representation depends on `Accept`, so the response says so to every shared cache.
+      return encodeTransportResponse(
+        result,
+        runtime.responseCodec(context.req.headers.get("accept")),
+        { status: context.set.status ?? 200, headers: context.set.headers },
+      )
     })
     return app
   }
