@@ -236,7 +236,8 @@ export function readBodyFramed<T>(
   formOrigins?: FormOrigins,
 ): Promise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
-  if (!isJsonMediaType(contentType)) {
+  // A body a transport codec decoded keeps its media type; the JSON lane below takes its value.
+  if (!isJsonMediaType(contentType) && preDecodedBody(source) === undefined) {
     // JSON needs a preflight, so CORS judges it; a form body reaches here from any site with cookies.
     if (isFormMediaType(contentType) && !formOriginAllowed(source, formOrigins)) {
       return Promise.resolve(wrapResponse(plainError(403, "forbidden_origin")))
