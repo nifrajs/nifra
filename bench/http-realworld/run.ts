@@ -45,8 +45,8 @@ const CONNECTIONS = envInt("BENCH_CONNS", 50)
 const REQUESTS_PER_SAMPLE = envInt("BENCH_REQUESTS", 100_000)
 const SCALE_PCT = envInt("BENCH_SCALE", 100)
 const WARMUP = envInt("BENCH_WARMUP", 1, 0)
-/** Even, so every two rows trade places equally often (bench/rounds.ts). */
-const ROUNDS = envInt("BENCH_ROUNDS", 4)
+/** Rounded up to even: an unpaired round favours one end of its order (bench/rounds.ts). */
+const ROUNDS = Math.ceil(envInt("BENCH_ROUNDS", 4) / 2) * 2
 /** Shifts the round rotation, so repeated aggregate runs start from different rows. */
 const ROUND_OFFSET = envInt("BENCH_ROUND_OFFSET", 0, 0)
 const BASE_PORT = 3600
