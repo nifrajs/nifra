@@ -334,7 +334,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.3.0"
+const CLI_VERSION = "5.4.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter

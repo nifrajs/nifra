@@ -1,5 +1,45 @@
 # @nifrajs/web
 
+## 5.4.0
+
+### Patch Changes
+
+- e7d43ca: On Bun, `servePublicDir` now sends `content-length` for files up to 1 MiB, whole or ranged. This covers the Bun server entry and `nifra dev`. `Bun.serve` drops the declared length of a stream body and sends it chunked, so these files used to arrive with no length: no download progress, and caches and proxies could not size them. They are now read whole through the already-open file, as files up to 256 KiB already were, which serves a 1 MiB file about a third faster. Files above 1 MiB still stream, and Bun still sends them chunked. Node and Deno keep a stream's length and are unchanged.
+- 5183c00: The server entry `buildTarget` generates for `deno` now answers static files with the validators the Bun and Node entries send:
+  
+  - an `etag` and `last-modified`, and a `304` with no body for a current copy, HEAD included.
+  - `Range` honored only when `If-Range` is absent or names the file's current validator; anything else gets the whole file.
+  - a link is typed by the file it resolves to, as on Bun and Node.
+  
+  `@nifrajs/core/static-file` holds the comparisons `servePublicDir`, the Deno entry and `@nifrajs/node`'s `static` reader now share.
+- e589893: The server entry `buildTarget` generates for `node` now passes the app itself to `@nifrajs/node`'s `serve` and serves files with the adapter's own reader. The entry needs the `@nifrajs/node` of the same release, so a `node` build with an older one installed stops before bundling, names both versions and leaves the last deploy dir in place. A 5.3 adapter used to build cleanly and then throw when the server started. It used to wrap `app.fetch` in a plain `{ fetch }` handler. That wrapper hid the node-direct lane, so every page built an undici `Request` and drained a `Response`, and every file went through one too. The entry mounts `/assets` and, at the root, only the `public/` files the build copied, with the same type, cache, range, HEAD and hidden-file answers the Bun entry gives.
+  
+  `serve`'s `static` option on `@nifrajs/node`:
+  
+  - takes an array of mounts; a path goes to the first mount that takes it, by its prefix and, when set, its `files`.
+  - `files` lists the only URL paths a mount serves; any other path passes to the next mount, then the app, without that mount touching the disk.
+  - `cacheControl` sets `cache-control` for files not served immutable.
+  - types files from the same table as `servePublicDir`, so `.pdf`, `.mp4`, `.xml`, `.csv` and other common types are no longer sent as `application/octet-stream`; a link is typed by the file it resolves to.
+  - serves `/.well-known` by default, as `servePublicDir` does, and refuses a visible name that links to a dotfile.
+  - answers a link that leaves the directory with `404`, the same as a missing file, instead of `403`.
+  - sends files up to 256 KiB, and HEAD, `304` and `416` answers, in one write with no `Response` or stream.
+  
+  `@nifrajs/core/static-file` exports `CONTENT_TYPES`, `contentTypeOf` and `isHiddenPath`, which both readers now use.
+- 02ac072: Static files on Bun and Deno evaluate `If-None-Match` before `If-Modified-Since`, including the wildcard condition for an existing file. A stale entity tag can no longer produce a `304` from its accompanying date.
+- 529f8d2: Static files are tagged by their content on every self-hosting entry: `servePublicDir` (the Bun entry and `nifra dev`), `@nifrajs/node`'s `static` reader and the generated Deno entry. Each sends a strong `ETag` of 128 bits of the file's SHA-256, the same for the same bytes on every instance and runtime. A replacement that keeps a file's size and modification time (`cp -p`, `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s) is no longer answered with a `304` for the old copy, and a resumed download is no longer spliced from two versions. The Node reader's `"<mtime>-<size>"` tag is gone; the Bun and Deno entries send a tag for the first time.
+  
+  - A tag is remembered per process for the file version it was read from (device, inode, size, mtime and ctime), so a known file costs no extra read. The first request for a file reads it once, and a file within the buffered size is then served from those bytes. Concurrent first requests share one read. A file changed in the last 2 s is read again until its ctime settles. A file over 256 MiB (`CONTENT_TAG_MAX`) is tagged by that identity instead: still strong, but different on each instance.
+  - `Last-Modified` is sent only while the file's mtime is the time of its own last change (within 1 s of its ctime). A file whose mtime a copy or build set, such as every file in a container image, is sent without it, so `If-Modified-Since` cannot validate it.
+  - An `If-Range` date no longer keeps a range for a file with a strong tag; a client resumes by the tag. On Node a configured strong `ETag` likewise sends the whole file for a date, while a configured weak one still lets a configured `Last-Modified` resume by its exact date.
+  - `@nifrajs/core/static-file` exports `contentTags`, `CONTENT_TAG_MAX`, `lastModifiedOf` and `isNotModified`, the `If-None-Match` and `If-Modified-Since` check all three readers share. `ifRangeAllowsPartial` now takes the file's tag.
+- Updated dependencies [5183c00]
+- Updated dependencies [01b97ec]
+- Updated dependencies [e589893]
+- Updated dependencies [ff66db6]
+- Updated dependencies [529f8d2]
+  - @nifrajs/core@5.4.0
+  - @nifrajs/island-trigger@5.4.0
+
 ## 5.3.0
 
 ### Minor Changes
