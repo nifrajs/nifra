@@ -385,6 +385,28 @@ describe("session - store mode", () => {
     expect(inFlight.setCalls).toEqual([])
   })
 
+  // Other logouts can evict a marker from a bounded store before the stale request commits.
+  test("revocations that evict a logout's marker still never bring its session back", async () => {
+    const store = new MemorySessionStore({ max: 1 })
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const login = async (userId: string) => {
+      const a = ctx()
+      const s = await sessions.get(a.context)
+      s.set("userId", userId)
+      await sessions.commit(a.context, s)
+      return lastCookie(a.setCalls)
+    }
+    const cookie = await login("victim")
+    const inFlight = ctx({ nifra_session: cookie })
+    const stale = await sessions.get(inFlight.context)
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+    await sessions.destroy(ctx({ nifra_session: await login("other") }).context)
+    await sessions.commit(inFlight.context, stale)
+
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    expect(inFlight.setCalls).toEqual([])
+  })
+
   test("a commit that loaded the pre-login session does not bring it back after rotation", async () => {
     const store = new MemorySessionStore()
     const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
