@@ -251,6 +251,47 @@ process.stdin.on("data", (chunk) => {
     }
   })
 
+  test("a diagnostic masks every credential Pi was given, whatever its shape", async () => {
+    const groq = "gsk_SYNTHETICabcdefghijklmnopqrstuvwxyz0123"
+    const opaque = "opaque-proxy-credential-0123"
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  const echoed = "401 Unauthorized: invalid api key " + process.env.GROQ_API_KEY + " via " + process.env.PROXY_TOKEN
+  process.stdout.write(JSON.stringify({ type: "extension_error", error: echoed }) + "\\n")
+  const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: echoed }
+  process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end", messages: [failed] }) + "\\n")
+})
+`
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", script],
+      env: { GROQ_API_KEY: groq, PROXY_TOKEN: opaque },
+    })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "value-echo" })
+      const events: AgentEvent[] = []
+      let rejection: unknown
+      try {
+        for await (const event of backend.send({ sessionId: "value-echo", message: "hello" }))
+          events.push(event)
+      } catch (error) {
+        rejection = error
+      }
+      expect(rejection).toMatchObject({ code: "PI_AUTH_REQUIRED" })
+      const failures = events.filter((event) => event.type === "session.failed")
+      expect(failures.length).toBe(2)
+      for (const text of [JSON.stringify(rejection), JSON.stringify(failures)]) {
+        expect(text).toContain("invalid api key [REDACTED] via [REDACTED]")
+        expect(text).not.toContain("SYNTHETIC")
+        expect(text).not.toContain(opaque)
+      }
+    } finally {
+      await backend.close("value-echo")
+    }
+  })
+
   test("a model error Pi retries does not end the turn, and the retried answer completes it", async () => {
     const script = `
 process.stdin.on("data", (chunk) => {

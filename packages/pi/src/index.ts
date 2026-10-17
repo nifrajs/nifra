@@ -61,6 +61,8 @@ interface PiSession {
   turnId: string | undefined
   /** Pi ends a turn whose model call failed with an ordinary `agent_end`; the error is on its last message. */
   modelError: ReturnType<typeof agentError> | undefined
+  /** Masks the credentials this session's Pi process was given, wherever a diagnostic echoes one. */
+  redact: (text: string) => string
   turnAbortCleanup: (() => void) | undefined
   reloadRequested: boolean
   reloadRevision: number
@@ -171,7 +173,8 @@ export class PiBackend implements AgentBackend {
       throw new TypeError("pi backend: sessionId must be a bounded token")
     if (this.sessions.has(id)) throw new Error(`pi backend: session already exists: ${id}`)
 
-    const proc = this.spawnProcess(input.cwd, id)
+    const env = filteredEnv(this.options.env)
+    const proc = this.spawnProcess(input.cwd, id, env)
     const now = Date.now()
     const snapshot: AgentSessionSnapshot = {
       version: 1,
@@ -193,6 +196,7 @@ export class PiBackend implements AgentBackend {
       seq: 0,
       turnId: undefined,
       modelError: undefined,
+      redact: credentialRedactor(env),
       turnAbortCleanup: undefined,
       reloadRequested: false,
       reloadRevision: 0,
@@ -324,7 +328,9 @@ export class PiBackend implements AgentBackend {
       })
       session.closed = false
       session.restarting = false
-      this.attachProcess(session, this.spawnProcess(session.cwd, session.id))
+      const env = filteredEnv(this.options.env)
+      session.redact = credentialRedactor(env)
+      this.attachProcess(session, this.spawnProcess(session.cwd, session.id, env))
       return { revision, loaded: [], disabled: [], rolledBack: false }
     }
     const stream = createAgentEventStream(this.options.maxEventQueueSize ?? 256)
@@ -422,7 +428,7 @@ export class PiBackend implements AgentBackend {
     return session
   }
 
-  private spawnProcess(cwd: string, id: string): Bun.Subprocess {
+  private spawnProcess(cwd: string, id: string, env: Record<string, string>): Bun.Subprocess {
     const args =
       this.options.rpcArgs === undefined
         ? ["--mode", "rpc", ...(this.options.noSession === false ? [] : ["--no-session"])]
@@ -440,7 +446,7 @@ export class PiBackend implements AgentBackend {
     args.push(...(this.options.args ?? []))
     return Bun.spawn([this.options.command ?? "pi", ...args], {
       cwd,
-      env: filteredEnv(this.options.env),
+      env,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -670,7 +676,9 @@ export class PiBackend implements AgentBackend {
             this.emit(session, { type: "assistant.message", turnId, text: piece })
         if (isRecord(message) && message.role === "assistant")
           session.modelError =
-            message.stopReason === "error" ? modelError(message.errorMessage) : undefined
+            message.stopReason === "error"
+              ? modelError(message.errorMessage, session.redact)
+              : undefined
         return
       }
       case "tool_execution_start":
@@ -739,7 +747,8 @@ export class PiBackend implements AgentBackend {
           type: "session.failed",
           error: agentError(
             "PI_EXTENSION",
-            boundedPiText(record.error, 4_096) || "Pi extension failed",
+            boundedPiText(redactedText(record.error, session.redact), 4_096) ||
+              "Pi extension failed",
           ),
           recoverable: true,
         })
@@ -985,40 +994,41 @@ const PI_PROVIDER_ENV = [
   "ZAI_CODING_CN_API_KEY",
 ]
 
+// What Pi needs to run at all. None of it is a credential, so a diagnostic keeps these values.
+const PI_BASE_ENV = [
+  "PATH",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  ...(process.platform === "win32"
+    ? [
+        "SystemRoot",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "COMSPEC",
+        "PATHEXT",
+        "BUN_INSTALL",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "USERNAME",
+        "USERDOMAIN",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+      ]
+    : []),
+]
+
 function filteredEnv(
   values: Readonly<Record<string, string | undefined>> | undefined,
 ): Record<string, string> {
   const result: Record<string, string> = {}
-  const names = new Set([
-    "PATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "TERM",
-    ...PI_PROVIDER_ENV,
-    ...(process.platform === "win32"
-      ? [
-          "SystemRoot",
-          "WINDIR",
-          "TEMP",
-          "TMP",
-          "USERPROFILE",
-          "LOCALAPPDATA",
-          "APPDATA",
-          "COMSPEC",
-          "PATHEXT",
-          "BUN_INSTALL",
-          "HOMEDRIVE",
-          "HOMEPATH",
-          "USERNAME",
-          "USERDOMAIN",
-          "ProgramData",
-          "ProgramFiles",
-          "ProgramFiles(x86)",
-        ]
-      : []),
-    ...Object.keys(values ?? {}),
-  ])
+  const names = new Set([...PI_BASE_ENV, ...PI_PROVIDER_ENV, ...Object.keys(values ?? {})])
   for (const name of names) {
     const value = values !== undefined && Object.hasOwn(values, name) ? values[name] : readEnv(name)
     if (value !== undefined) result[name] = value
@@ -1093,7 +1103,31 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bAIza[0-9A-Za-z_-]{20,}/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+  /\bgsk_[A-Za-z0-9]{20,}/g,
+  /\bxai-[A-Za-z0-9]{20,}/g,
+  /\bhf_[A-Za-z0-9]{20,}/g,
+  /\bnvapi-[A-Za-z0-9_-]{20,}/g,
 ]
+
+/** Mask every value Pi was given except its base environment - the credentials it may echo, in any
+ * shape - then the key shapes a provider or proxy could hand back on its own. */
+function credentialRedactor(env: Readonly<Record<string, string>>): (text: string) => string {
+  const base = new Set(PI_BASE_ENV)
+  const secrets = Object.entries(env)
+    .filter(([name, value]) => !base.has(name) && value.length >= 6)
+    .map(([, value]) => value)
+    .sort((a, b) => b.length - a.length)
+  return (text) => {
+    let masked = text
+    for (const secret of secrets) masked = masked.replaceAll(secret, "[REDACTED]")
+    for (const pattern of CREDENTIAL_PATTERNS) masked = masked.replace(pattern, "[REDACTED]")
+    return masked
+  }
+}
+
+function redactedText(value: unknown, redact: (text: string) => string): unknown {
+  return typeof value === "string" ? redact(value) : value
+}
 
 // A rejected provider login or API key. Matched over Pi's whole error text, since a provider's auth
 // code (`invalid_refresh_token`, `authentication_error`) sits in the response body it quotes.
@@ -1102,16 +1136,17 @@ const PI_AUTH_FAILURE =
 
 /** `PI_AUTH_REQUIRED` when the provider refused Pi's credentials, so a client can ask for a new
  * sign-in or key; `PI_MODEL_FAILED` for any other model failure. */
-function modelError(value: unknown): ReturnType<typeof agentError> {
+function modelError(
+  value: unknown,
+  redact: (text: string) => string,
+): ReturnType<typeof agentError> {
   const auth = typeof value === "string" && PI_AUTH_FAILURE.test(value.slice(0, 4_096))
-  return agentError(auth ? "PI_AUTH_REQUIRED" : "PI_MODEL_FAILED", modelErrorText(value))
+  return agentError(auth ? "PI_AUTH_REQUIRED" : "PI_MODEL_FAILED", modelErrorText(value, redact))
 }
 
-function modelErrorText(value: unknown): string {
+function modelErrorText(value: unknown, redact: (text: string) => string): string {
   if (typeof value !== "string") return "Pi's model call failed"
-  let text = value
-  for (const pattern of CREDENTIAL_PATTERNS) text = text.replace(pattern, "[REDACTED]")
-  return boundedPiText(text, 1_024) || "Pi's model call failed"
+  return boundedPiText(redact(value), 1_024) || "Pi's model call failed"
 }
 
 function boundedPiText(value: unknown, maxChars: number): string {
