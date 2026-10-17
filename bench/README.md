@@ -92,3 +92,20 @@ scripts/link-for-node.ts` first.
 
 `bench/ssr/README.md` says what each SSR row runs. Every headline row is a real app built and served
 the way its framework ships it, measured in interleaved rounds against the comparator.
+
+## In CI
+
+`.github/workflows/benchmarks.yml` runs both HTTP matrices nightly, on demand, and on a PR labelled
+`bench`: one job per suite x runtime, each through `bench/ci/run.ts`. A job splits the runner's
+physical cores in two (`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset
+lists the matrices also take by hand on Linux), runs the matrix 3 times in fresh processes, and keeps
+going up to 5 runs while any row's 95% interval is wider than 10 points. The stopping rule reads only
+interval widths, never which row leads. Every number in the job summary is a median of per-round ratios
+with a distribution-free interval (`bench/ci/stats.ts`); absolute req/s is left out. The report is
+uploaded as an artifact with every raw round, and nothing gates a merge yet: the nightly runs measure
+the runner's noise floor that a later regression gate will take its tolerance from.
+
+```sh
+bun run bench/ci/run.ts --suite http --runtime bun --pin   # one job, Linux only with --pin
+bun run bench/ci/summary.ts bench-ci                       # combine downloaded reports
+```
