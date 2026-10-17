@@ -100,20 +100,27 @@ export class HttpAgentTransport implements AgentTransport {
     assertResponseLimit(this.maxResponseBytes)
   }
 
-  private async headers(accept: string): Promise<Headers> {
+  private async headers(method: string, accept: string): Promise<Headers> {
     const headers = new Headers({ "content-type": "application/json", accept })
-    const token = await this.authorize?.()
+    let token: string | undefined
+    try {
+      token = await this.authorize?.()
+    } catch {
+      // A failed refresh commonly names the credential it was refreshing: never forward its text.
+      throw new AgentTransportError(method, "authorize() failed")
+    }
     if (token !== undefined && token.length > 0) headers.set("authorization", `Bearer ${token}`)
     return headers
   }
 
   async command<T = unknown>(request: AgentTransportRequest): Promise<CommandOutcome<T>> {
     const body = serialize(request)
+    const headers = await this.headers(request.method, "application/json")
     let response: Response
     try {
       response = await this.fetchImpl(this.url, {
         method: "POST",
-        headers: await this.headers("application/json"),
+        headers,
         body,
         ...(request.signal ? { signal: request.signal } : {}),
       })
@@ -132,11 +139,12 @@ export class HttpAgentTransport implements AgentTransport {
   }
 
   async *stream(request: AgentTransportRequest): AsyncIterable<AgentEvent> {
+    const headers = await this.headers(request.method, "text/event-stream")
     let response: Response
     try {
       response = await this.fetchImpl(this.url, {
         method: "POST",
-        headers: await this.headers("text/event-stream"),
+        headers,
         body: serialize(request),
         ...(request.signal ? { signal: request.signal } : {}),
       })

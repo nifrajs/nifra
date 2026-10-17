@@ -91,6 +91,34 @@ describe("HttpAgentTransport", () => {
     expect(JSON.stringify(transport)).not.toContain("token-")
   })
 
+  test("a failing authorize() is reported without its message, before any request", async () => {
+    const credential = "refresh-credential-SYNTHETIC-0123456789"
+    let fetched = 0
+    const transport = new HttpAgentTransport({
+      endpoint: "http://127.0.0.1:9",
+      authorize: () => {
+        throw new Error(`refresh failed for ${credential}`)
+      },
+      fetch: Object.assign(
+        async () => {
+          fetched++
+          return new Response("{}")
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    })
+    const command = await transport.command({ method: "a" }).catch((error: unknown) => error)
+    const stream = await Array.fromAsync(transport.stream({ method: "turn.attach" })).catch(
+      (error: unknown) => error,
+    )
+    for (const error of [command, stream]) {
+      if (!(error instanceof AgentTransportError)) throw new Error("expected AgentTransportError")
+      expect(error.message).toMatch(/: authorize\(\) failed$/)
+      expect(`${error.stack} ${JSON.stringify(error)}`).not.toContain(credential)
+    }
+    expect(fetched).toBe(0)
+  })
+
   test("returns a bounded outcome for a non-ok command, and a refused stream carries its status", async () => {
     const fetchImpl = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch
     const transport = new HttpAgentTransport({ endpoint: "http://127.0.0.1:9", fetch: fetchImpl })
