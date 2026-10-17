@@ -378,6 +378,8 @@ export async function registerWebMcpTools(
     })
 
   const key = context as object
+  // One set per host for as long as the host lives, never evicted when it empties: a caller still
+  // in its loop, or a report not yet cleaned up, holds it, and a replacement set would not see them.
   const existing = targetRegistrations.get(key) ?? new Set<string>()
   targetRegistrations.set(key, existing)
   const registered: string[] = []
@@ -400,8 +402,6 @@ export async function registerWebMcpTools(
       registered.push(name)
     } catch (error) {
       existing.delete(name)
-      if (existing.size === 0 && targetRegistrations.get(key) === existing)
-        targetRegistrations.delete(key)
       failed.push({ name, error: describeError(error) })
     }
   }
@@ -418,8 +418,6 @@ export async function registerWebMcpTools(
         // Cleanup is best effort; a host failure must not break the application.
       }
     }
-    if (existing.size === 0 && targetRegistrations.get(key) === existing)
-      targetRegistrations.delete(key)
   }
   return Object.freeze({
     supported: true,
