@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import {
+  assertUncompressed,
   clientScriptUrls,
+  fetchBenchPage,
   measureHydrationPayload,
   median,
+  ohaArgs,
   pairedRatio,
   parseOha,
   roundOrder,
   rowKind,
+  SSR_BENCH_REQUEST_HEADERS,
   type SsrBenchTarget,
 } from "./harness.ts"
 import { frontendSlice, heroSsrSlice, multipliersSlice, ssrTablesSlice } from "./site-slice.ts"
@@ -109,6 +113,70 @@ describe("successful SSR samples", () => {
     expect(() => parseOha(sample(1, { "200": 999, "500": 1 }))).toThrow("invalid sample")
     expect(() => parseOha(sample(1, { "200": 0 }))).toThrow("invalid sample")
     expect(() => parseOha(sample(1, {}))).toThrow("unexpected JSON shape")
+  })
+})
+
+describe("uncompressed rows", () => {
+  const page = "<p>catalog</p>".repeat(100)
+  // Next.js-style: gzip whenever the request allows it.
+  const negotiating = (req: Request): Response =>
+    /\bgzip\b/.test(req.headers.get("accept-encoding") ?? "")
+      ? new Response(Bun.gzipSync(new TextEncoder().encode(page)), {
+          headers: { "content-encoding": "gzip", "content-type": "text/html" },
+        })
+      : new Response(page, { headers: { "content-type": "text/html" } })
+
+  test("oha asks every row for identity, before the URL", () => {
+    const args = ohaArgs("http://127.0.0.1:4300/", 5)
+    expect(SSR_BENCH_REQUEST_HEADERS).toEqual({ "accept-encoding": "identity" })
+    expect(args.slice(-3)).toEqual(["-H", "accept-encoding: identity", "http://127.0.0.1:4300/"])
+  })
+
+  test("only an absent or identity content-encoding passes", () => {
+    expect(() => assertUncompressed(new Headers())).not.toThrow()
+    expect(() => assertUncompressed(new Headers({ "content-encoding": "Identity" }))).not.toThrow()
+    for (const encoding of ["gzip", "br", "deflate", "zstd", "gzip, br"]) {
+      expect(() => assertUncompressed(new Headers({ "content-encoding": encoding }))).toThrow(
+        "would not be measured uncompressed",
+      )
+    }
+  })
+
+  test("a row that compresses on request is fetched uncompressed", async () => {
+    const seen: (string | null)[] = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req) => {
+        seen.push(req.headers.get("accept-encoding"))
+        return negotiating(req)
+      },
+    })
+    try {
+      const { html } = await fetchBenchPage(`http://127.0.0.1:${server.port}/`)
+      expect(html).toBe(page)
+      expect(seen).toEqual(["identity"])
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("a row that compresses regardless of accept-encoding fails", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () =>
+        new Response(Bun.gzipSync(new TextEncoder().encode(page)), {
+          headers: { "content-encoding": "gzip", "content-type": "text/html" },
+        }),
+    })
+    try {
+      await expect(fetchBenchPage(`http://127.0.0.1:${server.port}/`)).rejects.toThrow(
+        '"gzip"-encoded under accept-encoding: identity',
+      )
+    } finally {
+      server.stop(true)
+    }
   })
 })
 

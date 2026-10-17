@@ -37,6 +37,24 @@ rows of a pair see the same host, so the ratio holds. Read ratios, not req/s.
 
 Compare Node rows with Node rows. The meta-frameworks run on Node; nifra runs on Bun and on Node.
 
+## Every row is measured uncompressed
+
+Every request the bench makes, from `oha` and from the harness, sends `accept-encoding: identity`
+(`SSR_BENCH_REQUEST_HEADERS` in `harness.ts`). Without it `oha` asks for `gzip, compress, deflate,
+br`, and the rows answer that differently by default: the Next.js standalone server gzips every
+response (`compress: true`), `react-router-serve` brotli-compresses, and nifra, Nuxt, SvelteKit and
+SolidStart send dynamic pages uncompressed. Those rows would pay a per-request compression cost the
+others skip, so the table would measure compression settings rather than rendering. A production
+deployment usually compresses at a CDN or reverse proxy in front of any of them.
+
+Before each sample, the harness fetches the page with the same headers and fails the row if the
+response carries a `content-encoding` other than `identity`. A row that compresses regardless of
+what the client asked for drops out of the table instead of being measured compressed.
+
+SvelteKit's static row serves a precompressed `.br` (or `.gz`) copy of its prerendered page when the
+request allows it, a real advantage for that row in production. Under `identity` it serves the plain
+HTML file like every other static row.
+
 ## Row kinds
 
 | Kind | What runs per request | Like for like? |
