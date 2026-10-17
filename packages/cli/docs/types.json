@@ -3724,7 +3724,7 @@
     "name": "ContentProps",
     "kind": "interface",
     "package": "@nifrajs/web-preact",
-    "signature": "export interface ContentProps extends Omit<JSX.HTMLAttributes<HTMLElement>, \"dangerouslySetInnerHTML\"> {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: TrustedHtml;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: string;\n}"
+    "signature": "export interface ContentProps extends Omit<JSX.IntrinsicElements[\"div\"], \"dangerouslySetInnerHTML\"> {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: TrustedHtml;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: string;\n}"
   },
   {
     "name": "ContentProps",

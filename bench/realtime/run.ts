@@ -65,6 +65,7 @@ async function measure(target: Target, port: number): Promise<Row> {
     stdout: "pipe",
     stderr: "pipe",
   })
+  const stderr = new Response(proc.stderr).text()
   const row: Row = { name: target.name }
   try {
     await waitReady(proc)
@@ -87,6 +88,10 @@ async function measure(target: Target, port: number): Promise<Row> {
   } finally {
     proc.kill()
     await proc.exited
+    const errors = await stderr
+    if ((row.error !== undefined || row.fanError !== undefined) && errors.length > 0) {
+      console.error(`[${target.name}] ${errors.slice(-4000)}`)
+    }
   }
   return row
 }
@@ -134,6 +139,12 @@ for (const target of TARGETS) {
   process.stdout.write(" done")
 }
 console.log("")
+if (Bun.env.BENCH_REALTIME_JSON !== undefined) {
+  await Bun.write(Bun.env.BENCH_REALTIME_JSON, `${JSON.stringify(rows, null, 2)}\n`, {
+    createPath: true,
+  })
+}
+if (rows.some((row) => row.error !== undefined || row.fanError !== undefined)) process.exitCode = 1
 
 table(
   rows,

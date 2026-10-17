@@ -11,7 +11,7 @@ import type { TrustedHtml } from "@nifrajs/web"
 import { createElement, type JSX, type VNode } from "preact"
 
 export interface ContentProps
-  extends Omit<JSX.HTMLAttributes<HTMLElement>, "dangerouslySetInnerHTML"> {
+  extends Omit<JSX.IntrinsicElements["div"], "dangerouslySetInnerHTML"> {
   /** Trusted, pre-rendered HTML (e.g. `entry.html`). */
   readonly html: TrustedHtml
   /** Wrapper element (default `"div"`). */
@@ -22,7 +22,7 @@ export interface ContentProps
 export function Content({ html, as, ...rest }: ContentProps): VNode {
   // Typed intermediate (like `<Image>`) keeps the inferred `VNode` generic stable under
   // exactOptionalPropertyTypes (a bare object literal infers an over-specific, non-assignable VNode).
-  const props: JSX.HTMLAttributes<HTMLElement> = {
+  const props: JSX.IntrinsicElements["div"] = {
     ...rest,
     dangerouslySetInnerHTML: { __html: html },
   }

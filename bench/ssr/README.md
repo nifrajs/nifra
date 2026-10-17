@@ -12,6 +12,15 @@ BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
 
 Knobs: `BENCH_ROUNDS` (default 5), `BENCH_DURATION_S` (5), `BENCH_WARMUP_S` (3), `BENCH_CONNS` (50).
 `BENCH_SSR_JSON` writes every round's req/s per row.
+`BENCH_SSR_RESULTS_JSON` preserves the complete measured rows, including latency and client bytes.
+`BENCH_SSR_RAW_DIR` preserves the oha JSON for each warmup and measurement sample.
+Every accepted sample must have a 100% success rate and only HTTP 200 responses.
+Duration-bounded samples finish outstanding requests instead of cancelling them at the deadline.
+
+Runtime versions are pinned in `.tool-versions`. Comparator apps have isolated installs;
+after changing their dependencies, run `bun install` in each changed app before measuring,
+including when its `node_modules` already exists. SolidStart 2 uses Vite and Nitro;
+SvelteKit 3 configures its adapter in the Vite plugin.
 
 ## How a table is measured
 
@@ -50,7 +59,7 @@ bundle and its static files.
 | Framework | nifra app | Comparator (Node) |
 | --- | --- | --- |
 | React | `nifra-app` | Next.js standalone server (`force-dynamic`), React Router `react-router-serve` |
-| Solid | `nifra-solid-app` | SolidStart (Nitro `node-server`) |
+| Solid | `nifra-solid-app` | SolidStart 2 (Vite + Nitro `node_server`) |
 | Vue | `nifra-vue-app` | Nuxt (Nitro `node-server`, route cache off) |
 | Svelte | `nifra-svelte-app` | SvelteKit `adapter-node` |
 | Preact | `nifra-preact-app` | none exists; `preact-ssr` is `preact-render-to-string` in a bare Node server, the renderer's ceiling |

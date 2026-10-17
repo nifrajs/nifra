@@ -120,7 +120,7 @@ async function runSection(section: SsrTableSection): Promise<SectionResult> {
       const ratio =
         baseline === undefined ? "" : `${pairedRatio(rpsOf(target), rpsOf(baseline)).toFixed(3)}x`
       printResultRow(target, result, ratio)
-      rows.push({ framework, target, result })
+      rows.push({ framework, target, result, samples: rpsOf(target) })
     }
   }
 
@@ -157,6 +157,14 @@ for (const section of ALL_TABLE_SECTIONS) {
 }
 const jsonOut = Bun.env.BENCH_SSR_JSON
 if (jsonOut !== undefined) await Bun.write(jsonOut, `${JSON.stringify(rawSamples, null, 1)}\n`)
+const resultsOut = Bun.env.BENCH_SSR_RESULTS_JSON
+if (resultsOut !== undefined) {
+  await Bun.write(
+    resultsOut,
+    `${JSON.stringify({ tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
+    { createPath: true },
+  )
+}
 
 // Refresh the website's numbers only from a run where every target of that table measured - a
 // partial run (a framework build failing on this machine) must not overwrite good published numbers.
