@@ -37,7 +37,9 @@ export interface ServiceWorkerOptions {
   /**
    * URL of a page to serve when a navigation fails and the network is unreachable. It must be a
    * static, user-independent document (a prerendered `/offline`), because every visitor gets the same
-   * bytes. Omit it and failed navigations simply fail, which is the honest default.
+   * bytes. Install fails rather than store it, or any precached URL, when the response is an error, a
+   * redirect, or marked `private` or `no-store`. Omit it and failed navigations simply fail, which is
+   * the honest default.
    */
   readonly offlineUrl?: string
   /**
@@ -115,10 +117,35 @@ const OWN_URLS = new Set(PRECACHE)
 const OWN = { cacheName: CACHE }
 const OFFLINE = ${offline === undefined ? "null" : JSON.stringify(offline)}
 
+// Whether every visitor may be served these bytes from this cache. CacheStorage itself ignores
+// Cache-Control, and a redirect can land one visitor's page under a shared URL.
+const shareable = (response) =>
+  response.ok &&
+  response.type === "basic" &&
+  !response.redirected &&
+  !(response.headers.get("cache-control") ?? "")
+    .split(",")
+    .some((directive) => /^\\s*(?:no-store|private)\\s*(?:=|$)/i.test(directive))
+
 self.addEventListener("install", (event) => {
-  // Take over as soon as the new assets are stored; the activate handler drops the old cache, so
-  // waiting would only serve stale bytes for longer.
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()))
+  // Every response is checked before any is stored, so a refused one leaves this build's cache
+  // empty and the install failed, as addAll would on an error status. Take over as soon as the new
+  // assets are stored; the activate handler drops the old cache, so waiting would only serve stale
+  // bytes for longer.
+  event.waitUntil(
+    Promise.all(
+      PRECACHE.map((url) =>
+        fetch(url).then((response) => {
+          if (shareable(response)) return response
+          throw new TypeError("[nifra/web] not precached, the response is not shareable: " + url)
+        }),
+      ),
+    )
+      .then((responses) =>
+        caches.open(CACHE).then((c) => Promise.all(responses.map((r, i) => c.put(PRECACHE[i], r)))),
+      )
+      .then(() => self.skipWaiting()),
+  )
 })
 
 self.addEventListener("activate", (event) => {
@@ -156,11 +183,7 @@ self.addEventListener("fetch", (event) => {
     caches.match(request, OWN).then((hit) => {
       if (hit !== undefined) return hit
       return fetch(request).then((response) => {
-        const cacheable =
-          response.ok &&
-          response.type === "basic" &&
-          !(response.headers.get("cache-control") ?? "").includes("no-store")
-        if (cacheable) {
+        if (shareable(response)) {
           const copy = response.clone()
           void caches.open(CACHE).then((c) => c.put(request, copy))
         }
