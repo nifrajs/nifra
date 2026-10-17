@@ -25,12 +25,12 @@ export interface Multiplier {
   readonly rivalVersion: string
 }
 
-/** When and with which toolchain the published numbers were measured. */
+/** When and with which toolchain a slice was measured; `deno` is absent for a suite that skips it. */
 export interface CapturedMeta {
   readonly date: string
   readonly bun: string
   readonly node: string
-  readonly deno: string
+  readonly deno?: string
   readonly oha: string
 }
 
@@ -117,7 +117,14 @@ export const HTTP_REALWORLD = ((data as { httpRealworld?: readonly HttpRealworld
   .httpRealworld ?? []) as readonly HttpRealworldTable[]
 export const BUNDLE = data.bundle as readonly BundleRow[]
 export const PROOF = data.proof as readonly ProofStat[]
-export const CAPTURED = data.captured as CapturedMeta
+/** A UI framework's headline dynamic-SSR multiplier over its meta-framework, as published. */
+export function ssrMultiplier(framework: string): string {
+  return MULTIPLIERS.find((item) => item.fw === framework)?.mult ?? "n/a"
+}
+
+export const HTTP_WORKLOADS_CAPTURED: CapturedMeta = data.httpWorkloadsCaptured
+export const HTTP_REALWORLD_CAPTURED: CapturedMeta = data.httpRealworldCaptured
+export const SSR_CAPTURED: CapturedMeta = data.ssrCaptured
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"
 export type HttpRealworldMetric = "get" | "post" | "body"

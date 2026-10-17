@@ -223,7 +223,7 @@ if (httpSlice.length > 0) {
     http: httpSlice,
     // A single-runtime run must not erase the other runtime tables in the canonical dataset.
     ...(runtimes.length === 3 && httpWorkloads.length === 3
-      ? { httpWorkloads, captured: capturedMeta(meta) }
+      ? { httpWorkloads, httpWorkloadsCaptured: capturedMeta(meta) }
       : {}),
   })
 }

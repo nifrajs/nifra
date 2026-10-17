@@ -1,10 +1,13 @@
 import {
-  CAPTURED,
+  type CapturedMeta,
   HTTP_REALWORLD,
+  HTTP_REALWORLD_CAPTURED,
   HTTP_WORKLOADS,
+  HTTP_WORKLOADS_CAPTURED,
   type HttpRealworldTable,
   type HttpWorkloadTable,
   MULTIPLIERS,
+  SSR_CAPTURED,
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
@@ -22,6 +25,17 @@ export const meta = pageMeta(
 // complete run - the page can't drift from the last measured numbers.
 const fmtMs = (ms: number): string => `${ms.toFixed(2)} ms`
 const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB` : "n/a")
+
+function Captured({ meta }: { meta: CapturedMeta }) {
+  const runtimes = [`Bun ${meta.bun}`, `Node ${meta.node}`]
+  if (meta.deno !== undefined) runtimes.push(`Deno ${meta.deno}`)
+  return (
+    <p className="note">
+      Captured {meta.date} on macOS arm64 with {runtimes.join(", ")} and <code>oha</code> {meta.oha}{" "}
+      at 50 connections.
+    </p>
+  )
+}
 
 function Named({ name, version }: { name: string; version: string }) {
   return (
@@ -152,17 +166,17 @@ export default function Benchmarks() {
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
       <p className="lead">
-        Captured {CAPTURED.date} on macOS arm64 with Bun {CAPTURED.bun}, Node {CAPTURED.node}, and
-        Deno {CAPTURED.deno}, driven by <code>oha</code> {CAPTURED.oha} at 50 connections. Every
-        number is the median of interleaved rounds - each round measures every framework in turn, so
-        drift on the machine lands on all of them alike - and every row names the version it
-        measured. Compare ratios inside each runtime before absolute request rates, because laptop
-        thermals and warmup move absolute throughput. Reproduce with <code>bun run bench:ssr</code>{" "}
-        and <code>bun run bench:http</code>.
+        Each section names the date and toolchain it was captured with. Every number is the median
+        of interleaved rounds - each round measures every framework in turn, so drift on the machine
+        lands on all of them alike - and every row names the version it measured. Compare ratios
+        inside each runtime before absolute request rates, because laptop thermals and warmup move
+        absolute throughput. Reproduce with <code>bun run bench:ssr</code> and{" "}
+        <code>bun run bench:http</code>.
       </p>
 
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
       <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
+      <Captured meta={SSR_CAPTURED} />
       <p className="lead">
         One section per UI framework, each with two explicitly-labelled tables:{" "}
         <b>A - dynamic SSR</b> (the page rendered on every request, no caching) and{" "}
@@ -211,6 +225,7 @@ export default function Benchmarks() {
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
+      <Captured meta={HTTP_WORKLOADS_CAPTURED} />
       <p className="lead">
         Nifra is also a standalone API framework. Two core workloads - a path-param GET and a
         validated POST - each runtime through Nifra's real adapter, next to the popular libraries on
@@ -237,6 +252,7 @@ export default function Benchmarks() {
       {HTTP_REALWORLD.length > 0 && (
         <>
           <h2 style={{ marginTop: 48 }}>Backend - the same routes with a real route's work</h2>
+          <Captured meta={HTTP_REALWORLD_CAPTURED} />
           <p className="lead">
             The tables above are the shape every framework publishes: a bare route doing nothing but
             routing. This is the same GET and POST after the route gains what an actual API route

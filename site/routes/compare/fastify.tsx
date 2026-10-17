@@ -54,9 +54,9 @@ export default function VsFastify() {
             httpWorkloadRps("Bun", "Elysia", "getUsers"),
           ),
         )}{" "}
-        of Elysia, the fastest Bun framework we measure, on the published GET. If your Node service
-        is CPU-bound on request handling, the cheapest optimization may be a runtime switch that
-        changes zero lines of application code.
+        of Elysia, its closest Bun rival, on the published GET. If your Node service is CPU-bound on
+        request handling, the cheapest optimization may be a runtime switch that changes zero lines
+        of application code.
       </p>
 
       <h2>Beyond throughput</h2>

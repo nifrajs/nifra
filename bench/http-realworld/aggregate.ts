@@ -223,7 +223,7 @@ const realworld = httpRealworldFromResults(
   meta,
 )
 if (runtimes.length === 3 && realworld.length === 3) {
-  await writeSiteBench({ httpRealworld: realworld, captured: capturedMeta(meta) })
+  await writeSiteBench({ httpRealworld: realworld, httpRealworldCaptured: capturedMeta(meta) })
 }
 
 const benchFile = Bun.file(OUT)
