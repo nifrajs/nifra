@@ -235,33 +235,15 @@ to full-stack later without a rewrite.
 -
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
-context, and serialization. In the current matrix (median of 5 full runs) Nifra
-**tops the framework field on Bun** - level with Elysia on `GET /users/:id` at
-percentOf(
-httpWorkloadRps("Bun", "Nifra", "postUsers"),
-httpWorkloadRps("Bun", "Elysia", "postUsers"),
-of Elysia on the validated `POST` - and
-**leads every framework on Deno** on both workloads. On **Node** it
-**leads the framework field too** - at
-percentOf(
-httpWorkloadRps("Node", "Nifra", "postUsers"),
-httpWorkloadRps("Node", "Fastify", "postUsers"),
-of Fastify on the validated `POST` ({formatPercent(
-percentOf(
-httpWorkloadRps("Node", "Nifra", "postUsers"),
-httpWorkloadRps("Node", "node-raw", "postUsers"),
-)} of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
-and Express behind. In the realistic shape (security headers + CORS +
+context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
+101% of Elysia on `GET /users/:id` and
+101% on the validated `POST` - and
+**level with Fastify on Node** (98% of Fastify on GET,
+101% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 97% of Elysia on
+GET and 114% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured with
-`oha`) Nifra runs at **{formatPercent(
-percentOf(
-httpRealworldRps("Bun", "Nifra", "get"),
-httpRealworldRps("Bun", "Elysia", "get"),
-)} of Elysia on GET and {formatPercent(
-percentOf(
-httpRealworldRps("Bun", "Nifra", "post"),
-httpRealworldRps("Bun", "Elysia", "post"),
-)} on POST**. Treat benchmark
+`oha`) Nifra runs at **98% of Elysia on GET and 99% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -6420,8 +6402,8 @@ host-specific deploy step for you to fill in (Fly, a registry push, SSH, …).
 
 ### Bun (its home)
 
-`app.listen(3000)` - the native Bun server. Sits at the raw `Bun.serve`
-ceiling (see [benchmarks](/benchmarks)).
+`app.listen(3000)` - the native Bun server. Bun is the runtime where Nifra measures
+fastest (see [benchmarks](/benchmarks)).
 
 **Every core:** Bun is single-threaded per process - for multi-core boxes,
 spawn one process per core, each binding the same port with
@@ -11722,6 +11704,8 @@ app.
 
 -
 **Much faster SSR** - the current dynamic-page snapshot reports Nifra at
+20× the throughput of Next.js, 7× Nuxt, and
+3.2× SvelteKit / 3.3× SolidStart, with a fraction
 of the client JavaScript. See [benchmarks](/benchmarks).
 
 -

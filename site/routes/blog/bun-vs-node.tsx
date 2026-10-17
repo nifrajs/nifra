@@ -2,8 +2,9 @@ import {
   formatPercent,
   formatRatio,
   formatRps,
+  HTTP_WORKLOADS_CAPTURED,
   httpWorkloadRps,
-  runtimeCeilingPercent,
+  percentOf,
   ssrRps,
 } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
@@ -40,8 +41,8 @@ export default function BunVsNode() {
         <thead>
           <tr>
             <th>Workload (identical app)</th>
-            <th>Node 26.10.0</th>
-            <th>Bun 1.4.2</th>
+            <th>Node {HTTP_WORKLOADS_CAPTURED.node}</th>
+            <th>Bun {HTTP_WORKLOADS_CAPTURED.bun}</th>
             <th>Bun advantage</th>
           </tr>
         </thead>
@@ -78,7 +79,7 @@ export default function BunVsNode() {
       </table>
       <p>
         (oha @ 50 conns, medians, harness public - <a href="/benchmarks">all rows here</a>.) The
-        pattern is the honest headline: Bun's advantage is largest on raw HTTP work (GET{" "}
+        pattern is the honest headline: Bun's advantage is largest on cheap HTTP work (GET{" "}
         {formatRatio(
           httpWorkloadRps("Bun", "Nifra", "getUsers"),
           httpWorkloadRps("Node", "Nifra", "getUsers"),
@@ -95,7 +96,14 @@ export default function BunVsNode() {
 
       <h2>What Bun actually buys you</h2>
       <ul>
-        <li>HTTP serving at roughly double Node's throughput for cheap endpoints</li>
+        <li>
+          HTTP serving at{" "}
+          {formatRatio(
+            httpWorkloadRps("Bun", "Nifra", "postUsers"),
+            httpWorkloadRps("Node", "Nifra", "postUsers"),
+          )}{" "}
+          Node's throughput on a validated POST, same app
+        </li>
         <li>One toolchain: runtime + package manager + test runner + bundler</li>
         <li>Startup fast enough to change how dev loops and serverless cold starts feel</li>
       </ul>
@@ -112,10 +120,15 @@ export default function BunVsNode() {
         The runtime only locks you in if your framework does. A Nifra app treats the runtime as an
         adapter: develop and deploy on Node today, move the identical code to Bun when the
         throughput matters (or Deno, or edge workers). The numbers above are that story measured -
-        nobody rewrote anything between the two columns. On Node, Nifra runs level-to-ahead of
-        Fastify (<a href="/compare/fastify">details</a>); on Bun it serves at{" "}
-        {formatPercent(runtimeCeilingPercent("Bun"))} of a hand-rolled <code>Bun.serve</code>{" "}
-        baseline - so you are not paying a framework tax on either side.
+        nobody rewrote anything between the two columns. On Node, Nifra runs level with Fastify (
+        <a href="/compare/fastify">details</a>); on Bun it serves at{" "}
+        {formatPercent(
+          percentOf(
+            httpWorkloadRps("Bun", "Nifra", "getUsers"),
+            httpWorkloadRps("Bun", "Elysia", "getUsers"),
+          ),
+        )}{" "}
+        of Elysia on GET - level with the strongest rival on either runtime.
       </p>
 
       <h2>Verdict</h2>

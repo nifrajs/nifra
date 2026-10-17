@@ -3,7 +3,7 @@ import {
   BUNDLE,
   formatRps,
   HERO_SSR,
-  HTTP_RUNTIME,
+  httpWorkloadRow,
   httpWorkloadRps,
   MULTIPLIERS,
   PROOF,
@@ -198,7 +198,11 @@ const REPLACE_TOP = REPLACE_GROUPS.flatMap((group) => group.rows.slice(0, 1))
 const REPLACE_TOTAL = REPLACE_GROUPS.reduce((total, group) => total + group.rows.length, 0)
 
 // The proof strip reads its two measured numbers from the benchmark dataset, so a re-run moves them.
-const BUN_HTTP = HTTP_RUNTIME.find((row) => row.runtime === "Bun")
+const BUN_HTTP = httpWorkloadRps("Bun", "Nifra", "getUsers")
+const BUN_RIVALS = ["Elysia", "Hono"].flatMap((name) => {
+  const rps = httpWorkloadRps("Bun", name, "getUsers")
+  return rps === undefined ? [] : [`${name} ${Math.round(rps / 1000)}k`]
+})
 const REACT_MULTIPLIER = MULTIPLIERS.find((row) => row.fw === "React")
 const PROOF_STATS: ReadonlyArray<{ value: string; label: string }> = [
   ...(REACT_MULTIPLIER !== undefined
@@ -212,16 +216,17 @@ const PROOF_STATS: ReadonlyArray<{ value: string; label: string }> = [
   ...(BUN_HTTP !== undefined
     ? [
         {
-          value: `${Math.round(BUN_HTTP.reqs / 1000)}k`,
-          label: `requests per second on Bun - ${BUN_HTTP.pctOfRaw}% of the raw-runtime ceiling`,
+          value: `${Math.round(BUN_HTTP / 1000)}k`,
+          label: `requests per second on Bun, GET /users/:id - ${BUN_RIVALS.join(", ")} on the same run`,
         },
       ]
     : []),
-  ...PROOF.slice(2),
+  ...PROOF,
 ]
 
 interface Bar {
   readonly name: string
+  readonly version: string
   readonly value: number
   readonly you: boolean
 }
@@ -239,14 +244,22 @@ function rankBars(rows: readonly Bar[]): readonly RankedBar[] {
 }
 
 const SSR_BARS = rankBars(
-  HERO_SSR.map((row) => ({ name: row.name, value: row.reqs, you: row.you === true })),
+  HERO_SSR.map((row) => ({
+    name: row.name,
+    version: row.version,
+    value: row.reqs,
+    you: row.you === true,
+  })),
 )
 
 const NODE_API_FRAMEWORKS = ["Nifra", "Fastify", "Elysia", "Express", "Hono"] as const
 const NODE_API_BARS = rankBars(
   NODE_API_FRAMEWORKS.flatMap((name) => {
+    const row = httpWorkloadRow("Node", name)
     const value = httpWorkloadRps("Node", name, "getUsers")
-    return value === undefined ? [] : [{ name, value, you: name === "Nifra" }]
+    return row === undefined || value === undefined
+      ? []
+      : [{ name, version: row.version, value, you: name === "Nifra" }]
   }),
 )
 
@@ -616,7 +629,9 @@ function BarChart(props: { title: string; unit: string; bars: readonly RankedBar
       <ol>
         {props.bars.map((bar) => (
           <li key={bar.name} className="home-bar" data-you={bar.you ? "" : undefined}>
-            <span className="home-bar-name">{bar.name}</span>
+            <span className="home-bar-name">
+              {bar.name} <span className="home-bar-version">v{bar.version}</span>
+            </span>
             <span className="home-bar-value">{formatRps(bar.value)}</span>
             <span className="home-bar-track" aria-hidden="true">
               <span className="home-bar-fill" style={cssVars({ "--w": bar.pct })} />

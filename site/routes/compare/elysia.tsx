@@ -3,7 +3,6 @@ import {
   httpRealworldRps,
   httpWorkloadRps,
   percentOf,
-  runtimeCeilingPercent,
 } from "../../shared/data/benchmarks"
 import { compareMeta } from "../../shared/meta"
 
@@ -11,7 +10,7 @@ export const meta = compareMeta(
   "elysia",
   "Nifra vs Elysia",
   "Nifra vs Elysia - Bun frameworks compared",
-  "Nifra vs Elysia compared honestly: measured throughput on identical workloads (level to ahead on Bun, ahead on Deno), typed clients, and the difference between a backend framework and a full-stack one.",
+  "Nifra vs Elysia compared honestly: measured throughput on identical workloads across Bun, Node, and Deno, typed clients, and the difference between a backend framework and a full-stack one.",
 )
 
 export default function VsElysia() {
@@ -20,23 +19,28 @@ export default function VsElysia() {
       <h1>Nifra vs Elysia</h1>
       <p className="lead">
         Elysia is the best-known Bun-first backend framework, and it set the bar Nifra measures
-        itself against. The short version: on identical benchmarked workloads Nifra is level to
-        ahead of Elysia on Bun and ahead on Deno, and the larger difference is scope - Elysia is a
-        backend framework, Nifra is a full-stack one.
+        itself against. The short version: on identical benchmarked workloads Nifra is level with
+        Elysia on Bun, and the larger difference is scope - Elysia is a backend framework, Nifra is
+        a full-stack one.
       </p>
 
       <h2>Throughput, on identical workloads</h2>
       <p>
-        Both frameworks are fast enough that the interesting question is overhead relative to the
-        raw runtime. In our published two-workload benchmark (a path-param <code>GET</code> and a
+        Both frameworks are fast enough that the interesting question is how close they run on the
+        same work. In our published two-workload benchmark (a path-param <code>GET</code> and a
         schema-validated <code>POST</code>, identical semantics per framework, load driven by{" "}
         <code>oha</code>):
       </p>
       <ul>
         <li>
-          On <strong>Bun</strong>, Nifra runs level with Elysia on <code>GET /users/:id</code> at
-          {formatPercent(runtimeCeilingPercent("Bun"))} of a hand-rolled <code>Bun.serve</code>
-          baseline on GET - the framework layer costs nothing measurable - and{" "}
+          On <strong>Bun</strong>, Nifra runs at{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Bun", "Nifra", "getUsers"),
+              httpWorkloadRps("Bun", "Elysia", "getUsers"),
+            ),
+          )}{" "}
+          of Elysia on <code>GET /users/:id</code> and{" "}
           {formatPercent(
             percentOf(
               httpWorkloadRps("Bun", "Nifra", "postUsers"),
@@ -64,8 +68,21 @@ export default function VsElysia() {
           on POST in the current Bun snapshot.
         </li>
         <li>
-          On <strong>Deno</strong>, Nifra leads every measured framework, Elysia included, on both
-          workloads.
+          On <strong>Deno</strong>, Nifra runs at{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Deno", "Nifra", "getUsers"),
+              httpWorkloadRps("Deno", "Elysia", "getUsers"),
+            ),
+          )}{" "}
+          of Elysia on GET and{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Deno", "Nifra", "postUsers"),
+              httpWorkloadRps("Deno", "Elysia", "postUsers"),
+            ),
+          )}{" "}
+          on the validated <code>POST</code>.
         </li>
       </ul>
       <p>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { evaluateDocConsts } from "./doc-code-consts.ts"
+import { docDataBindings, evaluateDataCalls } from "./doc-data.ts"
 import { jsxToMarkdown } from "./llms-convert.ts"
 import { emptyFences } from "./llms-corpus-check.ts"
 
@@ -93,5 +94,41 @@ describe("emptyFences", () => {
       "line 2: ```ts with no code",
       "line 8: ``` with no code",
     ])
+  })
+})
+
+describe("data a page imports", () => {
+  const data = new Map<string, unknown>([
+    ["percentOf", (a: number, b: number) => Math.round((a / b) * 100)],
+    ["rps", (framework: string) => (framework === "Nifra" ? 121 : 120)],
+    ["formatPercent", (value: number) => `${value}%`],
+  ])
+
+  test("a call to a data export renders the text the page shows, across lines", () => {
+    const body = `at {formatPercent(\n  percentOf(\n    rps("Nifra"),\n    rps("Elysia"),\n  ),\n)} of Elysia`
+    expect(evaluateDataCalls("page.tsx", body, data)).toBe("at 101% of Elysia")
+  })
+
+  test("a call to anything else is left for the converter as it was", () => {
+    const body = "{ROWS.map((row) => (\n{local(1)} {formatPercent(5)}"
+    expect(evaluateDataCalls("page.tsx", body, data)).toBe("{ROWS.map((row) => (\n{local(1)} 5%")
+  })
+
+  test("a data call that reads a page local throws, naming the page", () => {
+    expect(() => evaluateDataCalls("page.tsx", "{formatPercent(local)}", data)).toThrow(
+      "page.tsx: {formatPercent(local)} reads Identifier",
+    )
+  })
+
+  test("only value imports from shared/data modules are bound", async () => {
+    const bindings = await docDataBindings(
+      `${import.meta.dir}/../site/routes/docs/page.tsx`,
+      [
+        'import { formatPercent, type HttpWorkloadMetric } from "../../shared/data/benchmarks"',
+        'import { pageMeta } from "../../shared/meta"',
+      ].join("\n"),
+    )
+    expect([...bindings.keys()]).toEqual(["formatPercent"])
+    expect(typeof bindings.get("formatPercent")).toBe("function")
   })
 })

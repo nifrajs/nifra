@@ -19,6 +19,7 @@ import { Glob } from "bun"
 import ts from "typescript"
 import { codeUnitOrder } from "./code-unit-order.ts"
 import { evaluateDocConsts } from "./doc-code-consts.ts"
+import { docDataBindings } from "./doc-data.ts"
 import { jsxToMarkdown } from "./llms-convert.ts"
 import { emptyFences, outputIsStale, staleDeclarations } from "./llms-corpus-check.ts"
 
@@ -158,7 +159,7 @@ for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
     route: slug === "index" ? "/docs" : `/docs/${slug}`,
     title,
     description,
-    markdown: jsxToMarkdown(file, src, consts),
+    markdown: jsxToMarkdown(file, src, consts, await docDataBindings(`${ROOT}/${file}`, src)),
   })
 }
 // An empty fence is a code block the converter lost; the corpus must never ship one.

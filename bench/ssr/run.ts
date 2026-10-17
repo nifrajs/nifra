@@ -11,7 +11,7 @@
  *   BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
  */
 import { loadavg } from "node:os"
-import { writeSiteBench } from "../site-bench.ts"
+import { capturedMeta, ohaVersion, writeSiteBench } from "../site-bench.ts"
 import {
   buildTarget,
   measureOnce,
@@ -34,6 +34,7 @@ import {
   multipliersSlice,
   type SsrRunRow,
   ssrTablesSlice,
+  ssrTargetVersion,
 } from "./site-slice.ts"
 import { ALL_TABLE_SECTIONS, type SsrTableSection } from "./targets.ts"
 
@@ -169,11 +170,12 @@ const expectedB = expected("Table B")
 if (tableARows.length === expectedA && tableBRows.length === expectedB) {
   // writeSiteBench logs the update itself.
   await writeSiteBench({
-    heroSsr: heroSsrSlice(tableARows),
-    frontend: frontendSlice(tableARows),
-    multipliers: multipliersSlice(tableARows),
-    ssrTables: ssrTablesSlice(tableARows),
-    ssrTablesB: ssrTablesSlice(tableBRows),
+    heroSsr: heroSsrSlice(tableARows, ssrTargetVersion),
+    frontend: frontendSlice(tableARows, ssrTargetVersion),
+    multipliers: multipliersSlice(tableARows, ssrTargetVersion),
+    ssrTables: ssrTablesSlice(tableARows, ssrTargetVersion),
+    ssrTablesB: ssrTablesSlice(tableBRows, ssrTargetVersion),
+    ssrCaptured: capturedMeta({ bun: Bun.version, node: nodeVersion(), oha: ohaVersion() }),
   })
 } else {
   console.log(

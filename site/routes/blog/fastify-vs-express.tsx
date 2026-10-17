@@ -1,4 +1,9 @@
-import { formatRatio, formatRps, httpWorkloadRps } from "../../shared/data/benchmarks"
+import {
+  formatRatio,
+  formatRps,
+  HTTP_WORKLOADS_CAPTURED,
+  httpWorkloadRps,
+} from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
@@ -52,10 +57,9 @@ export default function FastifyVsExpress() {
         </tbody>
       </table>
       <p>
-        (oha @ 50 conns, Node 26.10.0, identical route semantics; Express validates with its usual
-        middleware, Fastify with compiled JSON Schema. Full methodology + every framework we
-        measure: <a href="/benchmarks">benchmarks</a>.) A raw <code>node:http</code> baseline does
-        measured 48,376 GET req/s in the same runs.
+        (oha @ 50 conns, Node {HTTP_WORKLOADS_CAPTURED.node}, identical route semantics; Express
+        validates with its usual middleware, Fastify with compiled JSON Schema. Full methodology +
+        every framework we measure: <a href="/benchmarks">benchmarks</a>.)
       </p>
 
       <h2>Beyond speed</h2>

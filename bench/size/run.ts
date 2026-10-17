@@ -333,16 +333,17 @@ const main = async (): Promise<void> => {
   // Push the gzipped numbers to the website's single source of truth (site-bench.ts's doc says
   // bench:size owns the `bundle` slice - bun-raw is a floor, not a framework row, so it's skipped).
   const SITE_LABELS: Record<string, string> = { nifra: "Nifra", hono: "Hono", elysia: "Elysia" }
+  const { httpFrameworkVersion, writeSiteBench } = await import("../site-bench.ts")
   const bundle = server
     .filter((s) => s.label in SITE_LABELS)
     .map((s) => ({
       name: SITE_LABELS[s.label] as string,
+      version: httpFrameworkVersion(s.label),
       kb: Math.round((s.gz / 1024) * 10) / 10,
       ...(s.label === "nifra" ? { you: true as const } : {}),
     }))
     .sort((a, b) => a.kb - b.kb)
   if (!CHECK && bundle.length === Object.keys(SITE_LABELS).length) {
-    const { writeSiteBench } = await import("../site-bench.ts")
     await writeSiteBench({ bundle })
   } else if (bundle.length !== Object.keys(SITE_LABELS).length) {
     console.error("  ! site bundle slice NOT updated - a framework row failed to build")

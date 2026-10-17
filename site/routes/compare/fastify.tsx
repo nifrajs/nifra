@@ -3,7 +3,7 @@ import {
   formatRatio,
   formatRps,
   httpWorkloadRps,
-  runtimeCeilingPercent,
+  percentOf,
 } from "../../shared/data/benchmarks"
 import { compareMeta } from "../../shared/meta"
 
@@ -11,7 +11,7 @@ export const meta = compareMeta(
   "fastify",
   "Nifra vs Fastify",
   "Nifra vs Fastify - Node's speed king vs a typed full-stack",
-  "Nifra vs Fastify compared honestly: current Node benchmark results, what each gives you beyond raw throughput, and why the same Nifra app runs unchanged across runtimes.",
+  "Nifra vs Fastify compared honestly: current Node benchmark results, what each gives you beyond throughput, and why the same Nifra app runs unchanged across runtimes.",
 )
 
 export default function VsFastify() {
@@ -21,18 +21,17 @@ export default function VsFastify() {
       <p className="lead">
         Fastify is the Node.js performance benchmark for a reason: a decade of optimization, a
         serious plugin architecture, and honest engineering culture. Nifra respects it enough to
-        publish the numbers plainly: in our current benchmark Nifra runs ahead of Fastify on Node -
-        clearly on the validated write and path-param read. The real comparison is what you get at
-        that speed - and what happens when you leave Node.
+        publish the numbers plainly: in our current benchmark Nifra and Fastify run level on Node -
+        within a few percent of each other on the validated write and the path-param read. The real
+        comparison is what you get at that speed - and what happens when you leave Node.
       </p>
 
       <h2>The Node numbers</h2>
       <p>
-        On identical workloads, Nifra leads the framework field on Node. On the schema-validated{" "}
-        <code>POST</code>, Nifra records {formatRps(httpWorkloadRps("Node", "Nifra", "postUsers"))}{" "}
-        req/s, Fastify records {formatRps(httpWorkloadRps("Node", "Fastify", "postUsers"))} req/s,
-        and raw <code>node:http</code> records{" "}
-        {formatRps(httpWorkloadRps("Node", "node-raw", "postUsers"))} req/s. On the path-param{" "}
+        On identical workloads, Nifra and Fastify lead the framework field on Node. On the
+        schema-validated <code>POST</code>, Nifra records{" "}
+        {formatRps(httpWorkloadRps("Node", "Nifra", "postUsers"))} req/s and Fastify records{" "}
+        {formatRps(httpWorkloadRps("Node", "Fastify", "postUsers"))} req/s. On the path-param{" "}
         <code>GET</code>, the same source reports Nifra at{" "}
         {formatRps(httpWorkloadRps("Node", "Nifra", "getUsers"))} req/s and Fastify at{" "}
         {formatRps(httpWorkloadRps("Node", "Fastify", "getUsers"))} req/s. Behind them: Elysia,
@@ -48,10 +47,16 @@ export default function VsFastify() {
           httpWorkloadRps("Bun", "Nifra", "getUsers"),
           httpWorkloadRps("Node", "Nifra", "getUsers"),
         )}{" "}
-        as much throughput on Bun as on Node, at {formatPercent(runtimeCeilingPercent("Bun"))} of a
-        hand-rolled <code>Bun.serve</code> baseline on the published GET - the framework layer
-        measurably costs nothing there. If your Node service is CPU-bound on request handling, the
-        cheapest optimization may be a runtime switch that changes zero lines of application code.
+        as much throughput on Bun as on Node, at{" "}
+        {formatPercent(
+          percentOf(
+            httpWorkloadRps("Bun", "Nifra", "getUsers"),
+            httpWorkloadRps("Bun", "Elysia", "getUsers"),
+          ),
+        )}{" "}
+        of Elysia, its closest Bun rival, on the published GET. If your Node service is CPU-bound on
+        request handling, the cheapest optimization may be a runtime switch that changes zero lines
+        of application code.
       </p>
 
       <h2>Beyond throughput</h2>

@@ -104,17 +104,23 @@ describe("site slices", () => {
     target,
     result: target.name === "nifra+react (node)" ? { ...result, rps: 300 } : result,
   }))
+  const versionOf = (target: SsrBenchTarget): string =>
+    target.name.startsWith("nifra") ? "5.0.0" : "16.0.0"
 
   test("own-server rows never reach the hero chart, the bar list or the multipliers", () => {
-    for (const slice of [heroSsrSlice(rows), frontendSlice(rows)]) {
+    for (const slice of [heroSsrSlice(rows, versionOf), frontendSlice(rows, versionOf)]) {
       expect(slice.some((row) => row.name.includes("own server"))).toBe(false)
       expect(slice.map((row) => row.name)).toContain("Nifra + React (Node)")
     }
-    expect(multipliersSlice(rows)).toEqual([{ fw: "React", mult: "3×", rival: "Next.js" }])
+    expect(multipliersSlice(rows, versionOf)).toEqual([
+      { fw: "React", mult: "3×", rival: "Next.js", rivalVersion: "16.0.0" },
+    ])
   })
 
   test("the per-framework table names every row kind", () => {
-    const names = ssrTablesSlice(rows).flatMap((table) => table.rows.map((row) => row.name))
+    const names = ssrTablesSlice(rows, versionOf).flatMap((table) =>
+      table.rows.map((row) => row.name),
+    )
     expect(names).toContain("Nifra + React render API in your own server (Bun)")
     expect(names).toContain("Nifra + React render API in your own server (Node)")
     const b = tables("B").flatMap((section) =>
@@ -124,10 +130,27 @@ describe("site slices", () => {
         result,
       })),
     )
-    const bNames = ssrTablesSlice(b).flatMap((table) => table.rows.map((row) => row.name))
+    const bNames = ssrTablesSlice(b, versionOf).flatMap((table) =>
+      table.rows.map((row) => row.name),
+    )
     expect(bNames).toContain("Nifra + Vue SSG (Node)")
     expect(bNames).toContain("Nifra + React ISR (Node)")
     expect(bNames).toContain("Nifra + Svelte SSG files on a static host")
+  })
+
+  test("every published row carries its version, and the renderer ceiling is never published", () => {
+    const preact = tables("A").find((section) => section.label.startsWith("Preact"))?.targets ?? []
+    const preactRows = preact.map((target) => ({ framework: "Preact", target, result }))
+    expect(preactRows.map((row) => row.target.name)).toContain("preact-ssr")
+    const published = [
+      ...ssrTablesSlice([...rows, ...preactRows], versionOf).flatMap((table) => table.rows),
+      ...frontendSlice([...rows, ...preactRows], versionOf),
+    ]
+    expect(published.some((row) => row.name.includes("Preact"))).toBe(true)
+    expect(published.some((row) => /raw|ceiling/i.test(row.name))).toBe(false)
+    for (const row of published) {
+      expect(row.version).toBe(row.name.startsWith("Nifra") ? "5.0.0" : "16.0.0")
+    }
   })
 })
 

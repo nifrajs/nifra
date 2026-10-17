@@ -445,6 +445,7 @@ const css = `
   .bench-block table { font-size: 13px; }
   tr:last-child td { border-bottom: none; }
   tr.hl td { background: var(--green-soft); color: var(--fg); font-weight: 700; }
+  .bench-version { display: block; margin-top: 2px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--muted); }
   .caveat {
     background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--green);
     border-radius: var(--radius); padding: 16px 20px; margin: 24px 0; color: var(--muted); font-size: 14px;
@@ -1799,6 +1800,7 @@ ${demoAutoplay("demo-auto", "a")}${demoAutoplay("demo-auto-b", "b")}${demoManual
   .home-bars ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
   .home-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: baseline; }
   .home-bar-name { min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--muted); overflow-wrap: anywhere; }
+  .home-bar-version { font-family: var(--font-mono); font-size: 12px; opacity: 0.75; }
   .home-bar-value {
     font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--soft);
   }

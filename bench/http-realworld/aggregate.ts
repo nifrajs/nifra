@@ -13,7 +13,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { assertBenchmarkPublishable } from "../publish-guard.ts"
 import { type Matrix, type MatrixCell, mergeRuns, pooledRatio } from "../rounds.ts"
-import { httpRealworldFromResults, writeSiteBench } from "../site-bench.ts"
+import { capturedMeta, httpRealworldFromResults, writeSiteBench } from "../site-bench.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const RUN = join(HERE, "run.ts")
@@ -213,13 +213,17 @@ if (!write) {
 // Publish the realistic slice alongside the bare one. A single-runtime run must not erase the
 // other runtime tables in the canonical dataset, so this only writes when all three ran - the same
 // discipline bench/http/aggregate.ts applies to `httpWorkloads`.
-const realworld = httpRealworldFromResults(merged as never, {
-  get: WORKLOADS[0] as string,
-  post: WORKLOADS[1] as string,
-  body: BODY_WORKLOAD,
-})
+const realworld = httpRealworldFromResults(
+  merged as never,
+  {
+    get: WORKLOADS[0] as string,
+    post: WORKLOADS[1] as string,
+    body: BODY_WORKLOAD,
+  },
+  meta,
+)
 if (runtimes.length === 3 && realworld.length === 3) {
-  await writeSiteBench({ httpRealworld: realworld })
+  await writeSiteBench({ httpRealworld: realworld, httpRealworldCaptured: capturedMeta(meta) })
 }
 
 const benchFile = Bun.file(OUT)

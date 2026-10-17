@@ -1,9 +1,13 @@
 import {
+  type CapturedMeta,
   HTTP_REALWORLD,
+  HTTP_REALWORLD_CAPTURED,
   HTTP_WORKLOADS,
+  HTTP_WORKLOADS_CAPTURED,
   type HttpRealworldTable,
   type HttpWorkloadTable,
   MULTIPLIERS,
+  SSR_CAPTURED,
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
@@ -22,6 +26,26 @@ export const meta = pageMeta(
 const fmtMs = (ms: number): string => `${ms.toFixed(2)} ms`
 const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB` : "n/a")
 
+function Captured({ meta }: { meta: CapturedMeta }) {
+  const runtimes = [`Bun ${meta.bun}`, `Node ${meta.node}`]
+  if (meta.deno !== undefined) runtimes.push(`Deno ${meta.deno}`)
+  return (
+    <p className="note">
+      Captured {meta.date} on macOS arm64 with {runtimes.join(", ")} and <code>oha</code> {meta.oha}{" "}
+      at 50 connections.
+    </p>
+  )
+}
+
+function Named({ name, version }: { name: string; version: string }) {
+  return (
+    <>
+      {name}
+      <span className="bench-version">v{version}</span>
+    </>
+  )
+}
+
 function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
   return (
     <table>
@@ -37,7 +61,9 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
       <tbody>
         {rows.map((row) => (
           <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-            <td>{row.name}</td>
+            <td>
+              <Named name={row.name} version={row.version} />
+            </td>
             <td className="num">{row.rps.toLocaleString()}</td>
             <td className="num">{fmtMs(row.p50ms)}</td>
             <td className="num">{fmtMs(row.p99ms)}</td>
@@ -49,15 +75,11 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
   )
 }
 
-// ---- Backend: raw HTTP throughput across runtimes ----
+// ---- Backend: HTTP throughput across runtimes ----
 // Two core workloads per framework (path-param GET, validated POST) - see BENCHMARKS.md.
 type HttpRow = HttpWorkloadTable["rows"][number]
 type RuntimeTable = HttpWorkloadTable
 
-// Captured 2026-09-24: median of 3 full-matrix runs per runtime; targeted Bun bare and Node realistic rows use seven-run medians. Bun 1.4.2 · Node 26.10.0 ·
-// Deno 2.9.7 · oha @ 50 conns. Read same-run ratios, not absolutes. `bun-native`/`node-raw`/
-// `deno-raw` are the runtime ceilings (no framework)
-// the framework rows chase - one ceiling row per runtime.
 const HTTP: ReadonlyArray<RuntimeTable> = HTTP_WORKLOADS
 
 /** Rank rows by geometric mean across the workloads - a single strong column (or a single weak
@@ -83,7 +105,7 @@ function RealworldTable({ table }: { table: HttpRealworldTable }) {
   const ranked = [...table.rows].sort((a, b) => realworldGeoMean(b) - realworldGeoMean(a))
   return (
     <section className="bench-block">
-      <h2>{table.title}</h2>
+      <h2>{`${table.title} ${table.version}`}</h2>
       <table>
         <thead>
           <tr>
@@ -96,7 +118,9 @@ function RealworldTable({ table }: { table: HttpRealworldTable }) {
         <tbody>
           {ranked.map((row) => (
             <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-              <td>{row.name}</td>
+              <td>
+                <Named name={row.name} version={row.version} />
+              </td>
               <td className="num">{row.get}</td>
               <td className="num">{row.post}</td>
               <td className="num">{row.body}</td>
@@ -112,7 +136,7 @@ function HttpTable({ table }: { table: RuntimeTable }) {
   const ranked = [...table.rows].sort((a, b) => geoMean(b) - geoMean(a))
   return (
     <section className="bench-block">
-      <h2>{table.title}</h2>
+      <h2>{`${table.title} ${table.version}`}</h2>
       <table>
         <thead>
           <tr>
@@ -124,7 +148,9 @@ function HttpTable({ table }: { table: RuntimeTable }) {
         <tbody>
           {ranked.map((row) => (
             <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-              <td>{row.name}</td>
+              <td>
+                <Named name={row.name} version={row.version} />
+              </td>
               <td className="num">{row.getUsers}</td>
               <td className="num">{row.postUsers}</td>
             </tr>
@@ -140,16 +166,17 @@ export default function Benchmarks() {
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
       <p className="lead">
-        Captured 2026-09-24 on macOS arm64 with Bun 1.4.2, Node 26.10.0, and Deno 2.9.7. Each
-        runtime uses the same-machine <code>oha</code> setup with 50 connections and the median of
-        three full-matrix runs; targeted Bun bare and Node realistic rows use seven-run medians.
-        Compare ratios inside each runtime before raw request rates because laptop thermals and
-        warmup move absolute throughput. Reproduce with <code>bun run bench:ssr</code> and{" "}
+        Each section names the date and toolchain it was captured with. Every number is the median
+        of interleaved rounds - each round measures every framework in turn, so drift on the machine
+        lands on all of them alike - and every row names the version it measured. Compare ratios
+        inside each runtime before absolute request rates, because laptop thermals and warmup move
+        absolute throughput. Reproduce with <code>bun run bench:ssr</code> and{" "}
         <code>bun run bench:http</code>.
       </p>
 
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
       <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
+      <Captured meta={SSR_CAPTURED} />
       <p className="lead">
         One section per UI framework, each with two explicitly-labelled tables:{" "}
         <b>A - dynamic SSR</b> (the page rendered on every request, no caching) and{" "}
@@ -162,7 +189,7 @@ export default function Benchmarks() {
         {MULTIPLIERS.map((m) => (
           <div className="mult-item" key={m.fw}>
             <strong>{m.mult}</strong>
-            <span>{`Nifra + ${m.fw} vs ${m.rival} (Node)`}</span>
+            <span>{`Nifra + ${m.fw} vs ${m.rival} ${m.rivalVersion} (Node)`}</span>
           </div>
         ))}
       </div>
@@ -198,12 +225,24 @@ export default function Benchmarks() {
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
+      <Captured meta={HTTP_WORKLOADS_CAPTURED} />
       <p className="lead">
         Nifra is also a standalone API framework. Two core workloads - a path-param GET and a
-        validated POST - each runtime through Nifra's real adapter, next to that runtime's raw
-        handler and the popular libraries. Rows are ordered by the geometric mean of the workloads,
-        so no single column decides the ranking.
+        validated POST - each runtime through Nifra's real adapter, next to the popular libraries on
+        that runtime. Rows are ordered by the geometric mean of the workloads, so no single column
+        decides the ranking.
       </p>
+      <div className="caveat">
+        <b>Why Nifra trails on Deno's bare GET.</b> Deno hands an app the request target exactly as
+        the client sent it, joined to the <code>Host</code> header as received. So on Deno, Nifra
+        rejects a malformed <code>Host</code> and resolves <code>.</code> and <code>..</code>{" "}
+        segments before routing, and routes the same path Bun, Node and Workers would. Those two
+        checks cost about 6% on this GET: the same build without them measured level with Elysia (10
+        interleaved rounds, 2026-10-17). Elysia and Hono route the raw path: both hand{" "}
+        <code>..</code> to a <code>/users/:id</code> handler for <code>/users/%2e%2e</code>, and
+        Hono answers a request for <code>/users/7</code> from <code>/search</code> when the{" "}
+        <code>Host</code> is <code>x/search?q=...#</code>, which Nifra refuses with a 400.
+      </div>
       <div className="bench-grid">
         {HTTP.map((table) => (
           <HttpTable key={table.title} table={table} />
@@ -213,6 +252,7 @@ export default function Benchmarks() {
       {HTTP_REALWORLD.length > 0 && (
         <>
           <h2 style={{ marginTop: 48 }}>Backend - the same routes with a real route's work</h2>
+          <Captured meta={HTTP_REALWORLD_CAPTURED} />
           <p className="lead">
             The tables above are the shape every framework publishes: a bare route doing nothing but
             routing. This is the same GET and POST after the route gains what an actual API route
