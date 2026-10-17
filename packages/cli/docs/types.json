@@ -7566,7 +7566,7 @@
     "name": "IsolatedExtensionWorkerOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface IsolatedExtensionWorkerOptions {\n    readonly modulePath: string;\n    readonly cwd: string;\n    readonly timeoutMs?: number;\n    readonly maxMessageBytes?: number;\n    /** Include bounded worker exception stacks for trusted local debugging. */\n    readonly exposeErrorStacks?: boolean;\n    readonly trustedCapabilities?: readonly string[];\n}"
+    "signature": "export interface IsolatedExtensionWorkerOptions {\n    readonly modulePath: string;\n    readonly cwd: string;\n    /** How long one tool call may run. Default 30 s. */\n    readonly timeoutMs?: number;\n    /** How long `start()` waits for the module to load and register. Default 30 s. */\n    readonly startTimeoutMs?: number;\n    readonly maxMessageBytes?: number;\n    /** Include bounded worker exception stacks for trusted local debugging. */\n    readonly exposeErrorStacks?: boolean;\n    readonly trustedCapabilities?: readonly string[];\n}"
   },
   {
     "name": "IsolationClass",

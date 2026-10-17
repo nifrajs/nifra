@@ -57,7 +57,9 @@ for a repository you trust.
 
 `IsolatedExtensionWorker` is an opt-in process-backed crash-containment seam for
 extensions. It is not a hostile-code sandbox; use OS-level isolation before
-loading code you do not trust.
+loading code you do not trust. `start()` rejects, and the worker is stopped, when the
+module exits before it is ready (a clean exit included) or is not ready within
+`startTimeoutMs` (default 30 s); `timeoutMs` bounds each tool call.
 
 `NifraBackend` is a small provider port for a future native backend. It accepts
 an injected model implementation and bounded tools without importing a provider

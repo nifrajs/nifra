@@ -6,7 +6,10 @@ import { readBoundedText } from "./process.ts"
 export interface IsolatedExtensionWorkerOptions {
   readonly modulePath: string
   readonly cwd: string
+  /** How long one tool call may run. Default 30 s. */
   readonly timeoutMs?: number
+  /** How long `start()` waits for the module to load and register. Default 30 s. */
+  readonly startTimeoutMs?: number
   readonly maxMessageBytes?: number
   /** Include bounded worker exception stacks for trusted local debugging. */
   readonly exposeErrorStacks?: boolean
@@ -54,7 +57,7 @@ interface PendingCall {
  */
 export class IsolatedExtensionWorker {
   private readonly options: Required<
-    Pick<IsolatedExtensionWorkerOptions, "timeoutMs" | "maxMessageBytes">
+    Pick<IsolatedExtensionWorkerOptions, "timeoutMs" | "startTimeoutMs" | "maxMessageBytes">
   > &
     IsolatedExtensionWorkerOptions
   private process: Bun.Subprocess | undefined
@@ -78,18 +81,18 @@ export class IsolatedExtensionWorker {
     this.options = {
       ...options,
       timeoutMs: options.timeoutMs ?? 30_000,
+      startTimeoutMs: options.startTimeoutMs ?? 30_000,
       maxMessageBytes: options.maxMessageBytes ?? 256 * 1024,
     }
     this.token = crypto.randomUUID().replaceAll("-", "")
     if (!isAbsolute(options.modulePath))
       throw new TypeError("isolated extension: modulePath must be absolute")
     if (!isAbsolute(options.cwd)) throw new TypeError("isolated extension: cwd must be absolute")
-    if (
-      !Number.isSafeInteger(this.options.timeoutMs) ||
-      this.options.timeoutMs < 1 ||
-      this.options.timeoutMs > 24 * 60 * 60_000
-    )
-      throw new RangeError("isolated extension: timeoutMs is invalid")
+    for (const name of ["timeoutMs", "startTimeoutMs"] as const) {
+      const value = this.options[name]
+      if (!Number.isSafeInteger(value) || value < 1 || value > 24 * 60 * 60_000)
+        throw new RangeError(`isolated extension: ${name} is invalid`)
+    }
     if (!Number.isSafeInteger(this.options.maxMessageBytes) || this.options.maxMessageBytes < 1024)
       throw new RangeError("isolated extension: maxMessageBytes must be at least 1024")
     const modulePath = realpathSync(options.modulePath)
@@ -120,10 +123,20 @@ export class IsolatedExtensionWorker {
     )
     void this.readOutput()
     void this.readErrors()
+    // Any exit we did not ask for is a failure, a clean one included: nothing would answer.
     void this.process.exited.then((status) => {
-      if (!this.closed && status !== 0)
-        this.fail(new Error(`isolated extension worker exited with code ${status}`))
+      if (!this.closed) this.fail(new Error(`isolated extension worker exited with code ${status}`))
     })
+    const deadline = setTimeout(() => {
+      this.fail(
+        new Error(
+          `isolated extension: worker was not ready within ${this.options.startTimeoutMs}ms`,
+        ),
+      )
+      this.process?.kill()
+    }, this.options.startTimeoutMs)
+    const settled = () => clearTimeout(deadline)
+    void this.ready.then(settled, settled)
     return this.ready
   }
 
