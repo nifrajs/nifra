@@ -37,6 +37,10 @@ import {
 } from "../rounds.ts"
 
 const APP_DIR = Bun.env.BENCH_APP_DIR ?? "bench/http-realworld"
+const BUN_CORE_PRELOAD =
+  Bun.env.BENCH_APP_DIR === undefined
+    ? ["--preload", `${import.meta.dir}/../dist-core-preload.ts`]
+    : []
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
   return Number.isInteger(n) && n >= min ? n : dflt
@@ -115,7 +119,7 @@ interface Section {
 
 const bunTarget = (framework: string): Target => ({
   framework,
-  spawn: (port) => ["bun", `${APP_DIR}/serve.ts`, framework, String(port)],
+  spawn: (port) => ["bun", ...BUN_CORE_PRELOAD, `${APP_DIR}/serve.ts`, framework, String(port)],
 })
 
 const nodeTarget = (framework: string): Target => ({

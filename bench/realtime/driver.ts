@@ -49,7 +49,13 @@ export async function echoRtt(wsUrl: string, total = 100_000, window = 32): Prom
         sent++
       }
     }
-    ws.onmessage = () => {
+    ws.onmessage = ({ data }) => {
+      if (data !== "ping") {
+        clearTimeout(guard)
+        ws.close()
+        reject(new Error("echo integrity: received a non-echo message"))
+        return
+      }
       rtt.push(performance.now() - (sentAt[recv] ?? started))
       recv++
       if (recv >= total) {
@@ -61,7 +67,9 @@ export async function echoRtt(wsUrl: string, total = 100_000, window = 32): Prom
     pump()
   })
   const secs = (performance.now() - started) / 1000
+  await Bun.sleep(20)
   ws.close()
+  if (recv !== total) throw new Error(`echo integrity: received ${recv}, expected ${total}`)
   rtt.sort((a, b) => a - b)
   return { msgPerSec: total / secs, p50: pct(rtt, 50), p99: pct(rtt, 99), msgs: total }
 }
@@ -83,10 +91,13 @@ export async function fanOut(
 ): Promise<FanOutResult> {
   const expected = subs * publishes
   let got = 0
+  let invalid = 0
+  const expectedPayload = JSON.stringify({ t: 1, body: "x".repeat(64) })
   const clients = await Promise.all(
     Array.from({ length: subs }, async () => {
       const ws = await openSocket(wsRoom)
-      ws.onmessage = () => {
+      ws.onmessage = ({ data }) => {
+        if (data !== expectedPayload) invalid++
         got++
       }
       return ws
@@ -111,6 +122,7 @@ export async function fanOut(
   for (const ws of clients) ws.close()
   if (got !== expected)
     throw new Error(`fan-out integrity: delivered ${got}, expected exactly ${expected}`)
+  if (invalid !== 0) throw new Error(`fan-out integrity: ${invalid} unexpected payloads`)
   const serverMs = body.ms
   return {
     delPerSec: expected / (serverMs / 1000),
@@ -127,18 +139,32 @@ export async function fanOut(
 export async function sseThroughput(baseUrl: string, n = 200_000): Promise<SseResult> {
   const started = performance.now()
   const res = await fetch(`${baseUrl}/feed?n=${n}`, { headers: { accept: "text/event-stream" } })
+  if (res.status !== 200) throw new Error(`SSE HTTP ${res.status}`)
   if (!res.body) throw new Error(`no SSE body (status ${res.status})`)
   const reader = res.body.getReader()
-  let events = 0
   let bytes = 0
-  const dec = new TextDecoder()
+  const chunks: Uint8Array[] = []
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
     bytes += value.length
-    const chunk = dec.decode(value, { stream: true })
-    for (let i = chunk.indexOf("data:"); i !== -1; i = chunk.indexOf("data:", i + 5)) events++
+    chunks.push(value)
   }
   const secs = (performance.now() - started) / 1000
+  // Validate after the transfer clock stops; frame markers may straddle network chunks.
+  const payload = new Uint8Array(bytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    payload.set(chunk, offset)
+    offset += chunk.length
+  }
+  const text = new TextDecoder().decode(payload).replace(/\r\n/g, "\n")
+  let events = 0
+  for (const frame of text.split("\n\n")) {
+    if (frame.startsWith("data:") || frame.includes("\ndata:")) events++
+  }
+  if (events !== n || !text.endsWith("\n\n")) {
+    throw new Error(`SSE integrity: delivered ${events}, expected exactly ${n} complete events`)
+  }
   return { evPerSec: n / secs, mib: bytes / 1024 / 1024, secs, events }
 }

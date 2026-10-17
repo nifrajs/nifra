@@ -6,8 +6,16 @@ const port = Number(process.argv[2])
 const MSG = JSON.stringify({ t: 1, body: "x".repeat(64) })
 
 const app = new Elysia()
-  .ws("/echo", { message: (ws, message) => ws.send(message) })
-  .ws("/room", { open: (ws) => ws.subscribe("room") })
+  .ws("/echo", {
+    message(ws, message) {
+      ws.send(message)
+    },
+  })
+  .ws("/room", {
+    open(ws) {
+      ws.subscribe("room")
+    },
+  })
   .get("/fire", ({ query }) => {
     const p = Number((query as { p?: string }).p ?? "0")
     const t0 = performance.now()

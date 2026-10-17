@@ -27,6 +27,8 @@
  *   BENCH_DURATION_S=2 BENCH_RUNS=1 bun run bench/proxy/run.ts    # fast, noisier pass
  */
 
+import { type ProxyMeasure as Measure, parseProxyOha } from "./oha.ts"
+
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
   return Number.isInteger(n) && n >= min ? n : dflt
@@ -128,42 +130,9 @@ const SECTIONS: readonly Section[] = [
   },
 ]
 
-interface Measure {
-  readonly rps: number
-  readonly p50ms: number
-  readonly p99ms: number
-}
-
 const ZERO: Measure = { rps: 0, p50ms: 0, p99ms: 0 }
 
-function finiteNumber(v: unknown): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined
-}
-
-function field(obj: unknown, key: string): unknown {
-  return typeof obj === "object" && obj !== null && key in obj
-    ? (obj as Record<string, unknown>)[key]
-    : undefined
-}
-
-/** Parse oha's `--output-format json` at the trust boundary - external tool output, so validate
- *  the shape rather than trusting property access. oha reports latencies in SECONDS. */
-function parseOha(raw: string): Measure {
-  let json: unknown
-  try {
-    json = JSON.parse(raw)
-  } catch {
-    throw new Error(`oha: output was not JSON: ${raw.slice(0, 160)}`)
-  }
-  const rps = finiteNumber(field(field(json, "summary"), "requestsPerSec"))
-  const lat = field(json, "latencyPercentiles")
-  const p50 = finiteNumber(field(lat, "p50"))
-  const p99 = finiteNumber(field(lat, "p99"))
-  if (rps === undefined || p50 === undefined || p99 === undefined) {
-    throw new Error(`oha: unexpected JSON shape: ${raw.slice(0, 200)}`)
-  }
-  return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
-}
+let sampleIndex = 0
 
 async function runOha(url: string, w: Workload, durationS: number): Promise<Measure> {
   const args = [
@@ -171,6 +140,7 @@ async function runOha(url: string, w: Workload, durationS: number): Promise<Meas
     String(CONNECTIONS),
     "-z",
     `${durationS}s`,
+    "--wait-ongoing-requests-after-deadline",
     "--no-tui",
     "--output-format",
     "json",
@@ -190,8 +160,15 @@ async function runOha(url: string, w: Workload, durationS: number): Promise<Meas
     new Response(proc.stderr).text(),
     proc.exited,
   ])
+  if (Bun.env.BENCH_RAW_DIR !== undefined) {
+    await Bun.write(
+      `${Bun.env.BENCH_RAW_DIR}/proxy-${String(++sampleIndex).padStart(4, "0")}-${new URL(url).port}.json`,
+      out,
+      { createPath: true },
+    )
+  }
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
-  return parseOha(out)
+  return parseProxyOha(out)
 }
 
 async function sample(base: string, w: Workload): Promise<Measure> {
@@ -262,7 +239,10 @@ try {
   console.log(
     `\nupstream origin on :${ORIGIN_PORT} - ${CONNECTIONS} conns, ${DURATION_S}s x${RUNS} (median), ${WARMUP_S}s warmup\n`,
   )
-  for (const w of WORKLOADS) direct[w.name] = await sample(originBase, w)
+  for (const w of WORKLOADS) {
+    console.log(`measuring direct origin: ${w.name}`)
+    direct[w.name] = await sample(originBase, w)
+  }
 
   let portCursor = BASE_PORT
   for (const section of sections) {
@@ -285,7 +265,10 @@ try {
           )
         }
         const row: Record<string, Measure> = {}
-        for (const w of WORKLOADS) row[w.name] = await sample(base, w)
+        for (const w of WORKLOADS) {
+          console.log(`measuring ${section.runtime}/${target.framework}: ${w.name}`)
+          row[w.name] = await sample(base, w)
+        }
         runtimeRows[target.framework] = row
       } finally {
         proc.kill()
