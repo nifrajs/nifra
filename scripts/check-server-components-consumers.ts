@@ -4,6 +4,10 @@ import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
+import {
+  CERTIFIED_COMPONENT_REACT,
+  CERTIFIED_COMPONENT_VITE,
+} from "../packages/web/src/internal/certified-components.ts"
 
 const root = resolve(import.meta.dirname, "..")
 const scratch = await realpath(await mkdtemp(resolve(tmpdir(), "nifra-components-consumers-")))
@@ -144,16 +148,16 @@ try {
       if (packages.has(dependency)) needed.add(dependency)
   }
   const dependencies: Record<string, string> = {
-    react: "19.2.8",
-    "react-dom": "19.2.8",
-    "react-server-dom-webpack": "19.2.8",
+    react: CERTIFIED_COMPONENT_REACT,
+    "react-dom": CERTIFIED_COMPONENT_REACT,
+    "react-server-dom-webpack": CERTIFIED_COMPONENT_REACT,
     vue: "3.5.40",
     svelte: "5.56.8",
     "solid-js": "1.9.14",
     preact: "10.29.8",
     "preact-render-to-string": "6.7.0",
     "@preact/preset-vite": "2.10.5",
-    vite: "8.2.1",
+    vite: CERTIFIED_COMPONENT_VITE,
     "@vitejs/plugin-rsc": "0.5.35",
     "@vitejs/plugin-vue": "6.0.9",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
