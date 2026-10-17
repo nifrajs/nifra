@@ -7,8 +7,8 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "preact": "^10.26.5",
-    "preact-render-to-string": "^6.5.13"
+    "preact": "^11.0.1",
+    "preact-render-to-string": "^6.8.1"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

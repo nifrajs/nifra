@@ -7,14 +7,18 @@
     "start": "node build/index.js"
   },
   "devDependencies": {
-    "@sveltejs/adapter-node": "^5.5.7",
-    "@sveltejs/kit": "^2.70.2",
-    "svelte": "^5.56.8",
+    "@sveltejs/adapter-node": "^6.0.0",
+    "@sveltejs/kit": "^3.1.0",
+    "svelte": "^5.57.2",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1"
   },
   "overrides": {
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
   }
 }

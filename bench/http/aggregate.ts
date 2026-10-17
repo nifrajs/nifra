@@ -189,6 +189,13 @@ for (let i = 0; i < runs; i++) {
   const runOrder = [...runtimes.slice(offset), ...runtimes.slice(0, offset)]
   for (const rt of runOrder) {
     const { meta: m, results } = await runOnce(runtime ?? rt, i)
+    if (Bun.env.BENCH_RAW_DIR !== undefined) {
+      await Bun.write(
+        `${Bun.env.BENCH_RAW_DIR}/http-${i + 1}-${rt}.json`,
+        `${JSON.stringify({ meta: m, results }, null, 2)}\n`,
+        { createPath: true },
+      )
+    }
     meta ??= m
     samples.push(results)
   }

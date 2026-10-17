@@ -92,19 +92,33 @@ export function parseOha(raw: string): SsrBenchMeasure {
   const summary = field(json, "summary")
   const rps = finiteNumber(field(summary, "requestsPerSec"))
   const success = finiteNumber(field(summary, "successRate"))
+  const statuses = field(json, "statusCodeDistribution")
+  const okRequests = finiteNumber(field(statuses, "200"))
   const lat = field(json, "latencyPercentiles")
   const p50 = finiteNumber(field(lat, "p50"))
   const p99 = finiteNumber(field(lat, "p99"))
-  if (rps === undefined || p50 === undefined || p99 === undefined || success === undefined) {
+  if (
+    rps === undefined ||
+    p50 === undefined ||
+    p99 === undefined ||
+    success === undefined ||
+    okRequests === undefined
+  ) {
     throw new Error(`oha: unexpected JSON shape: ${raw.slice(0, 200)}`)
   }
-  if (success < 0.99) {
+  const otherStatuses =
+    typeof statuses === "object" &&
+    statuses !== null &&
+    Object.keys(statuses).some((status) => status !== "200" && field(statuses, status) !== 0)
+  if (success !== 1 || okRequests <= 0 || otherStatuses) {
     throw new Error(
-      `oha: only ${(success * 100).toFixed(0)}% of requests succeeded - server shed load or refused connections`,
+      `oha: invalid sample (successRate=${success}, HTTP 200=${okRequests}, other statuses=${otherStatuses})`,
     )
   }
   return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
 }
+
+let ohaSampleIndex = 0
 
 export async function runOha(url: string, durationS: number): Promise<SsrBenchMeasure> {
   const args = [
@@ -112,6 +126,7 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
     String(SSR_BENCH_CONNECTIONS),
     "-z",
     `${durationS}s`,
+    "--wait-ongoing-requests-after-deadline",
     "--no-tui",
     "--output-format",
     "json",
@@ -127,6 +142,11 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
     new Response(proc.stderr).text(),
     proc.exited,
   ])
+  const rawDir = Bun.env.BENCH_SSR_RAW_DIR
+  if (rawDir !== undefined) {
+    const filename = `${String(++ohaSampleIndex).padStart(4, "0")}-${new URL(url).port}-${durationS}s.json`
+    await Bun.write(`${rawDir}/${filename}`, out, { createPath: true })
+  }
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
   return parseOha(out)
 }

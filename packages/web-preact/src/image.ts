@@ -35,8 +35,7 @@ export function Image(props: ImageComponentProps): VNode {
   // Strip the nifra-only props (not valid DOM attributes) before forwarding the rest to <img>.
   const { loader, widths, quality, priority, ...rest } = props
   const attrs = toHtmlAttrs(resolveImage(props, loader))
-  // `attrs` wins over the raw src/width/height/alt/sizes/loading still present in `rest`. The typed
-  // local pins Preact's `h` to its string-tag overload (spreads skip excess-property checks).
-  const imgProps: JSX.IntrinsicElements["img"] = { ...rest, ...attrs }
-  return h("img", imgProps)
+  // Normalize the VNode generic across Preact 10 and 11; the wrapper already types the DOM props.
+  const imgProps = { ...rest, ...attrs }
+  return h<Record<string, unknown>>("img", imgProps)
 }

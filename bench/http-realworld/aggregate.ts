@@ -194,6 +194,13 @@ let meta: Meta | undefined
 for (let i = 0; i < runs; i++) {
   process.stderr.write(`run ${i + 1}/${runs}…\n`)
   const { meta: m, results } = await runOnce(runtime)
+  if (Bun.env.BENCH_RAW_DIR !== undefined) {
+    await Bun.write(
+      `${Bun.env.BENCH_RAW_DIR}/http-realworld-${i + 1}.json`,
+      `${JSON.stringify({ meta: m, results }, null, 2)}\n`,
+      { createPath: true },
+    )
+  }
   meta ??= m
   samples.push(results)
 }
