@@ -48,7 +48,11 @@ same-run ratios (nifra vs the field, % of the raw server) - not the absolute num
 
 Workloads are identical across every framework (`bench/http/serve*.ts`): `GET /users/:id` (routing +
 path param) and `POST /users` (validated body), plus `GET /` and `GET /search` under `--full`. Each
-server runs in its own subprocess, measured one at a time, so nothing contends with the load client.
+server runs in its own subprocess. A runtime section boots all of them, then measures in interleaved
+rounds (`BENCH_ROUNDS`, default 4): each round takes one count-bounded `oha` sample of every server,
+one at a time, so only the sampled server carries load. A row's % of the raw server is the median of
+its per-round ratios, which holds on a busy host because both samples of a round see the same load;
+the aggregators pool those per-round ratios across runs. Round order is in `bench/rounds.ts`.
 The Deno rows use the shared direct `Deno.serve` ingress in `bench/http/deno-ingress.ts`, including
 the same parser-framing marker for Nifra; they do not mix Nifra's production adapter overhead into
 the framework comparison.

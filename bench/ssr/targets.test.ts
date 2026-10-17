@@ -73,8 +73,8 @@ describe("interleaved rounds", () => {
   test("each round is a rotation of every target, reversed on odd rounds", () => {
     const items = ["a", "b", "c", "d"]
     expect(roundOrder(items, 0)).toEqual(["a", "b", "c", "d"])
-    expect(roundOrder(items, 1)).toEqual(["a", "d", "c", "b"])
-    expect(roundOrder(items, 2)).toEqual(["c", "d", "a", "b"])
+    expect(roundOrder(items, 1)).toEqual(["d", "c", "b", "a"])
+    expect(roundOrder(items, 2)).toEqual(["b", "c", "d", "a"])
     for (let round = 0; round < 8; round++) {
       expect([...roundOrder(items, round)].sort()).toEqual(items)
     }

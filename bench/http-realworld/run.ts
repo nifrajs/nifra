@@ -1,6 +1,8 @@
 /**
  * REALISTIC-shape HTTP throughput matrix - the auth+middleware companion to bench/http/run.ts, same
- * harness shape (oha, isolated subprocess per framework, one runtime section at a time, median-of-N).
+ * harness shape (oha, one subprocess per framework, one runtime section at a time, every server of a
+ * section up at once and sampled in interleaved rounds; % of ceiling is the median of per-round
+ * ratios to the raw row serving the same workload).
  *
  * bench/http/ measures the framework floor: bare GET, one path param, one validated query, one
  * validated body - the shape nifra's fused Web lane targets, and the shape most benchmarks (including
@@ -24,6 +26,16 @@
  * built artifact rather than `src/` (see _nifra-app.ts), so the published mode closes the narrower
  * gap between a local build and the tarball actually shipped.
  */
+import { loadavg } from "node:os"
+import {
+  type Matrix,
+  type Measure,
+  mergeRuns,
+  pooledRatio,
+  pushRounds,
+  roundOrder,
+} from "../rounds.ts"
+
 const APP_DIR = Bun.env.BENCH_APP_DIR ?? "bench/http-realworld"
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
@@ -33,7 +45,10 @@ const CONNECTIONS = envInt("BENCH_CONNS", 50)
 const REQUESTS_PER_SAMPLE = envInt("BENCH_REQUESTS", 100_000)
 const SCALE_PCT = envInt("BENCH_SCALE", 100)
 const WARMUP = envInt("BENCH_WARMUP", 1, 0)
-const RUNS = envInt("BENCH_RUNS", 3)
+/** Even, so every two rows trade places equally often (bench/rounds.ts). */
+const ROUNDS = envInt("BENCH_ROUNDS", 4)
+/** Shifts the round rotation, so repeated aggregate runs start from different rows. */
+const ROUND_OFFSET = envInt("BENCH_ROUND_OFFSET", 0, 0)
 const BASE_PORT = 3600
 
 const AUTH_HEADERS: Readonly<Record<string, string>> = {
@@ -197,13 +212,14 @@ const SECTIONS: readonly Section[] = [
   },
 ]
 
-interface Measure {
-  readonly rps: number
-  readonly p50ms: number
-  readonly p99ms: number
-}
+const serves = (t: Target, workload: string): boolean =>
+  (t.workloads ?? WORKLOADS).some((w) => w.name === workload)
 
-const ZERO: Measure = { rps: 0, p50ms: 0, p99ms: 0 }
+/** Each workload is served by the targets that declare it, and each group carries its own raw row. */
+const ceilingOf = (runtime: string, workload: string): string | undefined =>
+  SECTIONS.find((s) => s.runtime === runtime)?.targets.find(
+    (t) => t.isCeiling === true && serves(t, workload),
+  )?.framework
 
 function finiteNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
@@ -276,19 +292,6 @@ async function runOha(url: string, w: Workload, requests: number): Promise<Measu
   return parseOha(out, requests)
 }
 
-async function sample(
-  url: string,
-  w: Workload,
-  requests: number,
-): Promise<{ median: Measure; best: Measure }> {
-  const runs: Measure[] = []
-  for (let i = 0; i < RUNS; i++) runs.push(await runOha(url, w, requests))
-  const sorted = [...runs].sort((a, b) => a.rps - b.rps)
-  const median = sorted[sorted.length >> 1] ?? ZERO
-  const best = sorted[sorted.length - 1] ?? ZERO
-  return { median, best }
-}
-
 async function waitReady(base: string, timeoutMs: number): Promise<void> {
   const deadline = performance.now() + timeoutMs
   while (performance.now() < deadline) {
@@ -306,8 +309,8 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
   throw new Error(`server at ${base} did not become ready within ${timeoutMs}ms`)
 }
 
-type Results = Record<string, Record<string, Record<string, Measure>>>
-const results: Results = {}
+// sampled[runtime][framework][workload].rounds - one Measure per round, in round order.
+const sampled: Matrix<{ rounds: Measure[] }> = {}
 const failures: string[] = []
 
 const argv = process.argv.slice(2)
@@ -320,39 +323,86 @@ if (sections.length === 0) {
   )
 }
 
+const pct = (ratio: number): string => String(Math.round(ratio * 100))
+
+interface Server {
+  readonly target: Target
+  readonly base: string
+  readonly proc: ReturnType<typeof Bun.spawn>
+}
+
 for (const section of sections) {
-  const sectionResults: Record<string, Record<string, Measure>> = {}
-  results[section.runtime] = sectionResults
-  let port = BASE_PORT
-  for (const target of section.targets) {
-    port += 1
-    const base = `http://127.0.0.1:${port}`
-    const fwResults: Record<string, Measure> = {}
-    sectionResults[target.framework] = fwResults
-    let proc: ReturnType<typeof Bun.spawn> | undefined
-    try {
-      if (target.prepare) await target.prepare()
-      proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
-      await waitReady(base, 8000)
-      for (const w of target.workloads ?? WORKLOADS) {
-        const requests = Math.max(500, Math.round((REQUESTS_PER_SAMPLE * SCALE_PCT) / 100))
-        // Count-bounded samples finish in-flight POSTs cleanly; duration cutoffs can leave Deno.serve
-        // degraded for later workloads. Warmup uses the same request path at 20% load.
-        if (WARMUP > 0) {
-          await runOha(`${base}${w.path}`, w, Math.max(500, Math.round(requests / 5)))
+  const servers: Server[] = []
+  const failed = new Set<Target>()
+  const fail = (target: Target, e: unknown): void => {
+    const msg = e instanceof Error ? e.message : String(e)
+    failures.push(`${section.runtime}/${target.framework}: ${msg}`)
+    console.error(`  ${section.runtime}/${target.framework}: ${msg}`)
+    failed.add(target)
+  }
+  // The plain and `-body` nifra Node targets share one bundle; build it once.
+  const prepared = new Map<() => Promise<void>, Promise<void>>()
+  try {
+    let port = BASE_PORT
+    for (const target of section.targets) {
+      port += 1
+      const base = `http://127.0.0.1:${port}`
+      try {
+        const { prepare } = target
+        if (prepare) {
+          if (!prepared.has(prepare)) prepared.set(prepare, prepare())
+          await prepared.get(prepare)
         }
-        const { median } = await sample(`${base}${w.path}`, w, requests)
-        fwResults[w.name] = median
+        const proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
+        servers.push({ target, base, proc })
+        await waitReady(base, 8000)
+      } catch (e) {
+        fail(target, e)
       }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      failures.push(`${section.runtime}/${target.framework}: ${msg}`)
-      console.error(`  ${section.runtime}/${target.framework}: ${msg}`)
-    } finally {
-      proc?.kill()
-      await proc?.exited
-      await Bun.sleep(1500)
     }
+    for (const w of ALL_WORKLOADS) {
+      const group = (): Server[] =>
+        servers.filter((s) => !failed.has(s.target) && serves(s.target, w.name))
+      if (group().length === 0) continue
+      const ceiling = ceilingOf(section.runtime, w.name)
+      const requests = Math.max(500, Math.round((REQUESTS_PER_SAMPLE * SCALE_PCT) / 100))
+      // Count-bounded samples finish in-flight POSTs cleanly; duration cutoffs can leave Deno.serve
+      // degraded for later workloads. Warmup uses the same request path at 20% load.
+      if (WARMUP > 0) {
+        for (const s of group()) {
+          try {
+            await runOha(`${s.base}${w.path}`, w, Math.max(500, Math.round(requests / 5)))
+          } catch (e) {
+            fail(s.target, e)
+          }
+        }
+      }
+      for (let round = 0; round < ROUNDS; round++) {
+        for (const s of roundOrder(group(), round + ROUND_OFFSET)) {
+          try {
+            const m = await runOha(`${s.base}${w.path}`, w, requests)
+            pushRounds(sampled, section.runtime, s.target.framework, w.name, m)
+          } catch (e) {
+            fail(s.target, e)
+          }
+        }
+        // A failed row stops sampling, so a live row's rounds are indexed by round number.
+        const inRound = (f: string | undefined): Measure | undefined =>
+          f === undefined ? undefined : sampled[section.runtime]?.[f]?.[w.name]?.rounds[round]
+        const ceil = inRound(ceiling)
+        const line = group().map(({ target: { framework: f } }) => {
+          const m = inRound(f)
+          return `${f} ${m?.rps.toLocaleString() ?? "-"}${m && ceil ? ` (${pct(m.rps / ceil.rps)}%)` : ""}`
+        })
+        console.error(
+          `  ${section.runtime} ${w.name}  round ${round + 1}/${ROUNDS}  load ${loadavg()[0]?.toFixed(1)}  ${line.join(" · ")}`,
+        )
+      }
+    }
+  } finally {
+    for (const s of servers) s.proc.kill()
+    await Promise.all(servers.map((s) => s.proc.exited))
+    await Bun.sleep(1500)
   }
 }
 if (failures.length > 0) {
@@ -360,6 +410,8 @@ if (failures.length > 0) {
     `benchmark results are invalid; ${failures.length} target(s) failed: ${failures.join("; ")}`,
   )
 }
+
+const results = mergeRuns([sampled], ceilingOf)
 
 function pad(s: string, n: number): string {
   return s.padStart(n)
@@ -383,7 +435,7 @@ const meta = {
   node: toolVersion("node", "--version"),
   deno: toolVersion("deno", "--version"),
   oha: toolVersion("oha", "--version"),
-  runs: RUNS,
+  rounds: ROUNDS,
   requestsPerRun: Math.max(500, Math.round((REQUESTS_PER_SAMPLE * SCALE_PCT) / 100)),
   scalePct: SCALE_PCT,
   connections: CONNECTIONS,
@@ -396,42 +448,32 @@ if (jsonMode) {
 
 const versions = `Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno}`
 console.log(
-  `\nRealistic-shape HTTP throughput (auth + security headers + CORS + request-id + cookie) - oha, median-of-${RUNS} count-bounded samples (${meta.requestsPerRun} requests/workload @ ${CONNECTIONS} conns)  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
+  `\nRealistic-shape HTTP throughput (auth + security headers + CORS + request-id + cookie) - oha, ${ROUNDS} interleaved rounds of count-bounded samples (${meta.requestsPerRun} requests/workload @ ${CONNECTIONS} conns)  (${versions})\n% of ceiling is the median of per-round ratios to the raw row serving that workload; req/s is the median round, indicative only.\n`,
 )
 
 for (const section of sections) {
   const got = results[section.runtime] ?? {}
   console.log(`## ${section.runtime}\n`)
   for (const w of ALL_WORKLOADS) {
-    // Each workload is served by the targets that declare it (plain rows vs the *-body rows), and
-    // each group carries its own raw ceiling.
-    const group = section.targets.filter((t) => (t.workloads ?? WORKLOADS).includes(w))
+    const group = section.targets.filter((t) => serves(t, w.name))
     if (group.length === 0) continue
     console.log(`  ${w.name}`)
-    const ceiling = group.find((t) => t.isCeiling)?.framework
-    const rows = group.map((t) => ({
-      f: t.framework,
-      m: got[t.framework]?.[w.name] ?? ZERO,
-    }))
-    const top = Math.max(1, ...rows.map((r) => r.m.rps))
-    const ceil = ceiling ? (got[ceiling]?.[w.name]?.rps ?? 0) : 0
-    for (const { f, m } of rows) {
-      const ofTop = Math.round((m.rps / top) * 100)
-      const ofCeil =
-        ceil > 0 ? `${pad(String(Math.round((m.rps / ceil) * 100)), 3)}% of ceiling` : ""
+    for (const { framework: f } of group) {
+      const m = got[f]?.[w.name]
+      if (m === undefined) continue
+      const ofCeil = m.ofCeiling === undefined ? "" : `${pad(pct(m.ofCeiling), 3)}% of ceiling`
       console.log(
-        `    ${f.padEnd(15)} ${pad(m.rps.toLocaleString(), 9)} req/s   ` +
-          `p50 ${pad(m.p50ms.toFixed(2), 6)}ms   p99 ${pad(m.p99ms.toFixed(2), 7)}ms   ` +
-          `${pad(String(ofTop), 3)}% of top   ${ofCeil}`,
+        `    ${f.padEnd(15)} ${pad(Math.round(m.rps).toLocaleString(), 9)} req/s   ` +
+          `p50 ${pad(m.p50ms.toFixed(2), 6)}ms   p99 ${pad(m.p99ms.toFixed(2), 7)}ms   ${ofCeil}`,
       )
     }
-    const nifra = rows.find((r) => r.f.startsWith("nifra"))?.m.rps ?? 0
-    const elysia = rows.find((r) => r.f.startsWith("elysia"))?.m.rps ?? 0
-    if (nifra > 0 && elysia > 0) {
-      console.log(`    → nifra is ${Math.round((nifra / elysia) * 100)}% of Elysia`)
-    }
+    const nifra = group.find((t) => t.framework.startsWith("nifra"))?.framework
+    const elysia = group.find((t) => t.framework.startsWith("elysia"))?.framework
+    const vsElysia =
+      nifra !== undefined && elysia !== undefined
+        ? pooledRatio([sampled], section.runtime, nifra, elysia, w.name)
+        : undefined
+    if (vsElysia !== undefined) console.log(`    → nifra is ${pct(vsElysia)}% of Elysia (paired)`)
     console.log("")
   }
 }
-
-export {}
