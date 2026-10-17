@@ -17,6 +17,7 @@
  *   bun run bench/http/run.ts bun        # one section only (bun | node | deno)
  */
 import { loadavg } from "node:os"
+import { cpuListFromEnv, pinned } from "../pinning.ts"
 import {
   type Matrix,
   type Measure,
@@ -40,6 +41,8 @@ const WARMUP = envInt("BENCH_WARMUP", 1, 0) // 0 skips the warmup run
 const ROUNDS = Math.ceil(envInt("BENCH_ROUNDS", 4) / 2) * 2
 /** Shifts the round rotation, so repeated aggregate runs start from different rows. */
 const ROUND_OFFSET = envInt("BENCH_ROUND_OFFSET", 0, 0)
+const SERVER_CPUS = cpuListFromEnv("BENCH_SERVER_CPUS")
+const LOAD_CPUS = cpuListFromEnv("BENCH_LOAD_CPUS")
 const BASE_PORT = 3400
 
 interface Workload {
@@ -236,7 +239,7 @@ async function runOha(url: string, w: Workload, requests: number): Promise<Measu
   }
   args.push(url)
   // Some shells export NO_COLOR=1; oha 1.14 expects a boolean-ish value, so normalize it for the child.
-  const proc = Bun.spawn(["oha", ...args], {
+  const proc = Bun.spawn(pinned(["oha", ...args], LOAD_CPUS), {
     stdout: "pipe",
     stderr: "pipe",
     env: { ...Bun.env, NO_COLOR: "true" },
@@ -312,7 +315,10 @@ for (const section of sections) {
       const base = `http://127.0.0.1:${port}`
       try {
         if (target.prepare) await target.prepare()
-        const proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
+        const proc = Bun.spawn(pinned(target.spawn(port), SERVER_CPUS), {
+          stdout: "ignore",
+          stderr: "inherit",
+        })
         servers.push({ target, base, proc })
         await waitReady(base, 8000)
       } catch (e) {
@@ -396,8 +402,16 @@ const meta = {
 
 // `--json`: one line of machine-readable results for aggregate.ts, every round included so it can
 // pool runs. No device/host/path info - only tool versions + the run knobs + the measured numbers.
+// `ceilings` names each section's raw row, so a reader pairs rows without knowing SECTIONS.
 if (jsonMode) {
-  console.log(JSON.stringify({ meta, results }))
+  const ceilings: Record<string, Record<string, string>> = {}
+  for (const section of sections) {
+    const ceiling = ceilingOf(section.runtime)
+    if (ceiling !== undefined) {
+      ceilings[section.runtime] = Object.fromEntries(WORKLOADS.map((w) => [w.name, ceiling]))
+    }
+  }
+  console.log(JSON.stringify({ meta, results, ceilings }))
   process.exit(0)
 }
 

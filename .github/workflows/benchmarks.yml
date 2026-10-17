@@ -1,0 +1,125 @@
+name: Benchmarks
+
+# Throughput on GitHub-hosted runners, as a report. Absolute req/s on a shared VM moves severalfold
+# between runs, so every number here is a ratio measured inside one job: each row against its
+# runtime's raw server, and nifra against each rival, sampled seconds apart in interleaved rounds,
+# with the server and oha pinned to separate physical cores. Each job keeps sampling until every
+# row's 95% interval is narrow or its run budget is spent, and lists what stayed noisy.
+#
+# Nothing here gates a merge. The nightly reports exist to measure this runner's noise floor first;
+# a regression gate gets its tolerance from them, never from a guess.
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+    inputs:
+      min_runs:
+        description: Whole-matrix runs before the noise check (4 rounds each; 2 is the minimum for a 95% interval)
+        default: "3"
+      max_runs:
+        description: Run budget per job when rows stay noisy
+        default: "5"
+  # Only for a PR a maintainer labels `bench`; every push to it re-runs until the label comes off.
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  measure:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(github.event.pull_request.labels.*.name, 'bench') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'bench'))
+    name: ${{ matrix.suite }} on ${{ matrix.runtime }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [http, realworld]
+        runtime: [bun, node, deno]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 26.12.0
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+
+      # The harness passes oha 1.16 flags, so the version is pinned, and the binary by its digest.
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Runner identity
+        run: |
+          bun --revision
+          uname -srm
+          lscpu
+          oha --version
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # The nifra servers load core and middleware from dist, like a deployed app. Middleware's build
+      # needs schema's and uploads' declarations, so the full ordered build is the reliable one.
+      - name: Build
+        run: bun run build
+
+      - name: Harness unit tests
+        run: bun test bench/ci bench/rounds.test.ts
+
+      - name: Measure
+        env:
+          MIN_RUNS: ${{ inputs.min_runs || '3' }}
+          MAX_RUNS: ${{ inputs.max_runs || '5' }}
+        run: >-
+          bun run bench/ci/run.ts --suite ${{ matrix.suite }} --runtime ${{ matrix.runtime }}
+          --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --pin
+          --out bench-ci/${{ matrix.suite }}-${{ matrix.runtime }}.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bench-${{ matrix.suite }}-${{ matrix.runtime }}
+          path: bench-ci/${{ matrix.suite }}-${{ matrix.runtime }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  summary:
+    needs: measure
+    if: always() && needs.measure.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: bench-*
+          path: bench-ci
+          merge-multiple: true
+
+      - name: Combined report
+        run: bun run bench/ci/summary.ts bench-ci >> "$GITHUB_STEP_SUMMARY"
