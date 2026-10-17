@@ -1,0 +1,107 @@
+/** Markdown for the GitHub job summary: one section per suite x runtime job, and a headline table. */
+import {
+  type CiReport,
+  rivalRow,
+  summarize,
+  unsettledRows,
+  type WorkloadSummary,
+} from "./report.ts"
+import type { MedianInterval } from "./stats.ts"
+
+const pct = (x: number): number => Math.round(x * 100)
+
+/** "101 (98-103)": the median and its interval, in percent. */
+export function formatInterval(i: MedianInterval | undefined, unit = ""): string {
+  if (i === undefined) return "-"
+  return `${pct(i.median)}${unit} (${pct(i.lo)}-${pct(i.hi)})`
+}
+
+function stealNote(steal: readonly (number | null)[]): string | undefined {
+  const known = steal.filter((s) => s !== null)
+  if (known.length === 0) return undefined
+  return `CPU steal up to ${(Math.max(...known) * 100).toFixed(1)}%`
+}
+
+function contextLine(report: CiReport): string {
+  const { host, runs } = report
+  const first = runs[0]?.meta
+  const rounds = typeof first?.rounds === "number" ? first.rounds : undefined
+  const parts = [
+    `${runs.length} runs x ${rounds ?? "?"} rounds`,
+    host.cpuModel ?? "CPU model unknown",
+    host.split === null
+      ? `${host.cpus} CPUs, unpinned`
+      : `${host.cpus} CPUs on ${host.split.cores} cores, servers on ${host.split.server.join(",")} and oha on ${host.split.load.join(",")}`,
+  ]
+  const steal = stealNote(host.steal)
+  if (steal !== undefined) parts.push(steal)
+  if (first !== undefined) {
+    const versions = ["bun", "node", "deno", "oha"].flatMap((tool) => {
+      const v = first[tool]
+      return v === undefined ? [] : [`${tool} ${v}`]
+    })
+    parts.push(versions.join(", "))
+  }
+  return parts.join(" - ")
+}
+
+function workloadTable(w: WorkloadSummary): string {
+  const lines = [
+    `**${w.workload}** (ceiling: ${w.ceiling})`,
+    "",
+    "| row | % of ceiling | nifra vs row | verdict |",
+    "| --- | ---: | ---: | --- |",
+  ]
+  for (const r of w.rows) {
+    const cells = [r.row, formatInterval(r.ofCeiling), formatInterval(r.nifraOver, "%"), r.verdict]
+    const shown =
+      r.row === w.nifra ? cells.map((c, i) => (i < 3 && c !== "-" ? `**${c}**` : c)) : cells
+    lines.push(`| ${shown.join(" | ")} |`)
+  }
+  return lines.join("\n")
+}
+
+export function renderSection(report: CiReport): string {
+  const workloads = summarize(report.runs, report.runtime, report.settings.maxCiWidthPts)
+  const unsettled = unsettledRows(workloads)
+  const parts = [`### ${report.suite} - ${report.runtime}`, "", contextLine(report), ""]
+  if (unsettled > 0) {
+    parts.push(
+      `${unsettled} row(s) still noisy after ${report.runs.length} of at most ${report.settings.maxRuns} runs; their numbers are listed but are not comparable.`,
+      "",
+    )
+  }
+  for (const w of workloads) parts.push(workloadTable(w), "")
+  return parts.join("\n")
+}
+
+export function renderHeadline(reports: readonly CiReport[]): string {
+  const lines = [
+    "| suite | runtime | workload | nifra % of ceiling | nifra vs rival | unsettled rows |",
+    "| --- | --- | --- | ---: | ---: | ---: |",
+  ]
+  for (const report of reports) {
+    const workloads = summarize(report.runs, report.runtime, report.settings.maxCiWidthPts)
+    for (const w of workloads) {
+      const nifra = w.rows.find((r) => r.row === w.nifra)
+      const rivalName = w.nifra === undefined ? undefined : rivalRow(report.runtime, w.nifra)
+      const rival = w.rows.find((r) => r.row === rivalName)
+      const vsRival =
+        rival === undefined ? "-" : `${formatInterval(rival.nifraOver, "%")} vs ${rival.row}`
+      const unsettled = w.rows.filter((r) => r.verdict !== "ok").length
+      lines.push(
+        `| ${report.suite} | ${report.runtime} | ${w.workload} | ${formatInterval(nifra?.ofCeiling)} | ${vsRival} | ${unsettled} |`,
+      )
+    }
+  }
+  return lines.join("\n")
+}
+
+export function renderFootnote(maxCiWidthPts: number): string {
+  return [
+    "Every number is the median of per-round ratios measured inside one job, with its 95% interval in brackets",
+    "(distribution-free, from order statistics). % of ceiling divides a row by its runtime's raw server in the same",
+    "round; nifra vs row divides nifra by that row. Absolute req/s is left out: on a shared runner it does not",
+    `compare between runs. A row is noisy when an interval is wider than ${maxCiWidthPts} points.`,
+  ].join("\n")
+}

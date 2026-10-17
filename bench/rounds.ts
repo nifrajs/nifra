@@ -81,10 +81,22 @@ export function pushRounds(
 const rpsOf = (cell: RoundCell | undefined): number[] => cell?.rounds.map((m) => m.rps) ?? []
 
 /**
- * The paired ratio of row `a` to row `b`, pooled over whole-matrix runs. Rounds pair only inside
- * the run that measured them, so each run contributes its own per-round ratios and the median spans
- * all of them. `undefined` when no round paired.
+ * Every per-round ratio of row `a` to row `b` across whole-matrix runs. Rounds pair only inside the
+ * run that measured them, so each run contributes its own ratios.
  */
+export function pooledRatios(
+  runs: readonly Matrix<RoundCell>[],
+  runtime: string,
+  a: string,
+  b: string,
+  workload: string,
+): number[] {
+  return runs.flatMap((run) =>
+    roundRatios(rpsOf(run[runtime]?.[a]?.[workload]), rpsOf(run[runtime]?.[b]?.[workload])),
+  )
+}
+
+/** The median of {@link pooledRatios}; `undefined` when no round paired. */
 export function pooledRatio(
   runs: readonly Matrix<RoundCell>[],
   runtime: string,
@@ -92,9 +104,7 @@ export function pooledRatio(
   b: string,
   workload: string,
 ): number | undefined {
-  const ratios = runs.flatMap((run) =>
-    roundRatios(rpsOf(run[runtime]?.[a]?.[workload]), rpsOf(run[runtime]?.[b]?.[workload])),
-  )
+  const ratios = pooledRatios(runs, runtime, a, b, workload)
   return ratios.length > 0 ? median(ratios) : undefined
 }
 

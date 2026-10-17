@@ -27,6 +27,7 @@
  * gap between a local build and the tarball actually shipped.
  */
 import { loadavg } from "node:os"
+import { cpuListFromEnv, pinned } from "../pinning.ts"
 import {
   type Matrix,
   type Measure,
@@ -53,6 +54,8 @@ const WARMUP = envInt("BENCH_WARMUP", 1, 0)
 const ROUNDS = Math.ceil(envInt("BENCH_ROUNDS", 4) / 2) * 2
 /** Shifts the round rotation, so repeated aggregate runs start from different rows. */
 const ROUND_OFFSET = envInt("BENCH_ROUND_OFFSET", 0, 0)
+const SERVER_CPUS = cpuListFromEnv("BENCH_SERVER_CPUS")
+const LOAD_CPUS = cpuListFromEnv("BENCH_LOAD_CPUS")
 const BASE_PORT = 3600
 
 const AUTH_HEADERS: Readonly<Record<string, string>> = {
@@ -282,7 +285,7 @@ async function runOha(url: string, w: Workload, requests: number): Promise<Measu
     for (const [k, v] of Object.entries(w.post.headers)) args.push("-H", `${k}: ${v}`)
   }
   args.push(url)
-  const proc = Bun.spawn(["oha", ...args], {
+  const proc = Bun.spawn(pinned(["oha", ...args], LOAD_CPUS), {
     stdout: "pipe",
     stderr: "pipe",
     env: { ...Bun.env, NO_COLOR: "true" },
@@ -357,7 +360,10 @@ for (const section of sections) {
           if (!prepared.has(prepare)) prepared.set(prepare, prepare())
           await prepared.get(prepare)
         }
-        const proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
+        const proc = Bun.spawn(pinned(target.spawn(port), SERVER_CPUS), {
+          stdout: "ignore",
+          stderr: "inherit",
+        })
         servers.push({ target, base, proc })
         await waitReady(base, 8000)
       } catch (e) {
@@ -445,8 +451,18 @@ const meta = {
   connections: CONNECTIONS,
 }
 
+// `ceilings` names the raw row of each runtime x workload, so a reader pairs rows without SECTIONS.
 if (jsonMode) {
-  console.log(JSON.stringify({ meta, results }))
+  const ceilings: Record<string, Record<string, string>> = {}
+  for (const section of sections) {
+    const byWorkload: Record<string, string> = {}
+    for (const w of ALL_WORKLOADS) {
+      const ceiling = ceilingOf(section.runtime, w.name)
+      if (ceiling !== undefined) byWorkload[w.name] = ceiling
+    }
+    ceilings[section.runtime] = byWorkload
+  }
+  console.log(JSON.stringify({ meta, results, ceilings }))
   process.exit(0)
 }
 
