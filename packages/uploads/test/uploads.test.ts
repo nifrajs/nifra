@@ -264,6 +264,23 @@ describe("signDownloadUrl / verifyDownloadUrl", () => {
     expect(await verifyDownloadUrl(spaced, secret, { now: 1000 })).toBe(false)
   })
 
+  test("signs only an expiry the verifier accepts", async () => {
+    const at = (expiresInSeconds: number, now: number) =>
+      signDownloadUrl("/uploads/a.png", secret, { expiresInSeconds, now })
+    const signed = await at(1, 100)
+    expect(await verifyDownloadUrl(signed, secret, { now: 101 })).toBe(true)
+    expect(await verifyDownloadUrl(signed, secret, { now: 102 })).toBe(false)
+    for (const ttl of [0.5, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+      await expect(at(ttl, 100)).rejects.toThrow("expiresInSeconds must be a whole number")
+    for (const now of [100.5, -1, Number.NaN])
+      await expect(at(60, now)).rejects.toThrow("now must be a whole")
+    await expect(at(1, Number.MAX_SAFE_INTEGER)).rejects.toThrow("the expiry is out of range")
+    const largest = await at(1, Number.MAX_SAFE_INTEGER - 1)
+    expect(await verifyDownloadUrl(largest, secret, { now: Number.MAX_SAFE_INTEGER - 1 })).toBe(
+      true,
+    )
+  })
+
   test("rejects a wrong secret + a missing signature", async () => {
     const signed = await signDownloadUrl("/uploads/a.png", secret, {
       expiresInSeconds: 60,

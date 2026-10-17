@@ -5071,7 +5071,7 @@ _No named exports (side-effect entrypoint)._
 - **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`
   Detect a file's type from its magic bytes, or `null` if unrecognized.
 - **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>`
-  Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended.
+  Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. Throws a `RangeError` for an `expiresInSeconds` or `now` that is not a whole number of seconds, since {@link verifyDownloadUrl} accepts only a whole-second expiry.
 - **stripImageMetadata** _(function)_ - `stripImageMetadata: (bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions) => Promise<Uint8Array>`
   Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes. A source over `maxPixels` throws {@link ImagePixelLimitError} without being decoded. Each call holds a full decoded image in memory, so bound how many run at once where uploads arrive.
 - **validateUpload** _(function)_ - `validateUpload: (input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions) => Promise<UploadResult>`

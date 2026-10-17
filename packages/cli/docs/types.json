@@ -14575,7 +14575,7 @@
     "name": "SignDownloadUrlOptions",
     "kind": "interface",
     "package": "@nifrajs/uploads",
-    "signature": "export interface SignDownloadUrlOptions {\n    /** Seconds until the URL expires. */\n    readonly expiresInSeconds: number;\n    /** Current unix time (seconds); defaults to `Date.now()/1000`. Injectable for tests. */\n    readonly now?: number;\n}",
+    "signature": "export interface SignDownloadUrlOptions {\n    /** Whole seconds until the URL expires, at least 1. */\n    readonly expiresInSeconds: number;\n    /** Current unix time in whole seconds; defaults to `Date.now()/1000` rounded down. Injectable for tests. */\n    readonly now?: number;\n}",
     "doc": "/**\n * Short-TTL **signed download URLs** - serve an uploaded file back via a tamper-evident, expiring URL\n * (HMAC-SHA256 over the path + query + expiry). WebCrypto only (portable across Bun/Node/Deno/workerd,\n * no `node:crypto`). Verification is constant-time (`crypto.subtle.verify`). Sign a *relative*\n * URL/path; the returned string is relative so it works behind any host. `vexp` / `vsig` are reserved\n * signature fields and are excluded from the payload.\n */"
   },
   {
@@ -23097,7 +23097,7 @@
     "kind": "function",
     "package": "@nifrajs/uploads",
     "signature": "export declare function signDownloadUrl(url: string, secret: string, options: SignDownloadUrlOptions): Promise<string>;",
-    "doc": "/** Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. */"
+    "doc": "/**\n * Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. Throws a `RangeError` for\n * an `expiresInSeconds` or `now` that is not a whole number of seconds, since\n * {@link verifyDownloadUrl} accepts only a whole-second expiry.\n */"
   },
   {
     "name": "signImageUrl",

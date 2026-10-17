@@ -71,13 +71,17 @@ const canonical = (u: URL, exp: number): string =>
   `${u.pathname}\n${JSON.stringify(signedQueryPairs(u))}\n${exp}`
 
 export interface SignDownloadUrlOptions {
-  /** Seconds until the URL expires. */
+  /** Whole seconds until the URL expires, at least 1. */
   readonly expiresInSeconds: number
-  /** Current unix time (seconds); defaults to `Date.now()/1000`. Injectable for tests. */
+  /** Current unix time in whole seconds; defaults to `Date.now()/1000` rounded down. Injectable for tests. */
   readonly now?: number
 }
 
-/** Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. */
+/**
+ * Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. Throws a `RangeError` for
+ * an `expiresInSeconds` or `now` that is not a whole number of seconds, since
+ * {@link verifyDownloadUrl} accepts only a whole-second expiry.
+ */
 export async function signDownloadUrl(
   url: string,
   secret: string,
@@ -87,7 +91,14 @@ export async function signDownloadUrl(
   u.searchParams.delete("vexp")
   u.searchParams.delete("vsig")
   const now = options.now ?? Math.floor(Date.now() / 1000)
+  if (!Number.isSafeInteger(options.expiresInSeconds) || options.expiresInSeconds < 1)
+    throw new RangeError(
+      "[nifra/uploads] expiresInSeconds must be a whole number of seconds, at least 1",
+    )
+  if (!Number.isSafeInteger(now) || now < 0)
+    throw new RangeError("[nifra/uploads] now must be a whole, non-negative number of unix seconds")
   const exp = now + options.expiresInSeconds
+  if (!Number.isSafeInteger(exp)) throw new RangeError("[nifra/uploads] the expiry is out of range")
   const sig = await crypto.subtle.sign(
     "HMAC",
     await importKey(secret),
