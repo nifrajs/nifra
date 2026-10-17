@@ -4345,34 +4345,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const method = source.method
       if (method !== "GET" && method !== "HEAD") markTransportCap(source, entry.bodyLimit)
     }
-    // An idempotency route runs its dedupe lane first; on a fresh key it delegates to the normal lanes
-    // (with the body buffered). All non-idempotent routes skip straight to the lanes - no added cost.
+    // An idempotency route meets its dedupe gate inside the program (`runIdempotencyGate`), so the
+    // gate runs after authentication and under the request deadline. Its lanes render a `Response`,
+    // which the gate stores. Non-idempotent routes skip straight to the lanes - no added cost.
     // The runtime is always present when a route resolved idempotency (enforced at registration).
     if (entry.idempotent !== undefined && this.idempotencyRuntime !== undefined) {
-      return this.idempotencyRuntime.run(
-        entry.idempotent,
-        requestOf(source),
+      const answered = this.runMatchedLanes(
+        this.idempotencyRuntime.prepare(requestOf(source), platform),
         platform,
         entry,
         params,
         search,
-        wrapResponse,
-        {
-          maxBodyBytes: entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-          runLanes: (buffered, plat, ent, prm, srch) =>
-            this.runMatchedLanes(
-              buffered,
-              plat,
-              ent as RouteEntry,
-              prm,
-              srch,
-              this.finalizeResponse,
-              this.wrapWebResponse,
-              this.webResponseTimeout,
-              false,
-            ),
-        },
+        this.finalizeResponse,
+        this.wrapWebResponse,
+        this.webResponseTimeout,
+        false,
       )
+      return answered instanceof Promise ? answered.then(wrapResponse) : wrapResponse(answered)
     }
     return this.runMatchedLanes(
       source,

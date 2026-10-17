@@ -29,35 +29,30 @@ import {
   requestEffectEvidence,
   requestIsSafeToRetry,
 } from "../internal/effect-execution.ts"
-import {
-  compileRouteExecutionPlan,
-  type InternalHandler,
-  type RouteEntry,
-} from "../internal/route-execution.ts"
-import { readBoundedBytes } from "./body.ts"
+import type { InternalHandler, RouteEntry } from "../internal/route-execution.ts"
+import type { IdempotencyResume } from "../internal/route-program.ts"
+import { readBoundedBytes, UNLIMITED_BODY_BYTES } from "./body.ts"
 import type { Platform, RouteSchema } from "./context.ts"
 import { jsonError, urlPartsOf } from "./http.ts"
 import { INSTALL_IDEMPOTENCY } from "./install.ts"
-import type { AnyServer, IdentityPlugin } from "./server.ts"
+import { CONTEXT_REQUEST, PRE_DECODED_BODY, preDecodedBody } from "./runtime-core.ts"
+import type { AnyServer, IdentityPlugin, RawContext } from "./server.ts"
 
 /** Requests whose route handler was entered. One rejected before it - by auth, validation, a guard -
  * began no execution, so its key is released rather than stored. */
 const HANDLER_ENTERED = new WeakSet<Request>()
 
+/** The gate's half of a body teed by {@link IdempotencyRuntime.prepare}, and the request's platform. */
+interface PreparedRequest {
+  readonly body: ReadableStream<Uint8Array> | null
+  readonly platform: Platform | undefined
+}
+
+const PREPARED = new WeakMap<Request, PreparedRequest>()
+
 /** Statuses that say the request was not carried out (RFC 9110). A handler answering with one, with no
  * owned effect begun, releases its key, so a refused caller cannot hold a store entry for the TTL. */
 const REFUSALS = new Set([401, 403, 408, 409, 425, 429])
-
-// Compile once in the opt-in plugin. The around runner also handles an empty hook list.
-const REPLAY_EXECUTION = compileRouteExecutionPlan({
-  lane: "lifecycle",
-  contextless: false,
-  hasAround: true,
-  hasLedger: false,
-  fusedWeb: undefined,
-  fusedBody: undefined,
-  fusedLane: undefined,
-})
 
 /** Registration-resolved idempotency for a route: the config with its store + defaults pinned. */
 export interface ResolvedIdempotency {
@@ -68,22 +63,6 @@ export interface ResolvedIdempotency {
   readonly headerName: string
   readonly namespace: NonNullable<RouteSchema["idempotency"]>["namespace"]
   readonly maxResponseBytes: number
-}
-
-/**
- * What the dedupe lane needs from the server to run a fresh key: the app-wide body cap and a way to
- * run the buffered request through the route's normal lanes to a concrete `Response`. The replay
- * path supplies an entry with the stored response replacing the handler and stored transformations.
- */
-export interface IdempotencyHost {
-  readonly maxBodyBytes: number
-  runLanes(
-    buffered: Request,
-    platform: Platform | undefined,
-    entry: unknown,
-    params: Record<string, string>,
-    search: string | undefined,
-  ): Response | Promise<Response>
 }
 
 /** The injected idempotency implementation the kernel calls through when the plugin is installed. */
@@ -99,17 +78,22 @@ export interface IdempotencyRuntime {
   wrapHandler<C extends { readonly req: Request }>(
     handler: (context: C) => unknown,
   ): (context: C) => unknown
-  /** The dedupe lane: read the key, fingerprint the request, consult the store, run/replay/reject. */
-  run<T>(
-    config: ResolvedIdempotency,
-    req: Request,
-    platform: Platform | undefined,
-    entry: unknown,
-    params: Record<string, string>,
-    search: string | undefined,
-    wrapResponse: (response: Response) => T,
-    host: IdempotencyHost,
-  ): Promise<T>
+  /**
+   * The request an idempotency route runs on: the same headers, and a body teed so the gate can
+   * fingerprint one half after authentication while the route still reads the other.
+   */
+  prepare(request: Request, platform: Platform | undefined): Request
+  /**
+   * The dedupe gate, entered from inside the route program: after authentication on an auth-first
+   * route, first on any other, and always under the request deadline. It reads the key, fingerprints
+   * the payload, consults the store, then resumes the program, replays, or rejects.
+   */
+  gate(
+    entry: RouteEntry,
+    ctx: RawContext,
+    wrapResponse: (response: Response) => Response,
+    resume: IdempotencyResume<Response>,
+  ): Promise<Response>
 }
 
 /** The install seam a server exposes so the `idempotency()` plugin can hand it a runtime. */
@@ -244,42 +228,76 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       })
     },
 
-    async run(config, req, platform, entry, params, search, wrapResponse, host) {
+    prepare(request, platform) {
+      const [route, gate] = request.body === null ? [null, null] : request.body.tee()
+      const init: StreamingRequestInit = {
+        method: request.method,
+        headers: request.headers,
+        signal: request.signal,
+        body: route,
+        duplex: "half",
+      }
+      const prepared = new Request(request.url, init)
+      const decoded = preDecodedBody(request)
+      if (decoded !== undefined)
+        Object.defineProperty(prepared, PRE_DECODED_BODY, { value: decoded })
+      PREPARED.set(prepared, { body: gate, platform })
+      return prepared
+    },
+
+    async gate(entry, ctx, wrapResponse, resume) {
+      const config = entry.idempotent
+      const req = ctx[CONTEXT_REQUEST]
+      const prepared = PREPARED.get(req)
+      if (config === undefined || prepared === undefined)
+        throw new Error("idempotency: the route ran on an unprepared request")
+      const maxBodyBytes = entry.bodyLimit ?? UNLIMITED_BODY_BYTES
+      const refuse = (response: Response): Response => {
+        releaseGateHalf(prepared.body)
+        return wrapResponse(response)
+      }
       const key = req.headers.get(config.headerName)
       if (key === null || !validIdempotencyKey(key)) {
-        return wrapResponse(jsonError(400, "idempotency_key_required"))
+        return refuse(jsonError(400, "idempotency_key_required"))
       }
       const namespace =
         typeof config.namespace === "function"
           ? await config.namespace(
               { method: req.method, url: req.url, headers: req.headers },
-              platform,
+              prepared.platform,
             )
           : config.namespace
       if (!validIdempotencyNamespace(namespace)) {
-        return wrapResponse(jsonError(500, "idempotency_namespace_invalid"))
+        return refuse(jsonError(500, "idempotency_namespace_invalid"))
       }
-      const read = await readBoundedBytes(req, host.maxBodyBytes)
-      if (!read.ok) {
-        return wrapResponse(
-          jsonError(read.status, read.status === 413 ? "payload_too_large" : "bad_request"),
-        )
+      // A codec-decoded body reached the route as a stand-in: fingerprint what the caller sent.
+      const decoded = preDecodedBody(req)
+      let bytes: Uint8Array
+      let contentType: string
+      if (decoded !== undefined) {
+        releaseGateHalf(prepared.body)
+        if (decoded.byteLength > maxBodyBytes) return refuse(jsonError(413, "payload_too_large"))
+        bytes = decoded.encoded
+        contentType = decoded.contentType
+      } else {
+        const read = await readBoundedBytes(gateCopy(req, prepared.body), maxBodyBytes)
+        if (!read.ok) {
+          return refuse(
+            jsonError(read.status, read.status === 413 ? "payload_too_large" : "bad_request"),
+          )
+        }
+        bytes = read.bytes
+        contentType = req.headers.get("content-type") ?? ""
       }
+      // Past the deadline the kernel has already answered; claim nothing for a request it abandoned.
+      if (ctx.signal.aborted) return refuse(jsonError(503, "request_timeout"))
       const url = urlPartsOf(req.url)
-      const canonicalBody = canonicalizeIdempotencyBody(read.bytes, req.headers.get("content-type"))
       const fingerprint = await computeIdempotencyFingerprint(
         req.method,
         `${url.pathname}${url.search}`,
-        canonicalBody,
-        req.headers.get("content-type") ?? "",
+        canonicalizeIdempotencyBody(bytes, contentType),
+        contentType,
       )
-      const buffered = new Request(req.url, {
-        method: req.method,
-        headers: req.headers,
-        signal: req.signal,
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: readBoundedBytes owns this byte view; Request accepts the same bytes on every supported runtime.
-        body: read.bytes.byteLength ? (read.bytes as NonNullable<RequestInit["body"]>) : null,
-      })
 
       const pendingTtlMs = config.pendingTtlMs
       const begin = await config.store.begin({
@@ -289,27 +307,26 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         ttlMs: config.ttlMs,
         pendingTtlMs,
       })
-      if (begin.state === "mismatch") return wrapResponse(jsonError(409, "idempotency_key_reused"))
+      if (begin.state === "mismatch") return refuse(jsonError(409, "idempotency_key_reused"))
       if (begin.state === "in-flight") {
-        return wrapResponse(jsonError(409, "idempotency_in_progress", { "Retry-After": "1" }))
+        return refuse(jsonError(409, "idempotency_in_progress", { "Retry-After": "1" }))
       }
       if (begin.state === "capacity") {
-        return wrapResponse(jsonError(503, "idempotency_store_capacity", { "Retry-After": "1" }))
+        return refuse(jsonError(503, "idempotency_store_capacity", { "Retry-After": "1" }))
       }
-      beginRequestEffectTracking(buffered)
+      if (ctx.signal.aborted) {
+        if (begin.state === "new") {
+          await config.store.abandon({ namespace, key, reservation: begin.reservation })
+        }
+        return refuse(jsonError(503, "request_timeout"))
+      }
+      beginRequestEffectTracking(req)
       if (begin.state === "replay") {
-        return wrapResponse(
-          await host.runLanes(
-            buffered,
-            platform,
-            replayEntry(
-              entry,
-              responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }),
-            ),
-            params,
-            search,
-          ),
+        const replay = replayEntry(
+          entry,
+          responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }),
         )
+        return await resume(replay, replay.program)
       }
       const reservation = begin.reservation
       let heartbeat: ReturnType<typeof setInterval> | undefined
@@ -327,8 +344,8 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       }
       try {
         // The handler threw, or its response body failed while being captured: no response to store.
-        const settleThrown = async (err: unknown): Promise<ReturnType<typeof wrapResponse>> => {
-          if (!requestEffectEvidence(buffered).began) {
+        const settleThrown = async (err: unknown): Promise<Response> => {
+          if (!requestEffectEvidence(req).began) {
             // The request-local boundary proves no owned effect started, so this is the one safe case
             // where releasing the key cannot duplicate an effect.
             await config.store.abandon({ namespace, key, reservation })
@@ -352,11 +369,11 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         }
         let response: Response
         try {
-          response = await host.runLanes(buffered, platform, entry, params, search)
+          response = await resume(pastGate(entry), entry.program)
         } catch (err) {
           return await settleThrown(err)
         }
-        if (!HANDLER_ENTERED.has(buffered) && !requestEffectEvidence(buffered).began) {
+        if (!HANDLER_ENTERED.has(req) && !requestEffectEvidence(req).began) {
           // Rejected before the handler ran: no execution began, so there is nothing a retry could
           // duplicate and no result is saved - storing every rejection would let callers who never
           // pass auth fill the store and lock everyone else out.
@@ -370,8 +387,8 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
         }
         if (
           (REFUSALS.has(response.status) ||
-            (response.status >= 500 && requestIsSafeToRetry(buffered))) &&
-          !requestEffectEvidence(buffered).began
+            (response.status >= 500 && requestIsSafeToRetry(req))) &&
+          !requestEffectEvidence(req).began
         ) {
           const abandoned = await config.store.abandon({ namespace, key, reservation })
           if (!abandoned) {
@@ -424,6 +441,36 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
   }
 }
 
+type StreamingRequestInit = RequestInit & { readonly duplex: "half" }
+
+/** The gate's half of the body under the request's own framing headers, for the bounded reader. */
+function gateCopy(request: Request, body: ReadableStream<Uint8Array> | null): Request {
+  const init: StreamingRequestInit = {
+    method: body === null ? "GET" : "POST",
+    headers: request.headers,
+    body,
+    duplex: "half",
+  }
+  return new Request(request.url, init)
+}
+
+/** Drop the gate's unread half of the body; a failed cancel has no caller left to report to. */
+function releaseGateHalf(body: ReadableStream<Uint8Array> | null): void {
+  body?.cancel().catch(() => {})
+}
+
+// The entry a program resumes on past its gate: the same route without idempotency, so a program
+// re-entered from the top does not meet the gate again. One per route, built on first use.
+const PAST_GATE = new WeakMap<RouteEntry, RouteEntry>()
+function pastGate(entry: RouteEntry): RouteEntry {
+  let past = PAST_GATE.get(entry)
+  if (past === undefined) {
+    past = { ...entry, idempotent: undefined }
+    PAST_GATE.set(entry, past)
+  }
+  return past
+}
+
 function replayEntry(entry: unknown, response: Response): RouteEntry {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the kernel supplies its matched RouteEntry through this internal opaque install seam.
   const route = entry as RouteEntry
@@ -431,8 +478,8 @@ function replayEntry(entry: unknown, response: Response): RouteEntry {
   return {
     ...route,
     handler,
+    idempotent: undefined,
     responseContract: undefined,
     program: { ...route.program, handler, afterHandle: [] },
-    execution: REPLAY_EXECUTION,
   }
 }

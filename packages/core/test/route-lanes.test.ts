@@ -74,7 +74,7 @@ describe("selectRouteLanes", () => {
       schema: { body: t.object({ name: t.string() }) },
     })
     expect(idempotent).toMatchObject({
-      lane: "body",
+      lane: "lifecycle",
       bodyOnly: true,
       fusedBody: false,
       fusedLane: undefined,

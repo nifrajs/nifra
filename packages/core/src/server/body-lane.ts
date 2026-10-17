@@ -11,8 +11,7 @@ import { isJsonMediaType, isUrlEncodedForm, readBoundedForm } from "./query.ts"
 import {
   headerOf,
   isResponseResult,
-  PRE_DECODED_BODY,
-  type PreDecodedBody,
+  preDecodedBody,
   type ResponseResult,
   TEXT_DECODER,
 } from "./runtime-core.ts"
@@ -52,7 +51,7 @@ export function readBoundedJsonSource<T>(
   onResult?: JsonResultContinuation<T>,
   onError?: JsonErrorContinuation<T>,
 ): Promise<unknown | ResponseResult | T> {
-  const preDecoded = (req as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
+  const preDecoded = preDecodedBody(req)
   if (preDecoded !== undefined) {
     const value =
       preDecoded.byteLength > maxBytes ? plainError(413, "payload_too_large") : preDecoded.value

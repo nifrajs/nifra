@@ -25,7 +25,15 @@ import {
   requestEffectEvidence,
   requestEffectScope,
 } from "../src/internal/effect-execution.ts"
-import { createIdempotencyRuntime } from "../src/server/idempotency-lane.ts"
+import type { RouteEntry } from "../src/internal/route-execution.ts"
+import type { IdempotencyResume } from "../src/internal/route-program.ts"
+import {
+  createIdempotencyRuntime,
+  type IdempotencyRuntime,
+  type ResolvedIdempotency,
+} from "../src/server/idempotency-lane.ts"
+import { CONTEXT_REQUEST } from "../src/server/runtime-core.ts"
+import type { RawContext } from "../src/server/server.ts"
 
 /** A POST whose length-less body is still producing when a cap trips: its last chunk is never
  * pulled. */
@@ -265,28 +273,39 @@ describe("effect-aware idempotency fallback", () => {
     return { runtime, config }
   }
 
+  /** Enter the gate the way a route program does, with `resume` standing in for the rest of it. It
+   * also hands `resume` the prepared request the program would be running on. */
+  const gate = (
+    runtime: IdempotencyRuntime,
+    config: ResolvedIdempotency,
+    request: Request,
+    resume: (
+      ...args: [...Parameters<IdempotencyResume<Response>>, Request, RawContext]
+    ) => Promise<Response>,
+  ) => {
+    const prepared = runtime.prepare(request, undefined)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the gate reads only the request and the deadline signal from its context.
+    const ctx = { [CONTEXT_REQUEST]: prepared, signal: new AbortController().signal } as RawContext
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the gate reads the entry's idempotency and body limit, and a replay spreads its absent program.
+    const entry = { idempotent: config, bodyLimit: 1024 } as RouteEntry
+    return runtime.gate(
+      entry,
+      ctx,
+      (r) => r,
+      (e, p) => resume(e, p, prepared, ctx),
+    )
+  }
+
   test("an escaped pre-effect failure releases its reservation", async () => {
     const store = new MemoryIdempotencyStore()
     const { runtime, config } = configFor(store)
     let runs = 0
     const run = () =>
-      runtime.run(
-        config,
-        post({ amount: 1 }, "pre-effect"),
-        undefined,
-        {},
-        {},
-        undefined,
-        (r) => r,
-        {
-          maxBodyBytes: 1024,
-          async runLanes() {
-            runs++
-            if (runs === 1) throw new Error("framework failure")
-            return new Response(null, { status: 204 })
-          },
-        },
-      )
+      gate(runtime, config, post({ amount: 1 }, "pre-effect"), async () => {
+        runs++
+        if (runs === 1) throw new Error("framework failure")
+        return new Response(null, { status: 204 })
+      })
     await expect(run()).rejects.toThrow("framework failure")
     expect((await run()).status).toBe(204)
     expect(runs).toBe(2)
@@ -297,30 +316,14 @@ describe("effect-aware idempotency fallback", () => {
     const { runtime, config } = configFor(store)
     let runs = 0
     const run = () =>
-      runtime.run(
-        config,
-        post({ amount: 1 }, "ambiguous"),
-        undefined,
-        { around: [], program: {} },
-        {},
-        undefined,
-        (r) => r,
-        {
-          maxBodyBytes: 1024,
-          async runLanes(request, _platform, entry) {
-            if (
-              typeof entry === "object" &&
-              entry !== null &&
-              "handler" in entry &&
-              typeof entry.handler === "function"
-            )
-              return entry.handler()
-            runs++
-            markBeaconEffectBegan({ req: request })
-            throw new Error("connection dropped after send")
-          },
-        },
-      )
+      gate(runtime, config, post({ amount: 1 }, "ambiguous"), async (entry, _p, source, ctx) => {
+        // Only a replay's entry carries a handler; the stand-in route has none.
+        const replayed = typeof entry.handler === "function" ? await entry.handler(ctx) : undefined
+        if (replayed instanceof Response) return replayed
+        runs++
+        markBeaconEffectBegan({ req: source })
+        throw new Error("connection dropped after send")
+      })
     expect((await run()).status).toBe(500)
     const replay = await run()
     expect(replay.status).toBe(500)
@@ -328,24 +331,14 @@ describe("effect-aware idempotency fallback", () => {
     expect(runs).toBe(1)
   })
 
-  test("buffered Request construction failure cannot reserve a key", async () => {
+  test("buffered Request construction failure cannot reserve a key", () => {
     const store = new MemoryIdempotencyStore()
-    const { runtime, config } = configFor(store)
+    const { runtime } = configFor(store)
     const request = post({ amount: 1 }, "invalid-signal")
     // Model an exceptional request source without replacing the global Request constructor.
     Object.defineProperty(request, "signal", { value: {} })
-    let runs = 0
-    await expect(
-      runtime.run(config, request, undefined, {}, {}, undefined, (response) => response, {
-        maxBodyBytes: 1024,
-        async runLanes() {
-          runs++
-          return new Response()
-        },
-      }),
-    ).rejects.toThrow("signal")
+    expect(() => runtime.prepare(request, undefined)).toThrow("signal")
     expect(store.size).toBe(0)
-    expect(runs).toBe(0)
   })
 
   test("request-local evidence distinguishes executing, committed, and ambiguous states", () => {

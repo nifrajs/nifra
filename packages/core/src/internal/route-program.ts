@@ -158,7 +158,22 @@ interface RouteProgramRuntime {
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
+  /** Installed by `idempotency()`, and present whenever a route resolved idempotency. */
+  readonly idempotencyRuntime: {
+    gate<T>(
+      entry: RouteEntry,
+      ctx: RawContext,
+      wrapResponse: (response: Response | ResponseResult) => T,
+      resume: IdempotencyResume<T>,
+    ): Promise<T>
+  }
 }
+
+/**
+ * The rest of a program after the idempotency gate. The gate continues it with the request it
+ * buffered, and with a replay entry and program when the key already holds a response.
+ */
+export type IdempotencyResume<T> = (entry: RouteEntry, program: RouteProgram) => ProgramResult<T>
 
 function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
@@ -278,6 +293,22 @@ function runAuthenticationStages<T>(
   validationComplete = false,
 ): ProgramResult<T> {
   if (start >= program.authStages.length) {
+    // Auth-first: the idempotency gate buffers the body, so it waits for every stage to pass. It
+    // resumes on an entry without the gate, so the program does not meet it twice.
+    if (entry.idempotent !== undefined && !validationComplete) {
+      return host.idempotencyRuntime.gate(entry, ctx, wrapResponse, (e, p) =>
+        runAuthenticationStages(
+          host,
+          e,
+          p,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+          p.authStages.length,
+        ),
+      )
+    }
     if (program.authFastLane) {
       const validationIndex = validationComplete ? program.validationStages.length : 0
       return runFastAuthenticatedProgram(
@@ -578,22 +609,32 @@ async function runAuthBeforeValidation<T>(
   ctx: RawContext,
   finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
+  gated = false,
 ): Promise<T> {
   try {
-    if (program.hasDecorations) Object.assign(ctx, program.decorations)
+    if (!gated) {
+      if (program.hasDecorations) Object.assign(ctx, program.decorations)
 
-    for (const derive of program.derives) {
-      const result = derive(ctx)
-      const settled = result instanceof Promise ? await result : result
-      if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
-      Object.assign(ctx, settled)
-    }
+      for (const derive of program.derives) {
+        const result = derive(ctx)
+        const settled = result instanceof Promise ? await result : result
+        if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
+        Object.assign(ctx, settled)
+      }
 
-    for (const before of program.beforeHandle) {
-      const result = before(ctx)
-      const settled = result instanceof Promise ? await result : result
-      if (settled !== undefined)
-        return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
+      for (const before of program.beforeHandle) {
+        const result = before(ctx)
+        const settled = result instanceof Promise ? await result : result
+        if (settled !== undefined)
+          return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
+      }
+
+      // The policy hooks have passed, so the idempotency gate may buffer the body now.
+      if (entry.idempotent !== undefined) {
+        return await host.idempotencyRuntime.gate(entry, ctx, wrapResponse, (e, p) =>
+          runAuthBeforeValidation(host, e, p, source, ctx, finalize, wrapResponse, true),
+        )
+      }
     }
 
     for (const stage of program.validationStages) {
@@ -634,6 +675,13 @@ export function executeRouteProgram<T, R extends Registry, Ctx>(
   wrapResponse: (response: Response | ResponseResult) => T,
 ): ProgramResult<T> {
   const host = runtime as unknown as RouteProgramRuntime
+  // An auth-first program meets the idempotency gate once authentication has passed, so the gate
+  // never buffers a body for a caller it would refuse. Every other program meets it first.
+  if (entry.idempotent !== undefined && !program.authBeforeValidation) {
+    return host.idempotencyRuntime.gate(entry, ctx, wrapResponse, (e, p) =>
+      executeRouteProgram(runtime, e, p, source, ctx, finalize, wrapResponse),
+    )
+  }
   try {
     if (program.authStages.length > 0) {
       if (program.hasDecorations) Object.assign(ctx, program.decorations)
