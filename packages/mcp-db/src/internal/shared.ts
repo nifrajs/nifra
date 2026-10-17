@@ -637,6 +637,11 @@ const MAX_CELL_DEPTH = 32
 const MIN_SAFE = BigInt(Number.MIN_SAFE_INTEGER)
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER)
 
+/** An exactly read INTEGER: a number in the safe range, its decimal string past it. */
+export function exactInteger(value: bigint): number | string {
+  return value >= MIN_SAFE && value <= MAX_SAFE ? Number(value) : value.toString()
+}
+
 /**
  * One database value as JSON: bytes become `<n bytes>`, a bigint outside the safe range a string,
  * a date an ISO string, a non-finite number a string. Strings go through `redaction.text`, and a
@@ -650,7 +655,7 @@ export function toJsonCell(value: unknown, redaction: DbRedaction = {}, depth = 
     case "number":
       return Number.isFinite(value) ? value : String(value)
     case "bigint":
-      return value >= MIN_SAFE && value <= MAX_SAFE ? Number(value) : value.toString()
+      return exactInteger(value)
     case "boolean":
       return value
     case "object":

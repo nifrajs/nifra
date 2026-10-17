@@ -4,7 +4,7 @@
  * tool runs each query in its own subprocess instead, which bounds the work by killing the process.
  */
 
-import { ROW_BYTES_COLUMN, type SqliteDatabaseLike } from "./shared.ts"
+import { exactInteger, ROW_BYTES_COLUMN, type SqliteDatabaseLike } from "./shared.ts"
 
 export class QueryTimeoutError extends Error {
   constructor() {
@@ -61,7 +61,7 @@ self.onmessage = (event) => {
   }
   try {
     if (db === undefined) {
-      db = new Database(filename, { readonly: true })
+      db = new Database(filename, { readonly: true, safeIntegers: true })
       db.run("PRAGMA query_only = ON")
     }
     const statement = db.prepare(sql)
@@ -247,12 +247,15 @@ function workerSession(filename: string): QuerySession {
   }
 
   return {
-    run: async (sql, deadline) => (await queue({ sql }, deadline)).rows,
+    run: async (sql, deadline) => exactIntegers((await queue({ sql }, deadline)).rows),
     columns: async (sql, deadline) =>
       (await queue({ sql, type: "columns" }, deadline)).rows.filter(
         (name): name is string => typeof name === "string",
       ),
-    read: (sql, deadline, maxBytes) => queue({ sql, type: "read", maxBytes }, deadline),
+    read: async (sql, deadline, maxBytes) => {
+      const read = await queue({ sql, type: "read", maxBytes }, deadline)
+      return { rows: exactIntegers(read.rows), cut: read.cut }
+    },
     close() {
       if (closePromise !== undefined) return closePromise
       closed = true
@@ -290,6 +293,34 @@ function workerSession(filename: string): QuerySession {
   }
 }
 
+/** Read INTEGERs exactly where the driver can: `safeIntegers` (bun:sqlite, better-sqlite3) or
+ * `setReadBigInts` (node:sqlite). */
+function exactStatement<S extends object>(statement: S): S {
+  for (const option of ["safeIntegers", "setReadBigInts"]) {
+    const enable: unknown = Reflect.get(statement, option)
+    if (typeof enable !== "function") continue
+    Reflect.apply(enable, statement, [true])
+    break
+  }
+  return statement
+}
+
+/** An exactly read INTEGER in the safe range becomes a number again, a larger one its decimal
+ * string, so an id past 2^53 reaches the agent exact instead of rounded to a neighbour. Rows are
+ * rebuilt, not edited: on a Bun row, JSON.stringify misses a write to a numeric column name. */
+function exactIntegers(rows: unknown[]): unknown[] {
+  return rows.map((row) =>
+    typeof row !== "object" || row === null
+      ? row
+      : Object.fromEntries(
+          Object.entries(row).map(([key, value]) => [
+            key,
+            typeof value === "bigint" ? exactInteger(value) : value,
+          ]),
+        ),
+  )
+}
+
 /**
  * The in-process lane, used when the database cannot be reopened elsewhere. The deadline is checked
  * around the statement and nothing more: `prepare().all()` is synchronous, so it holds the only
@@ -300,9 +331,9 @@ function inProcessSession(db: SqliteDatabaseLike): QuerySession {
   return {
     async run(sql, deadline) {
       if (Date.now() >= deadline) throw new QueryTimeoutError()
-      const rows = db.prepare(sql).all()
+      const rows = exactStatement(db.prepare(sql)).all()
       if (Date.now() > deadline) throw new QueryTimeoutError()
-      return rows
+      return exactIntegers(rows)
     },
     async columns(sql, deadline) {
       if (Date.now() >= deadline) throw new QueryTimeoutError()
@@ -310,7 +341,7 @@ function inProcessSession(db: SqliteDatabaseLike): QuerySession {
     },
     async read(sql, deadline, maxBytes) {
       if (Date.now() >= deadline) throw new QueryTimeoutError()
-      const statement = db.prepare(sql)
+      const statement = exactStatement(db.prepare(sql))
       const rows: unknown[] = []
       let bytes = 0
       let cut = false
@@ -325,7 +356,7 @@ function inProcessSession(db: SqliteDatabaseLike): QuerySession {
         }
       }
       if (Date.now() > deadline) throw new QueryTimeoutError()
-      return { rows, cut }
+      return { rows: exactIntegers(rows), cut }
     },
     async close() {},
   }
