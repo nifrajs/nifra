@@ -173,6 +173,7 @@ export function rawUpgradeStatus(
   port: number,
   target: string,
   headers: Readonly<Record<string, string>> = {},
+  host = "127.0.0.1",
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
@@ -181,7 +182,7 @@ export function rawUpgradeStatus(
       socket.write(
         [
           `GET ${target} HTTP/1.1`,
-          "Host: 127.0.0.1",
+          `Host: ${host}`,
           "Connection: Upgrade",
           "Upgrade: websocket",
           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",

@@ -620,8 +620,9 @@ const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegm
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
 const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::\d{1,5})?$/i
 
+// `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every header.
 const invalidHost = (req: Request): boolean => {
-  const host = req.headers.get("host")
+  const host = headerOf(req, "host")
   return host !== null && !HOST_AUTHORITY.test(host)
 }
 
@@ -3672,10 +3673,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     req: Request,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<WebSocketUpgradeOutcome> {
-    // Before any header is read: Deno only materializes a request's headers when asked, and that
-    // costs a plain request measurably.
+    // Before any header is read, and then through `headerOf`: Deno builds a request's whole header
+    // list when `headers` is read, which costs every plain request of an app with sockets measurably.
     if (this.wsRoutes.length === 0 && !this.mountsTakeUpgrades()) return WS_PASS
-    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
+    if (headerOf(req, "upgrade")?.toLowerCase() !== "websocket") return WS_PASS
     // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
     // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
     if (req.method !== "GET") return WS_PASS

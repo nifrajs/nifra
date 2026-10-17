@@ -181,12 +181,55 @@ export function requestOf(source: RequestSource): Request {
   return source.request ?? (source as unknown as Request)
 }
 
+// On Deno, reading `headers` builds the request's whole header list: ~4% of a bare route's
+// throughput for one header. A `Deno.serve` request's inner record (Deno's own "request" slot)
+// reads one header off the parsed request: the value `headers.get` would return, except that a name
+// no header can carry reads as absent instead of throwing, as on the Node source. It is used only
+// while the `Headers` are unbuilt (Deno's "headers cache" slot is empty), so the two never disagree;
+// on a closed request both throw Deno's "Request closed". A request Deno did not parse - constructed,
+// cloned, rebuilt - reads `headers`, as before.
+const denoSlots = "Deno" in globalThis ? denoRequestSlots(new Request("http://x/")) : undefined
+
+/** @internal Deno's own slots on a `Request`, found by the names Deno gives them. */
+export interface DenoSlots {
+  readonly inner: symbol
+  readonly headers: symbol
+}
+
+/** @internal */
+export function denoRequestSlots(request: object): DenoSlots | undefined {
+  let inner: symbol | undefined
+  let headers: symbol | undefined
+  for (const key of Object.getOwnPropertySymbols(request)) {
+    if (key.description === "request") inner = key
+    else if (key.description === "headers cache") headers = key
+  }
+  return inner === undefined || headers === undefined ? undefined : { inner, headers }
+}
+
+/** @internal The header as received, or `undefined` when only `headers` can answer. */
+export function denoWireHeader(
+  request: object,
+  slots: DenoSlots,
+  name: string,
+): string | null | undefined {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only the two symbol slots are read, and each value is checked before it is used.
+  const slotted = request as Record<symbol, { readonly header?: unknown } | undefined>
+  if (slotted[slots.headers] !== undefined) return undefined
+  const inner = slotted[slots.inner]
+  if (typeof inner?.header !== "function") return undefined
+  const value: unknown = inner.header(name)
+  return value === null || typeof value === "string" ? value : undefined
+}
+
 /** Read one request header. `header()` answers authoritatively when the source implements it - its
  * `null` means ABSENT, not "ask `headers` instead". Falling through on `null` would materialize the
  * lazy sources' full `Headers` object on every absent-header probe (measured at ~4% of request CPU
  * on the Node POST lane, which checks `transfer-encoding` on every request). */
 export function headerOf(source: RequestSource, name: string): string | null {
-  return source.header !== undefined ? source.header(name) : source.headers.get(name)
+  if (source.header !== undefined) return source.header(name)
+  const wire = denoSlots === undefined ? undefined : denoWireHeader(source, denoSlots, name)
+  return wire !== undefined ? wire : source.headers.get(name)
 }
 
 /** Off-edge `waitUntil`: run the background work fire-and-forget, never leaking an unhandled

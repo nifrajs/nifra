@@ -8,10 +8,11 @@ import { fileURLToPath } from "node:url"
  * `@nifrajs/core` - trips this before it ships.
  *
  * Measured at authoring: ~7.5 KB gz (raw ~22 KB); ~9.4 KB once the lane refused cross-site form
- * bodies. The ceiling has headroom for honest growth; a jump past it means something big got pulled
- * in - investigate, don't just bump the number.
+ * bodies; 9,607 B once header reads on Deno skipped building the whole header list (+158 B). The
+ * ceiling has headroom for honest growth; a jump past it means something big got pulled in -
+ * investigate, don't just bump the number.
  */
-const CEILING_GZIP_BYTES = 9_500
+const CEILING_GZIP_BYTES = 9_700
 
 test(`self-contained bundle stays under ${CEILING_GZIP_BYTES} B gzipped`, async () => {
   const built = await Bun.build({
