@@ -5057,6 +5057,8 @@ _No named exports (side-effect entrypoint)._
   How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `av…
 - **FileType** _(interface)_ - `interface FileType`
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
+- **ImagePixelLimitError** _(class)_ - `class ImagePixelLimitError`
+  Thrown before decoding a source larger than `maxPixels`; answer it with a `413`.
 - **ImageReencoder** _(interface)_ - `interface ImageReencoder`
   The slice of `@nifrajs/image`'s `ImageBackend` this needs - `probe` for dims/format, `transform` to re-encode.
 - **SignDownloadUrlOptions** _(interface)_ - `interface SignDownloadUrlOptions`
@@ -5069,7 +5071,7 @@ _No named exports (side-effect entrypoint)._
 - **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>`
   Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended.
 - **stripImageMetadata** _(function)_ - `stripImageMetadata: (bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions) => Promise<Uint8Array>`
-  Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes.
+  Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes. A source over `maxPixels` throws {@link ImagePixelLimitError} without being decoded. Each call holds a full decoded image in memory, so bound how many run at once where uploads arrive.
 - **validateUpload** _(function)_ - `validateUpload: (input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions) => Promise<UploadResult>`
   Validate uploaded bytes/Blob: size cap + magic-byte type sniff against an optional allow-list.
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`

@@ -19,6 +19,7 @@ export {
   verifyDownloadUrl,
 } from "./sign.ts"
 export {
+  ImagePixelLimitError,
   type ImageReencoder,
   type StripImageMetadataOptions,
   stripImageMetadata,

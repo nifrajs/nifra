@@ -17894,7 +17894,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/uploads
 
-`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES`, `FileType`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `detectFileType`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
+`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES`, `FileType`, `ImagePixelLimitError`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `detectFileType`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
 
 ## @nifrajs/web
 

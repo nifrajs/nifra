@@ -7136,6 +7136,13 @@
     "doc": "/** Builds a variant URL for `src` at a target pixel `width` (and optional `quality`). */"
   },
   {
+    "name": "ImagePixelLimitError",
+    "kind": "class",
+    "package": "@nifrajs/uploads",
+    "signature": "export declare class ImagePixelLimitError extends Error {\n    readonly width: number;\n    readonly height: number;\n    readonly maxPixels: number;\n    constructor(width: number, height: number, maxPixels: number);\n}",
+    "doc": "/** Thrown before decoding a source larger than `maxPixels`; answer it with a `413`. */"
+  },
+  {
     "name": "ImageProbe",
     "kind": "interface",
     "package": "@nifrajs/image",
@@ -15151,7 +15158,7 @@
     "name": "StripImageMetadataOptions",
     "kind": "interface",
     "package": "@nifrajs/uploads",
-    "signature": "export interface StripImageMetadataOptions {\n    /** Output format. Default: keep png/jpeg, else re-encode to webp. */\n    readonly format?: StripFormat;\n    /** Encode quality (1-100). Default 82. */\n    readonly quality?: number;\n}"
+    "signature": "export interface StripImageMetadataOptions {\n    /** Output format. Default: keep png/jpeg, else re-encode to webp. */\n    readonly format?: StripFormat;\n    /** Encode quality (1-100). Default 82. */\n    readonly quality?: number;\n    /**\n     * Largest source (width x height) the backend may decode. A few hundred compressed bytes can\n     * declare a picture that decodes to gigabytes, so this is checked against the probed header\n     * before any decode. Default 40 MP, the same as `@nifrajs/image`'s `createImageHandler`.\n     */\n    readonly maxPixels?: number;\n}"
   },
   {
     "name": "StructuredOutputParser",
@@ -23404,7 +23411,7 @@
     "kind": "function",
     "package": "@nifrajs/uploads",
     "signature": "export declare function stripImageMetadata(bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions): Promise<Uint8Array>;",
-    "doc": "/** Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes. */"
+    "doc": "/**\n * Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes.\n * A source over `maxPixels` throws {@link ImagePixelLimitError} without being decoded. Each call\n * holds a full decoded image in memory, so bound how many run at once where uploads arrive.\n */"
   },
   {
     "name": "stripSvgPreamble",

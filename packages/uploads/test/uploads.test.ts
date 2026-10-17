@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { DETECTABLE_MIME_TYPES, detectFileType, FILE_TYPE_PREFIX_BYTES } from "../src/detect.ts"
 import { signDownloadUrl, verifyDownloadUrl } from "../src/sign.ts"
-import { type ImageReencoder, stripImageMetadata } from "../src/strip.ts"
+import { ImagePixelLimitError, type ImageReencoder, stripImageMetadata } from "../src/strip.ts"
 import { validateUpload } from "../src/validate.ts"
 
 const bytesOf = (...nums: number[]): Uint8Array => new Uint8Array(nums)
@@ -298,5 +298,32 @@ describe("stripImageMetadata", () => {
     }
     const out = await stripImageMetadata(PNG, backend, { format: "webp", quality: 90 })
     expect(Array.from(out)).toEqual([1])
+  })
+
+  test("refuses a source over the pixel cap before the backend decodes it", async () => {
+    let decoded = 0
+    const backend = (width: number, height: number): ImageReencoder => ({
+      probe: async () => ({ width, height, format: "png" }),
+      transform: async () => {
+        decoded++
+        return { bytes: bytesOf(1) }
+      },
+    })
+    // A 60 MP header compresses to a few hundred kilobytes and passes a 1 MiB upload cap.
+    await expect(stripImageMetadata(PNG, backend(6_000, 10_000))).rejects.toBeInstanceOf(
+      ImagePixelLimitError,
+    )
+    await expect(
+      stripImageMetadata(PNG, backend(200, 200), { maxPixels: 10_000 }),
+    ).rejects.toMatchObject({ width: 200, height: 200, maxPixels: 10_000 })
+    await expect(stripImageMetadata(PNG, backend(0, 10))).rejects.toThrow(
+      /invalid image dimensions/,
+    )
+    await expect(stripImageMetadata(PNG, backend(10, 10), { maxPixels: 0 })).rejects.toThrow(
+      /maxPixels/,
+    )
+    expect(decoded).toBe(0)
+    expect(Array.from(await stripImageMetadata(PNG, backend(6_000, 6_000)))).toEqual([1])
+    expect(decoded).toBe(1)
   })
 })

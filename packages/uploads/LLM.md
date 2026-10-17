@@ -19,6 +19,7 @@ File-upload hardening for nifra - magic-byte MIME detection, size + type validat
 - **stripImageMetadata** _(function)_ - `stripImageMetadata: (bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions) => Promise<Uint8Array>` · from `@nifrajs/uploads`
 - **validateUpload** _(function)_ - `validateUpload: (input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions) => Promise<UploadResult>` · from `@nifrajs/uploads`
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>` · from `@nifrajs/uploads`
+- **ImagePixelLimitError** _(class)_ - `class ImagePixelLimitError` · from `@nifrajs/uploads`
 - **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]` · from `@nifrajs/uploads`
 - **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 32` · from `@nifrajs/uploads`
 - **FileType** _(interface)_ - `interface FileType` · from `@nifrajs/uploads`
