@@ -134,6 +134,33 @@ describe("memory agent evidence log", () => {
     expect(await replay?.result).toBe("completed")
   })
 
+  test("a turn reopened again and again keeps only its newest evidence", async () => {
+    const log = createMemoryAgentEvidenceLog({ maxTurns: 1, maxEvidencePerTurn: 4 })
+    for (let seq = 0; seq < 10; seq++) {
+      await log.open("turn-reused").step(evidence(seq))
+      await log.finish("turn-reused", seq)
+    }
+    const replay = await log.replay("turn-reused", 5)
+    expect(replay?.evidence.map((item) => item.seq)).toEqual([6, 7, 8, 9])
+    expect(await replay?.result).toBe(9)
+    // Replaying from an older cursor would skip the dropped items, so it is unavailable instead.
+    expect(await log.replay("turn-reused", 4)).toBeUndefined()
+    expect(await log.replay("turn-reused", -1)).toBeUndefined()
+  })
+
+  test("per-turn evidence is bounded by default and the bound is validated", async () => {
+    const log = createMemoryAgentEvidenceLog({ maxTurns: 1 })
+    const total = 3000
+    for (let seq = 0; seq < total; seq++) {
+      await log.open("turn-long").step(evidence(seq))
+      await log.finish("turn-long", undefined)
+    }
+    const replay = await log.replay("turn-long", total - 1025)
+    expect(replay?.evidence).toHaveLength(1024)
+    expect(await log.replay("turn-long", total - 1026)).toBeUndefined()
+    expect(() => createMemoryAgentEvidenceLog({ maxEvidencePerTurn: 0 })).toThrow(RangeError)
+  })
+
   test("evicts the oldest turn once maxTurns is reached", async () => {
     const log = createMemoryAgentEvidenceLog({ maxTurns: 2 })
     log.open("a")
