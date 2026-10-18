@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import { pathnameOf, queryObjectOf, searchOf, urlPartsOf } from "../src/server/server.ts"
+import { indexOfScanned } from "./fixtures/index-of-scan.ts"
 
 // AUDIT Perf-1: the request hot path no longer calls `new URL(req.url)`. `pathnameOf`/`searchOf`
 // extract the path + query by substring, and `c.query` is parsed LAZILY (a `URLSearchParams` built
@@ -70,6 +71,11 @@ describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AU
     "?bad=%E0%A4%A",
     "?",
     "",
+    "?a&b=1&c&d=2&e",
+    "?a&b&c=",
+    "?=x&a&b=1",
+    "?a=b=c&d&e=f=g",
+    "?a&&=&b",
   ])("queryObjectOf(%s) matches URLSearchParams semantics (repeats → arrays)", (search) => {
     const actual = queryObjectOf(search)
     // The reference contract: URLSearchParams pair iteration with repeated keys promoted to
@@ -87,6 +93,16 @@ describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AU
     // never an inherited collision (`constructor` was a crash before the null-proto fix).
     expect(Object.getPrototypeOf(actual)).toBeNull()
     expect(Object.hasOwn(actual, "__proto__")).toBe(Object.hasOwn(expected, "__proto__"))
+  })
+
+  test("bare segments are scanned once, not once per segment", () => {
+    for (const search of [`?${"a&".repeat(4000)}`, `?${"a&".repeat(4000)}z=1`]) {
+      const scanned = indexOfScanned(() => queryObjectOf(search))
+      expect(scanned).toBeLessThan(3 * search.length)
+    }
+    expect(queryObjectOf(`?${"a&".repeat(3)}z=1`)).toEqual(
+      Object.assign(Object.create(null), { a: ["", "", ""], z: "1" }),
+    )
   })
 
   test("degrades gracefully on no-path + schemeless shapes (req.url is normally absolute)", () => {

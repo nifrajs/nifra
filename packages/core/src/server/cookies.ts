@@ -78,6 +78,9 @@ export function parseCookies(header: string | null | undefined): Record<string, 
   if (!header) return out
   const len = header.length
   let pos = 0
+  // The first "=" at or after the segment, kept while it lies in a later one, so a run of bare
+  // segments does not rescan the rest of the header each time. -1: none left.
+  let eq = header.indexOf("=")
   while (pos < len) {
     let end = header.indexOf(";", pos)
     if (end === -1) end = len
@@ -86,7 +89,7 @@ export function parseCookies(header: string | null | undefined): Record<string, 
     while (start < end && header.charCodeAt(start) === 32) start++
     let stop = end
     while (stop > start && header.charCodeAt(stop - 1) === 32) stop--
-    const eq = header.indexOf("=", start)
+    if (eq !== -1 && eq < start) eq = header.indexOf("=", start)
     if (eq > start && eq < stop) {
       // name: trim trailing spaces before '='; value: trim leading spaces after it
       let nameEnd = eq
@@ -125,6 +128,8 @@ export function hasDuplicateCookie(header: string | null | undefined, targetName
   let found = false
   const len = header.length
   let pos = 0
+  // Kept across segments as in parseCookies.
+  let eq = header.indexOf("=")
   while (pos < len) {
     let end = header.indexOf(";", pos)
     if (end === -1) end = len
@@ -132,7 +137,7 @@ export function hasDuplicateCookie(header: string | null | undefined, targetName
     while (start < end && header.charCodeAt(start) === 32) start++
     let stop = end
     while (stop > start && header.charCodeAt(stop - 1) === 32) stop--
-    const eq = header.indexOf("=", start)
+    if (eq !== -1 && eq < start) eq = header.indexOf("=", start)
     if (eq > start && eq < stop) {
       let nameEnd = eq
       while (nameEnd > start && header.charCodeAt(nameEnd - 1) === 32) nameEnd--
