@@ -722,6 +722,37 @@ test("renderPage with deferred data: client placeholder + the inline registry ru
   expect(html).toContain("window.__nifraDeferred")
 })
 
+test("a streamed deferred value keeps an own __proto__ key as data when the browser runs it", async () => {
+  const value: { note: string } = JSON.parse(
+    `{"__proto__":{"isAdmin":true},"nested":{"__proto__":{"isAdmin":true}},"note":"</script>'\\\\${LINE_SEP}"}`,
+  )
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: { slow: defer(Promise.resolve(value)) },
+      clientEntry: "/c.js",
+    })
+  ).text()
+  // Run the inline runtime and the resolve script as the browser would, in document order.
+  type Resolved = Record<string, unknown> & { readonly nested?: Record<string, unknown> }
+  const window: Record<string, (id: number) => Promise<Resolved>> = {}
+  // The renderer writes these inline scripts as a bare `<script>`; none of their text holds `<`.
+  for (let at = html.indexOf("<script>"); at !== -1; at = html.indexOf("<script>", at)) {
+    const end = html.indexOf("</script>", at)
+    const code = html.slice(at + "<script>".length, end)
+    if (code.includes("__nifra")) new Function("window", code)(window)
+    at = end
+  }
+  const resolved = await window.__nifraDeferred?.(0)
+  for (const object of [resolved, resolved?.nested]) {
+    expect(Object.getPrototypeOf(object)).toBe(Object.prototype)
+    expect(Object.hasOwn(object ?? {}, "__proto__")).toBe(true)
+    expect(object?.isAdmin).toBeUndefined()
+  }
+  expect(resolved?.note).toBe(value.note)
+})
+
 test("renderPage hands the document nonce to the adapter's stream renderer", async () => {
   const seen: unknown[] = []
   const recording: RenderAdapter = {

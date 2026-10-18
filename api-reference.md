@@ -254,7 +254,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream`
   Create an async iterable that yields the exact evidence values received by `step`.
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog`
-  In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by construction: replay only sees runs recorded by this instance. Retention is bounded by `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports replay-unavailable rather than grow…
+  In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by construction: replay only sees runs recorded by this instance. Retention is bounded by `maxTurns` with oldest-first eviction and by `maxEvidencePerTurn` within a turn, so a reconnect to an evicted turn o…
 - **scopeAgentEvidenceLog** _(function)_ - `scopeAgentEvidenceLog: (log: AgentEvidenceLog, owner: string) => AgentEvidenceLog`
   A view of `log` holding one owner's turns: every turn id is recorded and replayed under `owner` (the caller's user or tenant id), so another owner's reconnect or reused turn id finds none of them. The HTTP seams apply it per request through their `evidenceOwner` option.
 
@@ -5531,7 +5531,7 @@ _No named exports (side-effect entrypoint)._
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
   The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every schema in the chain (outermost layout first, page last) and their outputs are merged, page-wi…
 - **serializeData** _(function)_ - `serializeData: (data: unknown) => string`
-  Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
+  Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators. The result is JSON text: read it…
 - **serializeSearch** _(function)_ - `serializeSearch: (value: Record<string, unknown>, codec?: SearchCodec) => string`
   Serialize a structured search object back to a query string (leading `?`, or `""` when empty).
 - **servePublicDir** _(function)_ - `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`

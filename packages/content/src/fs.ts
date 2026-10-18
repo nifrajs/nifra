@@ -3,7 +3,7 @@
  * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno); for the edge, bake the
  * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) - tracked as a follow-up.
  */
-import type { Stats } from "node:fs"
+import type { BigIntStats } from "node:fs"
 import { readdir, readFile, stat as statPath } from "node:fs/promises"
 import { resolve, sep } from "node:path"
 import { type Entry, type InferSchema, parseEntry, type StandardSchemaV1 } from "./index.ts"
@@ -50,6 +50,12 @@ const assertSafeExtensions = (extensions: readonly string[]): void => {
     }
   }
 }
+
+// File identity and ctime as well as mtime and size: an atomic replace that keeps both the size and
+// the mtime (`touch -r`, a sync tool preserving times) still swaps the inode and moves the ctime.
+// BigInt stats, because a 64-bit file id (Windows) and a nanosecond time do not fit a double.
+const stampOf = (stat: BigIntStats): string =>
+  `${stat.dev}:${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}:${stat.size}`
 
 const insideRoot = (root: string, file: string): boolean =>
   file !== root && file.startsWith(`${root}${sep}`)
@@ -109,8 +115,8 @@ export function defineCollection<S extends StandardSchemaV1>(
     return Promise.all(
       files.map(async (file) => {
         const path = resolve(root, file)
-        const stat = await statPath(path)
-        return { file, path, stamp: `${stat.mtimeMs}:${stat.size}` }
+        const stat = await statPath(path, { bigint: true })
+        return { file, path, stamp: stampOf(stat) }
       }),
     )
   }
@@ -148,16 +154,16 @@ export function defineCollection<S extends StandardSchemaV1>(
       for (const ext of extensions) {
         const file = resolve(root, `${slug}${ext}`)
         if (!insideRoot(root, file)) return null
-        let stat: Stats
+        let stat: BigIntStats
         try {
-          stat = await statPath(file)
+          stat = await statPath(file, { bigint: true })
         } catch {
           fileCache.delete(file)
           continue // Not this extension; try the next configured one.
         }
         if (!stat.isFile()) continue
         // Outside the try: a file that exists but fails to parse is an error, not a missing entry.
-        return await readEntry(file, slug, `${stat.mtimeMs}:${stat.size}`)
+        return await readEntry(file, slug, stampOf(stat))
       }
       return null
     },

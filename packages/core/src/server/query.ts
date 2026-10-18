@@ -98,8 +98,10 @@ export function queryObjectOf(search: string): Record<string, QueryValue> {
     const amp = search.indexOf("&", pos)
     const end = amp === -1 ? search.length : amp
     if (end > pos) {
-      const eq = search.indexOf("=", pos)
-      const split = eq !== -1 && eq < end ? eq : end
+      // Bounded by the segment, so a run of bare segments (`a&a&a...`) stays linear; keys are short,
+      // so the loop also beats an `indexOf` call.
+      let split = pos
+      while (split < end && search.charCodeAt(split) !== 61 /* = */) split++
       const key = search.slice(pos, split)
       const value = split === end ? "" : search.slice(split + 1, end)
       setQueryValue(out, key, value)

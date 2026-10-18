@@ -748,9 +748,9 @@ function streamDocument(
     d.promise
       .then(
         (value) =>
-          // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
-          // separators before this framework-owned script is emitted.
-          `<script${nonceAttr}>window.__nifraResolve(${d.id},${serializeData(value)})</script>`, // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
+          // `serializeData` escapes `<`, `>`, and Unicode line separators. The JSON goes through
+          // `JSON.parse`, never read as an object literal, where a `"__proto__"` key sets the prototype.
+          `<script${nonceAttr}>window.__nifraResolve(${d.id},JSON.parse(${jsStringLiteral(serializeData(value))}))</script>`, // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
       )
       .catch((err: unknown) => {
         // A rejected (or unserializable) deferred streams __nifraReject (the client `<Await>`
@@ -1088,7 +1088,9 @@ export function revalidate<T>(paths: readonly string[], data: T): RevalidateResu
  * Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone
  * is NOT safe there: a string containing `</script>` or `<!--` would break out of the
  * script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029
- * separators.
+ * separators. The result is JSON text: read it with `JSON.parse` (or from a
+ * `type="application/json"` script), never as a JavaScript object literal, where a `"__proto__"`
+ * key sets the object's prototype instead of becoming a property.
  */
 export function serializeData(data: unknown): string {
   const serialized = JSON.stringify(data ?? null)
@@ -1107,6 +1109,11 @@ export function serializeData(data: unknown): string {
   return needsEscape
     ? serialized.replace(SCRIPT_ESCAPE, (ch) => SCRIPT_ESCAPE_MAP[ch] ?? ch)
     : serialized
+}
+
+/** Single-quoted JS string literal for script-safe JSON text, which has no raw line terminators. */
+function jsStringLiteral(json: string): string {
+  return `'${json.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`
 }
 
 function escapeHtml(value: string): string {

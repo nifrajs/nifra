@@ -564,7 +564,7 @@
     "name": "AgentEvidenceLog",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentEvidenceLog {\n    /**\n     * Telemetry port recording one turn's evidence - combine it into `ports.telemetry` with\n     * `combineAgentTelemetry`. Opening a finished turn reopens it (a resume of a suspended run):\n     * evidence keeps appending and late replays await the new result.\n     */\n    open(turnId: string): AgentTelemetryPort;\n    /** Mark the turn finished: live replays complete and `result` is stored for late reconnects. */\n    finish(turnId: string, result: unknown): void | Promise<void>;\n    /** The turn's evidence after `afterSeq`, or `undefined` for an unknown turn. */\n    replay(turnId: string, afterSeq: number): AgentEvidenceReplay | undefined | Promise<AgentEvidenceReplay | undefined>;\n}",
+    "signature": "export interface AgentEvidenceLog {\n    /**\n     * Telemetry port recording one turn's evidence - combine it into `ports.telemetry` with\n     * `combineAgentTelemetry`. Opening a finished turn reopens it (a resume of a suspended run):\n     * evidence keeps appending and late replays await the new result.\n     */\n    open(turnId: string): AgentTelemetryPort;\n    /** Mark the turn finished: live replays complete and `result` is stored for late reconnects. */\n    finish(turnId: string, result: unknown): void | Promise<void>;\n    /**\n     * The turn's evidence after `afterSeq`, or `undefined` for an unknown turn and for a cursor older\n     * than the evidence the log still holds (replaying from it would skip items silently).\n     */\n    replay(turnId: string, afterSeq: number): AgentEvidenceReplay | undefined | Promise<AgentEvidenceReplay | undefined>;\n}",
     "doc": "/**\n * Seam for resumable evidence streams. An HTTP seam records one turn's step evidence through\n * `open`, stores the terminal wire frame through `finish`, and serves SSE reconnects through\n * `replay` (`Last-Event-ID` maps to evidence `seq`). The stored result value is opaque to the log -\n * each seam stores whatever it needs to re-emit its own terminal frames.\n *\n * {@link createMemoryAgentEvidenceLog} is the single-process dev/test reference; a durable,\n * multi-process log is an adapter concern behind the same interface.\n */"
   },
   {
@@ -8700,7 +8700,7 @@
     "name": "MemoryAgentEvidenceLogOptions",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /**\n     * Maximum retained turns. Opening one more evicts the oldest finished turn, or the oldest turn when\n     * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.\n     */\n    readonly maxTurns?: number;\n    /**\n     * Maximum live replays attached to one running turn. One more ends the oldest live view, which then\n     * waits for the result without further steps. Default 64.\n     */\n    readonly maxSubscribers?: number;\n}"
+    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /**\n     * Maximum retained turns. Opening one more evicts the oldest finished turn, or the oldest turn when\n     * none has finished; an evicted running turn ends its rejoined replays with no result. Default 256.\n     */\n    readonly maxTurns?: number;\n    /**\n     * Maximum live replays attached to one running turn. One more ends the oldest live view, which then\n     * waits for the result without further steps. Default 64.\n     */\n    readonly maxSubscribers?: number;\n    /**\n     * Maximum evidence items retained per turn, across every resume of it. One more drops the oldest,\n     * and a replay from a cursor before the retained items reports replay-unavailable. Default 1024.\n     */\n    readonly maxEvidencePerTurn?: number;\n}"
   },
   {
     "name": "MemoryAgentStateStore",
@@ -12410,7 +12410,7 @@
     "name": "ResponseStream",
     "kind": "interface",
     "package": "@nifrajs/aws-lambda",
-    "signature": "export interface ResponseStream {\n    write(chunk: Uint8Array | string): unknown;\n    end(): unknown;\n    once?(event: string, listener: () => void): unknown;\n}",
+    "signature": "export interface ResponseStream {\n    write(chunk: Uint8Array | string): unknown;\n    end(): unknown;\n    once?(event: string, listener: () => void): unknown;\n    off?(event: string, listener: () => void): unknown;\n    readonly destroyed?: boolean;\n}",
     "doc": "/** The Node `Writable`-shaped stream Lambda hands a streaming handler. Declared structurally. */"
   },
   {
@@ -18067,7 +18067,7 @@
     "kind": "function",
     "package": "@nifrajs/agent",
     "signature": "export declare function createMemoryAgentEvidenceLog(options?: MemoryAgentEvidenceLogOptions): AgentEvidenceLog;",
-    "doc": "/**\n * In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by\n * construction: replay only sees runs recorded by this instance. Retention is bounded by\n * `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports\n * replay-unavailable rather than growing memory without bound.\n */"
+    "doc": "/**\n * In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by\n * construction: replay only sees runs recorded by this instance. Retention is bounded by\n * `maxTurns` with oldest-first eviction and by `maxEvidencePerTurn` within a turn, so a reconnect to\n * an evicted turn or a dropped cursor reports replay-unavailable rather than growing memory without\n * bound.\n */"
   },
   {
     "name": "createMemoryAssureSink",
@@ -22829,7 +22829,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function serializeData(data: unknown): string;",
-    "doc": "/**\n * Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone\n * is NOT safe there: a string containing `</script>` or `<!--` would break out of the\n * script element (an XSS vector). Escape `<`/`>` to `\\uXXXX`, plus the U+2028/U+2029\n * separators.\n */"
+    "doc": "/**\n * Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone\n * is NOT safe there: a string containing `</script>` or `<!--` would break out of the\n * script element (an XSS vector). Escape `<`/`>` to `\\uXXXX`, plus the U+2028/U+2029\n * separators. The result is JSON text: read it with `JSON.parse` (or from a\n * `type=\"application/json\"` script), never as a JavaScript object literal, where a `\"__proto__\"`\n * key sets the object's prototype instead of becoming a property.\n */"
   },
   {
     "name": "serializeManifest",

@@ -47,6 +47,20 @@ function isDeferred(value: unknown): value is Deferred<unknown> {
   )
 }
 
+/** `target[key] = value` runs the prototype setter for a `__proto__` key; define it as data instead. */
+function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  } else {
+    target[key] = value
+  }
+}
+
 /**
  * Split a loader (or action) result into the **component-facing** data (deferred values carry their
  * assigned `id` + promise, for `<Await>`) and the **client-serializable** data (deferred values
@@ -113,8 +127,8 @@ export function prepareDeferred(
         const r = split(v)
         if (r === undefined) {
           if (fc !== undefined && cl !== undefined) {
-            fc[k] = v
-            cl[k] = v
+            setOwn(fc, k, v)
+            setOwn(cl, k, v)
           }
           continue
         }
@@ -125,12 +139,12 @@ export function prepareDeferred(
             if (!Object.hasOwn(input, prev)) continue
             if (prev === k) break
             const prevValue = input[prev]
-            fc[prev] = prevValue
-            cl[prev] = prevValue
+            setOwn(fc, prev, prevValue)
+            setOwn(cl, prev, prevValue)
           }
         }
-        fc[k] = r.fc
-        cl[k] = r.cl
+        setOwn(fc, k, r.fc)
+        setOwn(cl, k, r.cl)
       }
       return fc === undefined || cl === undefined ? undefined : { fc, cl }
     }

@@ -122,7 +122,10 @@ export interface AgentEvidenceLog {
   open(turnId: string): AgentTelemetryPort
   /** Mark the turn finished: live replays complete and `result` is stored for late reconnects. */
   finish(turnId: string, result: unknown): void | Promise<void>
-  /** The turn's evidence after `afterSeq`, or `undefined` for an unknown turn. */
+  /**
+   * The turn's evidence after `afterSeq`, or `undefined` for an unknown turn and for a cursor older
+   * than the evidence the log still holds (replaying from it would skip items silently).
+   */
   replay(
     turnId: string,
     afterSeq: number,
@@ -157,10 +160,17 @@ export interface MemoryAgentEvidenceLogOptions {
    * waits for the result without further steps. Default 64.
    */
   readonly maxSubscribers?: number
+  /**
+   * Maximum evidence items retained per turn, across every resume of it. One more drops the oldest,
+   * and a replay from a cursor before the retained items reports replay-unavailable. Default 1024.
+   */
+  readonly maxEvidencePerTurn?: number
 }
 
 interface MemoryTurnRecord {
   readonly evidence: AgentStepEvidence[]
+  /** Highest `seq` dropped to stay within `maxEvidencePerTurn`. */
+  droppedThrough: number
   finished: boolean
   resultPromise: Promise<unknown>
   resolveResult: (value: unknown) => void
@@ -170,8 +180,9 @@ interface MemoryTurnRecord {
 /**
  * In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by
  * construction: replay only sees runs recorded by this instance. Retention is bounded by
- * `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports
- * replay-unavailable rather than growing memory without bound.
+ * `maxTurns` with oldest-first eviction and by `maxEvidencePerTurn` within a turn, so a reconnect to
+ * an evicted turn or a dropped cursor reports replay-unavailable rather than growing memory without
+ * bound.
  */
 export function createMemoryAgentEvidenceLog(
   options: MemoryAgentEvidenceLogOptions = {},
@@ -182,6 +193,9 @@ export function createMemoryAgentEvidenceLog(
   const maxSubscribers = options.maxSubscribers ?? 64
   if (!Number.isSafeInteger(maxSubscribers) || maxSubscribers < 1)
     throw new RangeError("agent evidence log: maxSubscribers must be a positive safe integer")
+  const maxEvidence = options.maxEvidencePerTurn ?? 1024
+  if (!Number.isSafeInteger(maxEvidence) || maxEvidence < 1)
+    throw new RangeError("agent evidence log: maxEvidencePerTurn must be a positive safe integer")
   const turns = new Map<string, MemoryTurnRecord>()
 
   const deferred = (record: MemoryTurnRecord): void => {
@@ -218,6 +232,7 @@ export function createMemoryAgentEvidenceLog(
         while (turns.size >= maxTurns) evictOne()
         turn = {
           evidence: [],
+          droppedThrough: Number.NEGATIVE_INFINITY,
           finished: false,
           resultPromise: Promise.resolve(undefined),
           resolveResult: () => {},
@@ -234,6 +249,11 @@ export function createMemoryAgentEvidenceLog(
       return {
         step(evidence) {
           opened.evidence.push(evidence)
+          if (opened.evidence.length > maxEvidence) {
+            const oldest = opened.evidence.shift()
+            if (oldest !== undefined)
+              opened.droppedThrough = Math.max(opened.droppedThrough, oldest.seq)
+          }
           for (const subscriber of opened.subscribers) subscriber.step(evidence)
         },
       }
@@ -245,7 +265,7 @@ export function createMemoryAgentEvidenceLog(
     },
     replay(turnId, afterSeq) {
       const turn = turns.get(turnId)
-      if (turn === undefined) return undefined
+      if (turn === undefined || turn.droppedThrough > afterSeq) return undefined
       const evidence = turn.evidence.filter((item) => item.seq > afterSeq)
       if (turn.finished) return { evidence, live: undefined, result: turn.resultPromise }
       // Snapshot and subscribe in the same synchronous step, so no evidence item can land between

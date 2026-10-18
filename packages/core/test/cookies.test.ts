@@ -9,6 +9,7 @@ import {
   silentLogger,
   unsignValue,
 } from "../src/index.ts"
+import { indexOfScanned } from "./fixtures/index-of-scan.ts"
 
 const request = (method: string, path: string, headers?: Record<string, string>): Request =>
   new Request(`http://x${path}`, headers ? { method, headers } : { method })
@@ -41,6 +42,22 @@ describe("parseCookies", () => {
     expect(parseCookies("sid=first; sid=second").sid).toBe("first")
     expect(hasDuplicateCookie("sid=first; sid=second", "sid")).toBe(true)
     expect(hasDuplicateCookie("sid=first; theme=dark", "sid")).toBe(false)
+  })
+
+  test("bare and malformed segments around real pairs parse as before", () => {
+    const header = "a; =x; sid=one; b ;c=d=e; ; sid=two; tail"
+    expect(parseCookies(header)).toEqual({ sid: "one", c: "d=e" })
+    expect(hasDuplicateCookie(header, "sid")).toBe(true)
+    expect(hasDuplicateCookie(header, "c")).toBe(false)
+  })
+
+  test("bare segments are scanned once, not once per segment", () => {
+    for (const header of ["a;".repeat(4000), `${"a; ".repeat(4000)}sid=1`]) {
+      expect(indexOfScanned(() => parseCookies(header))).toBeLessThan(3 * header.length)
+      expect(indexOfScanned(() => hasDuplicateCookie(header, "sid"))).toBeLessThan(
+        3 * header.length,
+      )
+    }
   })
 })
 

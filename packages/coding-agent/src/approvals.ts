@@ -241,8 +241,11 @@ export class ApprovalManager {
       ...(why === undefined ? {} : { reason: why.slice(0, 512) }),
       at,
     }
-    // A failing broadcast must not become an unhandled rejection in the host.
-    Promise.resolve(this.options.onResolved?.(decision)).catch(() => {})
+    // The decision already stands: a broadcast that throws or rejects must not reach the caller, the
+    // expiry timer, or close(), nor become an unhandled rejection in the host.
+    try {
+      Promise.resolve(this.options.onResolved?.(decision)).catch(() => {})
+    } catch {}
     return decision
   }
 
@@ -278,7 +281,9 @@ export class ApprovalManager {
     }
     const pending: PendingApproval = { request, decided, settle, timer }
     this.pendingApprovals.set(request.id, pending)
-    await this.options.onRequired?.(request)
+    // Whichever lands first: a broadcast that never settles must not hold the caller past the
+    // approval's own timeout, denial, or close.
+    await Promise.race([this.options.onRequired?.(request), decided])
     return pending
   }
 }

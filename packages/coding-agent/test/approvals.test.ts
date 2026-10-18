@@ -163,6 +163,74 @@ describe("bounded approvals", () => {
   })
 })
 
+describe("a broadcast hook that never settles", () => {
+  const input = { sessionId: "session", action: "deploy", capability: "deploy" }
+  const hung = (): Promise<void> => new Promise(() => {})
+  // Drains microtasks only, so a caller still stuck on the hook reads as unsettled instead of hanging
+  // the test (fake timers would stop a timeout from ever firing).
+  async function settled<T>(promise: Promise<T>): Promise<{ value: T } | "unsettled"> {
+    let outcome: { value: T } | "unsettled" = "unsettled"
+    void promise.then((value) => {
+      outcome = { value }
+    })
+    for (let i = 0; i < 100; i++) await null
+    return outcome
+  }
+
+  test("the caller still gets the timeout", () =>
+    withFakeTimers(async () => {
+      const manager = new ApprovalManager({ timeoutMs: 10, onRequired: hung })
+      const approved = manager.request({ ...input, id: "timeout" })
+      const offered = manager.offer({ ...input, id: "offered" })
+      jest.advanceTimersByTime(10)
+      expect(await settled(approved)).toEqual({ value: false })
+      expect(await settled(offered)).toMatchObject({ value: { id: "offered" } })
+      expect(manager.pending).toHaveLength(0)
+    }))
+
+  test("the caller still gets an approval, a denial, and a close", async () => {
+    const manager = new ApprovalManager({ timeoutMs: "never", onRequired: hung })
+    const approved = manager.request({ ...input, id: "approved" })
+    const denied = manager.request({ ...input, id: "denied" })
+    const closed = manager.request({ ...input, id: "closed" })
+    manager.resolve("approved", true)
+    manager.resolve("denied", false)
+    manager.close()
+    expect(await settled(approved)).toEqual({ value: true })
+    expect(await settled(denied)).toEqual({ value: false })
+    expect(await settled(closed)).toEqual({ value: false })
+  })
+})
+
+describe("a throwing onResolved hook", () => {
+  const input = { sessionId: "session", action: "deploy", capability: "deploy" }
+  const boom = (): void => {
+    throw new Error("broadcast down")
+  }
+
+  test("leaves an explicit decision and an expiry standing", () =>
+    withFakeTimers(async () => {
+      const manager = new ApprovalManager({ timeoutMs: 10, onResolved: boom })
+      const approved = manager.request({ ...input, id: "approved" })
+      const expired = manager.request({ ...input, id: "expired" })
+      expect(manager.resolve("approved", true)?.approved).toBe(true)
+      jest.advanceTimersByTime(10)
+      await expect(approved).resolves.toBe(true)
+      await expect(expired).resolves.toBe(false)
+      expect(manager.pending).toHaveLength(0)
+    }))
+
+  test("lets close() deny every pending approval", async () => {
+    const manager = new ApprovalManager({ timeoutMs: "never", onResolved: boom })
+    const first = manager.request({ ...input, id: "first" })
+    const second = manager.request({ ...input, id: "second" })
+    manager.close()
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(manager.pending).toHaveLength(0)
+  })
+})
+
 describe("coordinate-matched approvals", () => {
   async function withBound(): Promise<ApprovalManager> {
     const manager = new ApprovalManager({ timeoutMs: 60_000 })

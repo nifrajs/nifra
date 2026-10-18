@@ -106,6 +106,78 @@ test("a non-Response throw becomes a flat 500 (no leak)", async () => {
   expect(await res.text()).not.toContain("secret internal detail")
 })
 
+test("parity: a value that cannot be serialized is the same flat 500 as on core", async () => {
+  const circular: Record<string, unknown> = {}
+  circular.self = circular
+  const throwing = {
+    toJSON() {
+      throw new Error("secret serializer detail")
+    },
+  }
+  const values: Record<string, unknown> = {
+    "/bigint": { value: 1n },
+    "/circular": circular,
+    "/to-json": throwing,
+  }
+  for (const [path, value] of Object.entries(values)) {
+    const edge = await server()
+      .get(path, () => value)
+      .fetch(new Request(`https://x.test${path}`))
+    const core = await coreServer({ logger: silent })
+      .get(path, () => value)
+      .fetch(new Request(`https://x.test${path}`))
+    expect(edge.status).toBe(500)
+    expect(edge.status).toBe(core.status)
+    expect(await edge.text()).toBe(await core.text())
+  }
+})
+
+test("a validator that throws or rejects is the flat 500; a thrown Response still exits early", async () => {
+  const schema = (
+    validate: StandardSchemaV1<unknown>["~standard"]["validate"],
+  ): StandardSchemaV1<unknown> => ({ "~standard": { version: 1, vendor: "edge-test", validate } })
+  const app = server()
+    .post(
+      "/throws",
+      {
+        body: schema(() => {
+          throw new Error("secret validator detail")
+        }),
+      },
+      () => "unreached",
+    )
+    .post(
+      "/rejects",
+      { body: schema(() => Promise.reject(new Error("secret validator detail"))) },
+      () => "unreached",
+    )
+    .post(
+      "/exits",
+      {
+        body: schema(() => {
+          throw new Response("teapot", { status: 418 })
+        }),
+      },
+      () => "unreached",
+    )
+  const post = (path: string) =>
+    app.fetch(
+      new Request(`https://x.test${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    )
+  for (const path of ["/throws", "/rejects"]) {
+    const res = await post(path)
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ ok: false, error: "internal_error" })
+  }
+  const exit = await post("/exits")
+  expect(exit.status).toBe(418)
+  expect(await exit.text()).toBe("teapot")
+})
+
 test("custom maxBodyBytes rejects an over-cap body with 413", async () => {
   const app = server({ maxBodyBytes: 16 }).post("/u", { body: userBody }, (c) => c.body)
   const res = await app.fetch(jsonReq("/u", "POST", { name: "a".repeat(1000), age: 1 }))

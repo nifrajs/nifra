@@ -89,6 +89,33 @@ export interface ResponseStream {
   write(chunk: Uint8Array | string): unknown
   end(): unknown
   once?(event: string, listener: () => void): unknown
+  off?(event: string, listener: () => void): unknown
+  readonly destroyed?: boolean
+}
+
+/**
+ * After a `write` that returned `false`: resolves `true` on `drain`, or `false` once the client is
+ * gone - already destroyed, or a `close`/`error` instead of the drain. Every listener is removed.
+ */
+function drained(out: ResponseStream): Promise<boolean> {
+  if (out.destroyed === true) return Promise.resolve(false)
+  if (typeof out.once !== "function") return Promise.resolve(true)
+  let resolve!: (ok: boolean) => void
+  const settled = new Promise<boolean>((r) => {
+    resolve = r
+  })
+  const drain = (): void => done(true)
+  const gone = (): void => done(false)
+  const done = (ok: boolean): void => {
+    out.off?.("drain", drain)
+    out.off?.("close", gone)
+    out.off?.("error", gone)
+    resolve(ok)
+  }
+  out.once("drain", drain)
+  out.once("close", gone)
+  out.once("error", gone)
+  return settled
 }
 
 interface StreamMetadata {
@@ -348,12 +375,9 @@ export function streamHandle(
       if (head) {
         discardBody(response)
       } else if (response.body !== null) {
+        // Leaving the loop early cancels the body, so a client that is gone stops the producer too.
         for await (const chunk of response.body) {
-          if (out.write(chunk) === false && typeof out.once === "function") {
-            await new Promise<void>((resolve) => {
-              ;(out.once as (event: string, listener: () => void) => unknown)("drain", resolve)
-            })
-          }
+          if (out.write(chunk) === false && !(await drained(out))) break
         }
       }
     } finally {

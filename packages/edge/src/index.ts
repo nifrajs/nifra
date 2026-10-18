@@ -33,7 +33,13 @@ import {
 } from "@nifrajs/core/edge-kit"
 import { decodeRouteParams, expandOptionalParams } from "@nifrajs/core/pattern"
 import { Router } from "@nifrajs/core/router"
-import type { Method, Params, StandardIssue, StandardSchemaV1 } from "@nifrajs/core/server"
+import type {
+  Method,
+  Params,
+  StandardIssue,
+  StandardResult,
+  StandardSchemaV1,
+} from "@nifrajs/core/server"
 
 /** The full Server's `DEFAULT_MAX_BODY_BYTES` - the same 1 MB cap, so the two agree on `413`. */
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
@@ -222,17 +228,15 @@ export class EdgeServer {
         query: () => queryObjectOf(searchOf(request.url)),
         header: (name) => request.headers.get(name),
       }
-      let out: unknown
+      // Serializing the handler's value is inside the boundary: a BigInt or a cycle is a 500 too.
       try {
-        out = await handler(c)
+        const out = await handler(c)
+        if (out instanceof Response) return out
+        // Core answers a handler that returns nothing with an empty 204.
+        return out === undefined ? new Response(null, { status: 204 }) : Response.json(out)
       } catch (err) {
-        // A handler may throw a `Response` for an early exit; anything else is an internal error.
-        if (err instanceof Response) return err
-        return render(plainError(500, "internal_error"))
+        return failureResponse(err)
       }
-      if (out instanceof Response) return out
-      // Core answers a handler that returns nothing with an empty 204.
-      return out === undefined ? new Response(null, { status: 204 }) : Response.json(out)
     }
 
     if (bodySchema === undefined) return dispatch(undefined, true)
@@ -245,7 +249,12 @@ export class EdgeServer {
       this.#maxBodyBytes,
       this.#protoPoisoning,
       async (parsed) => {
-        const result = await bodySchema["~standard"].validate(parsed)
+        let result: StandardResult<unknown>
+        try {
+          result = await bodySchema["~standard"].validate(parsed)
+        } catch (err) {
+          return failureResponse(err)
+        }
         if (result.issues !== undefined || result.value === undefined) {
           return render(plainValidationError((result.issues ?? []) as ReadonlyArray<StandardIssue>))
         }
@@ -279,6 +288,10 @@ export function notFound(handler: NotFoundHandler): EdgeNotFound {
       failed,
     )) as EdgeNotFound
 }
+
+/** A thrown `Response` is an early exit; any other failure is the flat 500, as on core. */
+const failureResponse = (err: unknown): Response =>
+  err instanceof Response ? err : render(plainError(500, "internal_error"))
 
 /** Create a compact edge server. */
 export function server(options?: EdgeOptions): EdgeServer {
