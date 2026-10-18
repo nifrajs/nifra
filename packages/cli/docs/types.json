@@ -22829,7 +22829,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function serializeData(data: unknown): string;",
-    "doc": "/**\n * Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone\n * is NOT safe there: a string containing `</script>` or `<!--` would break out of the\n * script element (an XSS vector). Escape `<`/`>` to `\\uXXXX`, plus the U+2028/U+2029\n * separators.\n */"
+    "doc": "/**\n * Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone\n * is NOT safe there: a string containing `</script>` or `<!--` would break out of the\n * script element (an XSS vector). Escape `<`/`>` to `\\uXXXX`, plus the U+2028/U+2029\n * separators. The result is JSON text: read it with `JSON.parse` (or from a\n * `type=\"application/json\"` script), never as a JavaScript object literal, where a `\"__proto__\"`\n * key sets the object's prototype instead of becoming a property.\n */"
   },
   {
     "name": "serializeManifest",

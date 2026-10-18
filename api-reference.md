@@ -5531,7 +5531,7 @@ _No named exports (side-effect entrypoint)._
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
   The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every schema in the chain (outermost layout first, page last) and their outputs are merged, page-wi…
 - **serializeData** _(function)_ - `serializeData: (data: unknown) => string`
-  Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
+  Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators. The result is JSON text: read it…
 - **serializeSearch** _(function)_ - `serializeSearch: (value: Record<string, unknown>, codec?: SearchCodec) => string`
   Serialize a structured search object back to a query string (leading `?`, or `""` when empty).
 - **servePublicDir** _(function)_ - `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`

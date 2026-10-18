@@ -158,6 +158,30 @@ describe("defer + prepareDeferred", () => {
     expect(actionSplit.forClient).toEqual({ receipt: { __nifra_deferred: 1 } }) // offset → 1, not 0
     expect(actionSplit.deferred[0]?.id).toBe(1)
   })
+
+  test("an own __proto__ key on a rebuilt object stays data, in either key order and nested", () => {
+    const cases = [
+      '{"__proto__":{"isAdmin":true},"later":0}',
+      '{"later":0,"__proto__":{"isAdmin":true}}',
+      '{"outer":{"__proto__":{"isAdmin":true},"later":0}}',
+      '{"outer":{"later":0,"__proto__":{"isAdmin":true}}}',
+    ]
+    for (const json of cases) {
+      const input = JSON.parse(json) as Record<string, Record<string, unknown>>
+      const nested = Object.hasOwn(input, "outer")
+      const holder = nested ? (input.outer as Record<string, unknown>) : input
+      holder.later = defer(Promise.resolve(1))
+      const { forComponent, forClient } = prepareDeferred(input)
+      for (const out of [forComponent, forClient] as Record<string, Record<string, unknown>>[]) {
+        const rebuilt = nested ? (out.outer as Record<string, unknown>) : out
+        expect(Object.getPrototypeOf(rebuilt)).toBe(Object.prototype)
+        expect(Object.hasOwn(rebuilt, "__proto__")).toBe(true)
+        expect(rebuilt.isAdmin).toBeUndefined()
+        expect(Object.keys(rebuilt)).toEqual(Object.keys(holder))
+      }
+      expect(JSON.stringify(forClient)).toContain('"__proto__":{"isAdmin":true}')
+    }
+  })
 })
 
 // A rejecting deferred. `ndjsonStream` handles it correctly (redacts, streams the opaque code - the

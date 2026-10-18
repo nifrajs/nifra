@@ -722,6 +722,33 @@ test("renderPage with deferred data: client placeholder + the inline registry ru
   expect(html).toContain("window.__nifraDeferred")
 })
 
+test("a streamed deferred value keeps an own __proto__ key as data when the browser runs it", async () => {
+  const value = JSON.parse(
+    `{"__proto__":{"isAdmin":true},"nested":{"__proto__":{"isAdmin":true}},"note":"</script>'\\\\${LINE_SEP}"}`,
+  ) as Record<string, Record<string, unknown>>
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: { slow: defer(Promise.resolve(value)) },
+      clientEntry: "/c.js",
+    })
+  ).text()
+  // Run the inline runtime and the resolve script as the browser would, in document order.
+  type Resolved = Record<string, Record<string, unknown>>
+  const window: Record<string, (id: number) => Promise<Resolved>> = {}
+  for (const [, code] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    if (code?.includes("__nifra")) new Function("window", code)(window)
+  }
+  const resolved = await window.__nifraDeferred?.(0)
+  for (const object of [resolved, resolved?.nested]) {
+    expect(Object.getPrototypeOf(object)).toBe(Object.prototype)
+    expect(Object.hasOwn(object ?? {}, "__proto__")).toBe(true)
+    expect(object?.isAdmin).toBeUndefined()
+  }
+  expect(resolved?.note).toBe(value.note)
+})
+
 test("renderPage hands the document nonce to the adapter's stream renderer", async () => {
   const seen: unknown[] = []
   const recording: RenderAdapter = {
