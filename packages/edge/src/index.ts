@@ -189,6 +189,16 @@ export class EdgeServer {
 
   /** The fetch handler. Not bound - use {@link toFetchHandler} (re-exported) or wrap it yourself. */
   fetch = async (request: Request): Promise<Response> => {
+    // One boundary around validation, the handler, and serializing its value, as core has: a thrown
+    // `Response` is an early exit, and anything else is the flat 500.
+    try {
+      return await this.#answer(request)
+    } catch (err) {
+      return err instanceof Response ? err : render(plainError(500, "internal_error"))
+    }
+  }
+
+  async #answer(request: Request): Promise<Response> {
     const url = new URL(request.url)
     const match = this.#router.find(request.method, url.pathname)
     if (!match.found) {
@@ -222,14 +232,7 @@ export class EdgeServer {
         query: () => queryObjectOf(searchOf(request.url)),
         header: (name) => request.headers.get(name),
       }
-      let out: unknown
-      try {
-        out = await handler(c)
-      } catch (err) {
-        // A handler may throw a `Response` for an early exit; anything else is an internal error.
-        if (err instanceof Response) return err
-        return render(plainError(500, "internal_error"))
-      }
+      const out = await handler(c)
       if (out instanceof Response) return out
       // Core answers a handler that returns nothing with an empty 204.
       return out === undefined ? new Response(null, { status: 204 }) : Response.json(out)
