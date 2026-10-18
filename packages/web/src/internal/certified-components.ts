@@ -4,4 +4,4 @@
  * in every manifest that runs the pipeline to them, so a range bump cannot drift past the guard.
  */
 export const CERTIFIED_COMPONENT_VITE = "8.2.1"
-export const CERTIFIED_COMPONENT_REACT = "19.2.8"
+export const CERTIFIED_COMPONENT_REACT = "19.3.1"

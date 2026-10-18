@@ -39,7 +39,7 @@ export default function Notes({ data }) {
 const SINGLE_COPY_DECLARATION = `{
   "name": "my-app",
   "dependencies": {
-    "react": "19.2.8",
+    "react": "19.3.1",
     "@example/ui": "link:../design-system/packages/ui"
   },
   "nifra": {
