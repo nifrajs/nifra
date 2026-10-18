@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/agent",
-  "version": "5.4.0",
+  "version": "5.5.0",
   "description": "Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.",
   "keywords": [
     "bun",

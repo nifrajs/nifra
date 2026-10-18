@@ -1,5 +1,16 @@
 # @nifrajs/core
 
+## 5.5.0
+
+### Patch Changes
+
+- 6cc9e11: On Deno, the `Host` check, the WebSocket upgrade probe and the framework's own header reads (the JSON body lane's `content-type` and `content-length`, `c.header()`, cookies) read the one header they need instead of making Deno build the request's whole header list. A bare route keeps the `Host` check and dot-segment resolution and no longer pays about 4% of its throughput for them; an app with a `ws()` route no longer pays it on every plain request. The answers are unchanged, except that `c.header()` with a name no header can carry now returns `null` on Deno, as it does on Node, instead of throwing. A request Deno did not parse itself - constructed, cloned or rebuilt by a hook - is still read through its `headers`, and a malformed `Host` is still refused with `400 {"ok":false,"error":"invalid_host"}` on HTTP and on the WebSocket handshake.
+- 28dd544: An idempotent route that authenticates first now runs its `authenticate()` stages before the idempotency key is checked or the body is read. A bad credential gets the route's `401` without its body being buffered, and a request with no key is refused only once it has authenticated. The whole dedupe step - namespace resolver, body read, store - now runs under the request deadline, so a stalled resolver or store answers `503` at `requestTimeoutMs` instead of holding the request open. A body decoded by `transportCodecs()` now reaches an idempotent route's body schema intact, and the fingerprint is taken over the bytes the caller sent, so a different payload under the same key is refused with `409 idempotency_key_reused` instead of replaying the first response.
+- 61113d8: Reading `c.query` or the request's cookies takes time linear in the query string or `Cookie` header, including when it holds many segments without an `=` (`?a&a&a...`, `a; a; a...`). Each such segment searched for `=` through the rest of the input, so a long run of them cost time quadratic in its length. `hasDuplicateCookie` scans the same way. Parsed values are unchanged.
+- 389e1b6: Skip the native Node mount preflight when an app has no mounted handlers, avoiding a second route lookup before normal dispatch.
+- a11fe77: A request `transportCodecs()` decodes keeps the body and `Content-Type` it was sent with. A route without a body schema, or middleware such as a signature check, used to read a `{}` JSON stand-in from `c.req.text()` or `c.req.json()`; it now reads the payload itself, while a route with a body schema still receives the decoded value as `c.body`.
+- fa5b67c: A response `transportCodecs()` negotiates from `Accept` now carries `Vary: Accept`, the JSON fallback included, as `encodeTransportResponse()` already did. A shared cache, `cache()` among them, no longer stores the representation one client asked for and replays it to a client that asked for another: `cache()` bypasses storage unless `vary` includes `accept`, and keeps one entry per representation when it does.
+
 ## 5.4.0
 
 ### Minor Changes

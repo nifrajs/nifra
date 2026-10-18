@@ -1,5 +1,11 @@
 # @nifrajs/mcp
 
+## 5.5.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

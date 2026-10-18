@@ -1,5 +1,23 @@
 # @nifrajs/web
 
+## 5.5.0
+
+### Patch Changes
+
+- df7ef2e: The server-component plugin's version guard names what it found: a Vite other than the certified 8.2.1, or a React, React DOM, or Flight other than the certified release, is reported with the installed version of each.
+- b8595b1: The React server-component pipeline is certified on React, React DOM and `react-server-dom-webpack` 19.3.1. The plugin's version guard and `nifra check` now expect 19.3.1, and `@nifrajs/web-react` peers on `react-server-dom-webpack` 19.3.1; an app on 19.2.8 upgrades all three together.
+- c37575c: A loader or action value that holds an own `__proto__` key next to a `defer()` value keeps that key as ordinary data. Splitting the result for the shell rebuilt the containing object by assignment, which set its prototype instead of copying the key; the streamed resolve script for a deferred value read the JSON as a JavaScript object literal, which does the same in the browser. Both now keep the key as an own property, and the streamed value is parsed with `JSON.parse`, matching how the initial page data already arrives.
+- 9fd49ec: A client navigation to a prerendered path that carries a query string now asks the server for its data, as a hard request for the same URL does, instead of reading the static `_data.json` rendered without that query. Filters and pagination driven by search parameters no longer show the default data after a soft navigation.
+- 506a387: The generated service worker checks each precache response before it stores any: an error status, a redirect, or `Cache-Control: private` or `no-store` fails the install, and the build's cache stays empty. It used to store whatever `cache.addAll()` fetched, so an `offlineUrl` rendered for one signed-in visitor could be served to every later visitor in that browser profile. A runtime cache miss now also skips a `private` response, as it already skipped `no-store`.
+- Updated dependencies [6cc9e11]
+- Updated dependencies [28dd544]
+- Updated dependencies [61113d8]
+- Updated dependencies [389e1b6]
+- Updated dependencies [a11fe77]
+- Updated dependencies [fa5b67c]
+  - @nifrajs/core@5.5.0
+  - @nifrajs/island-trigger@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

@@ -1,5 +1,20 @@
 # @nifrajs/coding-agent
 
+## 5.5.0
+
+### Patch Changes
+
+- 6fe9b8a: `ApprovalManager.request()`, `offer()` and `observe()` no longer wait on an `onRequired` hook that has not settled once the approval itself is decided. A broadcast that never finished kept the caller waiting after the approval had already timed out, been answered or been closed; the caller now gets the decision as soon as the approval settles.
+- 945f634: An `onResolved` hook that throws synchronously no longer escapes from `ApprovalManager`. The decision already stood, but the throw surfaced from `resolve()` and `resolveMatched()`, stopped `close()` before it had denied every pending approval, and was raised from the expiry timer. A synchronous throw is now contained the same way a rejected promise from the hook already was.
+- 16d085d: `IsolatedExtensionWorker.start()` now settles. A worker that exits before it reports ready, with status 0 as well as any other, rejects `start()` and every waiting call, and a worker that is not ready within the new `startTimeoutMs` option (default 30 s) is stopped and rejects them. Before, a clean early exit or an initializer that never settled left `start()` pending forever, since `timeoutMs` only bounds each tool call.
+- Updated dependencies [abe746a]
+- Updated dependencies [0658806]
+  - @nifrajs/agent@5.5.0
+  - @nifrajs/pi@5.5.0
+  - @nifrajs/jobs@5.5.0
+  - @nifrajs/agent-protocol@5.5.0
+  - @nifrajs/agent-review@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes
