@@ -246,7 +246,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     'The default WebMCP result is a bounded receipt. Large/non-JSON output is omitted with `outputTruncated: true`; `resultMode: "output"` is an explicit host-controlled escape hatch.',
   ],
   "@nifrajs/web-react": [
-    "Server-component opt-in uses real RSC/Flight with React, React DOM and Flight exactly 19.2.8, Vite 8.2.1 and plugin-rsc 0.5.35. Register server views in the RSC entry; every use-client export needs a closed companion props schema. Native use-server actions are rejected; use validated serverFn.",
+    "Server-component opt-in uses real RSC/Flight with React, React DOM and Flight exactly 19.3.1, Vite 8.2.1 and plugin-rsc 0.5.35. Register server views in the RSC entry; every use-client export needs a closed companion props schema. Native use-server actions are rejected; use validated serverFn.",
     "React is **deduped** in both the build and the Vite dev server, so a `file:`-linked package shipping its own React no longer nulls the SSR hook dispatcher (`Invalid hook call` / `resolveDispatcher`). See `/docs/troubleshooting`.",
     "A route file that exports `loader`/`action`/`meta` is **not a Fast-Refresh boundary** - keep the view in a child component for state-preserving HMR.",
   ],
