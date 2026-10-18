@@ -134,8 +134,10 @@
     "seroval": "1.6.8",
     "seroval-plugins": "1.6.8",
     "sharp": "0.35.5",
+    "solid-js": "1.9.17",
     "source-map-js": "1.2.2",
-    "vue": "3.5.42"
+    "svelte": "5.57.2",
+    "vue": "3.5.44"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.3",
@@ -154,7 +156,7 @@
     "@nifrajs/pi": "workspace:*",
     "@nifrajs/testing": "workspace:*",
     "@nifrajs/web": "workspace:*",
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.3",
     "@types/express": "^5.0.6",
     "@upstash/context7-mcp": "4.0.2",
     "drizzle-kit": "^0.31.10",
@@ -171,10 +173,10 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "typescript": "6.0.3",
-    "valibot": "^1.4.2",
+    "valibot": "^1.5.0",
     "wrangler": "4.131.1",
     "ws": "^8.21.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "repository": {
     "type": "git",
