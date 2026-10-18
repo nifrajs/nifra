@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { t } from "@nifrajs/schema"
@@ -162,6 +171,35 @@ test("a file deleted and recreated with the same size and mtime is read again", 
     writeFileSync(path, "---\ntitle: BBBB\n---\n")
     utimesSync(path, mtime, mtime)
     expect((await posts.all())[0]?.frontmatter.title).toBe("BBBB")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a file replaced in place with the same size and mtime is read again", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-content-replace-"))
+  try {
+    const path = join(dir, "post.md")
+    const mtime = new Date(1_700_000_000_000)
+    writeFileSync(path, "---\ntitle: AAAA\n---\n")
+    utimesSync(path, mtime, mtime)
+    // Separate collections, so `all()` cannot lean on a file `get()` already re-read.
+    const forGet = defineCollection({ dir, schema: titleSchema })
+    const forAll = defineCollection({ dir, schema: titleSchema })
+    expect((await forGet.get("post"))?.frontmatter.title).toBe("AAAA")
+    expect((await forAll.all())[0]?.frontmatter.title).toBe("AAAA")
+
+    // An atomic replace that keeps the size and the mtime, with no moment where the file is missing.
+    const before = statSync(path)
+    const staged = join(dir, "post.staged")
+    writeFileSync(staged, "---\ntitle: BBBB\n---\n")
+    utimesSync(staged, mtime, mtime)
+    renameSync(staged, path)
+    const after = statSync(path)
+    expect([after.size, after.mtimeMs]).toEqual([before.size, before.mtimeMs])
+
+    expect((await forGet.get("post"))?.frontmatter.title).toBe("BBBB")
+    expect((await forAll.all())[0]?.frontmatter.title).toBe("BBBB")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

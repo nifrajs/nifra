@@ -51,6 +51,11 @@ const assertSafeExtensions = (extensions: readonly string[]): void => {
   }
 }
 
+// File identity and ctime as well as mtime and size: an atomic replace that keeps both the size and
+// the mtime (`touch -r`, a sync tool preserving times) still swaps the inode and moves the ctime.
+const stampOf = (stat: Stats): string =>
+  `${stat.dev}:${stat.ino}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}`
+
 const insideRoot = (root: string, file: string): boolean =>
   file !== root && file.startsWith(`${root}${sep}`)
 
@@ -110,7 +115,7 @@ export function defineCollection<S extends StandardSchemaV1>(
       files.map(async (file) => {
         const path = resolve(root, file)
         const stat = await statPath(path)
-        return { file, path, stamp: `${stat.mtimeMs}:${stat.size}` }
+        return { file, path, stamp: stampOf(stat) }
       }),
     )
   }
@@ -157,7 +162,7 @@ export function defineCollection<S extends StandardSchemaV1>(
         }
         if (!stat.isFile()) continue
         // Outside the try: a file that exists but fails to parse is an error, not a missing entry.
-        return await readEntry(file, slug, `${stat.mtimeMs}:${stat.size}`)
+        return await readEntry(file, slug, stampOf(stat))
       }
       return null
     },
