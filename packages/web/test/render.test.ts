@@ -723,9 +723,9 @@ test("renderPage with deferred data: client placeholder + the inline registry ru
 })
 
 test("a streamed deferred value keeps an own __proto__ key as data when the browser runs it", async () => {
-  const value = JSON.parse(
+  const value: { note: string } = JSON.parse(
     `{"__proto__":{"isAdmin":true},"nested":{"__proto__":{"isAdmin":true}},"note":"</script>'\\\\${LINE_SEP}"}`,
-  ) as Record<string, Record<string, unknown>>
+  )
   const html = await (
     await renderPage({
       adapter: stub,
@@ -737,8 +737,12 @@ test("a streamed deferred value keeps an own __proto__ key as data when the brow
   // Run the inline runtime and the resolve script as the browser would, in document order.
   type Resolved = Record<string, Record<string, unknown>>
   const window: Record<string, (id: number) => Promise<Resolved>> = {}
-  for (const [, code] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
-    if (code?.includes("__nifra")) new Function("window", code)(window)
+  // The renderer writes these inline scripts as a bare `<script>`; none of their text holds `<`.
+  for (let at = html.indexOf("<script>"); at !== -1; at = html.indexOf("<script>", at)) {
+    const end = html.indexOf("</script>", at)
+    const code = html.slice(at + "<script>".length, end)
+    if (code.includes("__nifra")) new Function("window", code)(window)
+    at = end
   }
   const resolved = await window.__nifraDeferred?.(0)
   for (const object of [resolved, resolved?.nested]) {

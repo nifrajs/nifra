@@ -133,13 +133,9 @@ test("parity: a value that cannot be serialized is the same flat 500 as on core"
 })
 
 test("a validator that throws or rejects is the flat 500; a thrown Response still exits early", async () => {
-  const schema = (validate: () => unknown): StandardSchemaV1<unknown> => ({
-    "~standard": {
-      version: 1,
-      vendor: "edge-test",
-      validate,
-    } as StandardSchemaV1<unknown>["~standard"],
-  })
+  const schema = (
+    validate: StandardSchemaV1<unknown>["~standard"]["validate"],
+  ): StandardSchemaV1<unknown> => ({ "~standard": { version: 1, vendor: "edge-test", validate } })
   const app = server()
     .post(
       "/throws",
