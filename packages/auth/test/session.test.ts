@@ -532,6 +532,79 @@ describe("session - store mode", () => {
     expect(inFlight.setCalls).toEqual([])
   })
 
+  test("a custom store's replace keeps a session gone when a logout lands before the renewal writes", async () => {
+    const records = new Map<string, SessionRecord>()
+    let marker: string | undefined
+    let pause:
+      | { readonly key: string; readonly arrive: () => void; readonly at: Promise<void> }
+      | undefined
+    const written: string[] = []
+    const replaced: boolean[] = []
+    // Keeps one revocation marker, as a store under memory pressure might.
+    const store: SessionStore = {
+      async get(id) {
+        const found = records.get(id)
+        const held = pause
+        if (held !== undefined && held.key === id) {
+          pause = undefined
+          held.arrive()
+          await held.at
+        }
+        return found
+      },
+      async set(id, record) {
+        written.push(id)
+        if (id.endsWith(".revoked")) {
+          if (marker !== undefined) records.delete(marker)
+          marker = id
+        }
+        records.set(id, record)
+      },
+      async delete(id) {
+        records.delete(id)
+      },
+      async replace(id, record) {
+        const wrote = records.has(id)
+        if (wrote) records.set(id, record)
+        replaced.push(wrote)
+        return wrote
+      },
+    }
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const login = async (userId: string) => {
+      const a = ctx()
+      const s = await sessions.get(a.context)
+      s.set("userId", userId)
+      await sessions.commit(a.context, s)
+      return lastCookie(a.setCalls)
+    }
+    const cookie = await login("victim")
+    const inFlight = ctx({ nifra_session: cookie })
+    const stale = await sessions.get(inFlight.context)
+    const id = written[0] ?? ""
+
+    let release = () => {}
+    let arrive = () => {}
+    const arrived = new Promise<void>((resolve) => {
+      arrive = resolve
+    })
+    const at = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    pause = { key: `${id}.revoked`, arrive, at }
+    const commit = sessions.commit(inFlight.context, stale)
+    await arrived // the commit has read the record and found no marker
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+    // Another logout pushes the first marker out of the one-marker store.
+    await sessions.destroy(ctx({ nifra_session: await login("other") }).context)
+    release()
+    await commit
+
+    expect(replaced).toEqual([false])
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    expect(inFlight.setCalls).toEqual([])
+  })
+
   test("a commit that loaded the pre-login session does not bring it back after rotation", async () => {
     const store = new MemorySessionStore()
     const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })

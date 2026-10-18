@@ -16,9 +16,9 @@ export interface SessionRecord {
  * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.
  * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}
  * prod-guards against the per-instance footgun. Logout and rotation also write a revocation marker, an
- * empty record under `<id>.revoked`, so a store must accept that key like any other, and keep it until
- * its `expiresAt`: a marker dropped earlier lets a request that loaded the session before the logout
- * write it back.
+ * empty record under `<id>.revoked`, so a store must accept that key like any other. A store without
+ * `replace` must also keep the marker until its `expiresAt`: a marker dropped earlier lets a request that
+ * loaded the session before the logout write it back.
  */
 export interface SessionStore {
   /** The record for `id`, or `undefined` on a miss. */
@@ -27,27 +27,18 @@ export interface SessionStore {
   set(id: string, record: SessionRecord): Promise<void>
   /** Drop `id` (logout / regeneration). A no-op if absent. */
   delete(id: string): Promise<void>
+  /**
+   * Overwrite `id` only while it still holds a record, resolving whether it wrote. The check and the
+   * write must be one atomic step, such as Redis `SET key value XX` or a SQL `UPDATE ... WHERE id = ?`
+   * that reports the rows it changed. Optional: when present, a loaded session renews through it instead
+   * of `set`, so a logout that lands between the renewal's checks and its write wins even after the
+   * logout's revocation marker is gone.
+   */
+  replace?(id: string, record: SessionRecord): Promise<boolean>
 }
 
 /** The suffix of a revocation marker's key: `<id>.revoked`. */
 export const REVOKED_SUFFIX = ".revoked"
-
-// The stores that can make a renewal conditional on the record still existing, keyed by instance.
-const CONDITIONAL_WRITES = new WeakMap<
-  SessionStore,
-  (id: string, record: SessionRecord) => boolean
->()
-
-/** Overwrite `id` only while it still holds a record, resolving whether it wrote: `undefined` when
- * `store` cannot make that write in one step with the check. */
-export function replaceExisting(
-  store: SessionStore,
-  id: string,
-  record: SessionRecord,
-): Promise<boolean> | undefined {
-  const write = CONDITIONAL_WRITES.get(store)
-  return write === undefined ? undefined : Promise.resolve(write(id, record))
-}
 
 export interface MemorySessionStoreOptions {
   /** Allow the in-memory store in production. Off by default - per-instance sessions don't hold across
@@ -62,8 +53,8 @@ export interface MemorySessionStoreOptions {
  * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR
  * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).
  * Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their own.
- * Because a marker can be evicted, a session's renewal writes only while its record still exists, so a
- * request that loaded the session before a logout cannot restore it once the marker is gone.
+ * Because a marker can be evicted, it implements `replace`, so a request that loaded the session before
+ * a logout cannot restore it once the marker is gone.
  */
 export class MemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionRecord>()
@@ -85,12 +76,6 @@ export class MemorySessionStore implements SessionStore {
     if (!Number.isSafeInteger(this.max) || this.max <= 0) {
       throw new RangeError("[nifra/auth] MemorySessionStore max must be a positive safe integer")
     }
-    // Markers can be evicted here, so a renewal must not outlive the logout that deleted its record.
-    CONDITIONAL_WRITES.set(this, (id, record) => {
-      if (!this.sessions.has(id)) return false
-      this.write(this.sessions, id, record)
-      return true
-    })
   }
 
   private mapFor(id: string): Map<string, SessionRecord> {
@@ -109,6 +94,13 @@ export class MemorySessionStore implements SessionStore {
   delete(id: string): Promise<void> {
     this.mapFor(id).delete(id)
     return Promise.resolve()
+  }
+
+  replace(id: string, record: SessionRecord): Promise<boolean> {
+    const entries = this.mapFor(id)
+    if (!entries.has(id)) return Promise.resolve(false)
+    this.write(entries, id, record)
+    return Promise.resolve(true)
   }
 
   private write(entries: Map<string, SessionRecord>, id: string, record: SessionRecord): void {
@@ -153,7 +145,8 @@ const isSessionRecord = (value: unknown): value is SessionRecord => {
  * - the durable, shared production store: sessions hold across worker instances and survive restarts.
  * Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so KV
  * auto-evicts the session (a GC backstop - the manager still authoritatively checks expiry on read).
- * Every read is validated, so a corrupt/skewed entry reads as no session.
+ * Every read is validated, so a corrupt/skewed entry reads as no session. Workers KV has no conditional
+ * write, so this store leaves out `replace` and keeps each revocation marker until its `expiresAt`.
  */
 export class KVSessionStore implements SessionStore {
   private readonly kv: KVNamespaceLike
