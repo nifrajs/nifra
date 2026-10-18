@@ -256,4 +256,19 @@ describe("batch", () => {
     })
     expect(runs).toBe(1)
   })
+
+  test("an effect whose input another effect writes runs again, ending on the settled values", () => {
+    const source = signal(0)
+    const mirror = signal(0)
+    const seen: string[] = []
+    const stopObserver = effect(() => {
+      seen.push(`${source()}:${mirror()}`)
+    })
+    const stopCopy = effect(() => mirror.set(source()))
+    seen.length = 0
+    source.set(1)
+    expect(seen).toEqual(["1:0", "1:1"])
+    stopObserver()
+    stopCopy()
+  })
 })

@@ -72,7 +72,8 @@ bind it, for example to show or hide the nested island.
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
 into one flush. Computeds settle before any effect runs, so an effect never sees one that lags its
-inputs, and each effect runs once per write or batch. A `computed` runs on first read and stops by itself once nothing reads it: the
+inputs. A write or batch runs each affected effect once; an effect runs again only when another
+effect writes one of its inputs during that flush, and its last run sees the settled values. A `computed` runs on first read and stops by itself once nothing reads it: the
 next change to its inputs stops it instead of recomputing, and reading it again computes it afresh.
 Every effect an island's setup creates stops when `mountIslands`' disposer unmounts it; one created
 outside an island runs until its disposer is called. Island-scale by design: if a widget outgrows this (lists, ownership trees,
