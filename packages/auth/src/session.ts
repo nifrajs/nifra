@@ -302,11 +302,18 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
     if (store !== undefined) {
       if (state.id !== undefined) {
-        // A loaded session commits only while its record still exists. A logout deletes it, so a
-        // request that loaded it earlier cannot write it back, even once the marker has been evicted.
-        const current = await store.get(state.id)
-        // Check again after the read: a delayed store operation can outlive both session and marker.
-        if (current === undefined || (previousExpiry !== undefined && previousExpiry <= now()))
+        // A loaded session commits only while its record exists and no logout has marked it. The
+        // record covers a marker already evicted; the marker covers a logout between its two writes.
+        const [current, revoked] = await Promise.all([
+          store.get(state.id),
+          store.get(revokedKey(state.id)),
+        ])
+        // Check again after the reads: a delayed store operation can outlive both session and marker.
+        if (
+          current === undefined ||
+          revoked !== undefined ||
+          (previousExpiry !== undefined && previousExpiry <= now())
+        )
           return
       }
       if (state.regenerate) {

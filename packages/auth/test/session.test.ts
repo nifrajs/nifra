@@ -6,6 +6,7 @@ import {
   MemorySessionStore,
   type SessionContext,
   type SessionManager,
+  type SessionStore,
 } from "../src/index.ts"
 
 const SECRET = "test-secret-at-least-32-bytes-ok!"
@@ -402,6 +403,72 @@ describe("session - store mode", () => {
     await sessions.destroy(ctx({ nifra_session: cookie }).context)
     await sessions.destroy(ctx({ nifra_session: await login("other") }).context)
     await sessions.commit(inFlight.context, stale)
+
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    expect(inFlight.setCalls).toEqual([])
+  })
+
+  // A logout writes its marker, then deletes the record; a commit can read in between.
+  test("a commit that reads between a logout's two writes never brings the session back", async () => {
+    const inner = new MemorySessionStore({ max: 1 })
+    const holds = new Map<string, { arrive: () => void; released: Promise<void> }>()
+    const hold = (key: string) => {
+      let arrive = () => {}
+      let release = () => {}
+      const arrived = new Promise<void>((resolve) => {
+        arrive = resolve
+      })
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      holds.set(key, { arrive, released })
+      return { arrived, release }
+    }
+    const at = async (key: string) => {
+      const held = holds.get(key)
+      if (held === undefined) return
+      holds.delete(key)
+      held.arrive()
+      await held.released
+    }
+    const written: string[] = []
+    const store: SessionStore = {
+      get: (id) => inner.get(id),
+      set: async (id, record) => {
+        written.push(id)
+        await at(`set ${id}`)
+        await inner.set(id, record)
+      },
+      delete: async (id) => {
+        await at(`delete ${id}`)
+        await inner.delete(id)
+      },
+    }
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const login = async (userId: string) => {
+      const a = ctx()
+      const s = await sessions.get(a.context)
+      s.set("userId", userId)
+      await sessions.commit(a.context, s)
+      return lastCookie(a.setCalls)
+    }
+    const cookie = await login("victim")
+    const id = written[0] ?? ""
+    const inFlight = ctx({ nifra_session: cookie })
+    const stale = await sessions.get(inFlight.context)
+
+    const marked = hold(`delete ${id}`)
+    const logout = sessions.destroy(ctx({ nifra_session: cookie }).context)
+    await marked.arrived
+    const rewrite = hold(`set ${id}`)
+    const commit = sessions.commit(inFlight.context, stale)
+    await Promise.race([rewrite.arrived, commit])
+    marked.release()
+    await logout
+    // Another logout pushes the first marker out of the one-marker store.
+    await sessions.destroy(ctx({ nifra_session: await login("other") }).context)
+    rewrite.release()
+    await commit
 
     expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
     expect(inFlight.setCalls).toEqual([])
