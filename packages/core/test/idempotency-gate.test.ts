@@ -164,7 +164,9 @@ describe("the idempotency gate runs inside the route program", () => {
     expect(() => {
       answered = app.fetch(request)
     }).not.toThrow()
-    await expect(answered).rejects.toThrow("signal")
+    // The copy's own construction error, not a later failure that also mentions a signal.
+    await expect(answered).rejects.toBeInstanceOf(TypeError)
+    await expect(answered).rejects.toThrow(/signal is not of type AbortSignal/)
   })
 
   const hanging = new Promise<never>(() => {})

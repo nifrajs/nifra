@@ -338,12 +338,13 @@ describe("effect-aware idempotency fallback", () => {
     // Model an exceptional request source without replacing the global Request constructor.
     Object.defineProperty(request, "signal", { value: {} })
     let resumed = false
-    await expect(
-      gate(runtime, config, request, async () => {
-        resumed = true
-        return new Response(null, { status: 204 })
-      }),
-    ).rejects.toThrow("signal")
+    const gated = gate(runtime, config, request, async () => {
+      resumed = true
+      return new Response(null, { status: 204 })
+    })
+    // The copy's own construction error, not a later failure that also mentions a signal.
+    await expect(gated).rejects.toBeInstanceOf(TypeError)
+    await expect(gated).rejects.toThrow(/signal is not of type AbortSignal/)
     expect(resumed).toBe(false)
     expect(store.size).toBe(0)
   })
