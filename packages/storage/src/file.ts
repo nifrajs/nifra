@@ -736,8 +736,8 @@ export class FileStorage implements StorageAdapter {
     for (const dirent of listed) {
       const { name } = dirent
       if (!name.startsWith(namePrefix)) continue
-      // The type readdir reports is the entry's own, as lstat would give it, so a listing costs one
-      // readdir per directory it enters; only an entry of any other or unrecorded type is stat'ed.
+      // The type readdir reports is the entry's own, as lstat would give it, so a file costs no stat;
+      // only an entry of any other or unrecorded type is stat'ed here.
       const info =
         dirent.isFile() || dirent.isDirectory() || dirent.isSymbolicLink()
           ? dirent
@@ -752,8 +752,15 @@ export class FileStorage implements StorageAdapter {
       if (out.length >= limit) return
       // POSIX-join the key segments so listed keys are portable regardless of the host separator.
       const key = prefix === "" ? entry.name : posix.join(prefix, entry.name)
-      if (entry.kind === "dir") await this.walk(join(dir, entry.name), key, "", limit, out)
-      else out.push(key)
+      if (entry.kind === "file") {
+        out.push(key)
+        continue
+      }
+      // That type dates from the readdir: a directory replaced by a symlink since then would take
+      // the walk outside the root, so the path itself is checked again just before descending.
+      const path = join(dir, entry.name)
+      const current = await lstat(path).catch(() => undefined)
+      if (current?.isDirectory() === true) await this.walk(path, key, "", limit, out)
     }
   }
 }
