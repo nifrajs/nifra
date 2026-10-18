@@ -735,7 +735,7 @@ test("a streamed deferred value keeps an own __proto__ key as data when the brow
     })
   ).text()
   // Run the inline runtime and the resolve script as the browser would, in document order.
-  type Resolved = Record<string, Record<string, unknown>>
+  type Resolved = Record<string, unknown> & { readonly nested?: Record<string, unknown> }
   const window: Record<string, (id: number) => Promise<Resolved>> = {}
   // The renderer writes these inline scripts as a bare `<script>`; none of their text holds `<`.
   for (let at = html.indexOf("<script>"); at !== -1; at = html.indexOf("<script>", at)) {
