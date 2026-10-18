@@ -241,8 +241,11 @@ export class ApprovalManager {
       ...(why === undefined ? {} : { reason: why.slice(0, 512) }),
       at,
     }
-    // A failing broadcast must not become an unhandled rejection in the host.
-    Promise.resolve(this.options.onResolved?.(decision)).catch(() => {})
+    // The decision already stands: a broadcast that throws or rejects must not reach the caller, the
+    // expiry timer, or close(), nor become an unhandled rejection in the host.
+    try {
+      Promise.resolve(this.options.onResolved?.(decision)).catch(() => {})
+    } catch {}
     return decision
   }
 
