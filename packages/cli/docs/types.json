@@ -8876,8 +8876,8 @@
     "name": "MemorySessionStore",
     "kind": "class",
     "package": "@nifrajs/auth",
-    "signature": "export declare class MemorySessionStore implements SessionStore {\n    private readonly sessions;\n    private readonly markers;\n    private readonly max;\n    constructor(options?: MemorySessionStoreOptions);\n    private mapFor;\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n}",
-    "doc": "/**\n * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR\n * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).\n * Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their own.\n */"
+    "signature": "export declare class MemorySessionStore implements SessionStore {\n    private readonly sessions;\n    private readonly markers;\n    private readonly max;\n    constructor(options?: MemorySessionStoreOptions);\n    private mapFor;\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n    private write;\n}",
+    "doc": "/**\n * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR\n * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).\n * Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their own.\n * Because a marker can be evicted, a session's renewal writes only while its record still exists, so a\n * request that loaded the session before a logout cannot restore it once the marker is gone.\n */"
   },
   {
     "name": "MemorySessionStoreOptions",

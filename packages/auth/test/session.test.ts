@@ -6,6 +6,7 @@ import {
   MemorySessionStore,
   type SessionContext,
   type SessionManager,
+  type SessionRecord,
   type SessionStore,
 } from "../src/index.ts"
 
@@ -468,6 +469,63 @@ describe("session - store mode", () => {
     // Another logout pushes the first marker out of the one-marker store.
     await sessions.destroy(ctx({ nifra_session: await login("other") }).context)
     rewrite.release()
+    await commit
+
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+    expect(inFlight.setCalls).toEqual([])
+  })
+
+  // The commit's checks pass, then a logout and an eviction both land before its write.
+  test("a logout between a renewal's checks and its write keeps the session gone", async () => {
+    let pause:
+      | { readonly key: string; readonly arrive: () => void; readonly at: Promise<void> }
+      | undefined
+    const written: string[] = []
+    class PausingStore extends MemorySessionStore {
+      override set(id: string, record: SessionRecord): Promise<void> {
+        written.push(id)
+        return super.set(id, record)
+      }
+      override async get(id: string): Promise<SessionRecord | undefined> {
+        const found = await super.get(id)
+        const held = pause
+        if (held !== undefined && held.key === id) {
+          pause = undefined
+          held.arrive()
+          await held.at
+        }
+        return found
+      }
+    }
+    const store = new PausingStore({ max: 1 })
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const login = async (userId: string) => {
+      const a = ctx()
+      const s = await sessions.get(a.context)
+      s.set("userId", userId)
+      await sessions.commit(a.context, s)
+      return lastCookie(a.setCalls)
+    }
+    const cookie = await login("victim")
+    const inFlight = ctx({ nifra_session: cookie })
+    const stale = await sessions.get(inFlight.context)
+    const id = written[0] ?? ""
+
+    let release = () => {}
+    let arrive = () => {}
+    const arrived = new Promise<void>((resolve) => {
+      arrive = resolve
+    })
+    const at = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    pause = { key: `${id}.revoked`, arrive, at }
+    const commit = sessions.commit(inFlight.context, stale)
+    await arrived // the commit has read the record and found no marker
+    await sessions.destroy(ctx({ nifra_session: cookie }).context)
+    // Another logout pushes the first marker out of the one-marker store.
+    await sessions.destroy(ctx({ nifra_session: await login("other") }).context)
+    release()
     await commit
 
     expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)

@@ -16,7 +16,7 @@ import {
   signValue,
   unsignValue,
 } from "@nifrajs/core/cookies"
-import { REVOKED_SUFFIX, type SessionRecord, type SessionStore } from "./store.ts"
+import { REVOKED_SUFFIX, replaceExisting, type SessionRecord, type SessionStore } from "./store.ts"
 
 /** The cookie + response surface the manager needs - a structural subset of nifra's `Context`, so any
  * `c` satisfies it and it's testable with a stub. */
@@ -324,7 +324,12 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       }
       const loaded = state.id !== undefined
       state.id ??= randomId()
-      await store.set(state.id, { data, expiresAt } satisfies SessionRecord)
+      const record = { data, expiresAt } satisfies SessionRecord
+      // A store that can make the renewal conditional lets a logout landing after the checks above
+      // win outright; any other store relies on keeping the marker until it expires (see SessionStore).
+      const replaced = loaded ? replaceExisting(store, state.id, record) : undefined
+      if (replaced === undefined) await store.set(state.id, record)
+      else if (!(await replaced)) return
       // Checked after the write: a revocation that lands before it is seen here, one that lands after
       // it deletes the record itself. Either way the cookie is left alone - the browser may hold a
       // newer session by now, and this response must not replace or clear it.
