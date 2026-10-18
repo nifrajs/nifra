@@ -206,6 +206,42 @@ describe("WebMCP projection", () => {
     await retry.cleanup()
   })
 
+  test("a failed first registration keeps guarding the names registered after it", async () => {
+    const tool = (name: string) =>
+      defineAgentCapability({
+        name,
+        description: `The ${name} tool.`,
+        input: t.object({}),
+        output: t.object({ ok: t.boolean() }),
+        execute: () => ({ ok: true }),
+      })
+    const calls: string[] = []
+    const target: WebMcpTarget = {
+      modelContext: {
+        registerTool(definition) {
+          calls.push(definition.name)
+          if (definition.name === "fails") throw new Error("host refused")
+        },
+        unregisterTool(name) {
+          calls.push(`-${name}`)
+        },
+      },
+    }
+    const first = await registerWebMcpTools([tool("fails"), tool("good")], target)
+    expect(first.registered).toEqual(["good"])
+    const again = await registerWebMcpTools([tool("good")], target)
+    expect(again.registered).toEqual([])
+    expect(again.failed).toEqual([
+      { name: "good", error: "duplicate tool name is already registered" },
+    ])
+    await again.cleanup()
+    await first.cleanup()
+    const afterCleanup = await registerWebMcpTools([tool("good")], target)
+    expect(afterCleanup.registered).toEqual(["good"])
+    await afterCleanup.cleanup()
+    expect(calls).toEqual(["fails", "good", "-good", "good", "-good"])
+  })
+
   test("unsupported hosts are a safe no-op", async () => {
     const report = await registerWebMcpTools([], {})
     expect(report).toMatchObject({ supported: false, registered: [], failed: [] })

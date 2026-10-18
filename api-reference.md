@@ -312,6 +312,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Thrown only for transport-level faults (network, malformed body) and for a stream the host refused, which carries the response `status`. Carries no credential.
 - **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
   One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request.
+- **AgentTurnError** _(class)_ - `class AgentTurnError`
+  The host ended a streamed turn with its terminal `event: error` frame. The work failed; the connection did not, so it is never retried by attaching again. Carries the host's short failure `code` (`turn_failed` when the frame names none it can trust), never the host's diagnostic text.
 - **ApprovalRequiredView** _(interface)_ - `interface ApprovalRequiredView`
 - **ApprovalResolvedView** _(interface)_ - `interface ApprovalResolvedView`
 - **AssistantChunkView** _(interface)_ - `interface AssistantChunkView`
@@ -5057,6 +5059,8 @@ _No named exports (side-effect entrypoint)._
   How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `av…
 - **FileType** _(interface)_ - `interface FileType`
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
+- **ImagePixelLimitError** _(class)_ - `class ImagePixelLimitError`
+  Thrown before decoding a source larger than `maxPixels`; answer it with a `413`.
 - **ImageReencoder** _(interface)_ - `interface ImageReencoder`
   The slice of `@nifrajs/image`'s `ImageBackend` this needs - `probe` for dims/format, `transform` to re-encode.
 - **SignDownloadUrlOptions** _(interface)_ - `interface SignDownloadUrlOptions`
@@ -5067,9 +5071,9 @@ _No named exports (side-effect entrypoint)._
 - **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`
   Detect a file's type from its magic bytes, or `null` if unrecognized.
 - **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>`
-  Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended.
+  Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. Throws a `RangeError` for an `expiresInSeconds` or `now` that is not a whole number of seconds, since {@link verifyDownloadUrl} accepts only a whole-second expiry.
 - **stripImageMetadata** _(function)_ - `stripImageMetadata: (bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions) => Promise<Uint8Array>`
-  Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes.
+  Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes. A source over `maxPixels` throws {@link ImagePixelLimitError} without being decoded. Each call holds a full decoded image in memory, so bound how many run at once where uploads arrive.
 - **validateUpload** _(function)_ - `validateUpload: (input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions) => Promise<UploadResult>`
   Validate uploaded bytes/Blob: size cap + magic-byte type sniff against an optional allow-list.
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`

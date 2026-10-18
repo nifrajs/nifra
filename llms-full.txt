@@ -14629,7 +14629,9 @@ for a repository you trust.
 
 `IsolatedExtensionWorker` is an opt-in process-backed crash-containment seam for
 extensions. It is not a hostile-code sandbox; use OS-level isolation before
-loading code you do not trust.
+loading code you do not trust. `start()` rejects, and the worker is stopped, when the
+module exits before it is ready (a clean exit included) or is not ready within
+`startTimeoutMs` (default 30 s); `timeoutMs` bounds each tool call.
 
 `NifraBackend` is a small provider port for a future native backend. It accepts
 an injected model implementation and bounded tools without importing a provider
@@ -15685,7 +15687,9 @@ bind it, for example to show or hide the nested island.
 
 `signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
-into one flush. A `computed` runs on first read and stops by itself once nothing reads it: the
+into one flush. Computeds settle before any effect runs, so an effect never sees one that lags its
+inputs. A write or batch runs each affected effect once; an effect runs again only when another
+effect writes one of its inputs during that flush, and its last run sees the settled values. A `computed` runs on first read and stops by itself once nothing reads it: the
 next change to its inputs stops it instead of recomputing, and reading it again computes it afresh.
 Every effect an island's setup creates stops when `mountIslands`' disposer unmounts it; one created
 outside an island runs until its disposer is called. Island-scale by design: if a widget outgrows this (lists, ownership trees,
@@ -16927,6 +16931,8 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 - `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket)`.
 - `put(key, data, { contentType?, metadata? })` - `data` is `Uint8Array | ArrayBuffer | string`.
 - `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
+  `FileStorage.list` reads and sorts each directory it enters, so even `limit: 1` costs time in
+  proportion to those directories' entries; split a very large store across key prefixes.
 - `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.
 - `assertStorageAdapterConformance({ createAdapter })` - dependency-free executable adapter contract.
 - Optional interfaces: `PagedStorageAdapter` · `PresignableStorageAdapter` · `MovableStorageAdapter`.
@@ -17738,7 +17744,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-app
 
-`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `BoundaryDecisionResult`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `ContextUsageView`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionEventView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `PendingApprovalView`, `PlanUpdatedView`, `ReasoningDeltaView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `TurnStartedView`, `VerificationCompletedView`, `boundaryCommands`, `boundaryIsStale`, `parseEventStream`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `virtualizeEvidenceRows`
+`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `AgentTurnError`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `BoundaryDecisionResult`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `ContextUsageView`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionEventView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `PendingApprovalView`, `PlanUpdatedView`, `ReasoningDeltaView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `TurnStartedView`, `VerificationCompletedView`, `boundaryCommands`, `boundaryIsStale`, `parseEventStream`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `virtualizeEvidenceRows`
 
 ## @nifrajs/agent-protocol
 
@@ -17894,7 +17900,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/uploads
 
-`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES`, `FileType`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `detectFileType`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
+`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES`, `FileType`, `ImagePixelLimitError`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `detectFileType`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
 
 ## @nifrajs/web
 

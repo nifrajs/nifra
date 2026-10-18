@@ -927,6 +927,10 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bAIza[0-9A-Za-z_-]{20,}/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+  /\bgsk_[A-Za-z0-9]{20,}/g,
+  /\bxai-[A-Za-z0-9]{20,}/g,
+  /\bhf_[A-Za-z0-9]{20,}/g,
+  /\bnvapi-[A-Za-z0-9_-]{20,}/g,
 ]
 
 const BASE_ENV = [

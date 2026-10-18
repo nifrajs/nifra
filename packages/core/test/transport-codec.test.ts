@@ -405,6 +405,34 @@ describe("transport lane edges", () => {
     expect(await response.json()).toEqual({ a: { id: 1 }, b: [{ id: 1 }, { id: 1 }] })
   })
 
+  test("a route without a body schema reads the payload as sent, not a stand-in", async () => {
+    const anyBody = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },
+    } as const
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/raw", async (c) => ({
+        type: c.req.headers.get("content-type"),
+        text: await c.req.text(),
+      }))
+      .post("/decoded", { body: anyBody }, (c) => c.body)
+    const payload = rich.encode({ amount: 10, when: new Date(0) })
+    const send = (path: string) =>
+      app.fetch(
+        new Request(`http://test${path}`, {
+          method: "POST",
+          headers: { "content-type": rich.mediaType, accept: "application/json" },
+          body: payload,
+        }),
+      )
+    expect(await (await send("/raw")).json()).toEqual({ type: rich.mediaType, text: payload })
+    // A schema route still receives the decoded value, its Date included.
+    expect(await (await send("/decoded")).json()).toEqual({
+      amount: 10,
+      when: "1970-01-01T00:00:00.000Z",
+    })
+  })
+
   test("the poisoning policy reaches into Map members", async () => {
     const app = server()
       .use(transportCodecs(registry()))

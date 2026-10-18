@@ -32,6 +32,23 @@ export interface SessionStore {
 /** The suffix of a revocation marker's key: `<id>.revoked`. */
 export const REVOKED_SUFFIX = ".revoked"
 
+// The stores that can make a renewal conditional on the record still existing, keyed by instance.
+const CONDITIONAL_WRITES = new WeakMap<
+  SessionStore,
+  (id: string, record: SessionRecord) => boolean
+>()
+
+/** Overwrite `id` only while it still holds a record, resolving whether it wrote: `undefined` when
+ * `store` cannot make that write in one step with the check. */
+export function replaceExisting(
+  store: SessionStore,
+  id: string,
+  record: SessionRecord,
+): Promise<boolean> | undefined {
+  const write = CONDITIONAL_WRITES.get(store)
+  return write === undefined ? undefined : Promise.resolve(write(id, record))
+}
+
 export interface MemorySessionStoreOptions {
   /** Allow the in-memory store in production. Off by default - per-instance sessions don't hold across
    * instances and are lost on restart. */
@@ -45,6 +62,8 @@ export interface MemorySessionStoreOptions {
  * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR
  * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).
  * Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their own.
+ * Because a marker can be evicted, a session's renewal writes only while its record still exists, so a
+ * request that loaded the session before a logout cannot restore it once the marker is gone.
  */
 export class MemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionRecord>()
@@ -66,6 +85,12 @@ export class MemorySessionStore implements SessionStore {
     if (!Number.isSafeInteger(this.max) || this.max <= 0) {
       throw new RangeError("[nifra/auth] MemorySessionStore max must be a positive safe integer")
     }
+    // Markers can be evicted here, so a renewal must not outlive the logout that deleted its record.
+    CONDITIONAL_WRITES.set(this, (id, record) => {
+      if (!this.sessions.has(id)) return false
+      this.write(this.sessions, id, record)
+      return true
+    })
   }
 
   private mapFor(id: string): Map<string, SessionRecord> {
@@ -77,7 +102,16 @@ export class MemorySessionStore implements SessionStore {
   }
 
   set(id: string, record: SessionRecord): Promise<void> {
-    const entries = this.mapFor(id)
+    this.write(this.mapFor(id), id, record)
+    return Promise.resolve()
+  }
+
+  delete(id: string): Promise<void> {
+    this.mapFor(id).delete(id)
+    return Promise.resolve()
+  }
+
+  private write(entries: Map<string, SessionRecord>, id: string, record: SessionRecord): void {
     entries.delete(id) // re-insert at the tail so Map order tracks recency for the bounded evict
     entries.set(id, record)
     while (entries.size > this.max) {
@@ -85,12 +119,6 @@ export class MemorySessionStore implements SessionStore {
       if (oldest === undefined) break
       entries.delete(oldest)
     }
-    return Promise.resolve()
-  }
-
-  delete(id: string): Promise<void> {
-    this.mapFor(id).delete(id)
-    return Promise.resolve()
   }
 }
 

@@ -4,6 +4,10 @@ import { resolve } from "node:path"
 import type * as TS from "typescript"
 import { type Plugin, version as viteVersion } from "vite"
 import {
+  CERTIFIED_COMPONENT_REACT,
+  CERTIFIED_COMPONENT_VITE,
+} from "../internal/certified-components.ts"
+import {
   compileComponentModule,
   componentReference,
   directive,
@@ -102,25 +106,26 @@ export function serverComponentsPlugin(
     name: "nifra:server-components",
     enforce: "pre",
     configResolved(config) {
-      if (viteVersion !== "8.2.1")
+      if (viteVersion !== CERTIFIED_COMPONENT_VITE)
         throw new Error(
-          "[nifra/components] Use the certified Vite 8.2.1 component pipeline; Bun remains a supported server runtime",
+          `[nifra/components] Use the certified Vite ${CERTIFIED_COMPONENT_VITE} component pipeline, not ${viteVersion}; Bun remains a supported server runtime`,
         )
       if (options.adapter === "react") {
         const require = createRequire(resolve(config.root, "package.json"))
-        const versions = ["react", "react-dom", "react-server-dom-webpack"].map((name) => {
+        const packages = ["react", "react-dom", "react-server-dom-webpack"]
+        const versions = packages.map((name) => {
           try {
             // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The compiler inspects trusted AST/package metadata and its own populated stub map; application data never supplies these values.
             return (require(`${name}/package.json`) as { version: string }).version
           } catch {
             throw new Error(
-              `[nifra/components] Install ${name}@19.2.8 for the React component pipeline`,
+              `[nifra/components] Install ${name}@${CERTIFIED_COMPONENT_REACT} for the React component pipeline`,
             )
           }
         })
-        if (versions.some((version) => version !== "19.2.8"))
+        if (versions.some((version) => version !== CERTIFIED_COMPONENT_REACT))
           throw new Error(
-            "[nifra/components] React, React DOM, and Flight must all use the matching 19.2.8 version",
+            `[nifra/components] React, React DOM, and Flight must all use the matching ${CERTIFIED_COMPONENT_REACT} version, not ${packages.map((name, index) => `${name}@${versions[index]}`).join(", ")}`,
           )
       }
     },

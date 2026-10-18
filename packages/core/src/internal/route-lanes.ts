@@ -119,22 +119,24 @@ export function selectRouteLanes(options: {
     !hasLedger &&
     around === 0
 
-  const lane: RouteExecutionLane = authBeforeValidation
-    ? "lifecycle"
-    : bare
-      ? "bare"
-      : bodyOnly
-        ? "body"
-        : !hasResponseContract &&
-            schema?.body === undefined &&
-            schema?.query !== undefined &&
-            plain &&
-            derives === 0 &&
-            beforeHandle === 0 &&
-            afterHandle === 0 &&
-            onError === 0
-          ? "query"
-          : "lifecycle"
+  // The idempotency gate lives in the general program, so an idempotent route always runs it.
+  const lane: RouteExecutionLane =
+    authBeforeValidation || hasIdempotency
+      ? "lifecycle"
+      : bare
+        ? "bare"
+        : bodyOnly
+          ? "body"
+          : !hasResponseContract &&
+              schema?.body === undefined &&
+              schema?.query !== undefined &&
+              plain &&
+              derives === 0 &&
+              beforeHandle === 0 &&
+              afterHandle === 0 &&
+              onError === 0
+            ? "query"
+            : "lifecycle"
 
   // Lifecycle routes with no params schema are the common middleware shape: derive/before plus an
   // optional query or body schema. Select their complete validation stage at registration so the

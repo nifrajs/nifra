@@ -1,6 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { authenticated, rejected } from "@nifrajs/core/server"
+import { createTransportCodecRegistry, plainJsonCodec } from "@nifrajs/core/transport-codec"
+import { richWireCodec } from "@nifrajs/core/transport-codec-rich"
+import { transportCodecs } from "@nifrajs/core/transport-plugin"
 import {
   apiKey,
   type CachedResponse,
@@ -382,5 +385,42 @@ describe("cache() with a credential header it does not list", () => {
       })
     expect((await call(app, { "x-service-key": key })).headers.get("x-nifra-cache")).toBe("MISS")
     expect((await call(app, { "x-service-key": key })).headers.get("x-nifra-cache")).toBe("HIT")
+  })
+})
+
+describe("cache over negotiated transport codecs", () => {
+  const rich = richWireCodec()
+  const registry = createTransportCodecRegistry([plainJsonCodec, rich])
+  const app = () =>
+    server()
+      .use(transportCodecs(registry))
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/price", () => ({ amount: 10 }))
+
+  test("a rich-wire request cannot seed the entry a JSON client then reads", async () => {
+    const served = app()
+    const seeded = await served.fetch(
+      new Request("http://test/price", { headers: { accept: rich.mediaType } }),
+    )
+    expect(seeded.headers.get("content-type")).toBe(rich.mediaType)
+    expect(seeded.headers.get("vary")?.toLowerCase()).toContain("accept")
+    const plain = await served.fetch(new Request("http://test/price"))
+    expect(plain.headers.get("content-type")).toContain("application/json")
+    expect(await plain.json()).toEqual({ amount: 10 })
+  })
+
+  test("a response cached with vary: accept keeps one entry per representation", async () => {
+    const served = server()
+      .use(transportCodecs(registry))
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000, vary: ["accept"] }))
+      .get("/price", () => ({ amount: 10 }))
+    await served.fetch(new Request("http://test/price", { headers: { accept: rich.mediaType } }))
+    const plain = await served.fetch(new Request("http://test/price"))
+    expect(plain.headers.get("content-type")).toContain("application/json")
+    const again = await served.fetch(
+      new Request("http://test/price", { headers: { accept: rich.mediaType } }),
+    )
+    expect(again.headers.get("x-nifra-cache")).toBe("HIT")
+    expect(again.headers.get("content-type")).toBe(rich.mediaType)
   })
 })

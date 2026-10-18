@@ -680,8 +680,9 @@ describe("FileStorage list()", () => {
     expect(await storage.list({ limit: 0 })).toEqual([])
   })
 
-  // A directory with read but no search permission lists its names but fails every lstat inside it,
-  // so a walk that strays into it throws. Root ignores the permission, hence the uid skip.
+  // A directory with read but no search permission lists its names but fails every lstat inside it.
+  // Its FIFO is the one entry a walk must stat to type, so a walk that strays into it throws. Root
+  // ignores the permission, hence the uid skip.
   test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "a walk never enters a directory outside the prefix or past the limit",
     async () => {
@@ -690,6 +691,8 @@ describe("FileStorage list()", () => {
       const storage = new FileStorage(root)
       for (const key of ["a/1", "a/2", "z/1"]) await storage.put(key, "x")
       const dir = join(root, "z")
+      expect(Bun.spawnSync(["mkfifo", join(dir, "pipe")]).exitCode).toBe(0)
+      expect(await storage.list({ prefix: "z/" })).toEqual(["z/1"]) // a FIFO is not a key
       await chmod(dir, 0o444)
       try {
         expect(await storage.list({ prefix: "a/" })).toEqual(["a/1", "a/2"])

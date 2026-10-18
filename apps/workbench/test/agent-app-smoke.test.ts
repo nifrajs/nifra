@@ -5,7 +5,12 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { AgentAppClient, type AgentEventView, HttpAgentTransport } from "@nifrajs/agent-app"
+import {
+  AgentAppClient,
+  type AgentEventView,
+  AgentTurnError,
+  HttpAgentTransport,
+} from "@nifrajs/agent-app"
 import type { AgentEvent } from "@nifrajs/agent-protocol"
 import { CodingAgentRpcServer, NifraBackend, ReplayBackend } from "@nifrajs/coding-agent"
 
@@ -110,6 +115,54 @@ describe("workbench SDK smoke", () => {
       ])
       expect(await client.resolveApproval("smoke-a1", false)).toBe(false)
       expect(await client.listApprovals()).toEqual([])
+    } finally {
+      await handle.stop()
+    }
+  })
+
+  test("a turn the host ends with its error frame rejects instead of completing", async () => {
+    // An event over the response limit is the host's terminal turn failure.
+    const failing = new CodingAgentRpcServer({
+      backend: new ReplayBackend({
+        events: [
+          { ...base, seq: 1, at: 1, type: "turn.started", turnId, prompt: "inspect the project" },
+          { ...base, seq: 2, at: 2, type: "assistant.delta", turnId, text: "x".repeat(8_192) },
+        ],
+      }),
+      cwd: process.cwd(),
+      hostname: "127.0.0.1",
+      maxResponseBytes: 4_096,
+    })
+    const handle = await failing.start()
+    try {
+      let fetches = 0
+      const transport = new HttpAgentTransport({
+        endpoint: handle.url,
+        authorize: () => handle.token,
+        fetch: Object.assign(
+          (input: RequestInfo | URL, init?: RequestInit) => {
+            fetches++
+            return fetch(input, init)
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      })
+      const client = new AgentAppClient(transport)
+      await client.createSession({ sessionId })
+      const before = fetches
+      const views: AgentEventView[] = []
+      let failure: unknown
+      try {
+        for await (const view of client.send("inspect the project")) views.push(view)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(AgentTurnError)
+      expect(failure).toMatchObject({ code: "turn_failed" })
+      expect(String(failure)).not.toContain("response limit")
+      expect(views.some((view) => view.kind === "assistant.delta")).toBe(false)
+      // A failed turn is not a broken connection: nothing attaches again.
+      expect(fetches - before).toBe(1)
     } finally {
       await handle.stop()
     }

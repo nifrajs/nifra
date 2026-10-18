@@ -7,7 +7,7 @@
  * Every write is staged beside the root and renamed into place, so a reader sees an object whole.
  */
 import { createHash } from "node:crypto"
-import { constants } from "node:fs"
+import { constants, type Dirent } from "node:fs"
 import {
   type FileHandle,
   lstat,
@@ -726,16 +726,22 @@ export class FileStorage implements StorageAdapter {
     limit: number,
     out: string[],
   ): Promise<void> {
-    let names: string[]
+    let listed: Dirent[]
     try {
-      names = await readdir(dir)
+      listed = await readdir(dir, { withFileTypes: true })
     } catch {
       return // missing root → empty listing
     }
     const entries: { readonly name: string; readonly order: string; readonly kind: string }[] = []
-    for (const name of names) {
+    for (const dirent of listed) {
+      const { name } = dirent
       if (!name.startsWith(namePrefix)) continue
-      const info = await lstat(join(dir, name))
+      // The type readdir reports is the entry's own, as lstat would give it, so a file costs no stat;
+      // only an entry of any other or unrecorded type is stat'ed here.
+      const info =
+        dirent.isFile() || dirent.isDirectory() || dirent.isSymbolicLink()
+          ? dirent
+          : await lstat(join(dir, name))
       if (info.isSymbolicLink()) continue
       // A directory's keys all start with `name/`, so it sorts there among its siblings.
       if (info.isDirectory()) entries.push({ name, order: `${name}/`, kind: "dir" })
@@ -746,8 +752,15 @@ export class FileStorage implements StorageAdapter {
       if (out.length >= limit) return
       // POSIX-join the key segments so listed keys are portable regardless of the host separator.
       const key = prefix === "" ? entry.name : posix.join(prefix, entry.name)
-      if (entry.kind === "dir") await this.walk(join(dir, entry.name), key, "", limit, out)
-      else out.push(key)
+      if (entry.kind === "file") {
+        out.push(key)
+        continue
+      }
+      // That type dates from the readdir: a directory replaced by a symlink since then would take
+      // the walk outside the root, so the path itself is checked again just before descending.
+      const path = join(dir, entry.name)
+      const current = await lstat(path).catch(() => undefined)
+      if (current?.isDirectory() === true) await this.walk(path, key, "", limit, out)
     }
   }
 }

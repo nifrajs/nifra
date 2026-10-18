@@ -604,6 +604,35 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("a query-bearing navigation to a prerendered path renders on demand, as a hard request does", async () => {
+    const calls: Array<{ url: string; header: string | null }> = []
+    Reflect.set(globalThis, "__NIFRA_PRERENDERED__", ["/users/9"])
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const url = String(input)
+          calls.push({ url, header: new Headers(init?.headers).get("x-nifra-data") })
+          return Response.json({ id: url.endsWith("/_data.json") ? "static" : url })
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.navigate("/users/9?tab=posts")
+      expect(r.snapshot().data).toEqual({ id: "/users/9?tab=posts" })
+      await r.navigate("/users/9#bio?not-a-query")
+      expect(r.snapshot().data).toEqual({ id: "static" })
+      expect(calls).toEqual([
+        { url: "/users/9?tab=posts", header: "1" },
+        { url: "/users/9/_data.json", header: null },
+      ])
+    } finally {
+      fetchSpy.mockRestore()
+      Reflect.deleteProperty(globalThis, "__NIFRA_PRERENDERED__")
+    }
+  })
+
   test("default fetchData falls back to the worker when the static _data.json is missing [SSG P2.4]", async () => {
     const calls: string[] = []
     const realFetch = globalThis.fetch

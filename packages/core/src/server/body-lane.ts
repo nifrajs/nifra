@@ -11,8 +11,7 @@ import { isJsonMediaType, isUrlEncodedForm, readBoundedForm } from "./query.ts"
 import {
   headerOf,
   isResponseResult,
-  PRE_DECODED_BODY,
-  type PreDecodedBody,
+  preDecodedBody,
   type ResponseResult,
   TEXT_DECODER,
 } from "./runtime-core.ts"
@@ -52,7 +51,7 @@ export function readBoundedJsonSource<T>(
   onResult?: JsonResultContinuation<T>,
   onError?: JsonErrorContinuation<T>,
 ): Promise<unknown | ResponseResult | T> {
-  const preDecoded = (req as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
+  const preDecoded = preDecodedBody(req)
   if (preDecoded !== undefined) {
     const value =
       preDecoded.byteLength > maxBytes ? plainError(413, "payload_too_large") : preDecoded.value
@@ -237,7 +236,8 @@ export function readBodyFramed<T>(
   formOrigins?: FormOrigins,
 ): Promise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
-  if (!isJsonMediaType(contentType)) {
+  // A body a transport codec decoded keeps its media type; the JSON lane below takes its value.
+  if (!isJsonMediaType(contentType) && preDecodedBody(source) === undefined) {
     // JSON needs a preflight, so CORS judges it; a form body reaches here from any site with cookies.
     if (isFormMediaType(contentType) && !formOriginAllowed(source, formOrigins)) {
       return Promise.resolve(wrapResponse(plainError(403, "forbidden_origin")))

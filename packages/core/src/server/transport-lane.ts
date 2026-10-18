@@ -1,5 +1,9 @@
 /** Opt-in versioned transport integration. Kept outside the server kernel's bare dependency graph. */
-import type { TransportCodec, TransportCodecRegistry } from "../transport-codec.ts"
+import {
+  encodeTransportResponse,
+  type TransportCodec,
+  type TransportCodecRegistry,
+} from "../transport-codec.ts"
 import { readBoundedBytes } from "./body.ts"
 import { jsonError } from "./http.ts"
 import { guardDecodedValue, type ProtoPoisoning } from "./proto-guard.ts"
@@ -14,7 +18,7 @@ interface TransportBodySource {
 
 export type TransportDecodeResult =
   | { readonly matched: false }
-  | { readonly matched: true; readonly value: unknown; readonly byteLength: number }
+  | { readonly matched: true; readonly value: unknown; readonly bytes: Uint8Array }
   | { readonly matched: true; readonly response: Response }
 
 export interface TransportRuntime {
@@ -99,7 +103,7 @@ export function transportCodecs(
         return {
           matched: true,
           value: guardDecodedValue(codec.decode(text), protoPoisoning, acceptRegExp),
-          byteLength: read.bytes.byteLength,
+          bytes: read.bytes,
         }
       } catch {
         return {
@@ -129,36 +133,38 @@ export function transportCodecs(
       if (!decoded.matched) return undefined
       if ("response" in decoded) return decoded.response
 
-      // Re-frame as a plain JSON request whose already-decoded value rides the pre-decoded stash;
-      // the body lane takes the stash verbatim (this lane owns the cap and poisoning policy), so
-      // the placeholder body is never parsed and codec machinery stays out of the kernel.
-      const headers: Record<string, string> = {}
-      request.headers.forEach((value, name) => {
-        headers[name] = value
-      })
-      headers["content-type"] = "application/json"
-      headers["content-length"] = "2"
-      delete headers["transfer-encoding"]
+      // The decoded value rides the pre-decoded stash, which the body lane takes verbatim (this lane
+      // owns the cap and poisoning policy), so codec machinery stays out of the kernel. The request
+      // keeps the bytes and media type it was sent with: a route without a body schema, or a
+      // signature check, reads the payload itself, not a stand-in.
+      const headers = new Headers(request.headers)
+      headers.set("content-length", String(decoded.bytes.byteLength))
+      headers.delete("transfer-encoding")
       const normalized = new Request(request.url, {
         method: request.method,
         headers,
-        body: "{}",
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every reader behind readBoundedBytes yields an unshared buffer, which a Request body accepts.
+        body: decoded.bytes as Uint8Array<ArrayBuffer>,
         signal: request.signal as never,
       })
-      const stash: PreDecodedBody = { value: decoded.value, byteLength: decoded.byteLength }
+      const stash: PreDecodedBody = {
+        value: decoded.value,
+        byteLength: decoded.bytes.byteLength,
+        encoded: decoded.bytes,
+        contentType,
+      }
       Object.defineProperty(normalized, PRE_DECODED_BODY, { value: stash })
       return normalized
     })
     app.afterHandle((result, context) => {
       if (result === undefined || result instanceof Response || isResponseResult(result))
         return result
-      const codec = runtime.responseCodec(context.req.headers.get("accept"))
-      const headers = new Headers(context.set.headers)
-      headers.set("content-type", codec.mediaType)
-      return new Response(codec.encode(result), {
-        status: context.set.status ?? 200,
-        headers,
-      })
+      // The representation depends on `Accept`, so the response says so to every shared cache.
+      return encodeTransportResponse(
+        result,
+        runtime.responseCodec(context.req.headers.get("accept")),
+        { status: context.set.status ?? 200, headers: context.set.headers },
+      )
     })
     return app
   }

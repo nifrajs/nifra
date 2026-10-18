@@ -31,6 +31,16 @@ export interface PreDecodedBody {
   readonly value: unknown
   /** The encoded size, so the route's own body limit still applies to a body decoded before routing. */
   readonly byteLength: number
+  /** The bytes as sent and their media type: the stand-in body is not the payload, so an
+   * idempotency fingerprint must be taken over these. */
+  readonly encoded: Uint8Array
+  readonly contentType: string
+}
+
+/** The stash a transport codec left on a request, if one decoded its body. */
+export function preDecodedBody(request: object): PreDecodedBody | undefined {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only the codec lane and the idempotency prepare step define this key, each with a PreDecodedBody.
+  return (request as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
 }
 
 /**

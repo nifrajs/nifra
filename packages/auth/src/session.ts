@@ -16,7 +16,7 @@ import {
   signValue,
   unsignValue,
 } from "@nifrajs/core/cookies"
-import { REVOKED_SUFFIX, type SessionRecord, type SessionStore } from "./store.ts"
+import { REVOKED_SUFFIX, replaceExisting, type SessionRecord, type SessionStore } from "./store.ts"
 
 /** The cookie + response surface the manager needs - a structural subset of nifra's `Context`, so any
  * `c` satisfies it and it's testable with a stub. */
@@ -302,9 +302,18 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
     if (store !== undefined) {
       if (state.id !== undefined) {
-        const revoked = await store.get(revokedKey(state.id))
-        // Check again after the read: a delayed store operation can outlive both session and marker.
-        if (revoked !== undefined || (previousExpiry !== undefined && previousExpiry <= now()))
+        // A loaded session commits only while its record exists and no logout has marked it. The
+        // record covers a marker already evicted; the marker covers a logout between its two writes.
+        const [current, revoked] = await Promise.all([
+          store.get(state.id),
+          store.get(revokedKey(state.id)),
+        ])
+        // Check again after the reads: a delayed store operation can outlive both session and marker.
+        if (
+          current === undefined ||
+          revoked !== undefined ||
+          (previousExpiry !== undefined && previousExpiry <= now())
+        )
           return
       }
       if (state.regenerate) {
@@ -315,7 +324,12 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       }
       const loaded = state.id !== undefined
       state.id ??= randomId()
-      await store.set(state.id, { data, expiresAt } satisfies SessionRecord)
+      const record = { data, expiresAt } satisfies SessionRecord
+      // A store that can make the renewal conditional lets a logout landing after the checks above
+      // win outright; any other store relies on keeping the marker until it expires (see SessionStore).
+      const replaced = loaded ? replaceExisting(store, state.id, record) : undefined
+      if (replaced === undefined) await store.set(state.id, record)
+      else if (!(await replaced)) return
       // Checked after the write: a revocation that lands before it is seen here, one that lands after
       // it deletes the record itself. Either way the cookie is left alone - the browser may hold a
       // newer session by now, and this response must not replace or clear it.

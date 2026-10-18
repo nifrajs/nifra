@@ -123,9 +123,23 @@ describe("the generated worker, executed", () => {
   /** Never defaults to the real `fetch`: a test that can reach the network can pass without the code. */
   const OFFLINE_FETCH = (): Promise<Response> => Promise.reject(new Error("offline"))
 
+  /** A same-origin response as a worker's `fetch` returns it: `type` is "basic", not "default". */
+  const basic = (
+    body: string,
+    init?: ResponseInit & { readonly redirected?: boolean },
+  ): Response => {
+    const response = new Response(body, init)
+    Object.defineProperty(response, "type", { value: "basic" })
+    if (init?.redirected === true) Object.defineProperty(response, "redirected", { value: true })
+    return response
+  }
+
+  // Install fetches each precache URL by its string path; the fetch handler passes a Request. So
+  // `precache` answers the install and `fetchImpl` everything else.
   const boot = (
     sw: string,
     fetchImpl: (request: Request) => Promise<Response> = OFFLINE_FETCH,
+    precache: (path: string) => Response = (path) => basic(`asset:${path}`),
   ): Scope => {
     const listeners = new Map<string, (event: never) => void>()
     const store = new Map<string, Response>()
@@ -139,12 +153,9 @@ describe("the generated worker, executed", () => {
     const names = new Set<string>()
 
     const cacheFor = (name: string) => ({
-      addAll: async (urls: string[]) => {
+      put: async (key: Request | string, res: Response) => {
         names.add(name)
-        for (const u of urls) store.set(u, new Response(`asset:${u}`))
-      },
-      put: async (req: Request, res: Response) => {
-        store.set(new URL(req.url).pathname, res)
+        store.set(typeof key === "string" ? key : new URL(key.url).pathname, res)
       },
     })
     const caches = {
@@ -191,7 +202,8 @@ describe("the generated worker, executed", () => {
       Response,
       Request,
       URL,
-      fetchImpl,
+      (input: Request | string) =>
+        typeof input === "string" ? Promise.resolve(precache(input)) : fetchImpl(input),
     )
     return scope
   }
@@ -229,6 +241,46 @@ describe("the generated worker, executed", () => {
     await run(scope, "activate", {})
     expect(scope.deleted).toEqual(["nifra:v0"])
     expect(scope.claimed).toBe(true)
+  })
+
+  test("install refuses a precache response it may not share, and stores nothing", async () => {
+    for (const bad of [
+      basic("Alice's offline page", { headers: { "cache-control": "private, no-store" } }),
+      basic("Alice's offline page", { headers: { "cache-control": 'private="set-cookie"' } }),
+      basic("Alice's offline page", { headers: { "cache-control": "max-age=60, NO-STORE" } }),
+      basic("the login page", { redirected: true }),
+      basic("missing", { status: 404 }),
+      new Response("opaque-ish"),
+    ]) {
+      const scope = boot(SW, OFFLINE_FETCH, (path) => (path === "/offline" ? bad : basic(path)))
+      await expect(run(scope, "install", {})).rejects.toThrow()
+      expect(scope.store.size).toBe(0)
+    }
+    // A directive that only mentions the words is not one of them.
+    const scope = boot(SW, OFFLINE_FETCH, (path) =>
+      basic(path, { headers: { "cache-control": 'max-age=60, community="no-store"' } }),
+    )
+    await run(scope, "install", {})
+    expect(scope.store.has("/offline")).toBe(true)
+  })
+
+  test("a runtime miss stores only a response it may share", async () => {
+    for (const [cacheControl, stored] of [
+      ["public, max-age=31536000, immutable", true],
+      ["private, max-age=60", false],
+      ["no-store", false],
+    ] as const) {
+      const online = () =>
+        Promise.resolve(basic("fresh", { headers: { "cache-control": cacheControl } }))
+      const scope = boot(SW, online)
+      await run(scope, "fetch", { request: new Request("https://app.test/assets/entry-abc123.js") })
+      // The put is fire-and-forget; one turn lets it land.
+      await Promise.resolve()
+      expect({ cacheControl, stored: scope.store.has("/assets/entry-abc123.js") }).toEqual({
+        cacheControl,
+        stored,
+      })
+    }
   })
 
   test("activate leaves caches outside its namespace alone", async () => {

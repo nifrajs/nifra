@@ -616,6 +616,60 @@ describe("query execution lanes", () => {
     expect(result.text).toBe("query exceeded the time limit")
   })
 
+  test("both lanes answer an INTEGER past 2^53 exactly", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const fileDb = new Database(join(directory, "ids.db"))
+    const memoryDb = new Database(":memory:")
+    try {
+      for (const db of [fileDb, memoryDb]) {
+        db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+        db.run("INSERT INTO habits (id, name) VALUES (9007199254740993, 'read'), (7, 'run')")
+        const served = serveDatabaseAsMcp(db, {
+          tables: ["habits"],
+          runQuery: { authorize: (ctx) => ctx.request.headers.get("x-key") === "secret" },
+        })
+        try {
+          for (const shape of ["rows", "aggregate"] as const) {
+            const sql =
+              shape === "rows"
+                ? "SELECT id, 1 FROM habits ORDER BY name"
+                : "SELECT max(id) AS id, count(*) AS n FROM habits"
+            const result = await call(served, "run_query", { sql }, auth)
+            expect(result.isError).toBe(false)
+            expect(JSON.parse(result.text).rows).toEqual(
+              shape === "rows"
+                ? [
+                    { id: "9007199254740993", "1": 1 },
+                    { id: 7, "1": 1 },
+                  ]
+                : [{ id: "9007199254740993", n: 2 }],
+            )
+          }
+        } finally {
+          await served.close?.()
+        }
+      }
+    } finally {
+      fileDb.close()
+      memoryDb.close()
+      await removeDirectoryAfterWorkerExit(directory)
+    }
+  })
+
+  test("a driver that reads bigints on request is asked to", async () => {
+    let exact = false
+    const statement = {
+      setReadBigInts(enabled: boolean) {
+        exact = enabled
+      },
+      all: () => [{ id: exact ? 9007199254740993n : 9007199254740992 }],
+    }
+    const session = openQuerySession({ prepare: () => statement, run: () => undefined })
+    expect(await session.run("SELECT id FROM t", Date.now() + 60_000)).toEqual([
+      { id: "9007199254740993" },
+    ])
+  })
+
   test("a file-backed database runs off a reusable worker, never a per-call snapshot", async () => {
     const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
     const path = join(directory, "app.db")

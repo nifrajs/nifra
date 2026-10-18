@@ -10,12 +10,13 @@ const SECRET = "test-secret-at-least-32-bytes-ok!"
 
 class ExpiringKV implements KVNamespaceLike {
   private readonly entries = new Map<string, { value: string; expiration?: number }>()
-  beforeMarkerRead: (() => Promise<void>) | undefined
+  beforeGet: (() => Promise<void>) | undefined
+  afterPut: ((key: string) => Promise<void>) | undefined
 
   constructor(private readonly now: () => number) {}
 
   async get(key: string): Promise<string | null> {
-    if (key.endsWith(".revoked")) await this.beforeMarkerRead?.()
+    await this.beforeGet?.()
     const entry = this.entries.get(key)
     if (entry?.expiration !== undefined && entry.expiration <= Math.floor(this.now() / 1000)) {
       this.entries.delete(key)
@@ -24,9 +25,9 @@ class ExpiringKV implements KVNamespaceLike {
     return entry?.value ?? null
   }
 
-  put(key: string, value: string, options?: { readonly expiration?: number }): Promise<void> {
+  async put(key: string, value: string, options?: { readonly expiration?: number }): Promise<void> {
     this.entries.set(key, { value, ...options })
-    return Promise.resolve()
+    await this.afterPut?.(key)
   }
 
   delete(key: string): Promise<void> {
@@ -108,7 +109,7 @@ test("a refused rolling commit cannot extend the fence for a later retry", async
   expect((await sessions.get(context(cookie).c)).isEmpty).toBe(true)
 })
 
-test("expiry during a marker read cannot revive a held session", async () => {
+test("expiry during a commit's store read cannot revive a held session", async () => {
   const { sessions, kv, advanceTo } = setup()
   const cookie = await login(sessions)
   const held = context(cookie)
@@ -118,7 +119,7 @@ test("expiry during a marker read cannot revive a held session", async () => {
   advanceTo(3_000)
   const reached = Promise.withResolvers<void>()
   const resume = Promise.withResolvers<void>()
-  kv.beforeMarkerRead = async () => {
+  kv.beforeGet = async () => {
     reached.resolve()
     await resume.promise
   }
@@ -127,7 +128,7 @@ test("expiry during a marker read cannot revive a held session", async () => {
     await reached.promise
     advanceTo(122_500)
   } finally {
-    kv.beforeMarkerRead = undefined
+    kv.beforeGet = undefined
     resume.resolve()
     await commit
   }
@@ -141,16 +142,17 @@ test("a logout that lands after a renewal's write leaves no session and no cooki
   const cookie = await login(sessions)
   const held = context(cookie)
   const live = await sessions.get(held.c)
-  let markerReads = 0
-  // The commit reads the marker before its write and again after it; the logout lands in between.
-  kv.beforeMarkerRead = async () => {
-    if (++markerReads < 2) return
-    kv.beforeMarkerRead = undefined
+  let landed = false
+  // The logout lands right after the renewal's own write of the session record.
+  kv.afterPut = async (key) => {
+    if (key.endsWith(".revoked")) return
+    kv.afterPut = undefined
     await sessions.destroy(context(cookie).c)
+    landed = true
   }
   await sessions.commit(held.c, live)
 
-  expect(markerReads).toBe(2)
+  expect(landed).toBe(true)
   expect(held.writes).toEqual([])
   expect((await sessions.get(context(cookie).c)).isEmpty).toBe(true)
 })

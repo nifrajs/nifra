@@ -251,7 +251,8 @@ export interface CreateWebAppOptions<Env = unknown> {
   readonly cssLoading?: CssLoadingMode
   /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's
    * `prerendered.json`). Handed over as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
-   * into a prerendered route fetches its static `_data.json` instead of hitting the worker. A set over
+   * into a prerendered route fetches its static `_data.json` instead of hitting the worker, unless the
+   * target carries a query string, which renders on demand as a hard request does. A set over
    * 4 KB of JSON is served once from `/__nifra/prerendered.json?v=<version>`, cacheable for good, and
    * pages hand over only that URL; `prerenderRoutes` writes the file into a static output. */
   readonly prerenderedPaths?: readonly string[]

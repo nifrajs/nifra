@@ -145,6 +145,44 @@ describe("self-healing and UI extension seams", () => {
     }
   })
 
+  test("a worker that exits cleanly before it is ready fails start", async () => {
+    const worker = new IsolatedExtensionWorker({
+      modulePath: resolve(import.meta.dir, "fixtures/isolated-exit-extension.ts"),
+      cwd: process.cwd(),
+    })
+    try {
+      await expect(worker.start()).rejects.toThrow("isolated extension worker exited with code 0")
+      await expect(worker.invokeTool("echo", {})).rejects.toThrow("exited with code 0")
+    } finally {
+      await worker.close()
+    }
+  })
+
+  test("a worker that never becomes ready fails start at its deadline and is stopped", async () => {
+    const worker = new IsolatedExtensionWorker({
+      modulePath: resolve(import.meta.dir, "fixtures/isolated-stalled-extension.ts"),
+      cwd: process.cwd(),
+      startTimeoutMs: 200,
+    })
+    try {
+      await expect(worker.start()).rejects.toThrow("worker was not ready within 200ms")
+      expect(await Reflect.get(worker, "process")?.exited).not.toBe(0)
+    } finally {
+      await worker.close()
+    }
+  })
+
+  test("startTimeoutMs is range-checked like timeoutMs", () => {
+    expect(
+      () =>
+        new IsolatedExtensionWorker({
+          modulePath: resolve(import.meta.dir, "fixtures/isolated-extension.ts"),
+          cwd: process.cwd(),
+          startTimeoutMs: 0,
+        }),
+    ).toThrow("startTimeoutMs is invalid")
+  })
+
   test("preserves a worker stack only in local diagnostics mode", async () => {
     const defaultWorker = new IsolatedExtensionWorker({
       modulePath: resolve(import.meta.dir, "fixtures/isolated-error-extension.ts"),
