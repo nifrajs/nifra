@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { EventEmitter } from "node:events"
 import { server } from "@nifrajs/core"
 import {
   handle,
@@ -393,6 +394,100 @@ describe("streamHandle()", () => {
     expect(captured.chunks).toEqual([])
     expect(captured.ended).toBe(true)
     expect(source.cancelled()).toBe(true)
+  })
+
+  interface PressuredStream extends ResponseStream {
+    readonly emitter: EventEmitter
+    writes: number
+    ended: boolean
+    destroyed: boolean
+  }
+
+  // Every write reports backpressure; `onFull` runs once the handler has subscribed to the stream.
+  const pressuredStream = (onFull: (stream: PressuredStream) => void): PressuredStream => {
+    const emitter = new EventEmitter()
+    const stream: PressuredStream = {
+      emitter,
+      writes: 0,
+      ended: false,
+      destroyed: false,
+      write() {
+        stream.writes++
+        queueMicrotask(() => onFull(stream))
+        return false
+      },
+      end() {
+        stream.ended = true
+      },
+      once: (event, listener) => emitter.once(event, listener),
+      off: (event, listener) => emitter.off(event, listener),
+    }
+    return stream
+  }
+
+  const listeners = (stream: PressuredStream): number =>
+    ["drain", "close", "error"].reduce((n, event) => n + stream.emitter.listenerCount(event), 0)
+
+  const endlessSource = (): { stream: ReadableStream<Uint8Array>; cancelled: () => boolean } => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(8))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    return { stream, cancelled: () => cancelled }
+  }
+
+  test("a client that goes away during backpressure ends the stream and cancels the producer", async () => {
+    for (const event of ["close", "error"]) {
+      mockAwslambda()
+      const source = endlessSource()
+      const out = pressuredStream((stream) => stream.emitter.emit(event))
+      await streamHandle(server().get("/", () => new Response(source.stream)))(v2Event(), out)
+      expect(out.writes).toBe(1)
+      expect(out.ended).toBe(true)
+      expect(source.cancelled()).toBe(true)
+      expect(listeners(out)).toBe(0)
+    }
+  })
+
+  test("a client already gone when backpressure starts is not waited on", async () => {
+    mockAwslambda()
+    const source = endlessSource()
+    const out = pressuredStream(() => {})
+    out.destroyed = true
+    await streamHandle(server().get("/", () => new Response(source.stream)))(v2Event(), out)
+    expect(out.writes).toBe(1)
+    expect(out.ended).toBe(true)
+    expect(source.cancelled()).toBe(true)
+    expect(listeners(out)).toBe(0)
+  })
+
+  test("a drain resumes the body and leaves no listener behind", async () => {
+    mockAwslambda()
+    const source = tickingSource()
+    const out = pressuredStream((stream) => stream.emitter.emit("drain"))
+    await streamHandle(server().get("/", () => new Response(source.stream)))(v2Event(), out)
+    expect(out.writes).toBe(3)
+    expect(out.ended).toBe(true)
+    expect(listeners(out)).toBe(0)
+  })
+
+  test("a stream that cannot signal drain is written straight through", async () => {
+    const captured = mockAwslambda()
+    const source = tickingSource()
+    const out = makeStream(captured)
+    const write = out.write
+    out.write = (chunk) => {
+      write(chunk)
+      return false
+    }
+    await streamHandle(server().get("/", () => new Response(source.stream)))(v2Event(), out)
+    expect(Buffer.concat(captured.chunks).toString("utf8")).toBe("tickticktick")
+    expect(captured.ended).toBe(true)
   })
 
   test("a broken app streams the flat 500", async () => {

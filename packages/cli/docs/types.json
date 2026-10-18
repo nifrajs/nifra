@@ -12410,7 +12410,7 @@
     "name": "ResponseStream",
     "kind": "interface",
     "package": "@nifrajs/aws-lambda",
-    "signature": "export interface ResponseStream {\n    write(chunk: Uint8Array | string): unknown;\n    end(): unknown;\n    once?(event: string, listener: () => void): unknown;\n}",
+    "signature": "export interface ResponseStream {\n    write(chunk: Uint8Array | string): unknown;\n    end(): unknown;\n    once?(event: string, listener: () => void): unknown;\n    off?(event: string, listener: () => void): unknown;\n    readonly destroyed?: boolean;\n}",
     "doc": "/** The Node `Writable`-shaped stream Lambda hands a streaming handler. Declared structurally. */"
   },
   {
