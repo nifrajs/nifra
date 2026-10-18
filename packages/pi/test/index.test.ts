@@ -257,7 +257,8 @@ process.stdin.on("data", (chunk) => {
     const script = `
 process.stdin.on("data", (chunk) => {
   if (!String(chunk).includes("prompt")) return
-  const echoed = "401 Unauthorized: invalid api key " + process.env.GROQ_API_KEY + " via " + process.env.PROXY_TOKEN
+  const echoed = "401 Unauthorized: invalid api key " + process.env.GROQ_API_KEY + " via " + process.env.PROXY_TOKEN +
+    " pin " + process.env.PROXY_PIN + " after attempt " + process.env.PROXY_RETRIES + " verbose " + process.env.PROXY_VERBOSE
   process.stdout.write(JSON.stringify({ type: "extension_error", error: echoed }) + "\\n")
   const failed = { role: "assistant", content: [], stopReason: "error", errorMessage: echoed }
   process.stdout.write(JSON.stringify({ type: "message_end", message: failed }) + "\\n")
@@ -267,7 +268,13 @@ process.stdin.on("data", (chunk) => {
     const backend = new PiBackend({
       command: process.execPath,
       rpcArgs: ["-e", script],
-      env: { GROQ_API_KEY: groq, PROXY_TOKEN: opaque },
+      env: {
+        GROQ_API_KEY: groq,
+        PROXY_TOKEN: opaque,
+        PROXY_PIN: "k3y9z",
+        PROXY_RETRIES: "1",
+        PROXY_VERBOSE: "true",
+      },
     })
     try {
       await backend.createSession({ cwd: process.cwd(), sessionId: "value-echo" })
@@ -283,9 +290,12 @@ process.stdin.on("data", (chunk) => {
       const failures = events.filter((event) => event.type === "session.failed")
       expect(failures.length).toBe(2)
       for (const text of [JSON.stringify(rejection), JSON.stringify(failures)]) {
-        expect(text).toContain("invalid api key [REDACTED] via [REDACTED]")
+        expect(text).toContain(
+          "invalid api key [REDACTED] via [REDACTED] pin [REDACTED] after attempt 1 verbose true",
+        )
         expect(text).not.toContain("SYNTHETIC")
         expect(text).not.toContain(opaque)
+        expect(text).not.toContain("k3y9z")
       }
     } finally {
       await backend.close("value-echo")

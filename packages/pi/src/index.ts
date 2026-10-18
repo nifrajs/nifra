@@ -1109,17 +1109,30 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bnvapi-[A-Za-z0-9_-]{20,}/g,
 ]
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
 /** Mask every value Pi was given except its base environment - the credentials it may echo, in any
- * shape - then the key shapes a provider or proxy could hand back on its own. */
+ * shape - then the key shapes a provider or proxy could hand back on its own. A value under six
+ * characters is masked only where it stands alone, and a number or yes/no word is left: masking
+ * every `1` or `true` would leave nothing of the diagnostic. */
 function credentialRedactor(env: Readonly<Record<string, string>>): (text: string) => string {
   const base = new Set(PI_BASE_ENV)
-  const secrets = Object.entries(env)
-    .filter(([name, value]) => !base.has(name) && value.length >= 6)
+  const values = Object.entries(env)
+    .filter(([name, value]) => !base.has(name) && value.length > 0)
     .map(([, value]) => value)
     .sort((a, b) => b.length - a.length)
+  const secrets = values.filter((value) => value.length >= 6)
+  const short = values.filter(
+    (value) => value.length < 6 && !/^(?:\d+|true|false|yes|no|on|off)$/i.test(value),
+  )
+  const standalone =
+    short.length === 0
+      ? undefined
+      : new RegExp(`(?<![A-Za-z0-9])(?:${short.map(escapeRegExp).join("|")})(?![A-Za-z0-9])`, "g")
   return (text) => {
     let masked = text
     for (const secret of secrets) masked = masked.replaceAll(secret, "[REDACTED]")
+    if (standalone !== undefined) masked = masked.replace(standalone, "[REDACTED]")
     for (const pattern of CREDENTIAL_PATTERNS) masked = masked.replace(pattern, "[REDACTED]")
     return masked
   }
