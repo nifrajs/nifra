@@ -4345,13 +4345,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const method = source.method
       if (method !== "GET" && method !== "HEAD") markTransportCap(source, entry.bodyLimit)
     }
-    // An idempotency route meets its dedupe gate inside the program (`runIdempotencyGate`), so the
-    // gate runs after authentication and under the request deadline. Its lanes render a `Response`,
-    // which the gate stores. Non-idempotent routes skip straight to the lanes - no added cost.
+    // An idempotency route meets its dedupe gate inside the program, so the gate runs after
+    // authentication and under the request deadline. Its lanes render a `Response`, which the gate
+    // stores. Non-idempotent routes skip straight to the lanes - no added cost.
     // The runtime is always present when a route resolved idempotency (enforced at registration).
     if (entry.idempotent !== undefined && this.idempotencyRuntime !== undefined) {
       const answered = this.runMatchedLanes(
-        this.idempotencyRuntime.prepare(requestOf(source), platform),
+        this.idempotencyRuntime.prepare(source, platform),
         platform,
         entry,
         params,

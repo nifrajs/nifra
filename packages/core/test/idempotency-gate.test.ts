@@ -126,6 +126,47 @@ describe("the idempotency gate runs inside the route program", () => {
     expect((await send()).headers.get("x-nifra-idempotent-replay")).toBe("1")
   })
 
+  test("a hook on an auth-first route reads the body under the route's cap", async () => {
+    const app = server()
+      .use(idempotency())
+      .beforeHandle(async (c) => new Response(String((await c.req.text()).length)))
+      .post(
+        "/pay",
+        {
+          bodyLimit: 64,
+          validationOrder: "auth-before-validation",
+          idempotency: { scope: "request", namespace: "public:pay" },
+        },
+        () => "charged",
+      )
+    const response = await app.fetch(
+      new Request("http://test/pay", {
+        method: "POST",
+        headers: { "idempotency-key": "k5" },
+        body: "x".repeat(1_000),
+      }),
+    )
+    expect(response.status).toBe(413)
+  })
+
+  test("a request the gate cannot prepare fails as a rejection, not a throw", async () => {
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => "charged")
+    const request = new Request("http://test/pay", {
+      method: "POST",
+      headers: { "idempotency-key": "k6" },
+      body: "{}",
+    })
+    // An exceptional request source, modeled without replacing the global Request constructor.
+    Object.defineProperty(request, "signal", { value: {} })
+    let answered: unknown
+    expect(() => {
+      answered = app.fetch(request)
+    }).not.toThrow()
+    await expect(answered).rejects.toThrow("signal")
+  })
+
   const hanging = new Promise<never>(() => {})
   const stalled: IdempotencyStore = Object.assign(new MemoryIdempotencyStore(), {
     begin: () => hanging,

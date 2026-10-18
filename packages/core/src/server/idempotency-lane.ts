@@ -31,12 +31,12 @@ import {
 } from "../internal/effect-execution.ts"
 import type { InternalHandler, RouteEntry } from "../internal/route-execution.ts"
 import type { IdempotencyResume } from "../internal/route-program.ts"
-import { readBoundedBytes, UNLIMITED_BODY_BYTES } from "./body.ts"
+import { markTransportCap, readBoundedBytes, transportCapOf, UNLIMITED_BODY_BYTES } from "./body.ts"
 import type { Platform, RouteSchema } from "./context.ts"
 import { jsonError, urlPartsOf } from "./http.ts"
 import { INSTALL_IDEMPOTENCY } from "./install.ts"
-import { CONTEXT_REQUEST, PRE_DECODED_BODY, preDecodedBody } from "./runtime-core.ts"
-import type { AnyServer, IdentityPlugin, RawContext } from "./server.ts"
+import { CONTEXT_REQUEST, PRE_DECODED_BODY, preDecodedBody, requestOf } from "./runtime-core.ts"
+import type { AnyServer, IdentityPlugin, RawContext, RequestSource } from "./server.ts"
 
 /** Requests whose route handler was entered. One rejected before it - by auth, validation, a guard -
  * began no execution, so its key is released rather than stored. */
@@ -46,6 +46,8 @@ const HANDLER_ENTERED = new WeakSet<Request>()
 interface PreparedRequest {
   readonly body: ReadableStream<Uint8Array> | null
   readonly platform: Platform | undefined
+  /** Why the request could not be copied; the gate rethrows it inside the route's error handling. */
+  readonly failure?: { readonly error: unknown }
 }
 
 const PREPARED = new WeakMap<Request, PreparedRequest>()
@@ -82,7 +84,7 @@ export interface IdempotencyRuntime {
    * The request an idempotency route runs on: the same headers, and a body teed so the gate can
    * fingerprint one half after authentication while the route still reads the other.
    */
-  prepare(request: Request, platform: Platform | undefined): Request
+  prepare(source: RequestSource, platform: Platform | undefined): Request
   /**
    * The dedupe gate, entered from inside the route program: after authentication on an auth-first
    * route, first on any other, and always under the request deadline. It reads the key, fingerprints
@@ -228,20 +230,33 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       })
     },
 
-    prepare(request, platform) {
-      const [route, gate] = request.body === null ? [null, null] : request.body.tee()
-      const init: StreamingRequestInit = {
-        method: request.method,
-        headers: request.headers,
-        signal: request.signal,
-        body: route,
-        duplex: "half",
+    prepare(source, platform) {
+      const request = requestOf(source)
+      let prepared = request
+      let state: PreparedRequest
+      try {
+        const [route, gate] = request.body === null ? [null, null] : request.body.tee()
+        const init: StreamingRequestInit = {
+          method: request.method,
+          headers: request.headers,
+          signal: request.signal,
+          body: route,
+          duplex: "half",
+        }
+        prepared = new Request(request.url, init)
+        state = { body: gate, platform }
+        const decoded = preDecodedBody(request)
+        if (decoded !== undefined)
+          Object.defineProperty(prepared, PRE_DECODED_BODY, { value: decoded })
+      } catch (error) {
+        // A request that cannot be copied (a body an earlier hook already read) still enters the
+        // program, so the failure surfaces from the gate like any other route error.
+        state = { body: null, platform, failure: { error } }
       }
-      const prepared = new Request(request.url, init)
-      const decoded = preDecodedBody(request)
-      if (decoded !== undefined)
-        Object.defineProperty(prepared, PRE_DECODED_BODY, { value: decoded })
-      PREPARED.set(prepared, { body: gate, platform })
+      // The lanes, and any hook an auth-first route runs before the gate, read this copy's body.
+      const cap = transportCapOf(source)
+      if (cap !== undefined) markTransportCap(prepared, cap)
+      PREPARED.set(prepared, state)
       return prepared
     },
 
@@ -251,6 +266,7 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       const prepared = PREPARED.get(req)
       if (config === undefined || prepared === undefined)
         throw new Error("idempotency: the route ran on an unprepared request")
+      if (prepared.failure !== undefined) throw prepared.failure.error
       const maxBodyBytes = entry.bodyLimit ?? UNLIMITED_BODY_BYTES
       const refuse = (response: Response): Response => {
         releaseGateHalf(prepared.body)

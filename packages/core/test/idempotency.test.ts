@@ -331,13 +331,20 @@ describe("effect-aware idempotency fallback", () => {
     expect(runs).toBe(1)
   })
 
-  test("buffered Request construction failure cannot reserve a key", () => {
+  test("a request the gate cannot copy fails at the gate and reserves no key", async () => {
     const store = new MemoryIdempotencyStore()
-    const { runtime } = configFor(store)
+    const { runtime, config } = configFor(store)
     const request = post({ amount: 1 }, "invalid-signal")
     // Model an exceptional request source without replacing the global Request constructor.
     Object.defineProperty(request, "signal", { value: {} })
-    expect(() => runtime.prepare(request, undefined)).toThrow("signal")
+    let resumed = false
+    await expect(
+      gate(runtime, config, request, async () => {
+        resumed = true
+        return new Response(null, { status: 204 })
+      }),
+    ).rejects.toThrow("signal")
+    expect(resumed).toBe(false)
     expect(store.size).toBe(0)
   })
 

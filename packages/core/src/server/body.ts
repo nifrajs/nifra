@@ -462,6 +462,12 @@ export function markTransportCap(source: object, maxBytes: number): void {
   ;(source as { [TRANSPORT_CAP]?: number })[TRANSPORT_CAP] = maxBytes
 }
 
+/** The cap {@link markTransportCap} set on `source`, for a copy that must keep it. */
+export function transportCapOf(source: object): number | undefined {
+  const cap: unknown = Reflect.get(source, TRANSPORT_CAP)
+  return typeof cap === "number" ? cap : undefined
+}
+
 /**
  * Enforce a marked source's transport byte cap on **direct user reads** of its request
  * (`c.req.json()`, `c.req.arrayBuffer()`, the raw `body` stream, `clone()`, ...), without swapping
