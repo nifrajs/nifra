@@ -278,7 +278,9 @@ export class ApprovalManager {
     }
     const pending: PendingApproval = { request, decided, settle, timer }
     this.pendingApprovals.set(request.id, pending)
-    await this.options.onRequired?.(request)
+    // Whichever lands first: a broadcast that never settles must not hold the caller past the
+    // approval's own timeout, denial, or close.
+    await Promise.race([this.options.onRequired?.(request), decided])
     return pending
   }
 }
