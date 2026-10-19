@@ -2,8 +2,14 @@
 
 ## 5.5.0
 
+### Minor Changes
+
+- aed4a76: `QUERY` is a standard method. A route registered with `method("QUERY", path, schema, handler)` from `@nifrajs/core/methods` joins the typed registry, validates a `body` schema, and is listed in `METHODS`; `all()` now covers it too. It has no builder of its own. On Bun it is served by the portable router, since Bun's route table has no slot for it, while other routes on the same path stay on the table. `securityBaseline()` holds a QUERY route to its read rules; its body is bounded like any other.
+
 ### Patch Changes
 
+- 6b6f027: An `onRequest` hook that throws or rejects now fails the request the way a handler error does. Every `onError` the app registered sees the error, in order, with a context that has no route params, and the first answer is sent; when none answers, the error is logged and the client gets the default `500`. A thrown `Response` or `status()` value is sent as if returned. This covers `app.fetch`, the Node lane (including native `onNodeRequest` twins) and the WebSocket handshake. Previously the failure rejected `app.fetch`, so a rate-limit store outage skipped the app's error handling and the runtime answered with its own bare `500`.
+- 87d8abd: An `onError` hook that throws or rejects no longer makes `app.fetch` reject. The error it was handling and its own error are both logged, later `onError` hooks are skipped, and the client gets the default `500` (a failed `authenticate()` stage keeps its `503`). An `onError` answer that cannot be rendered is logged and answered `500` the same way. A thrown `Response` or `status()` value is sent as if returned, still held to the route's response contract. This covers route errors, `onRequest` failures, the Node lane and the WebSocket handshake. Previously nothing was logged and the runtime answered with its own bare `500`.
 - ba2941c: A `c.text()` response adopted by body hooks remains single-use even when a hook substitutes its body without consuming the original stream. Returning that response again now answers 500 without its earlier request's cookies, on Web and Node-direct rendering alike; compression could previously replay a user's session cookie and send plain bytes with a stale gzip header.
 - e37e683: The router's cache of matched dynamic paths bounds the total length of the paths it holds (256 Ki characters) as well as their count. 2048 paths of 8 KB each used to stay resident as 16 MiB; they now hold under 1 MiB on Bun, Node and Deno, with lookups at the same speed.
 - 3dba57e: On Bun and Deno, `onResponseBody` hooks now receive the body of a `c.text()` response and of a buffered rendered page, as they already did on Node; before, those went to `onResponseRaw`. A middleware that reads bodies, such as `compression()` or `etag()`, no longer drains them as streams there: a gzipped 33 KB text body or page serves 2.31x / 2.40x faster on Bun and the same on Deno and Node.

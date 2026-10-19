@@ -2,7 +2,9 @@
 
 ## 5.5.0
 
-No changes in this release.
+### Patch Changes
+
+- aed4a76: `QUERY` is a known method label in metrics and span names instead of `_OTHER`, and `nifra check` counts the QUERY route `all()` registers.
 
 ## 5.4.0
 

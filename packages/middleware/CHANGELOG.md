@@ -2,6 +2,10 @@
 
 ## 5.5.0
 
+### Minor Changes
+
+- aed4a76: `csrf()` lets a QUERY request through without a token by default, as it does a `GET`: a cross-site page cannot send one, since a form has no such method and a cross-origin `fetch` with it must pass a CORS preflight. List `"QUERY"` in `methods` to guard it anyway. `cors()` includes `QUERY` in the methods its preflight advertises by default.
+
 ### Patch Changes
 
 - ba2941c: The portable/Deno weak ETag fingerprint hashes strings as UTF-8, including replacement of unpaired surrogates, without allocating an encoded copy. String and raw-byte responses now fingerprint UTF-8 consistently; switching between text `Ã©` and raw UTF-8 `é` could previously answer an incorrect 304.

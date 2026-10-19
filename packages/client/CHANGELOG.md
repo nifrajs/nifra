@@ -4,6 +4,7 @@
 
 ### Minor Changes
 
+- aed4a76: The typed client calls a QUERY route as `$query(body, options?)`, the body positional and checked against the route's schema as for `post()`, so a route segment named `query` stays an ordinary path. `NAMESPACED_KEYS` lists `$query`, and `reservedKeyFor()` reports a segment spelled `$query`, which is reached by calling its parent node. A `$` in a segment passed to a parent-node call is no longer percent-encoded, so that call reaches a static segment written with one. QUERY joins the default retry methods.
 - 9e6a0a5: `.ws()` on the typed client takes `validateReceive`: the route's `sendSchema`, checked against every received frame. A frame that fails is not delivered, and `onError` gets a `TypeError` naming the issues with the frame as its `cause`. Frames keep their arrival order with an async schema too. Without the option nothing changes.
   
   `nifra check` reports `NF-S009` (info) for an `app.ws()` route whose inline `message()` calls `JSON.parse` with no `messageSchema`.

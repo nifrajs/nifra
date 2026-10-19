@@ -35,6 +35,7 @@
 
 ### Patch Changes
 
+- aed4a76: `QUERY` is a known method label in metrics and span names instead of `_OTHER`, and `nifra check` counts the QUERY route `all()` registers.
 - c5755cf: Source scans honor Git ignores for Unicode and special filenames. Git input/output uses NUL separators and exact paths, preserving literal POSIX backslashes and leading/trailing whitespace.
 
 - 9e6a0a5: `nifra build`, `nifra dev` and `buildClient`/`buildServer` print each bundler error with its file, line and column and the source line, where they printed the message alone. The message that `buildServer` throws without a client entry now names the `client` option.
