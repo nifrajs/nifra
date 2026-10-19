@@ -65,6 +65,7 @@ import {
   isLoopbackHost,
 } from "./dev-session.ts"
 import { createSsrGraph, type SsrGraph } from "./dev-ssr-graph.ts"
+import { formatBuildLog } from "./diagnostic.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { DEV_ENTRY_FILE } from "./internal/dev-reserved.ts"
@@ -634,11 +635,6 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
  * Overlapping runs are collapsed - a save during a bundle queues exactly one re-run, so a burst of edits
  * cannot pile up builds behind each other.
  */
-/**
- * Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError
- * whose message is just "Bundle failed" - the actionable part (which file, which import) lives in
- * `.errors`. Surface it, or the guard reports a failure while hiding the reason.
- */
 /** A Host header's name: lowercased, without its port or IPv6 brackets. */
 function hostName(host: string): string {
   const name = host.trim().toLowerCase()
@@ -648,9 +644,14 @@ function hostName(host: string): string {
   return colon === -1 ? name : name.slice(0, colon)
 }
 
+/**
+ * Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError
+ * whose message is just "Bundle failed" - the actionable part (which file, which import) lives in
+ * `.errors`. Surface it, or the guard reports a failure while hiding the reason.
+ */
 export function buildFailureDetail(err: unknown): string {
   return err instanceof AggregateError && err.errors.length > 0
-    ? err.errors.map((e) => `  ${e instanceof Error ? e.message : String(e)}`).join("\n")
+    ? err.errors.map((e) => `  ${formatBuildLog(e).replaceAll("\n", "\n  ")}`).join("\n")
     : `  ${err instanceof Error ? err.message : String(err)}`
 }
 

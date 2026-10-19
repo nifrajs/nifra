@@ -56,6 +56,13 @@ export type _CacheOutput = Expect<
   Equal<NamedReg["/cache/:key"]["DELETE"]["output"], { name: string }>
 >
 
+// QUERY is a standard method: it joins the registry with its body, and all() covers it.
+const queried = server().use(method("QUERY", "/search", { body: nameBody }, (c) => c.body))
+type QueriedReg = RegistryOf<typeof queried>
+export type _QueryKeys = Expect<Equal<keyof QueriedReg["/search"], "QUERY">>
+export type _QueryBody = Expect<Equal<QueriedReg["/search"]["QUERY"]["body"], { name: string }>>
+export type _AllQuery = Expect<Equal<AllReg["/named"]["QUERY"]["body"], { name: string }>>
+
 // --- inside a group -------------------------------------------------------------------------
 const grouped = server().group("/api", (api) => api.use(all("/ping", () => ({ pong: true }))))
 

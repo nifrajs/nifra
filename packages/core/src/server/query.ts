@@ -161,12 +161,17 @@ export function isJsonMediaType(contentType: string): boolean {
   )
 }
 
-/** `application/x-www-form-urlencoded`, with or without a charset suffix. */
+/** `application/x-www-form-urlencoded`, with or without parameters, in any case (RFC 9110 8.3.1). */
 export function isUrlEncodedForm(contentType: string): boolean {
-  return (
+  if (
     contentType === "application/x-www-form-urlencoded" ||
     contentType.startsWith("application/x-www-form-urlencoded;")
-  )
+  ) {
+    return true
+  }
+  const semi = contentType.indexOf(";")
+  const essence = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
+  return essence === "application/x-www-form-urlencoded"
 }
 
 const FORM_DECODER = new TextDecoder()

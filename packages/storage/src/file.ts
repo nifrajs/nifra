@@ -726,12 +726,7 @@ export class FileStorage implements StorageAdapter {
     limit: number,
     out: string[],
   ): Promise<void> {
-    let listed: Dirent[]
-    try {
-      listed = await readdir(dir, { withFileTypes: true })
-    } catch {
-      return // missing root → empty listing
-    }
+    const listed = await this.directoryEntries(dir, prefix)
     const entries: { readonly name: string; readonly order: string; readonly kind: string }[] = []
     for (const dirent of listed) {
       const { name } = dirent
@@ -761,6 +756,47 @@ export class FileStorage implements StorageAdapter {
       const path = join(dir, entry.name)
       const current = await lstat(path).catch(() => undefined)
       if (current?.isDirectory() === true) await this.walk(path, key, "", limit, out)
+    }
+  }
+
+  private async directoryEntries(dir: string, key: string): Promise<Dirent[]> {
+    try {
+      await this.assertNoSymlinkPath(this.root, dir, key)
+      const rootBefore = await lstat(this.root)
+      await this.assertTrustedAncestorChain(this.root, key)
+      // Windows cannot open a directory with the ordinary file flags. Check both identities around
+      // enumeration there. Linux reads through the validated descriptor; other Unix platforms also
+      // verify the path against that descriptor after enumeration, before returning any names.
+      if (process.platform === "win32") {
+        const before = await lstat(dir)
+        if (!before.isDirectory()) return []
+        const entries = await readdir(dir, { withFileTypes: true })
+        await this.assertNoSymlinkPath(this.root, dir, key)
+        const [after, rootAfter] = await Promise.all([lstat(dir), lstat(this.root)])
+        if (
+          before.dev !== after.dev ||
+          before.ino !== after.ino ||
+          rootBefore.dev !== rootAfter.dev ||
+          rootBefore.ino !== rootAfter.ino
+        )
+          throw this.symlinkError(key)
+        await this.pinRoot(key)
+        return entries
+      }
+      const handle = await this.openContained(this.root, dir, key)
+      if (handle === null) return []
+      try {
+        const path = process.platform === "linux" ? `/proc/self/fd/${handle.fd}` : dir
+        const entries = await readdir(path, { withFileTypes: true })
+        await this.assertOpenedContained(this.root, dir, key, handle, rootBefore)
+        await this.pinRoot(key)
+        return entries
+      } finally {
+        await handle.close()
+      }
+    } catch (error) {
+      if (isMissing(error)) return []
+      throw error
     }
   }
 }

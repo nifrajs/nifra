@@ -225,6 +225,8 @@ interface GzipStream {
 
 interface Zlib {
   createGzip(): GzipStream
+  gzipSync?(body: string | Uint8Array): Uint8Array
+  gzip?(body: string | Uint8Array, done: (error: Error | null, result: Uint8Array) => void): void
   readonly constants: { readonly Z_SYNC_FLUSH: number }
 }
 
@@ -253,6 +255,52 @@ function zlibModule(): Zlib | undefined {
   zlibLookup = { zlib }
   return zlib
 }
+
+/** Up to which length (UTF-16 units for a string) a buffered body is gzipped inline, then by one call. */
+export interface GzipPlan {
+  readonly inlineMax: number
+  readonly oneShotMax: number
+}
+
+/**
+ * Where each way of gzipping a buffered JSON body measured fastest over HTTP (16 connections). Inline
+ * `gzipSync` skips the hand-off that dominates a small body: on Bun up to 4 KiB (2 KB: 1.32x node:zlib's
+ * one-shot `gzip`), past which the one-shot runs on the thread pool in parallel with the loop (32 KB:
+ * 2.11x inline). Deno always gzips inline (256 KB: 1.54x `CompressionStream`): its one-shot swells the
+ * process by ~250 MB, after which inline calls serve at 0.6x. Node never gzips inline (16 KB: 0.44x),
+ * and its one-shot beats `CompressionStream` only up to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). These bodies
+ * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
+ */
+export function gzipPlanFor(runtime: {
+  readonly Bun?: unknown
+  readonly Deno?: unknown
+}): GzipPlan {
+  if (runtime.Bun !== undefined)
+    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY }
+  if (runtime.Deno !== undefined)
+    return { inlineMax: Number.POSITIVE_INFINITY, oneShotMax: Number.POSITIVE_INFINITY }
+  return { inlineMax: -1, oneShotMax: 8 * 1024 }
+}
+
+/** Gzip a buffered body by `plan`, through `zlib` where it has the call, else `CompressionStream`. */
+export function gzipBuffered(
+  body: string | Uint8Array,
+  plan: GzipPlan,
+  zlib: Pick<Zlib, "gzipSync" | "gzip"> | undefined,
+): Uint8Array | Promise<Uint8Array> {
+  const length = typeof body === "string" ? body.length : body.byteLength
+  const gzipSync = zlib?.gzipSync
+  if (gzipSync !== undefined && length <= plan.inlineMax) return gzipSync.call(zlib, body)
+  const gzip = zlib?.gzip
+  if (gzip !== undefined && length <= plan.oneShotMax) {
+    return new Promise((resolve, reject) => {
+      gzip.call(zlib, body, (error, result) => (error === null ? resolve(result) : reject(error)))
+    })
+  }
+  return gzipBytes(typeof body === "string" ? GZIP_ENCODER.encode(body) : body)
+}
+
+let planLookup: GzipPlan | undefined
 
 /** `CompressionStream` holds deflate output until its window fills or the input closes, so a
  * streamed shell would not reach the client until the whole page did. A sync flush after each
@@ -360,13 +408,15 @@ export function compression(options: CompressionOptions = {}) {
           // Both representations name the header they vary on, so a shared cache keeps them apart.
           addGzipVary(headers)
           if (!acceptsGzip(req.header("accept-encoding"))) return undefined
-          const bytes = typeof body === "string" ? GZIP_ENCODER.encode(body) : body
-          return gzipBytes(bytes).then((compressed) => {
+          const encoded = (compressed: Uint8Array): Uint8Array => {
             headers.set("content-encoding", "gzip")
             headers.delete("content-length")
             weakenEtag(headers)
             return compressed
-          })
+          }
+          planLookup ??= gzipPlanFor(globalThis)
+          const compressed = gzipBuffered(body, planLookup, zlibModule())
+          return compressed instanceof Promise ? compressed.then(encoded) : encoded(compressed)
         },
         onResponseRaw: (response, req) =>
           compressRawResponse(response, req, threshold, isCompressible),

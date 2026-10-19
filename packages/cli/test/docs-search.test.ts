@@ -5,6 +5,7 @@ import {
   renderDocsResult,
   searchSections,
   splitSections,
+  splitSubsections,
 } from "../src/docs-search.ts"
 import { MAX_QUERY_CHARS, MAX_QUERY_TERMS, queryTermGroups } from "../src/search-terms.ts"
 
@@ -80,6 +81,55 @@ describe("renderDocsResult", () => {
     expect(out).toContain("(trimmed")
   })
 
+  test("a long page answers with the subsection the query names, not its first screen", () => {
+    const filler = (word: string) => `${word} `.repeat(400)
+    const page = [
+      "## Nifra - Sockets",
+      "Sockets carry typed frames.",
+      "### Lifecycle",
+      filler("open close"),
+      "```ts",
+      "### not a heading inside a fence",
+      "```",
+      "### Answering a server heartbeat",
+      "Reply to a ping frame with a pong frame.",
+      "### Pub/sub",
+      filler("topic"),
+    ].join("\n")
+    const out = renderDocsResult(page, "heartbeat", 1)
+    expect(out).toContain("Sockets carry typed frames.")
+    expect(out).toContain(
+      "### Answering a server heartbeat\n\nReply to a ping frame with a pong frame.",
+    )
+    expect(out).not.toContain("open close")
+    expect(out).toContain("Also on this page: Lifecycle | Pub/sub")
+    expect(out).not.toContain("not a heading inside a fence |")
+    // No subsection matches: the page head is trimmed as before, with the subsections listed.
+    expect(renderDocsResult(page, "sockets", 1)).toContain(
+      "Subsections: Lifecycle | Answering a server heartbeat | Pub/sub",
+    )
+  })
+
+  test("a fence closes only on its own marker, at least as long, with nothing after it", () => {
+    const headings = (lines: string[]) =>
+      splitSubsections(lines.join("\n")).parts.map((part) => part.heading)
+    expect(
+      headings([
+        "````md",
+        "```ts",
+        "### inside the outer fence",
+        "```",
+        "### still inside",
+        "````",
+        "### After",
+      ]),
+    ).toEqual(["After"])
+    expect(headings(["~~~", "```", "### inside tildes", "~~~", "### After"])).toEqual(["After"])
+    expect(headings(["```", "``` ts", "### inside", "```", "### After"])).toEqual(["After"])
+    // Inline code at the start of a line opens nothing.
+    expect(headings(["```a` b", "### Real"])).toEqual(["Real"])
+  })
+
   test("no match → actionable message", () => {
     expect(renderDocsResult(DOC, "zzz-nothing", 3)).toContain("section index")
   })
@@ -103,5 +153,13 @@ describe("bundled corpus", () => {
     const out = renderDocsResult(corpus as string, "websockets pub sub", 2)
     expect(out).toContain("##")
     expect(out.length).toBeLessThan(12_000) // the point: a slice, never the 150 KB dump
+  })
+
+  test("a typed-messages query reaches the WebSockets typed example, untrimmed", async () => {
+    const corpus = (await loadDocsCorpus()) ?? ""
+    const out = renderDocsResult(corpus, "websocket typed messages schema", 3)
+    // The worked example is the answer, whole: its client half ends the subsection.
+    expect(out).toContain("### Typed messages, end to end")
+    expect(out).toContain("const unhandled: never = msg")
   })
 })

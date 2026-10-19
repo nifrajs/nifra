@@ -33,6 +33,7 @@ describe("cors", () => {
     )
     expect(res.status).toBe(204)
     expect(res.headers.get("access-control-allow-methods")).toContain("POST")
+    expect(res.headers.get("access-control-allow-methods")).toContain("QUERY")
     expect(res.headers.get("access-control-allow-headers")).toBe("content-type")
     expect(res.headers.get("access-control-max-age")).toBe("600")
     expect(res.headers.get("access-control-allow-origin")).toBe("*")

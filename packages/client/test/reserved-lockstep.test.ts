@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  NAMESPACED_KEYS,
   RESERVED_EXACT_KEYS,
   RESERVED_KEY_READOUT,
   RESERVED_VERB_KEYS,
@@ -7,6 +8,8 @@ import {
   testClient,
 } from "@nifrajs/client"
 import { server } from "@nifrajs/core"
+import { method } from "@nifrajs/core/methods"
+import { t } from "@nifrajs/schema"
 
 /**
  * `reserved.ts` is what the types, the runtime proxy, and the `nifra check` lint all claim to
@@ -84,6 +87,32 @@ describe("reserved key list is in lockstep with the runtime proxy", () => {
     expect((resolved as Record<string, unknown>).get).toBeUndefined()
   })
 
+  test("`$query` calls the QUERY method with its body; `query` and `$query` paths stay reachable", async () => {
+    const app = server()
+      .use(
+        method("QUERY", "/things", { body: t.object({ q: t.string() }) }, (c) => ({
+          via: "query",
+          body: c.body,
+        })),
+      )
+      .get("/things/query", () => ({ via: "path" }))
+      .get("/things/$query", () => ({ via: "path" }))
+    const api = testClient<typeof app>(app)
+    expect((await api.things.$query({ q: "nifra" })).data).toEqual({
+      via: "query",
+      body: { q: "nifra" },
+    })
+    expect((await api.things.query.get()).data).toEqual({ via: "path" })
+    // A literal `$query` segment is reached by calling its parent, like any reserved key. The type
+    // offers no node for a colliding segment, so the cast states what the runtime proxy is.
+    // biome-ignore lint/plugin/noChainedTypeAssertions: a path node is a callable proxy at runtime; the test asserts exactly that.
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a path node is a callable proxy at runtime; the test asserts exactly that.
+    const parent = api.things as unknown as (segment: string) => {
+      get(): Promise<{ data: unknown }>
+    }
+    expect((await parent("$query").get()).data).toEqual({ via: "path" })
+  })
+
   test("a name that is not reserved resolves as a path segment", async () => {
     // The control: without this, a proxy that intercepted EVERYTHING would pass every test above.
     const app = server().get("/things/remove", () => ({ via: "path" }))
@@ -97,6 +126,8 @@ describe("reservedKeyFor", () => {
     expect(reservedKeyFor("Delete")).toBe("delete")
     expect(reservedKeyFor("DELETE")).toBe("delete")
     expect(reservedKeyFor("subscribe")).toBe("subscribe")
+    expect(reservedKeyFor("$query")).toBe("$query")
+    expect(reservedKeyFor("$Query")).toBeUndefined()
     // Exact keys are compared exactly by the proxy, so `Subscribe` reaches the PATH and is fine.
     expect(reservedKeyFor("Subscribe")).toBeUndefined()
     expect(reservedKeyFor("remove")).toBeUndefined()
@@ -109,7 +140,7 @@ describe("reservedKeyFor", () => {
   })
 
   test("the readout names every reserved key, so a diagnostic quoting it stays complete", () => {
-    for (const key of [...RESERVED_VERB_KEYS, ...RESERVED_EXACT_KEYS])
+    for (const key of [...RESERVED_VERB_KEYS, ...RESERVED_EXACT_KEYS, ...NAMESPACED_KEYS])
       expect(RESERVED_KEY_READOUT).toContain(key)
   })
 })

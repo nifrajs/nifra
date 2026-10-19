@@ -25,6 +25,8 @@ bun examples/auth-react/server.ts        # http://localhost:3000
 - **Guard**: `requireUser(session, "userId", { redirectTo })` throws a redirect; nifra returns it.
 - **CSRF**: `app.use(csrf())` - Origin check on unsafe methods.
 
-Production swaps `MemorySessionStore` → `KVSessionStore(env.SESSIONS)` and sets `SESSION_SECRET` (at
-least 32 bytes: `openssl rand -base64 32`); nothing else changes. Without it, each process signs with a
-random secret, so sessions end when the server restarts (see `auth.ts`).
+Production swaps `MemorySessionStore` for a strongly consistent shared `SessionStore` and sets
+`SESSION_SECRET` (at least 32 bytes: `openssl rand -base64 32`). `KVSessionStore` is refused because
+Workers KV can serve stale sessions and missing logout markers after revocation. Use a transactional
+adapter or Durable Object instead. Without `SESSION_SECRET`, each process signs with a random secret,
+so sessions end when the server restarts (see `auth.ts`).

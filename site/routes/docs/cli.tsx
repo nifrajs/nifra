@@ -553,6 +553,23 @@ nifra migrate --from tailwind --to stylex --dir src`}
         targets with the notes of every release after the one you declare: what an app can observe
         changing on the way up.
       </p>
+      <p>
+        A release recipe names the packages its notes change. When none of them is one the project
+        loads (every group package a <code>package.json</code> names, and what those depend on as
+        installed), the list and the plan say so beside the release: no announced behaviour change
+        for this project, with the packages it does change. A tool such as <code>@nifrajs/cli</code>{" "}
+        counts when it is declared, without its own dependencies, since a release that changes what
+        a tool does names the tool. A release without that list, or a declared package that is not
+        installed, is never marked.
+      </p>
+
+      <h3 id="releases">Releases and support</h3>
+      <p>
+        Behaviour changes ship in minor releases; fixes ship as patches of the latest version and
+        change nothing an app relies on. Only the latest release is supported: security fixes and
+        fixes for data loss ship as patches of it, so move to the latest with{" "}
+        <code>nifra upgrade</code>. <code>SECURITY.md</code> lists the supported versions.
+      </p>
 
       <h2>Scope</h2>
       <p>

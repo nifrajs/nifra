@@ -494,6 +494,8 @@ export interface BuildServerViteOptions {
   readonly styles?: readonly string[] | undefined
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
   readonly copyChunks?: Readonly<Record<string, string>> | undefined
+  /** Every file the build emitted, by request path - baked as `buildAssets` (see `buildServer`). */
+  readonly buildAssets?: readonly string[] | undefined
   /** How framework-owned stylesheet links should activate before hydration (default `"blocking"`). */
   readonly cssLoading?: CssLoadingMode
   readonly resolve?: (file: string) => string
@@ -616,6 +618,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
       routeStyles,
       ...(cssLoading !== undefined ? { cssLoading } : {}),
       ...(options.copyChunks !== undefined ? { copyChunks: options.copyChunks } : {}),
+      ...(options.buildAssets !== undefined ? { buildAssets: options.buildAssets } : {}),
     }),
   )
 
@@ -732,6 +735,7 @@ export const viteBundler: Bundler = {
       ...(input.styles !== undefined ? { styles: input.styles } : {}),
       ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
       ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
+      ...(input.buildAssets !== undefined ? { buildAssets: input.buildAssets } : {}),
       ...(input.plugins ? { vitePlugins: input.plugins } : {}),
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),

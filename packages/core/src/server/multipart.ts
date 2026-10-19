@@ -71,6 +71,8 @@ const FALLBACK_FILE_NAME = "file"
 const MAX_FILE_NAME_LENGTH = 255
 
 const DASH = 45
+const CR = 13
+const LF = 10
 const QUOTE = 34
 const BACKSLASH = 92
 const SLASH = 47
@@ -148,16 +150,46 @@ function failureTable(pattern: Uint8Array): Uint8Array {
   return table
 }
 
-/** What a scan for `--boundary` found: how many, and whether the last one closes the body. */
+/**
+ * What a scan for `--boundary` found: how many, how many of them close a part with no content, and
+ * whether the last one closes the body.
+ */
 interface Delimiters {
   readonly count: number
+  readonly empty: number
   readonly closed: boolean
 }
 
-/** `end` is the index after the last delimiter, or -1 when there was none. */
-function delimiters(bytes: Uint8Array, count: number, end: number): Delimiters {
-  return { count, closed: end !== -1 && bytes[end] === DASH && bytes[end + 1] === DASH }
+/** The most delimiters a scan counts: past either budget the body is refused unparsed. */
+interface DelimiterLimits {
+  readonly filled: number
+  readonly empty: number
 }
+
+/** `end` is the index after the last delimiter, or -1 when there was none. */
+function delimiters(bytes: Uint8Array, count: number, empty: number, end: number): Delimiters {
+  return { count, empty, closed: end !== -1 && bytes[end] === DASH && bytes[end + 1] === DASH }
+}
+
+/**
+ * Whether the delimiter at `at` closes a part with no content: the blank line ending the part's
+ * headers is followed at once by the CRLF that opens the delimiter. A part whose own content ends
+ * in a blank line reads the same, which only spends the empty budget instead of the filled one.
+ */
+function closesEmptyPart(bytes: Uint8Array, at: number): boolean {
+  return (
+    at >= 6 &&
+    bytes[at - 1] === LF &&
+    bytes[at - 2] === CR &&
+    bytes[at - 3] === LF &&
+    bytes[at - 4] === CR &&
+    bytes[at - 5] === LF &&
+    bytes[at - 6] === CR
+  )
+}
+
+const overLimits = (count: number, empty: number, limits: DelimiterLimits): boolean =>
+  count - empty > limits.filled || empty > limits.empty
 
 /** Knuth-Morris-Pratt from `start`: linear in the input whatever the pattern repeats. */
 function scanFrom(
@@ -165,24 +197,27 @@ function scanFrom(
   pattern: Uint8Array,
   start: number,
   counted: number,
+  countedEmpty: number,
   lastEnd: number,
-  limit: number,
+  limits: DelimiterLimits,
 ): Delimiters {
   const table = failureTable(pattern)
   const size = pattern.length
   let count = counted
+  let empty = countedEmpty
   let end = lastEnd
   for (let i = start, k = 0; i < bytes.length; i++) {
     const byte = bytes[i]
     while (k > 0 && byte !== pattern[k]) k = table[k - 1]!
     if (byte === pattern[k]) k++
     if (k === size) {
+      if (count > 0 && closesEmptyPart(bytes, i + 1 - size)) empty++
       end = i + 1
-      if (++count > limit) break
+      if (overLimits(++count, empty, limits)) break
       k = 0
     }
   }
-  return delimiters(bytes, count, end)
+  return delimiters(bytes, count, empty, end)
 }
 
 /**
@@ -194,10 +229,15 @@ function scanFrom(
  * the verify loop re-read the same bytes (dashes against a boundary of dashes) spends a budget of
  * one pass over the input, then the scan continues with the linear matcher.
  */
-function scanDelimiters(bytes: Uint8Array, pattern: Uint8Array, limit: number): Delimiters {
+function scanDelimiters(
+  bytes: Uint8Array,
+  pattern: Uint8Array,
+  limits: DelimiterLimits,
+): Delimiters {
   const size = pattern.length
   const last = bytes.length - size
   let count = 0
+  let empty = 0
   let end = -1
   let work = 0
   let i = 0
@@ -207,16 +247,17 @@ function scanDelimiters(bytes: Uint8Array, pattern: Uint8Array, limit: number): 
     let k = 1
     while (k < size && bytes[i + k] === pattern[k]) k++
     if (k === size) {
+      if (count > 0 && closesEmptyPart(bytes, i)) empty++
       i += size
       end = i
-      if (++count > limit) break
+      if (overLimits(++count, empty, limits)) break
       continue
     }
     work += k
-    if (work > bytes.length) return scanFrom(bytes, pattern, i, count, end, limit)
+    if (work > bytes.length) return scanFrom(bytes, pattern, i, count, empty, end, limits)
     i++
   }
-  return delimiters(bytes, count, end)
+  return delimiters(bytes, count, empty, end)
 }
 
 /** True when `value` takes more than `max` bytes as UTF-8. */
@@ -308,8 +349,13 @@ function createReader(
   const maxFiles = limitOf(limits.maxFiles, DEFAULT_MAX_FILES, "maxFiles")
   const maxFieldBytes = limitOf(limits.maxFieldBytes, DEFAULT_MAX_FIELD_BYTES, "maxFieldBytes")
   const maxFileBytes = limitOf(limits.maxFileBytes, UNLIMITED_BODY_BYTES, "maxFileBytes")
-  // Every part sits between two delimiters, and the last delimiter closes the body.
-  const maxDelimiters = maxFields + maxFiles + 1
+  // Every part sits between two delimiters, and the last delimiter closes the body. A part with no
+  // content - a file input left empty, which is dropped below - spends a budget of its own, so an
+  // untouched optional input does not count against the parts that carry something.
+  const delimiterLimits: DelimiterLimits = {
+    filled: maxFields + maxFiles + 1,
+    empty: maxFields + maxFiles,
+  }
 
   const read: SchemaBodyReader = async (source, contentType, maxBodyBytes, protoPoisoning) => {
     const boundary = boundaryOf(contentType)
@@ -335,8 +381,10 @@ function createReader(
     delimiter[0] = DASH
     delimiter[1] = DASH
     for (let i = 0; i < boundary.length; i++) delimiter[i + 2] = boundary.charCodeAt(i)
-    const found = scanDelimiters(bytes, delimiter, maxDelimiters)
-    if (found.count > maxDelimiters) return plainError(413, "too_many_parts")
+    const found = scanDelimiters(bytes, delimiter, delimiterLimits)
+    if (overLimits(found.count, found.empty, delimiterLimits)) {
+      return plainError(413, "too_many_parts")
+    }
     // A body is over when `--boundary--` says so. One that stops short is refused here, because a
     // parser that tolerates it hands back the parts it saw as if they were the whole form.
     if (!found.closed) return INVALID()

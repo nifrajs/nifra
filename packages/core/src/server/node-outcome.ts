@@ -10,6 +10,7 @@ import {
   normalizeBodylessResponse,
   RESPONSE_OWNED_HEADERS,
   rememberRenderedResponse,
+  responseBodyUsed,
   SENT_BODY,
   taggedResponseBody,
 } from "./respond.ts"
@@ -83,7 +84,7 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     )
   }
   if (result instanceof Response) {
-    if (result.bodyUsed) return plainNodeOutcome(SENT_BODY.plain!, EMPTY_RESPONSE_CONTROLS)
+    if (responseBodyUsed(result)) return plainNodeOutcome(SENT_BODY.plain!, EMPTY_RESPONSE_CONTROLS)
     return nodeOutcomeFromResponse(applySetToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)

@@ -4,6 +4,7 @@ import {
   type KVNamespaceLike,
   KVSessionStore,
   type SessionContext,
+  type SessionStore,
 } from "../src/index.ts"
 
 const SECRET = "test-secret-at-least-32-bytes-ok!"
@@ -11,6 +12,7 @@ const SECRET = "test-secret-at-least-32-bytes-ok!"
 class ExpiringKV implements KVNamespaceLike {
   private readonly entries = new Map<string, { value: string; expiration?: number }>()
   beforeGet: (() => Promise<void>) | undefined
+  beforePut: ((key: string) => Promise<void>) | undefined
   afterPut: ((key: string) => Promise<void>) | undefined
 
   constructor(private readonly now: () => number) {}
@@ -26,6 +28,7 @@ class ExpiringKV implements KVNamespaceLike {
   }
 
   async put(key: string, value: string, options?: { readonly expiration?: number }): Promise<void> {
+    await this.beforePut?.(key)
     this.entries.set(key, { value, ...options })
     await this.afterPut?.(key)
   }
@@ -52,7 +55,14 @@ function setup(rolling = true) {
   let time = 1_000
   const now = () => time
   const kv = new ExpiringKV(now)
-  const store = new KVSessionStore(kv, { now })
+  const serialized = new KVSessionStore(kv, { now })
+  // This in-process fixture has coherent reads; real Workers KV does not and is refused by sessions.
+  const store: SessionStore = {
+    consistency: "strong",
+    get: serialized.get.bind(serialized),
+    set: serialized.set.bind(serialized),
+    delete: serialized.delete.bind(serialized),
+  }
   const sessions = createSessions({ secret: SECRET, maxAge: 120, rolling, store, now })
   return {
     kv,
@@ -153,6 +163,34 @@ test("a logout that lands after a renewal's write leaves no session and no cooki
   await sessions.commit(held.c, live)
 
   expect(landed).toBe(true)
+  expect(held.writes).toEqual([])
+  expect((await sessions.get(context(cookie).c)).isEmpty).toBe(true)
+})
+
+test("a renewal whose write outlives its record cannot undo a logout", async () => {
+  const { sessions, kv, advanceTo } = setup()
+  const cookie = await login(sessions)
+  const held = context(cookie)
+  const live = await sessions.get(held.c)
+  advanceTo(120_000)
+  const reached = Promise.withResolvers<void>()
+  const resume = Promise.withResolvers<void>()
+  kv.beforePut = async () => {
+    kv.beforePut = undefined
+    reached.resolve()
+    await resume.promise
+  }
+  const commit = sessions.commit(held.c, live)
+  try {
+    await reached.promise
+    // The record expires while the renewal's write is in flight, so the logout finds nothing to mark.
+    advanceTo(122_000)
+    await sessions.destroy(context(cookie).c)
+  } finally {
+    resume.resolve()
+    await commit
+  }
+
   expect(held.writes).toEqual([])
   expect((await sessions.get(context(cookie).c)).isEmpty).toBe(true)
 })

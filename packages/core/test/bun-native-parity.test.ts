@@ -111,6 +111,23 @@ describe("Bun-native route table agrees with the portable router", () => {
     expect(listened[3]).toContain('"id":"7"')
   })
 
+  test("a path with non-ASCII characters is served from the table under its encoded spelling", async () => {
+    const app = server()
+      .get("/café", () => ({ route: "cafe" }))
+      .get("/日本/:id", (c) => ({ route: "nihon", id: c.params.id }))
+      .get("/:name", (c) => ({ route: "name", name: c.params.name }))
+    expect(nativeKeys(app)).toContain("GET /caf%C3%A9")
+    const { listened, fetched } = await answers(app, [
+      ["GET", encodeURI("/café")],
+      ["GET", encodeURI("/日本/7")],
+      ["GET", "/cafe"],
+    ])
+    expect(listened).toEqual(fetched)
+    expect(listened[0]).toContain('"route":"cafe"')
+    expect(listened[1]).toContain('"id":"7"')
+    expect(listened[2]).toContain('"route":"name"')
+  })
+
   test("a part-literal segment is matched as written and outranks a bare parameter", async () => {
     const app = server()
       .get("/files/:name.json", (c) => ({ route: "json", params: c.params }))

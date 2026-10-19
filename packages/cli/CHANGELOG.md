@@ -1,5 +1,77 @@
 # @nifrajs/cli
 
+## 5.5.0
+
+### Minor Changes
+
+- 9e6a0a5: An app that serves only some of its pages on some hosts can say so with `createHostPolicy()` from `@nifrajs/web`, and the build's own files stay reachable on those hosts. A rule names the hosts (a list or a predicate), the page routes they get, any other paths (`paths`), and whether they get the build's files (`buildAssets`, on by default). A host no rule names is not restricted. A refused request answers `404` with `cache-control: no-store`, or what `refuse` returns.
+  
+  - `createWebApp({ hostPolicy, buildAssets })` runs the policy before `use()` middleware, mounts and pages, on Bun and on Node's direct lane.
+  - `hostPolicy` in `nifra.config.ts` is applied by `nifra build` to every target's generated server entry, static files included: the Bun, Deno and Cloudflare entries check it before serving a file, and `@nifrajs/node`'s `static` reader takes a new `allow(host, pathname)` option the Node entry sets. Cloudflare's `_routes.json` then sends every file, the client bundle included, through the worker. Vercel serves the client bundle and `public/` files from its CDN before the function runs, so there the policy covers pages and other routes only.
+  - The server manifest exports `buildAssets` (every file the client build emitted and every public file) and `isBuildAsset(pathname)`. `buildServer` takes the manifest `buildClient` returned as `client`, which sets the entry, styles and this set from it; `clientEntry` stays and wins when both are given.
+  - `checkHostReach()` from `@nifrajs/web/build` renders pages on a host and fetches every same-origin file they reference (scripts and their imports, stylesheets and their `url()`s, preloads, icons, images), expecting `200`, then expects each `refused` path to answer `404`. `nifra smoke` runs it for each entry of a fixture's new `hosts` list.
+  
+  Apps without a host policy are unchanged.
+- 9e6a0a5: `nifra doctor` (and `nifra check`, as `NF-D002`) counts the nifra a `link:` or `file:` repository outside the workspace installs in its own `node_modules`. That repository loads its own copy whatever the workspace installs, so two live-linked repositories that each pin one version, at different versions, are now reported as mixed versions.
+  
+  `nifra upgrade` and `--list` mark a release that announces no behaviour change for the packages a project loads: a release recipe may name the packages its notes change (`affects`), and a project that loads none of them sees that beside the release. 5.4.0 names `@nifrajs/node`, `@nifrajs/web` and `@nifrajs/cli`.
+- 9e6a0a5: One module inside `frontend/` or `backend/` can be declared shared where it is: name it `*.shared.ts` (any script extension), or list its path under `"nifra": { "zones": { "shared": [...] } }`. It is then held to the shared zone's rules, so it may import only shared code and packages, and `nifra check` reports each import that breaks them. A `shared` entry inside one of those folders was refused before; entries for other zones still are, and the refusal now says which entry may name such a path. A file listed under another zone keeps that zone whatever its name.
+  
+  NF-C028 now says which remedy applies when server code imports a frontend module: when the module imports only shared code and packages, it names the rename and the config entry that share it in place; otherwise it names the first import that keeps it from being shared, and says to move what both sides need into `shared/`.
+- 9e6a0a5: `.ws()` on the typed client takes `validateReceive`: the route's `sendSchema`, checked against every received frame. A frame that fails is not delivered, and `onError` gets a `TypeError` naming the issues with the frame as its `cause`. Frames keep their arrival order with an async schema too. Without the option nothing changes.
+  
+  `nifra check` reports `NF-S009` (info) for an `app.ws()` route whose inline `message()` calls `JSON.parse` with no `messageSchema`.
+  
+  `nifra_docs` answers a query that matches a long page with that page's lead, the `###` subsections the query matches, and the headings of the rest, where it returned the page's first 2,800 characters. The WebSockets guide gains a typechecked example (`nifra_example`) with discriminated-union `messageSchema` and `sendSchema`, the client's `.ws()` handle, an exhaustive `switch` with a `never` check, and a heartbeat the client answers.
+- ed55d22: `nifra check` reports an identity-sensitive package installed at more than one version as NF-C046, an error, instead of NF-C009. NF-C009 now covers only copies of one version, the duplicates a `singleCopy` declaration collapses, so a severity override on NF-C009 no longer changes how a version skew is reported. Its fix names the one version to install (`nifra upgrade <version>` in each install root for nifra's own packages) and no longer suggests a `singleCopy` declaration, which never covers a skew.
+  
+  `nifra upgrade` finds a linked package that loads another nifra version when its workspace hoists nifra to the workspace root, and through the workspace packages it depends on. It resolves each package from the linked package's real path, walking up through every `node_modules` as Node and Bun do, instead of reading only the linked package's own folder, and prints one upgrade command per install root.
+  
+  NF-D003 compares a `file:` package's `devDependencies` with what bun.lock recorded. Bun installs a `file:` package's devDependencies and never refreshes them, so a stale entry there installed an old version unreported.
+  
+  `nifra doctor`'s production-readiness table reads the source of `file:`, `link:` and workspace packages the app imports, and of those they import, so a setting a shared server factory applies counts as configured. The evidence names the package it came from. Registry installs and nifra's own packages are not read.
+  
+  NF-S002 no longer reports a comparison between two `const`s initialized from configuration reads (`const a = process.env.A_KEY`), such as a startup check that two keys differ. It reports names ending in `serviceKey`, `privateKey`, `signingKey`, `masterKey` and `encryptionKey` as secrets, which it missed before.
+
+### Patch Changes
+
+- aed4a76: `QUERY` is a known method label in metrics and span names instead of `_OTHER`, and `nifra check` counts the QUERY route `all()` registers.
+- c5755cf: Source scans honor Git ignores for Unicode and special filenames. Git input/output uses NUL separators and exact paths, preserving literal POSIX backslashes and leading/trailing whitespace.
+
+- 9e6a0a5: `nifra build`, `nifra dev` and `buildClient`/`buildServer` print each bundler error with its file, line and column and the source line, where they printed the message alone. The message that `buildServer` throws without a client entry now names the `client` option.
+- 9dbb277: `nifra upgrade 5.5.0` pins every Nifra package to 5.5.0 and an app's `react-server-dom-webpack` to 19.3.1, and its notes list what an app or a client sees differently after the upgrade.
+- 10a7854: `nifra verify` prints a line on stderr as each gate starts and finishes, with the gate's time, and the summary shows each gate's time and the total. A long run shows which gate it is on, and a slow gate can be found. The JSON result (`--json`, the `nifra_verify` MCP tool) gains `durationMs` on each gate that ran and on the result.
+- Updated dependencies [9e6a0a5]
+- Updated dependencies [c3ba1cb]
+- Updated dependencies [df7ef2e]
+- Updated dependencies [b8595b1]
+- Updated dependencies [c37575c]
+- Updated dependencies [6cc9e11]
+- Updated dependencies [9e6a0a5]
+- Updated dependencies [28dd544]
+- Updated dependencies [662afb0]
+- Updated dependencies [662afb0]
+- Updated dependencies [98347c2]
+- Updated dependencies [9fd49ec]
+- Updated dependencies [61113d8]
+- Updated dependencies [506a387]
+- Updated dependencies [9e6a0a5]
+- Updated dependencies [389e1b6]
+- Updated dependencies [662afb0]
+- Updated dependencies [a11fe77]
+- Updated dependencies [fa5b67c]
+- Updated dependencies [9e6a0a5]
+  - @nifrajs/web@5.5.0
+  - @nifrajs/core@5.5.0
+  - @nifrajs/mcp-db@5.5.0
+  - @nifrajs/client@5.5.0
+  - @nifrajs/i18n@5.5.0
+  - @nifrajs/mcp@5.5.0
+  - @nifrajs/schema@5.5.0
+  - @nifrajs/testing@5.5.0
+  - @nifrajs/agent-review@5.5.0
+  - @nifrajs/runner@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

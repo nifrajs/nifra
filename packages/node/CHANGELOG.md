@@ -1,5 +1,25 @@
 # @nifrajs/node
 
+## 5.5.0
+
+### Minor Changes
+
+- 9e6a0a5: An app that serves only some of its pages on some hosts can say so with `createHostPolicy()` from `@nifrajs/web`, and the build's own files stay reachable on those hosts. A rule names the hosts (a list or a predicate), the page routes they get, any other paths (`paths`), and whether they get the build's files (`buildAssets`, on by default). A host no rule names is not restricted. A refused request answers `404` with `cache-control: no-store`, or what `refuse` returns.
+  
+  - `createWebApp({ hostPolicy, buildAssets })` runs the policy before `use()` middleware, mounts and pages, on Bun and on Node's direct lane.
+  - `hostPolicy` in `nifra.config.ts` is applied by `nifra build` to every target's generated server entry, static files included: the Bun, Deno and Cloudflare entries check it before serving a file, and `@nifrajs/node`'s `static` reader takes a new `allow(host, pathname)` option the Node entry sets. Cloudflare's `_routes.json` then sends every file, the client bundle included, through the worker. Vercel serves the client bundle and `public/` files from its CDN before the function runs, so there the policy covers pages and other routes only.
+  - The server manifest exports `buildAssets` (every file the client build emitted and every public file) and `isBuildAsset(pathname)`. `buildServer` takes the manifest `buildClient` returned as `client`, which sets the entry, styles and this set from it; `clientEntry` stays and wins when both are given.
+  - `checkHostReach()` from `@nifrajs/web/build` renders pages on a host and fetches every same-origin file they reference (scripts and their imports, stylesheets and their `url()`s, preloads, icons, images), expecting `200`, then expects each `refused` path to answer `404`. `nifra smoke` runs it for each entry of a fixture's new `hosts` list.
+  
+  Apps without a host policy are unchanged.
+
+### Patch Changes
+
+- 44ea5a4: Static files answer a `HEAD`, and a `304` for the tag remembered for the file's settled version, from the file's stat without reading it. For files up to 256 KiB these run 1.22-1.59x faster on the Node reader, 1.24-1.89x on `servePublicDir()` under Bun, and 1.11-1.57x on the Deno entry. A snapshot over 4 KiB is now proven unchanged by a restat instead of hashed again, so an 8-24 KiB file serves 1.02-1.15x faster on Node and Bun; the Deno entry keeps 24 KiB, where a stat costs more. `contentTags()` takes the cut as `rehashMax`.
+- 1c159f1: A JSON request body on Node parses as its read settles, and an asynchronous response clears its in-flight count with one promise step instead of three. On the HTTP benchmark's `POST /users` route (body schema) that is about 3% more requests per second; an aborted upload still rejects its read through the request's `close` and `error` events.
+- 662afb0: A static file's strong `ETag` now always names the bytes sent with it. `servePublicDir()`, `@nifrajs/node`'s `static` option and the generated Deno entry tag a file of up to 256 KiB from the same whole read they serve it from, so an in-place write during the request can no longer pair new bytes with the old tag. A larger file streams without an automatic `ETag`, as a write could reach it after any separate hash pass. Once its last change is more than 2 seconds old it carries `Last-Modified` for `If-Modified-Since` revalidation, but no `If-Range` resumes it: a guarded `Range` request gets the whole file, and an unguarded one still gets its range. A remembered tag is reused without hashing a snapshot over 24 KiB when a second `stat` after the read shows the file unchanged. `contentTags().ofFile()`, which tags a file over `CONTENT_TAG_MAX` by its identity, now mixes a random per-instance salt into that tag, so two servers no longer issue one tag for different files that share an inode, size and times. `@nifrajs/core/static-file` adds `CONTENT_SNAPSHOT_MAX`, `ContentTags.ofSnapshot()` and `streamedLastModifiedOf()`.
+- 4e7f053: A client that leaves partway through a declared request body is let go at once on Node. Node reports the early end of the stream as a parse error, and the adapter's `clientError` handling waited for the in-flight response before closing the connection - but that response was waiting for the rest of the body, so the request stayed in flight until `stop()` force-closed it at the drain deadline, and every graceful shutdown sat out the full drain. The connection now closes as soon as the request it cut off has no finished response, so the body read rejects (the JSON body lane answers its flat 400) and the request ends. A body read that starts after the connection is already gone also rejects instead of waiting forever.
+
 ## 5.4.0
 
 ### Minor Changes

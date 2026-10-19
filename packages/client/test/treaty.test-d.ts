@@ -309,6 +309,17 @@ wsApi.chat.ws({ query: { tag: ["a", "b"], page: 2, room: undefined } })
 // @ts-expect-error a query value is a scalar or an array of scalars
 wsApi.chat.ws({ query: { filter: { nested: true } } })
 
+// validateReceive takes the route's sendSchema, or any schema producing its frame type; one producing
+// another shape is refused, since the handle would deliver it typed as the route's frame
+wsApi.chat.ws({ validateReceive: chatOut })
+declare const otherOut: StandardSchemaV1<unknown, { other: boolean }>
+wsApi.chat.ws({
+  // @ts-expect-error a received-frame schema whose output is not the route's frame
+  validateReceive: otherOut,
+})
+// a route without a sendSchema delivers unknown, so any schema fits it
+wsApi.rooms({ room: "a" }).ws({ validateReceive: otherOut })
+
 // @ts-expect-error sending a frame that violates the messageSchema input
 chat.send({ say: 1 })
 // @ts-expect-error an HTTP-only route has no .ws()

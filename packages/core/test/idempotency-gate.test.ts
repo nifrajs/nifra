@@ -12,20 +12,254 @@ import { richWireCodec } from "../src/transport-codec-rich.ts"
 import { transportCodecs } from "../src/transport-plugin.ts"
 
 /** A length-less body that hands over a chunk on every pull and never ends. */
-function endlessPost(url: string, headers: Record<string, string>) {
+function endlessPost(
+  url: string,
+  headers: Record<string, string>,
+  cancellation: "resolve" | "reject" | "pending" = "resolve",
+) {
   let chunks = 0
+  let cancelled = false
   const body = new ReadableStream<Uint8Array>({
     pull(controller) {
       chunks++
       controller.enqueue(new TextEncoder().encode(" "))
     },
+    cancel() {
+      cancelled = true
+      if (cancellation === "reject")
+        return Promise.reject(new Error("producer cancellation failed"))
+      if (cancellation === "pending") return new Promise<void>(() => {})
+      return undefined
+    },
   })
   const init: RequestInit & { duplex: "half" } = { method: "POST", headers, body, duplex: "half" }
   const request = new Request(url, init)
-  return { request, chunks: () => chunks }
+  return { request, chunks: () => chunks, cancelled: () => cancelled }
 }
 
 describe("the idempotency gate runs inside the route program", () => {
+  for (const mode of ["authentication", "key", "limit", "deadline", "hook-read"] as const) {
+    test(`cancels the request producer after ${mode} refusal`, async () => {
+      const app = server({ maxBodyBytes: 4, requestTimeoutMs: mode === "deadline" ? 1 : 0 }).use(
+        idempotency(),
+      )
+      if (mode === "authentication") app.authenticate({ id: "deny", run: () => rejected() })
+      if (mode === "hook-read")
+        app.beforeHandle(async (c) => {
+          await c.req.text()
+        })
+      app.post(
+        "/pay",
+        {
+          validationOrder:
+            mode === "hook-read" || mode === "authentication"
+              ? "auth-before-validation"
+              : "validate-before-auth",
+          idempotency: {
+            scope: "request",
+            namespace: () =>
+              mode === "deadline" ? new Promise<string>(() => {}) : "principal:pay",
+          },
+        },
+        () => "charged",
+      )
+      const input = endlessPost(
+        "http://test/pay",
+        mode === "key" ? {} : { "idempotency-key": "cleanup" },
+      )
+      const response = await app.fetch(input.request)
+      expect(response.status).toBe(
+        mode === "authentication" ? 401 : mode === "key" ? 400 : mode === "deadline" ? 503 : 413,
+      )
+      await Bun.sleep(0)
+      expect(input.cancelled()).toBe(true)
+      expect(input.request.body?.locked).toBe(false)
+    })
+  }
+
+  for (const cancellation of ["reject", "pending"] as const) {
+    test(`a ${cancellation} producer cancellation cannot hold up a refusal`, async () => {
+      const app = server()
+        .use(idempotency())
+        .post(
+          "/pay",
+          {
+            idempotency: { scope: "request", namespace: "public:pay" },
+          },
+          () => "charged",
+        )
+      const input = endlessPost("http://test/pay", {}, cancellation)
+      const response = await app.fetch(input.request)
+      expect(response.status).toBe(400)
+      expect(input.cancelled()).toBe(true)
+      expect(input.request.body?.locked).toBe(false)
+      await Bun.sleep(0)
+    })
+  }
+
+  test("bodyless idempotent requests complete and replay without a producer", async () => {
+    let runs = 0
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: { scope: "request", namespace: "public:pay" },
+        },
+        () => {
+          runs++
+          return "charged"
+        },
+      )
+    for (let i = 0; i < 2; i++) {
+      const response = await app.fetch(
+        new Request("http://test/pay", {
+          method: "POST",
+          headers: { "idempotency-key": "bodyless" },
+        }),
+      )
+      expect(response.status).toBe(200)
+      expect(await response.json()).toBe("charged")
+    }
+    expect(runs).toBe(1)
+  })
+
+  test("an errored request producer reaches the error hook and releases its reader", async () => {
+    const problem = new Error("producer failed")
+    let caught: unknown
+    const app = server()
+      .use(idempotency())
+      .onError((error) => {
+        caught = error
+        return new Response(null, { status: 502 })
+      })
+      .post(
+        "/pay",
+        {
+          idempotency: { scope: "request", namespace: "public:pay" },
+        },
+        () => "charged",
+      )
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(problem)
+      },
+    })
+    const init: RequestInit & { duplex: "half" } = {
+      method: "POST",
+      headers: { "idempotency-key": "broken" },
+      body,
+      duplex: "half",
+    }
+    const request = new Request("http://test/pay", init)
+    const response = await app.fetch(request)
+    expect(response.status).toBe(502)
+    expect(caught).toBe(problem)
+    expect(request.body?.locked).toBe(false)
+  })
+
+  test("a handler retaining a locked body reader does not retain the original reader", async () => {
+    let retained: ReadableStreamDefaultReader<Uint8Array> | undefined
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: { scope: "request", namespace: "public:pay" },
+        },
+        (c) => {
+          retained = c.req.body?.getReader()
+          return { charged: true }
+        },
+      )
+    const request = new Request("http://test/pay", {
+      method: "POST",
+      headers: { "idempotency-key": "locked" },
+      body: "finite",
+    })
+    const response = await app.fetch(request)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ charged: true })
+    expect(request.body?.locked).toBe(false)
+    retained?.releaseLock()
+    await Bun.sleep(0)
+  })
+
+  for (const order of ["default", "authenticate", "policy"] as const) {
+    for (const failure of ["namespace", "store"] as const) {
+      test(`${order} program reports a failed ${failure} through onError`, async () => {
+        const problem = new Error("idempotency unavailable")
+        let caught: unknown
+        const app = server()
+          .use(idempotency())
+          .onError((error) => {
+            caught = error
+            return new Response("unavailable", { status: 502 })
+          })
+        if (order === "authenticate")
+          app.authenticate({ id: "ok", run: () => authenticated({ id: "u" }) })
+        const store: IdempotencyStore = Object.assign(new MemoryIdempotencyStore(), {
+          begin: () => Promise.reject(problem),
+        })
+        app.post(
+          "/pay",
+          {
+            validationOrder:
+              order === "default" ? "validate-before-auth" : "auth-before-validation",
+            idempotency: {
+              scope: "request",
+              namespace: () => {
+                if (failure === "namespace") throw problem
+                return "principal:u"
+              },
+              store,
+            },
+          },
+          () => "charged",
+        )
+        const response = await app.fetch(
+          new Request("http://test/pay", {
+            method: "POST",
+            headers: { "idempotency-key": "failed" },
+            body: "{}",
+          }),
+        )
+        expect(response.status).toBe(502)
+        expect(caught).toBe(problem)
+      })
+    }
+
+    test(`${order} program meets a throwing onError once for a handler failure`, async () => {
+      const problem = new Error("hook failed")
+      let calls = 0
+      const app = server()
+        .use(idempotency())
+        .onError(() => {
+          calls++
+          throw problem
+        })
+      if (order === "authenticate")
+        app.authenticate({ id: "ok", run: () => authenticated({ id: "u" }) })
+      app.post(
+        "/pay",
+        {
+          validationOrder: order === "default" ? "validate-before-auth" : "auth-before-validation",
+          idempotency: { scope: "request", namespace: () => "principal:u" },
+        },
+        () => {
+          throw new Error("handler failed")
+        },
+      )
+      const request = new Request("http://test/pay", {
+        method: "POST",
+        headers: { "idempotency-key": "hook" },
+        body: "{}",
+      })
+      const response = await app.fetch(request)
+      expect(response.status).toBe(500)
+      expect(calls).toBe(1)
+    })
+  }
   test("an auth-first route refuses a bad credential before the gate reads the body", async () => {
     let authCalls = 0
     const app = server()
@@ -149,9 +383,14 @@ describe("the idempotency gate runs inside the route program", () => {
     expect(response.status).toBe(413)
   })
 
-  test("a request the gate cannot prepare fails as a rejection, not a throw", async () => {
+  test("a request the gate cannot prepare reaches the route error boundary", async () => {
+    let caught: unknown
     const app = server()
       .use(idempotency())
+      .onError((error) => {
+        caught = error
+        return new Response(null, { status: 500 })
+      })
       .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => "charged")
     const request = new Request("http://test/pay", {
       method: "POST",
@@ -160,13 +399,9 @@ describe("the idempotency gate runs inside the route program", () => {
     })
     // An exceptional request source, modeled without replacing the global Request constructor.
     Object.defineProperty(request, "signal", { value: {} })
-    let answered: unknown
-    expect(() => {
-      answered = app.fetch(request)
-    }).not.toThrow()
-    // The copy's own construction error, not a later failure that also mentions a signal.
-    await expect(answered).rejects.toBeInstanceOf(TypeError)
-    await expect(answered).rejects.toThrow(/signal is not of type AbortSignal/)
+    expect((await app.fetch(request)).status).toBe(500)
+    expect(caught).toBeInstanceOf(TypeError)
+    expect(String(caught)).toMatch(/signal is not of type AbortSignal/)
   })
 
   const hanging = new Promise<never>(() => {})

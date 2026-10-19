@@ -6,6 +6,7 @@
  * read them off `raw`). Sends before the socket opens are queued, so the handle never throws.
  */
 
+import { formatStandardIssues } from "@nifrajs/core/schema"
 import {
   createTransportCodecRegistry,
   decodeTransportFrame,
@@ -102,6 +103,31 @@ export function openWebSocket(
   socket.addEventListener("close", () => {
     sendQueue.length = 0
   })
+  const deliver = (message: unknown): void => {
+    for (const listener of listeners) listener(message)
+  }
+  const schema = callOptions?.validateReceive
+  // One chain for every frame, so an async schema cannot reorder what it lets through.
+  let received = Promise.resolve()
+  const receive =
+    schema === undefined
+      ? deliver
+      : (frame: unknown): void => {
+          const next = received
+            .then(() => schema["~standard"].validate(frame))
+            .then((result) => {
+              if (result.issues === undefined) deliver(result.value)
+              else {
+                callOptions?.onError?.(
+                  new TypeError(
+                    `a received frame does not match validateReceive: ${formatStandardIssues(result.issues)}`,
+                    { cause: frame },
+                  ),
+                )
+              }
+            })
+          received = next.catch((error: unknown) => callOptions?.onError?.(error))
+        }
   socket.addEventListener("message", (event: MessageEvent) => {
     if (typeof event.data !== "string") return // binary frames live off the typed contract
     let parsed: unknown
@@ -115,7 +141,7 @@ export function openWebSocket(
     } catch {
       return // a non-JSON text frame is outside the contract too
     }
-    for (const listener of listeners) listener(parsed)
+    receive(parsed)
   })
 
   const signal = callOptions?.signal
@@ -154,14 +180,13 @@ export function openWebSocket(
     onMessage,
     messages(options?: { signal?: AbortSignal }): AsyncIterableIterator<unknown> {
       const buffered: unknown[] = []
-      let pending: ((result: IteratorResult<unknown>) => void) | undefined
+      const pending: Array<(result: IteratorResult<unknown>) => void> = []
       let done = false
       const signal = options?.signal
 
       const push = (message: unknown): void => {
-        if (pending !== undefined) {
-          const resolve = pending
-          pending = undefined
+        const resolve = pending.shift()
+        if (resolve !== undefined) {
           resolve({ value: message, done: false })
         } else {
           buffered.push(message)
@@ -171,19 +196,25 @@ export function openWebSocket(
         if (done) return
         done = true
         unsubscribe()
-        socket.removeEventListener("close", end)
-        socket.removeEventListener("error", end)
+        socket.removeEventListener("close", closed)
+        socket.removeEventListener("error", closed)
         signal?.removeEventListener("abort", end)
-        pending?.({ value: undefined, done: true })
-        pending = undefined
+        for (const resolve of pending) resolve({ value: undefined, done: true })
+        pending.length = 0
+      }
+      // A frame still in `validateReceive` arrived before the close, so it is delivered first.
+      const closed = (): void => {
+        if (schema === undefined) end()
+        else void received.then(end)
       }
 
       const unsubscribe = onMessage(push)
-      socket.addEventListener("close", end, { once: true })
-      socket.addEventListener("error", end, { once: true })
+      socket.addEventListener("close", closed, { once: true })
+      socket.addEventListener("error", closed, { once: true })
       signal?.addEventListener("abort", end, { once: true })
       // Already over: no close or abort event is coming to end the iteration.
-      if (socket.readyState === CLOSED || signal?.aborted === true) end()
+      if (signal?.aborted === true) end()
+      else if (socket.readyState === CLOSED) closed()
 
       const iterator: AsyncIterableIterator<unknown> = {
         [Symbol.asyncIterator]() {
@@ -195,7 +226,7 @@ export function openWebSocket(
           }
           if (done) return Promise.resolve({ value: undefined, done: true })
           return new Promise((resolve) => {
-            pending = resolve
+            pending.push(resolve)
           })
         },
         return(): Promise<IteratorResult<unknown>> {

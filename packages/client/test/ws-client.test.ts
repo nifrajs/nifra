@@ -71,6 +71,10 @@ function schema<O>(validate: (value: unknown) => StandardResult<O>): StandardSch
   }
 }
 
+/** One property of a frame, without trusting its shape. */
+const field = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
+
 const chatIn = schema<{ say: string }>((v) =>
   typeof v === "object" &&
   v !== null &&
@@ -160,6 +164,27 @@ describe("typed client .ws()", () => {
     chat.close()
   })
 
+  test("validateReceive on the typed handle checks frames against the route's sendSchema", async () => {
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
+    const strictOut = schema<{ echoed: string; at: number }>((v) => {
+      const echoed = field(v, "echoed")
+      const at = field(v, "at")
+      return typeof echoed === "string" && echoed !== "drifted" && typeof at === "number"
+        ? { value: { echoed, at } }
+        : { issues: [{ message: "echoed is not allowed", path: ["echoed"] }] }
+    })
+    const errors: unknown[] = []
+    const chat = api.chat.ws({ validateReceive: strictOut, onError: (error) => errors.push(error) })
+    const iterator = chat.messages()
+    chat.send({ say: "drifted" })
+    chat.send({ say: "fine" })
+    const first = await iterator.next()
+    expect(first.value).toEqual({ echoed: "fine", at: 1 })
+    expect(String(errors[0])).toContain("echoed: echoed is not allowed")
+    chat.close()
+  })
+
   test("the in-process client refuses .ws() with a real explanation", () => {
     const api = testClient<typeof app>(app)
     expect(() => api.chat.ws()).toThrow(/in-process client cannot open WebSockets/)
@@ -198,6 +223,95 @@ describe("WebSocket runtime behavior", () => {
 
     handle.close(1000, "done")
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: "done" }])
+  })
+
+  test("validateReceive delivers only frames the schema accepts, in arrival order", async () => {
+    useFakeWebSocket()
+    let releaseFirst: () => void = () => {}
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const tick = schema<{ n: number }>((v) => {
+      const n = field(v, "n")
+      if (n === "boom") throw new Error("schema crashed")
+      return typeof n === "number"
+        ? { value: { n: n * 10 } }
+        : { issues: [{ message: "n must be a number", path: ["n"] }] }
+    })
+    // The first frame validates asynchronously and slowly; the later ones synchronously.
+    const ordered: StandardSchemaV1<unknown, { n: number }> = {
+      "~standard": {
+        ...tick["~standard"],
+        validate: (v) =>
+          field(v, "n") === 1
+            ? firstHeld.then(() => tick["~standard"].validate(v))
+            : tick["~standard"].validate(v),
+      },
+    }
+    const errors: Error[] = []
+    const handle = openWebSocket(
+      "http://example.test",
+      "/ticks",
+      {
+        validateReceive: ordered,
+        onError: (error) => errors.push(error instanceof Error ? error : new Error(String(error))),
+      },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    socket.open()
+    const received: unknown[] = []
+    handle.onMessage((message) => received.push(message))
+    socket.message('{"n":1}')
+    socket.message('{"n":"two"}')
+    socket.message('{"n":"boom"}')
+    socket.message('{"n":3}')
+    await Promise.resolve()
+    expect(received).toEqual([])
+    releaseFirst()
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+
+    // The schema's output is what is delivered, so a transform shows.
+    expect(received).toEqual([{ n: 10 }, { n: 30 }])
+    expect(errors).toHaveLength(2)
+    expect(errors[0]).toBeInstanceOf(TypeError)
+    expect(errors[0]?.message).toBe(
+      "a received frame does not match validateReceive: n: n must be a number",
+    )
+    expect(errors[0]?.cause).toEqual({ n: "two" })
+    expect(errors[1]?.message).toBe("schema crashed")
+  })
+
+  test("messages() delivers a frame still validating when the socket closes, then ends", async () => {
+    useFakeWebSocket()
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const slow = schema<{ n: number }>((v) => ({ value: { n: Number(field(v, "n")) } }))
+    const handle = openWebSocket(
+      "http://example.test",
+      "/ticks",
+      {
+        validateReceive: {
+          "~standard": {
+            ...slow["~standard"],
+            validate: (v) => held.then(() => slow["~standard"].validate(v)),
+          },
+        },
+      },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    socket.open()
+    const iterator = handle.messages()
+    socket.message('{"n":1}')
+    socket.message('{"n":2}')
+    socket.end()
+    release()
+    expect(await iterator.next()).toEqual({ value: { n: 1 }, done: false })
+    expect(await iterator.next()).toEqual({ value: { n: 2 }, done: false })
+    expect(await iterator.next()).toEqual({ value: undefined, done: true })
   })
 
   test("encodes the handshake query the way an HTTP call does", () => {
@@ -280,6 +394,61 @@ describe("WebSocket runtime behavior", () => {
     const closingPending = closingIterator.next()
     socket.end()
     expect(await closingPending).toEqual({ value: undefined, done: true })
+  })
+
+  test("overlapping iterator reads receive frames in call order before buffering later frames", async () => {
+    useFakeWebSocket()
+    const handle = openWebSocket("http://example.test", "/chat", undefined, false)
+    const socket = FakeWebSocket.instances[0]!
+    const iterator = handle.messages()
+    const delivered: IteratorResult<unknown>[] = []
+    const reads = Array.from({ length: 3 }, (_, index) =>
+      iterator.next().then((result) => {
+        delivered[index] = result
+      }),
+    )
+
+    for (let id = 1; id <= 4; id++) socket.message(JSON.stringify({ id }))
+    await Promise.resolve()
+    expect(delivered).toEqual([
+      { value: { id: 1 }, done: false },
+      { value: { id: 2 }, done: false },
+      { value: { id: 3 }, done: false },
+    ])
+    await Promise.all(reads)
+    expect(await iterator.next()).toEqual({ value: { id: 4 }, done: false })
+    await iterator.return?.()
+  })
+
+  test.each([
+    "close",
+    "error",
+    "abort",
+    "return",
+  ] as const)("%s settles every overlapping iterator read", async (ending) => {
+    useFakeWebSocket()
+    const handle = openWebSocket("http://example.test", "/chat", undefined, false)
+    const socket = FakeWebSocket.instances[0]!
+    const controller = new AbortController()
+    const iterator = handle.messages({ signal: controller.signal })
+    const completed: IteratorResult<unknown>[] = []
+    const reads = Array.from({ length: 3 }, () =>
+      iterator.next().then((result) => completed.push(result)),
+    )
+
+    if (ending === "close") socket.end()
+    else if (ending === "error") socket.fail()
+    else if (ending === "abort") controller.abort()
+    else await iterator.return?.()
+
+    await Promise.resolve()
+    expect(completed).toEqual([
+      { value: undefined, done: true },
+      { value: undefined, done: true },
+      { value: undefined, done: true },
+    ])
+    await Promise.all(reads)
+    expect(await iterator.next()).toEqual({ value: undefined, done: true })
   })
 
   test("a closed socket ends a new iteration at once and drops a send", async () => {

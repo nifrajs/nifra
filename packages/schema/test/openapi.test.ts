@@ -775,6 +775,34 @@ describe("routes registered by method name", () => {
   test("a stored snapshot produces the same document", () => {
     expect(toOpenAPIFromEvidence(snapshotProjectEvidence(app))).toEqual(toOpenAPI(app))
   })
+
+  test("QUERY is an operation in a 3.2 document, with its body, and absent from 3.1", () => {
+    const searched = server().use(
+      method("QUERY", "/search", { body: t.object({ q: t.string() }) }, (c) => ({ q: c.body.q })),
+    )
+    const current = toOpenAPI(searched, { openapiVersion: "3.2.0" })
+    const operation = current.paths["/search"]?.query
+    expect(operation?.requestBody).toEqual({
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { q: { type: "string" } },
+            required: ["q"],
+          },
+        },
+      },
+    })
+    expect(Object.keys(toOpenAPI(app, { openapiVersion: "3.2.0" }).paths["/echo"] ?? {})).toContain(
+      "query",
+    )
+    expect(toOpenAPI(searched).paths).toEqual({})
+    expect(
+      toOpenAPIFromEvidence(snapshotProjectEvidence(searched), { openapiVersion: "3.2.0" }),
+    ).toEqual(current)
+  })
 })
 
 describe("typed SSE routes", () => {

@@ -19,12 +19,14 @@ import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
 import {
+  CONTENT_SNAPSHOT_MAX,
   contentTags,
   contentTypeOf,
   ifRangeAllowsPartial,
   isHiddenPath,
   isNotModified,
   lastModifiedOf,
+  streamedLastModifiedOf,
 } from "@nifrajs/core/static-file"
 import { openResolved } from "./open-resolved.ts"
 
@@ -69,7 +71,7 @@ function hiddenUnder(root: string, abs: string): boolean {
 // Up to this many bytes are read whole through the pinned descriptor, which then closes before the
 // response leaves: on Bun a 200 KB asset is served in 0.17 ms against 0.28 ms through a node:fs
 // stream. A larger body streams, so a video holds a stream's buffer per request rather than the file.
-const BUFFERED_BODY_MAX = 256 * 1024
+const BUFFERED_BODY_MAX = CONTENT_SNAPSHOT_MAX
 // Bun.serve drops the declared length of any stream body and sends it chunked, and a Bun.file body
 // would need this descriptor open for a send nothing reports the end of. So on Bun a body up to 1 MiB
 // is read whole as well: a slow client then holds ~1 MB, against ~0.6 MB through Bun's stream sink.
@@ -125,9 +127,10 @@ export function resolvePublicPath(root: string, pathname: string): string | unde
  * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the
  * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.
  *
- * A file is sent with a strong `ETag` from its bytes, the tag `@nifrajs/node`'s `static` reader and
- * the Deno entry send, and with `Last-Modified` only while its mtime is that of its own last change,
- * so a replacement that keeps a file's size and timestamps is never judged current or resumed into.
+ * Files up to 256 KiB carry a strong `ETag` from the exact snapshot served, matching the Node and
+ * Deno readers. Those snapshots carry `Last-Modified` only while mtime reflects their own last change.
+ * Larger files stream without an `ETag`: an open inode can change after a separate hash pass. They
+ * are dated once settled, but an `If-Range` request gets the whole file rather than spliced versions.
  */
 export function servePublicDir(
   options: ServePublicDirOptions,
@@ -196,40 +199,44 @@ export function servePublicDir(
         // Set explicitly rather than inferred from the body, so HEAD (a null body) carries it too.
         "content-type": contentTypeOf(resolvedFile),
       })
-      // The whole file, when tagging it had to read it: the response is then served from these bytes.
-      let whole: Uint8Array<ArrayBuffer> | undefined
-      let etag = TAGS.cached(resolvedFile, stat)
-      if (etag === undefined && size <= bufferedMax) {
-        whole = await readPinned(file, 0, size)
-        etag = TAGS.ofBytes(resolvedFile, stat, whole)
-      }
-      etag ??= await TAGS.ofFile(resolvedFile, stat, async (bytes, position) => {
-        return (await file.read(bytes, 0, bytes.byteLength, position)).bytesRead
-      })
-      if (etag !== undefined) headers.set("etag", etag)
-      const lastModified = lastModifiedOf(stat)
+      const snapshot = size <= CONTENT_SNAPSHOT_MAX
+      const lastModified = snapshot ? lastModifiedOf(stat) : streamedLastModifiedOf(stat)
       if (lastModified !== undefined) {
         headers.set("last-modified", new Date(lastModified).toUTCString())
       }
       const head = request.method === "HEAD"
-
+      const ifNoneMatch = request.headers.get("if-none-match")
+      const ifModifiedSince = request.headers.get("if-modified-since")
+      // The whole file, when tagging it had to read it: the response is then served from these bytes.
+      let whole: Uint8Array<ArrayBuffer> | undefined
+      // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
+      // answers it from the stat alone: a write since that tag would show in the stat.
+      let etag = snapshot ? TAGS.cached(resolvedFile, stat) : undefined
       if (
-        isNotModified(
-          request.headers.get("if-none-match"),
-          request.headers.get("if-modified-since"),
-          etag,
-          lastModified,
-        )
+        snapshot &&
+        (etag === undefined ||
+          !(head || isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)))
       ) {
+        whole = await readPinned(file, 0, size)
+        etag = await TAGS.ofSnapshot(resolvedFile, stat, whole, () => file.stat())
+      }
+      if (etag !== undefined) headers.set("etag", etag)
+
+      if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
         headers.delete("content-type")
         return new Response(null, { status: 304, headers })
       }
 
       // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
       const rangeHeader = head ? null : request.headers.get("range")
+      // A streamed body's date is weak: a write during the stream must never splice two versions.
       const range =
         rangeHeader !== null &&
-        ifRangeAllowsPartial(request.headers.get("if-range"), etag, lastModified)
+        ifRangeAllowsPartial(
+          request.headers.get("if-range"),
+          etag,
+          snapshot ? lastModified : undefined,
+        )
           ? parseByteRange(rangeHeader, size)
           : ({ kind: "none" } as const)
 

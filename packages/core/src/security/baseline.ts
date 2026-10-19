@@ -41,9 +41,10 @@ export interface SecurityBaselineOptions {
   readonly requireRuntimeProvenance?: boolean
 }
 
-/** A mutation is every method these leave out: POST, PUT, PATCH, DELETE and any custom method. */
-const NOT_MUTATING: readonly (Method | "WS")[] = ["GET", "HEAD", "OPTIONS", "WS"]
-const READING = ["GET", "HEAD"] as const
+/** A mutation is every method these leave out: POST, PUT, PATCH, DELETE and any custom method. QUERY
+ * reads, with a body that the generic body rule still bounds. */
+const NOT_MUTATING: readonly (Method | "WS")[] = ["GET", "HEAD", "OPTIONS", "QUERY", "WS"]
+const READING = ["GET", "HEAD", "QUERY"] as const
 /** The classification threshold above which the baseline demands authentication. */
 const SENSITIVE = "pii" as const
 

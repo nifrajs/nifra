@@ -173,12 +173,27 @@ const METHOD_ROUTES = `import { server } from "@nifrajs/core/server"
 import { all, method } from "@nifrajs/core/methods"
 
 export const app = server()
-  // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo
+  // GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and QUERY /echo
   .use(all("/echo", (c) => ({ method: c.req.method })))
-  // A method outside the standard seven
+  // A method outside the standard ones
   .use(method("PURGE", "/cache/:key", (c) => ({ purged: c.params.key })))
   // A list of methods, one handler
   .use(method(["GET", "POST"], "/search", (c) => ({ q: c.query.get("q") })))`
+
+const QUERY_ROUTE = `import { client } from "@nifrajs/client"
+import { server } from "@nifrajs/core/server"
+import { method } from "@nifrajs/core/methods"
+import { t } from "@nifrajs/schema"
+
+// QUERY: a safe, repeatable read whose filter travels in the body instead of the URL.
+export const app = server().use(
+  method("QUERY", "/books", { body: t.object({ author: t.string() }) }, (c) => ({
+    author: c.body.author,
+  })),
+)
+
+const api = client<typeof app>("https://api.example.com")
+const found = await api.books.$query({ author: "Le Guin" }) // the body is checked against the schema`
 
 export default function Api() {
   return (
@@ -337,7 +352,7 @@ export default function Api() {
       <h2>Several methods, custom methods (all, method)</h2>
       <p>
         <code>all()</code> registers one handler under every standard method, and <code>method()</code>{" "}
-        under the method or methods you name, including one outside the standard seven. Both come
+        under the method or methods you name, including one outside the standard ones. Both come
         from <code>@nifrajs/core/methods</code> and are applied with <code>use()</code>:
       </p>
       <CodeBlock code={METHOD_ROUTES} />
@@ -349,7 +364,7 @@ export default function Api() {
           refused, none is added.
         </li>
         <li>
-          <b>There is no catch-all.</b> <code>all()</code> is the seven standard methods, and a
+          <b>There is no catch-all.</b> <code>all()</code> is the eight standard methods, and a
           request with any other method is still a <code>405</code> with an <code>Allow</code>{" "}
           header. To hand every request under a path to another handler whatever its method, use{" "}
           <code>mount()</code>.
@@ -371,6 +386,35 @@ export default function Api() {
           route is under a method it lists. <code>securityBaseline()</code> holds a custom method to
           its mutation rules, CSRF included, and <code>csrf()</code> publishes its evidence for one.
           Left unmatched, a route is reported as <code>unclassified-route</code>.
+        </li>
+      </ul>
+
+      <h3>QUERY</h3>
+      <p>
+        <code>QUERY</code> is a read like <code>GET</code> that carries its input in the body, for a
+        filter too large or too structured for a URL. It is a standard method without a builder of
+        its own: <code>method("QUERY", ...)</code> registers it, the route is typed and validates a{" "}
+        <code>body</code> schema, and <code>all()</code> includes it. The typed client calls it as{" "}
+        <code>$query(body)</code>, so a route segment named <code>query</code> stays an ordinary path,
+        and retries it like the other idempotent methods.
+      </p>
+      <CodeBlock code={QUERY_ROUTE} />
+      <ul>
+        <li>
+          <b>OpenAPI:</b> a <code>{"toOpenAPI(app, { openapiVersion: \"3.2.0\" })"}</code> document
+          lists it as the path item's <code>query</code> operation. OpenAPI 3.1 has no field for it,
+          so a 3.1 document leaves the route out.
+        </li>
+        <li>
+          <b>Middleware:</b> <code>csrf()</code> lets it through without a token, since a cross-site
+          page cannot send one: a form has no such method, and a cross-origin <code>fetch</code> must
+          pass a CORS preflight first. <code>cors()</code> advertises it, <code>bodyLimit()</code>{" "}
+          bounds its body, and <code>securityBaseline()</code> holds it to the read rules.
+        </li>
+        <li>
+          <b>Runtimes:</b> Bun, Node, Deno and workerd accept it. On Bun it is served by the portable
+          router, since Bun's route table has no slot for it. The compact server from{" "}
+          <code>@nifrajs/edge</code> has no way to register it.
         </li>
       </ul>
       <p className="caveat">

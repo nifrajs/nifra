@@ -42,6 +42,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C043": "Merged routes skip the parent's authentication",
   "NF-C044": "createWebApp passes no copy chunks",
   "NF-C045": "Route registered outside the typed chain",
+  "NF-C046": "Identity-sensitive version skew",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",
@@ -63,6 +64,7 @@ export const RULE_CODES = Object.freeze({
   "NF-S006": "Security escape hatch enabled",
   "NF-S007": "Secure cookie without a __Host-/__Secure- prefix",
   "NF-S008": "Authenticated route validates input before authentication",
+  "NF-S009": "WebSocket frames parsed without a messageSchema",
 } as const)
 
 /** Codes that no longer fire but remain reserved forever. */

@@ -165,6 +165,7 @@ interface RouteProgramRuntime {
       ctx: RawContext,
       wrapResponse: (response: Response | ResponseResult) => T,
       resume: IdempotencyResume<T>,
+      fail: (error: unknown) => MaybePromise<T>,
     ): Promise<T>
   }
 }
@@ -174,6 +175,20 @@ interface RouteProgramRuntime {
  * buffered, and with a replay entry and program when the key already holds a response.
  */
 export type IdempotencyResume<T> = (entry: RouteEntry, program: RouteProgram) => ProgramResult<T>
+
+/** Idempotency infrastructure failures use the same boundary as the resumed route program. */
+function runIdempotencyGate<T>(
+  host: RouteProgramRuntime,
+  entry: RouteEntry,
+  ctx: RawContext,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
+  resume: IdempotencyResume<T>,
+): Promise<T> {
+  return host.idempotencyRuntime.gate(entry, ctx, wrapResponse, resume, (error) =>
+    host.handleProgramError(entry, error, ctx, finalize, wrapResponse),
+  )
+}
 
 function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
@@ -296,7 +311,7 @@ function runAuthenticationStages<T>(
     // Auth-first: the idempotency gate buffers the body, so it waits for every stage to pass. It
     // resumes on an entry without the gate, so the program does not meet it twice.
     if (entry.idempotent !== undefined && !validationComplete) {
-      return host.idempotencyRuntime.gate(entry, ctx, wrapResponse, (e, p) =>
+      return runIdempotencyGate(host, entry, ctx, finalize, wrapResponse, (e, p) =>
         runAuthenticationStages(
           host,
           e,
@@ -629,9 +644,10 @@ async function runAuthBeforeValidation<T>(
           return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
       }
 
-      // The policy hooks have passed, so the idempotency gate may buffer the body now.
+      // The policy hooks have passed, so the idempotency gate may buffer the body now. Not awaited:
+      // the gate reports its own failures, and one the resumed program let escape must skip this catch.
       if (entry.idempotent !== undefined) {
-        return await host.idempotencyRuntime.gate(entry, ctx, wrapResponse, (e, p) =>
+        return runIdempotencyGate(host, entry, ctx, finalize, wrapResponse, (e, p) =>
           runAuthBeforeValidation(host, e, p, source, ctx, finalize, wrapResponse, true),
         )
       }
@@ -678,7 +694,7 @@ export function executeRouteProgram<T, R extends Registry, Ctx>(
   // An auth-first program meets the idempotency gate once authentication has passed, so the gate
   // never buffers a body for a caller it would refuse. Every other program meets it first.
   if (entry.idempotent !== undefined && !program.authBeforeValidation) {
-    return host.idempotencyRuntime.gate(entry, ctx, wrapResponse, (e, p) =>
+    return runIdempotencyGate(host, entry, ctx, finalize, wrapResponse, (e, p) =>
       executeRouteProgram(runtime, e, p, source, ctx, finalize, wrapResponse),
     )
   }

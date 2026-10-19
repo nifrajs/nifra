@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { applyHead, currentDocumentNonce } from "../src/client.ts"
+import { applyHead, currentDocumentNonce, mergeHeads, resolveChainMeta } from "../src/client.ts"
 import {
   LOCALES_GLOBAL,
   localeOfProps,
@@ -101,6 +101,25 @@ test("a route that sets only lang still clears a stale dir", () => {
   applyHead({ lang: "en" })
   expect(document.documentElement.getAttribute("lang")).toBe("en")
   expect(document.documentElement.hasAttribute("dir")).toBe(false)
+})
+
+test("a per-visitor lang/dir from the root layout's loader survives soft navigations", () => {
+  // The generated client entry's soft-nav step: the chain's metas resolved with each layout's own
+  // loader data (not the page's), merged, applied. Before 5.0 the layout meta saw the page data here.
+  const rootMeta = ({ data }: { data: unknown }) => {
+    const lang: unknown = Reflect.get(Object(data), "lang")
+    return {
+      lang: typeof lang === "string" ? lang : "en",
+      dir: Reflect.get(Object(data), "dir") === "rtl" ? "rtl" : "ltr",
+    } as const
+  }
+  const layoutData = [{ lang: "fa", dir: "rtl" as const }]
+  for (const page of [{ title: "Inbox" }, { title: "Settings" }]) {
+    const args = { data: page, pageData: page, params: {}, origin: "https://app.test" }
+    applyHead(mergeHeads(resolveChainMeta([rootMeta, page], layoutData, args)), "/inbox")
+    expect(document.documentElement.getAttribute("lang")).toBe("fa")
+    expect(document.documentElement.getAttribute("dir")).toBe("rtl")
+  }
 })
 
 test("dir=auto is applied verbatim (not treated as absent)", () => {

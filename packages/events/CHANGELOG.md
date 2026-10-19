@@ -1,5 +1,11 @@
 # @nifrajs/events
 
+## 5.5.0
+
+### Patch Changes
+
+- 35f724c: An event contract's `is` guard now works detached from its contract, so `events.filter(OrderPaid.is)` checks each value instead of throwing `TypeError`.
+
 ## 5.4.0
 
 No changes in this release.

@@ -148,7 +148,13 @@ const RULES: readonly Rule[] = [
     why: "eval and new Function run data as code",
     pattern: /(?<![.\w])eval\(|\bnew Function\(/g,
     scope: SHIPPED,
-    allowed: {},
+    allowed: {
+      "packages/web/src/internal/output-guard.ts": {
+        count: 1,
+        reason:
+          "the object projector: only JSON.stringify'd schema key names reach the source; never in an edge bundle or a browser",
+      },
+    },
   },
   {
     id: "wall-clock-deadline",

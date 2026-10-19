@@ -170,7 +170,11 @@ export interface ZoneConfig {
   readonly backend?: readonly string[]
   /** App-relative folders or files holding frontend code, beside `frontend/`. */
   readonly frontend?: readonly string[]
-  /** App-relative folders or files holding code both sides import, beside `shared/`. */
+  /**
+   * App-relative folders or files holding code both sides import, beside `shared/`. Unlike the other
+   * sides, an entry may sit inside `frontend/` or `backend/`: a module there that both sides import
+   * stays where it is, held to the shared rules (it may import only shared code and packages).
+   */
   readonly shared?: readonly string[]
 }
 
@@ -258,8 +262,15 @@ export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
       if (folder.split("/").includes("..")) fail(`"${side}" entry "${entry}" may not contain ".."`)
       if (/[*?[\]{}!]/.test(folder))
         fail(`"${side}" entry "${entry}" must be a plain path (a trailing "/**" is allowed)`)
-      if (RESERVED_FOLDERS.has(top) || top.startsWith(".nifra"))
-        fail(`"${side}" entry "${entry}" is inside ${top}/, which already has its own rules`)
+      const sharedInSide =
+        side === "shared" && (top === "frontend" || top === "backend") && folder !== top
+      if ((RESERVED_FOLDERS.has(top) && !sharedInSide) || top.startsWith(".nifra"))
+        fail(
+          `"${side}" entry "${entry}" is inside ${top}/, which already has its own rules` +
+            (top === "frontend" || top === "backend"
+              ? `; only a "shared" entry may name a path inside ${top}/`
+              : ""),
+        )
       const other = owner.get(folder)
       if (other !== undefined && other !== side)
         fail(`"${folder}" is listed as both ${other} and ${side}; a path has one side`)
@@ -587,11 +598,22 @@ export function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassi
         if (suffix === "shared") return { zone: "shared" }
         return { zone: "route-frontend" }
       }
-      const configured = ZONE_FOLDERS[top] === undefined ? configuredPath(rel) : undefined
-      const folder = ZONE_FOLDERS[top] ?? configured?.[1]
+      // Inside a reserved folder only a "shared" entry can match: the parser refuses the others there.
+      const configured = configuredPath(rel)
+      const folder = configured?.[1] ?? ZONE_FOLDERS[top]
       if (folder !== undefined) {
         if (suffix === undefined || suffix === folder) return { zone: folder }
         if (suffix === "fn" && folder === "backend") return { zone: "fn" }
+        // Code both sides import may live beside the side that wrote it. Shared code may import only
+        // shared code and packages, so the declaration narrows what the file may reach, never widens it.
+        // A file "nifra.zones" lists by name has that side; its suffix cannot contradict it.
+        if (
+          suffix === "shared" &&
+          (folder === "frontend" || folder === "backend") &&
+          top !== "public" &&
+          configured?.[0] !== rel
+        )
+          return { zone: "shared" }
         const where =
           configured === undefined
             ? `sits in ${top}/`

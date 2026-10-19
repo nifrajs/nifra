@@ -61,17 +61,21 @@ the check there only makes it need repeated swaps. Mutable or attacker-writable 
 therefore outside the adapter's guarantee on those platforms. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
-Every file carries `Accept-Ranges: bytes` and a strong `ETag` from its content: 128 bits of its
-SHA-256, the same for the same bytes on every instance and on `servePublicDir`. A replacement that
-keeps a file's size and timestamps - `cp -p`, `rsync -a`, tar, a container image layer,
-SOURCE_DATE_EPOCH, the Nix store - still changes its tag. The tag is remembered per file version
-(device, inode, size, mtime and ctime), so a known file costs no extra read; the first request for a
-file reads it once (a file up to 256 KiB is then served from those bytes), and one changed in the last
-2 s is read again until its ctime settles. A file over 256 MiB is tagged by that identity instead of
-its bytes: still strong, but different on each instance.
+Every file carries `Accept-Ranges: bytes`. A file up to 256 KiB is read whole and carries a strong
+`ETag` from exactly the bytes served: 128 bits of their SHA-256, the same for the same bytes on every
+instance and on `servePublicDir`. A replacement that keeps a file's size and timestamps still changes
+its tag. The tag is remembered per file version (device, inode, size, mtime and ctime): a file over
+4 KiB reuses it without hashing when a second stat after the read shows the same version, and a
+`HEAD` or a `304` for that tag is answered from the stat without reading the file at all. A
+larger file streams without an automatic `ETag`, because an open file can be overwritten after any
+separate hash pass: an `If-Range` request for it gets the whole file, and an unguarded range still
+works. Explicit validator headers remain the caller's responsibility and must describe an immutable
+representation.
 
 `Last-Modified` is sent only while the file's mtime is the time of its own last change (it matches its
-ctime), since a copy that keeps or normalizes mtimes gives a changed file the old date. Explicit
+ctime), since a copy that keeps or normalizes mtimes gives a changed file the old date. A streamed
+file is dated only once that change is more than 2 s old, so a write during the stream lands in a
+later second than the date it was sent with. Explicit
 validator headers still apply. `If-None-Match` takes precedence over `If-Modified-Since`; a matching
 condition gets a bodyless 304. `Range` on GET is parsed by a copy of `@nifrajs/core/range`, the parser
 `servePublicDir` uses, and gated by `If-Range`: it must name the file's strong tag, or its exact date

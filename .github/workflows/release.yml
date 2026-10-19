@@ -46,18 +46,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The release plan in parallel jobs, one per group of `releaseGroupNames()` in
+  # packages/cli/src/verification-plan.ts; `release-verification` below is the check publishing reads.
   verify-release-pr:
-    name: release-verification
+    name: release-verification (${{ matrix.group }})
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'release/')
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [core, artifacts, packages, runtimes, pipelines, server-components]
     runs-on: ubuntu-latest
     timeout-minutes: 75
     # Publishing needs a successful check on the merged head SHA only, so a run for an older head
     # is cancelled once a newer push starts one.
     concurrency:
-      group: release-verification-${{ github.event.pull_request.number }}
+      group: release-verification-${{ github.event.pull_request.number }}-${{ matrix.group }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -98,11 +104,30 @@ jobs:
       # `--shared-runner` leaves out the timing gates, which the plan keeps off CI: a shared runner's
       # timing swings too far to gate on, so `bun run check:release` runs them locally before a merge.
       - name: Run release verification
-        run: bun run verify:release --shared-runner
+        run: bun run verify:release --shared-runner --group "$GROUP"
         env:
+          GROUP: ${{ matrix.group }}
           RELEASE_MODE: "1"
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
+
+  # Passes only when every group passed. A run cancelled by a newer push reports nothing here.
+  release-verification:
+    name: release-verification
+    needs: verify-release-pr
+    if: >-
+      !cancelled() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every release verification group passed
+        run: test "$RESULT" = success
+        env:
+          RESULT: ${{ needs.verify-release-pr.result }}
 
   prove-release:
     name: prove-release

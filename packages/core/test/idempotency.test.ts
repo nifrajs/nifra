@@ -283,17 +283,24 @@ describe("effect-aware idempotency fallback", () => {
       ...args: [...Parameters<IdempotencyResume<Response>>, Request, RawContext]
     ) => Promise<Response>,
   ) => {
-    const prepared = runtime.prepare(request, undefined)
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the gate reads only the request and the deadline signal from its context.
-    const ctx = { [CONTEXT_REQUEST]: prepared, signal: new AbortController().signal } as RawContext
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the gate reads the entry's idempotency and body limit, and a replay spreads its absent program.
-    const entry = { idempotent: config, bodyLimit: 1024 } as RouteEntry
-    return runtime.gate(
-      entry,
-      ctx,
-      (r) => r,
-      (e, p) => resume(e, p, prepared, ctx),
-    )
+    return runtime.run(request, undefined, (prepared) => {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the gate reads only the request and the deadline signal from its context.
+      const ctx = {
+        [CONTEXT_REQUEST]: prepared,
+        signal: new AbortController().signal,
+      } as RawContext
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the gate reads the entry's idempotency and body limit, and a replay spreads its absent program.
+      const entry = { idempotent: config, bodyLimit: 1024 } as RouteEntry
+      return runtime.gate(
+        entry,
+        ctx,
+        (r) => r,
+        (e, p) => resume(e, p, prepared, ctx),
+        (error) => {
+          throw error
+        },
+      )
+    })
   }
 
   test("an escaped pre-effect failure releases its reservation", async () => {
@@ -311,25 +318,29 @@ describe("effect-aware idempotency fallback", () => {
     expect(runs).toBe(2)
   })
 
-  test("an escaped ambiguous effect is terminal and replayed", async () => {
-    const store = new MemoryIdempotencyStore()
-    const { runtime, config } = configFor(store)
-    let runs = 0
-    const run = () =>
-      gate(runtime, config, post({ amount: 1 }, "ambiguous"), async (entry, _p, source, ctx) => {
-        // Only a replay's entry carries a handler; the stand-in route has none.
-        const replayed = typeof entry.handler === "function" ? await entry.handler(ctx) : undefined
-        if (replayed instanceof Response) return replayed
-        runs++
-        markBeaconEffectBegan({ req: source })
-        throw new Error("connection dropped after send")
-      })
-    expect((await run()).status).toBe(500)
-    const replay = await run()
-    expect(replay.status).toBe(500)
-    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
-    expect(runs).toBe(1)
-  })
+  for (const effectPath of ["beacon", "capability"] as const) {
+    test(`an escaped ambiguous ${effectPath} effect is terminal and replayed`, async () => {
+      const store = new MemoryIdempotencyStore()
+      const { runtime, config } = configFor(store)
+      let runs = 0
+      const run = () =>
+        gate(runtime, config, post({ amount: 1 }, "ambiguous"), async (entry, _p, source, ctx) => {
+          // Only a replay's entry carries a handler; the stand-in route has none.
+          const replayed =
+            typeof entry.handler === "function" ? await entry.handler(ctx) : undefined
+          if (replayed instanceof Response) return replayed
+          runs++
+          if (effectPath === "beacon") markBeaconEffectBegan({ req: source })
+          else runtime.trackEffect({ req: source }, false)
+          throw new Error("connection dropped after send")
+        })
+      expect((await run()).status).toBe(500)
+      const replay = await run()
+      expect(replay.status).toBe(500)
+      expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+      expect(runs).toBe(1)
+    })
+  }
 
   test("a request the gate cannot copy fails at the gate and reserves no key", async () => {
     const store = new MemoryIdempotencyStore()
@@ -650,6 +661,7 @@ describe("server({ idempotency }) - request path", () => {
 
   test("a response body that fails while being stored never leaves its key in progress", async () => {
     let runs = 0
+    const errors: unknown[] = []
     const broken = () =>
       new Response(
         new ReadableStream({
@@ -660,6 +672,10 @@ describe("server({ idempotency }) - request path", () => {
       )
     const app = server()
       .use(idempotency())
+      .onError((error) => {
+        errors.push(error)
+        return new Response(null, { status: 500 })
+      })
       .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
         runs += 1
         if (c.req.headers.get("x-effect") === "1") markEffectExecuting(c)
@@ -671,9 +687,11 @@ describe("server({ idempotency }) - request path", () => {
         (error: unknown) => (error instanceof Error ? error.message : String(error)),
       )
     // No owned effect began: the key is released, so the retry runs again.
-    expect(await outcome(post({ amount: 1 }, "free"))).toBe("upstream broke")
-    expect(await outcome(post({ amount: 1 }, "free"))).toBe("upstream broke")
+    expect(await outcome(post({ amount: 1 }, "free"))).toBe(500)
+    expect(await outcome(post({ amount: 1 }, "free"))).toBe(500)
     expect(runs).toBe(2)
+    expect(errors).toHaveLength(2)
+    for (const error of errors) expect(error).toEqual(new Error("upstream broke"))
     // An owned effect began: the key keeps a terminal 500 that the retry replays.
     expect(await outcome(post({ amount: 1 }, "owned", { "x-effect": "1" }))).toBe(500)
     const replay = await app.fetch(post({ amount: 1 }, "owned", { "x-effect": "1" }))

@@ -152,7 +152,15 @@ Concretely, these are `major`, not `minor`:
 
 If you are shipping one of these anyway, ship a **codemod with it**. Hand-editing every broken call site is toil the framework caused, and the framework is the thing that knows the mechanical fix. Register it in `packages/cli/src/fix-recipes.ts` and point the diagnostic's `fix.command` at it, so `nifra fix` performs the migration the release note describes.
 
+### Releases
+
+Only the latest release is supported (`SECURITY.md`). Behaviour changes ship in a minor release; a fix ships as a patch of the latest version and changes nothing an app relies on.
+
+Every minor's upgrade recipe (`packages/cli/src/recipes/`) lists in `affects` the packages its notes change, so `nifra upgrade` can tell a project that loads none of them that the release changes nothing it uses. Leave `affects` out only when that cannot be said; the release is then treated as affecting everyone.
+
 ### Publishing
+
+A release PR runs the release plan as parallel `release-verification (<group>)` jobs, one per group in `packages/cli/src/verification-plan.ts`. The `release-verification` check passes only when every group did, and it is the check publishing requires. A newer push cancels the run in progress. To run one group locally: `bun run verify:release --group <name>`.
 
 Merging a release PR publishes it: `.github/workflows/release.yml` proves the merge, builds the packages in a job that cannot publish, publishes every package version npm does not have yet from that build, and deploys the site. npm accepts the workflow through [trusted publishing](https://docs.npmjs.com/trusted-publishers): each public package trusts `release.yml` run in the `npm-publish` environment, so there is no npm token to store or leak, and every version carries a provenance attestation.
 

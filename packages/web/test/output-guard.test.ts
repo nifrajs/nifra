@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { status } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
@@ -24,6 +24,7 @@ import {
 } from "../src/internal/output-guard.ts"
 import { mergeRouteHalves } from "../src/manifest.ts"
 import { DATA_HEADER } from "../src/router.ts"
+import { guardComponentProps } from "../src/server-components/props.ts"
 
 // Every value a loader, action, boundary loader or server function sends toward the browser passes
 // its declared output schema: undeclared keys are dropped, a wrong-typed declared field fails with
@@ -56,7 +57,67 @@ async function refusal(run: () => unknown): Promise<OutputGuardError> {
   throw new Error("the guard passed")
 }
 
-describe("projection drops what the schema does not declare", () => {
+/** Compile with code generation off, as a browser page does: objects project by the closure. */
+const withoutCodegen = {
+  start: () => Reflect.set(globalThis, "document", {}),
+  stop: () => Reflect.deleteProperty(globalThis, "document"),
+}
+
+describe.each([
+  "generated",
+  "closure",
+])("projection drops what the schema does not declare (%s projector)", (projector) => {
+  if (projector === "closure") {
+    beforeAll(withoutCodegen.start)
+    afterAll(withoutCodegen.stop)
+  }
+
+  test("a plain object projects by generated code wherever code generation is allowed", () => {
+    const compiled = outputGuard(
+      projectingBy({ type: "object", properties: { a: { type: "string" } } }),
+      '"page.backend.ts"',
+      "loaderOutput",
+    )
+    expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
+  })
+
+  test("any key name projects as data, never as code", () => {
+    const names = [
+      'a"b',
+      "back\\slash",
+      "`tick`",
+      '"); throw new Error("x"); ("',
+      "line\u2028break",
+      "",
+      "0",
+      "constructor",
+      "__proto__",
+    ]
+    const schema = projectingBy({
+      type: "object",
+      properties: Object.fromEntries(names.map((name) => [name, { type: "string" }])),
+    })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
+    const kept = Object.fromEntries(names.map((name) => [name, `value of ${name}`]))
+    const out = guard(schema, JSON.parse(JSON.stringify({ drop: 1, ...kept })))
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(JSON.stringify(out)).toBe(JSON.stringify(kept))
+    const exact: unknown = JSON.parse(JSON.stringify(kept))
+    expect(guard(schema, exact)).toBe(exact)
+  })
+
+  test("a declared __proto__ object is projected and kept as data", () => {
+    const schema = projectingBy(
+      JSON.parse(
+        '{"type": "object", "properties": {"__proto__": {"type": "object", "properties": {"a": {"type": "string"}}}}}',
+      ),
+    )
+    const out = guard(schema, JSON.parse('{"__proto__": {"a": "x", "b": 1}}'))
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(Object.getOwnPropertyDescriptor(out, "__proto__")?.value).toEqual({ a: "x" })
+  })
+
   test("at every depth, through arrays, records and optional fields", () => {
     const schema = t.object({
       user: t.object({ name: t.string(), nickname: t.optional(t.string()) }),
@@ -151,6 +212,34 @@ describe("projection drops what the schema does not declare", () => {
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
   })
 
+  test("an own toJSON, enumerable or not, never decides what is serialized", () => {
+    const hook = <T extends object>(value: T): T =>
+      Object.defineProperty(value, "toJSON", { value: () => ({ passwordHash: "never-sent" }) })
+    const user = t.object({ name: t.string() })
+    expect(JSON.stringify(guard(user, hook({ name: "Ada" })))).toBe('{"name":"Ada"}')
+    expect(JSON.stringify(guard(t.object({ u: user }), { u: hook({ name: "Ada" }) }))).toBe(
+      '{"u":{"name":"Ada"}}',
+    )
+    const listed = guard(t.object({ l: t.array(user), s: t.array(t.string()) }), {
+      l: hook([{ name: "Ada" }]),
+      s: hook(["a"]),
+    })
+    expect(JSON.stringify(listed)).toBe('{"l":[{"name":"Ada"}],"s":["a"]}')
+    expect(JSON.stringify(guard(t.array(t.string()), hook(["a"])))).toBe('["a"]')
+  })
+
+  test("an array subclass serializes as its items, not by its prototype toJSON", () => {
+    class Leaky<T> extends Array<T> {
+      toJSON() {
+        return { passwordHash: "never-sent" }
+      }
+    }
+    const rows = Leaky.from([{ name: "Ada", secret: 1 }])
+    const out = guard(t.object({ rows: t.array(t.object({ name: t.string() })) }), { rows })
+    expect(JSON.stringify(out)).toBe('{"rows":[{"name":"Ada"}]}')
+    expect(JSON.stringify(guard(t.array(t.string()), Leaky.from(["a"])))).toBe('["a"]')
+  })
+
   test("a recursive schema projects every level", () => {
     const schema = projectingBy({
       $id: "Node",
@@ -208,6 +297,38 @@ describe("projection drops what the schema does not declare", () => {
     }
     expect(guard(stripping, { id: "1", extra: 2 })).toEqual({ id: "1" })
   })
+})
+
+test("an edge bundle never generates code: objects project by the closure", () => {
+  Reflect.set(globalThis, "__NIFRA_EDGE_RUNTIME__", true)
+  try {
+    const schema = projectingBy({ type: "object", properties: { name: { type: "string" } } })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(String(compiled.project).includes("switch (key)")).toBe(false)
+    expect(guard(schema, { name: "Ada", extra: 1 })).toEqual({ name: "Ada" })
+  } finally {
+    Reflect.deleteProperty(globalThis, "__NIFRA_EDGE_RUNTIME__")
+  }
+})
+
+test("where code generation is refused, objects project by the closure", () => {
+  const generate = globalThis.Function
+  Reflect.set(globalThis, "Function", () => {
+    throw new EvalError("Code generation from strings disallowed for this context")
+  })
+  try {
+    const schema = projectingBy({
+      type: "object",
+      properties: { user: { type: "object", properties: { name: { type: "string" } } } },
+    })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(String(compiled.project).includes("switch (key)")).toBe(false)
+    expect(guard(schema, { user: { name: "Ada", passwordHash: "x" }, extra: 1 })).toEqual({
+      user: { name: "Ada" },
+    })
+  } finally {
+    Reflect.set(globalThis, "Function", generate)
+  }
 })
 
 describe("in development, dropped fields are named", () => {
@@ -306,6 +427,86 @@ describe("a declared field of the wrong shape fails", () => {
       },
     }
     expect((await refusal(() => guard(asyncFail, { a: 1 }))).paths).toEqual(["/a"])
+  })
+})
+
+describe("validation of the projected value", () => {
+  test("a t schema validates it without the key checks projection made redundant", () => {
+    const schema = t.object({ items: t.array(t.object({ id: t.integer(), name: t.string() })) })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(compiled.validate).not.toBe(schema["~standard"].validate)
+    const value = { items: [{ id: 1, name: "a", passwordHash: "x" }], sessionSecret: "x" }
+    expect(guard(schema, value)).toEqual({ items: [{ id: 1, name: "a" }] })
+  })
+
+  test("a declared field of the wrong shape still fails with its path", async () => {
+    const schema = t.object({ items: t.array(t.object({ id: t.integer(), name: t.string() })) })
+    const error = await refusal(() =>
+      guard(schema, { items: [{ id: 1, name: "a" }, { id: "2", name: "b", extra: 1 }, { id: 3 }] }),
+    )
+    expect(error.paths).toEqual(["/items/1/id", "/items/2/name"])
+  })
+
+  test("a union branch still refuses a key only another branch declares", async () => {
+    const schema = t.object({
+      who: t.union([
+        t.object({ kind: t.literal("user"), name: t.string() }),
+        t.object({ kind: t.literal("team"), members: t.integer() }),
+      ]),
+    })
+    await refusal(() => guard(schema, { who: { kind: "user", name: "Ada", members: 3 } }))
+    expect(guard(schema, { who: { kind: "user", name: "Ada" }, x: 1 })).toEqual({
+      who: { kind: "user", name: "Ada" },
+    })
+  })
+
+  test("a schema projected by another JSON Schema than its validate checks keeps that validate", async () => {
+    const strict = t.object({ id: t.string() })
+    const spoofed = {
+      ...strict,
+      jsonSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        additionalProperties: true,
+      },
+    }
+    expect(outputGuard(spoofed, '"page.backend.ts"', "loaderOutput").validate).toBe(
+      strict["~standard"].validate,
+    )
+    await refusal(() => guard(spoofed, { id: "1", secret: "x" }))
+  })
+
+  test("a deferred value's resolved value is validated the same way", async () => {
+    const schema = t.object({ feed: t.deferred(t.array(t.object({ n: t.integer() }))) })
+    const streamed = (value: unknown): unknown =>
+      typeof value === "object" &&
+      value !== null &&
+      "feed" in value &&
+      typeof value.feed === "object" &&
+      value.feed !== null &&
+      "promise" in value.feed
+        ? value.feed.promise
+        : undefined
+    const ok = guard(schema, { feed: defer(Promise.resolve([{ n: 1, token: "x" }])) })
+    expect(await streamed(ok)).toEqual([{ n: 1 }])
+    const bad = guard(schema, { feed: defer(Promise.resolve([{ n: "1" }])) })
+    expect((await refusal(() => streamed(bad))).paths).toEqual(["/0/n"])
+  })
+
+  test("a non-enumerable property is never sent: no serializer reads one", () => {
+    const row = { id: "1" }
+    Object.defineProperty(row, "passwordHash", { value: "never-sent", enumerable: false })
+    const out = guard(t.object({ list: t.array(t.object({ id: t.string() })) }), { list: [row] })
+    expect(JSON.stringify(out)).toBe('{"list":[{"id":"1"}]}')
+    expect(structuredClone(out)).toEqual({ list: [{ id: "1" }] })
+  })
+
+  test("client component props refuse a non-enumerable property", async () => {
+    const row = { id: "1" }
+    Object.defineProperty(row, "passwordHash", { value: "never-sent", enumerable: false })
+    const props = t.object({ row: t.object({ id: t.string() }) })
+    expect(await guardComponentProps(props, { row: { id: "1" } })).toEqual({ row: { id: "1" } })
+    await expect(guardComponentProps(props, { row })).rejects.toThrow()
   })
 })
 
@@ -544,6 +745,38 @@ describe("a route's backend half", () => {
     expect(page).toContain('<main>{"name":"Ada"}</main>')
     expect(page).not.toContain("never-sent")
     const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    expect(await data.text()).not.toContain("never-sent")
+  })
+
+  test("a non-enumerable property reaches neither the page nor the data request", async () => {
+    const app = appOf({
+      loader: () => {
+        const row = { name: "Ada" }
+        Object.defineProperty(row, "passwordHash", { value: "never-sent", enumerable: false })
+        return { rows: [row] }
+      },
+      loaderOutput: t.object({ rows: t.array(t.object({ name: t.string() })) }),
+    })
+    const page = await (await app.fetch(new Request("http://x/page"))).text()
+    expect(page).toContain('<main>{"rows":[{"name":"Ada"}]}</main>')
+    expect(page).not.toContain("never-sent")
+    const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    expect(await data.text()).not.toContain("never-sent")
+  })
+
+  test("a non-enumerable toJSON reaches neither the page nor the data request", async () => {
+    const app = appOf({
+      loader: () =>
+        Object.defineProperty({ name: "Ada" }, "toJSON", {
+          value: () => ({ passwordHash: "never-sent" }),
+        }),
+      loaderOutput: t.object({ name: t.string() }),
+    })
+    const page = await (await app.fetch(new Request("http://x/page"))).text()
+    expect(page).toContain('<main>{"name":"Ada"}</main>')
+    expect(page).not.toContain("never-sent")
+    const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    expect(data.status).toBe(200)
     expect(await data.text()).not.toContain("never-sent")
   })
 

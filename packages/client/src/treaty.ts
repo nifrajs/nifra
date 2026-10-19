@@ -1,4 +1,4 @@
-import type { RequestPath, RouteInfo, Server } from "@nifrajs/core/server"
+import type { RequestPath, RouteInfo, Server, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { Jsonify } from "./jsonify.ts"
 import type { Result } from "./result.ts"
 
@@ -26,8 +26,8 @@ type CallOptions<I extends RouteInfo> = {
  * value instead of being treated like an omitted object property by the general `Jsonify` helper. */
 type JsonifyResponses<T> = T extends object ? { [K in keyof T]: Jsonify<T[K]> } : never
 
-/** Where a verb's body goes: slot 0 for POST/PUT/PATCH, `options.body` for DELETE, nowhere else. */
-type BodySlot<M extends string> = M extends "POST" | "PUT" | "PATCH"
+/** Where a verb's body goes: slot 0 for POST/PUT/PATCH/QUERY, `options.body` for DELETE, nowhere else. */
+type BodySlot<M extends string> = M extends "POST" | "PUT" | "PATCH" | "QUERY"
   ? "positional"
   : M extends "DELETE"
     ? "option"
@@ -35,7 +35,7 @@ type BodySlot<M extends string> = M extends "POST" | "PUT" | "PATCH"
 
 /**
  * A terminal method call. The shape is **verb-aware** so the runtime can read
- * args unambiguously with no route info: body-verbs (POST/PUT/PATCH) always take
+ * args unambiguously with no route info: body-verbs (POST/PUT/PATCH/QUERY) always take
  * the body positionally Eden-style (typed `undefined` when the route has no body
  * schema, so it's still slot 0); GET/DELETE/HEAD take only options, and a DELETE
  * whose route declares a body schema requires it as `options.body`. Returns a
@@ -135,7 +135,8 @@ type SseMethods<MethodMap> = (MethodMap extends { GET: infer G }
 /** The WS frame contract of a route (from `app.ws()`'s schemas); `never` for ordinary routes. */
 type WsOf<I> = I extends { ws: infer W extends { in: unknown; out: unknown } } ? W : never
 
-export interface WsCallOptions {
+/** `Out` is what the handle delivers: a `validateReceive` schema must produce that type. */
+export interface WsCallOptions<Out = unknown> {
   /** Sent on the handshake URL as an HTTP call sends it: an array repeats its key once per item,
    * and an `undefined` value is left out. */
   query?: Record<
@@ -147,8 +148,15 @@ export interface WsCallOptions {
   protocols?: string | string[]
   /** Abort to close the socket (same effect as calling `close()`). */
   signal?: AbortSignal
-  /** Socket-level failures (connection refused, abnormal close). */
+  /** Socket-level failures (connection refused, abnormal close), and frames `validateReceive` refuses. */
   onError?: (error: unknown) => void
+  /**
+   * Check every received frame against this schema - the route's `sendSchema`, imported from the
+   * module that declares it (the typed client carries the contract's types, not its schemas). A frame
+   * that fails is not delivered: `onError` gets a `TypeError` naming the issues, with the frame as its
+   * `cause`. Frames are still delivered in the order they arrived, an async schema included.
+   */
+  validateReceive?: StandardSchemaV1<unknown, Out>
 }
 
 /**
@@ -172,7 +180,7 @@ export interface WsHandle<In, Out> {
 }
 
 type WsCall<I extends RouteInfo> = (
-  options?: WsCallOptions,
+  options?: WsCallOptions<Jsonify<WsOf<I>["out"]>>,
 ) => WsHandle<WsOf<I>["in"], Jsonify<WsOf<I>["out"]>>
 
 /** Routes declared via `app.ws()` (pseudo-method `"WS"`) grow a `.ws()` handle. */
@@ -183,10 +191,9 @@ type WsMethods<MethodMap> = MethodMap extends { WS: infer G }
   : unknown
 
 type Methods<MethodMap> = {
-  [M in Exclude<keyof MethodMap, "WS"> as Lowercase<M & string>]: MethodCall<
-    MethodMap[M] & RouteInfo,
-    BodySlot<M & string>
-  >
+  [M in Exclude<keyof MethodMap, "WS"> as M extends "QUERY"
+    ? "$query"
+    : Lowercase<M & string>]: MethodCall<MethodMap[M] & RouteInfo, BodySlot<M & string>>
 } & SseMethods<MethodMap> &
   WsMethods<MethodMap>
 
@@ -202,7 +209,7 @@ type Methods<MethodMap> = {
  * Kept in lockstep with the runtime's `HTTP_VERBS` set.
  */
 type ReservedVerbKey = "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
-type ReservedExactKey = "subscribe" | "ws" | "index" | "then"
+type ReservedExactKey = "subscribe" | "ws" | "index" | "then" | "$query"
 
 /**
  * What a reserved-named segment resolves to instead of a route node, so the collision is a
@@ -212,7 +219,7 @@ type ReservedExactKey = "subscribe" | "ws" | "index" | "then"
  * (NF-C018) with the same guidance.
  */
 interface ReservedSegmentCollision<Seg extends string> {
-  readonly "~nifra-reserved-segment": `route segment '${Seg}' collides with a reserved client proxy key (get/post/put/patch/delete/head/options/subscribe/ws/index/then) and cannot be reached by property access - call the parent node with the segment instead, parent("${Seg}").verb(), or rename the segment`
+  readonly "~nifra-reserved-segment": `route segment '${Seg}' collides with a reserved client proxy key (get/post/put/patch/delete/head/options/subscribe/ws/index/then/$query) and cannot be reached by property access - call the parent node with the segment instead, parent("${Seg}").verb(), or rename the segment`
 }
 
 type IsReservedSeg<Seg extends string> = Seg extends ReservedExactKey

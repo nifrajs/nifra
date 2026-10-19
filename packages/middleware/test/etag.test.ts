@@ -45,7 +45,7 @@ describe("etag", () => {
   test("adds a weak ETag to GET 200 responses", async () => {
     const res = await app.fetch(new Request("http://x/"))
     expect(res.status).toBe(200)
-    expect(res.headers.get("etag")).toMatch(/^W\/"[0-9a-f]+"$/)
+    expect(res.headers.get("etag")).toMatch(/^W\/"[\w-]+"$/)
     expect(await res.json()).toEqual({ hello: "world" })
   })
 
@@ -55,6 +55,17 @@ describe("etag", () => {
     expect(res.status).toBe(304)
     expect(await res.text()).toBe("")
     expect(res.headers.get("etag")).toBe(tag)
+  })
+
+  test("a HEAD carries the ETag its GET gets, and revalidates to 304", async () => {
+    const tag = (await app.fetch(new Request("http://x/"))).headers.get("etag")
+    const head = await app.fetch(new Request("http://x/", { method: "HEAD" }))
+    expect(head.status).toBe(200)
+    expect(head.headers.get("etag")).toBe(tag)
+    const revalidated = await app.fetch(
+      new Request("http://x/", { method: "HEAD", headers: { "if-none-match": tag ?? "" } }),
+    )
+    expect(revalidated.status).toBe(304)
   })
 
   test("matches If-None-Match lists, wildcard, and weak validators", async () => {
@@ -112,6 +123,35 @@ describe("etag", () => {
     const second = await raw.fetch(new Request("http://x/", { headers: { "if-none-match": tag! } }))
     expect(second.status).toBe(304)
     expect(await second.text()).toBe("")
+  })
+
+  test("text and raw UTF-8 bodies revalidate only when their bytes match", async () => {
+    const app = server()
+      .use(etag())
+      .get("/", (c) => {
+        const text = c.header("x-text") ?? "é"
+        return c.header("x-raw") === "1"
+          ? new Response(new TextEncoder().encode(text), {
+              headers: { "content-type": "text/plain;charset=utf-8" },
+            })
+          : c.text(text)
+      })
+    const first = await app.fetch(new Request("http://x/", { headers: { "x-text": "Ã©" } }))
+    const tag = first.headers.get("etag")!
+    expect(await first.text()).toBe("Ã©")
+    const changed = await app.fetch(
+      new Request("http://x/", {
+        headers: { "x-raw": "1", "if-none-match": tag },
+      }),
+    )
+    expect(changed.status).toBe(200)
+    expect(await changed.text()).toBe("é")
+    const same = await app.fetch(
+      new Request("http://x/", {
+        headers: { "x-text": "Ã©", "x-raw": "1", "if-none-match": tag },
+      }),
+    )
+    expect(same.status).toBe(304)
   })
 
   test("strong ETags use a collision-resistant digest", async () => {
@@ -185,6 +225,20 @@ describe("etag", () => {
     expect(res.status).toBe(304)
     expect(res.headers.get("content-length")).toBeNull()
     expect(res.headers.get("content-type")).toBeNull()
+  })
+
+  test("a weak tag follows the body, and a string is measured in UTF-8 bytes", async () => {
+    const app = server()
+      .use(etag({ maxBytes: 8 }))
+      .get("/:text", (c) => c.text(c.params.text))
+    const tagOf = async (text: string) =>
+      (await app.fetch(new Request(`http://x/${encodeURIComponent(text)}`))).headers.get("etag")
+    const [a, again, b] = [await tagOf("abc"), await tagOf("abc"), await tagOf("abd")]
+    expect(a).toBe(again)
+    expect(a).not.toBe(b)
+    // Four characters, eight bytes: at the cap. Five characters, ten bytes: over it.
+    expect(await tagOf("éééé")).not.toBeNull()
+    expect(await tagOf("ééééé")).toBeNull()
   })
 
   test("validates construction", () => {

@@ -1,5 +1,19 @@
 # @nifrajs/workbench
 
+## 5.5.0
+
+### Patch Changes
+
+- 806a7af: Workbench loads a project's `.nifra/extensions/**` only when it is started with `--extensions`, matching `nifra-agent`. Without the flag a Pi-backed session runs no project extension code; pass it only for a repository you trust, since an extension's top-level code runs as soon as it is imported.
+- Updated dependencies [50d7389]
+- Updated dependencies [69308da]
+- Updated dependencies [6fe9b8a]
+- Updated dependencies [945f634]
+- Updated dependencies [16d085d]
+  - @nifrajs/agent-app@5.5.0
+  - @nifrajs/coding-agent@5.5.0
+  - @nifrajs/agent-protocol@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

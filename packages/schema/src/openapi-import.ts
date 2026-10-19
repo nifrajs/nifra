@@ -86,6 +86,7 @@ const SUPPORTED_METHODS: ReadonlySet<string> = new Set([
   "options",
   "trace",
 ])
+const WITH_QUERY: ReadonlySet<string> = new Set([...SUPPORTED_METHODS, "query"])
 const PATH_ITEM_METADATA = new Set(["$ref", "summary", "description", "servers", "parameters"])
 const RESPONSE_KEY = /^(?:[1-5][0-9]{2}|default)$/
 const TEMPLATE_EXPRESSION = /\{([^{}]*)\}/g
@@ -218,7 +219,7 @@ function mergedParameters(
   return [...merged.values()]
 }
 
-/** Parse an OpenAPI 3.0/3.1 document into a canonical route inventory. Throws on invalid input. */
+/** Parse an OpenAPI 3.0, 3.1 or 3.2 document into a canonical route inventory. Throws on invalid input. */
 export function importOpenAPI(
   document: unknown,
   options: ImportOpenAPIOptions = {},
@@ -228,10 +229,12 @@ export function importOpenAPI(
   const maxParameters = normalizedLimit(options.maxParameters, 100, "maxParameters")
   if (!isRecord(document)) throw new OpenAPIImportError("document must be an object")
   const { openapi, info, paths } = document
-  if (typeof openapi !== "string" || !/^3\.(0|1)\.\d+$/.test(openapi))
+  if (typeof openapi !== "string" || !/^3\.[0-2]\.\d+$/.test(openapi))
     throw new OpenAPIImportError(
-      `unsupported OpenAPI version ${JSON.stringify(openapi)} - 3.0.x and 3.1.x only`,
+      `unsupported OpenAPI version ${JSON.stringify(openapi)} - 3.0.x, 3.1.x and 3.2.x only`,
     )
+  // 3.2 added the path-item field for QUERY; in an earlier document `query` is not a method.
+  const supported = openapi.startsWith("3.2.") ? WITH_QUERY : SUPPORTED_METHODS
   if (!isRecord(info)) throw new OpenAPIImportError("document.info must be an object")
   const title = typeof info.title === "string" ? info.title : ""
   const version = typeof info.version === "string" ? info.version : ""
@@ -261,7 +264,7 @@ export function importOpenAPI(
     const seenMethods = new Set<string>()
     for (const rawMethod of operationKeys) {
       const method = rawMethod.toLowerCase()
-      if (!SUPPORTED_METHODS.has(method))
+      if (!supported.has(method))
         throw new OpenAPIImportError(`unsupported method ${rawMethod} on ${openapiPath}`)
       if (seenMethods.has(method))
         throw new OpenAPIImportError(`duplicate method ${rawMethod} on ${openapiPath}`)

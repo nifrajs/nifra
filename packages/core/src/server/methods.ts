@@ -54,7 +54,7 @@ function plugin(
  * ```
  *
  * It is the same as calling `get`, `post`, `put`, `patch`, `delete`, `head` and `options` with the
- * one handler, as a single registration: a method already registered on the path makes the call
+ * one handler, and `method("QUERY", ...)`, as a single registration: a method already registered on the path makes the call
  * throw and adds nothing. A schema applies to every method, so with a `body` schema a request that
  * carries no body is refused under any of them, `GET` included.
  */
@@ -95,7 +95,8 @@ export function all(
  * or none is.
  *
  * Only the standard methods among the names join the app's typed registry, so the typed client has
- * a call for those and none for a custom token.
+ * a call for those and none for a custom token. `QUERY` is one: its route is typed, takes a `body`
+ * schema, and the client calls it as `$query(body)`.
  */
 export function method<
   const M extends string,

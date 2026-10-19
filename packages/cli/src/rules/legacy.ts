@@ -26,6 +26,7 @@ import { createWebAppProbe, withApiKindHint } from "../internal/nifra-project.ts
 import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import { linkLockUpdate, staleLinkLockMessage } from "../lock-links.ts"
 import { zoneFolderOf } from "../typecheck-coverage.ts"
+import { compareSemverSpec, isFixedGroup } from "../upgrade.ts"
 import { versionDriftMessage } from "../version-drift.ts"
 import { MISSING_EXPECTATION_REASON } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -42,6 +43,7 @@ export const LEGACY_RULE_CODES: Readonly<Record<string, string>> = Object.freeze
   "response-route": "NF-C007",
   "undeclared-dependency": "NF-C008",
   "duplicate-install": "NF-C009",
+  "version-skew": "NF-C046",
   "stale-workspace-dist": "NF-C010",
   pipeline: "NF-C011",
   "server-manifest-drift": "NF-C012",
@@ -62,6 +64,7 @@ const TITLES: Readonly<Record<string, string>> = Object.freeze({
   "response-route": "Raw response route advisory",
   "undeclared-dependency": "Undeclared dependency check",
   "duplicate-install": "Duplicate install check",
+  "version-skew": "Identity-sensitive version skew",
   "stale-workspace-dist": "Stale workspace build check",
   pipeline: "Build pipeline check",
   "server-manifest-drift": "Server manifest drift check",
@@ -84,6 +87,7 @@ export const LEGACY_RULE_ORDER: readonly string[] = Object.freeze([
   "response-route",
   "undeclared-dependency",
   "duplicate-install",
+  "version-skew",
   "stale-workspace-dist",
   "pipeline",
   "server-manifest-drift",
@@ -664,6 +668,15 @@ function copyLines(finding: DuplicateInstallFinding): string[] {
   )
 }
 
+const provenanceSteps = (group: readonly DuplicateInstallFinding[]): string[] =>
+  group.flatMap((finding) =>
+    finding.provenance === undefined
+      ? []
+      : [
+          `Planted links${group.length === 1 ? "" : ` (${finding.package})`}: ${finding.provenance} Try this before the fixes below.`,
+        ],
+  )
+
 /** One fix for duplicates that share a cause and topology, so a linked sibling repository that
  * duplicates every package reads as one finding instead of one paragraph per package. */
 function duplicateSuggestion(group: readonly DuplicateInstallFinding[]): DiagnosticSuggestion {
@@ -684,16 +697,38 @@ function duplicateSuggestion(group: readonly DuplicateInstallFinding[]): Diagnos
     ].join("\n"),
     steps: [
       ...group.flatMap(copyLines).map((line) => `Copy: ${line}`),
-      ...group.flatMap((finding) =>
-        finding.provenance === undefined
-          ? []
-          : [
-              `Planted links${group.length === 1 ? "" : ` (${finding.package})`}: ${finding.provenance} Try this before the fixes below.`,
-            ],
-      ),
+      ...provenanceSteps(group),
       "Fix 1 - deduplicate: align workspace dependency and peer ranges on one compatible version, remove stale nested installs, and reinstall from the workspace root so every importer resolves one physical copy.",
-      `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${group.some((finding) => finding.cause === "version-skew") ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
+      "Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.",
       "Re-run `nifra check`; the gate stays failing until one fix lands.",
+    ],
+  }
+}
+
+/** A version skew has one fix, one version: a singleCopy declaration never redirects across versions. */
+function skewSuggestion(group: readonly DuplicateInstallFinding[]): DiagnosticSuggestion {
+  const newest = group
+    .flatMap((finding) => finding.versions)
+    .reduce<string | undefined>(
+      (best, version) =>
+        best === undefined || compareSemverSpec(version, best) > 0 ? version : best,
+      undefined,
+    )
+  const align = group.every((finding) => isFixedGroup(finding.package))
+    ? `Upgrade each install that is behind to one nifra version (the newest here is ${newest}): \`nifra upgrade ${newest}\` in this app, and in a linked repository on its own, then install in each.`
+    : "Align dependency and peer ranges on one version in every install root that carries a copy, then install in each."
+  return {
+    kind: "manual",
+    title:
+      group.length === 1
+        ? `Install ${group[0]?.package} at one version`
+        : `Install each of ${group.length} packages at one version`,
+    steps: [
+      ...group.flatMap(copyLines).map((line) => `Copy: ${line}`),
+      ...provenanceSteps(group),
+      align,
+      "A singleCopy declaration does not cover this: it only collapses copies of one version.",
+      "Re-run `nifra check`; the gate stays failing until every copy is at one version.",
     ],
   }
 }
@@ -704,7 +739,7 @@ function duplicateDiagnostic(group: readonly DuplicateInstallFinding[]): Diagnos
   const context = `${first.topology === undefined ? "" : `. Topology: ${first.topology}`}${first.scope === undefined ? "" : `. Scope: ${first.scope}`}`
   const skew = first.cause === "version-skew"
   const names = group.map((finding) => finding.package)
-  return legacyDiagnostic("duplicate-install", {
+  return legacyDiagnostic(skew ? "version-skew" : "duplicate-install", {
     severity: "error",
     message:
       group.length === 1
@@ -715,8 +750,28 @@ function duplicateDiagnostic(group: readonly DuplicateInstallFinding[]): Diagnos
         ? first.remediation
         : `Deduplicate so each resolves to a single physical path, or declare them single-copy: add "nifra": { "singleCopy": [${names.map((name) => `"${name}"`).join(", ")}] } to package.json and preload "${SINGLE_COPY_REGISTER_SPECIFIER}" from bunfig.toml.`,
     evidence: group.flatMap(copyLines),
-    suggestion: duplicateSuggestion(group),
+    suggestion: skew ? skewSuggestion(group) : duplicateSuggestion(group),
   })
+}
+
+/**
+ * The identity preflight's findings of one cause as diagnostics. Duplicates with one cause and one
+ * layout (every package a linked sibling repo installs again) have one fix, so they are one finding;
+ * `identityPreflight` in --json keeps each package.
+ */
+function identityDiagnostics(
+  ctx: RuleContext,
+  cause: DuplicateInstallFinding["cause"],
+): readonly Diagnostic[] {
+  const doctor = ctx.project.packages.doctor
+  if (!doctor.ran) return []
+  const groups = new Map<string, DuplicateInstallFinding[]>()
+  for (const finding of doctor.duplicateInstalls) {
+    if (finding.cause !== cause) continue
+    const key = [finding.topology ?? "", finding.scope ?? ""].join("\0")
+    groups.set(key, [...(groups.get(key) ?? []), finding])
+  }
+  return [...groups.values()].flatMap((group) => duplicateDiagnostic(group) ?? [])
 }
 
 const doctorRules: readonly CheckRule[] = Object.freeze([
@@ -746,16 +801,16 @@ const doctorRules: readonly CheckRule[] = Object.freeze([
     code: LEGACY_RULE_CODES["duplicate-install"]!,
     title: TITLES["duplicate-install"]!,
     async scan(ctx: RuleContext) {
-      const doctor = ctx.project.packages.doctor
-      if (!doctor.ran) return []
-      // Duplicates with one cause and one layout (every package a linked sibling repo installs again)
-      // have one fix, so they are one finding; `identityPreflight` in --json keeps each package.
-      const groups = new Map<string, DuplicateInstallFinding[]>()
-      for (const finding of doctor.duplicateInstalls) {
-        const key = [finding.cause, finding.topology ?? "", finding.scope ?? ""].join("\0")
-        groups.set(key, [...(groups.get(key) ?? []), finding])
-      }
-      return [...groups.values()].flatMap((group) => duplicateDiagnostic(group) ?? [])
+      return identityDiagnostics(ctx, "duplicate-path")
+    },
+  },
+  // Its own code so a severity override that quiets same-version duplicates never quiets a skew,
+  // which no declaration can cover.
+  {
+    code: LEGACY_RULE_CODES["version-skew"]!,
+    title: TITLES["version-skew"]!,
+    async scan(ctx: RuleContext) {
+      return identityDiagnostics(ctx, "version-skew")
     },
   },
   {
