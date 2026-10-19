@@ -52,11 +52,11 @@ export async function fetchBenchPage(base: string): Promise<{ html: string; link
 /**
  * What a row measures (bench/ssr/README.md). Only `app` rows are like for like with each other.
  * - `app`: a framework app built and served the way that framework ships it.
- * - `own-server`: nifra's `renderPage` called from a server written by hand. No router or file
- *   routes, so it is never a headline.
+ * - `renderer`: a UI library's own render-to-string on a bare server, no framework. Published only
+ *   where no meta-framework exists to compare with (Preact), and never a headline.
  * - `static-host`: prerendered files from a plain file server, no framework code per request.
  */
-export type SsrRowKind = "app" | "own-server" | "static-host"
+export type SsrRowKind = "app" | "renderer" | "static-host"
 
 export interface SsrBenchTarget {
   readonly name: string

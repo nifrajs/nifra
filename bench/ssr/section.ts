@@ -87,14 +87,8 @@ export async function runSection(
   const baseline = measured.find((t) => t.name === section.baseline)
   const rows: SsrRunRow[] = []
   console.log(`\n  ratio = median of per-round ratios to ${section.baseline}\n`)
-  for (const kindOrder of ["app", "static-host", "own-server"] as const) {
-    const group = measured.filter((t) => rowKind(t) === kindOrder)
-    if (group.length > 0 && kindOrder === "own-server") {
-      console.log(
-        "\n  Not like for like - nifra's render API called from a server you write yourself:",
-      )
-    }
-    for (const target of group) {
+  for (const kindOrder of ["app", "renderer", "static-host"] as const) {
+    for (const target of measured.filter((t) => rowKind(t) === kindOrder)) {
       const all = samples.get(target) ?? []
       const payload = payloads.get(target) ?? { raw: 0, gzip: 0 }
       const result = {
@@ -111,14 +105,6 @@ export async function runSection(
     }
   }
 
-  // How much of the own-server speed a real app keeps, per runtime - the cost of the framework.
-  for (const app of measured.filter((t) => rowKind(t) === "app" && t.name.startsWith("nifra"))) {
-    const own = measured.find((t) => rowKind(t) === "own-server" && t.runtime === app.runtime)
-    if (own === undefined) continue
-    console.log(
-      `  ${app.name} / ${own.name}: ${pairedRatio(rpsOf(app), rpsOf(own)).toFixed(3)}x (paired)`,
-    )
-  }
   return {
     rows,
     samples: Object.fromEntries(measured.map((t) => [t.name, rpsOf(t)])),

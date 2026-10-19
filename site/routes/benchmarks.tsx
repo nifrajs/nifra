@@ -197,16 +197,10 @@ export default function Benchmarks() {
         ))}
       </div>
       <p className="note" style={{ margin: "14px 0 8px" }}>
-        <b>Render API in your own server.</b> Each Table A also has one row per runtime that calls
-        Nifra's <code>renderPage</code> from a hand-written server: a raw <code>Bun.serve</code>{" "}
-        handler, and the same handler on Node through <code>@nifrajs/node</code>. No Nifra router,
-        file routes, loader, or schema check runs. The row shows that the page renderer is a
-        function any request handler can call, in a server you own. Other frameworks run inside a
-        server you own too - SvelteKit's <code>handler.js</code>, a Next.js custom server, Nitro's
-        middleware preset, React Router's Express adapter - but there the framework's router still
-        owns each request. Here your code does, and Nifra only renders. It is not like for like with
-        the meta-frameworks, which run full file-routed apps, so these rows stay out of the chart
-        and the multipliers.
+        <b>Your own server.</b> The renderer under these app rows is also a plain function:{" "}
+        <code>renderPage</code> from <code>@nifrajs/web</code> renders a page from any request
+        handler, in a <code>Bun.serve</code> or Node server you write, without Nifra&apos;s router
+        or file routes.
       </p>
       <p className="note" style={{ margin: "0 0 8px" }}>
         <b>SSG files on a static host.</b> The <code>nifra build --target static</code> output
@@ -240,9 +234,11 @@ export default function Benchmarks() {
       })}
       <div className="caveat">
         Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> app
-        row (the headline multipliers above do exactly that). Preact has no maintained
-        meta-framework, so its section is Nifra-only. A client-JS of <code>n/a</code> means the run
-        couldn't account that framework's payload from the SSR HTML.
+        row (the headline multipliers above do exactly that). No Preact meta-framework runs on Node
+        (Fresh is Deno-only), so Preact&apos;s table compares with{" "}
+        <code>preact-render-to-string</code> in a bare Node server: the renderer&apos;s ceiling,
+        with no router, loader or schema. A client-JS of <code>n/a</code> means the run couldn't
+        account that framework's payload from the SSR HTML.
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
