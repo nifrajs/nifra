@@ -324,7 +324,7 @@ class Compiler {
     // A closed object drops a deferred marker's keys unless it declares them, so only an open one, or
     // one declaring the marker key, could pass a marker on.
     const checksMarker = open || declared.__nifra_deferred !== undefined
-    const project: Project = (value, state) => {
+    const closure: Project = (value, state) => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return value
       if (checksMarker && isDeferred(value)) {
         state.issues.push("")
@@ -332,13 +332,7 @@ class Compiler {
       }
       const proto = Object.getPrototypeOf(value)
       if (proto !== Object.prototype && proto !== null) {
-        if (value instanceof Date) return value.toJSON()
-        // A class instance: its own fields as a plain object, so no prototype `toJSON` or getter
-        // decides what is serialized.
-        const snapshot: Record<string, unknown> = {}
-        for (const key of Object.keys(value))
-          assign(snapshot, key, (value as Record<string, unknown>)[key])
-        return project(snapshot, state)
+        return value instanceof Date ? value.toJSON() : closure(snapshotOf(value), state)
       }
       const input = value as Record<string, unknown>
       // Copy-on-write: a value that already holds only declared keys is returned as it is.
@@ -367,6 +361,8 @@ class Compiler {
       }
       return out ?? value
     }
+    const project =
+      generatedObject(declared, open ? undeclared : undefined, checksMarker) ?? closure
     if (!checksMarker && Object.values(declared).every((child) => this.issueFree.has(child)))
       this.issueFree.add(project)
     return project
@@ -526,6 +522,114 @@ class Compiler {
       void promise.catch(() => {})
       return { __nifra_deferred: true, id: value.id, promise }
     }
+  }
+}
+
+/**
+ * A class instance as a plain object of its own fields, so no prototype `toJSON` or getter decides
+ * what is serialized.
+ */
+function snapshotOf(value: object): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {}
+  for (const key of Object.keys(value))
+    assign(snapshot, key, (value as Record<string, unknown>)[key])
+  return snapshot
+}
+
+// Inside `for-in`, V8 folds `hasOwnProperty.call` into the loop but calls `Object.hasOwn` per key.
+// Bun runs both alike.
+const ownKey = Object.prototype.hasOwnProperty
+// Bun's string `switch` stops beating the dictionary lookup near 128 declared keys; V8's does not.
+const MAX_GENERATED_KEYS = 64
+
+/**
+ * The object projector as code generated for its declared keys: a `switch` on each key, with every
+ * key's projector a call site of its own. It reads, keeps and drops exactly what the closure in
+ * `Compiler.object` does, which serves where code generation is off: an edge bundle (the build
+ * defines `__NIFRA_EDGE_RUNTIME__`), a browser page (where even a caught attempt is a reported CSP
+ * violation), or a runtime that refuses it. Only `JSON.stringify`d key names reach the source.
+ */
+function generatedObject(
+  declared: Record<string, Project>,
+  undeclared: ((key: string) => Project | undefined) | undefined,
+  checksMarker: boolean,
+): Project | undefined {
+  const keys = Object.keys(declared)
+  // The edge build defines this global as `true`, so that bundle drops the generator.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only nifra's build defines this global, as a boolean literal.
+  const edge = (globalThis as { readonly __NIFRA_EDGE_RUNTIME__?: boolean }).__NIFRA_EDGE_RUNTIME__
+  if (keys.length > MAX_GENERATED_KEYS || edge === true || "document" in globalThis)
+    return undefined
+  const tail = (store: (value: string) => string, call: string): string =>
+    `const from = state.issues.length; const after = ${call}(before, state);` +
+    "if (state.issues.length > from) prefix(state, from, key);" +
+    `if (out !== undefined) ${store("after")};` +
+    `else if (after !== before) { out = copyBefore(value, key); ${store("after")}; }` +
+    "continue;"
+  let cases = ""
+  for (const [i, key] of keys.entries()) {
+    const projector = declared[key]
+    const store = (value: string): string =>
+      key === "__proto__" ? `assign(out, key, ${value})` : `out[${JSON.stringify(key)}] = ${value}`
+    cases += `case ${JSON.stringify(key)}: { const before = value[key];`
+    if (projector === LEAF_ARRAY) cases += `if (out !== undefined) ${store("before")}; continue; }`
+    else {
+      if (projector === LEAF) {
+        cases += `if (!(before instanceof Date)) { if (out !== undefined) ${store("before")}; continue; }`
+      }
+      cases += `${tail(store, `p[${i}]`)} }`
+    }
+  }
+  const generic = (value: string): string => `assign(out, key, ${value})`
+  const rest =
+    undeclared === undefined
+      ? "out ??= copyBefore(value, key); continue;"
+      : "const projector = undeclared(key);" +
+        "if (projector === undefined) { out ??= copyBefore(value, key); continue; }" +
+        "const before = value[key];" +
+        "if (projector === LEAF_ARRAY || (projector === LEAF && !(before instanceof Date))) {" +
+        `if (out !== undefined) ${generic("before")}; continue; }` +
+        tail(generic, "projector")
+  const source =
+    '"use strict"; return function project(value, state) {' +
+    'if (typeof value !== "object" || value === null || Array.isArray(value)) return value;' +
+    (checksMarker ? 'if (isDeferred(value)) { state.issues.push(""); return value; }' : "") +
+    "const proto = Object.getPrototypeOf(value);" +
+    "if (proto !== Object.prototype && proto !== null)" +
+    "return value instanceof Date ? value.toJSON() : project(snapshotOf(value), state);" +
+    "let out;" +
+    "for (const key in value) {" +
+    "if (!ownKey.call(value, key)) continue;" +
+    `switch (key) { ${cases} default: { ${rest} } }` +
+    "}" +
+    "return out ?? value; }"
+  try {
+    return new Function(
+      "p",
+      "undeclared",
+      "isDeferred",
+      "snapshotOf",
+      "copyBefore",
+      "assign",
+      "prefix",
+      "ownKey",
+      "LEAF",
+      "LEAF_ARRAY",
+      source,
+    )(
+      keys.map((key) => declared[key]),
+      undeclared,
+      isDeferred,
+      snapshotOf,
+      copyBefore,
+      assign,
+      prefix,
+      ownKey,
+      LEAF,
+      LEAF_ARRAY,
+    )
+  } catch {
+    return undefined
   }
 }
 

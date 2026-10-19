@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { status } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
@@ -57,7 +57,67 @@ async function refusal(run: () => unknown): Promise<OutputGuardError> {
   throw new Error("the guard passed")
 }
 
-describe("projection drops what the schema does not declare", () => {
+/** Compile with code generation off, as a browser page does: objects project by the closure. */
+const withoutCodegen = {
+  start: () => Reflect.set(globalThis, "document", {}),
+  stop: () => Reflect.deleteProperty(globalThis, "document"),
+}
+
+describe.each([
+  "generated",
+  "closure",
+])("projection drops what the schema does not declare (%s projector)", (projector) => {
+  if (projector === "closure") {
+    beforeAll(withoutCodegen.start)
+    afterAll(withoutCodegen.stop)
+  }
+
+  test("a plain object projects by generated code wherever code generation is allowed", () => {
+    const compiled = outputGuard(
+      projectingBy({ type: "object", properties: { a: { type: "string" } } }),
+      '"page.backend.ts"',
+      "loaderOutput",
+    )
+    expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
+  })
+
+  test("any key name projects as data, never as code", () => {
+    const names = [
+      'a"b',
+      "back\\slash",
+      "`tick`",
+      '"); throw new Error("x"); ("',
+      "line\u2028break",
+      "",
+      "0",
+      "constructor",
+      "__proto__",
+    ]
+    const schema = projectingBy({
+      type: "object",
+      properties: Object.fromEntries(names.map((name) => [name, { type: "string" }])),
+    })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
+    const kept = Object.fromEntries(names.map((name) => [name, `value of ${name}`]))
+    const out = guard(schema, JSON.parse(JSON.stringify({ drop: 1, ...kept })))
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(JSON.stringify(out)).toBe(JSON.stringify(kept))
+    const exact: unknown = JSON.parse(JSON.stringify(kept))
+    expect(guard(schema, exact)).toBe(exact)
+  })
+
+  test("a declared __proto__ object is projected and kept as data", () => {
+    const schema = projectingBy(
+      JSON.parse(
+        '{"type": "object", "properties": {"__proto__": {"type": "object", "properties": {"a": {"type": "string"}}}}}',
+      ),
+    )
+    const out = guard(schema, JSON.parse('{"__proto__": {"a": "x", "b": 1}}'))
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(Object.getOwnPropertyDescriptor(out, "__proto__")?.value).toEqual({ a: "x" })
+  })
+
   test("at every depth, through arrays, records and optional fields", () => {
     const schema = t.object({
       user: t.object({ name: t.string(), nickname: t.optional(t.string()) }),
@@ -209,6 +269,38 @@ describe("projection drops what the schema does not declare", () => {
     }
     expect(guard(stripping, { id: "1", extra: 2 })).toEqual({ id: "1" })
   })
+})
+
+test("an edge bundle never generates code: objects project by the closure", () => {
+  Reflect.set(globalThis, "__NIFRA_EDGE_RUNTIME__", true)
+  try {
+    const schema = projectingBy({ type: "object", properties: { name: { type: "string" } } })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(String(compiled.project).includes("switch (key)")).toBe(false)
+    expect(guard(schema, { name: "Ada", extra: 1 })).toEqual({ name: "Ada" })
+  } finally {
+    Reflect.deleteProperty(globalThis, "__NIFRA_EDGE_RUNTIME__")
+  }
+})
+
+test("where code generation is refused, objects project by the closure", () => {
+  const generate = globalThis.Function
+  Reflect.set(globalThis, "Function", () => {
+    throw new EvalError("Code generation from strings disallowed for this context")
+  })
+  try {
+    const schema = projectingBy({
+      type: "object",
+      properties: { user: { type: "object", properties: { name: { type: "string" } } } },
+    })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(String(compiled.project).includes("switch (key)")).toBe(false)
+    expect(guard(schema, { user: { name: "Ada", passwordHash: "x" }, extra: 1 })).toEqual({
+      user: { name: "Ada" },
+    })
+  } finally {
+    Reflect.set(globalThis, "Function", generate)
+  }
 })
 
 describe("in development, dropped fields are named", () => {
