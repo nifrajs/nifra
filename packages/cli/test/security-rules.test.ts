@@ -544,12 +544,12 @@ describe("NF-S002 precision", () => {
     expect(
       await linesOf(
         [
-          "const aServiceKey = process.env['A_SERVICE_KEY']",
-          "const bServiceKey = process.env['B_SERVICE_KEY']",
-          "const hmacSecret = (process.env.HMAC_SECRET ?? '').trim()",
-          "if (aServiceKey !== undefined && aServiceKey === bServiceKey) throw new Error('keys must differ')",
-          "if (hmacSecret === aServiceKey || hmacSecret === bServiceKey!) throw new Error('keys must differ')",
-          "function boot() { const signingKey = Bun.env.SIGNING_KEY as string; return signingKey === hmacSecret }",
+          "const lighthouseToken = process.env['LIGHTHOUSE_TOKEN']",
+          "const ferryToken = Bun.env.FERRY_TOKEN",
+          "const harborPassword = (process.env.HARBOR_PASSWORD ?? 'pierside').trim()",
+          "export const sharedRoute = lighthouseToken === ferryToken",
+          "chartCourse(harborPassword !== ferryToken! ? 'portside' : 'starboard')",
+          "function lowWater() { const buoySecret = Deno.env.get('BUOY_SECRET') as string; return buoySecret == lighthouseToken }",
         ].join("\n"),
       ),
     ).toEqual([])
@@ -559,14 +559,14 @@ describe("NF-S002 precision", () => {
     expect(
       await linesOf(
         [
-          "const serviceKey = process.env.SERVICE_KEY",
-          "let rotatedSecret = process.env.ROTATED_SECRET",
-          "if (serviceKey === header) x()",
-          "if (rotatedSecret === serviceKey) x()",
-          "function f(serviceKey: string) { return serviceKey === process.env.OTHER_KEY_SECRET }",
-          "const fromBody = body.secret",
-          "if (fromBody === serviceKey) x()",
-          "function g() { for (const serviceKey of keys) if (serviceKey === process.env.A_TOKEN) x() }",
+          "const lighthouseToken = process.env.LIGHTHOUSE_TOKEN",
+          "let buoySecret = process.env.BUOY_SECRET",
+          "if (lighthouseToken === header) x()",
+          "if (buoySecret === lighthouseToken) x()",
+          "function f(lighthouseToken: string) { return lighthouseToken === process.env.FERRY_TOKEN }",
+          "const fromCrate = crate.lighthouseToken",
+          "if (fromCrate === lighthouseToken) x()",
+          "function g() { for (const lighthouseToken of list) if (lighthouseToken === process.env.A_TOKEN) x() }",
           "if (privateKey === input || signingKey === input || masterKey === input) x()",
         ].join("\n"),
       ),
