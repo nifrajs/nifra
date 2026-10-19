@@ -53,7 +53,11 @@ import type { ProgramValidationKind, RouteProgramStage } from "../internal/route
 import { compileRouteProgram, executeRouteProgram } from "../internal/route-program.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
-import { decodeRouteParams, expandOptionalParams } from "../router/pattern.ts"
+import {
+  decodeRouteParams,
+  expandOptionalParams,
+  type RoutePatternSegment,
+} from "../router/pattern.ts"
 import { EMPTY_PARAMS, METHODS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
@@ -429,6 +433,21 @@ function outranks(
     } else if (theirs.kind !== "param") ahead = true
   }
   return ahead && other.length === route.length
+}
+
+/**
+ * The key Bun's route table holds `path` under. Bun refuses one with a character outside printable
+ * ASCII, so such a path is spelled as the portable router matches it: percent-encoded static
+ * segments and `:name` parameters. `segments` holds static and `:param` segments only.
+ */
+function bunTablePath(path: string, segments: readonly RoutePatternSegment[]): string {
+  if (!/[^ -~]/.test(path)) return path
+  let key = ""
+  for (const segment of segments) {
+    if (segment.kind === "static") key += `/${segment.value}`
+    else if (segment.kind === "param") key += `/:${segment.name}`
+  }
+  return key
 }
 
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
@@ -6655,9 +6674,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Where Bun could pass a request down: the methods served natively on a path with a parameter,
     // as segment count + method. Two table paths match one request only at the same segment count.
     const below = new Set<string>()
-    const tableAt = (path: string): BunNativeMethodTable => {
-      routes[path] ??= Object.create(null) as BunNativeMethodTable
-      return routes[path]
+    const tableAt = (
+      path: string,
+      segments: readonly RoutePatternSegment[],
+    ): BunNativeMethodTable => {
+      const key = bunTablePath(path, segments)
+      routes[key] ??= Object.create(null) as BunNativeMethodTable
+      return routes[key]
     }
     for (let i = 0; i < all.length; i++) {
       const { method, path, pattern, entry } = all[i]!
@@ -6678,7 +6701,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       const paramNames = pattern.paramNames
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
-      tableAt(path)[method as Method] = this.compileBunNativeHandler(
+      tableAt(path, pattern.segments)[method as Method] = this.compileBunNativeHandler(
         entry,
         paramNames,
         fused,
@@ -6710,7 +6733,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (lead[i] === undefined) continue
       const { path, pattern } = all[i]!
       for (const method of METHODS) {
-        if (below.has(pattern.segments.length + method)) tableAt(path)[method] ??= fallback
+        if (below.has(pattern.segments.length + method))
+          tableAt(path, pattern.segments)[method] ??= fallback
       }
     }
     return routes
