@@ -18,6 +18,8 @@
 
 ### Patch Changes
 
+- 5264c5b: Host reachability reports `ok: false, truncated: true` whenever declared pages remain beyond its limit, even with no pending asset references. Binary asset bodies are canceled instead of downloaded and decoded as text; CSS/JavaScript dependency traversal is preserved.
+
 - 9e6a0a5: `nifra build`, `nifra dev` and `buildClient`/`buildServer` print each bundler error with its file, line and column and the source line, where they printed the message alone. The message that `buildServer` throws without a client entry now names the `client` option.
 - c3ba1cb: React server components on Bun need Bun 1.3.14 or later. Bun 1.3.0 through 1.3.13 cannot parse the React 19.3.1 server renderer (a labeled `if` used as an `else` branch), so the runtime matrix now certifies Bun 1.3.14 and 1.4.3 instead of 1.3.0.
 - df7ef2e: The server-component plugin's version guard names what it found: a Vite other than the certified 8.2.1, or a React, React DOM, or Flight other than the certified release, is reported with the installed version of each.

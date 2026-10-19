@@ -26,6 +26,8 @@
 
 ### Patch Changes
 
+- c5755cf: Source scans honor Git ignores for Unicode and special filenames. Git input/output uses NUL separators and exact paths, preserving literal POSIX backslashes and leading/trailing whitespace.
+
 - 9e6a0a5: `nifra build`, `nifra dev` and `buildClient`/`buildServer` print each bundler error with its file, line and column and the source line, where they printed the message alone. The message that `buildServer` throws without a client entry now names the `client` option.
 - 9dbb277: `nifra upgrade 5.5.0` pins every Nifra package to 5.5.0 and an app's `react-server-dom-webpack` to 19.3.1, and its notes list what an app or a client sees differently after the upgrade.
 - 10a7854: `nifra verify` prints a line on stderr as each gate starts and finishes, with the gate's time, and the summary shows each gate's time and the total. A long run shows which gate it is on, and a slow gate can be found. The JSON result (`--json`, the `nifra_verify` MCP tool) gains `durationMs` on each gate that ran and on the result.

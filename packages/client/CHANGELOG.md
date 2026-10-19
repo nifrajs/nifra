@@ -10,6 +10,11 @@
   
   `nifra_docs` answers a query that matches a long page with that page's lead, the `###` subsections the query matches, and the headings of the rest, where it returned the page's first 2,800 characters. The WebSockets guide gains a typechecked example (`nifra_example`) with discriminated-union `messageSchema` and `sendSchema`, the client's `.ws()` handle, an exhaustive `switch` with a `never` check, and a heartbeat the client answers.
 
+### Patch Changes
+
+- 92ed4d5: WebSocket message iterators queue overlapping reads in order and settle every pending read on close, error, abort, or return, preventing permanently pending reads.
+
+
 ## 5.4.0
 
 No changes in this release.

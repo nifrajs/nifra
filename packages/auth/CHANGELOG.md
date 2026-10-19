@@ -2,6 +2,10 @@
 
 ## 5.5.0
 
+### Security and migration
+
+- 8debc4c: Session managers refuse eventually consistent stores, including `KVSessionStore`. Cached session records and missing revocation markers could restore a logged-out session and let it keep renewing. Existing KV-backed session applications must migrate to a strongly consistent shared `SessionStore`; the legacy KV adapter remains exported for reading and migration. Custom adapters may declare `consistency: "strong"`; omitting it asserts the same required contract.
+
 ### Minor Changes
 
 - 662afb0: A store-backed session that `regenerate()` rotates while a logout of it runs can no longer come out of that race as a live session. A rotated ID is now the session's original ID, `~`, and a new random part, and logout with any generation's cookie revokes every generation, so the rotating request either sends no cookie or sends one that loads as an empty session. `SessionStore` gains an optional `rotate(previousId, nextId, record, marker)` that moves an existing, unrevoked record to its new ID in one atomic step and resolves whether it did. `MemorySessionStore` implements it, and drops every generation's record when one is revoked, so evicting a revocation marker cannot bring them back. A store without `rotate` keeps working: rotation writes an `<id>.rotated` marker beside the `<id>.revoked` one, and the store must keep both until their `expiresAt`. A load reads the rotation marker, and for a rotated ID the original ID's revocation marker, in parallel with the record.
