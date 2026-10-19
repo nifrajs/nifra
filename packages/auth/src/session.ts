@@ -365,8 +365,15 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         state.id ??= randomId()
         // A store with `replace` makes the renewal conditional, so a logout landing after the checks
         // above wins outright; any other store relies on keeping the marker until it expires.
-        if (!loaded || store.replace === undefined) await store.set(state.id, record)
-        else if (!(await store.replace(state.id, record))) return
+        if (!loaded || store.replace === undefined) {
+          await store.set(state.id, record)
+          // The renewed record may have expired while the write was in flight, and a logout in that
+          // gap found nothing to mark, so the write would revive what it ended.
+          if (loaded && previousExpiry !== undefined && previousExpiry <= now()) {
+            await store.delete(state.id)
+            return
+          }
+        } else if (!(await store.replace(state.id, record))) return
       }
       state.regenerate = false
       // Checked after the write: a revocation that lands before it is seen here, one that lands after
