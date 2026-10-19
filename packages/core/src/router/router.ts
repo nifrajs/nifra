@@ -37,6 +37,8 @@ export function isRegistrableMethod(method: string): boolean {
 const SLASH = 47
 export const EMPTY_PARAMS: Record<string, string> = Object.freeze({})
 const DYNAMIC_MATCH_CACHE_MAX = 2048
+// The client picks every key, so their length is bounded too: 2048 paths of 8 KiB held 16 MiB.
+const DYNAMIC_MATCH_CACHE_CHARS = 256 * 1024
 
 /**
  * Result of {@link Router.find}. The `found: false` cases deliberately separate
@@ -67,6 +69,8 @@ interface DynamicMatchCacheEntry<T> {
 
 interface DynamicMatchCacheState<T> {
   cache: Map<string, DynamicMatchCacheEntry<T>> | undefined
+  /** Total length of the cached paths. */
+  chars: number
   pendingPath: string | undefined
 }
 
@@ -79,6 +83,7 @@ function dynamicMatchCacheStateFor<T>(owner: object): DynamicMatchCacheState<T> 
   }
   const state: DynamicMatchCacheState<T> = {
     cache: undefined,
+    chars: 0,
     pendingPath: undefined,
   }
   DYNAMIC_MATCH_CACHES.set(owner, state as DynamicMatchCacheState<unknown>)
@@ -476,13 +481,19 @@ export class Router<T> {
       cache = new Map<string, DynamicMatchCacheEntry<T>>()
       state.cache = cache
     }
-    if (cache.size >= DYNAMIC_MATCH_CACHE_MAX) {
-      const oldest = cache.keys().next().value
-      if (oldest !== undefined) cache.delete(oldest)
+    for (const oldest of cache.keys()) {
+      if (
+        cache.size < DYNAMIC_MATCH_CACHE_MAX &&
+        state.chars + path.length <= DYNAMIC_MATCH_CACHE_CHARS
+      )
+        break
+      cache.delete(oldest)
+      state.chars -= oldest.length
     }
     cache.set(path, {
       terminal,
       values: values.slice(0, terminal.paramNames.length),
     })
+    state.chars += path.length
   }
 }
