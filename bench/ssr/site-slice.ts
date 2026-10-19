@@ -49,13 +49,8 @@ const DISPLAY: Record<string, string> = {
   "solidstart (static)": "SolidStart static (Node)",
   "nuxt (static)": "Nuxt static (Node)",
   "sveltekit (static)": "SvelteKit static (Node)",
-}
-
-/** Renderer ceilings: the local report keeps them as a reference, the site never shows them. */
-const CEILINGS: ReadonlySet<string> = new Set(["preact-ssr"])
-
-function published(rows: readonly SsrRunRow[]): readonly SsrRunRow[] {
-  return rows.filter((row) => !CEILINGS.has(row.target.name))
+  // The one raw row the site shows: Preact has no meta-framework on Node to compare with.
+  "preact-ssr": "Raw Preact render (Node, ceiling)",
 }
 
 /** The version a published row carries, by target; the run passes `ssrTargetVersion`. */
@@ -68,6 +63,7 @@ const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
   ["solidstart", "@solidjs/start"],
   ["nuxt", "nuxt"],
   ["sveltekit", "@sveltejs/kit"],
+  ["preact-ssr", "preact-render-to-string"],
 ]
 
 /** nifra rows carry the workspace version; a rival row the version installed in its own app. */
@@ -100,10 +96,6 @@ export function ssrRowName(fw: string, target: SsrBenchTarget): string {
   const mapped = DISPLAY[target.name]
   if (mapped !== undefined) return mapped
   const runtime = target.runtime === "node" ? "Node" : "Bun"
-  // Spelled out so neither row can be read as an app served like the meta-frameworks are.
-  if (rowKind(target) === "own-server") {
-    return `Nifra + ${fw} render API in your own server (${runtime})`
-  }
   if (rowKind(target) === "static-host") return `Nifra + ${fw} SSG files on a static host`
   // nifra Table B rows: "nifra+react (SSG)" → "Nifra + React SSG (Bun)"
   const mode = NIFRA_MODE.exec(target.name)
@@ -136,7 +128,7 @@ export function ssrTablesSlice(
 ): readonly SsrTable[] {
   const order: string[] = []
   const byFw = new Map<string, SsrTableRow[]>()
-  for (const row of published(rows)) {
+  for (const row of rows) {
     let group = byFw.get(row.framework)
     if (group === undefined) {
       group = []
@@ -148,7 +140,7 @@ export function ssrTablesSlice(
   return order.map((framework) => ({ framework, rows: byFw.get(framework) ?? [] }))
 }
 
-/** Rows that compare a framework app with a framework app; the own-server rows never headline. */
+/** Rows that compare a framework app with a framework app; a raw renderer row never headlines. */
 function likeForLike(row: SsrRunRow): boolean {
   return rowKind(row.target) === "app"
 }
@@ -158,7 +150,7 @@ export function heroSsrSlice(
   rows: readonly SsrRunRow[],
   versionOf: SsrVersionOf,
 ): readonly BenchRow[] {
-  return published(rows)
+  return rows
     .filter((r) => r.framework === "React" && likeForLike(r))
     .map((r) => ({
       name: displayName(r),
@@ -173,14 +165,12 @@ export function frontendSlice(
   rows: readonly SsrRunRow[],
   versionOf: SsrVersionOf,
 ): readonly BenchRow[] {
-  return published(rows)
-    .filter(likeForLike)
-    .map((r) => ({
-      name: displayName(r),
-      version: versionOf(r.target),
-      reqs: r.result.rps,
-      ...(isNifra(r) ? { you: true } : {}),
-    }))
+  return rows.filter(likeForLike).map((r) => ({
+    name: displayName(r),
+    version: versionOf(r.target),
+    reqs: r.result.rps,
+    ...(isNifra(r) ? { you: true } : {}),
+  }))
 }
 
 /** "N×" with one decimal under 10 ("3.8×"), integers above ("26×"); trailing .0 dropped. */

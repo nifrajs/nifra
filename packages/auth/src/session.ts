@@ -16,7 +16,15 @@ import {
   signValue,
   unsignValue,
 } from "@nifrajs/core/cookies"
-import { REVOKED_SUFFIX, replaceExisting, type SessionRecord, type SessionStore } from "./store.ts"
+import {
+  isSessionMarker,
+  REVOKED_SUFFIX,
+  ROTATED_SUFFIX,
+  rotateExisting,
+  type SessionRecord,
+  type SessionStore,
+  sessionFamily,
+} from "./store.ts"
 
 /** The cookie + response surface the manager needs - a structural subset of nifra's `Context`, so any
  * `c` satisfies it and it's testable with a stub. */
@@ -53,7 +61,8 @@ export interface SessionOptions {
    * secret, drop the old one after `maxAge` has elapsed. A bare secret swap (no list) invalidates
    * all existing sessions. */
   readonly secret: string | readonly string[]
-  /** Provide a store for **store mode**; omit for **cookie mode** (stateless). */
+  /** Strongly consistent backend for **store mode**; omit for **cookie mode** (stateless).
+   * Declared eventually consistent stores (including KVSessionStore) are refused. */
   readonly store?: SessionStore
   /** Cookie name. Default `nifra_session`. */
   readonly cookieName?: string
@@ -116,6 +125,11 @@ const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8A
 // but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
 const revokedKey = (id: string): string => `${id}${REVOKED_SUFFIX}`
 
+// A superseded cookie is still the user's own while the rotating response is on its way to the
+// browser. Past that it is a copy someone else kept (a planted pre-login cookie), and it must not end
+// the session that replaced it.
+const ROTATION_GRACE_MS = 60_000
+
 interface Payload {
   data: Record<string, unknown>
   expiresAt: number
@@ -140,6 +154,14 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   options: SessionOptions,
 ): SessionManager<Data> {
   const { secret, store } = options
+  // A cached marker miss can authenticate or recreate a session after logout, even with fixed expiry.
+  if (store?.consistency !== undefined && store.consistency !== "strong") {
+    throw new Error(
+      "[nifra/auth] sessions require a strongly consistent store for logout and rotation; " +
+        "eventually consistent stores such as KVSessionStore are not supported. " +
+        "Use a strongly consistent shared SessionStore instead.",
+    )
+  }
   const secretList = typeof secret === "string" ? [secret] : secret
   if (secretList.length === 0) {
     throw new Error("[nifra/auth] session secret list cannot be empty")
@@ -237,13 +259,16 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
     if (store !== undefined) {
       // Only reachable with a value the app signed itself (legacy mode): never read a marker as a session.
-      if (unsigned.endsWith(REVOKED_SUFFIX)) return make({})
-      const [record, revoked] = await Promise.all([
+      if (isSessionMarker(unsigned)) return make({})
+      const family = sessionFamily(unsigned)
+      const [record, revoked, rotated, familyRevoked] = await Promise.all([
         store.get(unsigned),
         store.get(revokedKey(unsigned)),
+        store.get(`${unsigned}${ROTATED_SUFFIX}`),
+        family === unsigned ? undefined : store.get(revokedKey(family)),
       ])
       if (record === undefined) return make({})
-      if (revoked !== undefined) {
+      if (revoked !== undefined || rotated !== undefined || familyRevoked !== undefined) {
         await store.delete(unsigned) // a commit that raced the logout wrote it back
         return make({})
       }
@@ -284,7 +309,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   // Marker first: a racing commit's write either precedes the delete below or follows the marker.
   const revoke = async (id: string): Promise<void> => {
     if (store === undefined) return
-    await store.set(revokedKey(id), { data: {}, expiresAt: now() + maxAge * 1000 })
+    await store.set(revokedKey(sessionFamily(id)), { data: {}, expiresAt: now() + maxAge * 1000 })
     await store.delete(id)
   }
 
@@ -304,40 +329,78 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       if (state.id !== undefined) {
         // A loaded session commits only while its record exists and no logout has marked it. The
         // record covers a marker already evicted; the marker covers a logout between its two writes.
-        const [current, revoked] = await Promise.all([
+        const family = sessionFamily(state.id)
+        const [current, revoked, rotated, familyRevoked] = await Promise.all([
           store.get(state.id),
           store.get(revokedKey(state.id)),
+          store.get(`${state.id}${ROTATED_SUFFIX}`),
+          family === state.id ? undefined : store.get(revokedKey(family)),
         ])
         // Check again after the reads: a delayed store operation can outlive both session and marker.
         if (
           current === undefined ||
           revoked !== undefined ||
+          rotated !== undefined ||
+          familyRevoked !== undefined ||
           (previousExpiry !== undefined && previousExpiry <= now())
         )
           return
       }
-      if (state.regenerate) {
-        if (state.id !== undefined) await revoke(state.id) // drop the pre-rotation session
-        if (previousExpiry !== undefined && previousExpiry <= now()) return
-        state.id = undefined
-        state.regenerate = false
-      }
-      const loaded = state.id !== undefined
-      state.id ??= randomId()
       const record = { data, expiresAt } satisfies SessionRecord
-      // A store that can make the renewal conditional lets a logout landing after the checks above
-      // win outright; any other store relies on keeping the marker until it expires (see SessionStore).
-      const replaced = loaded ? replaceExisting(store, state.id, record) : undefined
-      if (replaced === undefined) await store.set(state.id, record)
-      else if (!(await replaced)) return
+      const previousId = state.regenerate ? state.id : undefined
+      const loaded = state.id !== undefined && previousId === undefined
+      if (previousId !== undefined) {
+        const nextId = `${sessionFamily(previousId)}~${randomId()}`
+        const rotated = await rotateExisting(store, previousId, nextId, record, {
+          data: { rotatedAt: committedAt },
+          expiresAt: committedAt + maxAge * 1000,
+        })
+        if (!rotated) return
+        if (previousExpiry !== undefined && previousExpiry <= now()) {
+          await revoke(nextId)
+          return
+        }
+        state.id = nextId
+      } else {
+        state.id ??= randomId()
+        // A store with `replace` makes the renewal conditional, so a logout landing after the checks
+        // above wins outright; any other store relies on keeping the marker until it expires.
+        if (!loaded || store.replace === undefined) {
+          await store.set(state.id, record)
+          // The renewed record may have expired while the write was in flight, and a logout in that
+          // gap found nothing to mark, so the write would revive what it ended.
+          if (loaded && previousExpiry !== undefined && previousExpiry <= now()) {
+            await store.delete(state.id)
+            return
+          }
+        } else if (!(await store.replace(state.id, record))) return
+      }
+      state.regenerate = false
       // Checked after the write: a revocation that lands before it is seen here, one that lands after
       // it deletes the record itself. Either way the cookie is left alone - the browser may hold a
       // newer session by now, and this response must not replace or clear it.
-      if (loaded && (await store.get(revokedKey(state.id))) !== undefined) {
+      if (
+        loaded &&
+        (
+          await Promise.all([
+            store.get(revokedKey(state.id)),
+            store.get(`${state.id}${ROTATED_SUFFIX}`),
+            store.get(revokedKey(sessionFamily(state.id))),
+          ])
+        ).some((marker) => marker !== undefined)
+      ) {
         await store.delete(state.id)
         return
       }
       const signed = await sign(state.id)
+      if (
+        previousId !== undefined &&
+        ((await store.get(state.id)) === undefined ||
+          (await store.get(revokedKey(sessionFamily(state.id)))) !== undefined)
+      ) {
+        await store.delete(state.id)
+        return
+      }
       state.expiresAt = expiresAt
       writeCookie(c, signed, expiresAt)
       return
@@ -348,19 +411,36 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     writeCookie(c, signed, expiresAt)
   }
 
+  // Whether logging out with this id may end its whole family: the live generation always may, a
+  // rotated-away one only within the grace window, and an id with neither record nor marker never.
+  const speaksForFamily = async (activeStore: SessionStore, id: string): Promise<boolean> => {
+    const [record, rotated] = await Promise.all([
+      activeStore.get(id),
+      activeStore.get(`${id}${ROTATED_SUFFIX}`),
+    ])
+    if (rotated === undefined) return record !== undefined
+    const stamped = rotated.data.rotatedAt
+    // Markers written before the stamp existed carry the rotation time only through their expiry.
+    const rotatedAt = typeof stamped === "number" ? stamped : rotated.expiresAt - maxAge * 1000
+    return now() - rotatedAt < ROTATION_GRACE_MS
+  }
+
   const destroy = async (c: SessionContext, session?: Session<Data>): Promise<void> => {
     const state = session === undefined ? undefined : states.get(session)
     if (store !== undefined) {
-      let id: string | undefined
       if (session !== undefined) {
-        id = state?.id
+        const id = state?.id
+        if (id !== undefined && !isSessionMarker(id)) await revoke(id)
       } else {
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
         const raw = sessionCookie(c)
-        if (raw !== undefined) id = (await unsign(raw)) ?? undefined
+        const id = raw === undefined ? null : await unsign(raw)
+        if (id !== null && !isSessionMarker(id)) {
+          if (await speaksForFamily(store, id)) await revoke(id)
+          else await store.delete(id)
+        }
       }
-      if (id !== undefined && !id.endsWith(REVOKED_SUFFIX)) await revoke(id)
     }
     // A later commit of this object must neither write the ended data back (cookie mode) nor vanish
     // against the revocation marker (store mode).

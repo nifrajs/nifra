@@ -321,26 +321,6 @@
           "p99ms": 24.97,
           "jsGzKb": 104.9,
           "version": "8.4.0"
-        },
-        {
-          "name": "Nifra + React render API in your own server (Bun)",
-          "runtime": "bun",
-          "rps": 39137,
-          "p50ms": 1.19,
-          "p99ms": 2.56,
-          "jsGzKb": 60.1,
-          "nifra": true,
-          "version": "5.4.0"
-        },
-        {
-          "name": "Nifra + React render API in your own server (Node)",
-          "runtime": "node",
-          "rps": 26626,
-          "p50ms": 1.82,
-          "p99ms": 3.65,
-          "jsGzKb": 60.1,
-          "nifra": true,
-          "version": "5.4.0"
         }
       ]
     },
@@ -375,26 +355,6 @@
           "p99ms": 13.41,
           "jsGzKb": 19.2,
           "version": "1.4.0"
-        },
-        {
-          "name": "Nifra + Solid render API in your own server (Bun)",
-          "runtime": "bun",
-          "rps": 39452,
-          "p50ms": 1.18,
-          "p99ms": 2.5,
-          "jsGzKb": 6.3,
-          "nifra": true,
-          "version": "5.4.0"
-        },
-        {
-          "name": "Nifra + Solid render API in your own server (Node)",
-          "runtime": "node",
-          "rps": 27610,
-          "p50ms": 1.75,
-          "p99ms": 3.48,
-          "jsGzKb": 6.3,
-          "nifra": true,
-          "version": "5.4.0"
         }
       ]
     },
@@ -429,26 +389,6 @@
           "p99ms": 33.21,
           "jsGzKb": 74.7,
           "version": "4.6.2"
-        },
-        {
-          "name": "Nifra + Vue render API in your own server (Bun)",
-          "runtime": "bun",
-          "rps": 41904,
-          "p50ms": 1.06,
-          "p99ms": 2.49,
-          "jsGzKb": 27.5,
-          "nifra": true,
-          "version": "5.4.0"
-        },
-        {
-          "name": "Nifra + Vue render API in your own server (Node)",
-          "runtime": "node",
-          "rps": 23517,
-          "p50ms": 1.99,
-          "p99ms": 4,
-          "jsGzKb": 27.5,
-          "nifra": true,
-          "version": "5.4.0"
         }
       ]
     },
@@ -483,26 +423,6 @@
           "p99ms": 9.81,
           "jsGzKb": 30,
           "version": "2.70.3"
-        },
-        {
-          "name": "Nifra + Svelte render API in your own server (Bun)",
-          "runtime": "bun",
-          "rps": 55554,
-          "p50ms": 0.81,
-          "p99ms": 1.84,
-          "jsGzKb": 20.7,
-          "nifra": true,
-          "version": "5.4.0"
-        },
-        {
-          "name": "Nifra + Svelte render API in your own server (Node)",
-          "runtime": "node",
-          "rps": 29289,
-          "p50ms": 1.57,
-          "p99ms": 3.24,
-          "jsGzKb": 20.7,
-          "nifra": true,
-          "version": "5.4.0"
         }
       ]
     },
@@ -526,26 +446,6 @@
           "p50ms": 1.6,
           "p99ms": 3.19,
           "jsGzKb": 19.7,
-          "nifra": true,
-          "version": "5.4.0"
-        },
-        {
-          "name": "Nifra + Preact render API in your own server (Bun)",
-          "runtime": "bun",
-          "rps": 40414,
-          "p50ms": 1.15,
-          "p99ms": 2.51,
-          "jsGzKb": 7.4,
-          "nifra": true,
-          "version": "5.4.0"
-        },
-        {
-          "name": "Nifra + Preact render API in your own server (Node)",
-          "runtime": "node",
-          "rps": 27198,
-          "p50ms": 1.78,
-          "p99ms": 3.55,
-          "jsGzKb": 7.4,
           "nifra": true,
           "version": "5.4.0"
         }

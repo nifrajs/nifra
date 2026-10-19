@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { t } from "@nifrajs/schema"
 import ts from "typescript"
-import { type BuildServerOptions, buildServer } from "../src/build.ts"
+import { type BuildServerOptions, buildServer, resyncServerManifestSource } from "../src/build.ts"
 import { createMatcher } from "../src/client.ts"
 import {
   buildManifest,
@@ -230,9 +230,7 @@ test("generateServerManifest refuses a missing clientEntry instead of baking und
   for (const clientEntry of [undefined, null, 42]) {
     expect(() =>
       generateServerManifest(m, { resolve, clientEntry: clientEntry as unknown as string }),
-    ).toThrow(
-      /needs clientEntry .* got (undefined|null|number); check the option is spelled clientEntry/,
-    )
+    ).toThrow(/needs the client build: pass client .* got clientEntry (undefined|null|number)/)
   }
   // "" is an app with no client script, not a missing option.
   expect(generateServerManifest(m, { resolve, clientEntry: "" })).toContain(
@@ -240,25 +238,85 @@ test("generateServerManifest refuses a missing clientEntry instead of baking und
   )
 })
 
-test("buildServer fails the build when clientEntry is misspelled", async () => {
+test("buildServer refuses a client that is not buildClient's manifest", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-build-server-client-entry-"))
   try {
     await mkdir(join(root, "routes"))
     await writeFile(join(root, "routes/index.tsx"), "export default () => null\n")
     await writeFile(join(root, "worker.ts"), "export default {}\n")
-    const options = {
+    const withoutClient: BuildServerOptions = {
       routesDir: join(root, "routes"),
       serverEntry: join(root, "worker.ts"),
       outDir: join(root, "dist"),
+    }
+    const options: Omit<BuildServerOptions, "client"> & { client: unknown } = {
+      ...withoutClient,
       client: "/assets/entry.js",
     }
-    await expect(buildServer(options as unknown as BuildServerOptions)).rejects.toThrow(
-      /needs clientEntry .* got undefined/,
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a wrong client on purpose; the runtime refusal is what this checks.
+    await expect(buildServer(options as BuildServerOptions)).rejects.toThrow(
+      /`client` must be the manifest buildClient returned/,
+    )
+    await expect(buildServer(withoutClient)).rejects.toThrow(
+      /needs the client build: pass client .* got clientEntry undefined/,
     )
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("buildServer({ client }) bakes the whole client build, and the files it emitted", async () => {
+  // Inside the workspace, so the bundled manifest resolves @nifrajs/web.
+  const root = await mkdtemp(join(import.meta.dir, ".tmp-build-server-client-"))
+  try {
+    await mkdir(join(root, "routes"))
+    await writeFile(join(root, "routes/index.tsx"), "export default () => null\n")
+    await writeFile(
+      join(root, "worker.ts"),
+      'export { buildAssets, clientEntry, isBuildAsset, routeStyles, styles } from "./server-manifest"\n',
+    )
+    const client = {
+      entry: "/assets/_nifra-entry-a1.js",
+      assets: ["/assets/_nifra-entry-a1.js", "/assets/index-b2.js", "/assets/index-c3.css"],
+      routes: { index: ["/assets/index-b2.js"] },
+      css: ["/assets/index-c3.css"],
+      routeStyles: { index: ["/assets/index-c3.css"] },
+      publicFiles: ["/sw.js", "/report%2C2026.csv"],
+    }
+    const { worker } = await buildServer({
+      routesDir: join(root, "routes"),
+      serverEntry: join(root, "worker.ts"),
+      outDir: join(root, "dist"),
+      target: "bun",
+      client,
+    })
+    const built = await import(worker)
+    expect(built.clientEntry).toBe(client.entry)
+    expect(built.styles).toEqual(client.css)
+    expect(built.routeStyles).toEqual(client.routeStyles)
+    expect([...built.buildAssets]).toEqual([
+      "/assets/_nifra-entry-a1.js",
+      "/assets/index-b2.js",
+      "/assets/index-c3.css",
+      "/report%2C2026.csv",
+      "/sw.js",
+    ])
+    expect(built.isBuildAsset("/sw.js")).toBe(true)
+    expect(built.isBuildAsset("/assets/index-zz.js")).toBe(false)
+    // A re-sync of the route table keeps the baked set.
+    const source = await Bun.file(join(root, "server-manifest.ts")).text()
+    const resynced = resyncServerManifestSource(
+      source,
+      buildManifest(["index.tsx"], importer),
+      "./routes/",
+    )
+    expect(resynced).toContain(
+      source.split("\n").find((line) => line.includes("buildAssets: ReadonlySet")) ?? "missing",
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 60_000)
 
 // biome-ignore format: keep the existing compact test body while adding an explicit heavy-test timeout.
 test("generated server manifests compile under a strict consumer tsconfig", async () => {

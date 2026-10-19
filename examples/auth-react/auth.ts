@@ -14,7 +14,7 @@ export interface SessionData extends Record<string, unknown> {
 let manager: SessionManager<SessionData> | undefined
 export const getSessions = (): SessionManager<SessionData> => {
   // Store mode (data server-side, revocable). Dev: in-memory store + secure:false for local http.
-  // Production swaps in KVSessionStore(env.SESSIONS) + SESSION_SECRET (and drops secure). Without
+  // Production uses a strongly consistent shared SessionStore + SESSION_SECRET (and drops secure). Without
   // SESSION_SECRET each process signs with a random secret: the in-memory store forgets sessions on
   // restart anyway, and no secret anyone can read ships with the example.
   manager ??= createSessions<SessionData>({

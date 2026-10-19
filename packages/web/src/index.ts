@@ -76,6 +76,16 @@ export {
   fontFace,
   fontPreload,
 } from "./fonts.ts"
+// Generated client entries intentionally import the browser router from the client subpath:
+// `import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"`.
+export {
+  type BuildAssetSet,
+  createHostPolicy,
+  type HostPolicy,
+  type HostPolicyOptions,
+  type HostPolicyRule,
+  isHostPolicy,
+} from "./host-policy.ts"
 export {
   type GenerateClientEntryOptions,
   type GenerateRouteSearchTypesOptions,
@@ -84,8 +94,6 @@ export {
   generateRouteSearchTypes,
   generateServerManifest,
 } from "./internal/codegen.ts"
-// Generated client entries intentionally import the browser router from the client subpath:
-// `import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"`.
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
 export type { PrerenderedPages } from "./internal/prerendered-pages.ts"
 export {

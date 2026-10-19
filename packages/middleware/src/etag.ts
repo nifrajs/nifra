@@ -4,15 +4,14 @@ import {
   type Middleware,
   type ResponseBodyReplacement,
 } from "@nifrajs/core/server"
+import { weakFingerprint } from "./_fingerprint.ts"
 
-/** 32-bit FNV-1a over bytes → hex. A fast, dependency-free content fingerprint for ETags - not crypto. */
-function fnv1a(bytes: Uint8Array): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i]!
-    h = Math.imul(h, 0x01000193)
-  }
-  return (h >>> 0).toString(16)
+/** Whether `body` is over `maxBytes` as UTF-8. A UTF-16 unit is 1 to 3 bytes, so only a string
+ * between those bounds is encoded to find out. */
+function exceeds(body: string | Uint8Array, maxBytes: number): boolean {
+  if (typeof body !== "string") return body.byteLength > maxBytes
+  if (body.length > maxBytes) return true
+  return body.length * 3 > maxBytes && ETAG_ENCODER.encode(body).byteLength > maxBytes
 }
 
 export interface ETagOptions {
@@ -115,9 +114,8 @@ export function etag(options: ETagOptions = {}) {
     app.use(
       withResponseObserver<Middleware>({
         onResponseBody(body, headers, req, status) {
-          if (req.method !== "GET" || status !== 200) return undefined
-          const bytes = typeof body === "string" ? ETAG_ENCODER.encode(body) : body
-          if (bytes.byteLength > maxBytes) return undefined
+          if (!isConditionalMethod(req.method) || status !== 200) return undefined
+          if (exceeds(body, maxBytes)) return undefined
           const finish = (fingerprint: string): ResponseBodyReplacement | undefined => {
             const tag = prefix + String.fromCharCode(34) + fingerprint + String.fromCharCode(34)
             headers.set("etag", tag)
@@ -130,11 +128,15 @@ export function etag(options: ETagOptions = {}) {
             }
             return undefined
           }
-          if (weak) return finish(fnv1a(bytes))
-          return sha256Tag(bytes).then(finish)
+          if (weak) return finish(weakFingerprint()(body))
+          return sha256Tag(typeof body === "string" ? ETAG_ENCODER.encode(body) : body).then(finish)
         },
         onResponseRaw(response, req) {
-          if (req.method !== "GET" || response.status !== 200 || response.body === null) {
+          if (
+            !isConditionalMethod(req.method) ||
+            response.status !== 200 ||
+            response.body === null
+          ) {
             return response
           }
           // Hashing reads the body before any of it is sent. A stream meant to arrive as it is
@@ -162,6 +164,9 @@ export function etag(options: ETagOptions = {}) {
   )
 }
 
+// A HEAD answer carries the validators its GET would (RFC 9110 section 9.3.2).
+const isConditionalMethod = (method: string): boolean => method === "GET" || method === "HEAD"
+
 async function etagRawResponse(
   response: Response,
   req: Request,
@@ -171,8 +176,8 @@ async function etagRawResponse(
 ): Promise<Response> {
   const read = await readBytesCapped(response, maxBytes)
   if ("response" in read) return read.response
-  const fingerprint = weak ? fnv1a(read.bytes) : await sha256Tag(read.bytes)
-  const tag = prefix + String.fromCharCode(34) + fingerprint + String.fromCharCode(34)
+  const digest = weak ? weakFingerprint()(read.bytes) : await sha256Tag(read.bytes)
+  const tag = prefix + String.fromCharCode(34) + digest + String.fromCharCode(34)
   const headers = new Headers(response.headers)
   headers.set("etag", tag)
   if (matchesIfNoneMatch(req.headers.get("if-none-match"), tag)) {

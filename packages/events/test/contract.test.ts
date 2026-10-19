@@ -193,6 +193,11 @@ describe("@nifrajs/events - parse (untrusted input)", () => {
     expect(OrderPaid.is(JSON.parse(JSON.stringify(valid)))).toBe(true)
     expect(OrderPaid.is({ ...valid, version: 9 })).toBe(false)
   })
+
+  test("is() works detached, as a filter callback", () => {
+    const inbox: unknown[] = [JSON.parse(JSON.stringify(valid)), { ...valid, version: 9 }, null]
+    expect(inbox.filter(OrderPaid.is)).toHaveLength(1)
+  })
 })
 
 describe("@nifrajs/events - registry", () => {

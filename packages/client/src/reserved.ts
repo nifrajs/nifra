@@ -8,8 +8,9 @@
  *   - The list is FROZEN. A name is never added to it. Growing it would break, at compile time,
  *     every consumer that happens to have a route segment with that name - which is exactly the
  *     break `subscribe`/`ws`/`index`/`then` caused once already. Anything the client gains from
- *     here on is reached through a namespaced key (`$`-prefixed) or a symbol, neither of which any
- *     URL path segment can spell, so no future capability can collide with a user's route.
+ *     here on is reached through a `$`-prefixed key in {@link NAMESPACED_KEYS}, or a symbol. A path
+ *     segment can spell a `$` key, so those are reported by the same lint, but no route is
+ *     expected to.
  *   - Removing one is a breaking change too (a call site that uses the capability stops working),
  *     so this list only ever shrinks in a major.
  *
@@ -35,8 +36,13 @@ export const RESERVED_VERB_KEYS = Object.freeze([
 /** Intercepted by exact match: `subscribe`/`ws` are transports, `index` is `/`, `then` is the await guard. */
 export const RESERVED_EXACT_KEYS = Object.freeze(["subscribe", "ws", "index", "then"] as const)
 
+/** Capabilities added after the lists above froze, intercepted by exact match. Only ever `$`-prefixed:
+ * `$query` calls a route under the QUERY method, which has no plain verb key because `query` is a
+ * common route segment. */
+export const NAMESPACED_KEYS = Object.freeze(["$query"] as const)
+
 /** Human-readable readout of the closed set, for diagnostics that have to teach it. */
-export const RESERVED_KEY_READOUT = `${RESERVED_VERB_KEYS.join("/")} (any casing), ${RESERVED_EXACT_KEYS.join(", ")}`
+export const RESERVED_KEY_READOUT = `${RESERVED_VERB_KEYS.join("/")} (any casing), ${[...RESERVED_EXACT_KEYS, ...NAMESPACED_KEYS].join(", ")}`
 
 /**
  * The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards
@@ -44,7 +50,9 @@ export const RESERVED_KEY_READOUT = `${RESERVED_VERB_KEYS.join("/")} (any casing
  */
 export function reservedKeyFor(segment: string): string | undefined {
   if (segment.startsWith(":") || segment.startsWith("*")) return undefined
-  if ((RESERVED_EXACT_KEYS as readonly string[]).includes(segment)) return segment
+  if (listed(RESERVED_EXACT_KEYS, segment) || listed(NAMESPACED_KEYS, segment)) return segment
   const lower = segment.toLowerCase()
-  return (RESERVED_VERB_KEYS as readonly string[]).includes(lower) ? lower : undefined
+  return listed(RESERVED_VERB_KEYS, lower) ? lower : undefined
 }
+
+const listed = (keys: readonly string[], segment: string): boolean => keys.includes(segment)

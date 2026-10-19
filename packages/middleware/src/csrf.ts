@@ -54,7 +54,7 @@ export interface CsrfOptions {
    * fails closed - send the header, or raise this for that app.
    */
   readonly fieldMaxBytes?: number
-  /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */
+  /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE/QUERY. */
   readonly methods?: readonly string[]
   /** Allowed request origins. Default: same host as the request URL, where an `https:` Origin may
    * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). */
@@ -65,8 +65,12 @@ export interface CsrfOptions {
 
 const TOKEN_PREFIX = "v1"
 
+// QUERY reads like GET, and a cross-site page cannot send one: a form has no such method, and a
+// cross-origin `fetch` with it must pass a CORS preflight first.
+const UNGUARDED_METHODS: ReadonlySet<string> = new Set([...SAFE_METHODS, "QUERY"])
+
 function protectedMethod(method: string, configured: Set<string> | undefined): boolean {
-  return configured !== undefined ? configured.has(method) : !SAFE_METHODS.has(method)
+  return configured !== undefined ? configured.has(method) : !UNGUARDED_METHODS.has(method)
 }
 
 /**
@@ -236,7 +240,7 @@ export function csrf(options: CsrfOptions): Middleware {
     // Middleware may intentionally mention methods the Nifra router does not expose (for example
     // TRACE). Keep runtime behavior unchanged, but publish evidence only for registerable routes.
     ...(methods === undefined
-      ? { exceptMethods: [...SAFE_METHODS].filter(isRegistrableMethod) }
+      ? { exceptMethods: [...UNGUARDED_METHODS].filter(isRegistrableMethod) }
       : { methods: [...methods].filter(isRegistrableMethod) }),
   })
 }

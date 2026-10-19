@@ -11,6 +11,8 @@
  *
  *   bun run bench:prerender
  */
+import { fetchBenchPage, SSR_BENCH_OHA_HEADER_ARGS } from "./harness.ts"
+
 const HOST = "127.0.0.1"
 const CONNECTIONS = 50
 const DURATION_S = 5
@@ -71,6 +73,7 @@ async function runOha(url: string): Promise<Measure> {
       "--no-tui",
       "--output-format",
       "json",
+      ...SSR_BENCH_OHA_HEADER_ARGS,
       url,
     ],
     { stdout: "pipe", stderr: "pipe", env },
@@ -113,6 +116,7 @@ async function measure(
   try {
     const url = `http://${HOST}:${port}/`
     await waitReady(url)
+    await fetchBenchPage(url)
     await Bun.sleep(WARMUP_MS)
     const runs: Measure[] = []
     for (let i = 0; i < RUNS; i++) runs.push(await runOha(url))

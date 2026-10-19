@@ -11,6 +11,7 @@ const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "OPTIONS",
   "CONNECT",
   "TRACE",
+  "QUERY",
 ])
 
 /** A method as a label or span name may carry it. Any other method a runtime accepts (Deno takes

@@ -17,6 +17,7 @@ export {
 } from "./client.ts"
 export type { Jsonify } from "./jsonify.ts"
 export {
+  NAMESPACED_KEYS,
   RESERVED_EXACT_KEYS,
   RESERVED_KEY_READOUT,
   RESERVED_VERB_KEYS,

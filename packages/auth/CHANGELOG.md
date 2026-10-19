@@ -1,5 +1,22 @@
 # @nifrajs/auth
 
+## 5.5.0
+
+### Security and migration
+
+- 8debc4c: Session managers refuse eventually consistent stores, including `KVSessionStore`. Cached session records and missing revocation markers could restore a logged-out session and let it keep renewing. Existing KV-backed session applications must migrate to a strongly consistent shared `SessionStore`; the legacy KV adapter remains exported for reading and migration. Custom adapters may declare `consistency: "strong"`; omitting it asserts the same required contract.
+
+### Minor Changes
+
+- 662afb0: A store-backed session that `regenerate()` rotates while a logout of it runs can no longer come out of that race as a live session. A rotated ID is now the session's original ID, `~`, and a new random part, and logout with any generation's cookie revokes every generation, so the rotating request either sends no cookie or sends one that loads as an empty session. `SessionStore` gains an optional `rotate(previousId, nextId, record, marker)` that moves an existing, unrevoked record to its new ID in one atomic step and resolves whether it did. `MemorySessionStore` implements it, and drops every generation's record when one is revoked, so evicting a revocation marker cannot bring them back. A store without `rotate` keeps working: rotation writes an `<id>.rotated` marker beside the `<id>.revoked` one, and the store must keep both until their `expiresAt`. A load reads the rotation marker, and for a rotated ID the original ID's revocation marker, in parallel with the record.
+- f6a71bc: `SessionStore` gains an optional `replace(id, record)` method that overwrites `id` only while it still holds a record and resolves whether it wrote. When a store implements it, a loaded session renews through `replace` instead of `set`, so a logout that lands between the commit's checks and its write wins, even once the logout's revocation marker is gone. Implement it as one atomic step that also sets the new expiry, such as Redis `SET key value XX PXAT <record.expiresAt>` (a bare `XX` drops the key's TTL) or a SQL `UPDATE ... WHERE id = ?` that reports the rows it changed. `MemorySessionStore` implements it. A store without it works as before and must keep each revocation marker until its `expiresAt`, as `KVSessionStore` does: Workers KV has no conditional write.
+
+### Patch Changes
+
+- b747034: A store-backed session renewal on a store without `replace()` can no longer undo a logout. When the record it renews expires while the write is in flight, a logout in that gap finds nothing to revoke; the renewal now deletes what it wrote and sends no cookie instead of restoring the session.
+- 32c701e: In store mode, `destroy(c)` called with a cookie that a `regenerate()` rotation has already replaced ends the whole session family only within 60 seconds of that rotation, while the rotating response may still be on its way to the browser. After that it drops only the replaced ID, so a pre-login cookie kept elsewhere can no longer end the session that replaced it. A cookie naming the live session, and `destroy(c, session)` with a loaded session, end the family as before.
+- e14bc02: A store-backed session that a request loaded before a logout or rotation can no longer be written back by that request's later `commit()`. A loaded session now commits only while its record still exists and no revocation marker names it, so the guarantee no longer depends on the logout's marker outliving the request: other revocations pushing that marker out of a bounded `MemorySessionStore` cannot bring the session back, and neither can a commit that reads between a logout's marker write and its delete. The commit reads the record and the marker in parallel, so it waits on no extra store round trip. A `MemorySessionStore`, which can evict markers, also makes the renewal itself conditional: it writes only while the record still exists, in one step with the check, so a logout that lands after the commit's reads still wins.
+
 ## 5.4.0
 
 No changes in this release.

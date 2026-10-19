@@ -3,7 +3,9 @@
  * `llms-full.txt` (written into this package by `bun run gen:llms`, so it can't drift from the
  * source it's generated from). Instead of dumping the whole ~150 KB into an agent's context, the
  * tool keyword-scores the document's `##` sections and returns only the top matches - or, with no
- * query, just the section index (the cheap discovery call).
+ * query, just the section index (the cheap discovery call). A matched page too long to return whole
+ * is narrowed to its `###` subsections that match, after the page's lead and before a list of the
+ * rest, so the answer is the part asked about rather than the page's first screen.
  *
  * Deliberately NOT a vector search: the corpus is one curated document with descriptive headings;
  * weighted keyword scoring over sections is deterministic, dependency-free, and good enough that
@@ -102,6 +104,92 @@ export function searchSections(
 /** Cap a section body for the tool result - whole sections can be pages long; the agent can ask
  * again with a narrower query if the trim cuts what it needed. */
 const MAX_SECTION_CHARS = 2800
+/** The page lead kept above its matched subsections: enough to say what the page is. */
+const MAX_LEAD_CHARS = 600
+/** The best subsection is the answer, so it may run past the section cap; a whole worked example fits. */
+const MAX_SUBSECTION_CHARS = 6000
+
+/** A code fence line: a run of three or more backticks or tildes, indented at most three spaces. */
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
+
+/** A page body's lead (before its first `###`) and its `###` subsections. Fenced code is skipped,
+ * so a `###` line inside a snippet is not a heading. A fence closes only on a run of its own marker
+ * at least as long, as in CommonMark, so a snippet that shows a fence does not end the one around it. */
+export function splitSubsections(body: string): { lead: string; parts: DocSection[] } {
+  const parts: DocSection[] = []
+  let lead = ""
+  let heading: string | undefined
+  let buf: string[] = []
+  let fence: string | undefined
+  const flush = (): void => {
+    const text = buf.join("\n").trim()
+    if (heading === undefined) lead = text
+    else parts.push({ heading, body: text })
+    buf = []
+  }
+  for (const line of body.split("\n")) {
+    const [, run, rest = ""] = FENCE.exec(line) ?? []
+    if (run !== undefined) {
+      if (fence === undefined) {
+        // A backtick fence's info string cannot hold a backtick: such a line is inline code.
+        if (!(run.startsWith("`") && rest.includes("`"))) fence = run
+      } else if (run[0] === fence[0] && run.length >= fence.length && rest.trim() === "") {
+        fence = undefined
+      }
+    }
+    if (fence === undefined && line.startsWith("### ")) {
+      flush()
+      heading = line.slice(4).trim()
+    } else {
+      buf.push(line)
+    }
+  }
+  flush()
+  return { lead, parts }
+}
+
+function capped(text: string, max: number, note: string): string {
+  return text.length > max ? `${text.slice(0, max)}\n…(${note})` : text
+}
+
+/** One matched page: whole when it fits, otherwise its lead, the subsections the query matches
+ * (best first, at least one, within the size cap) and the headings of the others. */
+function renderMatch(match: DocSection, query: string): string {
+  if (match.body.length <= MAX_SECTION_CHARS) return `## ${match.heading}\n\n${match.body}`
+  const { lead, parts } = splitSubsections(match.body)
+  const ranked = parts.length === 0 ? [] : searchSections(parts, query, parts.length)
+  if (ranked.length === 0) {
+    const others =
+      parts.length === 0
+        ? ""
+        : `\n\nSubsections: ${parts.map((part) => part.heading).join(" | ")} - query one by name for its text.`
+    return `## ${match.heading}\n\n${capped(match.body, MAX_SECTION_CHARS, "trimmed - narrow the query for the rest")}${others}`
+  }
+  const shown: ScoredSection[] = []
+  let used = 0
+  for (const part of ranked) {
+    if (
+      shown.length > 0 &&
+      (used + part.body.length > MAX_SECTION_CHARS || part.score * 2 < ranked[0]!.score)
+    ) {
+      break
+    }
+    shown.push(part)
+    used += part.body.length
+  }
+  const shownHeadings = new Set(shown.map((part) => part.heading))
+  const others = parts
+    .filter((part) => !shownHeadings.has(part.heading))
+    .map((part) => part.heading)
+  const body = shown
+    .map(
+      (part, index) =>
+        `### ${part.heading}\n\n${capped(part.body, index === 0 ? MAX_SUBSECTION_CHARS : MAX_SECTION_CHARS, "trimmed")}`,
+    )
+    .join("\n\n")
+  const rest = others.length === 0 ? "" : `\n\nAlso on this page: ${others.join(" | ")}`
+  return `## ${match.heading}\n\n${capped(lead, MAX_LEAD_CHARS, "lead trimmed")}\n\n${body}${rest}`
+}
 
 /** Render the tool result: matched sections, or the index when no query was given. */
 export function renderDocsResult(
@@ -118,15 +206,7 @@ export function renderDocsResult(
   if (matches.length === 0) {
     return `No docs sections matched ${JSON.stringify(query)}. Call without a query for the section index.`
   }
-  return matches
-    .map((m) => {
-      const body =
-        m.body.length > MAX_SECTION_CHARS
-          ? `${m.body.slice(0, MAX_SECTION_CHARS)}\n…(trimmed - narrow the query for the rest)`
-          : m.body
-      return `## ${m.heading}\n\n${body}`
-    })
-    .join("\n\n---\n\n")
+  return matches.map((match) => renderMatch(match, query)).join("\n\n---\n\n")
 }
 
 /** Load the bundled corpus. Resolves relative to this module so it works from `src/` (repo dev)

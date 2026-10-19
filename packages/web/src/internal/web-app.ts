@@ -14,6 +14,12 @@ import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
 import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
+import {
+  type BuildAssetSet,
+  type HostPolicy,
+  hostPolicyGate,
+  isHostPolicy,
+} from "../host-policy.ts"
 import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
@@ -264,6 +270,18 @@ export interface CreateWebAppOptions<Env = unknown> {
    * {@link nonce}, whose documents need a nonce minted for their request.
    */
   readonly prerenderedPages?: PrerenderedPages
+  /**
+   * Which pages and files each host serves, from `createHostPolicy()`. Evaluated before everything
+   * else the app answers (prerendered pages, mounts, the API, every page) and, in a `nifra build`
+   * server entry, before its static files too. A refused path answers the policy's refusal.
+   */
+  readonly hostPolicy?: HostPolicy
+  /**
+   * The files the build emitted, by request path: `buildAssets` from the generated server manifest.
+   * A {@link hostPolicy} rule's `buildAssets` token matches exactly these. `nifra dev` serves the
+   * client bundle and `public/` ahead of the app, so the app's own check never sees them there.
+   */
+  readonly buildAssets?: BuildAssetSet
   /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:
    * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the
    * team - unreleased feature names, internal hostnames, and "don't touch X yet" notes live there
@@ -396,6 +414,13 @@ export function createWebApp<Env = unknown>(
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
   const app = server<Env>(options.server)
+  // First of all: a host's refused path must not reach a rate limiter, a mount or a page.
+  if (options.hostPolicy !== undefined) {
+    if (!isHostPolicy(options.hostPolicy)) {
+      throw new TypeError("[nifra/web] createWebApp `hostPolicy` must come from createHostPolicy()")
+    }
+    app.use(hostPolicyGate(options.hostPolicy, options.buildAssets))
+  }
   // Before the mount hooks and before every page route, so the order-scoped hooks (`derive`,
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.

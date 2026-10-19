@@ -208,6 +208,67 @@ function convertFlat(plan: CoercionPlan, value: unknown): unknown {
 }
 
 /**
+ * On a plain `fromTypeBox` validate, shared with `@nifrajs/web`'s output guard. Called with the
+ * JSON Schema the caller projected a value by, it returns a validate for that projected value, or
+ * `undefined` when that schema is not this validate's own or the variant would skip nothing.
+ */
+const VALIDATE_PROJECTED = Symbol.for("nifra.schema.validateProjected")
+
+const isSchemaNode = (value: unknown): value is Record<PropertyKey, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+const isTypeBoxSchema = (value: unknown): value is TSchema =>
+  isSchemaNode(value) && typeof value[Kind] === "string"
+
+/**
+ * `node` without the undeclared-key check (`additionalProperties: false`) of each object a
+ * projection by declared keys reaches directly: the root, then through properties, array items,
+ * tuple slots, record values and an extra-key schema. A union, intersection, `not` or `$id` target
+ * is not entered: a union's projection keeps the keys of every branch, so each branch still needs
+ * its own check. Returns `node` itself when nothing below changes.
+ */
+function withoutKeyChecks(node: unknown): unknown {
+  if (!isSchemaNode(node) || node.$id !== undefined) return node
+  const kind = node[Kind]
+  let out: Record<PropertyKey, unknown> | undefined
+  const replace = (key: string, value: unknown): void => {
+    out ??= { ...node }
+    out[key] = value
+  }
+  if (kind === "Object" || kind === "Record") {
+    for (const field of ["properties", "patternProperties"]) {
+      const subs = node[field]
+      if (!isSchemaNode(subs)) continue
+      let next: Record<string, unknown> | undefined
+      for (const key of Object.keys(subs)) {
+        const sub = withoutKeyChecks(subs[key])
+        if (sub === subs[key]) continue
+        next ??= { ...subs }
+        next[key] = sub
+      }
+      if (next !== undefined) replace(field, next)
+    }
+    const extra = node.additionalProperties
+    if (kind === "Object" && extra === false && node.patternProperties === undefined) {
+      const { additionalProperties: _closed, ...open } = out ?? node
+      out = open
+    } else if (isSchemaNode(extra)) {
+      const sub = withoutKeyChecks(extra)
+      if (sub !== extra) replace("additionalProperties", sub)
+    }
+  } else if (kind === "Array" && isSchemaNode(node.items)) {
+    const sub = withoutKeyChecks(node.items)
+    if (sub !== node.items) replace("items", sub)
+  } else if (kind === "Tuple") {
+    const slots = node.items
+    if (Array.isArray(slots)) {
+      const items = slots.map(withoutKeyChecks)
+      if (items.some((sub, i) => sub !== slots[i])) replace("items", items)
+    }
+  }
+  return out ?? node
+}
+
+/**
  * Wrap a TypeBox schema as a `NifraSchema`.
  *
  * **Validation is fast where it can be, and works everywhere.** The first `validate`
@@ -286,6 +347,23 @@ export function fromTypeBox<T extends TSchema>(
     jsonSchema: schema,
   }
   if (coerce) Object.defineProperty(result["~standard"].validate, COERCES, { value: true })
-  else PLAIN_VALIDATORS.add(result["~standard"].validate)
+  else {
+    PLAIN_VALIDATORS.add(result["~standard"].validate)
+    // Built when the output guard first asks, at route load: most schemas never validate one.
+    let projected: NifraSchema["~standard"]["validate"] | null | undefined
+    Object.defineProperty(result["~standard"].validate, VALIDATE_PROJECTED, {
+      value: (projectedBy: unknown) => {
+        if (projectedBy !== schema) return undefined
+        if (projected === undefined) {
+          const open = withoutKeyChecks(schema)
+          projected =
+            open !== schema && isTypeBoxSchema(open)
+              ? fromTypeBox(open)["~standard"].validate
+              : null
+        }
+        return projected ?? undefined
+      },
+    })
+  }
   return result
 }

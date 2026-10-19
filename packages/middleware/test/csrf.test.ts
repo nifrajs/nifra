@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { method } from "@nifrajs/core/methods"
 import { createCsrfToken, csrf, verifyCsrfToken } from "../src/index.ts"
 
 const SECRET = "0123456789abcdef0123456789abcdef"
@@ -194,6 +195,23 @@ describe("csrf()", () => {
       .use(csrf({ secret: SECRET }))
       .get("/", () => ({ ok: true }))
     expect((await app.fetch(new Request("http://x/"))).status).toBe(200)
+  })
+
+  test("a QUERY passes without a token, cross-site included; listing it protects it", async () => {
+    const query = () =>
+      new Request("http://x/search", {
+        method: "QUERY",
+        headers: { origin: "https://evil.example", "content-type": "application/json" },
+        body: "{}",
+      })
+    const open = server()
+      .use(csrf({ secret: SECRET }))
+      .use(method("QUERY", "/search", () => ({ ok: true })))
+    expect((await open.fetch(query())).status).toBe(200)
+    const listed = server()
+      .use(csrf({ secret: SECRET, methods: ["QUERY"] }))
+      .use(method("QUERY", "/search", () => ({ ok: true })))
+    expect((await listed.fetch(query())).status).toBe(403)
   })
 
   test("accepts Referer fallback and rejects malformed Referer", async () => {

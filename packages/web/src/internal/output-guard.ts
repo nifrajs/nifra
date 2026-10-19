@@ -12,6 +12,12 @@
  * Projection reads the schema's JSON Schema: a nifra schema's `jsonSchema`, or a Standard JSON Schema
  * (`~standard.jsonSchema.output`). A schema that exposes neither is trusted to strip unknown keys in
  * its own `validate` output, as zod and valibot objects do by default.
+ *
+ * Validation then runs on the projected value. A `@nifrajs/schema` schema validates it without the
+ * undeclared-key check of each closed object projection reached, which projection already did. A
+ * non-enumerable property is no key to either: JSON and `structuredClone` skip it and server
+ * component props refuse it, so it never reaches the browser. The one such property `JSON.stringify`
+ * does read, an own `toJSON` (or an array subclass's), never survives projection.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import { markDeferredFree } from "./deferred-free.ts"
@@ -22,6 +28,8 @@ const RESPONSE_RESULT = Symbol.for("nifra.response.result")
 const STATUS_SIGNAL = Symbol.for("nifra.web.status-signal")
 /** Set by `t.deferred(inner)` on its schema node: `inner`'s own validate. */
 const DEFERRED_VALIDATE = Symbol.for("nifra.schema.deferredValidate")
+/** On a `@nifrajs/schema` validate: its variant for a value projected by its own JSON Schema. */
+const VALIDATE_PROJECTED = Symbol.for("nifra.schema.validateProjected")
 
 export const DECLASSIFIED_KEY = "x-nifra-declassified"
 const DEFERRED_KEY = "x-nifra-deferred"
@@ -168,7 +176,7 @@ const DATE: Project = (value) =>
       : value
 
 /** An array whose items are all scalars, passed through whole. */
-const LEAF_ARRAY: Project = (value) => value
+const LEAF_ARRAY: Project = (value) => (Array.isArray(value) ? plainArray(value) : value)
 
 const typesOf = (node: Node): readonly unknown[] | undefined =>
   Array.isArray(node.type) ? node.type : node.type === undefined ? undefined : [node.type]
@@ -317,7 +325,7 @@ class Compiler {
     // A closed object drops a deferred marker's keys unless it declares them, so only an open one, or
     // one declaring the marker key, could pass a marker on.
     const checksMarker = open || declared.__nifra_deferred !== undefined
-    const project: Project = (value, state) => {
+    const closure: Project = (value, state) => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return value
       if (checksMarker && isDeferred(value)) {
         state.issues.push("")
@@ -325,13 +333,7 @@ class Compiler {
       }
       const proto = Object.getPrototypeOf(value)
       if (proto !== Object.prototype && proto !== null) {
-        if (value instanceof Date) return value.toJSON()
-        // A class instance: its own fields as a plain object, so no prototype `toJSON` or getter
-        // decides what is serialized.
-        const snapshot: Record<string, unknown> = {}
-        for (const key of Object.keys(value))
-          assign(snapshot, key, (value as Record<string, unknown>)[key])
-        return project(snapshot, state)
+        return value instanceof Date ? value.toJSON() : closure(snapshotOf(value), state)
       }
       const input = value as Record<string, unknown>
       // Copy-on-write: a value that already holds only declared keys is returned as it is.
@@ -345,7 +347,11 @@ class Compiler {
           continue
         }
         const before = input[key]
-        if (projector === LEAF_ARRAY || (projector === LEAF && !(before instanceof Date))) {
+        if (
+          projector === LEAF_ARRAY
+            ? !hasJsonHook(before)
+            : projector === LEAF && !(before instanceof Date)
+        ) {
           if (out !== undefined) assign(out, key, before)
           continue
         }
@@ -358,8 +364,10 @@ class Compiler {
           assign(out, key, after)
         }
       }
-      return out ?? value
+      return out ?? (input.toJSON === undefined ? value : snapshotOf(input))
     }
+    const project =
+      generatedObject(declared, open ? undeclared : undefined, checksMarker) ?? closure
     if (!checksMarker && Object.values(declared).every((child) => this.issueFree.has(child)))
       this.issueFree.add(project)
     return project
@@ -393,7 +401,7 @@ class Compiler {
             out[i] = after
           }
         }
-        return out ?? value
+        return plainArray(out ?? value)
       }
       this.issueFree.add(project)
       return project
@@ -417,7 +425,7 @@ class Compiler {
           out[i] = after
         }
       }
-      return out ?? value
+      return plainArray(out ?? value)
     }
   }
 
@@ -507,7 +515,7 @@ class Compiler {
     }
     const inner: CompiledGuard = {
       project: this.compile(node.inner, where),
-      validate: validate as CompiledGuard["validate"],
+      validate: validatorFor(validate as CompiledGuard["validate"], node.inner),
       warnDropped: inDevelopment(),
       deferredFree: false,
     }
@@ -519,6 +527,133 @@ class Compiler {
       void promise.catch(() => {})
       return { __nifra_deferred: true, id: value.id, promise }
     }
+  }
+}
+
+/**
+ * A class instance as a plain object of its own fields, so no prototype `toJSON` or getter decides
+ * what is serialized.
+ */
+function snapshotOf(value: object): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {}
+  for (const key of Object.keys(value))
+    assign(snapshot, key, (value as Record<string, unknown>)[key])
+  return snapshot
+}
+
+/** Whether `JSON.stringify` would call a `toJSON` of `value`'s own or of its prototype chain. */
+const hasJsonHook = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: reads one optional property of a value already narrowed to a non-null object.
+  (value as { readonly toJSON?: unknown }).toJSON !== undefined
+
+/**
+ * `value`, or a plain copy of its items when `JSON.stringify` would serialize it by a hook instead:
+ * an own `toJSON`, enumerable or not, or one on a subclass prototype (which `slice` also keeps).
+ */
+function plainArray(value: unknown[]): unknown[] {
+  if (!hasJsonHook(value)) return value
+  const copy = new Array<unknown>(value.length)
+  for (let i = 0; i < value.length; i++) copy[i] = value[i]
+  return copy
+}
+
+// Inside `for-in`, V8 folds `hasOwnProperty.call` into the loop but calls `Object.hasOwn` per key.
+// Bun runs both alike.
+const ownKey = Object.prototype.hasOwnProperty
+// Bun's string `switch` stops beating the dictionary lookup near 128 declared keys; V8's does not.
+const MAX_GENERATED_KEYS = 64
+
+/**
+ * The object projector as code generated for its declared keys: a `switch` on each key, with every
+ * key's projector a call site of its own. It reads, keeps and drops exactly what the closure in
+ * `Compiler.object` does, which serves where code generation is off: an edge bundle (the build
+ * defines `__NIFRA_EDGE_RUNTIME__`), a browser page (where even a caught attempt is a reported CSP
+ * violation), or a runtime that refuses it. Only `JSON.stringify`d key names reach the source.
+ */
+function generatedObject(
+  declared: Record<string, Project>,
+  undeclared: ((key: string) => Project | undefined) | undefined,
+  checksMarker: boolean,
+): Project | undefined {
+  const keys = Object.keys(declared)
+  // The edge build defines this global as `true`, so that bundle drops the generator.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only nifra's build defines this global, as a boolean literal.
+  const edge = (globalThis as { readonly __NIFRA_EDGE_RUNTIME__?: boolean }).__NIFRA_EDGE_RUNTIME__
+  if (keys.length > MAX_GENERATED_KEYS || edge === true || "document" in globalThis)
+    return undefined
+  const tail = (store: (value: string) => string, call: string): string =>
+    `const from = state.issues.length; const after = ${call}(before, state);` +
+    "if (state.issues.length > from) prefix(state, from, key);" +
+    `if (out !== undefined) ${store("after")};` +
+    `else if (after !== before) { out = copyBefore(value, key); ${store("after")}; }` +
+    "continue;"
+  let cases = ""
+  for (const [i, key] of keys.entries()) {
+    const projector = declared[key]
+    const store = (value: string): string =>
+      key === "__proto__" ? `assign(out, key, ${value})` : `out[${JSON.stringify(key)}] = ${value}`
+    cases += `case ${JSON.stringify(key)}: { const before = value[key];`
+    if (projector === LEAF_ARRAY) {
+      cases += `if (!hasJsonHook(before)) { if (out !== undefined) ${store("before")}; continue; }`
+    } else if (projector === LEAF) {
+      cases += `if (!(before instanceof Date)) { if (out !== undefined) ${store("before")}; continue; }`
+    }
+    cases += `${tail(store, `p[${i}]`)} }`
+  }
+  const generic = (value: string): string => `assign(out, key, ${value})`
+  const rest =
+    undeclared === undefined
+      ? "out ??= copyBefore(value, key); continue;"
+      : "const projector = undeclared(key);" +
+        "if (projector === undefined) { out ??= copyBefore(value, key); continue; }" +
+        "const before = value[key];" +
+        "if (projector === LEAF_ARRAY ? !hasJsonHook(before) : projector === LEAF && !(before instanceof Date)) {" +
+        `if (out !== undefined) ${generic("before")}; continue; }` +
+        tail(generic, "projector")
+  const source =
+    '"use strict"; return function project(value, state) {' +
+    'if (typeof value !== "object" || value === null || Array.isArray(value)) return value;' +
+    (checksMarker ? 'if (isDeferred(value)) { state.issues.push(""); return value; }' : "") +
+    "const proto = Object.getPrototypeOf(value);" +
+    "if (proto !== Object.prototype && proto !== null)" +
+    "return value instanceof Date ? value.toJSON() : project(snapshotOf(value), state);" +
+    "let out;" +
+    "for (const key in value) {" +
+    "if (!ownKey.call(value, key)) continue;" +
+    `switch (key) { ${cases} default: { ${rest} } }` +
+    "}" +
+    "return out ?? (value.toJSON === undefined ? value : snapshotOf(value)); }"
+  try {
+    return new Function(
+      "p",
+      "undeclared",
+      "isDeferred",
+      "snapshotOf",
+      "copyBefore",
+      "assign",
+      "prefix",
+      "ownKey",
+      "hasJsonHook",
+      "LEAF",
+      "LEAF_ARRAY",
+      source,
+    )(
+      keys.map((key) => declared[key]),
+      undeclared,
+      isDeferred,
+      snapshotOf,
+      copyBefore,
+      assign,
+      prefix,
+      ownKey,
+      hasJsonHook,
+      LEAF,
+      LEAF_ARRAY,
+    )
+  } catch {
+    return undefined
   }
 }
 
@@ -609,6 +744,19 @@ export function jsonSchemaOf(schema: StandardSchemaV1): Node | undefined {
   }
 }
 
+/**
+ * `validate`, or the variant its schema offers for a value projected by `json`: one that skips the
+ * undeclared-key check of each closed object the projection already kept to its declared keys.
+ */
+function validatorFor(validate: CompiledGuard["validate"], json: Node): CompiledGuard["validate"] {
+  const variant: unknown = Reflect.get(validate, VALIDATE_PROJECTED)
+  const projected: unknown = typeof variant === "function" ? variant(json) : undefined
+  return isValidate(projected) ? projected : validate
+}
+
+const isValidate = (value: unknown): value is CompiledGuard["validate"] =>
+  typeof value === "function"
+
 const compiled = new WeakMap<object, CompiledGuard>()
 
 /**
@@ -642,7 +790,10 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
   }
   const guard: CompiledGuard = {
     project,
-    validate: standard["~standard"].validate,
+    validate:
+      json === undefined
+        ? standard["~standard"].validate
+        : validatorFor(standard["~standard"].validate, json),
     warnDropped: inDevelopment(),
     deferredFree,
   }

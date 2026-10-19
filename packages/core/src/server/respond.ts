@@ -314,6 +314,37 @@ export function writableResponse(response: Response, request?: Request): Respons
   return copiedResponse(response, new Response(response.body, response), true)
 }
 
+// Body-bearing responses a hook handed over as a request's answer. The Node writer sends a buffered
+// body without reading it, so `bodyUsed` alone does not show that one was already sent.
+const HANDED_OVER = new WeakSet<Response>()
+
+/**
+ * Whether `response`, handed over by a hook as this request's answer, may be sent: not when its body
+ * already answered a request or was handed over for one. A body-bearing response is claimed here.
+ */
+export function claimHandedOver(response: Response): boolean {
+  if (responseBodyUsed(response) || HANDED_OVER.has(response)) return false
+  if (
+    hasResidentBody(response) ||
+    WRITABLE_BODY_RESPONSES.has(response) ||
+    response.body !== null
+  ) {
+    HANDED_OVER.add(response)
+  }
+  return true
+}
+
+/**
+ * `writableResponse` for a Response a hook hands back in place of the one it was given, with the
+ * single-use check a handler's result gets: a reused body is the internal error a reused handler
+ * result is, carrying none of its earlier request's headers.
+ */
+export function handedBackResponse(response: Response, request: Request): Response {
+  return claimHandedOver(response)
+    ? writableResponse(response, request)
+    : toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, undefined, request)
+}
+
 /** `copy`, recorded and carrying `original`'s buffered-body marker: the Node writer still sends the
  * serialized bytes directly, and a marked body-less Response keeps the body only the marker holds. */
 function copiedResponse(original: Response, copy: Response, hasBody: boolean): Response {
@@ -383,6 +414,63 @@ export function taggedResponseOwner(response: Response): object | undefined {
   return typeof marker === "object" && marker !== null && "owner" in marker
     ? marker.owner
     : undefined
+}
+
+// The text each c.text() response was built from; null once adopted by the body tier. A hook can
+// substitute its body without consuming the original stream, but that source is still single-use.
+const RESIDENT_TEXTS = new WeakMap<Response, string | null>()
+let residentTextsRecorded = false
+
+/** From now on, keep the string of each `c.text()` response for the body tier. */
+export function recordResidentTexts(): void {
+  residentTextsRecorded = true
+}
+
+/** `response`, which `c.text()` built from `body`. */
+export function residentText(response: Response, body: string): Response {
+  if (residentTextsRecorded) RESIDENT_TEXTS.set(response, body)
+  return response
+}
+
+/** Whether the actual body, or its body-tier substitute, has already been handed to a request. */
+export function responseBodyUsed(response: Response): boolean {
+  return response.bodyUsed || RESIDENT_TEXTS.get(response) === null
+}
+
+/** `response` tagged with the text it was built from, so this app's body-tier hooks get the string. */
+function withResidentText(
+  response: Response,
+  source: Response,
+  owner: object | undefined,
+): Response {
+  if (owner === undefined) return response
+  const text = RESIDENT_TEXTS.get(source)
+  if (text === undefined || text === null) return response
+  RESIDENT_TEXTS.set(source, null)
+  return taggedResponseBody(response) !== undefined
+    ? response
+    : markTaggedResponse(response, text, owner)
+}
+
+/** A buffered page built from the body it reports, tagged for this app's body-tier hooks. */
+function bufferedPageResponse(
+  page: {
+    readonly status: number
+    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
+    readonly body: string
+  },
+  owner: object,
+): Response {
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(page.headers ?? {})) {
+    if (typeof value === "string") headers.set(name, value)
+    else for (const item of value) headers.append(name, item)
+  }
+  return markTaggedResponse(
+    withBody(new Response(page.body, { status: page.status, headers })),
+    page.body,
+    owner,
+  )
 }
 
 export function markTaggedResponse(
@@ -546,20 +634,34 @@ export function toResponse(
         request,
       )
     }
+    // A buffered page is built from the body it reports, so the bytes its hooks see are the ones sent.
+    const owner = typeof tagResponseBody === "object" ? tagResponseBody : undefined
+    const page = owner === undefined ? undefined : result.toNodeBody?.()
+    const response =
+      owner !== undefined &&
+      page !== undefined &&
+      typeof page.body === "string" &&
+      !isBodylessStatus(page.status)
+        ? bufferedPageResponse({ ...page, body: page.body }, owner)
+        : result.toResponse()
     return withStatics(
-      applySetToResponse(normalizeBodylessResponse(result.toResponse(), request), set, request),
+      applySetToResponse(normalizeBodylessResponse(response, request), set, request),
       statics,
       request,
     )
   }
   if (result instanceof Response) {
-    if (result.bodyUsed) {
+    if (responseBodyUsed(result)) {
       return toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, statics, request)
     }
-    return withStatics(
-      applySetToResponse(normalizeBodylessResponse(result, request), set, request),
-      statics,
-      request,
+    return withResidentText(
+      withStatics(
+        applySetToResponse(normalizeBodylessResponse(result, request), set, request),
+        statics,
+        request,
+      ),
+      result,
+      typeof tagResponseBody === "object" ? tagResponseBody : undefined,
     )
   }
   return renderValue(result, set, tagResponseBody, statics, request)

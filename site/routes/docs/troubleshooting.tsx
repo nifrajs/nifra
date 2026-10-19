@@ -424,8 +424,11 @@ export default function Troubleshooting() {
         together at one version. <code>nifra doctor</code> (and <code>nifra check</code>, as the{" "}
         <code>NF-D002</code> advisory) reads the versions your <code>package.json</code> files pin,
         the versions installed in <code>node_modules</code> - followed to their real location, so a
-        linked repository reports its own - and the running CLI. When they disagree it names each
-        version and where it came from. It only reads files, and it never fails the run.
+        linked repository reports its own - the copies a <code>link:</code> or <code>file:</code>{" "}
+        repository outside the root installs in its own <code>node_modules</code> (its imports load
+        those, whatever the workspace installs, so two live-linked repositories that each pin one
+        version still run two), and the running CLI. When they disagree it names each version and
+        where it came from. It only reads files, and it never fails the run.
       </p>
       <p>
         The fix is <a href="/docs/cli#upgrade"><code>nifra upgrade &lt;highest&gt;</code></a>, not a

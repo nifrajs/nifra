@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { connect } from "node:net"
+import { t } from "@nifrajs/schema"
 import {
   defineAssurancePolicy,
   evaluateRouteAssurance,
@@ -159,7 +160,7 @@ describe("all()", () => {
     }
   })
 
-  test("is not a catch-all: another method on the path is a 405 naming the seven", async () => {
+  test("is not a catch-all: another method on the path is a 405 naming each standard one", async () => {
     const app = server().use(all("/echo", () => "ok"))
     for (const name of ["PROPFIND", "TRACE", "CONNECT", "BREW"]) {
       const response = await app.fetch(requestWith(name, "http://t/echo"))
@@ -439,6 +440,41 @@ describe("all() and method(): after listen()", () => {
       expect(await raw(port, "HEAD", "/echo")).toEqual(["HTTP/1.1 200 OK", ""])
       // TRACE reaches the app on this transport and finds no route: it cannot be registered.
       expect((await raw(port, "TRACE", "/echo"))[0]).toBe("HTTP/1.1 405 Method Not Allowed")
+    } finally {
+      await running.stop()
+    }
+  })
+
+  // Bun's route table has no QUERY slot, so a QUERY route has to be found by the portable router
+  // while the GET beside it stays on the table.
+  test("a listening server serves QUERY with its body beside a table route on the same path", async () => {
+    const app = server()
+      .get("/search/:index", (c) => ({ index: c.params.index }))
+      .use(
+        method("QUERY", "/search/:index", { body: t.object({ name: t.string() }) }, (c) => ({
+          index: c.params.index,
+          name: c.body.name,
+        })),
+      )
+      .use(method("QUERY", "/only", () => "queried"))
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const url = `http://127.0.0.1:${running.port}`
+      const query = (path: string, body: string) =>
+        fetch(url + path, {
+          method: "QUERY",
+          headers: { "content-type": "application/json" },
+          body,
+        })
+      const queried = await query("/search/books", '{"name":"nifra"}')
+      expect([queried.status, await queried.json()]).toEqual([
+        200,
+        { index: "books", name: "nifra" },
+      ])
+      expect((await query("/search/books", '{"name":1}')).status).toBe(422)
+      expect(await (await fetch(`${url}/search/books`)).json()).toEqual({ index: "books" })
+      const refused = await fetch(`${url}/only`)
+      expect([refused.status, refused.headers.get("allow")]).toEqual([405, "QUERY"])
     } finally {
       await running.stop()
     }

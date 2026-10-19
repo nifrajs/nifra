@@ -148,7 +148,7 @@ const DB_MODULE = /^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
  * module, a bare builtin with no browser counterpart, or a package the browser build refuses
  * (`SERVER_PACKAGES` and the driver entries of `@nifrajs/web/zones`).
  */
-function isServerOnlySink(specifier: string): boolean {
+export function isServerOnlySink(specifier: string): boolean {
   return (
     /^(?:node:|bun:)/.test(specifier) ||
     SERVER_BUILTINS.has(specifier) ||
@@ -1013,7 +1013,8 @@ function scanMethodRoutes(
   ALL_ROUTES.lastIndex = 0
   for (let m = ALL_ROUTES.exec(code); m !== null; m = ALL_ROUTES.exec(code)) {
     const double = m[1] !== undefined
-    collect(m.index, "all", 0, double ? m[1] : m[2], double ? '"' : "'", [...HTTP_VERBS])
+    // all() also registers QUERY, which has no builder of its own and so is not in HTTP_VERBS.
+    collect(m.index, "all", 0, double ? m[1] : m[2], double ? '"' : "'", [...HTTP_VERBS, "QUERY"])
   }
   METHOD_ROUTES.lastIndex = 0
   for (let m = METHOD_ROUTES.exec(code); m !== null; m = METHOD_ROUTES.exec(code)) {
@@ -3462,23 +3463,19 @@ const RAW_RESPONSE_EXPECTATION = ["NF-C007", "raw-response"]
 async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<string>> {
   if (rels.length === 0) return new Set()
   try {
-    const proc = Bun.spawn(["git", "check-ignore", "--stdin"], {
+    const proc = Bun.spawn(["git", "check-ignore", "--stdin", "-z"], {
       cwd,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
     })
-    proc.stdin.write(`${rels.join("\n")}\n`)
+    proc.stdin.write(`${rels.join("\0")}\0`)
     await proc.stdin.end()
-    // git echoes back each ignored path exactly as fed on stdin (one per line); exit 1 = none matched.
+    // -z keeps both directions literal: Git otherwise C-quotes Unicode/escapes on output and
+    // interprets quoted input. Only matching paths are emitted; exit 1 means none matched.
     const out = await new Response(proc.stdout).text()
     await proc.exited
-    return new Set(
-      out
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    )
+    return new Set(out.split("\0").filter((path) => path !== ""))
   } catch {
     return new Set()
   }
@@ -3507,7 +3504,8 @@ export async function walkSource(
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
   for await (const rawRel of new Glob(pattern).scan({ cwd, dot: false })) {
-    const rel = normalizeProjectPath(rawRel)
+    // A backslash is a filename character on POSIX; only Windows separators need normalizing.
+    const rel = sep === "\\" ? normalizeProjectPath(rawRel) : rawRel
     // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
     if (PLAIN_SCRIPT_FILE.test(rel) && !ZONED_PATH.test(rel)) continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)

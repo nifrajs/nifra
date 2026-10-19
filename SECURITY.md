@@ -2,12 +2,12 @@
 
 ## Supported Versions
 
-Every published package (`@nifrajs/*`, `nifra`, `create-nifra`) is released together at one version. Security fixes ship as a patch release of the latest major version.
+Every published package (`@nifrajs/*`, `nifra`, `create-nifra`) is released together at one version. Only the latest release is supported: security fixes ship as a patch release of the latest version. Move to it with `nifra upgrade`.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.x     | :white_check_mark: |
-| < 5.0   | :x:                |
+| Version        | Supported          |
+| -------------- | ------------------ |
+| latest release | :white_check_mark: |
+| older releases | :x:                |
 
 ## Reporting a Vulnerability
 

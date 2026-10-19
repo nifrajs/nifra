@@ -20,6 +20,7 @@ type FrameworkWebAppOptions = Pick<
   | "nonce"
   | "serverComponents"
   | "i18n"
+  | "hostPolicy"
 >
 
 /** `use`, the backend as `api`, and every forwarded framework field the config sets. */

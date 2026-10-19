@@ -394,6 +394,27 @@ describe("multipartBody size and count bounds", () => {
     expect(await errorOf(over)).toEqual([413, { ok: false, error: "too_many_parts" }])
   })
 
+  test("a file input left empty does not count against the parts that carry something", async () => {
+    const response = await echo({ maxFields: 1, maxFiles: 1 }).fetch(
+      upload(
+        encode([
+          { name: "title", value: "t" },
+          { name: "avatar", filename: "a.png", value: "png" },
+          { name: "banner", filename: "", type: "application/octet-stream" },
+        ]),
+      ),
+    )
+    expect(response.status).toBe(200)
+    expect(Object.keys(await response.json())).toEqual(["title", "avatar"])
+  })
+
+  test("empty parts past their own budget are refused before parsing", async () => {
+    const parts: Part[] = [{ name: "title", value: "t" }]
+    for (let i = 0; i < 3; i++) parts.push({ name: `skip${i}`, filename: "" })
+    const response = await echo({ maxFields: 1, maxFiles: 1 }).fetch(upload(encode(parts)))
+    expect(await errorOf(response)).toEqual([413, { ok: false, error: "too_many_parts" }])
+  })
+
   test("the boundary text inside a part counts toward the part bound", async () => {
     // A delimiter is counted wherever it sits, so file content cannot hide parts from the count.
     const response = await echo({ maxFields: 1, maxFiles: 1 }).fetch(

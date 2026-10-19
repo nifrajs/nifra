@@ -51,7 +51,7 @@ const SCHEMA = `// doc-check: skip - illustrative: validated inbound frames on a
 import { t } from "@nifrajs/schema"
 
 app.ws("/chat", {
-  messageSchema: t.Object({ kind: t.Literal("say"), text: t.String({ maxLength: 500 }) }),
+  messageSchema: t.object({ kind: t.literal("say"), text: t.string({ maxLength: 500 }) }),
   message(ws, msg) {
     // msg is typed { kind: "say"; text: string } - already parsed + validated.
     app.publish("room", msg.text)
@@ -65,12 +65,89 @@ const OUTBOUND = `// doc-check: skip - illustrative: outbound contract on an exi
 import { t } from "@nifrajs/schema"
 
 app.ws("/events", {
-  sendSchema: t.Object({ kind: t.Literal("ready"), id: t.String() }),
+  sendSchema: t.object({ kind: t.literal("ready"), id: t.string() }),
   validateSend: true, // opt in; default remains type-level only
   open(ws) {
     ws.send(JSON.stringify({ kind: "ready", id: "evt-1" }))
   },
 })`
+
+const TYPED_MESSAGES = `import { client } from "@nifrajs/client"
+import { type InferOutput, server } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
+import { t } from "@nifrajs/schema"
+
+// The contract, in a module both sides import: one discriminated union per direction.
+export const ChatIn = t.union([
+  t.object({ type: t.literal("say"), text: t.string({ maxLength: 500 }) }),
+  t.object({ type: t.literal("pong"), id: t.integer() }),
+])
+export const ChatOut = t.union([
+  t.object({ type: t.literal("said"), from: t.string(), text: t.string() }),
+  t.object({ type: t.literal("ping"), id: t.integer() }),
+])
+type ChatFrame = InferOutput<typeof ChatOut>
+
+const frame = (value: ChatFrame): string => JSON.stringify(value)
+
+// Server: a ping every 30 s; a connection that leaves two unanswered is closed.
+const app = server()
+  .use(websocket())
+  .ws("/chat", {
+    messageSchema: ChatIn,
+    sendSchema: ChatOut,
+    upgrade: (c) => ({
+      user: c.cookies.user ?? "guest",
+      sent: 0,
+      unanswered: 0,
+      timer: undefined as ReturnType<typeof setInterval> | undefined,
+    }),
+    open(ws) {
+      ws.subscribe("room")
+      ws.data.timer = setInterval(() => {
+        if (ws.data.unanswered >= 2) return ws.close(4000, "heartbeat timeout")
+        ws.data.unanswered += 1
+        ws.data.sent += 1
+        ws.send(frame({ type: "ping", id: ws.data.sent }))
+      }, 30_000)
+    },
+    message(ws, msg) {
+      switch (msg.type) {
+        case "say":
+          app.publish("room", frame({ type: "said", from: ws.data.user, text: msg.text }))
+          break
+        case "pong":
+          // Only an answer to a ping still outstanding counts, not any id the client makes up.
+          if (msg.id > ws.data.sent - ws.data.unanswered && msg.id <= ws.data.sent) {
+            ws.data.unanswered = 0
+          }
+          break
+      }
+    },
+    close: (ws) => clearInterval(ws.data.timer),
+  })
+
+// Client: frames are typed from sendSchema, and checked against it with validateReceive.
+export async function joinChat(baseUrl: string): Promise<void> {
+  const chat = client<typeof app>(baseUrl).chat.ws({
+    validateReceive: ChatOut,
+    onError: (error) => console.warn(error),
+  })
+  for await (const msg of chat.messages()) {
+    switch (msg.type) {
+      case "said":
+        console.log(\`\${msg.from}: \${msg.text}\`)
+        break
+      case "ping":
+        chat.send({ type: "pong", id: msg.id }) // a frame the client must answer
+        break
+      default: {
+        const unhandled: never = msg // a new ChatOut variant fails to compile here
+        throw new Error(\`unhandled frame \${JSON.stringify(unhandled)}\`)
+      }
+    }
+  }
+}`
 
 const PUBSUB = `// doc-check: skip - illustrative pub/sub on an existing app.
 app.ws("/room/:id", {
@@ -224,7 +301,9 @@ export default function WebSockets() {
         <a href="https://standardschema.dev">Standard Schema</a> (<code>t</code>, zod, valibot) - and
         Nifra parses each frame as JSON, validates it, and hands <code>message</code> the typed
         value; anything that fails goes to <code>onInvalidMessage</code> instead (so a malformed
-        frame can never reach your handler).
+        frame can never reach your handler). <code>nifra check</code> reports{" "}
+        <code>NF-S009</code> (info) for a route whose <code>message</code> calls{" "}
+        <code>JSON.parse</code> itself with no <code>messageSchema</code>.
       </p>
       <CodeBlock code={SCHEMA} />
 
@@ -238,6 +317,39 @@ export default function WebSockets() {
         <code>sendSchema</code> and is intentionally off by default.
       </p>
       <CodeBlock code={OUTBOUND} />
+
+      <h2 id="typed-messages">Typed messages, end to end</h2>
+      <p>
+        Put both schemas in a module the server and the client import, each a{" "}
+        <code>t.union</code> discriminated on a literal <code>type</code>. The server&apos;s{" "}
+        <code>message</code> then switches over what the client sent, and the typed client&apos;s{" "}
+        <code>.ws()</code> handle types <code>send</code> from <code>messageSchema</code> and every
+        received frame from <code>sendSchema</code>. A <code>default</code> branch that assigns the
+        frame to <code>never</code> turns a new server frame into a compile error on the client
+        instead of a silently ignored message.
+      </p>
+      <p>
+        The client types received frames but does not check them unless asked: pass the
+        route&apos;s <code>sendSchema</code> as <code>validateReceive</code> (the typed client
+        carries the contract&apos;s types, not its schemas, so the schema is the import). A frame
+        that fails is not delivered; <code>onError</code> gets a <code>TypeError</code> naming the
+        issues, with the frame as its <code>cause</code>. Frames keep their arrival order, an async
+        schema included.
+      </p>
+      <CodeBlock code={TYPED_MESSAGES} />
+
+      <h2 id="heartbeat">Frames the client must answer (heartbeats)</h2>
+      <p>
+        A server heartbeat that the application can see is an ordinary frame in the contract: a{" "}
+        <code>ping</code> variant in <code>sendSchema</code> and a <code>pong</code> variant in{" "}
+        <code>messageSchema</code>. The client answers it from the same switch that handles every
+        other frame, so the answer is typed and the exhaustiveness check covers it; the server
+        counts unanswered pings in <code>ws.data</code>, takes a <code>pong</code> only for a ping
+        still outstanding, and closes a connection that stops answering, as above. Clear the timer in <code>close</code>. WebSocket protocol pings (the
+        runtime&apos;s own keep-alive) are answered by the socket itself and never reach{" "}
+        <code>messages()</code>; use them to keep a connection open through proxies, and a frame
+        in the contract when the server needs to know the client is still running.
+      </p>
 
       <h2>Pub/sub - app.publish</h2>
       <p>

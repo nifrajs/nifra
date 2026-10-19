@@ -10,6 +10,8 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import {
   omittedVerificationGateIds,
+  releaseGroupGateIds,
+  releaseGroupNames,
   type VerificationGateSpec,
   type VerificationPlanMode,
   verificationPlan,
@@ -28,7 +30,14 @@ export interface ReleaseGateResult {
   /** The last lines a failed gate's command printed, so a CI log shows why it failed. */
   readonly output?: string
   readonly remediation: string
+  /** How long the gate's commands ran; absent for a gate that did not run. */
+  readonly durationMs?: number
 }
+
+/** A gate starting, or finishing with its result, reported while verification runs. */
+export type ReleaseProgressEvent =
+  | { readonly type: "start"; readonly id: string }
+  | { readonly type: "end"; readonly gate: ReleaseGateResult }
 
 export interface ReleaseVerificationResult {
   readonly ok: boolean
@@ -38,6 +47,9 @@ export interface ReleaseVerificationResult {
   readonly omittedReleaseGateIds: readonly string[]
   /** Gates a shared runner left out; a local verification runs them. */
   readonly localGateIds: readonly string[]
+  /** The gates this run was limited to, when it ran only part of the plan. */
+  readonly selectedGateIds?: readonly string[]
+  readonly durationMs: number
 }
 
 export interface ReleaseCommandResult {
@@ -64,6 +76,9 @@ export interface ReleaseVerificationOptions {
    * The repository's own gate runs every gate in its plan, so a renamed script cannot drop one.
    */
   readonly requireScripts?: boolean
+  /** Run only these gates of the plan, in plan order; CI splits the release plan this way. */
+  readonly gateIds?: readonly string[]
+  readonly onProgress?: (event: ReleaseProgressEvent) => void
   readonly runCommand?: (spec: ReleaseCommandSpec) => Promise<ReleaseCommandResult>
 }
 
@@ -166,6 +181,7 @@ const runGate = async (
   runCommand: (spec: ReleaseCommandSpec) => Promise<ReleaseCommandResult>,
   fixtureRoot: string,
 ): Promise<ReleaseGateResult> => {
+  const started = performance.now()
   let lastExitCode: number | undefined
   for (const [index, args] of gate.commands.entries()) {
     const fixture = mkdtempSync(join(fixtureRoot, `${gate.id}-${index}-`))
@@ -187,6 +203,7 @@ const runGate = async (
         exitCode: result.exitCode,
         message: `${commandLabel(args)} exited with code ${result.exitCode}`,
         remediation: gate.remediation,
+        durationMs: performance.now() - started,
       }
       const output = outputTail(result)
       if (output !== undefined) failed.output = output
@@ -199,6 +216,7 @@ const runGate = async (
     commands: gate.commands.map(commandLabel),
     ...(lastExitCode === undefined ? {} : { exitCode: lastExitCode }),
     remediation: gate.remediation,
+    durationMs: performance.now() - started,
   }
 }
 
@@ -248,37 +266,51 @@ export async function collectReleaseVerification(
   const scripts = new Set(
     declared !== null && typeof declared === "object" ? Object.keys(declared) : [],
   )
-  const plan = gatePlan(mode)
+  const started = performance.now()
+  const fullPlan = gatePlan(mode)
+  const selected = options.gateIds
+  if (selected !== undefined) {
+    const unknown = selected.filter((id) => !fullPlan.some((gate) => gate.id === id))
+    if (unknown.length > 0)
+      throw new Error(`the ${mode} plan has no gate named ${unknown.join(", ")}`)
+  }
+  const plan =
+    selected === undefined ? fullPlan : fullPlan.filter((gate) => selected.includes(gate.id))
   const local = options.sharedRunner === true ? plan.filter((gate) => !gate.workflowRequired) : []
   const gates: ReleaseGateResult[] = []
+  const record = (result: ReleaseGateResult): void => {
+    gates.push(result)
+    options.onProgress?.({ type: "end", gate: result })
+  }
   try {
     let failedId: string | undefined
     for (const gate of plan) {
       if (local.includes(gate)) continue
       if (failedId !== undefined) {
-        gates.push(skippedGate(gate, failedId))
+        record(skippedGate(gate, failedId))
         continue
       }
       // The plan names the nifra repository's own scripts; a project without one has nothing to run.
       const missing = undeclaredScript(gate, scripts)
       if (missing !== undefined && options.requireScripts === true) {
         const result = missingScriptGate(gate, missing)
-        gates.push(result)
+        record(result)
         failedId = result.id
         continue
       }
       if (missing !== undefined) {
-        gates.push(undeclaredGate(gate, missing))
+        record(undeclaredGate(gate, missing))
         continue
       }
+      options.onProgress?.({ type: "start", id: gate.id })
       const result = await runGate(root, gate, runCommand, fixtureRoot)
-      gates.push(result)
+      record(result)
       if (result.status === "fail") failedId = result.id
     }
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
-  return {
+  const result: ReleaseVerificationResult = {
     ok:
       gates.some((gate) => gate.status === "pass") &&
       gates.every((gate) => gate.status === "pass" || gate.status === "undeclared"),
@@ -286,14 +318,30 @@ export async function collectReleaseVerification(
     gates,
     omittedReleaseGateIds: omittedVerificationGateIds(mode),
     localGateIds: local.map((gate) => gate.id),
+    durationMs: performance.now() - started,
   }
+  return selected === undefined
+    ? result
+    : { ...result, selectedGateIds: plan.map((gate) => gate.id) }
 }
+
+/** `41.2s` under a minute, `2m 31s` above. */
+export function formatDuration(ms: number): string {
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  const seconds = Math.round(ms / 1000)
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
+}
+
+const gateMarker = (status: ReleaseGateStatus): string =>
+  status === "pass" ? "✓" : status === "fail" ? "✗" : "-"
+
+const gateLine = (gate: ReleaseGateResult): string =>
+  `${gateMarker(gate.status)} ${gate.id}: ${gate.status}${gate.durationMs === undefined ? "" : ` (${formatDuration(gate.durationMs)})`}`
 
 export function renderReleaseVerification(result: ReleaseVerificationResult): string {
   const lines = [`nifra verify --${result.mode}`, ""]
   for (const gate of result.gates) {
-    const marker = gate.status === "pass" ? "✓" : gate.status === "fail" ? "✗" : "-"
-    lines.push(`${marker} ${gate.id}: ${gate.status}`)
+    lines.push(gateLine(gate))
     if (gate.message !== undefined) lines.push(`  ${gate.message}`)
     if (gate.output !== undefined)
       lines.push(...gate.output.split("\n").map((line) => `  | ${line}`))
@@ -314,8 +362,20 @@ export function renderReleaseVerification(result: ReleaseVerificationResult): st
       "      run `bun run check:release` locally for them.",
     )
   }
-  lines.push("", result.ok ? "✓ verification passed" : "✗ verification failed")
+  if (result.selectedGateIds !== undefined) {
+    lines.push("", `note: this run checked only these gates: ${result.selectedGateIds.join(", ")}`)
+  }
+  lines.push(
+    "",
+    `${result.ok ? "✓ verification passed" : "✗ verification failed"} in ${formatDuration(result.durationMs)}`,
+  )
   return lines.join("\n")
+}
+
+/** One stderr line as each gate starts and finishes, so a long run shows where it is. */
+export const printReleaseProgress = (event: ReleaseProgressEvent): void => {
+  if (event.type === "start") console.error(`> ${event.id}: running`)
+  else console.error(gateLine(event.gate))
 }
 
 /** Run verification and render either the human or machine interface. */
@@ -323,7 +383,10 @@ export async function runReleaseVerification(
   cwd: string,
   options: ReleaseVerificationOptions & { readonly json?: boolean } = {},
 ): Promise<boolean> {
-  const result = await collectReleaseVerification(cwd, options)
+  const result = await collectReleaseVerification(cwd, {
+    ...options,
+    onProgress: options.onProgress ?? printReleaseProgress,
+  })
   if (options.json) console.log(JSON.stringify(result, null, 2))
   else console.log(renderReleaseVerification(result))
   return result.ok
@@ -331,11 +394,24 @@ export async function runReleaseVerification(
 
 if (import.meta.main) {
   const mode: ReleaseVerificationMode = process.argv.includes("--release") ? "release" : "default"
-  const ok = await runReleaseVerification(process.cwd(), {
+  const groupAt = process.argv.indexOf("--group")
+  const group = groupAt === -1 ? undefined : process.argv[groupAt + 1]
+  const gateIds = group === undefined ? undefined : releaseGroupGateIds(group)
+  if (groupAt !== -1 && (mode !== "release" || gateIds === undefined)) {
+    console.error(
+      `--group needs --release and one of: ${releaseGroupNames().join(", ")} (got ${group ?? "nothing"})`,
+    )
+    process.exit(2)
+  }
+  const options = {
     mode,
     sharedRunner: process.argv.includes("--shared-runner"),
     requireScripts: true,
     json: process.argv.includes("--json"),
-  })
+  }
+  const ok = await runReleaseVerification(
+    process.cwd(),
+    gateIds === undefined ? options : { ...options, gateIds },
+  )
   if (!ok) process.exitCode = 1
 }

@@ -228,7 +228,7 @@ try {
   // probe in serve() times server startup rather than a cold download on a fresh runner.
   for (const [bin, runtime, users] of [
     ["node", "node@22.23.3", ["node", "vercel"]],
-    ["bun", "bun@1.3.0", ["bun"]],
+    ["bun", "bun@1.3.14", ["bun"]],
     ["deno", "deno@2.0.0", ["deno"]],
   ] as const) {
     if (!users.some((target) => targets.includes(target))) continue
@@ -257,9 +257,9 @@ try {
       } else if (target === "bun") {
         await serve(["bun", `${out}/server.js`], adapter, "bun-current", true)
         await serve(
-          ["npm", "exec", "--yes", "--package=bun@1.3.0", "--", "bun", `${out}/server.js`],
+          ["npm", "exec", "--yes", "--package=bun@1.3.14", "--", "bun", `${out}/server.js`],
           adapter,
-          "bun-1.3.0",
+          "bun-1.3.14",
           true,
         )
       } else if (target === "deno") {

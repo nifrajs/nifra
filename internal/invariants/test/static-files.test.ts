@@ -171,6 +171,8 @@ beforeAll(async () => {
   const modified = new Date(Date.parse(MODIFIED) + 500)
   utimesSync(join(dir, "assets/page-1a2b3c.js"), modified, modified)
   writeFileSync(join(dir, "assets/big-9f8e7d.bin"), Buffer.alloc(BIG, 1))
+  // Undated: a streamed file is dated once its write settles, so parity would depend on timing.
+  utimesSync(join(dir, "assets/big-9f8e7d.bin"), 0, 0)
   writeFileSync(join(dir, "assets/dated.txt"), "dated by its own write")
   writeFileSync(join(dir, "assets/manifest.json"), "{}")
   writeFileSync(join(dir, "assets/guide.pdf"), "%PDF")
@@ -336,6 +338,27 @@ for (const [runtime, base] of [
   ["Deno", () => denoBase],
 ] as const) {
   describe.skipIf(runtime === "Deno" && DENO === null)(`${runtime} static cache validators`, () => {
+    test("streamed files carry no content tag and refuse guarded ranges", async () => {
+      const url = `${base()}/assets/big-9f8e7d.bin`
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(url, { method })
+        expect(response.status).toBe(200)
+        expect(response.headers.get("etag")).toBeNull()
+        expect(response.headers.get("last-modified")).toBeNull()
+        expect((await response.arrayBuffer()).byteLength).toBe(method === "HEAD" ? 0 : BIG)
+      }
+      for (const validator of ['"stale"', FUTURE]) {
+        const response = await fetch(url, {
+          headers: { range: "bytes=0-9", "if-range": validator },
+        })
+        expect(response.status).toBe(200)
+        expect((await response.arrayBuffer()).byteLength).toBe(BIG)
+      }
+      const range = await fetch(url, { headers: { range: "bytes=0-9" } })
+      expect(range.status).toBe(206)
+      expect((await range.arrayBuffer()).byteLength).toBe(10)
+    })
+
     test("a nonmatching tag suppresses the date condition, for GET and HEAD", async () => {
       for (const method of ["GET", "HEAD"]) {
         const response = await fetch(base() + PAGE, {

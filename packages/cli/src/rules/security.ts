@@ -29,7 +29,8 @@ function didNotRun(code: string, title: string): readonly Diagnostic[] {
   ]
 }
 
-const SECRET = /(?:token|secret|apiKey|api_key|signature|hmac|password)/i
+const SECRET =
+  /(?:token|secret|apiKey|api_key|signature|hmac|password|(?:service|private|signing|master|encryption)_?key)/i
 const PII = /(?:email|phone|ssn|password|token|authorization)/i
 // Retired in 5.0.0: it silenced any security finding without a reason. It now silences nothing and
 // only makes the finding name the form that replaced it.
@@ -321,6 +322,76 @@ function isConfigRead(ts: typeof TSApi, node: TSApi.Expression): boolean {
   return CONTEXT_NAMES.has(owner.text) && CONFIG_KEY.test(key) && isParameterRef(ts, owner)
 }
 
+/**
+ * The initializer of the `const` that `id` names, when that const is the nearest binding of the name.
+ * A parameter, a loop or catch variable, a `let` or a function in between disproves it.
+ */
+function constInitializer(ts: typeof TSApi, id: TSApi.Identifier): TSApi.Expression | undefined {
+  for (let node: TSApi.Node | undefined = id.parent; node !== undefined; node = node.parent) {
+    if (ts.isFunctionLike(node) && node.parameters.some((p) => bindsName(ts, p.name, id.text)))
+      return undefined
+    if (
+      (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      node.initializer !== undefined &&
+      ts.isVariableDeclarationList(node.initializer) &&
+      node.initializer.declarations.some((d) => bindsName(ts, d.name, id.text))
+    )
+      return undefined
+    if (
+      ts.isCatchClause(node) &&
+      node.variableDeclaration !== undefined &&
+      bindsName(ts, node.variableDeclaration.name, id.text)
+    )
+      return undefined
+    if (!ts.isBlock(node) && !ts.isSourceFile(node)) continue
+    for (const statement of node.statements) {
+      if (!ts.isVariableStatement(statement)) continue
+      const constant = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+      for (const declaration of statement.declarationList.declarations) {
+        if (!bindsName(ts, declaration.name, id.text)) continue
+        return constant && ts.isIdentifier(declaration.name) ? declaration.initializer : undefined
+      }
+    }
+    if (declaresIn(ts, node.statements, id.text)) return undefined
+  }
+  return undefined
+}
+
+/**
+ * Whether `node` holds deployment configuration: a read {@link isConfigRead} accepts, or a `const`
+ * initialized from one (`const key = process.env.KEY`), through parentheses, `as`, `!`, a `.trim()` and
+ * a `??`/`||` string default.
+ */
+function isConfigValue(ts: typeof TSApi, node: TSApi.Expression, depth = 0): boolean {
+  if (depth > 8) return false
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  )
+    return isConfigValue(ts, node.expression, depth + 1)
+  if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
+    ts.isStringLiteralLike(node.right)
+  )
+    return isConfigValue(ts, node.left, depth + 1)
+  if (
+    ts.isCallExpression(node) &&
+    node.arguments.length === 0 &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "trim"
+  )
+    return isConfigValue(ts, node.expression.expression, depth + 1)
+  if (ts.isIdentifier(node)) {
+    const initializer = constInitializer(ts, node)
+    return initializer !== undefined && isConfigValue(ts, initializer, depth + 1)
+  }
+  return isConfigRead(ts, node)
+}
+
 function secretComparisons(
   ts: typeof TSApi,
   tree: TSApi.SourceFile,
@@ -344,7 +415,7 @@ function secretComparisons(
       if (
         (isSecretName(left) || isSecretName(right)) &&
         !isClientConfirmationPair(browser, left, right) &&
-        !(isConfigRead(ts, node.left) && isConfigRead(ts, node.right))
+        !(isConfigValue(ts, node.left) && isConfigValue(ts, node.right))
       ) {
         const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
         found.push({ node, left, right, line })
@@ -976,6 +1047,103 @@ export const inputBeforeAuthenticationRule: CheckRule = {
   },
 }
 
+function propertyName(ts: typeof TSApi, prop: TSApi.ObjectLiteralElementLike): string | undefined {
+  if (ts.isSpreadAssignment(prop)) return undefined
+  return ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : undefined
+}
+
+/** The `message` handler of an `app.ws()` handler object, when it is written inline. */
+function wsMessageHandler(
+  ts: typeof TSApi,
+  handler: TSApi.ObjectLiteralExpression,
+): TSApi.Node | undefined {
+  for (const prop of handler.properties) {
+    if (propertyName(ts, prop) !== "message") continue
+    if (ts.isMethodDeclaration(prop)) return prop.body
+    if (ts.isPropertyAssignment(prop)) {
+      const fn = prop.initializer
+      if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) return fn.body
+    }
+  }
+  return undefined
+}
+
+function callsJsonParse(ts: typeof TSApi, node: TSApi.Node): boolean {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "parse" &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === "JSON"
+  ) {
+    return true
+  }
+  return ts.forEachChild(node, (child) => (callsJsonParse(ts, child) ? true : undefined)) === true
+}
+
+/**
+ * An `app.ws()` route whose `message()` parses frames itself has no `messageSchema`, so a client's
+ * frame reaches the handler unvalidated and the typed client's `send()` is untyped. Only an inline
+ * handler object with no spread is judged: a spread may carry the schema.
+ */
+export const unvalidatedWsFrameRule: CheckRule = {
+  code: "NF-S009",
+  title: "WebSocket frames parsed without a messageSchema",
+  async scan(ctx) {
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
+    if (ts === undefined) return didNotRun("NF-S009", "WebSocket messageSchema scan")
+    const findings: Diagnostic[] = []
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
+      const visit = (node: TSApi.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "ws"
+        ) {
+          const [path, handler] = node.arguments
+          if (
+            path !== undefined &&
+            ts.isStringLiteralLike(path) &&
+            handler !== undefined &&
+            ts.isObjectLiteralExpression(handler) &&
+            !handler.properties.some(
+              (prop) => ts.isSpreadAssignment(prop) || propertyName(ts, prop) === "messageSchema",
+            )
+          ) {
+            const body = wsMessageHandler(ts, handler)
+            if (body !== undefined && callsJsonParse(ts, body)) {
+              const line =
+                tree.getLineAndCharacterOfPosition(node.expression.name.getStart(tree)).line + 1
+              const reviewed = expectedReason(lines, line, "NF-S009") !== undefined
+              findings.push(
+                diagnostic({
+                  code: "NF-S009",
+                  severity: "info",
+                  file,
+                  line,
+                  message: reviewed
+                    ? `ws("${path.text}") parsing its own frames is expected here`
+                    : `ws("${path.text}") parses frames with JSON.parse in message() and declares no messageSchema, so a client's frame reaches the handler unvalidated and the typed client's send() takes unknown. Declare messageSchema: message() then receives the parsed, validated value, invalid frames go to onInvalidMessage, and send() is typed from it`,
+                  evidence: [path.text, ...expectationEvidence(lines, line, "NF-S009")],
+                  verify: "nifra check --lints-only",
+                }),
+              )
+            }
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+    }
+    return findings
+  },
+}
+
 export const securityRules = Object.freeze([
   failOpenGateRule,
   secretComparisonRule,
@@ -985,4 +1153,5 @@ export const securityRules = Object.freeze([
   assuranceEscapeHatchRule,
   unprefixedSecureCookieRule,
   inputBeforeAuthenticationRule,
+  unvalidatedWsFrameRule,
 ])

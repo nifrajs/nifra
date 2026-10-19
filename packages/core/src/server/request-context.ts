@@ -14,7 +14,7 @@ import { headerObjectOf } from "./headers.ts"
 import { plainError } from "./http.ts"
 import type { ProtoPoisoning } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
-import { responseJsonContentType } from "./respond.ts"
+import { residentText, responseJsonContentType } from "./respond.ts"
 import {
   CONTEXT_REQUEST,
   CONTEXT_SEARCH,
@@ -378,9 +378,12 @@ export class RequestContext implements RawContext {
       }
     }
     // Default to text/plain; if the caller passes their own headers, they own the content-type.
-    if (i?.headers !== undefined) return markResidentBody(new Response(body, i))
+    if (i?.headers !== undefined) return markResidentBody(residentText(new Response(body, i), body))
     return markResidentBody(
-      new Response(body, { ...i, headers: { "content-type": TEXT_CONTENT_TYPE } }),
+      residentText(
+        new Response(body, { ...i, headers: { "content-type": TEXT_CONTENT_TYPE } }),
+        body,
+      ),
     )
   }
 

@@ -36,34 +36,6 @@ function nifraApp(
   }
 }
 
-/** `renderPage` from a hand-written server: a raw Bun.serve handler, or the same handler on Node. */
-function ownServer(
-  name: string,
-  subdir: string,
-  runtime: "bun" | "node",
-  port: number,
-): SsrBenchTarget {
-  return runtime === "bun"
-    ? {
-        name,
-        runtime,
-        kind: "own-server",
-        build: ["bun", "run", `${BENCH_DIR}/${subdir}/build.ts`],
-        serve: ["bun", `${BENCH_DIR}/${subdir}/server-bun.js`],
-        port,
-        validate: CATALOG_HTML,
-      }
-    : {
-        name,
-        runtime,
-        kind: "own-server",
-        build: ["bun", "run", `${BENCH_DIR}/${subdir}/build-node.ts`],
-        serve: ["node", `${BENCH_DIR}/${subdir}/dist-node/server-node.js`],
-        port,
-        validate: CATALOG_HTML,
-      }
-}
-
 /** The `nifra build --target static` output on a plain file server: what a CDN or static host does. */
 function staticHost(name: string, subdir: string, port: number): SsrBenchTarget {
   return {
@@ -103,8 +75,6 @@ export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
-  ownServer("nifra+react (own server)", "nifra", "bun", 4305),
-  ownServer("nifra+react (own server, node)", "nifra", "node", 4306),
 ]
 
 export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
@@ -166,8 +136,6 @@ export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
-  ownServer("nifra+solid (own server)", "nifra-solid", "bun", 4354),
-  ownServer("nifra+solid (own server, node)", "nifra-solid", "node", 4355),
 ]
 
 export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
@@ -200,8 +168,6 @@ export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
-  ownServer("nifra+vue (own server)", "nifra-vue", "bun", 4346),
-  ownServer("nifra+vue (own server, node)", "nifra-vue", "node", 4347),
 ]
 
 export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
@@ -234,8 +200,6 @@ export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
     validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
-  ownServer("nifra+svelte (own server)", "nifra-svelte", "bun", 4349),
-  ownServer("nifra+svelte (own server, node)", "nifra-svelte", "node", 4356),
 ]
 
 export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
@@ -254,7 +218,7 @@ export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
   staticHost("nifra+svelte (SSG files, static host)", "nifra-svelte-static", 4366),
 ]
 
-/** Preact - nifra only (no maintained Preact meta-framework exists to bench). */
+/** Preact - no meta-framework runs on Node (Fresh is Deno-only), so the raw renderer is the rival. */
 export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
   nifraApp("nifra+preact", "nifra-preact-app", "bun", 4323),
   nifraApp("nifra+preact (node)", "nifra-preact-app", "node", 4353),
@@ -262,6 +226,7 @@ export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
     // The renderer ceiling: preact-render-to-string on a bare node server - no framework.
     name: "preact-ssr",
     runtime: "node",
+    kind: "renderer",
     cwd: `${BENCH_DIR}/preact-ssr`,
     build: ["sh", "-c", `${INSTALL} && bun run build.ts`],
     serve: ["node", "dist/server.js"],
@@ -269,8 +234,6 @@ export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
     serveEnv: NODE_HOST,
     validate: CATALOG_HTML,
   },
-  ownServer("nifra+preact (own server)", "nifra-preact", "bun", 4357),
-  ownServer("nifra+preact (own server, node)", "nifra-preact", "node", 4358),
 ]
 
 export const PREACT_TABLE_B: readonly SsrBenchTarget[] = [
@@ -340,7 +303,7 @@ export const ALL_TABLE_SECTIONS: readonly SsrTableSection[] = [
   {
     label: "Preact - Table A (uncached SSR)",
     blurb:
-      "nifra app (Bun + Node); no Preact meta-framework exists to bench against. preact-ssr is the raw render-to-string ceiling (no framework).",
+      "nifra app (Bun + Node) vs preact-ssr, the raw render-to-string ceiling (no framework): no Preact meta-framework runs on Node.",
     baseline: "preact-ssr",
     targets: PREACT_TABLE_A,
   },

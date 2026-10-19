@@ -11,6 +11,7 @@ exports[`verification golden output: nifra check full assurance project: human r
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
 ✓ duplicate identity-sensitive dependency install: none
+✓ identity-sensitive dependency at more than one version: none
 ✓ workspace-linked dist older than its source: none
 ✓ bundler pipeline (Vite/Bun) config: none
 ✓ server-manifest.ts drifted from routes/: none
@@ -59,6 +60,7 @@ exports[`verification golden output: nifra check plain project (no config): huma
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
 ✓ duplicate identity-sensitive dependency install: none
+✓ identity-sensitive dependency at more than one version: none
 ✓ workspace-linked dist older than its source: none
 ✓ bundler pipeline (Vite/Bun) config: none
 ✓ server-manifest.ts drifted from routes/: none
@@ -99,6 +101,7 @@ exports[`verification golden output: nifra check dirty project: human report wit
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
 ✓ duplicate identity-sensitive dependency install: none
+✓ identity-sensitive dependency at more than one version: none
 ✓ workspace-linked dist older than its source: none
 ✓ bundler pipeline (Vite/Bun) config: none
 ✓ server-manifest.ts drifted from routes/: none

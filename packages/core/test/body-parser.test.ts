@@ -179,8 +179,6 @@ describe("bodyParser media type", () => {
     "text/plain",
     "TEXT/PLAIN",
     "application/octet-stream",
-    // A reserved type in a spelling the built-in lanes do not take is not read by the parser either.
-    "Application/X-WWW-Form-Urlencoded",
     "multipart/form-data; boundary=x",
   ]
   for (const contentType of unread) {
@@ -211,7 +209,8 @@ describe("bodyParser media type", () => {
     )
     expect((await app.fetch(post('{"a":1}', "application/json"))).status).toBe(200)
     expect((await app.fetch(post("a=1", "application/x-www-form-urlencoded"))).status).toBe(200)
-    expect(seen).toEqual([{ a: 1 }, { a: "1" }])
+    expect((await app.fetch(post("b=2", "Application/X-WWW-Form-Urlencoded"))).status).toBe(200)
+    expect(seen).toEqual([{ a: 1 }, { a: "1" }, { b: "2" }])
     expect(calls).toBe(0)
   })
 

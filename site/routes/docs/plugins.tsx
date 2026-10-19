@@ -310,6 +310,14 @@ export default function Plugins() {
         <code>responseHeaders</code> and every <code>onResponse</code> hook apply to it. A hand-built{" "}
         <code>Response</code> still works.
       </p>
+      <p>
+        An <code>onRequest</code> hook that throws or rejects (a rate-limit store that is down, say)
+        fails the request the way a handler error does. Every <code>onError</code> the app
+        registered sees it, in order, with a context that has no route params; the first answer is
+        sent. When none answers, the error is logged and the client gets the default{" "}
+        <code>500</code>. A thrown <code>Response</code> or <code>status()</code> value is sent as
+        if returned.
+      </p>
 
       <h3>Which hooks run where</h3>
       <p>

@@ -97,6 +97,42 @@ describe("graceful shutdown", () => {
       process.removeListener("SIGINT", h as (...a: unknown[]) => void)
   })
 
+  test("stop() closes open WebSockets with 1001 before onStop runs", async () => {
+    const { websocket } = await import("../src/ws.ts")
+    const events: string[] = []
+    const app = server()
+      .use(websocket())
+      .ws("/echo", {
+        message: (ws, data) => ws.send(data),
+        close: () => {
+          events.push("socket closed")
+        },
+      })
+      .onStop(() => {
+        events.push("onStop")
+      })
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
+    const client = new WebSocket(`ws://127.0.0.1:${srv.port}/echo`)
+    await new Promise((resolve) => client.addEventListener("open", resolve, { once: true }))
+    const closed = new Promise<number>((resolve) =>
+      client.addEventListener("close", (event) => resolve(event.code), { once: true }),
+    )
+    await app.stop({ drainMs: 5_000 })
+    expect(events).toEqual(["socket closed", "onStop"])
+    expect(await closed).toBe(1001)
+  })
+
+  test("stop() removes the signal handlers listen() installed", async () => {
+    const beforeTerm = process.listenerCount("SIGTERM")
+    const beforeInt = process.listenerCount("SIGINT")
+    const app = server({ gracefulSignals: true }).get("/", () => "ok")
+    app.listen(0, { hostname: "127.0.0.1" })
+    expect(process.listenerCount("SIGTERM")).toBe(beforeTerm + 1)
+    await app.stop()
+    expect(process.listenerCount("SIGTERM")).toBe(beforeTerm)
+    expect(process.listenerCount("SIGINT")).toBe(beforeInt)
+  })
+
   test("gracefulSignals: { drainMs } is the drain window the signal's stop() gets", async () => {
     for (const [option, expected] of [
       [{ drainMs: 25 }, { drainMs: 25 }],

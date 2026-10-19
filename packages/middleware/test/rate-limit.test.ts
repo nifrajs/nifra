@@ -219,6 +219,41 @@ describe("rateLimit", () => {
     expect((await app.fetch(new Request("http://x/"))).status).toBe(429)
   })
 
+  test("a failing store goes through the app's onError, else the default 500", async () => {
+    const errors: unknown[] = []
+    const ignore = (): void => undefined
+    const logger = {
+      debug: ignore,
+      info: ignore,
+      warn: ignore,
+      error: (_m: string, f?: { detail?: unknown }) => errors.push(f?.detail),
+    }
+    const down = { hit: () => Promise.reject(new Error("store down")) }
+    const limit = () => rateLimit({ store: down, max: 3, windowMs: 1000, key: () => "k" })
+
+    const bare = server({ logger })
+      .use(limit())
+      .get("/", () => "ok")
+    const unhandled = await bare.fetch(new Request("http://x/"))
+    expect(unhandled.status).toBe(500)
+    expect(await unhandled.json()).toEqual({ ok: false, error: "internal_error" })
+    expect(errors).toEqual(["store down"])
+
+    const seen: unknown[] = []
+    const handled = server({ logger })
+      .onError((error) => {
+        seen.push(error instanceof Error ? error.message : String(error))
+        return new Response("rate limiter unavailable", { status: 503 })
+      })
+      .use(limit())
+      .get("/", () => "ok")
+    const res = await handled.fetch(new Request("http://x/"))
+    expect(res.status).toBe(503)
+    expect(await res.text()).toBe("rate limiter unavailable")
+    expect(seen).toEqual(["store down"])
+    expect(errors).toEqual(["store down"])
+  })
+
   test("onResponse without a prior onRequest leaves the response unchanged", async () => {
     const mw = rateLimit({ store: new MemoryStore(), max: 1, windowMs: 1000, key: () => "k" })
     const original = new Response("x")

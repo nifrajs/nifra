@@ -1,5 +1,18 @@
 # @nifrajs/schema
 
+## 5.5.0
+
+### Minor Changes
+
+- aed4a76: `toOpenAPI(app, { openapiVersion: "3.2.0" })` describes a QUERY route as the path item's `query` operation, with its request body. A 3.1 document has no field for it and leaves the route out, as before. `importOpenAPI()` accepts OpenAPI 3.2 documents, and reads a `query` operation only from one.
+
+### Patch Changes
+
+- 625a315: The output guard now validates a `t` schema's projected value without re-checking each projected object for undeclared keys, which projection had already removed. The check walked every object of loader, action and server-function data a second time on each request. One behavior changes with it: an object in that data carrying a non-enumerable undeclared property is no longer refused. The property is still never sent, since JSON skips it and client component props refuse it.
+- Updated dependencies [5f68512]
+- Updated dependencies [56515ec]
+  - @nifrajs/uploads@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

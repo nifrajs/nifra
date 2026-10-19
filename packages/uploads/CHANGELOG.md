@@ -1,5 +1,12 @@
 # @nifrajs/uploads
 
+## 5.5.0
+
+### Patch Changes
+
+- 5f68512: `signDownloadUrl()` rejects, with a `RangeError`, an `expiresInSeconds` that is not a whole number of seconds of at least 1, a `now` that is not a whole, non-negative number of unix seconds, and an expiry past the largest safe integer. It used to sign such values into a `vexp` that `verifyDownloadUrl()` never accepts, so `expiresInSeconds: 0.5` produced a link that was dead on arrival.
+- 56515ec: `stripImageMetadata()` now refuses a source larger than `maxPixels` (width x height, default 40 MP, the same as `createImageHandler`) before the backend decodes it, throwing the new `ImagePixelLimitError` - answer it with a `413`. A small compressed upload that passes `validateUpload()`'s byte cap can declare an image that decodes to hundreds of megabytes; the cap is checked against the probed header, so it never reaches the codec. A backend that probes zero, negative or non-integer dimensions is refused with a `TypeError`.
+
 ## 5.4.0
 
 No changes in this release.

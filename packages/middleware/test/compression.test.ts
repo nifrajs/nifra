@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { constants, gunzipSync, gzipSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { compression } from "@nifrajs/middleware"
+import { gzipBuffered, gzipPlanFor } from "../src/compression.ts"
 
 const GZIP = { "accept-encoding": "gzip, deflate, br" }
 const big = "x".repeat(2000) // > default 1024 threshold
@@ -52,6 +54,51 @@ async function firstChunk(response: Response, ms: number): Promise<string> {
   return outcome
 }
 
+describe("buffered gzip lanes", () => {
+  test("each runtime gets the lanes measured fastest for it", () => {
+    const unbounded = Number.POSITIVE_INFINITY
+    expect([gzipPlanFor({ Bun: {} }), gzipPlanFor({ Deno: {} }), gzipPlanFor({})]).toEqual([
+      { inlineMax: 4096, oneShotMax: unbounded },
+      { inlineMax: unbounded, oneShotMax: unbounded },
+      { inlineMax: -1, oneShotMax: 8192 },
+    ])
+  })
+
+  test("inline up to its cut, then one call, then CompressionStream", async () => {
+    const calls: string[] = []
+    const zlib = {
+      gzipSync: (body: string | Uint8Array) => {
+        calls.push(`sync ${body.length}`)
+        return gzipSync(body)
+      },
+      gzip: (
+        body: string | Uint8Array,
+        done: (error: Error | null, result: Uint8Array) => void,
+      ) => {
+        calls.push(`one-shot ${body.length}`)
+        done(null, gzipSync(body))
+      },
+    }
+    const plan = { inlineMax: 2, oneShotMax: 4 }
+    const inline = gzipBuffered("ab", plan, zlib)
+    if (inline instanceof Promise)
+      throw new Error("a body within inlineMax was gzipped off the loop")
+    const results = [
+      inline,
+      await gzipBuffered("abcd", plan, zlib),
+      await gzipBuffered("abcde", plan, zlib),
+    ]
+    expect(calls).toEqual(["sync 2", "one-shot 4"])
+    expect(results.map((bytes) => gunzipSync(bytes).toString())).toEqual(["ab", "abcd", "abcde"])
+    expect(gunzipSync(await gzipBuffered("abc", plan, undefined)).toString()).toBe("abc")
+    const failing = {
+      gzip: (_: unknown, done: (error: Error | null, result: Uint8Array) => void) =>
+        done(new Error("zlib failed"), new Uint8Array()),
+    }
+    await expect(gzipBuffered("abc", plan, failing)).rejects.toThrow("zlib failed")
+  })
+})
+
 describe("compression()", () => {
   test("gzips a framework-serialized body when the client accepts gzip (round-trips)", async () => {
     const app = server()
@@ -61,6 +108,49 @@ describe("compression()", () => {
     expect(res.headers.get("content-encoding")).toBe("gzip")
     expect(res.headers.get("vary")?.toLowerCase()).toContain("accept-encoding")
     expect(JSON.parse(await gunzip(res))).toEqual({ data: big }) // decompresses to the original
+  })
+
+  test("a buffered body round-trips through every gzip lane", async () => {
+    for (const data of ["é".repeat(2 * 1024), "é".repeat(64 * 1024)]) {
+      const app = server()
+        .use(compression())
+        .get("/", () => ({ data }))
+      const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+      expect(res.headers.get("content-encoding")).toBe("gzip")
+      expect(JSON.parse(await gunzip(res))).toEqual({ data })
+    }
+  })
+
+  test("a compressed c.text response is single-use and never replays another user's cookie", async () => {
+    for (const network of [false, true]) {
+      let shared: Response | undefined
+      const app = server()
+        .use(compression())
+        .get("/", (c) => {
+          shared ??= c.text(big)
+          if (c.header("x-user") === "alice") c.set.cookie("sid", "alice-session")
+          return shared
+        })
+      const running = network ? app.listen(0, { hostname: "127.0.0.1" }) : undefined
+      const send = (user: string) => {
+        const req = new Request(`http://127.0.0.1:${running?.port ?? 80}/`, {
+          headers: { ...GZIP, "x-user": user },
+        })
+        return network ? fetch(req) : app.fetch(req)
+      }
+      try {
+        const alice = await send("alice")
+        expect(alice.headers.get("set-cookie")).toContain("sid=alice-session")
+        expect(network ? await alice.text() : await gunzip(alice)).toBe(big)
+        const bob = await send("bob")
+        expect(bob.status).toBe(500)
+        expect(bob.headers.getSetCookie()).toEqual([])
+        expect(bob.headers.get("content-encoding")).toBeNull()
+        expect(await bob.json()).toEqual({ ok: false, error: "internal_error" })
+      } finally {
+        if (running !== undefined) await app.stop()
+      }
+    }
   })
 
   test("compresses a handler-returned raw streamed Response without buffering it", async () => {
@@ -73,7 +163,6 @@ describe("compression()", () => {
   })
 
   test("a streamed body's compressed prefix reaches the client before the upstream ends", async () => {
-    const { gunzipSync, constants } = await import("node:zlib")
     let release = () => {}
     const held = new Promise<void>((resolve) => {
       release = resolve

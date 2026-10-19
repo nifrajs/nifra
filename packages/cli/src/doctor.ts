@@ -17,7 +17,7 @@
  * undeclared import there fails a clean `bun install --frozen-lockfile` build just the same.
  */
 import type { Dirent } from "node:fs"
-import { readdir, stat } from "node:fs/promises"
+import { readdir, realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
@@ -48,6 +48,7 @@ import {
 import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
+import { isFixedGroup, resolvePackageFrom } from "./upgrade.ts"
 import { collectVersionDrift, type VersionDrift, versionDriftMessage } from "./version-drift.ts"
 import { buildScriptName } from "./workspace-link.ts"
 
@@ -629,6 +630,8 @@ interface ReadinessSource {
   readonly file: string
   readonly code: string
   readonly source: string
+  /** The linked package the file belongs to, when it is not the app's own. */
+  readonly via?: string
 }
 
 function sourceLineAt(source: string, index: number): number {
@@ -645,9 +648,60 @@ function readinessEvidence(
   for (const file of files) {
     const content = source === "source" ? file.source : file.code
     const match = pattern.exec(content)
-    if (match !== null) return `${file.file}:${sourceLineAt(content, match.index)}`
+    if (match !== null)
+      return `${file.file}:${sourceLineAt(content, match.index)}${file.via === undefined ? "" : ` via ${file.via}`}`
   }
   return undefined
+}
+
+function readinessSource(file: string, source: string, via?: string): ReadinessSource {
+  const code = codePositionMask(source)
+  return via === undefined ? { file, source, code } : { file, source, code, via }
+}
+
+/**
+ * The source of every package the app imports from outside its own tree that is not a registry
+ * install (a `file:` or `link:` dependency, a workspace sibling), and of those it imports in turn: a
+ * server factory such a package builds is this app's server. nifra's own packages are skipped - they
+ * define these settings, they do not apply them.
+ */
+async function linkedReadinessSources(
+  cwd: string,
+  files: readonly ReadinessSource[],
+): Promise<ReadinessSource[]> {
+  let root: string
+  try {
+    root = await realpath(cwd)
+  } catch {
+    root = resolve(cwd)
+  }
+  const visited = new Set<string>([root])
+  const linked: ReadinessSource[] = []
+  const follow = async (from: string, sources: readonly ReadinessSource[]): Promise<void> => {
+    const imported = new Set(
+      sources.flatMap((file) =>
+        scanUndeclaredImports(file.file, file.source, new Set(), () => false).map(
+          (finding) => finding.snippet,
+        ),
+      ),
+    )
+    for (const name of [...imported].sort(codeUnitOrder)) {
+      if (isFixedGroup(name)) continue
+      const path = resolvePackageFrom(from, name)
+      if (path === undefined || visited.has(path) || path.split(sep).includes("node_modules"))
+        continue
+      if (path === root || path.startsWith(root + sep)) continue
+      visited.add(path)
+      const own: ReadinessSource[] = []
+      await walkSource(path, (rel, source) => {
+        own.push(readinessSource(displayPath(root, join(path, rel)), source, name))
+      })
+      linked.push(...own)
+      await follow(path, own)
+    }
+  }
+  await follow(root, files)
+  return linked
 }
 
 /** Read only source shapes used to report production readiness. Values and secrets are never loaded. */
@@ -656,10 +710,12 @@ async function collectDoctorReadiness(
   opts: { readonly target?: string; readonly strict?: boolean },
 ): Promise<DoctorReadiness> {
   const resolved = await resolveTarget(cwd, opts.target)
-  const files: ReadinessSource[] = []
+  const own: ReadinessSource[] = []
   await walkSource(cwd, (file, source) => {
-    files.push({ file, source, code: codePositionMask(source) })
+    own.push(readinessSource(file, source))
   })
+  // The app's own files first, so a setting it makes itself is the evidence shown.
+  const files = [...own, ...(await linkedReadinessSources(cwd, own))]
   const edgeTarget = /^(?:cloudflare|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
   const configured = (
     id: DoctorReadinessItem["id"],

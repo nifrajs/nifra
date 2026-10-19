@@ -692,7 +692,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVSessionStore} uses. Structural (no `@cloudflare/workers-types` dependency) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
-  A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}) - the durable, shared production store: sessions hold across worker instances and survive restarts. Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so …
+  Legacy Cloudflare Workers KV persistence, retained for reading and migrating existing records. `createSessions` rejects this adapter: cached records and missing revocation markers can resurrect a logged-out session. Use a strongly consistent {@link SessionStore} for authenticated sessions. Records …
 - **MemorySessionStore** _(class)_ - `class MemorySessionStore`
   In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances). Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their ow…
 - **MemorySessionStoreOptions** _(interface)_ - `interface MemorySessionStoreOptions`
@@ -707,7 +707,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionRecord** _(interface)_ - `interface SessionRecord`
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
-  Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun. Logout and rotation also write a revocation marke…
+  Pluggable session backend (store mode). Reads must observe completed writes and deletes, including revocation markers, across all instances. Eventual consistency cannot provide logout guarantees. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionSto…
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
   The response a guard denies a missing session with, in place of the default `401` JSON.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
@@ -983,6 +983,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
 - **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
   Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
+- **NAMESPACED_KEYS** _(const)_ - `NAMESPACED_KEYS: readonly ["$query"]`
+  Capabilities added after the lists above froze, intercepted by exact match. Only ever `$`-prefixed: `$query` calls a route under the QUERY method, which has no plain verb key because `query` is a common route segment.
 - **OutputOf** _(type)_ - `type OutputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> : never : null`
   What a route module's output schema lets through to the browser: the output type of its `Name` export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without one sends no data.
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
@@ -1018,7 +1020,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ - `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
   The Eden-style proxy type for a route registry - the shared core used by both `Treaty<App>` (coupled, from `typeof app`) and `client(contract, url)` (decoupled, from a contract's `RegistryFor`).
-- **WsCallOptions** _(interface)_ - `interface WsCallOptions`
+- **WsCallOptions** _(interface)_ - `interface WsCallOptions<Out = unknown>`
+  `Out` is what the handle delivers: a `validateReceive` schema must produce that type.
 - **WsHandle** _(interface)_ - `interface WsHandle<In, Out>`
   A live typed WebSocket connection to an `app.ws()` route. `send` accepts the route's `messageSchema` input type (validated server-side at the trust boundary); received frames are typed from its `sendSchema` and JSON-parsed. Binary frames are not part of the typed contract and are ignored by `messag…
 - **client** _(function)_ - `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, options?: ClientOptions): TreatyFromRegistry<RegistryFor<C>>; }`
@@ -1610,8 +1613,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -1738,7 +1741,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.4.0"`
+- **VERSION** _(const)_ - `VERSION: "5.5.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -2787,8 +2790,8 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/core/router`
 
 - **EMPTY_PARAMS** _(const)_ - `EMPTY_PARAMS: Record<string, string>`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
   A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
@@ -2888,8 +2891,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -3146,6 +3149,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/core/static-file`
 
+- **CONTENT_SNAPSHOT_MAX** _(const)_ - `CONTENT_SNAPSHOT_MAX: number`
+  Static HTTP readers tag only a whole, bounded snapshot; streamed inodes can change after hashing.
 - **CONTENT_TAG_MAX** _(const)_ - `CONTENT_TAG_MAX: number`
   Largest file tagged by its content. Its first request waits for one read of the whole file, ~0.1 s per 256 MiB with hardware SHA-256 and several times that on a slow disk or CPU, so a larger file - a long video that is only ever fetched by ranges, say - is tagged by its device, inode, size and time…
 - **CONTENT_TYPES** _(const)_ - `CONTENT_TYPES: Readonly<Record<string, string>>`
@@ -3154,7 +3159,7 @@ _No named exports (side-effect entrypoint)._
   What node:crypto's `createHash` returns; Bun, Node and Deno all provide it.
 - **ContentTagOptions** _(interface)_ - `interface ContentTagOptions`
 - **ContentTags** _(interface)_ - `interface ContentTags`
-  Strong entity tags from what a file holds, the same for the same bytes on every instance and runtime, so a replacement that keeps a file's size and timestamps still changes its tag. A tag is remembered per real path for the version it was computed from, so serving a known file reads no more than be…
+  Entity tags from file bytes, consistent across instances and runtimes. Files beyond the content hash limit instead use a per-instance identity tag. Callers must serve the same immutable bytes they hash; static HTTP readers use bounded snapshots for that guarantee. A tag is remembered per real path …
 - **FileVersion** _(interface)_ - `interface FileVersion`
   The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is, or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.
 - **ReadAt** _(type)_ - `type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>`
@@ -3171,6 +3176,8 @@ _No named exports (side-effect entrypoint)._
   Whether the client's copy is current, so the answer is a bodyless 304. `If-None-Match` (the header, or `null`) decides whenever it is sent (RFC 9110 section 13.2.2), by weak comparison with `etag`, and `*` matches any file. Otherwise an `If-Modified-Since` at or after `lastModified` (epoch millisec…
 - **lastModifiedOf** _(function)_ - `lastModifiedOf: (version: FileVersion) => number | undefined`
   The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`, `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a same-size replac…
+- **streamedLastModifiedOf** _(function)_ - `streamedLastModifiedOf: (version: FileVersion, now?: number) => number | undefined`
+  {@link lastModifiedOf} for a body streamed after its stat, where a write can still reach the bytes sent. Dated only once its change is older than the racy window, so such a write falls in a later HTTP-date second and the next `If-Modified-Since` fetches it. A weak validator: never pass it to {@link…
 
 ### `@nifrajs/core/tool-catalog`
 
@@ -4606,7 +4613,7 @@ _No named exports (side-effect entrypoint)._
 - **fromTypeBox** _(function)_ - `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>`
   Wrap a TypeBox schema as a `NifraSchema`.
 - **importOpenAPI** _(function)_ - `importOpenAPI: (document: unknown, options?: ImportOpenAPIOptions) => ImportedApiInventory`
-  Parse an OpenAPI 3.0/3.1 document into a canonical route inventory. Throws on invalid input.
+  Parse an OpenAPI 3.0, 3.1 or 3.2 document into a canonical route inventory. Throws on invalid input.
 - **paginate** _(function)_ - `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
   Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void`
@@ -5127,6 +5134,8 @@ _No named exports (side-effect entrypoint)._
 - **BoundaryStatus** _(type)_ - `type BoundaryStatus = "unresolved" | "pending" | "ready" | "error"`
 - **BrowserNavigate** _(type)_ - `type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void`
   A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1` forward), matching the browser's `history.go`. Registered by `installHistory`.
+- **BuildAssetSet** _(interface)_ - `interface BuildAssetSet`
+  The files a build emitted, by request path: the generated server manifest's `buildAssets`.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
@@ -5201,6 +5210,10 @@ _No named exports (side-effect entrypoint)._
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
 - **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
   `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
+- **HostPolicy** _(interface)_ - `interface HostPolicy`
+- **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
+- **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`
+  One host's surface. A request on a host no rule names is not restricted.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -5440,6 +5453,8 @@ _No named exports (side-effect entrypoint)._
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createCspPolicy** _(function)_ - `createCspPolicy: (options: CreateCspPolicyOptions) => CspPolicy`
   Create a hash-based Content-Security-Policy for nifra documents, so a page can carry a strict CSP and still be cached.
+- **createHostPolicy** _(function)_ - `createHostPolicy: (options: HostPolicyOptions) => HostPolicy`
+  Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })` (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads): it is evaluated before the build's static files, the prerendered pages, the mounts and every page. On…
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
@@ -5479,6 +5494,8 @@ _No named exports (side-effect entrypoint)._
   Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
+- **isHostPolicy** _(function)_ - `isHostPolicy: (value: unknown) => value is HostPolicy`
+  Whether `value` came from {@link createHostPolicy}.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
@@ -5581,6 +5598,10 @@ _No named exports (side-effect entrypoint)._
   A Cloudflare Pages `_routes.json` document. `exclude`d paths are served straight from the CDN (the Function/worker is NOT invoked); everything else in `include` hits the worker.
 - **CloudflarePagesRoutesOptions** _(interface)_ - `interface CloudflarePagesRoutesOptions`
 - **CloudflareRouteRules** _(interface)_ - `interface CloudflareRouteRules`
+- **HostReachOptions** _(interface)_ - `interface HostReachOptions`
+- **HostReachReport** _(interface)_ - `interface HostReachReport`
+- **HostReachResult** _(interface)_ - `interface HostReachResult`
+  One request the check made.
 - **ManifestDrift** _(interface)_ - `interface ManifestDrift`
   A drift finding between a committed server-manifest and the live `routes/` tree.
 - **NodeBuiltinFinding** _(interface)_ - `interface NodeBuiltinFinding`
@@ -5592,7 +5613,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
@@ -5617,6 +5638,8 @@ _No named exports (side-effect entrypoint)._
 - **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport`
   Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.
+- **buildAssetPaths** _(function)_ - `buildAssetPaths: (client: BuildManifest) => string[]`
+  Every file a client build emitted, by request path: its `assets` and the `public/` files it copied.
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>`
   Build the client bundle for a file-routed app. Writes the hashed assets + `manifest.json` to `outDir` and returns the manifest. Throws (with the bundler logs) on build failure - never silently ships a broken bundle.
 - **buildServer** _(function)_ - `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>`
@@ -5627,6 +5650,8 @@ _No named exports (side-effect entrypoint)._
   The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps, which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite` (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape, server-entry …
 - **bunBundler** _(const)_ - `bunBundler: Bundler`
   The default (Bun) strategy - `buildClient`/`buildServer` from this module.
+- **checkHostReach** _(function)_ - `checkHostReach: (options: HostReachOptions) => Promise<HostReachReport>`
+  Render each page on `host`, then fetch every same-origin file each page references, following scripts' imports and stylesheets' `url()`s, and expect 200 for all of them; then expect each `refused` path to answer `refusedStatus`. Cross-origin references are skipped: they are not this app's to serve.
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
@@ -5661,6 +5686,8 @@ _No named exports (side-effect entrypoint)._
   True when a drift report is clean (no missing + no extra routes).
 - **parseBuildTarget** _(function)_ - `parseBuildTarget: (value: string, label?: string) => BuildTarget`
   `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`).
+- **parseManifestBuildAssets** _(function)_ - `parseManifestBuildAssets: (source: string) => string[] | undefined`
+  The baked `buildAssets` set in a committed server-manifest, or `undefined` when it bakes none. Pure.
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
 - **parseManifestCopyChunks** _(function)_ - `parseManifestCopyChunks: (source: string) => Record<string, string> | undefined`
@@ -5812,6 +5839,7 @@ _No named exports (side-effect entrypoint)._
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string`
+  Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError whose message is just "Bundle failed" - the actionable part (which file, which import) lives in `.errors`. Surface it, or the guard reports a failure while hiding the reason.
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`
@@ -5934,6 +5962,8 @@ _No named exports (side-effect entrypoint)._
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
 - **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
+- **formatBuildLog** _(function)_ - `formatBuildLog: (log: unknown, root?: string) => string`
+  One bundler log as `file:line:column: message`, the source line it points at underneath. Bun's `BuildMessage`/`ResolveMessage` carry the place in `position`, which their `String()` drops: a failed build said "Could not resolve: ./db" without naming the module that imported it.
 - **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
   True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
@@ -7415,8 +7445,8 @@ _No named exports (side-effect entrypoint)._
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -7543,7 +7573,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.4.0"`
+- **VERSION** _(const)_ - `VERSION: "5.5.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
