@@ -181,9 +181,12 @@ export default function Benchmarks() {
         One section per UI framework, each with two explicitly-labelled tables:{" "}
         <b>A - dynamic SSR</b> (the page rendered on every request, no caching) and{" "}
         <b>B - cacheable</b> (the same page from each framework's SSG/ISR mode). Meta-frameworks run
-        on Node through their own production server. Nifra shows <b>Bun</b> and <b>Node</b> rows (
-        <code>@nifrajs/node</code>) so the Node rows compare apples-to-apples. The headline
-        multipliers below are Table A only.
+        on Node through their own production server. Nifra's app rows are real apps, written the way
+        the docs teach it - file routes, a typed loader with an output schema - built by{" "}
+        <code>nifra build --target bun</code> or <code>--target node</code> and served by the{" "}
+        <code>server.js</code> that build generates. Nifra shows <b>Bun</b> and <b>Node</b> rows so
+        the Node rows compare apples-to-apples. The headline multipliers below are Table A only:
+        Nifra's Node app row vs each meta-framework.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
@@ -193,6 +196,19 @@ export default function Benchmarks() {
           </div>
         ))}
       </div>
+      <p className="note" style={{ margin: "14px 0 8px" }}>
+        <b>Your own server.</b> The renderer under these app rows is also a plain function:{" "}
+        <code>renderPage</code> from <code>@nifrajs/web</code> renders a page from any request
+        handler, in a <code>Bun.serve</code> or Node server you write, without Nifra&apos;s router
+        or file routes.
+      </p>
+      <p className="note" style={{ margin: "0 0 8px" }}>
+        <b>SSG files on a static host.</b> The <code>nifra build --target static</code> output
+        served by a plain Bun file server that reads the file on each request. No Nifra code runs,
+        so the row measures that file server - on a CDN, the number is the CDN's. Nifra's SSG app
+        rows serve the same prerendered page through the generated app server, the way each
+        meta-framework serves its static page through its own server.
+      </p>
       {SSR_TABLES.map((table) => {
         const tableB = SSR_TABLES_B.find((b) => b.framework === table.framework)
         return (
@@ -217,10 +233,12 @@ export default function Benchmarks() {
         )
       })}
       <div className="caveat">
-        Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> row
-        (the headline multipliers above do exactly that). Preact has no maintained meta-framework,
-        so its section is Nifra-only - Bun vs Node on the same app. A client-JS of <code>n/a</code>{" "}
-        means the run couldn't account that framework's payload from the SSR HTML.
+        Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> app
+        row (the headline multipliers above do exactly that). No Preact meta-framework runs on Node
+        (Fresh is Deno-only), so Preact&apos;s table compares with{" "}
+        <code>preact-render-to-string</code> in a bare Node server: the renderer&apos;s ceiling,
+        with no router, loader or schema. A client-JS of <code>n/a</code> means the run couldn't
+        account that framework's payload from the SSR HTML.
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}

@@ -64,6 +64,34 @@ describe("Router.find - matching", () => {
     }
   })
 
+  test("the dynamic cache holds a bounded length of client-chosen paths", () => {
+    const r = router()
+    r.add("GET", "/users/:id/posts/:post", "post")
+    const retained = () => {
+      Bun.gc(true)
+      return process.memoryUsage().heapUsed
+    }
+    const before = retained()
+    const pad = "a".repeat(8 * 1024)
+    for (let i = 0; i < 2048; i++) {
+      const path = `/users/${i}${pad}/posts/x`
+      // Twice in a row, so each path passes the gate into the cache.
+      r.find("GET", path)
+      expect(r.find("GET", path)).toEqual({
+        found: true,
+        payload: "post",
+        params: { id: `${i}${pad}`, post: "x" },
+      })
+    }
+    // Bounded by count alone, these paths held 16 MiB.
+    expect(retained() - before).toBeLessThan(4 * 1024 * 1024)
+    expect(r.find("GET", "/users/1/posts/2")).toEqual({
+      found: true,
+      payload: "post",
+      params: { id: "1", post: "2" },
+    })
+  })
+
   test("named wildcard captures the rest of the path", () => {
     const r = router()
     r.add("GET", "/files/*path", "files")

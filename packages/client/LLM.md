@@ -15,6 +15,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **testClient** _(function)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: TestClientOptions) => InProcessCli…`
 - **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
+- **NAMESPACED_KEYS** _(const)_ - `NAMESPACED_KEYS: readonly ["$query"]`
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
 - **RESERVED_KEY_READOUT** _(const)_ - `RESERVED_KEY_READOUT: string`
 - **RESERVED_VERB_KEYS** _(const)_ - `RESERVED_VERB_KEYS: readonly ["get", "post", "put", "patch", "delete", "head", "options"]`
@@ -23,9 +24,8 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **ClientRetryOptions** _(interface)_ - `interface ClientRetryOptions`
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
-- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 26 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 

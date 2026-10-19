@@ -1,5 +1,20 @@
 # @nifrajs/mock
 
+## 5.5.0
+
+### Patch Changes
+
+- Updated dependencies [6cc9e11]
+- Updated dependencies [28dd544]
+- Updated dependencies [662afb0]
+- Updated dependencies [662afb0]
+- Updated dependencies [61113d8]
+- Updated dependencies [389e1b6]
+- Updated dependencies [662afb0]
+- Updated dependencies [a11fe77]
+- Updated dependencies [fa5b67c]
+  - @nifrajs/core@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

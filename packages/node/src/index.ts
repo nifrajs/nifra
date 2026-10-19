@@ -32,12 +32,14 @@ import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import {
+  CONTENT_SNAPSHOT_MAX,
   contentTags,
   contentTypeOf,
   ifRangeAllowsPartial,
   isHiddenPath,
   isNotModified,
   lastModifiedOf,
+  streamedLastModifiedOf,
 } from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
@@ -762,6 +764,13 @@ export interface ServeStaticOptions {
    * files. A later mount over the same paths can still serve the rest.
    */
   readonly files?: Iterable<string>
+  /**
+   * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to
+   * `host` (its Host header). `false` passes the request on, without touching the filesystem, to the
+   * next mount and then the app - the seam a host policy uses so a host's refused file meets the
+   * app's own refusal instead of being served.
+   */
+  readonly allow?: (host: string, pathname: string) => boolean
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
   /**
@@ -968,6 +977,7 @@ interface StaticState {
   readonly hashedFiles: ReadonlySet<string> | undefined
   readonly cacheControl: string | undefined
   readonly files: ReadonlySet<string> | undefined
+  readonly allow: ((host: string, pathname: string) => boolean) | undefined
   readonly headers: Readonly<Record<string, string>> | undefined
   readonly denyDotfiles: boolean
 }
@@ -997,6 +1007,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
     hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
     cacheControl: options.cacheControl,
     files: options.files === undefined ? undefined : new Set(options.files),
+    allow: options.allow,
     headers: staticHeadersOf(options.headers),
     denyDotfiles: options.dotfiles !== "allow",
   }
@@ -1009,13 +1020,15 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
  */
 function staticMatch(
   state: StaticState,
-  rawUrl: string,
+  req: IncomingMessage,
 ): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
+  const rawUrl = req.url ?? "/"
   const query = rawUrl.indexOf("?")
   const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
   const underPrefix =
     state.prefix === "/" ? true : path === state.prefix || path.startsWith(`${state.prefix}/`)
   if (!underPrefix || (state.files !== undefined && !state.files.has(path))) return "pass"
+  if (state.allow !== undefined && !state.allow(rawHost(req) ?? "", path)) return "pass"
   let rel: string
   try {
     rel = decodeURIComponent(state.prefix === "/" ? path : path.slice(state.prefix.length))
@@ -1079,7 +1092,7 @@ function staticByteRange(
 
 // Up to this many bytes are read whole through the pinned descriptor and written in one call, with
 // no Response or stream; a larger body streams from the descriptor. The same cut as servePublicDir.
-const STATIC_BUFFERED_MAX = 256 * 1024
+const STATIC_BUFFERED_MAX = CONTENT_SNAPSHOT_MAX
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
 async function readPinned(handle: FileHandle, start: number, length: number): Promise<Uint8Array> {
@@ -1130,28 +1143,34 @@ async function readStatic(
       const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
       if (cacheControl !== undefined) headers["cache-control"] = cacheControl
     }
-    // The whole file, when tagging it had to read it: the response is then served from these bytes.
-    let whole: Uint8Array | undefined
-    if (headers.etag === undefined) {
-      let tag = STATIC_TAGS.cached(realFile, stat)
-      if (tag === undefined && stat.size <= STATIC_BUFFERED_MAX) {
-        whole = await readPinned(opened, 0, stat.size)
-        tag = STATIC_TAGS.ofBytes(realFile, stat, whole)
-      }
-      tag ??= await STATIC_TAGS.ofFile(realFile, stat, async (bytes, position) => {
-        return (await opened.read(bytes, 0, bytes.byteLength, position)).bytesRead
-      })
-      if (tag !== undefined) headers.etag = tag
-    }
-    const modified = lastModifiedOf(stat)
+    const streamed = stat.size > STATIC_BUFFERED_MAX
+    const modified = streamed ? streamedLastModifiedOf(stat) : lastModifiedOf(stat)
+    // A date this reader chose for a streamed body is weak; a caller's own stays theirs to vouch for.
+    const weakDate = streamed && headers["last-modified"] === undefined
     if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
-    // Custom validators are response headers, not decoration: compare the exact values the client saw.
-    const etag = headers.etag
     const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
     const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
-    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
     const ifNoneMatch = headerOf(requestHeaders, "if-none-match")
     const ifModifiedSince = headerOf(requestHeaders, "if-modified-since")
+    // The whole file, when tagging it had to read it: the response is then served from these bytes.
+    let whole: Uint8Array | undefined
+    if (headers.etag === undefined && !streamed) {
+      // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
+      // answers it from the stat alone: a write since that tag would show in the stat.
+      const known = STATIC_TAGS.cached(realFile, stat)
+      if (
+        known !== undefined &&
+        (method === "HEAD" || isNotModified(ifNoneMatch, ifModifiedSince, known, lastModified))
+      ) {
+        headers.etag = known
+      } else {
+        whole = await readPinned(opened, 0, stat.size)
+        headers.etag = await STATIC_TAGS.ofSnapshot(realFile, stat, whole, () => opened.stat())
+      }
+    }
+    // Custom validators are response headers, not decoration: compare the exact values the client saw.
+    const etag = headers.etag
+    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
     if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
       await handle.close()
       delete headers["content-length"]
@@ -1165,7 +1184,9 @@ async function readStatic(
     headers["accept-ranges"] = "bytes"
     // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
     const range =
-      method === "GET" ? staticByteRange(requestHeaders, stat.size, etag, lastModified) : undefined
+      method === "GET"
+        ? staticByteRange(requestHeaders, stat.size, etag, weakDate ? undefined : lastModified)
+        : undefined
     if (range === "unsatisfiable") {
       await handle.close()
       headers["content-range"] = `bytes */${stat.size}`
@@ -1275,10 +1296,14 @@ const closingAfterResponses = new WeakSet<Duplex>()
  * Node queues pipelined responses and hands the socket to the next one as each finishes, so waiting
  * on whichever holds it walks the queue in order. One that closes without finishing never hands the
  * socket on, so nothing behind it can be written either.
+ *
+ * A request the error cut off mid-body (a client EOF raises `HPE_INVALID_EOF_STATE`) is not waited
+ * on unless its handler already ended the response: anything reading that body waits for bytes that
+ * will never come, so only destroying the socket - Node's own default - fails the read.
  */
 function closeAfterResponses(socket: ResponseSocket): void {
   const response = socket._httpMessage
-  if (response == null) {
+  if (response == null || (!response.writableEnded && !response.req.complete)) {
     socket.destroy()
     return
   }
@@ -1319,21 +1344,23 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     staticOption === undefined
       ? undefined
       : ("dir" in staticOption ? [staticOption] : staticOption).map(staticStateOf)
+  const settled = (): void => {
+    inFlight -= 1
+  }
   const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
     inFlight += 1
     try {
       const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
       if (handled instanceof Promise) {
-        // `catch` before `finally`: a `finally` alone forwards the rejection to a promise nothing
-        // observes, and Node terminates the process on an unhandled rejection by default. Every
-        // writer already ends and reports its own failures (`failAndReport`), so anything arriving
-        // here is a fault no response can still be built from - the connection is the only thing
-        // left to end.
-        void handled
-          .catch((error: unknown) => failAndReport(nodeRes, error))
-          .finally(() => {
-            inFlight -= 1
-          })
+        // The rejection arm is required: Node terminates the process on an unhandled rejection by
+        // default. Every writer already ends and reports its own failures (`failAndReport`), so
+        // anything arriving here is a fault no response can still be built from - the connection is
+        // the only thing left to end. One `then`, not `catch` + `finally`: every async response
+        // pays for each extra promise and microtask.
+        handled.then(settled, (error: unknown) => {
+          inFlight -= 1
+          failAndReport(nodeRes, error)
+        })
         return
       }
       inFlight -= 1
@@ -1571,7 +1598,7 @@ function handle(
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
   if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
     for (const mount of staticState) {
-      const matched = staticMatch(mount, nodeReq.url ?? "/")
+      const matched = staticMatch(mount, nodeReq)
       if (matched === "pass") continue
       if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
       return readStatic(
@@ -2074,6 +2101,15 @@ function parseJsonBytes(bytes: Uint8Array): unknown {
   return JSON.parse(buffer.toString("utf8")) as unknown
 }
 
+const bodyItself = (body: Buffer): Buffer => body
+
+const parsedWithLength = (
+  body: Buffer,
+): { readonly value: unknown; readonly byteLength: number } => ({
+  value: JSON.parse(body.toString("utf8")) as unknown,
+  byteLength: body.byteLength,
+})
+
 /** A one-chunk stream replaying already-buffered bytes. `highWaterMark: 0` keeps construction free
  * of a pull, and the copy keeps the shared buffer out of a consumer's reach. */
 function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -2102,6 +2138,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private requestValue: Request | undefined
   private consumedBody: Buffer | undefined
   private readBodyPromise: Promise<Buffer> | undefined
+  private mappedRead: Promise<unknown> | undefined
   private rawReaders: NodeRawBodyReaders | undefined
   private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
@@ -2176,10 +2213,15 @@ class LazyNodeRequestSource implements NodeRequestSource {
         byteLength: buffer.byteLength,
       }))
     }
-    return this.readNodeBody().then((buffer) => ({
-      value: JSON.parse(buffer.toString("utf8")) as unknown,
-      byteLength: buffer.byteLength,
-    }))
+    // The first read parses as the body settles: one promise from socket to value, not two.
+    if (
+      this.consumedBody === undefined &&
+      this.readBodyPromise === undefined &&
+      this.mappedRead === undefined
+    ) {
+      return this.collectBody(parsedWithLength)
+    }
+    return this.readNodeBody().then(parsedWithLength)
   }
 
   /**
@@ -2269,19 +2311,48 @@ class LazyNodeRequestSource implements NodeRequestSource {
   }
 
   // Buffer the request body once. A single-chunk body (the common case) skips the array + `concat`;
-  // a client abort / socket error rejects (via `error`/`aborted`), which the body-cap callers catch
+  // a client abort / socket error rejects (via `error`/`close`), which the body-cap callers catch
   // and map to a flat 400.
   private readNodeBody(): Promise<Buffer> {
     if (this.consumedBody !== undefined) return Promise.resolve(this.consumedBody)
-    this.readBodyPromise ??= new Promise<Buffer>((resolve, reject) => {
+    if (this.readBodyPromise === undefined) {
+      const mapped = this.mappedRead
+      if (mapped === undefined) {
+        this.readBodyPromise = this.collectBody(bodyItself)
+      } else {
+        // A raw reader arriving mid-read waits on that read: listening now would miss earlier
+        // chunks. A failed parse still consumed the body, so either outcome yields the bytes.
+        const bytesOf = (reason?: unknown): Buffer => {
+          if (this.consumedBody !== undefined) return this.consumedBody
+          throw reason
+        }
+        this.readBodyPromise = mapped.then(bytesOf, bytesOf)
+      }
+    }
+    return this.readBodyPromise
+  }
+
+  /** Listen for the body once and settle with `map` of its bytes, which later readers share. */
+  private collectBody<T>(map: (body: Buffer) => T): Promise<T> {
+    const read = new Promise<T>((resolve, reject) => {
+      // A request torn down before the first read already emitted `aborted`/`close`; listeners
+      // attached now would wait forever.
+      if (this.nodeReq.destroyed) {
+        reject(new Error("request closed before body completed"))
+        return
+      }
       let first: Buffer | undefined
       let chunks: Buffer[] | undefined
       let total = 0
       const finish = (): void => {
         cleanup()
-        this.consumedBody =
-          chunks === undefined ? (first ?? EMPTY_BUFFER) : Buffer.concat(chunks, total)
-        resolve(this.consumedBody)
+        const body = chunks === undefined ? (first ?? EMPTY_BUFFER) : Buffer.concat(chunks, total)
+        this.consumedBody = body
+        try {
+          resolve(map(body))
+        } catch (error) {
+          reject(error)
+        }
       }
       const fail = (err: Error): void => {
         cleanup()
@@ -2297,26 +2368,25 @@ class LazyNodeRequestSource implements NodeRequestSource {
         }
         total += buffer.byteLength
       }
-      const onAborted = (): void => fail(new Error("request aborted"))
       const cleanup = (): void => {
         this.nodeReq.removeListener("data", onData)
         this.nodeReq.removeListener("end", finish)
         this.nodeReq.removeListener("error", fail)
-        this.nodeReq.removeListener("aborted", onAborted)
         this.nodeReq.removeListener("close", onClose)
       }
-      // `aborted` is deprecated on newer Node; `close`-without-`end` is the forward-compatible signal
-      // that the connection dropped mid-body. Either way the read rejects instead of hanging forever.
+      // `close` without `end` is the signal that the connection dropped mid-body (the deprecated
+      // `aborted` precedes it), so the read rejects instead of hanging forever.
       const onClose = (): void => {
         if (this.consumedBody === undefined) fail(new Error("request closed before body completed"))
       }
+      // `on`, not `once`: `cleanup` removes all of them on settling, and `once` wraps each listener.
       this.nodeReq.on("data", onData)
-      this.nodeReq.once("end", finish)
-      this.nodeReq.once("error", fail)
-      this.nodeReq.once("aborted", onAborted)
-      this.nodeReq.once("close", onClose)
+      this.nodeReq.on("end", finish)
+      this.nodeReq.on("error", fail)
+      this.nodeReq.on("close", onClose)
     })
-    return this.readBodyPromise
+    if (map !== bodyItself) this.mappedRead = read
+    return read
   }
 }
 

@@ -11,9 +11,11 @@ import { parseJsonc } from "./internal/project-specifiers.ts"
 
 export const BUN_LOCK = "bun.lock"
 
-/** The fields Bun installs from a linked package's manifest. */
+/** The fields Bun installs from a linked package's manifest: unlike a registry package's, a `file:`
+ * package's devDependencies are recorded and installed too (checked on Bun 1.4.3). */
 const INSTALLED_FIELDS: readonly string[] = [
   "dependencies",
+  "devDependencies",
   "optionalDependencies",
   "peerDependencies",
 ]

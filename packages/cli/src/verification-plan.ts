@@ -262,6 +262,57 @@ const RELEASE_PLAN = Object.freeze([
   "changesets",
 ] as const)
 
+/**
+ * The release plan as groups CI runs in parallel jobs. Each job starts from a clean checkout, so every
+ * group begins with `build`; every other release gate belongs to exactly one group.
+ */
+const RELEASE_GROUPS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  core: [
+    "build",
+    "lint",
+    "typecheck",
+    "coverage",
+    "rest-tests",
+    "cli-isolation",
+    "verification-parity",
+    "changesets",
+  ],
+  artifacts: [
+    "build",
+    "corpus",
+    "sitemap",
+    "site",
+    "docs",
+    "public-boundary",
+    "public-manifest",
+    "plugin-manifest",
+    "size",
+    "core-performance",
+    "middleware-performance",
+    "output-guard-performance",
+    "edge-startup",
+  ],
+  packages: ["build", "publish", "consumer", "cold-start"],
+  runtimes: ["build", "cross-runtime-deno", "cross-runtime-node", "workerd"],
+  pipelines: ["build", "pipeline-parity", "leak-matrix"],
+  "server-components": [
+    "build",
+    "server-components",
+    "server-components-performance",
+    "server-components-contracts",
+  ],
+})
+
+/** The names of the release plan's CI groups. */
+export function releaseGroupNames(): readonly string[] {
+  return Object.keys(RELEASE_GROUPS)
+}
+
+/** The release gates one CI group runs, or undefined for a name that is not a group. */
+export function releaseGroupGateIds(name: string): readonly string[] | undefined {
+  return Object.hasOwn(RELEASE_GROUPS, name) ? RELEASE_GROUPS[name] : undefined
+}
+
 const gateById = new Map(GATES.map((entry) => [entry.id, entry]))
 
 const planIds = (mode: VerificationPlanMode): readonly string[] =>

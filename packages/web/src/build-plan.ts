@@ -201,6 +201,8 @@ export interface Bundler {
     readonly routeStyles?: Readonly<Record<string, readonly string[]>>
     /** The client build's copy chunk URLs by locale to bake into the server manifest. */
     readonly copyChunks?: Readonly<Record<string, string>>
+    /** Every file the build emitted, by request path, to bake into the server manifest. */
+    readonly buildAssets?: readonly string[]
     readonly plugins?: readonly unknown[]
     readonly define?: Readonly<Record<string, string>>
     /** CSS activation policy to bake into the generated server manifest. */
@@ -743,6 +745,30 @@ function bakedManifestLiteral(source: string, name: string): string | undefined 
  * Only a comma immediately before a closing `]`/`}` is stripped, so commas inside string values are safe. */
 function parseManifestLiteral(raw: string): unknown {
   return JSON.parse(raw.replace(/,(\s*[\]}])/g, "$1"))
+}
+
+/** Every file a client build emitted, by request path: its `assets` and the `public/` files it copied. */
+export function buildAssetPaths(client: BuildManifest): string[] {
+  return [...new Set([...client.assets, ...(client.publicFiles ?? [])])].sort()
+}
+
+/** The baked `buildAssets` set in a committed server-manifest, or `undefined` when it bakes none. Pure. */
+export function parseManifestBuildAssets(source: string): string[] | undefined {
+  const opener = "export const buildAssets: ReadonlySet<string> = new Set("
+  const start = source.indexOf(opener)
+  if (start === -1) return undefined
+  const from = start + opener.length
+  const end = source.indexOf("\nexport const ", from)
+  const raw = source.slice(from, end === -1 ? source.length : end).trim()
+  if (!raw.endsWith(")")) return undefined
+  try {
+    const value = parseManifestLiteral(raw.slice(0, -1))
+    return Array.isArray(value) && value.every((path) => typeof path === "string")
+      ? value
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */

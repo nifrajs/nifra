@@ -130,6 +130,39 @@ describe("stale file: entries in bun.lock", () => {
     ])
   })
 
+  test("a linked package's devDependencies are recorded and installed, so they go stale too", () => {
+    const root = linkedApp()
+    writeAppFile(
+      root,
+      "bun.lock",
+      LOCK.replace(
+        `"dep-a": "^1.0.0" } }],\n\n    "linked-kit/@nifrajs/core"`,
+        `"dep-a": "^1.0.0" }, "devDependencies": { "@nifrajs/testing": "4.0.2" } }],\n\n    "linked-kit/@nifrajs/core"`,
+      ),
+    )
+    const declare = (testing: string): void => {
+      writeAppFile(
+        root,
+        "kit/package.json",
+        json({
+          name: "linked-kit",
+          dependencies: { "@nifrajs/core": "4.0.2", "dep-a": "^1.0.0" },
+          devDependencies: { "@nifrajs/testing": testing },
+        }),
+      )
+    }
+    declare("4.0.2")
+    expect(staleLinkLocks(root)).toEqual([])
+    declare("5.0.0")
+    expect(staleLinkLocks(root)).toEqual([
+      {
+        package: "linked-kit",
+        path: "kit",
+        changes: [{ name: "@nifrajs/testing", recorded: "4.0.2", declared: "5.0.0" }],
+      },
+    ])
+  })
+
   test("a planned manifest stands in for the file on disk", () => {
     const root = linkedApp()
     const planned = new Map([

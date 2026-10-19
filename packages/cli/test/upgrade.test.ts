@@ -8,6 +8,7 @@ import {
   chainRecipes,
   compareSemverSpec,
   computeUpgrade,
+  groupSurface,
   installedGroupVersion,
   moveDependenciesText,
   pendingInstall,
@@ -16,6 +17,7 @@ import {
   runUpgrade,
   specIncludes,
   specVersion,
+  unaffectedReleases,
   upgradeTargets,
 } from "../src/upgrade.ts"
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
@@ -707,6 +709,52 @@ describe("computeUpgrade / runUpgrade", () => {
     expect(Reflect.get(notes, "5.0.0")).toEqual(getRecipe("5.0.0")?.notes ?? ["missing"])
   })
 
+  test("a release whose changes touch no package the project loads is marked as such", async () => {
+    const root = join(FIXTURES, "surface")
+    const install = async (name: string, deps: Record<string, string> = {}) => {
+      await mkdir(join(root, "node_modules", name), { recursive: true })
+      await writeFile(
+        join(root, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version: "5.3.0", dependencies: deps }),
+      )
+    }
+    const declare = (deps: Record<string, string>) =>
+      writeFile(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: deps }))
+    await mkdir(root, { recursive: true })
+    await declare({ "@nifrajs/client": "5.3.0" })
+    await install("@nifrajs/client", { "@nifrajs/core": "5.3.0" })
+    await install("@nifrajs/core")
+    await install("@nifrajs/cli", { "@nifrajs/web": "5.3.0" })
+    expect([...(groupSurface(root) ?? [])].sort()).toEqual(["@nifrajs/client", "@nifrajs/core"])
+    expect(unaffectedReleases(["5.3.0", "5.4.0"], groupSurface(root))).toEqual([
+      { version: "5.4.0", affects: ["@nifrajs/cli", "@nifrajs/node", "@nifrajs/web"] },
+    ])
+
+    const lines: string[] = []
+    const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+    try {
+      expect(await runUpgrade(root, { list: true, cliVersion: "5.4.0" })).toBe(true)
+      expect(await runUpgrade(root, { version: "5.4.0", cliVersion: "5.4.0" })).toBe(true)
+    } finally {
+      log.mockRestore()
+    }
+    const quiet =
+      "5.4.0 changes only @nifrajs/cli, @nifrajs/node, @nifrajs/web, which this project does not load: no announced behaviour change for it"
+    expect(lines[0]).toContain(`  5.4.0\n    ${quiet}\n    - The server entry`)
+    expect(lines[1]).toContain(`From 5.3.0, applying the 5.4.0 recipe.\n${quiet}`)
+
+    // A tool is part of the surface when declared, without what it depends on.
+    await declare({ "@nifrajs/client": "5.3.0", "@nifrajs/cli": "5.3.0" })
+    expect(unaffectedReleases(["5.4.0"], groupSurface(root))).toEqual([])
+    // A declared package that is not installed makes the surface unknown: nothing is marked.
+    await declare({ "@nifrajs/client": "5.3.0", "@nifrajs/schema": "5.3.0" })
+    expect(groupSurface(root)).toBeUndefined()
+    expect(unaffectedReleases(["5.4.0"], undefined)).toEqual([])
+    // A release with no affects list is never marked.
+    await declare({ "@nifrajs/client": "5.3.0" })
+    expect(unaffectedReleases(["5.3.0"], groupSurface(root))).toEqual([])
+  })
+
   test("every minor and major release this CLI offers has its own recipe", () => {
     for (const version of upgradeTargets("5.1.0").filter((v) => /^\d+\.\d+\.0$/.test(v)))
       if (compareSemverSpec(version, "5.0.0") >= 0) expect(getRecipe(version)).toBeDefined()
@@ -1152,6 +1200,68 @@ describe("a linked repository that loads its own nifra", () => {
 
   test("a linked repository resolving this project's copy follows its install", async () => {
     const app = await linkedLayout("skew-follows", "app-copy")
+    const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(true)
+  })
+
+  /** An app linking members of a workspace whose install hoists nifra to the workspace root. */
+  async function hoistedLayout(name: string, coreVersion: string): Promise<string> {
+    const base = join(FIXTURES, name)
+    const app = join(base, "app")
+    const repo = join(base, "repo")
+    await mkdir(join(app, "node_modules", "@team"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: {
+          "@nifrajs/core": "^5.0.0",
+          "@team/kit": "file:../repo/packages/kit",
+          "@team/ui": "file:../repo/packages/ui",
+        },
+      }),
+    )
+    await writeFile(
+      join(app, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "5.0.0" }),
+    )
+    await mkdir(join(repo, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await mkdir(join(repo, "node_modules", "@team"), { recursive: true })
+    await writeFile(
+      join(repo, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: coreVersion }),
+    )
+    const member = async (dir: string, manifest: Record<string, unknown>): Promise<void> => {
+      await mkdir(join(repo, "packages", dir), { recursive: true })
+      await writeFile(join(repo, "packages", dir, "package.json"), JSON.stringify(manifest))
+      await symlink(join(repo, "packages", dir), join(repo, "node_modules", "@team", dir))
+    }
+    await member("kit", { name: "@team/kit", dependencies: { "@nifrajs/core": "^5.0.0" } })
+    await member("base", { name: "@team/base", peerDependencies: { "@nifrajs/core": ">=5" } })
+    // Loads nifra only through a workspace sibling, which resolves it from the root as well.
+    await member("ui", { name: "@team/ui", dependencies: { "@team/base": "workspace:*" } })
+    await symlink(join(repo, "packages", "kit"), join(app, "node_modules", "@team", "kit"))
+    await symlink(join(repo, "packages", "ui"), join(app, "node_modules", "@team", "ui"))
+    return app
+  }
+
+  test("a workspace member reads the copy hoisted to its workspace root, directly or through a sibling", async () => {
+    const app = await hoistedLayout("skew-hoisted", "5.0.0")
+    const before = await readFile(join(app, "package.json"), "utf8")
+    const { value, out } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(false)
+    expect(await readFile(join(app, "package.json"), "utf8")).toBe(before)
+    expect(out).toContain("Blocked: 1 linked repository loads its own nifra at another version")
+    expect(out).toContain("@team/kit (package.json) at ../repo/packages/kit: @nifrajs/core 5.0.0")
+    expect(out).toContain("@team/ui (package.json) at ../repo/packages/ui: @nifrajs/core 5.0.0")
+    // One command, at the root the copy is installed under, not one per member folder.
+    expect(out.match(/nifra upgrade 5\.1\.0 --write/g)).toHaveLength(1)
+    expect(out).toContain("cd ../repo && nifra upgrade 5.1.0 --write && bun install")
+  })
+
+  test("a hoisted copy already on the target does not block", async () => {
+    const app = await hoistedLayout("skew-hoisted-none", "5.1.0")
     const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
     expect(value).toBe(true)
   })

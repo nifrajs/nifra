@@ -39,7 +39,7 @@
     "name": "METHOD_ROUTES",
     "topic": "Nifra - API & typed client",
     "slug": "api",
-    "code": "import { server } from \"@nifrajs/core/server\"\nimport { all, method } from \"@nifrajs/core/methods\"\n\nexport const app = server()\n  // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo\n  .use(all(\"/echo\", (c) => ({ method: c.req.method })))\n  // A method outside the standard seven\n  .use(method(\"PURGE\", \"/cache/:key\", (c) => ({ purged: c.params.key })))\n  // A list of methods, one handler\n  .use(method([\"GET\", \"POST\"], \"/search\", (c) => ({ q: c.query.get(\"q\") })))"
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { all, method } from \"@nifrajs/core/methods\"\n\nexport const app = server()\n  // GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and QUERY /echo\n  .use(all(\"/echo\", (c) => ({ method: c.req.method })))\n  // A method outside the standard ones\n  .use(method(\"PURGE\", \"/cache/:key\", (c) => ({ purged: c.params.key })))\n  // A list of methods, one handler\n  .use(method([\"GET\", \"POST\"], \"/search\", (c) => ({ q: c.query.get(\"q\") })))"
   },
   {
     "name": "OPTIONAL_PARAMS",
@@ -52,6 +52,12 @@
     "topic": "Nifra - API & typed client",
     "slug": "api",
     "code": "import { server } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  // /users/me is its own route; /users/42 is this one; /users/ada is a 404\n  .get(\"/users/me\", () => ({ me: true }))\n  .get(\"/users/:id{[0-9]+}\", (c) => ({ id: Number(c.params.id) }))\n  // A list of values, and a count: exactly two capital letters\n  .get(\"/img/:size{thumb|full}/:file\", (c) => ({ size: c.params.size, file: c.params.file }))\n  .get(\"/countries/:code{[A-Z]{2}}\", (c) => ({ code: c.params.code }))\n  // Inside a segment, and optional at the end of a path\n  .get(\"/files/:name.:ext{png|jpg}\", (c) => ({ name: c.params.name, ext: c.params.ext }))\n  .get(\"/posts/:page{[0-9]+}?\", (c) => ({ page: c.params.page ?? \"1\" }))"
+  },
+  {
+    "name": "QUERY_ROUTE",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { client } from \"@nifrajs/client\"\nimport { server } from \"@nifrajs/core/server\"\nimport { method } from \"@nifrajs/core/methods\"\nimport { t } from \"@nifrajs/schema\"\n\n// QUERY: a safe, repeatable read whose filter travels in the body instead of the URL.\nexport const app = server().use(\n  method(\"QUERY\", \"/books\", { body: t.object({ author: t.string() }) }, (c) => ({\n    author: c.body.author,\n  })),\n)\n\nconst api = client<typeof app>(\"https://api.example.com\")\nconst found = await api.books.$query({ author: \"Le Guin\" }) // the body is checked against the schema"
   },
   {
     "name": "TYPED_ERRORS",
@@ -69,7 +75,7 @@
     "name": "SETUP",
     "topic": "Nifra - Auth & sessions",
     "slug": "auth",
-    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // ≥ 16 chars; rotating it invalidates all sessions\n  store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)\n  // cookie: { secure: false },                 // local http dev only\n}))"
+    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret\n  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore\n  // cookie: { secure: false },                 // local http dev only\n}))"
   },
   {
     "name": "BACKEND",
@@ -724,5 +730,11 @@
     "topic": "Nifra - WebSockets",
     "slug": "websockets",
     "code": "// server.ts - one listener; the chat child and a non-nifra child both take upgrades.\nimport { server } from \"@nifrajs/core/server\"\nimport { attachWebSocket, TopicRegistry, websocket, type WebSocketUpgradeOutcome } from \"@nifrajs/core/ws\"\n\nconst chat = server()\n  .use(websocket())\n  .ws(\"/room\", { message: (ws, data) => ws.send(data) })\n\n// Not a nifra server: it answers HTTP through fetch and builds its own upgrade outcome.\nconst topics = new TopicRegistry()\nconst legacy = {\n  fetch: () => new Response(\"legacy\"),\n  resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome =>\n    new URL(request.url).pathname === \"/feed\"\n      ? { kind: \"upgrade\", handler: { open: (ws) => ws.send(\"hello\") }, data: undefined, pubsub: topics, attach: attachWebSocket }\n      : { kind: \"pass\" },\n}\n\nserver()\n  .use(websocket()) // Bun: the parent holds the socket table every mounted upgrade runs through\n  .mount({ path: \"/chat\", app: chat, stripPrefix: true })\n  .mount({ path: \"/legacy\", app: legacy, stripPrefix: true })\n  .listen(3000)"
+  },
+  {
+    "name": "TYPED_MESSAGES",
+    "topic": "Nifra - WebSockets",
+    "slug": "websockets",
+    "code": "import { client } from \"@nifrajs/client\"\nimport { type InferOutput, server } from \"@nifrajs/core/server\"\nimport { websocket } from \"@nifrajs/core/ws\"\nimport { t } from \"@nifrajs/schema\"\n\n// The contract, in a module both sides import: one discriminated union per direction.\nexport const ChatIn = t.union([\n  t.object({ type: t.literal(\"say\"), text: t.string({ maxLength: 500 }) }),\n  t.object({ type: t.literal(\"pong\"), id: t.integer() }),\n])\nexport const ChatOut = t.union([\n  t.object({ type: t.literal(\"said\"), from: t.string(), text: t.string() }),\n  t.object({ type: t.literal(\"ping\"), id: t.integer() }),\n])\ntype ChatFrame = InferOutput<typeof ChatOut>\n\nconst frame = (value: ChatFrame): string => JSON.stringify(value)\n\n// Server: a ping every 30 s; a connection that leaves two unanswered is closed.\nconst app = server()\n  .use(websocket())\n  .ws(\"/chat\", {\n    messageSchema: ChatIn,\n    sendSchema: ChatOut,\n    upgrade: (c) => ({\n      user: c.cookies.user ?? \"guest\",\n      sent: 0,\n      unanswered: 0,\n      timer: undefined as ReturnType<typeof setInterval> | undefined,\n    }),\n    open(ws) {\n      ws.subscribe(\"room\")\n      ws.data.timer = setInterval(() => {\n        if (ws.data.unanswered >= 2) return ws.close(4000, \"heartbeat timeout\")\n        ws.data.unanswered += 1\n        ws.data.sent += 1\n        ws.send(frame({ type: \"ping\", id: ws.data.sent }))\n      }, 30_000)\n    },\n    message(ws, msg) {\n      switch (msg.type) {\n        case \"say\":\n          app.publish(\"room\", frame({ type: \"said\", from: ws.data.user, text: msg.text }))\n          break\n        case \"pong\":\n          // Only an answer to a ping still outstanding counts, not any id the client makes up.\n          if (msg.id > ws.data.sent - ws.data.unanswered && msg.id <= ws.data.sent) {\n            ws.data.unanswered = 0\n          }\n          break\n      }\n    },\n    close: (ws) => clearInterval(ws.data.timer),\n  })\n\n// Client: frames are typed from sendSchema, and checked against it with validateReceive.\nexport async function joinChat(baseUrl: string): Promise<void> {\n  const chat = client<typeof app>(baseUrl).chat.ws({\n    validateReceive: ChatOut,\n    onError: (error) => console.warn(error),\n  })\n  for await (const msg of chat.messages()) {\n    switch (msg.type) {\n      case \"said\":\n        console.log(`${msg.from}: ${msg.text}`)\n        break\n      case \"ping\":\n        chat.send({ type: \"pong\", id: msg.id }) // a frame the client must answer\n        break\n      default: {\n        const unhandled: never = msg // a new ChatOut variant fails to compile here\n        throw new Error(`unhandled frame ${JSON.stringify(unhandled)}`)\n      }\n    }\n  }\n}"
   }
 ]

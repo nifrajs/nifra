@@ -116,6 +116,9 @@ export interface NifraFramework {
    * takes its `<html lang dir>`, `Content-Language` and adapter locale from it. See `createWebApp`'s
    * `i18n`. */
   readonly i18n?: CreateWebAppOptions["i18n"]
+  /** Which pages and files each host serves, from `createHostPolicy()`: checked before the app's
+   * static files, mounts and pages. See `createWebApp`'s `hostPolicy`. */
+  readonly hostPolicy?: CreateWebAppOptions["hostPolicy"]
 }
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
@@ -128,6 +131,7 @@ export const FRAMEWORK_WEB_OPTIONS = [
   "nonce",
   "serverComponents",
   "i18n",
+  "hostPolicy",
 ] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
@@ -173,6 +177,15 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
     (typeof fw.i18n !== "object" || fw.i18n === null || typeof fw.i18n.localeOf !== "function")
   ) {
     wrong("i18n", "the router defineI18nRouting() from @nifrajs/i18n/routing returns")
+  }
+  if (
+    fw.hostPolicy !== undefined &&
+    (typeof fw.hostPolicy !== "object" ||
+      fw.hostPolicy === null ||
+      typeof fw.hostPolicy.allows !== "function" ||
+      typeof fw.hostPolicy.check !== "function")
+  ) {
+    wrong("hostPolicy", "the policy createHostPolicy() from @nifrajs/web returns")
   }
   if (fw.publicEnvPrefix !== undefined && typeof fw.publicEnvPrefix !== "string") {
     wrong("publicEnvPrefix", 'a string such as "PUBLIC_", or "" to expose no environment variable')

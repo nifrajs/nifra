@@ -27,6 +27,7 @@ const DEFAULT_METHODS: ReadonlyArray<string> = [
   "PATCH",
   "DELETE",
   "OPTIONS",
+  "QUERY",
 ]
 
 /** Resolve the `Access-Control-Allow-Origin` value for a request, or `null` to omit it. */

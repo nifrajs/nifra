@@ -19,13 +19,44 @@ export const SSR_BENCH_ROUNDS = envInt("BENCH_ROUNDS", 5)
 export const SSR_BENCH_ISR_WARMUP_REQUESTS = 500
 
 /**
+ * Headers on every request the bench makes to a row. oha otherwise sends `accept-encoding: gzip,
+ * compress, deflate, br`, and only some frameworks compress by default (Next.js gzips, React
+ * Router brotli-compresses), so rows would pay unequal per-request compression costs.
+ */
+export const SSR_BENCH_REQUEST_HEADERS: Readonly<Record<string, string>> = {
+  "accept-encoding": "identity",
+}
+
+/** {@link SSR_BENCH_REQUEST_HEADERS} as oha `-H` arguments. */
+export const SSR_BENCH_OHA_HEADER_ARGS: readonly string[] = Object.entries(
+  SSR_BENCH_REQUEST_HEADERS,
+).flatMap(([name, value]) => ["-H", `${name}: ${value}`])
+
+/** Throw when a response was encoded although the bench's request headers asked for identity. */
+export function assertUncompressed(headers: Headers): void {
+  const encoding = headers.get("content-encoding")
+  if (encoding === null || encoding.trim().toLowerCase() === "identity") return
+  throw new Error(
+    `response is ${JSON.stringify(encoding)}-encoded under accept-encoding: ${SSR_BENCH_REQUEST_HEADERS["accept-encoding"]}, so the row would not be measured uncompressed`,
+  )
+}
+
+/** The page every sample measures, fetched with the bench's headers and checked uncompressed. */
+export async function fetchBenchPage(base: string): Promise<{ html: string; link: string | null }> {
+  const res = await fetch(base, { headers: SSR_BENCH_REQUEST_HEADERS })
+  const html = await res.text()
+  assertUncompressed(res.headers)
+  return { html, link: res.headers.get("link") }
+}
+
+/**
  * What a row measures (bench/ssr/README.md). Only `app` rows are like for like with each other.
  * - `app`: a framework app built and served the way that framework ships it.
- * - `own-server`: nifra's `renderPage` called from a server written by hand. No router or file
- *   routes, so it is never a headline.
+ * - `renderer`: a UI library's own render-to-string on a bare server, no framework. Published only
+ *   where no meta-framework exists to compare with (Preact), and never a headline.
  * - `static-host`: prerendered files from a plain file server, no framework code per request.
  */
-export type SsrRowKind = "app" | "own-server" | "static-host"
+export type SsrRowKind = "app" | "renderer" | "static-host"
 
 export interface SsrBenchTarget {
   readonly name: string
@@ -120,8 +151,8 @@ export function parseOha(raw: string): SsrBenchMeasure {
 
 let ohaSampleIndex = 0
 
-export async function runOha(url: string, durationS: number): Promise<SsrBenchMeasure> {
-  const args = [
+export function ohaArgs(url: string, durationS: number): string[] {
+  return [
     "-c",
     String(SSR_BENCH_CONNECTIONS),
     "-z",
@@ -130,13 +161,21 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
     "--no-tui",
     "--output-format",
     "json",
+    ...SSR_BENCH_OHA_HEADER_ARGS,
     url,
   ]
+}
+
+export async function runOha(url: string, durationS: number): Promise<SsrBenchMeasure> {
   // oha 1.14+ rejects NO_COLOR=1 (common in CI) - its --no-color only accepts true/false literals.
   const env = { ...process.env }
   delete env.NO_COLOR
   delete env.CLERK_NO_COLOR
-  const proc = Bun.spawn(["oha", ...args], { stdout: "pipe", stderr: "pipe", env })
+  const proc = Bun.spawn(["oha", ...ohaArgs(url, durationS)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  })
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -272,7 +311,7 @@ export async function waitServerReady(
 /** Prime framework / in-process caches so ISR measurements reflect steady-state hits. */
 export async function warmupCacheHits(base: string, count: number): Promise<void> {
   for (let i = 0; i < count; i++) {
-    const res = await fetch(base)
+    const res = await fetch(base, { headers: SSR_BENCH_REQUEST_HEADERS })
     if (!res.ok) throw new Error(`cache warmup failed: ${res.status} ${base}`)
     await res.text()
   }
@@ -322,12 +361,9 @@ export async function measureOnce(
     if (target.warmupCache === true) {
       await warmupCacheHits(base, SSR_BENCH_ISR_WARMUP_REQUESTS)
     }
-    const res = await fetch(base)
-    const html = await res.text()
+    const { html, link } = await fetchBenchPage(base)
     validateSsrHtml(html, target)
-    const payload = withPayload
-      ? await measureHydrationPayload(html, base, res.headers.get("link"))
-      : undefined
+    const payload = withPayload ? await measureHydrationPayload(html, base, link) : undefined
     await runOha(base, SSR_BENCH_WARMUP_S)
     const m = await runOha(base, SSR_BENCH_DURATION_S)
     return payload === undefined ? m : { ...m, payload }

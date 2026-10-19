@@ -19,6 +19,7 @@ import {
   DEFAULT_DEV_PORT,
   type RenderAdapter,
 } from "@nifrajs/web"
+import { formatBuildLog } from "@nifrajs/web/diagnostic"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
@@ -334,7 +335,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.4.0"
+const CLI_VERSION = "5.5.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
@@ -373,10 +374,10 @@ export function formatCliError(err: unknown): string {
   if (aggregate !== undefined && aggregate.errors.length > 0) {
     const outer = err instanceof Error ? err.message : ""
     const head = outer !== "" && outer !== "Bundle failed" ? outer : "build failed"
-    // `String(e)` (not `e.message`) so a Bun BuildMessage/ResolveMessage renders with its file + line,
-    // not just the bare text. Multi-line entries are indented to stay under the head. Deduplicated
-    // because Bun can repeat one cause across `.errors`.
-    const details = [...new Set(aggregate.errors.map((e) => String(e).trim()))].map(
+    // `formatBuildLog`, not `String(e)`: a Bun BuildMessage/ResolveMessage keeps its file and line in
+    // `position`, which `String` drops. Multi-line entries are indented to stay under the head.
+    // Deduplicated because Bun can repeat one cause across `.errors`.
+    const details = [...new Set(aggregate.errors.map((e) => formatBuildLog(e).trim()))].map(
       (line) => `  - ${line.replace(/\n/g, "\n    ")}`,
     )
     return [head, ...details].join("\n")

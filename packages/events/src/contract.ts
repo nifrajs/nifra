@@ -136,7 +136,7 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       : { ok: false, issues: outcome.issues }
   }
 
-  return {
+  const contract: EventContract<Schema> = {
     type,
     version,
     payload,
@@ -238,8 +238,8 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
         },
       }
     },
-    is(input): input is EventEnvelope<InferOutput<Schema>> {
-      return this.parse(input).success
-    },
+    // Bound to the contract, so `events.filter(contract.is)` works.
+    is: (input): input is EventEnvelope<InferOutput<Schema>> => contract.parse(input).success,
   }
+  return contract
 }

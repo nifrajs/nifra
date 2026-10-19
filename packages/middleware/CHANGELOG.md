@@ -1,5 +1,20 @@
 # @nifrajs/middleware
 
+## 5.5.0
+
+### Minor Changes
+
+- aed4a76: `csrf()` lets a QUERY request through without a token by default, as it does a `GET`: a cross-site page cannot send one, since a form has no such method and a cross-origin `fetch` with it must pass a CORS preflight. List `"QUERY"` in `methods` to guard it anyway. `cors()` includes `QUERY` in the methods its preflight advertises by default.
+
+### Patch Changes
+
+- ba2941c: The portable/Deno weak ETag fingerprint hashes strings as UTF-8, including replacement of unpaired surrogates, without allocating an encoded copy. String and raw-byte responses now fingerprint UTF-8 consistently; switching between text `Ã©` and raw UTF-8 `é` could previously answer an incorrect 304.
+- 4ea30e4: `compression()` gzips a framework-serialized body by the fastest route each runtime has, measured over HTTP against the `CompressionStream` it used before. Bun gzips a body of up to 4 KiB inline and a larger one with a single `node:zlib` call (2 KB / 8 KB / 32 KB JSON: 1.14x / 1.40x / 2.10x). Deno gzips every body inline (2 KB / 8 KB / 32 KB: 1.38x / 1.72x / 1.89x). Node uses the single call up to 8 KiB (2 KB / 4 KB: 1.19x / 1.11x) and keeps the stream past that. A body that compresses far beyond typical JSON or HTML (over 100x) can serve slightly slower on Bun (0.93x).
+- 57a507f: `etag()` fingerprints a body with the runtime's native hash: `Bun.hash` on Bun and node:crypto's one-shot SHA-1 on Node, neither copying a string body first. Deno keeps FNV-1a, now run over the string itself. A JSON `GET` of 2-64 KB through `etag()` costs 1.86-2.31x less CPU on Bun, 1.19-1.54x less on Node and 1.05-1.11x less on Deno. Weak tags change once with this release, so a cached copy is answered with a 200 on its first revalidation after the upgrade; the Bun and Node tags are also wider than the 32-bit FNV-1a they replace.
+- 4af4b3b: `etag()` now answers `HEAD` like `GET`: a `HEAD` response carries the `ETag` its `GET` would, and a matching `If-None-Match` gets `304 Not Modified`.
+- db2546c: `compression()` adds `Vary: Accept-Encoding` to the identity response it sends a client that does not accept gzip, whenever it would have compressed that response for one that does. Only the gzip response carried it before, so a shared cache could store the identity bytes and replay them to gzip-capable clients. A response that is never compressed (too small, an incompressible type, already encoded, a range, or `no-transform`) still gets no `Vary`.
+- @nifrajs/schema@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

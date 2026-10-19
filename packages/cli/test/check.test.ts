@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { mkdir, mkdtemp, realpath, rm, symlink, watch, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join } from "node:path"
 import ts from "typescript"
 import {
   collectCheckResult,
@@ -31,6 +31,7 @@ import {
 import { createSourceFacts } from "../src/internal/source-facts.ts"
 import {
   collectReleaseVerification,
+  formatDuration,
   type ReleaseCommandResult,
   type ReleaseCommandSpec,
   renderReleaseVerification,
@@ -39,6 +40,8 @@ import {
 import { readSecretExemptions } from "../src/rules/secrets.ts"
 import {
   omittedVerificationGateIds,
+  releaseGroupGateIds,
+  releaseGroupNames,
   renderVerificationPlan,
   verificationPlan,
   verificationPlanIds,
@@ -62,6 +65,22 @@ test("the help and README say a contract lock makes check import backend/app.ts,
 })
 
 describe("release verification", () => {
+  test("every release gate runs in exactly one CI group, after the build each group starts with", () => {
+    const release = verificationPlanIds("release")
+    const seen = new Map<string, string>()
+    for (const name of releaseGroupNames()) {
+      const ids = releaseGroupGateIds(name) ?? []
+      expect(ids[0]).toBe("build")
+      for (const id of ids.slice(1)) {
+        expect(release).toContain(id)
+        expect(seen.get(id)).toBeUndefined()
+        seen.set(id, name)
+      }
+    }
+    expect([...seen.keys()].sort()).toEqual(release.filter((id) => id !== "build").sort())
+    expect(releaseGroupGateIds("constructor")).toBeUndefined()
+  })
+
   test("uses explicit gate IDs so default-plan edits cannot re-point the release plan", () => {
     expect(verificationPlanIds()).toEqual([
       "lint",
@@ -289,6 +308,56 @@ describe("release verification", () => {
         "test:coverage",
       )
       expect(result.gates.at(-1)?.status).toBe("skipped")
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("a selected subset runs in plan order, reports each gate as it starts and ends, and is timed", async () => {
+    const root = createFixtureRoot("verify-subset")
+    try {
+      const scripts = Object.fromEntries(
+        verificationPlan("release").flatMap((gate) =>
+          gate.commands.map(([, script]) => [script, "true"]),
+        ),
+      )
+      await Bun.write(
+        join(root, "package.json"),
+        JSON.stringify({ private: true, workspaces: [], scripts }),
+      )
+      const calls: string[] = []
+      const events: string[] = []
+      const runCommand = async (spec: ReleaseCommandSpec): Promise<ReleaseCommandResult> => {
+        calls.push(spec.args.join(" "))
+        return { exitCode: 0 }
+      }
+      const result = await collectReleaseVerification(root, {
+        mode: "release",
+        gateIds: ["lint", "build"],
+        onProgress: (event) =>
+          events.push(
+            event.type === "start"
+              ? `start ${event.id}`
+              : `end ${event.gate.id} ${event.gate.status}`,
+          ),
+        runCommand,
+      })
+      expect(calls).toEqual(["run build", "run lint"])
+      expect(events).toEqual(["start build", "end build pass", "start lint", "end lint pass"])
+      expect(result.selectedGateIds).toEqual(["build", "lint"])
+      expect(result.gates.map((gate) => typeof gate.durationMs)).toEqual(["number", "number"])
+      const rendered = renderReleaseVerification(result)
+      expect(rendered).toMatch(/^✓ build: pass \(\d+\.\ds\)$/m)
+      expect(rendered).toContain("note: this run checked only these gates: build, lint")
+      expect(rendered).toMatch(/^✓ verification passed in \d+\.\ds$/m)
+      await expect(
+        collectReleaseVerification(root, { mode: "release", gateIds: ["nope"], runCommand }),
+      ).rejects.toThrow("the release plan has no gate named nope")
+      expect([formatDuration(41_234), formatDuration(60_000), formatDuration(151_000)]).toEqual([
+        "41.2s",
+        "1m 00s",
+        "2m 31s",
+      ])
     } finally {
       removeFixtureRoot(root)
     }
@@ -597,6 +666,7 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
       "4 DELETE /echo",
       "4 HEAD /echo",
       "4 OPTIONS /echo",
+      "4 QUERY /echo",
       "5 PURGE /cache/:key",
       "6 GET /doc",
       "6 REPORT /doc",
@@ -1222,14 +1292,28 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     const skewed = await fixture("2.0.0")
     try {
       const result = await collectCheckResult(skewed.app, { lintsOnly: true })
-      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      const diagnostic = result.diagnostics.find((d) => d.rule === "version-skew")
       expect(result.ok).toBe(false)
+      expect(result.diagnostics.some((d) => d.rule === "duplicate-install")).toBe(false)
       expect(diagnostic?.severity).toBe("error")
       expect(diagnostic?.message).toContain("shared-state identity preflight found version-skew")
       expect(diagnostic?.fix).toContain("Align dependency ranges")
+      expect(diagnostic?.suggestion?.diff).toBeUndefined()
+      expect(diagnostic?.suggestion?.steps).toContain(
+        "A singleCopy declaration does not cover this: it only collapses copies of one version.",
+      )
       expect(result.identityPreflight?.duplicates.map((finding) => finding.package)).toEqual([
         "shared-state",
       ])
+
+      // Quieting same-version duplicates leaves the skew failing.
+      await writeFile(
+        join(skewed.app, "nifra.check.json"),
+        JSON.stringify({ rules: { "NF-C009": { severity: "info" } } }),
+      )
+      const overridden = await collectCheckResult(skewed.app, { lintsOnly: true })
+      expect(overridden.ok).toBe(false)
+      expect(overridden.diagnostics.find((d) => d.rule === "version-skew")?.severity).toBe("error")
     } finally {
       await rm(skewed.ground, { recursive: true, force: true })
     }
@@ -2009,6 +2093,55 @@ describe("collectCheckResult - transitive server-only chain end-to-end (#4.4)", 
 })
 
 describe("walkSource - respects .gitignore (no huge scans of generated/build trees)", () => {
+  test("scans Unicode source while excluding ignored Unicode source", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-unicode-"))
+    try {
+      expect(Bun.spawnSync(["git", "init", "-q"], { cwd: dir }).exitCode).toBe(0)
+      await writeFile(join(dir, ".gitignore"), "generated/\n")
+      await mkdir(join(dir, "generated"))
+      await writeFile(join(dir, "café.ts"), 'export const page = () => fetch("/page")')
+      await writeFile(join(dir, "generated", "café.ts"), 'export const app = () => fetch("/app")')
+
+      const found = await scanProject(dir)
+
+      expect(found.map((finding) => finding.file)).toEqual(["café.ts"])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test.skipIf(process.platform === "win32")(
+    "preserves literal quoted, whitespace and backslash paths",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-literal-"))
+      const paths = [
+        '"quoted.ts',
+        "back\\slash.ts",
+        " leading.ts",
+        "trailing /inside.ts",
+        "line\nbreak.ts",
+        "carriage\rreturn.ts",
+      ]
+      try {
+        expect(Bun.spawnSync(["git", "init", "-q"], { cwd: dir }).exitCode).toBe(0)
+        await writeFile(join(dir, ".gitignore"), "generated/\n")
+        for (const prefix of ["", "generated"]) {
+          for (const path of paths) {
+            const file = join(dir, prefix, path)
+            await mkdir(dirname(file), { recursive: true })
+            await writeFile(file, 'export const page = () => fetch("/page")')
+          }
+        }
+
+        const found = await scanProject(dir)
+
+        expect(found.map((finding) => finding.file)).toEqual(paths.sort())
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
   test("skips a gitignored dir even though it holds a lintable source file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-"))
     Bun.spawnSync(["git", "init", "-q"], { cwd: dir })

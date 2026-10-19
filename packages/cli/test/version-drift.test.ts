@@ -6,7 +6,7 @@ import { collectDoctorResult } from "../src/doctor.ts"
 import type { UpgradeRecipe } from "../src/recipes/index.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { legacyRules } from "../src/rules/legacy.ts"
-import { computeUpgrade } from "../src/upgrade.ts"
+import { computeUpgrade, linkedSkew } from "../src/upgrade.ts"
 import { collectVersionDrift, versionDriftMessage } from "../src/version-drift.ts"
 import { writeAppFile } from "./fixture-root.ts"
 import { projectFacts } from "./rule-facts.ts"
@@ -206,5 +206,74 @@ describe("version drift, installs", () => {
     expect(message).toContain(
       `It does not edit 5 packages at 4.0.2 under ${realpathSync(outside)} (@nifrajs/cli, @nifrajs/client, @nifrajs/core and 2 more), linked from outside`,
     )
+  })
+})
+
+describe("version drift, linked repositories", () => {
+  test("a live-linked repository that resolves its own nifra is a second version", () => {
+    const root = scratch("nifra-drift-")
+    const other = scratch("nifra-linked-repo-")
+    writeAppFile(
+      root,
+      "package.json",
+      json({ dependencies: { "@nifrajs/core": "5.3.0", "linked-lib": `link:${other}` } }),
+    )
+    writeAppFile(root, "node_modules/@nifrajs/core/package.json", json({ version: "5.3.0" }))
+    writeAppFile(
+      other,
+      "package.json",
+      json({ name: "linked-lib", dependencies: { "@nifrajs/core": "5.2.0" } }),
+    )
+    writeAppFile(other, "node_modules/@nifrajs/core/package.json", json({ version: "5.2.0" }))
+    symlinkSync(other, join(root, "node_modules/linked-lib"), "dir")
+    const repo = realpathSync(other)
+
+    const drift = collectVersionDrift(root)
+    expect(drift?.versions.map((entry) => entry.version)).toEqual(["5.2.0", "5.3.0"])
+    expect(drift?.versions[0]?.sources).toEqual([
+      `installed @nifrajs/core by linked-lib (linked from ${repo}), which loads its own copy`,
+    ])
+    expect(drift?.linkedOutside).toEqual([
+      {
+        package: "@nifrajs/core",
+        path: join(repo, "node_modules/@nifrajs/core"),
+        version: "5.2.0",
+      },
+    ])
+    expect(versionDriftMessage(drift!)).toContain(`linked from outside the workspace root`)
+
+    // The same version on both sides is one version: nothing to report.
+    writeAppFile(other, "node_modules/@nifrajs/core/package.json", json({ version: "5.3.0" }))
+    expect(collectVersionDrift(root)).toBeUndefined()
+  })
+
+  test("a linked workspace package loads what its repository hoisted above it", () => {
+    const root = scratch("nifra-drift-")
+    const other = scratch("nifra-linked-monorepo-")
+    const lib = join(other, "packages/lib")
+    writeAppFile(
+      root,
+      "package.json",
+      json({ dependencies: { "@nifrajs/core": "5.3.0", "linked-lib": `link:${lib}` } }),
+    )
+    writeAppFile(root, "node_modules/@nifrajs/core/package.json", json({ version: "5.3.0" }))
+    writeAppFile(
+      lib,
+      "package.json",
+      json({ name: "linked-lib", dependencies: { "@nifrajs/core": "5.2.0" } }),
+    )
+    writeAppFile(other, "node_modules/@nifrajs/core/package.json", json({ version: "5.2.0" }))
+    symlinkSync(lib, join(root, "node_modules/linked-lib"), "dir")
+    const hoisted = join(realpathSync(other), "node_modules/@nifrajs/core")
+
+    const drift = collectVersionDrift(root)
+    expect(drift?.versions.map((entry) => entry.version)).toEqual(["5.2.0", "5.3.0"])
+    expect(drift?.linkedOutside).toEqual([
+      { package: "@nifrajs/core", path: hoisted, version: "5.2.0" },
+    ])
+    // An upgrade to 5.3.0 leaves that copy behind, so it is refused like a repository's own install.
+    expect(linkedSkew(root, "5.3.0").map((repo) => repo.installs)).toEqual([
+      [{ package: "@nifrajs/core", path: hoisted, version: "5.2.0" }],
+    ])
   })
 })

@@ -30,6 +30,17 @@ export interface SmokeSsrCheck {
   readonly expectedHeaders?: Readonly<Record<string, string>>
 }
 
+/** One host's surface under a host policy: what it must render and load, and what it must refuse. */
+export interface SmokeHostCheck {
+  readonly id: string
+  /** The Host header every request of this check sends. */
+  readonly host: string
+  /** Pages that must render on `host`; every file each references must answer 200 there too. */
+  readonly pages: readonly string[]
+  /** Paths `host` must answer 404 for. */
+  readonly refused?: readonly string[]
+}
+
 export interface SmokeHookContext {
   readonly app: SmokeApp
   readonly origin: string
@@ -56,6 +67,12 @@ export interface SmokeFixture {
   readonly securityHeaders?: readonly SmokeRequestCheck[]
   /** Optional callback/guard witnesses; credentials stay inside the fixture. */
   readonly authCallbacks?: readonly SmokeRequestCheck[]
+  /**
+   * Per-host surfaces, for an app with a host policy. A page a gate serves while refusing its bundle
+   * or stylesheet still answers 200, so each page's referenced files (scripts and their imports,
+   * stylesheets and their `url()`s, icons) are fetched on the same host and must answer 200 too.
+   */
+  readonly hosts?: readonly SmokeHostCheck[]
   /** Optional response-contract laboratory hook. Its result is summarized without payloads. */
   readonly contract?: (
     context: SmokeHookContext,
@@ -79,6 +96,7 @@ export interface SmokeCheckResult {
     | "not-found"
     | "headers"
     | "auth"
+    | "hosts"
     | "contract"
     | "hydration"
   readonly message?: string
@@ -212,6 +230,26 @@ function smokeSsrError(value: unknown): string | undefined {
   return undefined
 }
 
+function hostCheckError(value: unknown, label: string): string | undefined {
+  if (!isRecord(value)) return `${label} must be an object`
+  if (typeof value.id !== "string" || !/^[A-Za-z0-9._-]{1,80}$/.test(value.id))
+    return `${label}.id must be a short safe identifier`
+  if (typeof value.host !== "string" || !/^[A-Za-z0-9.-]{1,253}(:\d{1,5})?$/.test(value.host))
+    return `${label}.host must be a host name`
+  if (
+    !Array.isArray(value.pages) ||
+    value.pages.length === 0 ||
+    !value.pages.every(validRelativePath)
+  )
+    return `${label}.pages must list local absolute paths`
+  if (
+    value.refused !== undefined &&
+    (!Array.isArray(value.refused) || !value.refused.every(validRelativePath))
+  )
+    return `${label}.refused must list local absolute paths`
+  return undefined
+}
+
 function fixtureError(fixture: unknown, inProcess: boolean): string | undefined {
   if (!isRecord(fixture)) return "fixture must export an object"
   const app = fixture.app
@@ -254,6 +292,13 @@ function fixtureError(fixture: unknown, inProcess: boolean): string | undefined 
     if (!Array.isArray(checks)) return `${category} must be an array`
     for (let index = 0; index < checks.length; index++) {
       const error = requestCheckError(checks[index], `${category}[${index}]`)
+      if (error !== undefined) return error
+    }
+  }
+  if (fixture.hosts !== undefined) {
+    if (!Array.isArray(fixture.hosts)) return "hosts must be an array"
+    for (let index = 0; index < fixture.hosts.length; index++) {
+      const error = hostCheckError(fixture.hosts[index], `hosts[${index}]`)
       if (error !== undefined) return error
     }
   }
@@ -517,6 +562,31 @@ export async function runSmoke(
       }
     }
     if (fixture.authCallbacks === undefined) add("auth", "auth-callbacks", "skip")
+
+    if (fixture.hosts !== undefined && fixture.hosts.length > 0) {
+      // Bun-only and heavy, so loaded only by a fixture that declares hosts.
+      const { checkHostReach } = await import("@nifrajs/web/build")
+      for (const check of fixture.hosts) {
+        try {
+          const report = await checkHostReach({
+            host: check.host,
+            pages: check.pages,
+            refused: check.refused ?? [],
+            fetch: (path, host) =>
+              fetchRequest({ id: check.id, path, headers: { host }, expectedStatus: 200 }),
+          })
+          const shown = report.failures
+            .slice(0, 3)
+            .map((f) => `${f.path} ${f.status}${f.from === undefined ? "" : ` (from ${f.from})`}`)
+          const message = report.truncated
+            ? "too many referenced files to check"
+            : `${report.failures.length} failed: ${shown.join(", ")}`
+          add("hosts", check.id, report.ok ? "pass" : "fail", report.ok ? undefined : message)
+        } catch {
+          add("hosts", check.id, "fail", "host check request failed")
+        }
+      }
+    }
 
     if (fixture.contract === undefined) {
       add("contract", "response-contract", "skip")

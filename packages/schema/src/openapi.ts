@@ -547,8 +547,10 @@ function addOperation(
   version: OpenAPIVersion,
 ): void {
   // A path item has a field for each standard method and no place for any other, so a route
-  // registered under a custom method is left out of the document.
-  if (!PATH_ITEM_METHODS.has(method.toLowerCase())) return
+  // registered under a custom method is left out of the document. 3.2 added the `query` field;
+  // a 3.1 document has none, so a QUERY route is left out of it too.
+  const field = method.toLowerCase()
+  if (!PATH_ITEM_METHODS.has(field) && !(field === "query" && version === "3.2.0")) return
   const templated = templatedPath(input.path).template
   const pathItem = paths[templated] ?? {}
   paths[templated] = pathItem
@@ -557,7 +559,7 @@ function addOperation(
   const override =
     operations?.[input.operationId ?? ""] ?? operations?.[`${method.toUpperCase()} ${input.path}`]
   if (override !== undefined) operation = { ...operation, ...override } as OpenAPIOperation
-  pathItem[method.toLowerCase()] = operation
+  pathItem[field] = operation
 }
 
 function isApp(input: ContractShape | Server): input is Server {

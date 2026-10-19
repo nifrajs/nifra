@@ -15,6 +15,8 @@ export const recipe: UpgradeRecipe = {
     { match: "nifra", to: "5.4.0" },
   ],
   importMoves: [],
+  // `@nifrajs/core` gained `static-file`, which only these load; `nifra dev` serves files with web's reader.
+  affects: ["@nifrajs/cli", "@nifrajs/node", "@nifrajs/web"],
   notes: [
     "The server entry a `node` build generates passes the app itself to `@nifrajs/node`'s `serve` and serves files with the adapter's own reader, so it needs the `@nifrajs/node` of the same release. With an older adapter installed the build stops before bundling, names both versions and leaves the last deploy dir in place, where a 5.3 adapter used to build and then throw when the server started. Upgrade `@nifrajs/node` with the rest.",
     "Static files carry a strong `ETag` from their content (128 bits of SHA-256) on the Bun entry and `nifra dev` (`servePublicDir`), `@nifrajs/node`'s `static` reader and the generated Deno entry, the same for the same bytes on every instance. The Node reader's `\"<mtime>-<size>\"` tag is gone, so clients and caches revalidate each file once after the upgrade. `Last-Modified` is sent only while a file's mtime is its own last change, so a file whose mtime a copy or build set (every file in a container image) is sent without one and `If-Modified-Since` cannot validate it. An `If-Range` date no longer keeps a range for a tagged file; a client resumes by the tag.",

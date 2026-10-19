@@ -96,6 +96,13 @@ export interface PageRouteContext<Env = unknown> {
   /** The visitor's IP as the serving app derived it; forwarded to a request-bound `ctx.api`. */
   readonly clientIp?: string | undefined
   readonly waitUntil?: (promise: Promise<unknown>) => void
+  /** One request header, read off the serving app's source without building `req.headers`. */
+  readonly header?: (name: string) => string | null
+}
+
+/** Whether `c` is a client navigation's data request. On Node, `req.headers` builds every header. */
+function isDataRequest(c: PageRouteContext<unknown>): boolean {
+  return (c.header !== undefined ? c.header(DATA_HEADER) : c.req.headers.get(DATA_HEADER)) !== null
 }
 
 /** The page slot of an `ssr = false` route with no `HydrateFallback`: a component that renders nothing. */
@@ -139,11 +146,15 @@ class LoaderPlatform {
  * `x-nifra-redirect` on a 204 that keeps the redirect's own headers. `undefined` for any other outcome
  * or request.
  */
-function dataRedirect(req: Request, outcome: unknown): Response | ResponseResult | undefined {
-  if (req.headers.get(DATA_HEADER) === null) return undefined
+function dataRedirect(
+  req: Request,
+  isData: boolean,
+  outcome: unknown,
+): Response | ResponseResult | undefined {
+  if (!isData) return undefined
   if (isResponseResult(outcome)) {
     const plain = outcome.plain
-    if (plain === undefined) return dataRedirect(req, outcome.toResponse())
+    if (plain === undefined) return dataRedirect(req, isData, outcome.toResponse())
     if (plain.status < 300 || plain.status >= 400) return undefined
     const { location, ...own } = plain.headers ?? {}
     if (location === undefined) return undefined
@@ -676,8 +687,9 @@ export function createPageRequestExecutor<Env = unknown>(
    * The browser's side of a client navigation: the page it is leaving and the layout slots it asked
    * to keep. Undefined unless this is a data request whose `from` is same-origin and routable.
    */
-  const retainContextOf = (req: Request): RetainContext | undefined => {
-    if (req.headers.get(DATA_HEADER) === null) return undefined
+  const retainContextOf = (c: PageRouteContext<Env>): RetainContext | undefined => {
+    if (!isDataRequest(c)) return undefined
+    const req = c.req
     const requested = retainedIndices(req.headers.get(RETAIN_HEADER))
     const from = req.headers.get(NAV_FROM_HEADER)
     if (requested.size === 0 || from === null) return undefined
@@ -1065,6 +1077,7 @@ export function createPageRequestExecutor<Env = unknown>(
 
   const handleDataOrDocument = async (
     req: Request,
+    isData: boolean,
     env: Env,
     route: RouteEntry,
     params: Readonly<Record<string, string>>,
@@ -1084,7 +1097,7 @@ export function createPageRequestExecutor<Env = unknown>(
       settledLayouts(layoutModules, layoutData, count)
     if (isStatusSignal(data)) return renderStatusSignal(req, env, data, personalized, settled)
     if (isControlFlow(data)) return data
-    if (req.headers.get(DATA_HEADER) !== null) {
+    if (isData) {
       const pageSplit = prepareDeferred(data)
       const layoutSplits: Array<ReturnType<typeof prepareDeferred>> = []
       let offset = pageSplit.deferred.length
@@ -1354,11 +1367,11 @@ export function createPageRequestExecutor<Env = unknown>(
       const controls = new PageResponseControls(c)
       try {
         const outcome = await run(c, controls)
-        const answer = dataRedirect(c.req, outcome) ?? outcome
+        const answer = dataRedirect(c.req, isDataRequest(c), outcome) ?? outcome
         return controls.personalized ? (privateOutcome(answer) as PageResponse) : answer
       } catch (err) {
         if (!isControlFlow(err)) throw err
-        const answer = dataRedirect(c.req, err)
+        const answer = dataRedirect(c.req, isDataRequest(c), err)
         // Returned rather than rethrown: the serving app sends a thrown `Response` exactly as it is,
         // without the cookies the request queued.
         if (controls.personalized) return privateOutcome(answer ?? err) as PageResponse
@@ -1448,7 +1461,7 @@ export function createPageRequestExecutor<Env = unknown>(
             route,
             ctx,
             controls,
-            componentOwner ? undefined : retainContextOf(c.req),
+            componentOwner ? undefined : retainContextOf(c),
           )
           layoutModules = run.modules
           layoutRetained = run.retained
@@ -1580,6 +1593,7 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         return handleDataOrDocument(
           c.req,
+          isDataRequest(c),
           c.env,
           route,
           c.params,

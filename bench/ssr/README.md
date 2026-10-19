@@ -37,12 +37,30 @@ rows of a pair see the same host, so the ratio holds. Read ratios, not req/s.
 
 Compare Node rows with Node rows. The meta-frameworks run on Node; nifra runs on Bun and on Node.
 
+## Every row is measured uncompressed
+
+Every request the bench makes, from `oha` and from the harness, sends `accept-encoding: identity`
+(`SSR_BENCH_REQUEST_HEADERS` in `harness.ts`). Without it `oha` asks for `gzip, compress, deflate,
+br`, and the rows answer that differently by default: the Next.js standalone server gzips every
+response (`compress: true`), `react-router-serve` brotli-compresses, and nifra, Nuxt, SvelteKit and
+SolidStart send dynamic pages uncompressed. Those rows would pay a per-request compression cost the
+others skip, so the table would measure compression settings rather than rendering. A production
+deployment usually compresses at a CDN or reverse proxy in front of any of them.
+
+Before each sample, the harness fetches the page with the same headers and fails the row if the
+response carries a `content-encoding` other than `identity`. A row that compresses regardless of
+what the client asked for drops out of the table instead of being measured compressed.
+
+SvelteKit's static row serves a precompressed `.br` (or `.gz`) copy of its prerendered page when the
+request allows it, a real advantage for that row in production. Under `identity` it serves the plain
+HTML file like every other static row.
+
 ## Row kinds
 
 | Kind | What runs per request | Like for like? |
 | --- | --- | --- |
 | app | A framework app, built and served the way that framework ships it | Yes, with the other app rows |
-| own server | nifra's `renderPage` called from a server you write yourself | No |
+| renderer | A UI library's render-to-string in a bare server, no framework (Preact only) | No |
 | static host | A prerendered file from a plain file server | No framework code runs |
 
 ### App rows (the headline)
@@ -64,26 +82,16 @@ bundle and its static files.
 | Solid | `nifra-solid-app` | SolidStart 2 (Vite + Nitro `node_server`) |
 | Vue | `nifra-vue-app` | Nuxt (Nitro `node-server`, route cache off) |
 | Svelte | `nifra-svelte-app` | SvelteKit `adapter-node` |
-| Preact | `nifra-preact-app` | none exists; `preact-ssr` is `preact-render-to-string` in a bare Node server, the renderer's ceiling |
+| Preact | `nifra-preact-app` | none runs on Node (Fresh is Deno-only); `preact-ssr` is `preact-render-to-string` in a bare Node server, the renderer's ceiling |
 
 No dynamic row caches anything: each request runs the loader and renders the page.
 
-### Own-server rows: nifra's render API in a server you write
+### The renderer row (Preact only)
 
-Each Table A also has one row per runtime that calls `renderPage({ adapter, chain, data })` from a
-hand-written server: a raw `Bun.serve` fetch handler, and the same handler on Node through
-`@nifrajs/node`'s `serve` (see `nifra*/handler.ts`). No nifra router, `createWebApp`, file routes,
-loader or schema check runs.
-
-The row shows that nifra's page renderer is a function any request handler can call, in a server
-you own. Other frameworks can run inside a server you own too: SvelteKit's `handler.js`, a Next.js
-custom server, Nitro's `node_middleware` preset, React Router's Express adapter. There, though,
-the framework's router still owns each request. Here your code does, and nifra only renders.
-
-It is **not** like for like with the comparators, which run full file-routed apps. The website
-labels these rows and keeps them out of the headline chart and the multipliers. Each Table A ends
-with the paired ratio of the app row to its own-server row, per runtime: the cost of the framework
-layer.
+Preact has no meta-framework that runs on Node, so its Table A compares the app with `preact-ssr`:
+`preact-render-to-string` in a bare Node server, with no router, loader or schema. It is the one raw
+row the website shows, labelled as the renderer's ceiling and kept out of the headline chart and the
+multipliers. The other frameworks' tables compare with their meta-frameworks only.
 
 ## Table B: SSG and ISR
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { type Middleware, server, silentLogger } from "../src/index.ts"
 import { responseObserver, withResponseObserver } from "../src/response-observer.ts"
 import { taggedResponseBody } from "../src/server/respond.ts"
+import { RESPONSE_RESULT } from "../src/server/runtime-core.ts"
 
 /** Return a copy of `res` with an `x-app` header - onResponse can't mutate in place. */
 function tagged(res: Response, value: string): Response {
@@ -119,6 +120,42 @@ describe("onResponse", () => {
 
     const res = await app.fetch(new Request("http://x/"))
     expect(await res.text()).toBe('{"source":true}A')
+  })
+
+  test("body hooks take a c.text() body and a buffered page's, never a raw Response's", async () => {
+    const page = {
+      [RESPONSE_RESULT]: true as const,
+      toResponse: () => new Response("<p>unseen</p>"),
+      toNodeBody: () => ({
+        status: 201,
+        headers: { "content-type": "text/html; charset=utf-8", "x-page": ["a", "b"] },
+        body: "<p>page</p>",
+      }),
+    }
+    const seen: unknown[] = []
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => {
+        seen.push(body)
+        return `${body}!`
+      })
+      .get("/text", (c) => {
+        c.set.headers["x-set"] = "1"
+        return c.text("hello")
+      })
+      .get("/page", () => page)
+      .get("/raw", () => new Response("raw"))
+    const text = await app.fetch(new Request("http://x/text"))
+    expect([text.headers.get("x-set"), await text.text()]).toEqual(["1", "hello!"])
+    const built = await app.fetch(new Request("http://x/page"))
+    expect([
+      built.status,
+      built.headers.get("content-type"),
+      built.headers.get("x-page"),
+      await built.text(),
+    ]).toEqual([201, "text/html; charset=utf-8", "a, b", "<p>page</p>!"])
+    expect(await (await app.fetch(new Request("http://x/raw"))).text()).toBe("raw")
+    expect(seen).toEqual(["hello", "<p>page</p>"])
   })
 
   test("does not treat a legacy unowned marker as a local framework body", async () => {

@@ -1,4 +1,5 @@
 import { type StandardSchemaV1, server, status } from "@nifrajs/core"
+import { method } from "@nifrajs/core/methods"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
@@ -748,6 +749,31 @@ Deno.test("tls serves HTTPS from PEM bytes, and request URLs see https:", async 
     assertEquals(await (await fetch(`${base}/where`, { client })).json(), { url: `${base}/where` })
   } finally {
     client.close()
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("serves a QUERY route: its body validated, its method kept, GET beside it", async () => {
+  const app = server()
+    .get("/search", () => ({ via: "get" }))
+    .use(
+      method("QUERY", "/search", { body: named }, (c) => ({
+        via: c.req.method,
+        name: c.body.name,
+      })),
+    )
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    const url = `http://127.0.0.1:${running.port}/search`
+    const query = (body: string) =>
+      fetch(url, { method: "QUERY", headers: { "content-type": "application/json" }, body })
+    const found = await query('{"name":"nifra"}')
+    assertEquals([found.status, await found.json()], [200, { via: "QUERY", name: "nifra" }])
+    const invalid = await query('{"name":1}')
+    assertEquals(invalid.status, 422)
+    await invalid.body?.cancel()
+    assertEquals(await (await fetch(url)).json(), { via: "get" })
+  } finally {
     await running.stop({ drainMs: 0 })
   }
 })

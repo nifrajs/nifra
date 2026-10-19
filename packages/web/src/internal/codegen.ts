@@ -17,6 +17,13 @@ import {
 import { PRERENDERED_GLOBAL } from "../router.ts"
 import { jsStringLiteral, jsValueLiteral } from "./js-string.ts"
 
+/** The refusal for a server build given no client entry, shared by the codegen and `buildServer`. */
+export function missingClientEntry(clientEntry: unknown): TypeError {
+  return new TypeError(
+    `[nifra/web] the server build needs the client build: pass client (the manifest buildClient returned) or clientEntry (its entry URL), got clientEntry ${clientEntry === null ? "null" : typeof clientEntry}; pass clientEntry "" for an app with no client script`,
+  )
+}
+
 /** The globals the page-state handover may set - nothing else in it reaches `window`. */
 const HANDOVER_GLOBALS = [
   DATA_GLOBAL,
@@ -474,6 +481,12 @@ export interface GenerateServerManifestOptions {
   /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`) - baked as
    * `export const copyChunks` when the client build split copy tables, for `createWebApp`. */
   readonly copyChunks?: Readonly<Record<string, string>> | undefined
+  /**
+   * The request path of every file the build emitted: the client build's `assets` and the `public/`
+   * files it copied. Baked as `export const buildAssets` (a `Set`) and `isBuildAsset(pathname)`, so a
+   * server entry or a host policy can allow exactly the files that exist. Omitted ⇒ neither export.
+   */
+  readonly buildAssets?: readonly string[] | undefined
   /** Emit **lazy** per-route loaders (`() => import("./routes/x")`, a static specifier) instead of
    * eager `import * as`, so a bundler with code-splitting emits one chunk per route - loaded on the
    * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both
@@ -522,15 +535,12 @@ export function generateServerManifest(
     routeStyles,
     cssLoading: requestedCssLoading,
     copyChunks,
+    buildAssets,
     lazy = false,
   } = options
   // A missing entry would bake `clientEntry = undefined` and the build would still succeed, leaving
   // every hydrating page to fail at request time. `""` stays valid: an app with no client script.
-  if (typeof clientEntry !== "string") {
-    throw new TypeError(
-      `[nifra/web] the server build needs clientEntry (the built client entry URL, buildClient's manifest.entry), got ${clientEntry === null ? "null" : typeof clientEntry}; check the option is spelled clientEntry, or pass "" for an app with no client script`,
-    )
-  }
+  if (typeof clientEntry !== "string") throw missingClientEntry(clientEntry)
   const cssLoading = normalizeCssLoading(requestedCssLoading ?? DEFAULT_CSS_LOADING)
   // Every unique source file in the manifest, both halves of each, sorted for stable output. This is the
   // one generated module that imports frontend and backend halves together: it is the server's
@@ -568,6 +578,13 @@ export function generateServerManifest(
     copyChunks === undefined || Object.keys(copyChunks).length === 0
       ? []
       : [`export const copyChunks = ${jsValueLiteral(copyChunks)}`]
+  const buildAssetsLines =
+    buildAssets === undefined
+      ? []
+      : [
+          `export const buildAssets: ReadonlySet<string> = new Set(${jsValueLiteral([...new Set(buildAssets)].sort())})`,
+          "export const isBuildAsset = (pathname: string): boolean => buildAssets.has(pathname)",
+        ]
   if (lazy) {
     // Lazy: `() => import("./routes/x")` per route (static specifier → one chunk per route under a
     // code-splitting bundler, loaded on first request). The map keys are the route-relative paths
@@ -586,6 +603,7 @@ export function generateServerManifest(
       routeStylesLine,
       cssLoadingLine,
       ...copyChunksLines,
+      ...buildAssetsLines,
       `export const manifest = buildManifest(Object.keys(loaders), ${LAZY_IMPORTER})`,
     ].join("\n")}\n`
   }
@@ -606,6 +624,7 @@ export function generateServerManifest(
     routeStylesLine,
     cssLoadingLine,
     ...copyChunksLines,
+    ...buildAssetsLines,
     `export const manifest = buildManifest(Object.keys(modules), ${EAGER_IMPORTER})`,
   ].join("\n")}\n`
 }

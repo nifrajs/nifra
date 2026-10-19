@@ -623,6 +623,7 @@ const REPORT_SECTIONS = [
   ["response-route", "route returns a raw Response (typed client → data: never)"],
   ["undeclared-dependency", "undeclared dependency in package.json"],
   ["duplicate-install", "duplicate identity-sensitive dependency install"],
+  ["version-skew", "identity-sensitive dependency at more than one version"],
   ["stale-workspace-dist", "workspace-linked dist older than its source"],
   ["pipeline", "bundler pipeline (Vite/Bun) config"],
   ["server-manifest-drift", "server-manifest.ts drifted from routes/"],

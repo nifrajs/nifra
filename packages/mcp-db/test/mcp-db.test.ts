@@ -20,6 +20,8 @@ function seededDb(): Database {
 
 async function removeDirectoryAfterWorkerExit(directory: string): Promise<void> {
   // A forcibly terminated SQLite worker can release its file handle asynchronously on Windows.
+  // Callers close their own handle with close(true): close() keeps the file open until GC
+  // finalizes the statements still alive on it, and Windows refuses to remove an open file.
   const cleanupDeadline = Date.now() + 1_000
   for (;;) {
     try {
@@ -573,7 +575,7 @@ describe("query execution lanes", () => {
         await session.close()
       }
     } finally {
-      fileDb.close()
+      fileDb.close(true)
       memoryDb.close()
       await removeDirectoryAfterWorkerExit(directory)
     }
@@ -650,7 +652,7 @@ describe("query execution lanes", () => {
         }
       }
     } finally {
-      fileDb.close()
+      fileDb.close(true)
       memoryDb.close()
       await removeDirectoryAfterWorkerExit(directory)
     }
@@ -704,7 +706,7 @@ describe("query execution lanes", () => {
       expect(snapshots).toBe(0)
     } finally {
       await served.close?.()
-      db.close()
+      db.close(true)
       await removeDirectoryAfterWorkerExit(directory)
     }
   })
