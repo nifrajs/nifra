@@ -236,7 +236,7 @@ to full-stack later without a rewrite.
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
-99% of Elysia on `GET /users/:id` and
+100% of Elysia on `GET /users/:id` and
 102% on the validated `POST` - and
 **level with Fastify on Node** (102% of Fastify on GET,
 99% on the validated `POST`), with Elysia, Hono,
