@@ -212,6 +212,34 @@ describe.each([
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
   })
 
+  test("an own toJSON, enumerable or not, never decides what is serialized", () => {
+    const hook = <T extends object>(value: T): T =>
+      Object.defineProperty(value, "toJSON", { value: () => ({ passwordHash: "never-sent" }) })
+    const user = t.object({ name: t.string() })
+    expect(JSON.stringify(guard(user, hook({ name: "Ada" })))).toBe('{"name":"Ada"}')
+    expect(JSON.stringify(guard(t.object({ u: user }), { u: hook({ name: "Ada" }) }))).toBe(
+      '{"u":{"name":"Ada"}}',
+    )
+    const listed = guard(t.object({ l: t.array(user), s: t.array(t.string()) }), {
+      l: hook([{ name: "Ada" }]),
+      s: hook(["a"]),
+    })
+    expect(JSON.stringify(listed)).toBe('{"l":[{"name":"Ada"}],"s":["a"]}')
+    expect(JSON.stringify(guard(t.array(t.string()), hook(["a"])))).toBe('["a"]')
+  })
+
+  test("an array subclass serializes as its items, not by its prototype toJSON", () => {
+    class Leaky<T> extends Array<T> {
+      toJSON() {
+        return { passwordHash: "never-sent" }
+      }
+    }
+    const rows = Leaky.from([{ name: "Ada", secret: 1 }])
+    const out = guard(t.object({ rows: t.array(t.object({ name: t.string() })) }), { rows })
+    expect(JSON.stringify(out)).toBe('{"rows":[{"name":"Ada"}]}')
+    expect(JSON.stringify(guard(t.array(t.string()), Leaky.from(["a"])))).toBe('["a"]')
+  })
+
   test("a recursive schema projects every level", () => {
     const schema = projectingBy({
       $id: "Node",
@@ -733,6 +761,22 @@ describe("a route's backend half", () => {
     expect(page).toContain('<main>{"rows":[{"name":"Ada"}]}</main>')
     expect(page).not.toContain("never-sent")
     const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    expect(await data.text()).not.toContain("never-sent")
+  })
+
+  test("a non-enumerable toJSON reaches neither the page nor the data request", async () => {
+    const app = appOf({
+      loader: () =>
+        Object.defineProperty({ name: "Ada" }, "toJSON", {
+          value: () => ({ passwordHash: "never-sent" }),
+        }),
+      loaderOutput: t.object({ name: t.string() }),
+    })
+    const page = await (await app.fetch(new Request("http://x/page"))).text()
+    expect(page).toContain('<main>{"name":"Ada"}</main>')
+    expect(page).not.toContain("never-sent")
+    const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    expect(data.status).toBe(200)
     expect(await data.text()).not.toContain("never-sent")
   })
 

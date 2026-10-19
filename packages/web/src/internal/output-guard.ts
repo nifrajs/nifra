@@ -16,7 +16,8 @@
  * Validation then runs on the projected value. A `@nifrajs/schema` schema validates it without the
  * undeclared-key check of each closed object projection reached, which projection already did. A
  * non-enumerable property is no key to either: JSON and `structuredClone` skip it and server
- * component props refuse it, so it never reaches the browser.
+ * component props refuse it, so it never reaches the browser. The one such property `JSON.stringify`
+ * does read, an own `toJSON` (or an array subclass's), never survives projection.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import { markDeferredFree } from "./deferred-free.ts"
@@ -175,7 +176,7 @@ const DATE: Project = (value) =>
       : value
 
 /** An array whose items are all scalars, passed through whole. */
-const LEAF_ARRAY: Project = (value) => value
+const LEAF_ARRAY: Project = (value) => (Array.isArray(value) ? plainArray(value) : value)
 
 const typesOf = (node: Node): readonly unknown[] | undefined =>
   Array.isArray(node.type) ? node.type : node.type === undefined ? undefined : [node.type]
@@ -346,7 +347,11 @@ class Compiler {
           continue
         }
         const before = input[key]
-        if (projector === LEAF_ARRAY || (projector === LEAF && !(before instanceof Date))) {
+        if (
+          projector === LEAF_ARRAY
+            ? !hasJsonHook(before)
+            : projector === LEAF && !(before instanceof Date)
+        ) {
           if (out !== undefined) assign(out, key, before)
           continue
         }
@@ -359,7 +364,7 @@ class Compiler {
           assign(out, key, after)
         }
       }
-      return out ?? value
+      return out ?? (input.toJSON === undefined ? value : snapshotOf(input))
     }
     const project =
       generatedObject(declared, open ? undeclared : undefined, checksMarker) ?? closure
@@ -396,7 +401,7 @@ class Compiler {
             out[i] = after
           }
         }
-        return out ?? value
+        return plainArray(out ?? value)
       }
       this.issueFree.add(project)
       return project
@@ -420,7 +425,7 @@ class Compiler {
           out[i] = after
         }
       }
-      return out ?? value
+      return plainArray(out ?? value)
     }
   }
 
@@ -536,6 +541,23 @@ function snapshotOf(value: object): Record<string, unknown> {
   return snapshot
 }
 
+/** Whether `JSON.stringify` would call a `toJSON` of `value`'s own or of its prototype chain. */
+const hasJsonHook = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { readonly toJSON?: unknown }).toJSON !== undefined
+
+/**
+ * `value`, or a plain copy of its items when `JSON.stringify` would serialize it by a hook instead:
+ * an own `toJSON`, enumerable or not, or one on a subclass prototype (which `slice` also keeps).
+ */
+function plainArray(value: unknown[]): unknown[] {
+  if (!hasJsonHook(value)) return value
+  const copy = new Array<unknown>(value.length)
+  for (let i = 0; i < value.length; i++) copy[i] = value[i]
+  return copy
+}
+
 // Inside `for-in`, V8 folds `hasOwnProperty.call` into the loop but calls `Object.hasOwn` per key.
 // Bun runs both alike.
 const ownKey = Object.prototype.hasOwnProperty
@@ -572,13 +594,12 @@ function generatedObject(
     const store = (value: string): string =>
       key === "__proto__" ? `assign(out, key, ${value})` : `out[${JSON.stringify(key)}] = ${value}`
     cases += `case ${JSON.stringify(key)}: { const before = value[key];`
-    if (projector === LEAF_ARRAY) cases += `if (out !== undefined) ${store("before")}; continue; }`
-    else {
-      if (projector === LEAF) {
-        cases += `if (!(before instanceof Date)) { if (out !== undefined) ${store("before")}; continue; }`
-      }
-      cases += `${tail(store, `p[${i}]`)} }`
+    if (projector === LEAF_ARRAY) {
+      cases += `if (!hasJsonHook(before)) { if (out !== undefined) ${store("before")}; continue; }`
+    } else if (projector === LEAF) {
+      cases += `if (!(before instanceof Date)) { if (out !== undefined) ${store("before")}; continue; }`
     }
+    cases += `${tail(store, `p[${i}]`)} }`
   }
   const generic = (value: string): string => `assign(out, key, ${value})`
   const rest =
@@ -587,7 +608,7 @@ function generatedObject(
       : "const projector = undeclared(key);" +
         "if (projector === undefined) { out ??= copyBefore(value, key); continue; }" +
         "const before = value[key];" +
-        "if (projector === LEAF_ARRAY || (projector === LEAF && !(before instanceof Date))) {" +
+        "if (projector === LEAF_ARRAY ? !hasJsonHook(before) : projector === LEAF && !(before instanceof Date)) {" +
         `if (out !== undefined) ${generic("before")}; continue; }` +
         tail(generic, "projector")
   const source =
@@ -602,7 +623,7 @@ function generatedObject(
     "if (!ownKey.call(value, key)) continue;" +
     `switch (key) { ${cases} default: { ${rest} } }` +
     "}" +
-    "return out ?? value; }"
+    "return out ?? (value.toJSON === undefined ? value : snapshotOf(value)); }"
   try {
     return new Function(
       "p",
@@ -613,6 +634,7 @@ function generatedObject(
       "assign",
       "prefix",
       "ownKey",
+      "hasJsonHook",
       "LEAF",
       "LEAF_ARRAY",
       source,
@@ -625,6 +647,7 @@ function generatedObject(
       assign,
       prefix,
       ownKey,
+      hasJsonHook,
       LEAF,
       LEAF_ARRAY,
     )
