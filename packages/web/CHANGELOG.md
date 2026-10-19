@@ -18,6 +18,7 @@
 
 ### Patch Changes
 
+- 1c159f1: A page request checks the client-navigation data header through the serving context's own header reader instead of `req.headers`, so a document request on Node no longer builds the request's full `Headers` object. The SSR benchmark apps serve 4-6% more pages per second on Node; Bun is unchanged.
 - 5264c5b: Host reachability reports `ok: false, truncated: true` whenever declared pages remain beyond its limit, even with no pending asset references. Binary asset bodies are canceled instead of downloaded and decoded as text; CSS/JavaScript dependency traversal is preserved.
 
 - 9e6a0a5: `nifra build`, `nifra dev` and `buildClient`/`buildServer` print each bundler error with its file, line and column and the source line, where they printed the message alone. The message that `buildServer` throws without a client entry now names the `client` option.
