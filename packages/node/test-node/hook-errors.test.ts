@@ -1,6 +1,7 @@
 /**
  * Hook and write failures on a real Node socket. An `onRequest` hook that throws or rejects is
- * answered by the app's `onError`, else a logged 500, on both the Web and the native-twin lanes. A
+ * answered by the app's `onError`, else a logged 500, on both the Web and the native-twin lanes; an
+ * `onError` that fails too is logged with the error it was handling and answered 500. A
  * header value Node refuses to write fails after the app returned; the adapter answers 500 and logs
  * the error through the app's own logger, as Bun's `listen()` does. The request a hook receives on
  * Node is a lazy stand-in for undici's `Request`, which `new Request(req)` cannot copy; `clone()` can.
@@ -76,6 +77,34 @@ for (const mode of ["sync", "async"] as const) {
     }
     assert.deepEqual(seen, ["store down"])
     assert.deepEqual(errors, [])
+  })
+}
+
+for (const mode of ["sync", "async"] as const) {
+  test(`a ${mode} onError failure answers the logged 500 for a route and a hook error`, async () => {
+    const { logger, errors } = recorder()
+    const route = server({ logger })
+      .onError(failures[mode])
+      .get("/x", () => {
+        throw new Error("handler broke")
+      })
+    const hooked = server({ logger })
+      .onError(failures[mode])
+      .onRequest(() => {
+        throw new Error("hook failed")
+      })
+      .get("/x", () => ({ ok: true }))
+    for (const served of [route, hooked]) {
+      const running = await serve(served, { port: 0, hostname: "127.0.0.1" })
+      try {
+        const res = await fetch(`http://127.0.0.1:${running.port}/x`)
+        assert.equal(res.status, 500)
+        assert.deepEqual(await res.json(), { ok: false, error: "internal_error" })
+      } finally {
+        await running.stop()
+      }
+    }
+    assert.deepEqual(errors, ["handler broke", "store down", "hook failed", "store down"])
   })
 }
 

@@ -6458,7 +6458,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /** The `onError` chain, split off {@link handleLifecycleError} so its `await` costs only the routes
-   * that registered a hook. A hook may return a custom response; otherwise the default 500 stands. */
+   * that registered a hook. A hook may return a custom response; otherwise the default 500 stands.
+   * Never rejects: nothing outside it re-enters `onError`, so a hook that throws, or an answer that
+   * cannot be rendered, is logged and answered here. */
   private async runErrorHooks<T>(
     hooks: readonly RawErrorHandler[],
     contract: RouteEntry["responseContract"],
@@ -6471,17 +6473,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
     // the `await` and stay heap-allocated on both engines.
     for (let i = 0; i < hooks.length; i++) {
-      const outcome = hooks[i]!(err, ctx)
-      const handled = outcome instanceof Promise ? await outcome : outcome
-      if (handled === undefined) continue
-      if (contract === undefined || (handled !== ctx.jsonReply && !isResponseResult(handled)))
-        return finalize(handled, responseSet(ctx), ctx)
-      // Checked here, not through finishLifecycleContract: a throwing schema must not re-enter onError.
+      let handled: unknown
       try {
+        const outcome = hooks[i]!(err, ctx)
+        handled = outcome instanceof Promise ? await outcome : outcome
+      } catch (hookError) {
+        // A thrown Response or status() is the hook's answer, as from beforeHandle.
+        if (!(hookError instanceof Response) && !isResponseResult(hookError)) {
+          this.logRequestError(err, ctx)
+          this.logRequestError(hookError, ctx)
+          return fallback === undefined
+            ? wrapResponse(plainError(500, "internal_error"))
+            : fallback()
+        }
+        handled = hookError
+      }
+      if (handled === undefined) continue
+      // Awaited so an asynchronous finalize's rejection lands in the catch too.
+      try {
+        if (contract === undefined || (handled !== ctx.jsonReply && !isResponseResult(handled)))
+          return await finalize(handled, responseSet(ctx), ctx)
+        // Checked here, not through finishLifecycleContract: a throwing schema must not re-enter onError.
         const checked = await contract.runtime.check(contract.definition, handled, ctx)
-        return this.finishContractOutcome(ctx, finalize, wrapResponse, checked)
-      } catch (checkError) {
-        this.logRequestError(checkError, ctx)
+        return await this.finishContractOutcome(ctx, finalize, wrapResponse, checked)
+      } catch (finishError) {
+        this.logRequestError(finishError, ctx)
         return wrapResponse(plainError(500, "internal_error"))
       }
     }
