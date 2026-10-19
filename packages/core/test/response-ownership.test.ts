@@ -178,6 +178,90 @@ for (const lane of LANES) {
         }
       })
     }
+
+    for (const async of [false, true]) {
+      const hook = (async ? "an async" : "a sync") + " onResponse hook"
+      test(`a body ${hook} hands back is single-use and never replays a cookie`, async () => {
+        let shared: Response | undefined
+        const app = server({ logger: silentLogger })
+          .use(nodeDirect())
+          .use(responseObserver())
+          .onResponseBody((body, _headers, _req, status) =>
+            status === 200 ? `${body}!` : undefined,
+          )
+          .onResponse((res) => (async ? Promise.resolve(shared ?? res) : (shared ?? res)))
+          .onResponse((res, req) => {
+            if (req.headers.get("x-user") === "alice") res.headers.append("set-cookie", "sid=alice")
+            return res
+          })
+          .get("/cached", (c) => {
+            shared ??= c.text("payload")
+            return c.text("own")
+          })
+        const { send, close } = lane.open(app)
+        try {
+          const alice = await send("/cached", "alice")
+          expect(alice.headers.getSetCookie()).toEqual(["sid=alice"])
+          expect(await alice.text()).toBe("payload")
+          const bob = await send("/cached", "bob")
+          expect(bob.status).toBe(500)
+          expect(bob.headers.getSetCookie()).toEqual([])
+          expect(await bob.json()).toEqual({ ok: false, error: "internal_error" })
+        } finally {
+          await close()
+        }
+      })
+
+      test(`a body ${async ? "an async" : "a sync"} onRequest hook answers with is single-use`, async () => {
+        const cached = new Response("cached", { headers: { "content-type": "text/plain" } })
+        const app = server({ logger: silentLogger })
+          .use(nodeDirect())
+          .onRequest(() => (async ? Promise.resolve(cached) : cached))
+          .onResponse((res, req) => {
+            if (req.headers.get("x-user") === "alice") res.headers.append("set-cookie", "sid=alice")
+            return res
+          })
+          .get("/cached", () => "unreached")
+        const { send, close } = lane.open(app)
+        try {
+          const alice = await send("/cached", "alice")
+          expect(alice.headers.getSetCookie()).toEqual(["sid=alice"])
+          expect(await alice.text()).toBe("cached")
+          const bob = await send("/cached", "bob")
+          expect(bob.status).toBe(500)
+          expect(bob.headers.getSetCookie()).toEqual([])
+          expect(await bob.json()).toEqual({ ok: false, error: "internal_error" })
+        } finally {
+          await close()
+        }
+      })
+
+      test(`${hook} handing back a cached handler result never replays a cookie`, async () => {
+        let shared: Response | undefined
+        const app = server({ logger: silentLogger })
+          .use(nodeDirect())
+          .use(responseObserver())
+          .onResponseBody((body, _headers, _req, status) =>
+            status === 200 ? `${body}!` : undefined,
+          )
+          .onResponse((res) => (async ? Promise.resolve(shared ?? res) : (shared ?? res)))
+          .get("/cached", (c) => {
+            if (c.header("x-user") === "alice") c.set.cookie("sid", "alice-session")
+            shared ??= c.text("payload")
+            return shared
+          })
+        const { send, close } = lane.open(app)
+        try {
+          await (await send("/cached", "alice")).arrayBuffer()
+          const bob = await send("/cached", "bob")
+          expect(bob.status).toBe(500)
+          expect(bob.headers.getSetCookie()).toEqual([])
+          expect(await bob.json()).toEqual({ ok: false, error: "internal_error" })
+        } finally {
+          await close()
+        }
+      })
+    }
   })
 }
 

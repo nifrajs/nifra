@@ -314,6 +314,37 @@ export function writableResponse(response: Response, request?: Request): Respons
   return copiedResponse(response, new Response(response.body, response), true)
 }
 
+// Body-bearing responses a hook handed over as a request's answer. The Node writer sends a buffered
+// body without reading it, so `bodyUsed` alone does not show that one was already sent.
+const HANDED_OVER = new WeakSet<Response>()
+
+/**
+ * Whether `response`, handed over by a hook as this request's answer, may be sent: not when its body
+ * already answered a request or was handed over for one. A body-bearing response is claimed here.
+ */
+export function claimHandedOver(response: Response): boolean {
+  if (responseBodyUsed(response) || HANDED_OVER.has(response)) return false
+  if (
+    hasResidentBody(response) ||
+    WRITABLE_BODY_RESPONSES.has(response) ||
+    response.body !== null
+  ) {
+    HANDED_OVER.add(response)
+  }
+  return true
+}
+
+/**
+ * `writableResponse` for a Response a hook hands back in place of the one it was given, with the
+ * single-use check a handler's result gets: a reused body is the internal error a reused handler
+ * result is, carrying none of its earlier request's headers.
+ */
+export function handedBackResponse(response: Response, request: Request): Response {
+  return claimHandedOver(response)
+    ? writableResponse(response, request)
+    : toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, undefined, request)
+}
+
 /** `copy`, recorded and carrying `original`'s buffered-body marker: the Node writer still sends the
  * serialized bytes directly, and a marked body-less Response keeps the body only the marker holds. */
 function copiedResponse(original: Response, copy: Response, hasBody: boolean): Response {

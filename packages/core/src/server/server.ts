@@ -121,8 +121,10 @@ import { needsResolving, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
+  claimHandedOver,
   fusedRespond,
   fusedRespondNoSet,
+  handedBackResponse,
   recordResidentTexts,
   toResponse,
   writableResponse,
@@ -818,6 +820,16 @@ const SERVER_RUNTIMES = [
 // Stable module-level finalizers so `fetch`/`resolveNode` allocate no per-request closures.
 const IDENTITY_RESPONSE = (response: Response | ResponseResult): Response => webResponseOf(response)
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
+
+/** An `onRequest` hook's answer, held to the single-use check a handler's result gets. */
+function earlyAnswer<T>(
+  answer: Response | ResponseResult,
+  wrapResponse: (response: Response | ResponseResult) => T,
+): T {
+  return answer instanceof Response && !claimHandedOver(answer)
+    ? wrapResponse(plainError(500, "internal_error"))
+    : wrapResponse(answer)
+}
 
 // The unused-order-scoped-hook audit (recorder, seal check, stack capture, message) is a dev-time
 // diagnostic. Every guard below keeps the INLINE literal `process.env.NODE_ENV !== "production"` at the
@@ -4034,7 +4046,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           (err) => this.onRequestFailure(err, source, platform, finalize, wrapResponse),
         )
       }
-      if (outcome !== undefined) return wrapResponse(outcome)
+      if (outcome !== undefined) return earlyAnswer(outcome, wrapResponse)
     }
     return this.routeAndRun(source, platform, finalize, wrapResponse, onTimeout, false)
   }
@@ -4049,7 +4061,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): Promise<T> {
-    if (first !== undefined) return wrapResponse(first)
+    if (first !== undefined) return earlyAnswer(first, wrapResponse)
     for (let i = nextIndex; i < this.onNodeRequestHooks.length; i++) {
       const hook = this.onNodeRequestHooks[i] as NodeRequestHook
       let early: Response | undefined
@@ -4059,7 +4071,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       } catch (err) {
         return this.onRequestFailure(err, source, platform, finalize, wrapResponse)
       }
-      if (early !== undefined) return wrapResponse(early)
+      if (early !== undefined) return earlyAnswer(early, wrapResponse)
     }
     return this.routeAndRun(source, platform, finalize, wrapResponse, onTimeout, false)
   }
@@ -4121,7 +4133,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (outcome !== originalRequest) this.responseRequests.set(originalRequest, outcome)
         continue
       }
-      if (outcome !== undefined) return wrapResponse(outcome)
+      if (outcome !== undefined) return earlyAnswer(outcome, wrapResponse)
     }
     return this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
   }
@@ -4149,7 +4161,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         current = early
         if (early !== originalRequest) this.responseRequests.set(originalRequest, early)
       } else if (early !== undefined) {
-        return wrapResponse(early)
+        return earlyAnswer(early, wrapResponse)
       }
       if (index >= this.onRequestHooks.length) break
       seen = requestOf(current)
@@ -6231,7 +6243,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         const handed = current
         return next.then((settled) => this.continueOnResponse(settled, i + 1, req, handed))
       }
-      current = next === current ? next : writableResponse(next, req)
+      current = next === current ? next : handedBackResponse(next, req)
     }
     return current
   }
@@ -6307,11 +6319,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     req: Request,
     handed: Response,
   ): Promise<Response> {
-    let current = response === handed ? response : writableResponse(response, req)
+    let current = response === handed ? response : handedBackResponse(response, req)
     for (let i = nextIndex; i < this.onResponseHooks.length; i++) {
       const next = (this.onResponseHooks[i] as RawOnResponse)(current, req)
       const settled = next instanceof Promise ? await next : next
-      current = settled === current ? settled : writableResponse(settled, req)
+      current = settled === current ? settled : handedBackResponse(settled, req)
     }
     return current
   }
