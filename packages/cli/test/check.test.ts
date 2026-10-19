@@ -666,6 +666,7 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
       "4 DELETE /echo",
       "4 HEAD /echo",
       "4 OPTIONS /echo",
+      "4 QUERY /echo",
       "5 PURGE /cache/:key",
       "6 GET /doc",
       "6 REPORT /doc",

@@ -10,8 +10,18 @@ import {
   mixedSegmentShape,
 } from "./pattern.ts"
 
-/** The standard HTTP methods: the ones with a builder on the server and a call on the typed client. */
-export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const
+/** The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server
+ * builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers. */
+export const METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+  "QUERY",
+] as const
 
 export type Method = (typeof METHODS)[number]
 

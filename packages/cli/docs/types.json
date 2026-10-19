@@ -3381,7 +3381,7 @@
     "name": "ClientRetryOptions",
     "kind": "interface",
     "package": "@nifrajs/client",
-    "signature": "export interface ClientRetryOptions {\n    /** Max RETRIES after the first attempt. Default 2. */\n    readonly attempts?: number;\n    /** Response statuses to retry. Default `[502, 503, 504]`. 4xx/429 are never added by default. */\n    readonly on?: readonly number[];\n    /** Methods eligible for retry. Default the idempotent set `GET/HEAD/OPTIONS/PUT/DELETE`. */\n    readonly methods?: readonly string[];\n    /** Delay (ms) before retry `n` (1-based). Default exponential backoff with jitter, capped at 3s. */\n    readonly backoff?: (attempt: number) => number;\n}",
+    "signature": "export interface ClientRetryOptions {\n    /** Max RETRIES after the first attempt. Default 2. */\n    readonly attempts?: number;\n    /** Response statuses to retry. Default `[502, 503, 504]`. 4xx/429 are never added by default. */\n    readonly on?: readonly number[];\n    /** Methods eligible for retry. Default the idempotent set `GET/HEAD/OPTIONS/PUT/DELETE/QUERY`. */\n    readonly methods?: readonly string[];\n    /** Delay (ms) before retry `n` (1-based). Default exponential backoff with jitter, capped at 3s. */\n    readonly backoff?: (attempt: number) => number;\n}",
     "doc": "/** Safe retry policy. Off unless `retry` is set; retries ONLY idempotent methods and transient 5xx -\n * never a 4xx/429 and never a non-idempotent method, so a retry can't double a side effect. */"
   },
   {
@@ -4289,7 +4289,7 @@
     "name": "CsrfOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface CsrfOptions {\n    /** HMAC secret (≥ 32 bytes), or a rotation list - see {@link CsrfSecret}. */\n    readonly secret: CsrfSecret;\n    /** Cookie carrying the signed token. Default `\"csrf-token\"`. */\n    readonly cookie?: string;\n    /** Header carrying the same signed token. Default `\"x-csrf-token\"`. */\n    readonly header?: string;\n    /**\n     * Form field that may carry the token when the header is absent, so a plain HTML `<form>` (no\n     * script to set a header) can submit - e.g. `field: \"_csrf\"` with\n     * `<input type=\"hidden\" name=\"_csrf\" value=\"...\">`. Read from `application/x-www-form-urlencoded`\n     * and `multipart/form-data` bodies only, through a clone, so the handler still reads the body.\n     * Unset (default), only the header is accepted.\n     *\n     * A cross-site form can set any field but never a custom header, so keep `checkOrigin` on with a\n     * field: the Origin check is what stops a site that can plant a cookie on your domain (a sibling\n     * subdomain) from pairing it with a matching field.\n     */\n    readonly field?: string;\n    /**\n     * Largest body scanned for {@link field}, in bytes. Default 64 KiB. A bigger form (a file upload)\n     * fails closed - send the header, or raise this for that app.\n     */\n    readonly fieldMaxBytes?: number;\n    /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */\n    readonly methods?: readonly string[];\n    /** Allowed request origins. Default: same host as the request URL, where an `https:` Origin may\n     * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). */\n    readonly origins?: readonly string[];\n    /** Check Origin/Referer on protected requests. Default true. */\n    readonly checkOrigin?: boolean;\n}"
+    "signature": "export interface CsrfOptions {\n    /** HMAC secret (≥ 32 bytes), or a rotation list - see {@link CsrfSecret}. */\n    readonly secret: CsrfSecret;\n    /** Cookie carrying the signed token. Default `\"csrf-token\"`. */\n    readonly cookie?: string;\n    /** Header carrying the same signed token. Default `\"x-csrf-token\"`. */\n    readonly header?: string;\n    /**\n     * Form field that may carry the token when the header is absent, so a plain HTML `<form>` (no\n     * script to set a header) can submit - e.g. `field: \"_csrf\"` with\n     * `<input type=\"hidden\" name=\"_csrf\" value=\"...\">`. Read from `application/x-www-form-urlencoded`\n     * and `multipart/form-data` bodies only, through a clone, so the handler still reads the body.\n     * Unset (default), only the header is accepted.\n     *\n     * A cross-site form can set any field but never a custom header, so keep `checkOrigin` on with a\n     * field: the Origin check is what stops a site that can plant a cookie on your domain (a sibling\n     * subdomain) from pairing it with a matching field.\n     */\n    readonly field?: string;\n    /**\n     * Largest body scanned for {@link field}, in bytes. Default 64 KiB. A bigger form (a file upload)\n     * fails closed - send the header, or raise this for that app.\n     */\n    readonly fieldMaxBytes?: number;\n    /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE/QUERY. */\n    readonly methods?: readonly string[];\n    /** Allowed request origins. Default: same host as the request URL, where an `https:` Origin may\n     * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). */\n    readonly origins?: readonly string[];\n    /** Check Origin/Referer on protected requests. Default true. */\n    readonly checkOrigin?: boolean;\n}"
   },
   {
     "name": "CssLoadingMode",
@@ -8466,15 +8466,15 @@
     "name": "METHODS",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const METHODS: readonly [\"GET\", \"POST\", \"PUT\", \"PATCH\", \"DELETE\", \"HEAD\", \"OPTIONS\"];",
-    "doc": "/** The standard HTTP methods: the ones with a builder on the server and a call on the typed client. */"
+    "signature": "export declare const METHODS: readonly [\"GET\", \"POST\", \"PUT\", \"PATCH\", \"DELETE\", \"HEAD\", \"OPTIONS\", \"QUERY\"];",
+    "doc": "/** The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server\n * builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers. */"
   },
   {
     "name": "METHODS",
     "kind": "const",
     "package": "nifra",
-    "signature": "export declare const METHODS: readonly [\"GET\", \"POST\", \"PUT\", \"PATCH\", \"DELETE\", \"HEAD\", \"OPTIONS\"];",
-    "doc": "/** The standard HTTP methods: the ones with a builder on the server and a call on the typed client. */"
+    "signature": "export declare const METHODS: readonly [\"GET\", \"POST\", \"PUT\", \"PATCH\", \"DELETE\", \"HEAD\", \"OPTIONS\", \"QUERY\"];",
+    "doc": "/** The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server\n * builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers. */"
   },
   {
     "name": "MIN_DIGEST_KEY_BYTES",
@@ -9422,6 +9422,13 @@
     "package": "@nifrajs/web",
     "signature": "export type MutationStatus = \"idle\" | \"pending\" | \"success\" | \"error\";",
     "doc": "/** A mutation's lifecycle status. */"
+  },
+  {
+    "name": "NAMESPACED_KEYS",
+    "kind": "const",
+    "package": "@nifrajs/client",
+    "signature": "export declare const NAMESPACED_KEYS: readonly [\"$query\"];",
+    "doc": "/** Capabilities added after the lists above froze, intercepted by exact match. Only ever `$`-prefixed:\n * `$query` calls a route under the QUERY method, which has no plain verb key because `query` is a\n * common route segment. */"
   },
   {
     "name": "NAV_FROM_HEADER",
@@ -19958,7 +19965,7 @@
     "kind": "function",
     "package": "@nifrajs/schema",
     "signature": "export declare function importOpenAPI(document: unknown, options?: ImportOpenAPIOptions): ImportedApiInventory;",
-    "doc": "/** Parse an OpenAPI 3.0/3.1 document into a canonical route inventory. Throws on invalid input. */"
+    "doc": "/** Parse an OpenAPI 3.0, 3.1 or 3.2 document into a canonical route inventory. Throws on invalid input. */"
   },
   {
     "name": "importRuleMessage",

@@ -983,6 +983,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
 - **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
   Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
+- **NAMESPACED_KEYS** _(const)_ - `NAMESPACED_KEYS: readonly ["$query"]`
+  Capabilities added after the lists above froze, intercepted by exact match. Only ever `$`-prefixed: `$query` calls a route under the QUERY method, which has no plain verb key because `query` is a common route segment.
 - **OutputOf** _(type)_ - `type OutputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> : never : null`
   What a route module's output schema lets through to the browser: the output type of its `Name` export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without one sends no data.
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
@@ -1611,8 +1613,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -2788,8 +2790,8 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/core/router`
 
 - **EMPTY_PARAMS** _(const)_ - `EMPTY_PARAMS: Record<string, string>`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
   A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
@@ -2889,8 +2891,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -4611,7 +4613,7 @@ _No named exports (side-effect entrypoint)._
 - **fromTypeBox** _(function)_ - `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>`
   Wrap a TypeBox schema as a `NifraSchema`.
 - **importOpenAPI** _(function)_ - `importOpenAPI: (document: unknown, options?: ImportOpenAPIOptions) => ImportedApiInventory`
-  Parse an OpenAPI 3.0/3.1 document into a canonical route inventory. Throws on invalid input.
+  Parse an OpenAPI 3.0, 3.1 or 3.2 document into a canonical route inventory. Throws on invalid input.
 - **paginate** _(function)_ - `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
   Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void`
@@ -7443,8 +7445,8 @@ _No named exports (side-effect entrypoint)._
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
-- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
+- **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"]`
+  The standard HTTP methods: the ones the typed registry and the typed client know. Each has a server builder except `QUERY` (RFC 9110's safe, idempotent read with a body), which `method()` registers.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`

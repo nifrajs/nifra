@@ -1013,7 +1013,8 @@ function scanMethodRoutes(
   ALL_ROUTES.lastIndex = 0
   for (let m = ALL_ROUTES.exec(code); m !== null; m = ALL_ROUTES.exec(code)) {
     const double = m[1] !== undefined
-    collect(m.index, "all", 0, double ? m[1] : m[2], double ? '"' : "'", [...HTTP_VERBS])
+    // all() also registers QUERY, which has no builder of its own and so is not in HTTP_VERBS.
+    collect(m.index, "all", 0, double ? m[1] : m[2], double ? '"' : "'", [...HTTP_VERBS, "QUERY"])
   }
   METHOD_ROUTES.lastIndex = 0
   for (let m = METHOD_ROUTES.exec(code); m !== null; m = METHOD_ROUTES.exec(code)) {

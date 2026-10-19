@@ -53,7 +53,7 @@ const CORE_WS_RUNTIME = Symbol.for("@nifrajs/core/get-ws-runtime")
  * apply trap below) reaches it.
  */
 const HTTP_VERBS: ReadonlySet<string> = new Set(RESERVED_VERB_KEYS)
-const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
+const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch", "query"])
 
 /** Marks client options whose transport returns same-process responses (see {@link inProcessClient}). */
 const LOCAL_FETCH = Symbol("nifra.local-fetch")
@@ -73,7 +73,7 @@ export interface ClientRetryOptions {
   readonly attempts?: number
   /** Response statuses to retry. Default `[502, 503, 504]`. 4xx/429 are never added by default. */
   readonly on?: readonly number[]
-  /** Methods eligible for retry. Default the idempotent set `GET/HEAD/OPTIONS/PUT/DELETE`. */
+  /** Methods eligible for retry. Default the idempotent set `GET/HEAD/OPTIONS/PUT/DELETE/QUERY`. */
   readonly methods?: readonly string[]
   /** Delay (ms) before retry `n` (1-based). Default exponential backoff with jitter, capped at 3s. */
   readonly backoff?: (attempt: number) => number
@@ -144,6 +144,7 @@ const DEFAULT_IDEMPOTENT_SET: ReadonlySet<string> = new Set([
   "OPTIONS",
   "PUT",
   "DELETE",
+  "QUERY",
 ])
 
 function defaultBackoff(attempt: number): number {
@@ -504,7 +505,9 @@ function createProxy(
  */
 function encodeSegment(value: string): string {
   try {
-    return encodeURIComponent(value)
+    // `$` is a legal path character and the router matches static segments literally, so it stays
+    // as written: a segment spelled `$query` must still be reachable by calling its parent.
+    return encodeURIComponent(value).replaceAll("%24", "$")
   } catch {
     return ".."
   }
@@ -521,6 +524,10 @@ function resolveSegment(
   if (HTTP_VERBS.has(key.toLowerCase())) {
     return (...args: unknown[]): Promise<Result<unknown>> =>
       execute(base, path, key.toLowerCase(), args, options)
+  }
+  if (key === "$query") {
+    return (...args: unknown[]): Promise<Result<unknown>> =>
+      execute(base, path, "query", args, options)
   }
   // Typed SSE subscription for `app.sse()` routes. Like `fetch` on the in-process client,
   // `subscribe` is a reserved proxy key - a literal `/subscribe` path segment is unreachable

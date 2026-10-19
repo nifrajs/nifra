@@ -408,6 +408,9 @@ function bunPeerPlatform(server: BunPeerServer, req: Request): Platform {
 
 type BunNativeHandler = (request: Request, server: BunPeerServer) => MaybePromise<Response>
 type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
+// Bun's route table has a slot for each of these; a QUERY entry is ignored and the request falls
+// through to the table's fetch, so QUERY routes stay on the portable dispatcher.
+const BUN_TABLE_METHODS: readonly Method[] = METHODS.filter((method) => method !== "QUERY")
 type BunNativeRoutes = Record<string, BunNativeMethodTable>
 type BunRequestWithParams = Request & { readonly params?: Record<string, string> }
 
@@ -6785,7 +6788,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (
         run === undefined ||
         entry.idempotent !== undefined ||
-        !METHODS.includes(method as Method) ||
+        !BUN_TABLE_METHODS.includes(method as Method) ||
         (preflightOnFallback && method === "OPTIONS") ||
         under.get(run)?.some((other) => outranks(other.pattern.segments, pattern.segments))
       ) {
@@ -6824,7 +6827,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (let i = 0; i < all.length; i++) {
       if (lead[i] === undefined) continue
       const { path, pattern } = all[i]!
-      for (const method of METHODS) {
+      for (const method of BUN_TABLE_METHODS) {
         if (below.has(pattern.segments.length + method))
           tableAt(path, pattern.segments)[method] ??= fallback
       }

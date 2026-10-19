@@ -232,8 +232,8 @@ describe("project provenance firewall", () => {
       .use(method(["purge", "GET"], "/cache/:key", { capabilities: ["db.read"] }, handler))
     const project = await collectCapabilityProjectReport(cwd, app, policy)
 
-    // 3 forms of the optional route, 7 methods of all(), 2 named methods.
-    expect(project.report.routes).toHaveLength(12)
+    // 3 forms of the optional route, 8 methods of all(), 2 named methods.
+    expect(project.report.routes).toHaveLength(13)
     expect(project.report.routes.filter((route) => !route.covered)).toEqual([])
     expect(
       project.report.routes.find(

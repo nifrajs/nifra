@@ -32,6 +32,19 @@ function roundtrip(): ImportedApiInventory {
 }
 
 describe("importOpenAPI - inventory import", () => {
+  test("a 3.2 QUERY operation comes back as a route", async () => {
+    const { method } = await import("@nifrajs/core/methods")
+    const searched = server().use(
+      method("QUERY", "/search", { body: t.object({ q: t.string() }) }, (c) => ({ q: c.body.q })),
+    )
+    const exported = toOpenAPI(searched, { openapiVersion: "3.2.0" })
+    const transported: unknown = JSON.parse(JSON.stringify(exported))
+    const inventory = importOpenAPI(transported)
+    expect(inventory.routes.map((route) => `${route.method} ${route.path}`)).toEqual([
+      "query /search",
+    ])
+  })
+
   test("recovers method, nifra path, query flags, body, and statuses", () => {
     const inventory = roundtrip()
     expect(inventory.title).toBe("Roundtrip API")
