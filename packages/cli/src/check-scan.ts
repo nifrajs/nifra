@@ -3462,23 +3462,19 @@ const RAW_RESPONSE_EXPECTATION = ["NF-C007", "raw-response"]
 async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<string>> {
   if (rels.length === 0) return new Set()
   try {
-    const proc = Bun.spawn(["git", "check-ignore", "--stdin"], {
+    const proc = Bun.spawn(["git", "check-ignore", "--stdin", "-z"], {
       cwd,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
     })
-    proc.stdin.write(`${rels.join("\n")}\n`)
+    proc.stdin.write(`${rels.join("\0")}\0`)
     await proc.stdin.end()
-    // git echoes back each ignored path exactly as fed on stdin (one per line); exit 1 = none matched.
+    // -z keeps both directions literal: Git otherwise C-quotes Unicode/escapes on output and
+    // interprets quoted input. Only matching paths are emitted; exit 1 means none matched.
     const out = await new Response(proc.stdout).text()
     await proc.exited
-    return new Set(
-      out
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    )
+    return new Set(out.split("\0").filter((path) => path !== ""))
   } catch {
     return new Set()
   }
@@ -3507,7 +3503,8 @@ export async function walkSource(
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
   for await (const rawRel of new Glob(pattern).scan({ cwd, dot: false })) {
-    const rel = normalizeProjectPath(rawRel)
+    // A backslash is a filename character on POSIX; only Windows separators need normalizing.
+    const rel = sep === "\\" ? normalizeProjectPath(rawRel) : rawRel
     // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
     if (PLAIN_SCRIPT_FILE.test(rel) && !ZONED_PATH.test(rel)) continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { mkdir, mkdtemp, realpath, rm, symlink, watch, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join } from "node:path"
 import ts from "typescript"
 import {
   collectCheckResult,
@@ -2078,6 +2078,55 @@ describe("collectCheckResult - transitive server-only chain end-to-end (#4.4)", 
 })
 
 describe("walkSource - respects .gitignore (no huge scans of generated/build trees)", () => {
+  test("scans Unicode source while excluding ignored Unicode source", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-unicode-"))
+    try {
+      expect(Bun.spawnSync(["git", "init", "-q"], { cwd: dir }).exitCode).toBe(0)
+      await writeFile(join(dir, ".gitignore"), "generated/\n")
+      await mkdir(join(dir, "generated"))
+      await writeFile(join(dir, "café.ts"), 'export const page = () => fetch("/page")')
+      await writeFile(join(dir, "generated", "café.ts"), 'export const app = () => fetch("/app")')
+
+      const found = await scanProject(dir)
+
+      expect(found.map((finding) => finding.file)).toEqual(["café.ts"])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test.skipIf(process.platform === "win32")(
+    "preserves literal quoted, whitespace and backslash paths",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-literal-"))
+      const paths = [
+        '"quoted.ts',
+        "back\\slash.ts",
+        " leading.ts",
+        "trailing /inside.ts",
+        "line\nbreak.ts",
+        "carriage\rreturn.ts",
+      ]
+      try {
+        expect(Bun.spawnSync(["git", "init", "-q"], { cwd: dir }).exitCode).toBe(0)
+        await writeFile(join(dir, ".gitignore"), "generated/\n")
+        for (const prefix of ["", "generated"]) {
+          for (const path of paths) {
+            const file = join(dir, prefix, path)
+            await mkdir(dirname(file), { recursive: true })
+            await writeFile(file, 'export const page = () => fetch("/page")')
+          }
+        }
+
+        const found = await scanProject(dir)
+
+        expect(found.map((finding) => finding.file)).toEqual(paths.sort())
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
   test("skips a gitignored dir even though it holds a lintable source file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-"))
     Bun.spawnSync(["git", "init", "-q"], { cwd: dir })
