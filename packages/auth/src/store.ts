@@ -59,7 +59,7 @@ export interface SessionStore {
 export const REVOKED_SUFFIX = ".revoked"
 export const ROTATED_SUFFIX = ".rotated"
 
-// A rotated cookie carries its original ID, so logout of any generation revokes them all. That ID
+// A rotated cookie carries its original ID, so one logout revokes every generation. That ID
 // may be a legacy cookie's value of any length; a rotation only ever appends one random part.
 export const sessionFamily = (id: string): string =>
   /^([^~]+)~[A-Za-z0-9_-]{43}$/.exec(id)?.[1] ?? id

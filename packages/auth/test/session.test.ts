@@ -458,6 +458,69 @@ describe("session - store mode", () => {
     expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
   })
 
+  // A planted pre-login cookie outlives the login that rotated it. Logging out with it must not end
+  // the session that replaced it once the rotating response has had time to reach the browser.
+  for (const atomic of [true, false]) {
+    test(`a superseded cookie past the rotation grace leaves its replacement (${atomic ? "memory" : "generic"} store)`, async () => {
+      const inner = new MemorySessionStore()
+      const store: SessionStore = atomic
+        ? inner
+        : {
+            get: (id) => inner.get(id),
+            set: (id, record) => inner.set(id, record),
+            delete: (id) => inner.delete(id),
+          }
+      let t = 1000
+      const sessions = createSessions<Data>({ secret: SECRET, store, now: () => t })
+      const anonymous = ctx()
+      await sessions.commit(anonymous.context, await sessions.get(anonymous.context))
+      const planted = lastCookie(anonymous.setCalls)
+      const login = ctx({ nifra_session: planted })
+      const session = await sessions.get(login.context)
+      session.set("userId", "u1")
+      sessions.regenerate(session)
+      await sessions.commit(login.context, session)
+      const current = lastCookie(login.setCalls)
+
+      t += 60_000
+      const logout = ctx({ nifra_session: planted })
+      await sessions.destroy(logout.context)
+      expect(logout.deleted).toContain("nifra_session")
+      expect((await sessions.get(ctx({ nifra_session: current }).context)).get("userId")).toBe("u1")
+      expect((await sessions.get(ctx({ nifra_session: planted }).context)).isEmpty).toBe(true)
+    })
+  }
+
+  test("a rotation marker without its time stamp dates the rotation from its expiry", async () => {
+    const store = new MemorySessionStore()
+    let t = 1000
+    const maxAge = 3600
+    const sessions = createSessions<Data>({ secret: SECRET, store, maxAge, now: () => t })
+    const login = ctx()
+    const session = await sessions.get(login.context)
+    session.set("userId", "u1")
+    await sessions.commit(login.context, session)
+    const first = lastCookie(login.setCalls)
+    const rotated = async (): Promise<string> => {
+      sessions.regenerate(session)
+      const next = ctx()
+      await sessions.commit(next.context, session)
+      await store.set(`${idOf(first)}.rotated`, { data: {}, expiresAt: t + maxAge * 1000 })
+      return lastCookie(next.setCalls)
+    }
+
+    const current = await rotated()
+    t += 60_000
+    await sessions.destroy(ctx({ nifra_session: first }).context)
+    expect((await sessions.get(ctx({ nifra_session: current }).context)).get("userId")).toBe("u1")
+
+    // Within the grace window the superseded cookie may still be the user's own, so it ends them all.
+    const later = await rotated()
+    t += 59_999
+    await sessions.destroy(ctx({ nifra_session: first }).context)
+    expect((await sessions.get(ctx({ nifra_session: later }).context)).isEmpty).toBe(true)
+  })
+
   test("a cookie that fails the signature check deletes nothing", async () => {
     const store = new MemorySessionStore()
     const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })

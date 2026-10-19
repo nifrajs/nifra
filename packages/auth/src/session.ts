@@ -125,6 +125,11 @@ const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8A
 // but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
 const revokedKey = (id: string): string => `${id}${REVOKED_SUFFIX}`
 
+// A superseded cookie is still the user's own while the rotating response is on its way to the
+// browser. Past that it is a copy someone else kept (a planted pre-login cookie), and it must not end
+// the session that replaced it.
+const ROTATION_GRACE_MS = 60_000
+
 interface Payload {
   data: Record<string, unknown>
   expiresAt: number
@@ -347,7 +352,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       if (previousId !== undefined) {
         const nextId = `${sessionFamily(previousId)}~${randomId()}`
         const rotated = await rotateExisting(store, previousId, nextId, record, {
-          data: {},
+          data: { rotatedAt: committedAt },
           expiresAt: committedAt + maxAge * 1000,
         })
         if (!rotated) return
@@ -399,19 +404,36 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     writeCookie(c, signed, expiresAt)
   }
 
+  // Whether logging out with this id may end its whole family: the live generation always may, a
+  // rotated-away one only within the grace window, and an id with neither record nor marker never.
+  const speaksForFamily = async (activeStore: SessionStore, id: string): Promise<boolean> => {
+    const [record, rotated] = await Promise.all([
+      activeStore.get(id),
+      activeStore.get(`${id}${ROTATED_SUFFIX}`),
+    ])
+    if (rotated === undefined) return record !== undefined
+    const stamped = rotated.data.rotatedAt
+    // Markers written before the stamp existed carry the rotation time only through their expiry.
+    const rotatedAt = typeof stamped === "number" ? stamped : rotated.expiresAt - maxAge * 1000
+    return now() - rotatedAt < ROTATION_GRACE_MS
+  }
+
   const destroy = async (c: SessionContext, session?: Session<Data>): Promise<void> => {
     const state = session === undefined ? undefined : states.get(session)
     if (store !== undefined) {
-      let id: string | undefined
       if (session !== undefined) {
-        id = state?.id
+        const id = state?.id
+        if (id !== undefined && !isSessionMarker(id)) await revoke(id)
       } else {
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
         const raw = sessionCookie(c)
-        if (raw !== undefined) id = (await unsign(raw)) ?? undefined
+        const id = raw === undefined ? null : await unsign(raw)
+        if (id !== null && !isSessionMarker(id)) {
+          if (await speaksForFamily(store, id)) await revoke(id)
+          else await store.delete(id)
+        }
       }
-      if (id !== undefined && !isSessionMarker(id)) await revoke(id)
     }
     // A later commit of this object must neither write the ended data back (cookie mode) nor vanish
     // against the revocation marker (store mode).
