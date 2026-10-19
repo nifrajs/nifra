@@ -385,6 +385,55 @@ export function taggedResponseOwner(response: Response): object | undefined {
     : undefined
 }
 
+// The string each `c.text()` response was built from, kept once an app reads bodies on the body tier.
+const RESIDENT_TEXTS = new WeakMap<Response, string>()
+let residentTextsRecorded = false
+
+/** From now on, keep the string of each `c.text()` response for the body tier. */
+export function recordResidentTexts(): void {
+  residentTextsRecorded = true
+}
+
+/** `response`, which `c.text()` built from `body`. */
+export function residentText(response: Response, body: string): Response {
+  if (residentTextsRecorded) RESIDENT_TEXTS.set(response, body)
+  return response
+}
+
+/** `response` tagged with the text it was built from, so this app's body-tier hooks get the string. */
+function withResidentText(
+  response: Response,
+  source: Response,
+  owner: object | undefined,
+): Response {
+  if (owner === undefined) return response
+  const text = RESIDENT_TEXTS.get(source)
+  return text === undefined || taggedResponseBody(response) !== undefined
+    ? response
+    : markTaggedResponse(response, text, owner)
+}
+
+/** A buffered page built from the body it reports, tagged for this app's body-tier hooks. */
+function bufferedPageResponse(
+  page: {
+    readonly status: number
+    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
+    readonly body: string
+  },
+  owner: object,
+): Response {
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(page.headers ?? {})) {
+    if (typeof value === "string") headers.set(name, value)
+    else for (const item of value) headers.append(name, item)
+  }
+  return markTaggedResponse(
+    withBody(new Response(page.body, { status: page.status, headers })),
+    page.body,
+    owner,
+  )
+}
+
 export function markTaggedResponse(
   response: Response,
   body: string | Uint8Array,
@@ -546,8 +595,18 @@ export function toResponse(
         request,
       )
     }
+    // A buffered page is built from the body it reports, so the bytes its hooks see are the ones sent.
+    const owner = typeof tagResponseBody === "object" ? tagResponseBody : undefined
+    const page = owner === undefined ? undefined : result.toNodeBody?.()
+    const response =
+      owner !== undefined &&
+      page !== undefined &&
+      typeof page.body === "string" &&
+      !isBodylessStatus(page.status)
+        ? bufferedPageResponse({ ...page, body: page.body }, owner)
+        : result.toResponse()
     return withStatics(
-      applySetToResponse(normalizeBodylessResponse(result.toResponse(), request), set, request),
+      applySetToResponse(normalizeBodylessResponse(response, request), set, request),
       statics,
       request,
     )
@@ -556,10 +615,14 @@ export function toResponse(
     if (result.bodyUsed) {
       return toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, statics, request)
     }
-    return withStatics(
-      applySetToResponse(normalizeBodylessResponse(result, request), set, request),
-      statics,
-      request,
+    return withResidentText(
+      withStatics(
+        applySetToResponse(normalizeBodylessResponse(result, request), set, request),
+        statics,
+        request,
+      ),
+      result,
+      typeof tagResponseBody === "object" ? tagResponseBody : undefined,
     )
   }
   return renderValue(result, set, tagResponseBody, statics, request)

@@ -123,6 +123,7 @@ import {
   buildStaticResponseHeaders,
   fusedRespond,
   fusedRespondNoSet,
+  recordResidentTexts,
   toResponse,
   writableResponse,
 } from "./respond.ts"
@@ -1773,6 +1774,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (this.responseBodyTag === undefined) {
       this.responseBodyTag = Object.freeze({})
       this.responseBodyOwners.add(this.responseBodyTag)
+      recordResidentTexts()
     }
     return this.responseBodyTag
   }
@@ -2664,6 +2666,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (this.responseBodyTag === undefined) {
           this.responseBodyTag = Object.freeze({})
           this.responseBodyOwners.add(this.responseBodyTag)
+          recordResidentTexts()
         }
         return this.responseBodyTag
       },
