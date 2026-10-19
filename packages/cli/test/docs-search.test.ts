@@ -5,6 +5,7 @@ import {
   renderDocsResult,
   searchSections,
   splitSections,
+  splitSubsections,
 } from "../src/docs-search.ts"
 import { MAX_QUERY_CHARS, MAX_QUERY_TERMS, queryTermGroups } from "../src/search-terms.ts"
 
@@ -107,6 +108,26 @@ describe("renderDocsResult", () => {
     expect(renderDocsResult(page, "sockets", 1)).toContain(
       "Subsections: Lifecycle | Answering a server heartbeat | Pub/sub",
     )
+  })
+
+  test("a fence closes only on its own marker, at least as long, with nothing after it", () => {
+    const headings = (lines: string[]) =>
+      splitSubsections(lines.join("\n")).parts.map((part) => part.heading)
+    expect(
+      headings([
+        "````md",
+        "```ts",
+        "### inside the outer fence",
+        "```",
+        "### still inside",
+        "````",
+        "### After",
+      ]),
+    ).toEqual(["After"])
+    expect(headings(["~~~", "```", "### inside tildes", "~~~", "### After"])).toEqual(["After"])
+    expect(headings(["```", "``` ts", "### inside", "```", "### After"])).toEqual(["After"])
+    // Inline code at the start of a line opens nothing.
+    expect(headings(["```a` b", "### Real"])).toEqual(["Real"])
   })
 
   test("no match → actionable message", () => {

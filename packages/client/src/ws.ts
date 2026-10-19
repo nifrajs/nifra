@@ -197,19 +197,25 @@ export function openWebSocket(
         if (done) return
         done = true
         unsubscribe()
-        socket.removeEventListener("close", end)
-        socket.removeEventListener("error", end)
+        socket.removeEventListener("close", closed)
+        socket.removeEventListener("error", closed)
         signal?.removeEventListener("abort", end)
         pending?.({ value: undefined, done: true })
         pending = undefined
       }
+      // A frame still in `validateReceive` arrived before the close, so it is delivered first.
+      const closed = (): void => {
+        if (schema === undefined) end()
+        else void received.then(end)
+      }
 
       const unsubscribe = onMessage(push)
-      socket.addEventListener("close", end, { once: true })
-      socket.addEventListener("error", end, { once: true })
+      socket.addEventListener("close", closed, { once: true })
+      socket.addEventListener("error", closed, { once: true })
       signal?.addEventListener("abort", end, { once: true })
       // Already over: no close or abort event is coming to end the iteration.
-      if (socket.readyState === CLOSED || signal?.aborted === true) end()
+      if (signal?.aborted === true) end()
+      else if (socket.readyState === CLOSED) closed()
 
       const iterator: AsyncIterableIterator<unknown> = {
         [Symbol.asyncIterator]() {

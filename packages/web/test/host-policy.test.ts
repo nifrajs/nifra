@@ -61,6 +61,17 @@ test("without the build's file set the token matches nothing, and buildAssets: f
   expect(strict.allows("pArtner.example:443", "/", assets)).toBe(true)
 })
 
+test("a fully qualified host name with a trailing dot is the same host", () => {
+  const listed = createHostPolicy({ rules: [{ hosts: ["partner.example"], pages: ["/"] }] })
+  for (const host of ["partner.example.", "partner.example.:443", "PARTNER.example.."]) {
+    expect(listed.allows(host, "/", assets)).toBe(true)
+    expect(listed.allows(host, "/login", assets)).toBe(false)
+  }
+  // An own host spelled with the dot stays unrestricted under "every host that is not ours".
+  expect(partner.allows("app.test.", "/login", assets)).toBe(true)
+  expect(partner.allows("[::1]:443", "/login", assets)).toBe(false)
+})
+
 test("check reads the Host header, answers a bare 404 by default and a custom refusal when given", async () => {
   const refused = partner.check(new Request("http://partner.example/login"), assets)
   expect(refused?.status).toBe(404)

@@ -98,16 +98,17 @@ const app = server()
     sendSchema: ChatOut,
     upgrade: (c) => ({
       user: c.cookies.user ?? "guest",
+      sent: 0,
       unanswered: 0,
       timer: undefined as ReturnType<typeof setInterval> | undefined,
     }),
     open(ws) {
       ws.subscribe("room")
-      let id = 0
       ws.data.timer = setInterval(() => {
         if (ws.data.unanswered >= 2) return ws.close(4000, "heartbeat timeout")
         ws.data.unanswered += 1
-        ws.send(frame({ type: "ping", id: ++id }))
+        ws.data.sent += 1
+        ws.send(frame({ type: "ping", id: ws.data.sent }))
       }, 30_000)
     },
     message(ws, msg) {
@@ -116,7 +117,10 @@ const app = server()
           app.publish("room", frame({ type: "said", from: ws.data.user, text: msg.text }))
           break
         case "pong":
-          ws.data.unanswered = 0
+          // Only an answer to a ping still outstanding counts, not any id the client makes up.
+          if (msg.id > ws.data.sent - ws.data.unanswered && msg.id <= ws.data.sent) {
+            ws.data.unanswered = 0
+          }
           break
       }
     },
@@ -340,8 +344,8 @@ export default function WebSockets() {
         <code>ping</code> variant in <code>sendSchema</code> and a <code>pong</code> variant in{" "}
         <code>messageSchema</code>. The client answers it from the same switch that handles every
         other frame, so the answer is typed and the exhaustiveness check covers it; the server
-        counts unanswered pings in <code>ws.data</code> and closes a connection that stops
-        answering, as above. Clear the timer in <code>close</code>. WebSocket protocol pings (the
+        counts unanswered pings in <code>ws.data</code>, takes a <code>pong</code> only for a ping
+        still outstanding, and closes a connection that stops answering, as above. Clear the timer in <code>close</code>. WebSocket protocol pings (the
         runtime&apos;s own keep-alive) are answered by the socket itself and never reach{" "}
         <code>messages()</code>; use them to keep a connection open through proxies, and a frame
         in the contract when the server needs to know the client is still running.

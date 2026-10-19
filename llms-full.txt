@@ -6153,16 +6153,17 @@ const app = server()
     sendSchema: ChatOut,
     upgrade: (c) => ({
       user: c.cookies.user ?? "guest",
+      sent: 0,
       unanswered: 0,
       timer: undefined as ReturnType<typeof setInterval> | undefined,
     }),
     open(ws) {
       ws.subscribe("room")
-      let id = 0
       ws.data.timer = setInterval(() => {
         if (ws.data.unanswered >= 2) return ws.close(4000, "heartbeat timeout")
         ws.data.unanswered += 1
-        ws.send(frame({ type: "ping", id: ++id }))
+        ws.data.sent += 1
+        ws.send(frame({ type: "ping", id: ws.data.sent }))
       }, 30_000)
     },
     message(ws, msg) {
@@ -6171,7 +6172,10 @@ const app = server()
           app.publish("room", frame({ type: "said", from: ws.data.user, text: msg.text }))
           break
         case "pong":
-          ws.data.unanswered = 0
+          // Only an answer to a ping still outstanding counts, not any id the client makes up.
+          if (msg.id > ws.data.sent - ws.data.unanswered && msg.id <= ws.data.sent) {
+            ws.data.unanswered = 0
+          }
           break
       }
     },
@@ -6207,8 +6211,8 @@ A server heartbeat that the application can see is an ordinary frame in the cont
 `ping` variant in `sendSchema` and a `pong` variant in
 `messageSchema`. The client answers it from the same switch that handles every
 other frame, so the answer is typed and the exhaustiveness check covers it; the server
-counts unanswered pings in `ws.data` and closes a connection that stops
-answering, as above. Clear the timer in `close`. WebSocket protocol pings (the
+counts unanswered pings in `ws.data`, takes a `pong` only for a ping
+still outstanding, and closes a connection that stops answering, as above. Clear the timer in `close`. WebSocket protocol pings (the
 runtime's own keep-alive) are answered by the socket itself and never reach
 `messages()`; use them to keep a connection open through proxies, and a frame
 in the contract when the server needs to know the client is still running.
@@ -10275,8 +10279,8 @@ With `nifra build`.
 Export `hostPolicy` from `backend/framework.ts`. The generated server
 entry passes it and `buildAssets` to `createWebApp`, and checks it
 before its own static files on Bun, Node and Deno, and before the Cloudflare worker's
-`ASSETS` fallback (the build then routes `public/` files through the
-worker). Vercel serves files from its CDN before the function runs, so there the policy
+`ASSETS` fallback (the build then routes every file, the client bundle included,
+through the worker). Vercel serves files from its CDN before the function runs, so there the policy
 governs pages and the API only.
 
 -

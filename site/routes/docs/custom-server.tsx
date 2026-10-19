@@ -198,8 +198,8 @@ export default function CustomServer() {
           Export <code>hostPolicy</code> from <code>backend/framework.ts</code>. The generated server
           entry passes it and <code>buildAssets</code> to <code>createWebApp</code>, and checks it
           before its own static files on Bun, Node and Deno, and before the Cloudflare worker's{" "}
-          <code>ASSETS</code> fallback (the build then routes <code>public/</code> files through the
-          worker). Vercel serves files from its CDN before the function runs, so there the policy
+          <code>ASSETS</code> fallback (the build then routes every file, the client bundle included,
+          through the worker). Vercel serves files from its CDN before the function runs, so there the policy
           governs pages and the API only.
         </li>
         <li>

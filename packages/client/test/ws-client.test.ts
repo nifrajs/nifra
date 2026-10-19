@@ -282,6 +282,38 @@ describe("WebSocket runtime behavior", () => {
     expect(errors[1]?.message).toBe("schema crashed")
   })
 
+  test("messages() delivers a frame still validating when the socket closes, then ends", async () => {
+    useFakeWebSocket()
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const slow = schema<{ n: number }>((v) => ({ value: { n: Number(field(v, "n")) } }))
+    const handle = openWebSocket(
+      "http://example.test",
+      "/ticks",
+      {
+        validateReceive: {
+          "~standard": {
+            ...slow["~standard"],
+            validate: (v) => held.then(() => slow["~standard"].validate(v)),
+          },
+        },
+      },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    socket.open()
+    const iterator = handle.messages()
+    socket.message('{"n":1}')
+    socket.message('{"n":2}')
+    socket.end()
+    release()
+    expect(await iterator.next()).toEqual({ value: { n: 1 }, done: false })
+    expect(await iterator.next()).toEqual({ value: { n: 2 }, done: false })
+    expect(await iterator.next()).toEqual({ value: undefined, done: true })
+  })
+
   test("encodes the handshake query the way an HTTP call does", () => {
     useFakeWebSocket()
     openWebSocket(

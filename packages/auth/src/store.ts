@@ -29,8 +29,9 @@ export interface SessionStore {
   delete(id: string): Promise<void>
   /**
    * Overwrite `id` only while it still holds a record, resolving whether it wrote. The check and the
-   * write must be one atomic step, such as Redis `SET key value XX` or a SQL `UPDATE ... WHERE id = ?`
-   * that reports the rows it changed. Optional: when present, a loaded session renews through it instead
+   * write must be one atomic step that also sets the new expiry, such as Redis
+   * `SET key value XX PXAT <record.expiresAt>` (a bare `XX` drops the key's TTL) or a SQL
+   * `UPDATE ... WHERE id = ?` that reports the rows it changed. Optional: when present, a loaded session renews through it instead
    * of `set`, so a logout that lands between the renewal's checks and its write wins even after the
    * logout's revocation marker is gone.
    */

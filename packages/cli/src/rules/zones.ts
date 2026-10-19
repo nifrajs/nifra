@@ -252,10 +252,14 @@ export const zoneImportRule: CheckRule = {
       if (content === undefined) return ""
       let blocker: string | undefined
       for (const { specifier } of importSites(content, targetName, facts)) {
+        // By name first, as NF-C004 judges shared code: an alias resolving it to a project file
+        // does not stop that rule from refusing it.
+        if (isServerOnlySink(specifier)) {
+          blocker = `it imports ${specifier}, a server package`
+          break
+        }
         const resolved = resolveSpecifier(target, specifier)
-        if (resolved === undefined) {
-          if (isServerOnlySink(specifier)) blocker = `it imports ${specifier}, a server package`
-        } else {
+        if (resolved !== undefined) {
           const zone = classifierFor(app).classify(resolved, specifier).zone
           if (zone === "error" || !importAllowed("shared", zone))
             blocker = `it imports ${display(ctx.root, resolved)} (${zone === "error" ? "in no zone" : `${zone} code`})`

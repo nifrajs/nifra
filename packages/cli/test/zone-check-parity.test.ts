@@ -407,6 +407,19 @@ describe("a module both sides import may be declared shared where it lives", () 
     expect(finding?.message).toEndWith(
       ". frontend/lib/rates.ts cannot be shared as it is: it imports frontend/lib/format.ts (frontend code); move what both sides need into shared/",
     )
+    // A server package's name is a blocker even where an alias answers it with a project file.
+    const aliased = app(
+      files('import { hash } from "bcrypt"\nexport const rates = [hash(5)]\n', {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "~/*": ["./*"], bcrypt: ["./shared/hash.ts"] } },
+        }),
+        "shared/hash.ts": "export const hash = (n: number) => n\n",
+      }),
+    )
+    const [aliasFinding] = await zoneFindings(aliased)
+    expect(aliasFinding?.message).toEndWith(
+      ". frontend/lib/rates.ts cannot be shared as it is: it imports bcrypt, a server package; move what both sides need into shared/",
+    )
     const reading = "export const rates = [Number(process.env.RATE_SECRET)]\n"
     const [envFinding] = await zoneFindings(app(files(reading)))
     expect(envFinding?.message).toContain(

@@ -339,6 +339,22 @@ test("--target bun with a host policy: a restricted host loads every file its pa
   }
 }, 60_000)
 
+test("--target cloudflare with a host policy sends every file request through the worker", async () => {
+  hostPolicyApp()
+  const outDir = join(projectRoot, "dist-cf-host-policy")
+  await buildTarget("cloudflare", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-cf-host-policy"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    optionImports: { hostPolicy: join(projectRoot, "backend/policy.ts") },
+  })
+  // An excluded path is answered from the CDN before the worker, where no policy runs.
+  const routes: unknown = JSON.parse(readFileSync(join(outDir, "_routes.json"), "utf8"))
+  expect(routes).toEqual({ version: 1, include: ["/*"], exclude: [] })
+}, 60_000)
+
 test("the generated entries put a host policy ahead of their static files", () => {
   const optionImports = { hostPolicy: "../backend/policy.ts" }
   const entry = (target: "bun" | "node" | "deno" | "cloudflare") =>

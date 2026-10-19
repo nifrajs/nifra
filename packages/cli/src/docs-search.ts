@@ -109,14 +109,18 @@ const MAX_LEAD_CHARS = 600
 /** The best subsection is the answer, so it may run past the section cap; a whole worked example fits. */
 const MAX_SUBSECTION_CHARS = 6000
 
+/** A code fence line: a run of three or more backticks or tildes, indented at most three spaces. */
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
+
 /** A page body's lead (before its first `###`) and its `###` subsections. Fenced code is skipped,
- * so a `###` line inside a snippet is not a heading. */
+ * so a `###` line inside a snippet is not a heading. A fence closes only on a run of its own marker
+ * at least as long, as in CommonMark, so a snippet that shows a fence does not end the one around it. */
 export function splitSubsections(body: string): { lead: string; parts: DocSection[] } {
   const parts: DocSection[] = []
   let lead = ""
   let heading: string | undefined
   let buf: string[] = []
-  let fenced = false
+  let fence: string | undefined
   const flush = (): void => {
     const text = buf.join("\n").trim()
     if (heading === undefined) lead = text
@@ -124,8 +128,16 @@ export function splitSubsections(body: string): { lead: string; parts: DocSectio
     buf = []
   }
   for (const line of body.split("\n")) {
-    if (line.startsWith("```")) fenced = !fenced
-    if (!fenced && line.startsWith("### ")) {
+    const [, run, rest = ""] = FENCE.exec(line) ?? []
+    if (run !== undefined) {
+      if (fence === undefined) {
+        // A backtick fence's info string cannot hold a backtick: such a line is inline code.
+        if (!(run.startsWith("`") && rest.includes("`"))) fence = run
+      } else if (run[0] === fence[0] && run.length >= fence.length && rest.trim() === "") {
+        fence = undefined
+      }
+    }
+    if (fence === undefined && line.startsWith("### ")) {
       flush()
       heading = line.slice(4).trim()
     } else {

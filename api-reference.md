@@ -1018,7 +1018,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ - `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
   The Eden-style proxy type for a route registry - the shared core used by both `Treaty<App>` (coupled, from `typeof app`) and `client(contract, url)` (decoupled, from a contract's `RegistryFor`).
-- **WsCallOptions** _(interface)_ - `interface WsCallOptions`
+- **WsCallOptions** _(interface)_ - `interface WsCallOptions<Out = unknown>`
+  `Out` is what the handle delivers: a `validateReceive` schema must produce that type.
 - **WsHandle** _(interface)_ - `interface WsHandle<In, Out>`
   A live typed WebSocket connection to an `app.ws()` route. `send` accepts the route's `messageSchema` input type (validated server-side at the trust boundary); received frames are typed from its `sendSchema` and JSON-parsed. Binary frames are not part of the typed contract and are ignored by `messag…
 - **client** _(function)_ - `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, options?: ClientOptions): TreatyFromRegistry<RegistryFor<C>>; }`
@@ -5447,7 +5448,7 @@ _No named exports (side-effect entrypoint)._
 - **createCspPolicy** _(function)_ - `createCspPolicy: (options: CreateCspPolicyOptions) => CspPolicy`
   Create a hash-based Content-Security-Policy for nifra documents, so a page can carry a strict CSP and still be cached.
 - **createHostPolicy** _(function)_ - `createHostPolicy: (options: HostPolicyOptions) => HostPolicy`
-  Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })` (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads): it is evaluated before the build's static files, the prerendered pages, the mounts and every page. A …
+  Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })` (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads): it is evaluated before the build's static files, the prerendered pages, the mounts and every page. On…
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`

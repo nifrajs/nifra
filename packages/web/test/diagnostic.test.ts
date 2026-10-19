@@ -205,6 +205,11 @@ test("formatBuildLog names the file, line and column a Bun build failure points 
 test("formatBuildLog keeps an absolute path outside the root, and a plain message without a position", () => {
   const log = { message: "boom", position: { file: "/elsewhere/x.ts", line: 3, column: 1 } }
   expect(formatBuildLog(log, "/app")).toBe("/elsewhere/x.ts:3:1: boom")
+  const sibling = { message: "boom", position: { file: "/app-other/x.ts", line: 1, column: 1 } }
+  expect(formatBuildLog(sibling, "/app")).toBe("/app-other/x.ts:1:1: boom")
+  // A name that only starts with two dots is still inside the root.
+  const dotted = { message: "boom", position: { file: "/app/..page.ts", line: 2, column: 5 } }
+  expect(formatBuildLog(dotted, "/app")).toBe("..page.ts:2:5: boom")
   expect(formatBuildLog(new Error("plain"), "/app")).toBe("plain")
   expect(formatBuildLog("text", "/app")).toBe("text")
 })

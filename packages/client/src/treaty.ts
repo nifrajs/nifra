@@ -135,7 +135,8 @@ type SseMethods<MethodMap> = (MethodMap extends { GET: infer G }
 /** The WS frame contract of a route (from `app.ws()`'s schemas); `never` for ordinary routes. */
 type WsOf<I> = I extends { ws: infer W extends { in: unknown; out: unknown } } ? W : never
 
-export interface WsCallOptions {
+/** `Out` is what the handle delivers: a `validateReceive` schema must produce that type. */
+export interface WsCallOptions<Out = unknown> {
   /** Sent on the handshake URL as an HTTP call sends it: an array repeats its key once per item,
    * and an `undefined` value is left out. */
   query?: Record<
@@ -155,7 +156,7 @@ export interface WsCallOptions {
    * that fails is not delivered: `onError` gets a `TypeError` naming the issues, with the frame as its
    * `cause`. Frames are still delivered in the order they arrived, an async schema included.
    */
-  validateReceive?: StandardSchemaV1
+  validateReceive?: StandardSchemaV1<unknown, Out>
 }
 
 /**
@@ -179,7 +180,7 @@ export interface WsHandle<In, Out> {
 }
 
 type WsCall<I extends RouteInfo> = (
-  options?: WsCallOptions,
+  options?: WsCallOptions<Jsonify<WsOf<I>["out"]>>,
 ) => WsHandle<WsOf<I>["in"], Jsonify<WsOf<I>["out"]>>
 
 /** Routes declared via `app.ws()` (pseudo-method `"WS"`) grow a `.ws()` handle. */

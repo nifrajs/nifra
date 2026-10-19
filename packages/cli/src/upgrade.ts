@@ -966,14 +966,43 @@ export function linkedRepositories(cwd: string): readonly LinkedSkew[] {
         }
         if (path === undefined || inside(path) || seen.has(path)) continue
         seen.add(path)
-        const installs = installedGroupPackages(path)
-          .filter((entry) => !inside(entry.path))
-          .map((entry) => ({ package: entry.package, version: entry.version, path: entry.path }))
+        const installs = loadedGroupPackages(path).filter((entry) => !inside(entry.path))
         if (installs.length > 0) found.push({ package: name, declaredIn: rel, path, installs })
       }
     }
   }
   return found
+}
+
+/**
+ * The fixed-group packages the package at real path `dir` loads: those its own `node_modules` holds,
+ * and each one it declares that is not there, from the nearest ancestor `node_modules` that has it,
+ * the way a bare import resolves from a real path. A linked workspace package's dependencies are
+ * usually hoisted to its repository root.
+ */
+function loadedGroupPackages(dir: string): LinkedGroupInstall[] {
+  const found = new Map<string, LinkedGroupInstall>()
+  for (const { package: name, path, version } of installedGroupPackages(dir)) {
+    found.set(name, { package: name, path, version })
+  }
+  for (const name of groupDependenciesAt(dir)) {
+    if (found.has(name)) continue
+    for (let base = dirname(dir); ; base = dirname(base)) {
+      let path: string | undefined
+      try {
+        path = realpathSync(join(base, "node_modules", name))
+      } catch {
+        path = undefined
+      }
+      const version = path === undefined ? undefined : packageVersionAt(path)
+      if (path !== undefined && version !== undefined) {
+        found.set(name, { package: name, path, version })
+        break
+      }
+      if (dirname(base) === base) break
+    }
+  }
+  return [...found.values()]
 }
 
 /**

@@ -23,8 +23,8 @@ export interface BuildAssetSet {
 /** One host's surface. A request on a host no rule names is not restricted. */
 export interface HostPolicyRule {
   /**
-   * The hosts this rule restricts: names compared without case and port, or a predicate given that
-   * lowercase name (`(host) => !ownHosts.has(host)` for "every host that is not ours").
+   * The hosts this rule restricts: names compared without case, port or trailing dot, or a predicate
+   * given that lowercase name (`(host) => !ownHosts.has(host)` for "every host that is not ours").
    */
   readonly hosts: readonly string[] | ((hostname: string) => boolean)
   /** Page routes these hosts render, as route patterns (`/`, `/p/:id`, `/share/*`). */
@@ -69,7 +69,7 @@ interface CompiledRule {
   readonly buildAssets: boolean
 }
 
-/** A Host header value's name: lowercase, without its port or IPv6 brackets. */
+/** A Host header value's name: lowercase, without its port, IPv6 brackets or trailing dots. */
 export function hostnameOf(host: string): string {
   const name = host.trim().toLowerCase()
   if (name.startsWith("[")) {
@@ -77,7 +77,11 @@ export function hostnameOf(host: string): string {
     return end === -1 ? name.slice(1) : name.slice(1, end)
   }
   const colon = name.lastIndexOf(":")
-  return colon === -1 || name.indexOf(":") !== colon ? name : name.slice(0, colon)
+  const bare = colon === -1 || name.indexOf(":") !== colon ? name : name.slice(0, colon)
+  // `partner.example.` is the same host as `partner.example`; kept, it escapes the rule listing it.
+  let end = bare.length
+  while (end > 0 && bare.charCodeAt(end - 1) === 46 /* . */) end--
+  return end === bare.length ? bare : bare.slice(0, end)
 }
 
 function compilePatterns(
@@ -136,6 +140,7 @@ const notFound = (): Response =>
  * Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })`
  * (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads):
  * it is evaluated before the build's static files, the prerendered pages, the mounts and every page.
+ * On Vercel the CDN answers the build's files before the function runs, so there it covers the rest.
  * A hand-written entry calls `check(request, buildAssets)` first, before its own static handler.
  *
  * ```ts

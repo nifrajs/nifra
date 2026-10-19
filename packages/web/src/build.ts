@@ -2241,12 +2241,16 @@ export async function buildTargetWith(
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
     // The app's real patterns, so a directory is only collapsed into a glob once the route table
     // proves nothing can be served beneath it.
-    // A host policy must see a public file's request, which Pages answers from the CDN when the file
-    // is excluded from the worker. Only the hashed bundle stays excluded: `buildAssets` serves it.
-    const rules = cloudflareRouteRules(
-      options.optionImports?.hostPolicy === undefined ? publicFiles : [],
-      discoverRoutes(routesDir).routes.map((route) => route.pattern),
-    )
+    // A host policy must see every file request, which Pages answers from the CDN before the worker
+    // when the path is excluded, so with one nothing is: each file costs an invocation, and the
+    // worker serves the allowed ones from ASSETS.
+    const rules =
+      options.optionImports?.hostPolicy === undefined
+        ? cloudflareRouteRules(
+            publicFiles,
+            discoverRoutes(routesDir).routes.map((route) => route.pattern),
+          )
+        : { include: ["/*"], exclude: [], omitted: [] }
     writeFileSync(
       `${outDir}/_routes.json`,
       `${JSON.stringify({ version: 1, include: rules.include, exclude: rules.exclude }, null, 2)}\n`,

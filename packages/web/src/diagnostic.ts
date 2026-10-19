@@ -39,7 +39,7 @@ export const LAST_ERROR_PATH = "/__nifra/last-error"
 function pathUnder(root: string, file: string): string {
   const inside = (base: string): string | undefined => {
     const rel = relative(base, file).replaceAll("\\", "/")
-    return rel.startsWith("..") || isAbsolute(rel) ? undefined : rel
+    return rel === ".." || rel.startsWith("../") || isAbsolute(rel) ? undefined : rel
   }
   let real: string | undefined
   try {
