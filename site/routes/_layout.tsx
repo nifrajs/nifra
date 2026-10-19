@@ -451,6 +451,16 @@ const css = `
     border-radius: var(--radius); padding: 16px 20px; margin: 24px 0; color: var(--muted); font-size: 14px;
   }
   .caveat b { color: var(--fg); }
+  /* /benchmarks prose: the full column, in the body face, set like the docs pages. */
+  .bench p.lead { max-width: none; margin: 0 0 16px; color: var(--soft); font-size: 16px; line-height: 1.7; overflow-wrap: break-word; }
+  .bench > p.note { margin: 0 0 12px; }
+  .bench .note, .bench .caveat { line-height: 1.7; overflow-wrap: break-word; }
+  .bench .caveat { color: var(--soft); font-size: 15px; }
+  .bench :not(pre) > code {
+    background: var(--green-soft); border: 1px solid color-mix(in oklch, var(--color-accent) 18%, transparent);
+    border-radius: 6px; padding: 1px 6px; font-size: 0.875em; color: var(--green-2); overflow-wrap: anywhere;
+    -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  }
   .prose { width: 100%; max-width: 760px; }
   .prose > h1:not(.page) {
     font-size: clamp(30px, 5vw, 44px); line-height: 1.1; letter-spacing: -0.02em;
