@@ -1,5 +1,22 @@
 # @nifrajs/cli
 
+## 5.5.1
+
+### Patch Changes
+
+- a0b1ab4: NF-C007 no longer reports a route handler whose plain return is a call to an imported function, such as `if (!id) return new Response("bad", { status: 400 }); return toShelfRow(id)`. The call keeps the route typed unless the imported module, read from the project, returns a `Response`.
+- Updated dependencies [a0b1ab4]
+  - @nifrajs/core@5.5.1
+  - @nifrajs/client@5.5.1
+  - @nifrajs/i18n@5.5.1
+  - @nifrajs/mcp@5.5.1
+  - @nifrajs/schema@5.5.1
+  - @nifrajs/testing@5.5.1
+  - @nifrajs/web@5.5.1
+  - @nifrajs/agent-review@5.5.1
+  - @nifrajs/mcp-db@5.5.1
+  - @nifrajs/runner@5.5.1
+
 ## 5.5.0
 
 ### Minor Changes

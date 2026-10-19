@@ -1,5 +1,15 @@
 # @nifrajs/coding-agent
 
+## 5.5.1
+
+### Patch Changes
+
+- @nifrajs/agent@5.5.1
+  - @nifrajs/jobs@5.5.1
+  - @nifrajs/agent-protocol@5.5.1
+  - @nifrajs/agent-review@5.5.1
+  - @nifrajs/pi@5.5.1
+
 ## 5.5.0
 
 ### Patch Changes

@@ -1,5 +1,9 @@
 # @nifrajs/events
 
+## 5.5.1
+
+No changes in this release.
+
 ## 5.5.0
 
 ### Patch Changes

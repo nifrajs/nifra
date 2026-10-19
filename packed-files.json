@@ -422,6 +422,7 @@
     "dist/i18n-check.d.ts.map",
     "dist/i18n-check.js",
     "dist/i18n-check.js.map",
+    "dist/index.d.ts",
     "dist/init-agents.d.ts",
     "dist/init-agents.d.ts.map",
     "dist/init-agents.js",
