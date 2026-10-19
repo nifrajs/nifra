@@ -171,21 +171,21 @@
         {
           "name": "Nifra",
           "version": "5.5.0",
-          "getUsers": "118,674",
-          "postUsers": "100,416",
+          "getUsers": "115,570",
+          "postUsers": "98,368",
           "nifra": true
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "getUsers": "120,478",
-          "postUsers": "99,745"
+          "getUsers": "116,886",
+          "postUsers": "96,739"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
-          "getUsers": "112,023",
-          "postUsers": "93,357"
+          "getUsers": "110,006",
+          "postUsers": "91,230"
         }
       ]
     },

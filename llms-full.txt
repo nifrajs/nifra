@@ -237,7 +237,7 @@ to full-stack later without a rewrite.
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
 99% of Elysia on `GET /users/:id` and
-101% on the validated `POST` - and
+102% on the validated `POST` - and
 **level with Fastify on Node** (102% of Fastify on GET,
 99% on the validated `POST`), with Elysia, Hono,
 and Express behind. On **Deno** it runs at 98% of Elysia on
