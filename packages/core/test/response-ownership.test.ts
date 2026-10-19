@@ -149,6 +149,35 @@ for (const lane of LANES) {
         await close()
       }
     })
+    for (const readFirst of [false, true]) {
+      test(`a replaced c.text response cannot leak cookies on reuse (first body read: ${readFirst})`, async () => {
+        let shared: Response | undefined
+        const app = server({ logger: silentLogger })
+          .use(nodeDirect())
+          .use(responseObserver())
+          .onResponseBody((body, _headers, _req, status) =>
+            status === 200 ? `${body}!` : undefined,
+          )
+          .get("/cached", (c) => {
+            shared ??= c.text("payload")
+            if (c.header("x-user") === "alice") c.set.cookie("sid", "alice-session")
+            return shared
+          })
+        const { send, close } = lane.open(app)
+        try {
+          const alice = await app.fetch(request("http://t", "/cached", "alice"))
+          expect(alice.headers.get("set-cookie")).toContain("sid=alice-session")
+          if (readFirst) expect(await alice.text()).toBe("payload!")
+          const bob = await send("/cached", "bob")
+          expect(bob.status).toBe(500)
+          expect(bob.headers.getSetCookie()).toEqual([])
+          expect(await bob.json()).toEqual({ ok: false, error: "internal_error" })
+          if (!readFirst) expect(await alice.text()).toBe("payload!")
+        } finally {
+          await close()
+        }
+      })
+    }
   })
 }
 

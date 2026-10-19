@@ -233,11 +233,13 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 35.6,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
-  "nifra-idempotency": 39.9,
+  // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
+  // Add 0.05 KiB only to the three caps the security fix crosses.
+  "nifra-idempotency": 39.95,
   "nifra-effect-ledger": 37.6,
-  "nifra-mcp": 35.8,
+  "nifra-mcp": 35.85,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 36.4,
+  "nifra-sse": 36.45,
   "nifra-valibot": 36.6,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,

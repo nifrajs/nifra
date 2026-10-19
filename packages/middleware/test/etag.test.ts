@@ -125,6 +125,35 @@ describe("etag", () => {
     expect(await second.text()).toBe("")
   })
 
+  test("text and raw UTF-8 bodies revalidate only when their bytes match", async () => {
+    const app = server()
+      .use(etag())
+      .get("/", (c) => {
+        const text = c.header("x-text") ?? "é"
+        return c.header("x-raw") === "1"
+          ? new Response(new TextEncoder().encode(text), {
+              headers: { "content-type": "text/plain;charset=utf-8" },
+            })
+          : c.text(text)
+      })
+    const first = await app.fetch(new Request("http://x/", { headers: { "x-text": "Ã©" } }))
+    const tag = first.headers.get("etag")!
+    expect(await first.text()).toBe("Ã©")
+    const changed = await app.fetch(
+      new Request("http://x/", {
+        headers: { "x-raw": "1", "if-none-match": tag },
+      }),
+    )
+    expect(changed.status).toBe(200)
+    expect(await changed.text()).toBe("é")
+    const same = await app.fetch(
+      new Request("http://x/", {
+        headers: { "x-text": "Ã©", "x-raw": "1", "if-none-match": tag },
+      }),
+    )
+    expect(same.status).toBe(304)
+  })
+
   test("strong ETags use a collision-resistant digest", async () => {
     const app = server()
       .use(etag({ weak: false }))

@@ -1,12 +1,38 @@
 export type Fingerprint = (body: string | Uint8Array) => string
 
-/** 32-bit FNV-1a over a string's UTF-16 units or over bytes, as hex: no string is encoded first. */
+/** 32-bit FNV-1a over UTF-8 bytes, as hex; strings are encoded inline without a buffer copy. */
 export function fnv1a(body: string | Uint8Array): string {
   let h = 0x811c9dc5
   if (typeof body === "string") {
     for (let i = 0; i < body.length; i++) {
-      h ^= body.charCodeAt(i)
-      h = Math.imul(h, 0x01000193)
+      let code = body.charCodeAt(i)
+      if (code < 0x80) {
+        h = Math.imul(h ^ code, 0x01000193)
+        continue
+      }
+      if (code < 0x800) {
+        h = Math.imul(h ^ (0xc0 | (code >>> 6)), 0x01000193)
+        h = Math.imul(h ^ (0x80 | (code & 0x3f)), 0x01000193)
+        continue
+      }
+      if (code >= 0xd800 && code <= 0xdfff) {
+        const low = body.charCodeAt(i + 1)
+        if (code <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) {
+          code = 0x10000 + ((code - 0xd800) << 10) + low - 0xdc00
+          i++
+        } else {
+          // Match TextEncoder/Response: an unpaired surrogate becomes U+FFFD.
+          code = 0xfffd
+        }
+      }
+      if (code < 0x10000) {
+        h = Math.imul(h ^ (0xe0 | (code >>> 12)), 0x01000193)
+      } else {
+        h = Math.imul(h ^ (0xf0 | (code >>> 18)), 0x01000193)
+        h = Math.imul(h ^ (0x80 | ((code >>> 12) & 0x3f)), 0x01000193)
+      }
+      h = Math.imul(h ^ (0x80 | ((code >>> 6) & 0x3f)), 0x01000193)
+      h = Math.imul(h ^ (0x80 | (code & 0x3f)), 0x01000193)
     }
   } else {
     for (let i = 0; i < body.length; i++) {

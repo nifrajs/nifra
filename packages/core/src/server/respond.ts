@@ -385,8 +385,9 @@ export function taggedResponseOwner(response: Response): object | undefined {
     : undefined
 }
 
-// The string each `c.text()` response was built from, kept once an app reads bodies on the body tier.
-const RESIDENT_TEXTS = new WeakMap<Response, string>()
+// The text each c.text() response was built from; null once adopted by the body tier. A hook can
+// substitute its body without consuming the original stream, but that source is still single-use.
+const RESIDENT_TEXTS = new WeakMap<Response, string | null>()
 let residentTextsRecorded = false
 
 /** From now on, keep the string of each `c.text()` response for the body tier. */
@@ -400,6 +401,11 @@ export function residentText(response: Response, body: string): Response {
   return response
 }
 
+/** Whether the actual body, or its body-tier substitute, has already been handed to a request. */
+export function responseBodyUsed(response: Response): boolean {
+  return response.bodyUsed || RESIDENT_TEXTS.get(response) === null
+}
+
 /** `response` tagged with the text it was built from, so this app's body-tier hooks get the string. */
 function withResidentText(
   response: Response,
@@ -408,7 +414,9 @@ function withResidentText(
 ): Response {
   if (owner === undefined) return response
   const text = RESIDENT_TEXTS.get(source)
-  return text === undefined || taggedResponseBody(response) !== undefined
+  if (text === undefined || text === null) return response
+  RESIDENT_TEXTS.set(source, null)
+  return taggedResponseBody(response) !== undefined
     ? response
     : markTaggedResponse(response, text, owner)
 }
@@ -612,7 +620,7 @@ export function toResponse(
     )
   }
   if (result instanceof Response) {
-    if (result.bodyUsed) {
+    if (responseBodyUsed(result)) {
       return toResponse(SENT_BODY, EMPTY_RESPONSE_CONTROLS, false, statics, request)
     }
     return withResidentText(

@@ -3,10 +3,50 @@ import { createHash } from "node:crypto"
 import { fingerprintFor, fnv1a, weakFingerprint } from "../src/_fingerprint.ts"
 
 describe("weak fingerprints", () => {
-  test("FNV-1a reads a string's units as it reads the same ASCII bytes", () => {
+  test("FNV-1a preserves its ASCII byte fingerprints", () => {
     expect(fnv1a("a")).toBe("e40c292c")
     expect(fnv1a("hello")).toBe(fnv1a(new TextEncoder().encode("hello")))
     expect(fnv1a("hello")).not.toBe(fnv1a("hellp"))
+  })
+
+  test("portable fingerprints hash UTF-8, including paired and unpaired surrogates", () => {
+    const encode = new TextEncoder()
+    const values = [
+      "",
+      "é",
+      "Ã©",
+      "日本",
+      "😀",
+      "\u007f",
+      "\u0080",
+      "\u07ff",
+      "\u0800",
+      "\ud7ff",
+      "\ue000",
+      "\uffff",
+      "\ud800",
+      "\udfff",
+      "\ud800A",
+      "\udc00\ud800",
+      "\ud800\ud800",
+      "\udbff\udfff",
+    ]
+    let seed = 12345
+    for (let i = 0; i < 200; i++) {
+      let value = ""
+      for (let j = 0; j < 16; j++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+        value += String.fromCharCode(seed & 0xffff)
+      }
+      values.push(value)
+    }
+    for (const runtime of [{}, { Deno: {} }]) {
+      const fingerprint = fingerprintFor(runtime)
+      for (const value of values) {
+        expect(fingerprint(value)).toBe(fnv1a(encode.encode(value)))
+      }
+      expect(fingerprint("Ã©")).not.toBe(fingerprint(encode.encode("é")))
+    }
   })
 
   test("Bun.hash is taken first, and called on Bun", () => {

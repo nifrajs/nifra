@@ -121,6 +121,38 @@ describe("compression()", () => {
     }
   })
 
+  test("a compressed c.text response is single-use and never replays another user's cookie", async () => {
+    for (const network of [false, true]) {
+      let shared: Response | undefined
+      const app = server()
+        .use(compression())
+        .get("/", (c) => {
+          shared ??= c.text(big)
+          if (c.header("x-user") === "alice") c.set.cookie("sid", "alice-session")
+          return shared
+        })
+      const running = network ? app.listen(0, { hostname: "127.0.0.1" }) : undefined
+      const send = (user: string) => {
+        const req = new Request(`http://127.0.0.1:${running?.port ?? 80}/`, {
+          headers: { ...GZIP, "x-user": user },
+        })
+        return network ? fetch(req) : app.fetch(req)
+      }
+      try {
+        const alice = await send("alice")
+        expect(alice.headers.get("set-cookie")).toContain("sid=alice-session")
+        expect(network ? await alice.text() : await gunzip(alice)).toBe(big)
+        const bob = await send("bob")
+        expect(bob.status).toBe(500)
+        expect(bob.headers.getSetCookie()).toEqual([])
+        expect(bob.headers.get("content-encoding")).toBeNull()
+        expect(await bob.json()).toEqual({ ok: false, error: "internal_error" })
+      } finally {
+        if (running !== undefined) await app.stop()
+      }
+    }
+  })
+
   test("compresses a handler-returned raw streamed Response without buffering it", async () => {
     const app = server()
       .use(compression())
