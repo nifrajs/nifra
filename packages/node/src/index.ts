@@ -1296,10 +1296,14 @@ const closingAfterResponses = new WeakSet<Duplex>()
  * Node queues pipelined responses and hands the socket to the next one as each finishes, so waiting
  * on whichever holds it walks the queue in order. One that closes without finishing never hands the
  * socket on, so nothing behind it can be written either.
+ *
+ * A request the error cut off mid-body (a client EOF raises `HPE_INVALID_EOF_STATE`) is not waited
+ * on unless its handler already ended the response: anything reading that body waits for bytes that
+ * will never come, so only destroying the socket - Node's own default - fails the read.
  */
 function closeAfterResponses(socket: ResponseSocket): void {
   const response = socket._httpMessage
-  if (response == null) {
+  if (response == null || (!response.writableEnded && !response.req.complete)) {
     socket.destroy()
     return
   }
@@ -2331,6 +2335,12 @@ class LazyNodeRequestSource implements NodeRequestSource {
   /** Listen for the body once and settle with `map` of its bytes, which later readers share. */
   private collectBody<T>(map: (body: Buffer) => T): Promise<T> {
     const read = new Promise<T>((resolve, reject) => {
+      // A request torn down before the first read already emitted `aborted`/`close`; listeners
+      // attached now would wait forever.
+      if (this.nodeReq.destroyed) {
+        reject(new Error("request closed before body completed"))
+        return
+      }
       let first: Buffer | undefined
       let chunks: Buffer[] | undefined
       let total = 0
