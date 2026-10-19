@@ -26,6 +26,7 @@ packages/web/test/.tmp-*
 /AUDIT*.md
 /REPOSITORY_AUDIT.md
 /*FEEDBACK*.md
+/*_report.md
 
 # Benchmark RESULTS - generated locally, never committed (numbers move with machine load; see
 # bench/README.md). The benchmark CODE under bench/ stays tracked.
