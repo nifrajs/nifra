@@ -1332,21 +1332,23 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     staticOption === undefined
       ? undefined
       : ("dir" in staticOption ? [staticOption] : staticOption).map(staticStateOf)
+  const settled = (): void => {
+    inFlight -= 1
+  }
   const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
     inFlight += 1
     try {
       const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
       if (handled instanceof Promise) {
-        // `catch` before `finally`: a `finally` alone forwards the rejection to a promise nothing
-        // observes, and Node terminates the process on an unhandled rejection by default. Every
-        // writer already ends and reports its own failures (`failAndReport`), so anything arriving
-        // here is a fault no response can still be built from - the connection is the only thing
-        // left to end.
-        void handled
-          .catch((error: unknown) => failAndReport(nodeRes, error))
-          .finally(() => {
-            inFlight -= 1
-          })
+        // The rejection arm is required: Node terminates the process on an unhandled rejection by
+        // default. Every writer already ends and reports its own failures (`failAndReport`), so
+        // anything arriving here is a fault no response can still be built from - the connection is
+        // the only thing left to end. One `then`, not `catch` + `finally`: every async response
+        // pays for each extra promise and microtask.
+        handled.then(settled, (error: unknown) => {
+          inFlight -= 1
+          failAndReport(nodeRes, error)
+        })
         return
       }
       inFlight -= 1
@@ -2087,6 +2089,15 @@ function parseJsonBytes(bytes: Uint8Array): unknown {
   return JSON.parse(buffer.toString("utf8")) as unknown
 }
 
+const bodyItself = (body: Buffer): Buffer => body
+
+const parsedWithLength = (
+  body: Buffer,
+): { readonly value: unknown; readonly byteLength: number } => ({
+  value: JSON.parse(body.toString("utf8")) as unknown,
+  byteLength: body.byteLength,
+})
+
 /** A one-chunk stream replaying already-buffered bytes. `highWaterMark: 0` keeps construction free
  * of a pull, and the copy keeps the shared buffer out of a consumer's reach. */
 function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -2115,6 +2126,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private requestValue: Request | undefined
   private consumedBody: Buffer | undefined
   private readBodyPromise: Promise<Buffer> | undefined
+  private mappedRead: Promise<unknown> | undefined
   private rawReaders: NodeRawBodyReaders | undefined
   private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
@@ -2189,10 +2201,15 @@ class LazyNodeRequestSource implements NodeRequestSource {
         byteLength: buffer.byteLength,
       }))
     }
-    return this.readNodeBody().then((buffer) => ({
-      value: JSON.parse(buffer.toString("utf8")) as unknown,
-      byteLength: buffer.byteLength,
-    }))
+    // The first read parses as the body settles: one promise from socket to value, not two.
+    if (
+      this.consumedBody === undefined &&
+      this.readBodyPromise === undefined &&
+      this.mappedRead === undefined
+    ) {
+      return this.collectBody(parsedWithLength)
+    }
+    return this.readNodeBody().then(parsedWithLength)
   }
 
   /**
@@ -2282,19 +2299,42 @@ class LazyNodeRequestSource implements NodeRequestSource {
   }
 
   // Buffer the request body once. A single-chunk body (the common case) skips the array + `concat`;
-  // a client abort / socket error rejects (via `error`/`aborted`), which the body-cap callers catch
+  // a client abort / socket error rejects (via `error`/`close`), which the body-cap callers catch
   // and map to a flat 400.
   private readNodeBody(): Promise<Buffer> {
     if (this.consumedBody !== undefined) return Promise.resolve(this.consumedBody)
-    this.readBodyPromise ??= new Promise<Buffer>((resolve, reject) => {
+    if (this.readBodyPromise === undefined) {
+      const mapped = this.mappedRead
+      if (mapped === undefined) {
+        this.readBodyPromise = this.collectBody(bodyItself)
+      } else {
+        // A raw reader arriving mid-read waits on that read: listening now would miss earlier
+        // chunks. A failed parse still consumed the body, so either outcome yields the bytes.
+        const bytesOf = (reason?: unknown): Buffer => {
+          if (this.consumedBody !== undefined) return this.consumedBody
+          throw reason
+        }
+        this.readBodyPromise = mapped.then(bytesOf, bytesOf)
+      }
+    }
+    return this.readBodyPromise
+  }
+
+  /** Listen for the body once and settle with `map` of its bytes, which later readers share. */
+  private collectBody<T>(map: (body: Buffer) => T): Promise<T> {
+    const read = new Promise<T>((resolve, reject) => {
       let first: Buffer | undefined
       let chunks: Buffer[] | undefined
       let total = 0
       const finish = (): void => {
         cleanup()
-        this.consumedBody =
-          chunks === undefined ? (first ?? EMPTY_BUFFER) : Buffer.concat(chunks, total)
-        resolve(this.consumedBody)
+        const body = chunks === undefined ? (first ?? EMPTY_BUFFER) : Buffer.concat(chunks, total)
+        this.consumedBody = body
+        try {
+          resolve(map(body))
+        } catch (error) {
+          reject(error)
+        }
       }
       const fail = (err: Error): void => {
         cleanup()
@@ -2310,26 +2350,25 @@ class LazyNodeRequestSource implements NodeRequestSource {
         }
         total += buffer.byteLength
       }
-      const onAborted = (): void => fail(new Error("request aborted"))
       const cleanup = (): void => {
         this.nodeReq.removeListener("data", onData)
         this.nodeReq.removeListener("end", finish)
         this.nodeReq.removeListener("error", fail)
-        this.nodeReq.removeListener("aborted", onAborted)
         this.nodeReq.removeListener("close", onClose)
       }
-      // `aborted` is deprecated on newer Node; `close`-without-`end` is the forward-compatible signal
-      // that the connection dropped mid-body. Either way the read rejects instead of hanging forever.
+      // `close` without `end` is the signal that the connection dropped mid-body (the deprecated
+      // `aborted` precedes it), so the read rejects instead of hanging forever.
       const onClose = (): void => {
         if (this.consumedBody === undefined) fail(new Error("request closed before body completed"))
       }
+      // `on`, not `once`: `cleanup` removes all of them on settling, and `once` wraps each listener.
       this.nodeReq.on("data", onData)
-      this.nodeReq.once("end", finish)
-      this.nodeReq.once("error", fail)
-      this.nodeReq.once("aborted", onAborted)
-      this.nodeReq.once("close", onClose)
+      this.nodeReq.on("end", finish)
+      this.nodeReq.on("error", fail)
+      this.nodeReq.on("close", onClose)
     })
-    return this.readBodyPromise
+    if (map !== bodyItself) this.mappedRead = read
+    return read
   }
 }
 
