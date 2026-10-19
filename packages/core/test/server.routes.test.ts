@@ -114,6 +114,24 @@ describe("audit 2026-06: param/query/body parity fixes", () => {
     expect(await res.json()).toEqual({ name: "ada l", tag: ["a", "b"] })
   })
 
+  test("a urlencoded media type is matched in any case and with padding before its parameters", async () => {
+    const app = server().post("/f", { body: passThrough }, (c) => c.body)
+    for (const contentType of [
+      "Application/X-WWW-Form-Urlencoded",
+      "application/x-www-form-urlencoded ; charset=UTF-8",
+      " application/x-www-form-urlencoded",
+    ]) {
+      const res = await app.fetch(
+        new Request("http://t/f", {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body: "a=1",
+        }),
+      )
+      expect([contentType, res.status, await res.json()]).toEqual([contentType, 200, { a: "1" }])
+    }
+  })
+
   test("urlencoded body respects the byte cap (413, never buffered past it)", async () => {
     const echo = {
       "~standard": {
