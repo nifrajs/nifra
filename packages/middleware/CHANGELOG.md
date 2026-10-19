@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- 4af4b3b: `etag()` now answers `HEAD` like `GET`: a `HEAD` response carries the `ETag` its `GET` would, and a matching `If-None-Match` gets `304 Not Modified`.
 - db2546c: `compression()` adds `Vary: Accept-Encoding` to the identity response it sends a client that does not accept gzip, whenever it would have compressed that response for one that does. Only the gzip response carried it before, so a shared cache could store the identity bytes and replay them to gzip-capable clients. A response that is never compressed (too small, an incompressible type, already encoded, a range, or `no-transform`) still gets no `Vary`.
 - @nifrajs/schema@5.5.0
 
