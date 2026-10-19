@@ -16525,8 +16525,9 @@ an application or object-storage path with its own validation policy.
 Every file carries `Accept-Ranges: bytes`. A file up to 256 KiB is read whole and carries a strong
 `ETag` from exactly the bytes served: 128 bits of their SHA-256, the same for the same bytes on every
 instance and on `servePublicDir`. A replacement that keeps a file's size and timestamps still changes
-its tag. The tag is remembered per file version (device, inode, size, mtime and ctime), and a file
-over 24 KiB reuses it without hashing when a second stat after the read shows the same version. A
+its tag. The tag is remembered per file version (device, inode, size, mtime and ctime): a file over
+4 KiB reuses it without hashing when a second stat after the read shows the same version, and a
+`HEAD` or a `304` for that tag is answered from the stat without reading the file at all. A
 larger file streams without an automatic `ETag`, because an open file can be overwritten after any
 separate hash pass: an `If-Range` request for it gets the whole file, and an unguarded range still
 works. Explicit validator headers remain the caller's responsibility and must describe an immutable

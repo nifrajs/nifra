@@ -1143,26 +1143,34 @@ async function readStatic(
       const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
       if (cacheControl !== undefined) headers["cache-control"] = cacheControl
     }
-    // The whole file, when tagging it had to read it: the response is then served from these bytes.
-    let whole: Uint8Array | undefined
-    if (headers.etag === undefined) {
-      if (stat.size <= STATIC_BUFFERED_MAX) {
-        whole = await readPinned(opened, 0, stat.size)
-        headers.etag = await STATIC_TAGS.ofSnapshot(realFile, stat, whole, () => opened.stat())
-      }
-    }
     const streamed = stat.size > STATIC_BUFFERED_MAX
     const modified = streamed ? streamedLastModifiedOf(stat) : lastModifiedOf(stat)
     // A date this reader chose for a streamed body is weak; a caller's own stays theirs to vouch for.
     const weakDate = streamed && headers["last-modified"] === undefined
     if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
-    // Custom validators are response headers, not decoration: compare the exact values the client saw.
-    const etag = headers.etag
     const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
     const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
-    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
     const ifNoneMatch = headerOf(requestHeaders, "if-none-match")
     const ifModifiedSince = headerOf(requestHeaders, "if-modified-since")
+    // The whole file, when tagging it had to read it: the response is then served from these bytes.
+    let whole: Uint8Array | undefined
+    if (headers.etag === undefined && !streamed) {
+      // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
+      // answers it from the stat alone: a write since that tag would show in the stat.
+      const known = STATIC_TAGS.cached(realFile, stat)
+      if (
+        known !== undefined &&
+        (method === "HEAD" || isNotModified(ifNoneMatch, ifModifiedSince, known, lastModified))
+      ) {
+        headers.etag = known
+      } else {
+        whole = await readPinned(opened, 0, stat.size)
+        headers.etag = await STATIC_TAGS.ofSnapshot(realFile, stat, whole, () => opened.stat())
+      }
+    }
+    // Custom validators are response headers, not decoration: compare the exact values the client saw.
+    const etag = headers.etag
+    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
     if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
       await handle.close()
       delete headers["content-length"]

@@ -199,28 +199,30 @@ export function servePublicDir(
         // Set explicitly rather than inferred from the body, so HEAD (a null body) carries it too.
         "content-type": contentTypeOf(resolvedFile),
       })
-      // The whole file, when tagging it had to read it: the response is then served from these bytes.
-      let whole: Uint8Array<ArrayBuffer> | undefined
-      let etag: string | undefined
-      if (size <= CONTENT_SNAPSHOT_MAX) {
-        whole = await readPinned(file, 0, size)
-        etag = await TAGS.ofSnapshot(resolvedFile, stat, whole, () => file.stat())
-      }
-      if (etag !== undefined) headers.set("etag", etag)
-      const lastModified = whole === undefined ? streamedLastModifiedOf(stat) : lastModifiedOf(stat)
+      const snapshot = size <= CONTENT_SNAPSHOT_MAX
+      const lastModified = snapshot ? lastModifiedOf(stat) : streamedLastModifiedOf(stat)
       if (lastModified !== undefined) {
         headers.set("last-modified", new Date(lastModified).toUTCString())
       }
       const head = request.method === "HEAD"
-
+      const ifNoneMatch = request.headers.get("if-none-match")
+      const ifModifiedSince = request.headers.get("if-modified-since")
+      // The whole file, when tagging it had to read it: the response is then served from these bytes.
+      let whole: Uint8Array<ArrayBuffer> | undefined
+      // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
+      // answers it from the stat alone: a write since that tag would show in the stat.
+      let etag = snapshot ? TAGS.cached(resolvedFile, stat) : undefined
       if (
-        isNotModified(
-          request.headers.get("if-none-match"),
-          request.headers.get("if-modified-since"),
-          etag,
-          lastModified,
-        )
+        snapshot &&
+        (etag === undefined ||
+          !(head || isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)))
       ) {
+        whole = await readPinned(file, 0, size)
+        etag = await TAGS.ofSnapshot(resolvedFile, stat, whole, () => file.stat())
+      }
+      if (etag !== undefined) headers.set("etag", etag)
+
+      if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
         headers.delete("content-type")
         return new Response(null, { status: 304, headers })
       }
@@ -233,7 +235,7 @@ export function servePublicDir(
         ifRangeAllowsPartial(
           request.headers.get("if-range"),
           etag,
-          whole === undefined ? undefined : lastModified,
+          snapshot ? lastModified : undefined,
         )
           ? parseByteRange(rangeHeader, size)
           : ({ kind: "none" } as const)

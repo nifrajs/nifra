@@ -211,6 +211,22 @@ export function verifyStaticFilePolicy(
         throw new Error("restat")
       }
       expect(await tags.ofSnapshot("/t", small, file("other").bytes, unread)).toBe(sha("other"))
+      // The cut sits at 4 KiB unless the tagger is given its own.
+      const now = () => MODIFIED + 10_000
+      for (const [cutTags, cut] of [
+        [contentTags(createHash, { now }), 4 * 1024],
+        [contentTags(createHash, { now, rehashMax: 64 }), 64],
+      ] as const) {
+        for (const length of [cut, cut + 1]) {
+          const sized = version({ size: length })
+          cutTags.ofBytes(`/cut${length}`, sized, file("a".repeat(length)).bytes)
+          const again = file("b".repeat(length)).bytes
+          const restat = length > cut ? async () => sized : unread
+          expect(await cutTags.ofSnapshot(`/cut${length}`, sized, again, restat)).toBe(
+            sha((length > cut ? "a" : "b").repeat(length)),
+          )
+        }
+      }
     })
 
     test("contentTags reads a file whole in chunks, once per version however many ask", async () => {

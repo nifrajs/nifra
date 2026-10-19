@@ -228,6 +228,12 @@ export interface ContentTagOptions {
   readonly limit?: number
   /** The clock compared with a file's ctime (default `Date.now`). */
   readonly now?: () => number
+  /**
+   * Largest snapshot {@link ContentTags.ofSnapshot} hashes on every request (default 4 KiB). A larger
+   * one takes the tag remembered for its version once a restat shows that version. Raise it where a
+   * stat costs more than hashing, as on Deno.
+   */
+  readonly rehashMax?: number
 }
 
 /**
@@ -242,9 +248,9 @@ export const CONTENT_TAG_MAX = 256 * 1024 * 1024
 /** Static HTTP readers tag only a whole, bounded snapshot; streamed inodes can change after hashing. */
 export const CONTENT_SNAPSHOT_MAX = 256 * 1024
 
-// Hashing this much costs about one fstat, ~9 us on Bun and Node (SHA-256 at ~2.7 GB/s on an M3 Max):
-// a larger snapshot is cheaper to prove unchanged than to hash again.
-const SNAPSHOT_REHASH_MAX = 24 * 1024
+// Past this, a restat proves a remembered version unchanged faster than hashing it again: served over
+// HTTP on Node and Bun, an 8 KiB file is 1.02-1.05x faster that way, a 4 KiB one no faster.
+const SNAPSHOT_REHASH_MAX = 4 * 1024
 
 const READ_CHUNK = 1024 * 1024
 // A file changed this recently can change again within its ctime's granularity (a jiffy on ext4, a
@@ -272,6 +278,7 @@ export function contentTags(
 ): ContentTags {
   const limit = options.limit ?? 8192
   const now = options.now ?? Date.now
+  const rehashMax = options.rehashMax ?? SNAPSHOT_REHASH_MAX
   let instance: Uint8Array | undefined
   const known = new Map<string, FileVersion & { readonly tag: string }>()
   const reading = new Map<
@@ -325,7 +332,7 @@ export function contentTags(
     cached,
     ofBytes,
     async ofSnapshot(path, version, bytes, restat) {
-      if (bytes.byteLength > SNAPSHOT_REHASH_MAX) {
+      if (bytes.byteLength > rehashMax) {
         const tag = cached(path, version)
         // A remembered version is settled, so any write since its stat would show in the restat.
         if (tag !== undefined && cached(path, await restat()) === tag) return tag

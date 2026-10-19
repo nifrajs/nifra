@@ -1,6 +1,16 @@
 import { afterAll, afterEach, beforeAll, expect, setSystemTime, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
@@ -614,6 +624,62 @@ test("only whole snapshots keep a content tag across same-size replacements", as
       }
     }
   } finally {
+    setSystemTime()
+  }
+})
+
+/** Counts reads through every `FileHandle` until `restore()`. */
+async function countFileReads(): Promise<{ readonly count: () => number; restore(): void }> {
+  const probe = await open(import.meta.path)
+  const proto = Object.getPrototypeOf(probe)
+  await probe.close()
+  const read = proto.read
+  let reads = 0
+  proto.read = function (this: unknown, ...args: unknown[]) {
+    reads++
+    return read.apply(this, args)
+  }
+  return {
+    count: () => reads,
+    restore: () => {
+      proto.read = read
+    },
+  }
+}
+
+test("a HEAD or a 304 of a remembered version reads none of the file", async () => {
+  // Ten seconds on, the file written here looks settled, so its tag and date are both kept.
+  setSystemTime(new Date(Date.now() + 10_000))
+  const reads = await countFileReads()
+  try {
+    const base = await startWithStatic()
+    const body = "k".repeat(8 * 1024)
+    const path = join(dir, "remembered.txt")
+    await writeFile(path, body)
+    const url = `${base}/assets/remembered.txt`
+    const first = await fetch(url)
+    const etag = first.headers.get("etag") ?? ""
+    const dated = first.headers.get("last-modified") ?? ""
+    expect([etag, await first.text()]).toEqual([tagOf(body), body])
+    const before = reads.count()
+    const head = await fetch(url, { method: "HEAD" })
+    const matched = await fetch(url, { headers: { "if-none-match": etag } })
+    const unmodified = await fetch(url, { headers: { "if-modified-since": dated } })
+    expect([
+      head.status,
+      head.headers.get("etag"),
+      head.headers.get("content-length"),
+      matched.status,
+      matched.headers.get("etag"),
+      unmodified.status,
+      reads.count() - before,
+    ]).toEqual([200, etag, String(body.length), 304, etag, 304, 0])
+    // Any other request still sends, and so reads, the snapshot it tags.
+    const stale = await fetch(url, { headers: { "if-none-match": '"other"' } })
+    expect([stale.status, await stale.text()]).toEqual([200, body])
+    expect(reads.count()).toBeGreaterThan(before)
+  } finally {
+    reads.restore()
     setSystemTime()
   }
 })

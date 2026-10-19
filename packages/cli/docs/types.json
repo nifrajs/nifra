@@ -3770,7 +3770,7 @@
     "name": "ContentTagOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ContentTagOptions {\n    /** Most tags remembered at once (default 8192); past it the earliest is forgotten. */\n    readonly limit?: number;\n    /** The clock compared with a file's ctime (default `Date.now`). */\n    readonly now?: () => number;\n}"
+    "signature": "export interface ContentTagOptions {\n    /** Most tags remembered at once (default 8192); past it the earliest is forgotten. */\n    readonly limit?: number;\n    /** The clock compared with a file's ctime (default `Date.now`). */\n    readonly now?: () => number;\n    /**\n     * Largest snapshot {@link ContentTags.ofSnapshot} hashes on every request (default 4 KiB). A larger\n     * one takes the tag remembered for its version once a restat shows that version. Raise it where a\n     * stat costs more than hashing, as on Deno.\n     */\n    readonly rehashMax?: number;\n}"
   },
   {
     "name": "ContentTags",

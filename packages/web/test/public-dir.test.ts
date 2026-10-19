@@ -1,6 +1,16 @@
 import { expect, setSystemTime, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises"
 import { connect, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
@@ -616,6 +626,63 @@ test("only whole snapshots have validators, including after a same-size replacem
       }
     })
   } finally {
+    setSystemTime()
+  }
+})
+
+/** Counts reads through every `FileHandle` until `restore()`. */
+async function countFileReads(): Promise<{ readonly count: () => number; restore(): void }> {
+  const probe = await open(import.meta.path)
+  const proto = Object.getPrototypeOf(probe)
+  await probe.close()
+  const read = proto.read
+  let reads = 0
+  proto.read = function (this: unknown, ...args: unknown[]) {
+    reads++
+    return read.apply(this, args)
+  }
+  return {
+    count: () => reads,
+    restore: () => {
+      proto.read = read
+    },
+  }
+}
+
+test("a HEAD or a 304 of a remembered version reads none of the file", async () => {
+  // Ten seconds on, the file written here looks settled, so its tag and date are both kept.
+  setSystemTime(new Date(Date.now() + 10_000))
+  const reads = await countFileReads()
+  try {
+    await withDir(async (dir) => {
+      const serve = servePublicDir({ dir })
+      const body = "k".repeat(8 * 1024)
+      const path = join(dir, "kept.txt")
+      await writeFile(path, body)
+      const first = await serve(get("/kept.txt"))
+      const etag = first?.headers.get("etag") ?? ""
+      const dated = first?.headers.get("last-modified") ?? ""
+      expect([etag, await first?.text()]).toEqual([tagOf(body), body])
+      const before = reads.count()
+      const head = await serve(get("/kept.txt", "HEAD"))
+      const matched = await serve(ranged("/kept.txt", { "if-none-match": etag }))
+      const unmodified = await serve(ranged("/kept.txt", { "if-modified-since": dated }))
+      expect([
+        head?.status,
+        head?.headers.get("etag"),
+        head?.headers.get("content-length"),
+        matched?.status,
+        matched?.headers.get("etag"),
+        unmodified?.status,
+        reads.count() - before,
+      ]).toEqual([200, etag, String(body.length), 304, etag, 304, 0])
+      // Any other request still sends, and so reads, the snapshot it tags.
+      const stale = await serve(ranged("/kept.txt", { "if-none-match": '"other"' }))
+      expect([stale?.status, await stale?.text()]).toEqual([200, body])
+      expect(reads.count()).toBeGreaterThan(before)
+    })
+  } finally {
+    reads.restore()
     setSystemTime()
   }
 })
