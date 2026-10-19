@@ -255,7 +255,8 @@ describe("the idempotency gate runs inside the route program", () => {
         headers: { "idempotency-key": "hook" },
         body: "{}",
       })
-      await expect(app.fetch(request)).rejects.toBe(problem)
+      const response = await app.fetch(request)
+      expect(response.status).toBe(500)
       expect(calls).toBe(1)
     })
   }
