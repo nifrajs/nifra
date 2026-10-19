@@ -6,6 +6,7 @@ import {
   HTTP_WORKLOADS_CAPTURED,
   type HttpRealworldTable,
   type HttpWorkloadTable,
+  httpGetTrail,
   MULTIPLIERS,
   SSR_CAPTURED,
   SSR_TABLES,
@@ -162,6 +163,11 @@ function HttpTable({ table }: { table: RuntimeTable }) {
 }
 
 export default function Benchmarks() {
+  const denoTrail = httpGetTrail("Deno")
+  const denoHeading =
+    denoTrail === undefined
+      ? "What Nifra checks on Deno's bare GET."
+      : "Why Nifra trails on Deno's bare GET."
   return (
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
@@ -233,15 +239,23 @@ export default function Benchmarks() {
         decides the ranking.
       </p>
       <div className="caveat">
-        <b>Why Nifra trails on Deno's bare GET.</b> Deno hands an app the request target exactly as
-        the client sent it, joined to the <code>Host</code> header as received. So on Deno, Nifra
-        rejects a malformed <code>Host</code> and resolves <code>.</code> and <code>..</code>{" "}
-        segments before routing, and routes the same path Bun, Node and Workers would. Those two
-        checks cost about 6% on this GET: the same build without them measured level with Elysia (10
-        interleaved rounds, 2026-10-17). Elysia and Hono route the raw path: both hand{" "}
-        <code>..</code> to a <code>/users/:id</code> handler for <code>/users/%2e%2e</code>, and
-        Hono answers a request for <code>/users/7</code> from <code>/search</code> when the{" "}
-        <code>Host</code> is <code>x/search?q=...#</code>, which Nifra refuses with a 400.
+        <b>{denoHeading}</b> Deno hands an app the request target exactly as the client sent it,
+        joined to the <code>Host</code> header as received. So on Deno, Nifra rejects a malformed{" "}
+        <code>Host</code> and resolves <code>.</code> and <code>..</code> segments before routing,
+        and routes the same path Bun, Node and Workers would. Elysia and Hono route the raw path:
+        both hand <code>..</code> to a <code>/users/:id</code> handler for{" "}
+        <code>/users/%2e%2e</code>, and Hono answers a request for <code>/users/7</code> from{" "}
+        <code>/search</code> when the <code>Host</code> is <code>x/search?q=...#</code>, which Nifra
+        refuses with a 400.
+        {denoTrail !== undefined && (
+          <>
+            {" "}
+            In this capture Nifra {denoTrail.nifra.version} is {denoTrail.behindPercent.toFixed(1)}%
+            behind {denoTrail.rival.name} {denoTrail.rival.version} on that GET (
+            {denoTrail.nifra.getUsers} vs {denoTrail.rival.getUsers} req/s): the two checks are work
+            the rows that route the raw path do not do.
+          </>
+        )}
       </div>
       <div className="bench-grid">
         {HTTP.map((table) => (
