@@ -1,5 +1,21 @@
 # @nifrajs/webmcp
 
+## 5.5.0
+
+### Patch Changes
+
+- 12d93b5: `registerWebMcpTools()` keeps refusing a duplicate tool name after a registration in the same call failed. A host refusal for the first capability used to drop the target's name record while later capabilities in that call registered into it, so registering one of them again reached the host a second time instead of failing as a duplicate.
+- Updated dependencies [6cc9e11]
+- Updated dependencies [28dd544]
+- Updated dependencies [662afb0]
+- Updated dependencies [662afb0]
+- Updated dependencies [61113d8]
+- Updated dependencies [389e1b6]
+- Updated dependencies [662afb0]
+- Updated dependencies [a11fe77]
+- Updated dependencies [fa5b67c]
+  - @nifrajs/core@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

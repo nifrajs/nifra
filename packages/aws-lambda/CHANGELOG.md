@@ -1,5 +1,11 @@
 # @nifrajs/aws-lambda
 
+## 5.5.0
+
+### Patch Changes
+
+- e59084d: `streamHandle` stops streaming when the client goes away during backpressure. After a `write()` that returned `false` it waited only for `drain`, so a response stream that closed or errored instead left the invocation waiting, the app's body still producing and the stream never ended. It now also finishes on `close` or `error`, or at once when the stream is already destroyed; it then cancels the response body, ends the stream, settles background work, and removes its listeners. `ResponseStream` declares the optional `off` and `destroyed` members it reads.
+
 ## 5.4.0
 
 No changes in this release.

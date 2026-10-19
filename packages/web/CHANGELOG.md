@@ -1,5 +1,43 @@
 # @nifrajs/web
 
+## 5.5.0
+
+### Minor Changes
+
+- 9e6a0a5: An app that serves only some of its pages on some hosts can say so with `createHostPolicy()` from `@nifrajs/web`, and the build's own files stay reachable on those hosts. A rule names the hosts (a list or a predicate), the page routes they get, any other paths (`paths`), and whether they get the build's files (`buildAssets`, on by default). A host no rule names is not restricted. A refused request answers `404` with `cache-control: no-store`, or what `refuse` returns.
+  
+  - `createWebApp({ hostPolicy, buildAssets })` runs the policy before `use()` middleware, mounts and pages, on Bun and on Node's direct lane.
+  - `hostPolicy` in `nifra.config.ts` is applied by `nifra build` to every target's generated server entry, static files included: the Bun, Deno and Cloudflare entries check it before serving a file, and `@nifrajs/node`'s `static` reader takes a new `allow(host, pathname)` option the Node entry sets. Cloudflare's `_routes.json` then sends every file, the client bundle included, through the worker. Vercel serves the client bundle and `public/` files from its CDN before the function runs, so there the policy covers pages and other routes only.
+  - The server manifest exports `buildAssets` (every file the client build emitted and every public file) and `isBuildAsset(pathname)`. `buildServer` takes the manifest `buildClient` returned as `client`, which sets the entry, styles and this set from it; `clientEntry` stays and wins when both are given.
+  - `checkHostReach()` from `@nifrajs/web/build` renders pages on a host and fetches every same-origin file they reference (scripts and their imports, stylesheets and their `url()`s, preloads, icons, images), expecting `200`, then expects each `refused` path to answer `404`. `nifra smoke` runs it for each entry of a fixture's new `hosts` list.
+  
+  Apps without a host policy are unchanged.
+- 9e6a0a5: One module inside `frontend/` or `backend/` can be declared shared where it is: name it `*.shared.ts` (any script extension), or list its path under `"nifra": { "zones": { "shared": [...] } }`. It is then held to the shared zone's rules, so it may import only shared code and packages, and `nifra check` reports each import that breaks them. A `shared` entry inside one of those folders was refused before; entries for other zones still are, and the refusal now says which entry may name such a path. A file listed under another zone keeps that zone whatever its name.
+  
+  NF-C028 now says which remedy applies when server code imports a frontend module: when the module imports only shared code and packages, it names the rename and the config entry that share it in place; otherwise it names the first import that keeps it from being shared, and says to move what both sides need into `shared/`.
+
+### Patch Changes
+
+- 9e6a0a5: `nifra build`, `nifra dev` and `buildClient`/`buildServer` print each bundler error with its file, line and column and the source line, where they printed the message alone. The message that `buildServer` throws without a client entry now names the `client` option.
+- c3ba1cb: React server components on Bun need Bun 1.3.14 or later. Bun 1.3.0 through 1.3.13 cannot parse the React 19.3.1 server renderer (a labeled `if` used as an `else` branch), so the runtime matrix now certifies Bun 1.3.14 and 1.4.3 instead of 1.3.0.
+- df7ef2e: The server-component plugin's version guard names what it found: a Vite other than the certified 8.2.1, or a React, React DOM, or Flight other than the certified release, is reported with the installed version of each.
+- b8595b1: The React server-component pipeline is certified on React, React DOM and `react-server-dom-webpack` 19.3.1. The plugin's version guard and `nifra check` now expect 19.3.1, and `@nifrajs/web-react` peers on `react-server-dom-webpack` 19.3.1; an app on 19.2.8 upgrades all three together.
+- c37575c: A loader or action value that holds an own `__proto__` key next to a `defer()` value keeps that key as ordinary data. Splitting the result for the shell rebuilt the containing object by assignment, which set its prototype instead of copying the key; the streamed resolve script for a deferred value read the JSON as a JavaScript object literal, which does the same in the browser. Both now keep the key as an own property, and the streamed value is parsed with `JSON.parse`, matching how the initial page data already arrives.
+- 9fd49ec: A client navigation to a prerendered path that carries a query string now asks the server for its data, as a hard request for the same URL does, instead of reading the static `_data.json` rendered without that query. Filters and pagination driven by search parameters no longer show the default data after a soft navigation.
+- 506a387: The generated service worker checks each precache response before it stores any: an error status, a redirect, or `Cache-Control: private` or `no-store` fails the install, and the build's cache stays empty. It used to store whatever `cache.addAll()` fetched, so an `offlineUrl` rendered for one signed-in visitor could be served to every later visitor in that browser profile. A runtime cache miss now also skips a `private` response, as it already skipped `no-store`.
+- 662afb0: A static file's strong `ETag` now always names the bytes sent with it. `servePublicDir()`, `@nifrajs/node`'s `static` option and the generated Deno entry tag a file of up to 256 KiB from the same whole read they serve it from, so an in-place write during the request can no longer pair new bytes with the old tag. A larger file streams without an automatic `ETag`, as a write could reach it after any separate hash pass. Once its last change is more than 2 seconds old it carries `Last-Modified` for `If-Modified-Since` revalidation, but no `If-Range` resumes it: a guarded `Range` request gets the whole file, and an unguarded one still gets its range. A remembered tag is reused without hashing a snapshot over 24 KiB when a second `stat` after the read shows the file unchanged. `contentTags().ofFile()`, which tags a file over `CONTENT_TAG_MAX` by its identity, now mixes a random per-instance salt into that tag, so two servers no longer issue one tag for different files that share an inode, size and times. `@nifrajs/core/static-file` adds `CONTENT_SNAPSHOT_MAX`, `ContentTags.ofSnapshot()` and `streamedLastModifiedOf()`.
+- Updated dependencies [6cc9e11]
+- Updated dependencies [28dd544]
+- Updated dependencies [662afb0]
+- Updated dependencies [662afb0]
+- Updated dependencies [61113d8]
+- Updated dependencies [389e1b6]
+- Updated dependencies [662afb0]
+- Updated dependencies [a11fe77]
+- Updated dependencies [fa5b67c]
+  - @nifrajs/core@5.5.0
+  - @nifrajs/island-trigger@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

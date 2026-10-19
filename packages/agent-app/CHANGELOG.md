@@ -1,5 +1,13 @@
 # @nifrajs/agent-app
 
+## 5.5.0
+
+### Patch Changes
+
+- 50d7389: When the transport's `authorize()` callback throws, `command()` and `stream()` now reject with an `AgentTransportError` reading `authorize() failed`, before any request is sent. The callback's own message used to be forwarded into the error, and a failed token refresh often names the credential it was refreshing.
+- 69308da: A turn the host ends with its terminal `event: error` frame now rejects `AgentAppClient.send()` (and `HttpAgentTransport.stream()`) with the new `AgentTurnError`, instead of completing as if the turn had succeeded. The error carries the host's short failure `code` (`turn_failed` unless the frame names a well-formed one) and none of the host's diagnostic text, and it is never retried by attaching again: the work failed, not the connection.
+- @nifrajs/agent-protocol@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes

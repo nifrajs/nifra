@@ -1,5 +1,22 @@
 # @nifrajs/node
 
+## 5.5.0
+
+### Minor Changes
+
+- 9e6a0a5: An app that serves only some of its pages on some hosts can say so with `createHostPolicy()` from `@nifrajs/web`, and the build's own files stay reachable on those hosts. A rule names the hosts (a list or a predicate), the page routes they get, any other paths (`paths`), and whether they get the build's files (`buildAssets`, on by default). A host no rule names is not restricted. A refused request answers `404` with `cache-control: no-store`, or what `refuse` returns.
+  
+  - `createWebApp({ hostPolicy, buildAssets })` runs the policy before `use()` middleware, mounts and pages, on Bun and on Node's direct lane.
+  - `hostPolicy` in `nifra.config.ts` is applied by `nifra build` to every target's generated server entry, static files included: the Bun, Deno and Cloudflare entries check it before serving a file, and `@nifrajs/node`'s `static` reader takes a new `allow(host, pathname)` option the Node entry sets. Cloudflare's `_routes.json` then sends every file, the client bundle included, through the worker. Vercel serves the client bundle and `public/` files from its CDN before the function runs, so there the policy covers pages and other routes only.
+  - The server manifest exports `buildAssets` (every file the client build emitted and every public file) and `isBuildAsset(pathname)`. `buildServer` takes the manifest `buildClient` returned as `client`, which sets the entry, styles and this set from it; `clientEntry` stays and wins when both are given.
+  - `checkHostReach()` from `@nifrajs/web/build` renders pages on a host and fetches every same-origin file they reference (scripts and their imports, stylesheets and their `url()`s, preloads, icons, images), expecting `200`, then expects each `refused` path to answer `404`. `nifra smoke` runs it for each entry of a fixture's new `hosts` list.
+  
+  Apps without a host policy are unchanged.
+
+### Patch Changes
+
+- 662afb0: A static file's strong `ETag` now always names the bytes sent with it. `servePublicDir()`, `@nifrajs/node`'s `static` option and the generated Deno entry tag a file of up to 256 KiB from the same whole read they serve it from, so an in-place write during the request can no longer pair new bytes with the old tag. A larger file streams without an automatic `ETag`, as a write could reach it after any separate hash pass. Once its last change is more than 2 seconds old it carries `Last-Modified` for `If-Modified-Since` revalidation, but no `If-Range` resumes it: a guarded `Range` request gets the whole file, and an unguarded one still gets its range. A remembered tag is reused without hashing a snapshot over 24 KiB when a second `stat` after the read shows the file unchanged. `contentTags().ofFile()`, which tags a file over `CONTENT_TAG_MAX` by its identity, now mixes a random per-instance salt into that tag, so two servers no longer issue one tag for different files that share an inode, size and times. `@nifrajs/core/static-file` adds `CONTENT_SNAPSHOT_MAX`, `ContentTags.ofSnapshot()` and `streamedLastModifiedOf()`.
+
 ## 5.4.0
 
 ### Minor Changes

@@ -1,5 +1,13 @@
 # @nifrajs/schema
 
+## 5.5.0
+
+### Patch Changes
+
+- Updated dependencies [5f68512]
+- Updated dependencies [56515ec]
+  - @nifrajs/uploads@5.5.0
+
 ## 5.4.0
 
 ### Patch Changes
