@@ -24,7 +24,7 @@ export interface HostReachReport {
   readonly results: readonly HostReachResult[]
   /** The results that broke the expectation: a page or asset not answered 200, a refused path answered. */
   readonly failures: readonly HostReachResult[]
-  /** `limit` stopped the walk with references left unfetched; `ok` is then `false`. */
+  /** `limit` stopped the walk with declared pages or references left unfetched; `ok` is then `false`. */
   readonly truncated: boolean
 }
 
@@ -133,8 +133,12 @@ export async function checkHostReach(options: HostReachOptions): Promise<HostRea
     queue.push({ path, from: base })
   }
 
+  let pagesTruncated = false
   for (const page of options.pages) {
-    if (results.length >= limit) break
+    if (results.length >= limit) {
+      pagesTruncated = true
+      break
+    }
     seen.add(page)
     const response = await fetch(page, host)
     const text = await response.text()
@@ -152,12 +156,12 @@ export async function checkHostReach(options: HostReachOptions): Promise<HostRea
       continue
     }
     const type = response.headers.get("content-type") ?? ""
+    if (!type.includes("css") && !type.includes("javascript")) {
+      await response.body?.cancel()
+      continue
+    }
     const body = await response.text()
-    const references = type.includes("css")
-      ? cssReferences(body)
-      : type.includes("javascript")
-        ? scriptReferences(body)
-        : []
+    const references = type.includes("css") ? cssReferences(body) : scriptReferences(body)
     for (const reference of references) enqueue(reference, next.path)
   }
   for (const path of options.refused ?? []) {
@@ -168,6 +172,6 @@ export async function checkHostReach(options: HostReachOptions): Promise<HostRea
   const failures = results.filter((result) =>
     result.kind === "refused" ? result.status !== refusedStatus : result.status !== 200,
   )
-  const truncated = queue.length > 0
+  const truncated = pagesTruncated || queue.length > 0
   return { host, ok: failures.length === 0 && !truncated, results, failures, truncated }
 }
