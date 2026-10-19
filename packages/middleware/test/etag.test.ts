@@ -45,7 +45,7 @@ describe("etag", () => {
   test("adds a weak ETag to GET 200 responses", async () => {
     const res = await app.fetch(new Request("http://x/"))
     expect(res.status).toBe(200)
-    expect(res.headers.get("etag")).toMatch(/^W\/"[0-9a-f]+"$/)
+    expect(res.headers.get("etag")).toMatch(/^W\/"[\w-]+"$/)
     expect(await res.json()).toEqual({ hello: "world" })
   })
 
@@ -196,6 +196,20 @@ describe("etag", () => {
     expect(res.status).toBe(304)
     expect(res.headers.get("content-length")).toBeNull()
     expect(res.headers.get("content-type")).toBeNull()
+  })
+
+  test("a weak tag follows the body, and a string is measured in UTF-8 bytes", async () => {
+    const app = server()
+      .use(etag({ maxBytes: 8 }))
+      .get("/:text", (c) => c.text(c.params.text))
+    const tagOf = async (text: string) =>
+      (await app.fetch(new Request(`http://x/${encodeURIComponent(text)}`))).headers.get("etag")
+    const [a, again, b] = [await tagOf("abc"), await tagOf("abc"), await tagOf("abd")]
+    expect(a).toBe(again)
+    expect(a).not.toBe(b)
+    // Four characters, eight bytes: at the cap. Five characters, ten bytes: over it.
+    expect(await tagOf("éééé")).not.toBeNull()
+    expect(await tagOf("ééééé")).toBeNull()
   })
 
   test("validates construction", () => {
