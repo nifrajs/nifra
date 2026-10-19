@@ -18,6 +18,8 @@
 
 ### Patch Changes
 
+- cb887ea: The output guard projects each object of loader, action and server-function data with code generated for that object schema's declared keys, which halves the projection's per-request cost on Bun and Node. It keeps and drops exactly the keys it did before. Edge bundles, browser pages and runtimes that refuse code generation project as before.
+- 625a315: The output guard now validates a `t` schema's projected value without re-checking each projected object for undeclared keys, which projection had already removed. The check walked every object of loader, action and server-function data a second time on each request. One behavior changes with it: an object in that data carrying a non-enumerable undeclared property is no longer refused. The property is still never sent, since JSON skips it and client component props refuse it.
 - 1c159f1: A page request checks the client-navigation data header through the serving context's own header reader instead of `req.headers`, so a document request on Node no longer builds the request's full `Headers` object. The SSR benchmark apps serve 4-6% more pages per second on Node; Bun is unchanged.
 - 5264c5b: Host reachability reports `ok: false, truncated: true` whenever declared pages remain beyond its limit, even with no pending asset references. Binary asset bodies are canceled instead of downloaded and decoded as text; CSS/JavaScript dependency traversal is preserved.
 
