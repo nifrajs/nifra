@@ -563,15 +563,12 @@ nifra migrate --from tailwind --to stylex --dir src`}
         installed, is never marked.
       </p>
 
-      <h3 id="releases">Release cadence and support</h3>
+      <h3 id="releases">Releases and support</h3>
       <p>
-        Behaviour changes are batched into minor releases, at most one every two weeks; between
-        them, fixes ship as patches of the latest minor and change nothing an app relies on. Pinning
-        a minor with <code>~</code> and taking its patches is the supported way to stay still. The
-        previous minor of the current major gets security fixes and fixes for data loss as patch
-        releases for 90 days after the next minor ships; older minors get none, so move to the
-        latest with <code>nifra upgrade</code>. <code>SECURITY.md</code> lists the supported
-        versions.
+        Behaviour changes ship in minor releases; fixes ship as patches of the latest version and
+        change nothing an app relies on. Only the latest release is supported: security fixes and
+        fixes for data loss ship as patches of it, so move to the latest with{" "}
+        <code>nifra upgrade</code>. <code>SECURITY.md</code> lists the supported versions.
       </p>
 
       <h2>Scope</h2>

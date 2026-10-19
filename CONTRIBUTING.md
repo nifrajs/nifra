@@ -152,9 +152,9 @@ Concretely, these are `major`, not `minor`:
 
 If you are shipping one of these anyway, ship a **codemod with it**. Hand-editing every broken call site is toil the framework caused, and the framework is the thing that knows the mechanical fix. Register it in `packages/cli/src/fix-recipes.ts` and point the diagnostic's `fix.command` at it, so `nifra fix` performs the migration the release note describes.
 
-### Release cadence
+### Releases
 
-Behaviour changes collect into a minor release, at most one every two weeks; a fix between minors ships as a patch of the latest minor, and changes nothing an app relies on. A fix for a security issue or data loss is also released as a patch of the previous minor for 90 days after the next minor ships (`SECURITY.md`).
+Only the latest release is supported (`SECURITY.md`). Behaviour changes ship in a minor release; a fix ships as a patch of the latest version and changes nothing an app relies on.
 
 Every minor's upgrade recipe (`packages/cli/src/recipes/`) lists in `affects` the packages its notes change, so `nifra upgrade` can tell a project that loads none of them that the release changes nothing it uses. Leave `affects` out only when that cannot be said; the release is then treated as affecting everyone.
 

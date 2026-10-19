@@ -2,13 +2,12 @@
 
 ## Supported Versions
 
-Every published package (`@nifrajs/*`, `nifra`, `create-nifra`) is released together at one version. Security fixes ship as a patch release of the latest minor. The previous minor of the current major gets security fixes as patch releases for 90 days after the next minor ships.
+Every published package (`@nifrajs/*`, `nifra`, `create-nifra`) is released together at one version. Only the latest release is supported: security fixes ship as a patch release of the latest version. Move to it with `nifra upgrade`.
 
-| Version                 | Supported                                        |
-| ----------------------- | ------------------------------------------------ |
-| latest 5.x minor        | :white_check_mark:                               |
-| previous 5.x minor      | security fixes, for 90 days after the next minor |
-| older 5.x minors, < 5.0 | :x:                                              |
+| Version        | Supported          |
+| -------------- | ------------------ |
+| latest release | :white_check_mark: |
+| older releases | :x:                |
 
 ## Reporting a Vulnerability
 
