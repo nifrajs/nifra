@@ -545,6 +545,7 @@ function snapshotOf(value: object): Record<string, unknown> {
 const hasJsonHook = (value: unknown): boolean =>
   typeof value === "object" &&
   value !== null &&
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: reads one optional property of a value already narrowed to a non-null object.
   (value as { readonly toJSON?: unknown }).toJSON !== undefined
 
 /**
