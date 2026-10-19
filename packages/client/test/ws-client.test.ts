@@ -396,6 +396,61 @@ describe("WebSocket runtime behavior", () => {
     expect(await closingPending).toEqual({ value: undefined, done: true })
   })
 
+  test("overlapping iterator reads receive frames in call order before buffering later frames", async () => {
+    useFakeWebSocket()
+    const handle = openWebSocket("http://example.test", "/chat", undefined, false)
+    const socket = FakeWebSocket.instances[0]!
+    const iterator = handle.messages()
+    const delivered: IteratorResult<unknown>[] = []
+    const reads = Array.from({ length: 3 }, (_, index) =>
+      iterator.next().then((result) => {
+        delivered[index] = result
+      }),
+    )
+
+    for (let id = 1; id <= 4; id++) socket.message(JSON.stringify({ id }))
+    await Promise.resolve()
+    expect(delivered).toEqual([
+      { value: { id: 1 }, done: false },
+      { value: { id: 2 }, done: false },
+      { value: { id: 3 }, done: false },
+    ])
+    await Promise.all(reads)
+    expect(await iterator.next()).toEqual({ value: { id: 4 }, done: false })
+    await iterator.return?.()
+  })
+
+  test.each([
+    "close",
+    "error",
+    "abort",
+    "return",
+  ] as const)("%s settles every overlapping iterator read", async (ending) => {
+    useFakeWebSocket()
+    const handle = openWebSocket("http://example.test", "/chat", undefined, false)
+    const socket = FakeWebSocket.instances[0]!
+    const controller = new AbortController()
+    const iterator = handle.messages({ signal: controller.signal })
+    const completed: IteratorResult<unknown>[] = []
+    const reads = Array.from({ length: 3 }, () =>
+      iterator.next().then((result) => completed.push(result)),
+    )
+
+    if (ending === "close") socket.end()
+    else if (ending === "error") socket.fail()
+    else if (ending === "abort") controller.abort()
+    else await iterator.return?.()
+
+    await Promise.resolve()
+    expect(completed).toEqual([
+      { value: undefined, done: true },
+      { value: undefined, done: true },
+      { value: undefined, done: true },
+    ])
+    await Promise.all(reads)
+    expect(await iterator.next()).toEqual({ value: undefined, done: true })
+  })
+
   test("a closed socket ends a new iteration at once and drops a send", async () => {
     useFakeWebSocket()
     const handle = openWebSocket("http://example.test", "/chat", undefined, false)

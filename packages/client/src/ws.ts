@@ -180,14 +180,13 @@ export function openWebSocket(
     onMessage,
     messages(options?: { signal?: AbortSignal }): AsyncIterableIterator<unknown> {
       const buffered: unknown[] = []
-      let pending: ((result: IteratorResult<unknown>) => void) | undefined
+      const pending: Array<(result: IteratorResult<unknown>) => void> = []
       let done = false
       const signal = options?.signal
 
       const push = (message: unknown): void => {
-        if (pending !== undefined) {
-          const resolve = pending
-          pending = undefined
+        const resolve = pending.shift()
+        if (resolve !== undefined) {
           resolve({ value: message, done: false })
         } else {
           buffered.push(message)
@@ -200,8 +199,8 @@ export function openWebSocket(
         socket.removeEventListener("close", closed)
         socket.removeEventListener("error", closed)
         signal?.removeEventListener("abort", end)
-        pending?.({ value: undefined, done: true })
-        pending = undefined
+        for (const resolve of pending) resolve({ value: undefined, done: true })
+        pending.length = 0
       }
       // A frame still in `validateReceive` arrived before the close, so it is delivered first.
       const closed = (): void => {
@@ -227,7 +226,7 @@ export function openWebSocket(
           }
           if (done) return Promise.resolve({ value: undefined, done: true })
           return new Promise((resolve) => {
-            pending = resolve
+            pending.push(resolve)
           })
         },
         return(): Promise<IteratorResult<unknown>> {
