@@ -13,6 +13,22 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/auth
 ```
 
+## Store revocation and rotation
+
+In store mode, `destroy` revokes the entire session family, including later IDs issued by
+`regenerate`. Rotated IDs remain opaque signed cookie values. Store adapters must retain
+`<id>.rotated` and `<family>.revoked` marker records until their `expiresAt`, including after the
+original session record is deleted. Do not interpret markers as sessions.
+For store adapters, the family is the session's original ID: a rotated ID has the form
+`<family>~<replacement>`, and repeated rotations keep that same family prefix.
+
+Adapters may implement `SessionStore.rotate(previousId, nextId, record, marker)` atomically: refuse
+when the previous record is missing, rotated, or its family is revoked; otherwise write the rotation
+marker, delete the old record, and store the replacement in one transaction. Return whether it won.
+The built-in memory store implements this operation. Adapters with only `get`/`set`/`delete` keep
+logout markers separate from rotation markers and check family revocation after writing; concurrent
+rotations can produce multiple replacement IDs, all revoked by logout of any family member.
+
 ## Docs
 
 - Reference: <https://nifra.dev/docs>

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setSystemTime, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
@@ -531,15 +531,51 @@ test("a file above the buffered size streams with its length, whole and as a ran
   const base = await startWithStatic()
   const whole = await fetch(`${base}/assets/stream.bin`)
   expect(whole.headers.get("content-length")).toBe(String(size))
-  expect(whole.headers.get("etag")).toBe(tagOf("\u0007".repeat(size)))
+  expect(whole.headers.get("etag")).toBeNull()
+  expect(whole.headers.get("last-modified")).toBeNull()
   expect((await whole.arrayBuffer()).byteLength).toBe(size)
   const tail = await fetch(`${base}/assets/stream.bin`, { headers: { range: "bytes=1-" } })
   expect(tail.status).toBe(206)
   expect(tail.headers.get("content-length")).toBe(String(size - 1))
   expect((await tail.arrayBuffer()).byteLength).toBe(size - 1)
+  const guarded = await fetch(`${base}/assets/stream.bin`, {
+    headers: { range: "bytes=1-4", "if-range": tagOf("\u0007".repeat(size)) },
+  })
+  expect(guarded.status).toBe(200)
+  expect((await guarded.arrayBuffer()).byteLength).toBe(size)
 })
 
-test("a remembered tag gives way to a same-size replacement that keeps its mtime", async () => {
+test("a settled streamed file is dated for revalidation, never for resuming a range", async () => {
+  const size = 256 * 1024 + 1
+  const path = join(dir, "settled.bin")
+  await writeFile(path, Buffer.alloc(size, 9))
+  const base = await startWithStatic()
+  const fresh = await fetch(`${base}/assets/settled.bin`)
+  expect(fresh.headers.get("last-modified")).toBeNull()
+  await fresh.arrayBuffer()
+  setSystemTime(new Date(Date.now() + 10_000))
+  try {
+    const settled = await fetch(`${base}/assets/settled.bin`)
+    const dated = settled.headers.get("last-modified") ?? ""
+    expect([settled.headers.get("etag"), dated]).toEqual([
+      null,
+      new Date((await stat(path)).mtimeMs).toUTCString(),
+    ])
+    await settled.arrayBuffer()
+    const current = await fetch(`${base}/assets/settled.bin`, {
+      headers: { "if-modified-since": dated },
+    })
+    expect(current.status).toBe(304)
+    const resumed = await fetch(`${base}/assets/settled.bin`, {
+      headers: { range: "bytes=1-3", "if-range": dated },
+    })
+    expect([resumed.status, (await resumed.arrayBuffer()).byteLength]).toEqual([200, size])
+  } finally {
+    setSystemTime()
+  }
+})
+
+test("only whole snapshots keep a content tag across same-size replacements", async () => {
   // Ten seconds on, the files written here look settled, so their tags are remembered.
   setSystemTime(new Date(Date.now() + 10_000))
   try {
@@ -553,11 +589,13 @@ test("a remembered tag gives way to a same-size replacement that keeps its mtime
       await utimes(path, 1, 1)
       const first = await fetch(`${base}/assets/${name}`)
       const etag = first.headers.get("etag") ?? ""
-      expect([etag, await first.text()]).toEqual([tagOf(body), body])
+      const tagged = body.length <= 256 * 1024
+      expect([etag, await first.text()]).toEqual([tagged ? tagOf(body) : "", body])
       const remembered = await fetch(`${base}/assets/${name}`, {
         headers: { "if-none-match": etag },
       })
-      expect(remembered.status).toBe(304)
+      expect(remembered.status).toBe(tagged ? 304 : 200)
+      await remembered.arrayBuffer()
       for (const replace of ["in place", "renamed over"]) {
         const next = (replace === "in place" ? "o" : "r").repeat(body.length)
         const target = replace === "in place" ? path : join(dir, `.${name}`)
@@ -570,7 +608,7 @@ test("a remembered tag gives way to a same-size replacement that keeps its mtime
         expect([replace, replaced.status, replaced.headers.get("etag")]).toEqual([
           replace,
           200,
-          tagOf(next),
+          tagged ? tagOf(next) : null,
         ])
         await replaced.arrayBuffer()
       }

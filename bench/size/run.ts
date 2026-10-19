@@ -232,10 +232,12 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 // reachable optional subsystem fails CI. A commit that raises one states the measured cost.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 35.1,
-  "nifra-idempotency": 39.2,
+  // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
+  "nifra-idempotency": 39.4,
   "nifra-effect-ledger": 37.1,
   "nifra-mcp": 35.4,
-  "nifra-sse": 35.9,
+  // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
+  "nifra-sse": 36.0,
   "nifra-valibot": 36.1,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,

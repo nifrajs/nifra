@@ -4350,18 +4350,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // stores. Non-idempotent routes skip straight to the lanes - no added cost.
     // The runtime is always present when a route resolved idempotency (enforced at registration).
     if (entry.idempotent !== undefined && this.idempotencyRuntime !== undefined) {
-      const answered = this.runMatchedLanes(
-        this.idempotencyRuntime.prepare(source, platform),
-        platform,
-        entry,
-        params,
-        search,
-        this.finalizeResponse,
-        this.wrapWebResponse,
-        this.webResponseTimeout,
-        false,
-      )
-      return answered instanceof Promise ? answered.then(wrapResponse) : wrapResponse(answered)
+      return this.idempotencyRuntime
+        .run(source, platform, (prepared) =>
+          this.runMatchedLanes(
+            prepared,
+            platform,
+            entry,
+            params,
+            search,
+            this.finalizeResponse,
+            this.wrapWebResponse,
+            this.webResponseTimeout,
+            false,
+          ),
+        )
+        .then(wrapResponse)
     }
     return this.runMatchedLanes(
       source,

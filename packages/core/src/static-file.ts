@@ -108,6 +108,19 @@ export function lastModifiedOf(version: FileVersion): number | undefined {
   return version.mtimeMs > 0 && lag < MODIFIED_LAG_MS ? version.mtimeMs : undefined
 }
 
+/**
+ * {@link lastModifiedOf} for a body streamed after its stat, where a write can still reach the bytes
+ * sent. Dated only once its change is older than the racy window, so such a write falls in a later
+ * HTTP-date second and the next `If-Modified-Since` fetches it. A weak validator: never pass it to
+ * {@link ifRangeAllowsPartial}, which would resume a range across two versions.
+ */
+export function streamedLastModifiedOf(
+  version: FileVersion,
+  now: number = Date.now(),
+): number | undefined {
+  return now - version.ctimeMs >= RACY_MS ? lastModifiedOf(version) : undefined
+}
+
 /** HTTP dates carry whole seconds; comparing raw milliseconds makes every file look stale. */
 function seconds(time: number): number {
   return Math.floor(time / 1000)
@@ -177,10 +190,10 @@ export interface ContentHash {
 export type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>
 
 /**
- * Strong entity tags from what a file holds, the same for the same bytes on every instance and
- * runtime, so a replacement that keeps a file's size and timestamps still changes its tag. A tag is
- * remembered per real path for the version it was computed from, so serving a known file reads no
- * more than before.
+ * Entity tags from file bytes, consistent across instances and runtimes. Files beyond the content
+ * hash limit instead use a per-instance identity tag. Callers must serve the same immutable bytes
+ * they hash; static HTTP readers use bounded snapshots for that guarantee. A tag is remembered per
+ * real path for the version it was computed from.
  */
 export interface ContentTags {
   /** The tag remembered for this version of the file at `path`, if any. */
@@ -188,9 +201,21 @@ export interface ContentTags {
   /** The tag of `bytes`, read whole from this version of the file at `path`. */
   ofBytes(path: string, version: FileVersion, bytes: Uint8Array): string
   /**
+   * The tag of `bytes`, the whole file at `path` read after a stat that gave `version`. A small
+   * snapshot is hashed; a larger one takes the tag remembered for `version` when `restat`, called
+   * after the read, still reports that version, since no write reached the file in between.
+   */
+  ofSnapshot(
+    path: string,
+    version: FileVersion,
+    bytes: Uint8Array,
+    restat: () => Promise<FileVersion>,
+  ): Promise<string>
+  /**
    * The tag of this version of the file at `path`, read whole through `read`; requests for a version
    * already being read wait for that read. A file over {@link CONTENT_TAG_MAX} is not read: its tag
-   * names its identity on this host instead, or is `undefined` where the runtime reports none.
+   * names its identity within this tagger instance instead, or is `undefined` without a stable identity.
+   * Reading a mutable inode and later streaming it does not preserve this tag's byte identity.
    */
   ofFile(path: string, version: FileVersion, read: ReadAt): Promise<string | undefined>
 }
@@ -206,9 +231,17 @@ export interface ContentTagOptions {
  * Largest file tagged by its content. Its first request waits for one read of the whole file, ~0.1 s
  * per 256 MiB with hardware SHA-256 and several times that on a slow disk or CPU, so a larger file -
  * a long video that is only ever fetched by ranges, say - is tagged by its device, inode, size and
- * times. That tag is still strong and changes with any replacement, but differs between instances.
+ * times plus a random instance salt. Identity tags require immutable file versions and intentionally
+ * differ between tagger instances so local stat identities cannot collide across hosts.
  */
 export const CONTENT_TAG_MAX = 256 * 1024 * 1024
+
+/** Static HTTP readers tag only a whole, bounded snapshot; streamed inodes can change after hashing. */
+export const CONTENT_SNAPSHOT_MAX = 256 * 1024
+
+// Hashing this much costs about one fstat, ~9 us on Bun and Node (SHA-256 at ~2.7 GB/s on an M3 Max):
+// a larger snapshot is cheaper to prove unchanged than to hash again.
+const SNAPSHOT_REHASH_MAX = 24 * 1024
 
 const READ_CHUNK = 1024 * 1024
 // A file changed this recently can change again within its ctime's granularity (a jiffy on ext4, a
@@ -236,6 +269,7 @@ export function contentTags(
 ): ContentTags {
   const limit = options.limit ?? 8192
   const now = options.now ?? Date.now
+  let instance: Uint8Array | undefined
   const known = new Map<string, FileVersion & { readonly tag: string }>()
   const reading = new Map<
     string,
@@ -271,23 +305,38 @@ export function contentTags(
     return tag
   }
 
+  const cached = (path: string, version: FileVersion): string | undefined => {
+    const entry = known.get(path)
+    return entry !== undefined && sameVersion(entry, version) ? entry.tag : undefined
+  }
+
+  const ofBytes = (path: string, version: FileVersion, bytes: Uint8Array): string => {
+    const hash = createHash("sha256")
+    hash.update(bytes)
+    const tag = quoted(hash)
+    if (bytes.byteLength === version.size) remember(path, version, tag)
+    return tag
+  }
+
   return {
-    cached(path, version) {
-      const entry = known.get(path)
-      return entry !== undefined && sameVersion(entry, version) ? entry.tag : undefined
-    },
-    ofBytes(path, version, bytes) {
-      const hash = createHash("sha256")
-      hash.update(bytes)
-      const tag = quoted(hash)
-      if (bytes.byteLength === version.size) remember(path, version, tag)
-      return tag
+    cached,
+    ofBytes,
+    async ofSnapshot(path, version, bytes, restat) {
+      if (bytes.byteLength > SNAPSHOT_REHASH_MAX) {
+        const tag = cached(path, version)
+        // A remembered version is settled, so any write since its stat would show in the restat.
+        if (tag !== undefined && cached(path, await restat()) === tag) return tag
+      }
+      return ofBytes(path, version, bytes)
     },
     async ofFile(path, version, read) {
       if (version.size > CONTENT_TAG_MAX) {
         const { dev, ino, size, mtimeMs, ctimeMs } = version
         if (!Number.isFinite(ino) || !(now() - ctimeMs >= RACY_MS)) return undefined
         const hash = createHash("sha256")
+        // Filesystem identities are local: another host may reuse every one of these stat fields.
+        instance ??= crypto.getRandomValues(new Uint8Array(16))
+        hash.update(instance)
         hash.update(new TextEncoder().encode(`${dev}:${ino}:${size}:${mtimeMs}:${ctimeMs}`))
         return quoted(hash)
       }

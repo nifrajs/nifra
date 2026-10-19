@@ -1,6 +1,6 @@
 import { expect, setSystemTime, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
 import { connect, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
@@ -21,6 +21,62 @@ const withDir = async (fn: (dir: string) => Promise<void>): Promise<void> => {
 const get = (path: string, method = "GET") => new Request(`http://x${path}`, { method })
 const tagOf = (text: string) =>
   `"${createHash("sha256").update(text).digest("base64url").slice(0, 22)}"`
+
+test("a mutable streamed file never advertises a validator for an earlier read", async () => {
+  await withDir(async (dir) => {
+    const path = join(dir, "stream.bin")
+    const body = "a".repeat(2 * 1024 * 1024)
+    await writeFile(path, body)
+    const serve = servePublicDir({ dir })
+    const response = await serve(get("/stream.bin"))
+    await writeFile(path, "b".repeat(body.length))
+    expect(response?.headers.get("etag")).toBeNull()
+    expect(response?.headers.get("last-modified")).toBeNull()
+    await response?.arrayBuffer()
+    const resumed = await serve(
+      new Request("http://x/stream.bin", {
+        headers: { range: "bytes=1-4", "if-range": tagOf(body) },
+      }),
+    )
+    expect(resumed?.status).toBe(200)
+    expect((await resumed?.arrayBuffer())?.byteLength).toBe(body.length)
+    const head = await serve(get("/stream.bin", "HEAD"))
+    expect(head?.headers.get("etag")).toBeNull()
+    expect(head?.headers.get("last-modified")).toBeNull()
+  })
+})
+
+test("a settled streamed file is dated for revalidation, never for resuming a range", async () => {
+  await withDir(async (dir) => {
+    const path = join(dir, "video.bin")
+    const body = "v".repeat(256 * 1024 + 1)
+    await writeFile(path, body)
+    const serve = servePublicDir({ dir })
+    // Just written: a write landing mid-stream could share its HTTP-date second, so it stays undated.
+    const fresh = await serve(get("/video.bin"))
+    expect(fresh?.headers.get("last-modified")).toBeNull()
+    await fresh?.arrayBuffer()
+    setSystemTime(new Date(Date.now() + 10_000))
+    try {
+      const settled = await serve(get("/video.bin"))
+      const dated = settled?.headers.get("last-modified") ?? ""
+      expect([settled?.headers.get("etag"), dated]).toEqual([
+        null,
+        new Date((await stat(path)).mtimeMs).toUTCString(),
+      ])
+      await settled?.arrayBuffer()
+      const current = await serve(ranged("/video.bin", { "if-modified-since": dated }))
+      expect(current?.status).toBe(304)
+      const resumed = await serve(ranged("/video.bin", { range: "bytes=1-3", "if-range": dated }))
+      expect([resumed?.status, (await resumed?.arrayBuffer())?.byteLength]).toEqual([
+        200,
+        body.length,
+      ])
+    } finally {
+      setSystemTime()
+    }
+  })
+})
 
 test("serves a public file and falls through on a miss", async () => {
   await withDir(async (dir) => {
@@ -512,15 +568,16 @@ test("a file a copy dated is tagged, not dated, and a same-size replacement chan
   })
 })
 
-test("a remembered tag is served without reading, and gives way to a same-size replacement", async () => {
+test("only whole snapshots have validators, including after a same-size replacement", async () => {
   // Ten seconds on, the files written here look settled, so their tags are remembered.
   setSystemTime(new Date(Date.now() + 10_000))
   try {
     await withDir(async (dir) => {
       const serve = servePublicDir({ dir })
-      // Past the buffered size the tag is read in a pass of its own; below it, from the body's bytes.
       for (const [name, body] of [
         ["small.txt", "first"],
+        // Past the rehash cut, a remembered tag is reused once a restat shows the same version.
+        ["mid.bin", "m".repeat(64 * 1024)],
         ["large.bin", "f".repeat(1024 * 1024 + 1)],
       ] as const) {
         const path = join(dir, name)
@@ -528,11 +585,20 @@ test("a remembered tag is served without reading, and gives way to a same-size r
         await utimes(path, 1, 1)
         const first = await serve(get(`/${name}`))
         const etag = first?.headers.get("etag") ?? ""
-        expect([etag, (await first?.text())?.length]).toEqual([tagOf(body), body.length])
+        const tagged = body.length <= 256 * 1024
+        expect([etag, (await first?.text())?.length]).toEqual([
+          tagged ? tagOf(body) : "",
+          body.length,
+        ])
         const remembered = await serve(ranged(`/${name}`, { "if-none-match": etag }))
-        expect(remembered?.status).toBe(304)
+        expect(remembered?.status).toBe(tagged ? 304 : 200)
+        await remembered?.arrayBuffer()
         const again = await serve(ranged(`/${name}`, { range: "bytes=1-3", "if-range": etag }))
-        expect([again?.status, await again?.text()]).toEqual([206, body.slice(1, 4)])
+        expect([again?.status, await again?.text()]).toEqual(
+          tagged ? [206, body.slice(1, 4)] : [200, body],
+        )
+        const partial = await serve(ranged(`/${name}`, { range: "bytes=1-3" }))
+        expect([partial?.status, await partial?.text()]).toEqual([206, body.slice(1, 4)])
         for (const replace of ["in place", "renamed over"]) {
           const next = (replace === "in place" ? "o" : "r").repeat(body.length)
           const target = replace === "in place" ? path : join(dir, `.${name}`)
@@ -543,7 +609,7 @@ test("a remembered tag is served without reading, and gives way to a same-size r
           expect([replace, replaced?.status, replaced?.headers.get("etag")]).toEqual([
             replace,
             200,
-            tagOf(next),
+            tagged ? tagOf(next) : null,
           ])
           await replaced?.arrayBuffer()
         }

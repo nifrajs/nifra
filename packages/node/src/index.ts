@@ -32,12 +32,14 @@ import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import {
+  CONTENT_SNAPSHOT_MAX,
   contentTags,
   contentTypeOf,
   ifRangeAllowsPartial,
   isHiddenPath,
   isNotModified,
   lastModifiedOf,
+  streamedLastModifiedOf,
 } from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
@@ -1090,7 +1092,7 @@ function staticByteRange(
 
 // Up to this many bytes are read whole through the pinned descriptor and written in one call, with
 // no Response or stream; a larger body streams from the descriptor. The same cut as servePublicDir.
-const STATIC_BUFFERED_MAX = 256 * 1024
+const STATIC_BUFFERED_MAX = CONTENT_SNAPSHOT_MAX
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
 async function readPinned(handle: FileHandle, start: number, length: number): Promise<Uint8Array> {
@@ -1144,17 +1146,15 @@ async function readStatic(
     // The whole file, when tagging it had to read it: the response is then served from these bytes.
     let whole: Uint8Array | undefined
     if (headers.etag === undefined) {
-      let tag = STATIC_TAGS.cached(realFile, stat)
-      if (tag === undefined && stat.size <= STATIC_BUFFERED_MAX) {
+      if (stat.size <= STATIC_BUFFERED_MAX) {
         whole = await readPinned(opened, 0, stat.size)
-        tag = STATIC_TAGS.ofBytes(realFile, stat, whole)
+        headers.etag = await STATIC_TAGS.ofSnapshot(realFile, stat, whole, () => opened.stat())
       }
-      tag ??= await STATIC_TAGS.ofFile(realFile, stat, async (bytes, position) => {
-        return (await opened.read(bytes, 0, bytes.byteLength, position)).bytesRead
-      })
-      if (tag !== undefined) headers.etag = tag
     }
-    const modified = lastModifiedOf(stat)
+    const streamed = stat.size > STATIC_BUFFERED_MAX
+    const modified = streamed ? streamedLastModifiedOf(stat) : lastModifiedOf(stat)
+    // A date this reader chose for a streamed body is weak; a caller's own stays theirs to vouch for.
+    const weakDate = streamed && headers["last-modified"] === undefined
     if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
     // Custom validators are response headers, not decoration: compare the exact values the client saw.
     const etag = headers.etag
@@ -1176,7 +1176,9 @@ async function readStatic(
     headers["accept-ranges"] = "bytes"
     // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
     const range =
-      method === "GET" ? staticByteRange(requestHeaders, stat.size, etag, lastModified) : undefined
+      method === "GET"
+        ? staticByteRange(requestHeaders, stat.size, etag, weakDate ? undefined : lastModified)
+        : undefined
     if (range === "unsatisfiable") {
       await handle.close()
       headers["content-range"] = `bytes */${stat.size}`
