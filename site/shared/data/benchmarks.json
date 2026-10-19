@@ -3,163 +3,163 @@
   "heroSsr": [
     {
       "name": "Nifra + React (Bun)",
-      "reqs": 34143,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 34102,
+      "you": true
     },
     {
       "name": "Nifra + React (Node)",
-      "reqs": 28899,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 28894,
+      "you": true
     },
     {
       "name": "Next.js (Node)",
-      "reqs": 1426,
-      "version": "16.4.2"
+      "version": "16.4.2",
+      "reqs": 2133
     },
     {
       "name": "Remix / React Router (Node)",
-      "reqs": 2601,
-      "version": "8.4.0"
+      "version": "8.4.0",
+      "reqs": 5479
     }
   ],
   "frontend": [
     {
       "name": "Nifra + React (Bun)",
-      "reqs": 34143,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 34102,
+      "you": true
     },
     {
       "name": "Nifra + React (Node)",
-      "reqs": 28899,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 28894,
+      "you": true
     },
     {
       "name": "Next.js (Node)",
-      "reqs": 1426,
-      "version": "16.4.2"
+      "version": "16.4.2",
+      "reqs": 2133
     },
     {
       "name": "Remix / React Router (Node)",
-      "reqs": 2601,
-      "version": "8.4.0"
+      "version": "8.4.0",
+      "reqs": 5479
     },
     {
       "name": "Nifra + Solid (Bun)",
-      "reqs": 34120,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 34191,
+      "you": true
     },
     {
       "name": "Nifra + Solid (Node)",
-      "reqs": 30031,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 31102,
+      "you": true
     },
     {
       "name": "SolidStart (Node)",
-      "reqs": 9130,
-      "version": "1.4.0"
+      "version": "2.0.6",
+      "reqs": 16158
     },
     {
       "name": "Nifra + Vue (Bun)",
-      "reqs": 36609,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 37175,
+      "you": true
     },
     {
       "name": "Nifra + Vue (Node)",
-      "reqs": 25191,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 25890,
+      "you": true
     },
     {
       "name": "Nuxt (Node)",
-      "reqs": 3599,
-      "version": "4.6.2"
+      "version": "4.6.2",
+      "reqs": 3958
     },
     {
       "name": "Nifra + Svelte (Bun)",
-      "reqs": 46720,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 48032,
+      "you": true
     },
     {
       "name": "Nifra + Svelte (Node)",
-      "reqs": 31385,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 37010,
+      "you": true
     },
     {
       "name": "SvelteKit (Node)",
-      "reqs": 9808,
-      "version": "2.70.3"
+      "version": "3.1.0",
+      "reqs": 10737
     },
     {
       "name": "Nifra + Preact (Bun)",
-      "reqs": 36285,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 37174,
+      "you": true
     },
     {
       "name": "Nifra + Preact (Node)",
-      "reqs": 30247,
-      "you": true,
-      "version": "5.4.0"
+      "version": "5.5.0",
+      "reqs": 31869,
+      "you": true
     }
   ],
   "multipliers": [
     {
       "fw": "React",
-      "mult": "20×",
+      "mult": "13×",
       "rival": "Next.js",
       "rivalVersion": "16.4.2"
     },
     {
       "fw": "Solid",
-      "mult": "3.3×",
+      "mult": "1.9×",
       "rival": "SolidStart",
-      "rivalVersion": "1.4.0"
+      "rivalVersion": "2.0.6"
     },
     {
       "fw": "Vue",
-      "mult": "7×",
+      "mult": "6.5×",
       "rival": "Nuxt",
       "rivalVersion": "4.6.2"
     },
     {
       "fw": "Svelte",
-      "mult": "3.2×",
+      "mult": "3.4×",
       "rival": "SvelteKit",
-      "rivalVersion": "2.70.3"
+      "rivalVersion": "3.1.0"
     }
   ],
   "http": [
     {
-      "name": "Fastify",
-      "version": "5.12.5",
-      "reqs": 95051,
-      "you": false
-    },
-    {
       "name": "Nifra",
-      "version": "5.4.0",
-      "reqs": 93311,
+      "version": "5.5.0",
+      "reqs": 104973,
       "you": true
     },
     {
-      "name": "Hono",
-      "version": "4.13.7",
-      "reqs": 57516,
+      "name": "Fastify",
+      "version": "5.12.7",
+      "reqs": 102855,
       "you": false
     },
     {
       "name": "Express",
-      "version": "5.2.1",
-      "reqs": 57151,
+      "version": "5.3.0",
+      "reqs": 63712,
+      "you": false
+    },
+    {
+      "name": "Hono",
+      "version": "4.13.13",
+      "reqs": 61658,
       "you": false
     }
   ],
@@ -170,22 +170,22 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.4.0",
-          "getUsers": "121,813",
-          "postUsers": "100,940",
+          "version": "5.5.0",
+          "getUsers": "118,674",
+          "postUsers": "100,416",
           "nifra": true
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "getUsers": "120,680",
-          "postUsers": "100,107"
+          "getUsers": "120,478",
+          "postUsers": "99,745"
         },
         {
           "name": "Hono",
-          "version": "4.13.7",
-          "getUsers": "113,729",
-          "postUsers": "91,046"
+          "version": "4.13.13",
+          "getUsers": "112,023",
+          "postUsers": "93,357"
         }
       ]
     },
@@ -195,34 +195,34 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.4.0",
-          "getUsers": "93,311",
-          "postUsers": "68,454",
+          "version": "5.5.0",
+          "getUsers": "104,973",
+          "postUsers": "84,171",
           "nifra": true
         },
         {
           "name": "Fastify",
-          "version": "5.12.5",
-          "getUsers": "95,051",
-          "postUsers": "67,680"
+          "version": "5.12.7",
+          "getUsers": "102,855",
+          "postUsers": "84,810"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "getUsers": "84,679",
-          "postUsers": "49,601"
+          "getUsers": "90,242",
+          "postUsers": "61,519"
         },
         {
           "name": "Express",
-          "version": "5.2.1",
-          "getUsers": "57,151",
-          "postUsers": "42,129"
+          "version": "5.3.0",
+          "getUsers": "63,712",
+          "postUsers": "50,502"
         },
         {
           "name": "Hono",
-          "version": "4.13.7",
-          "getUsers": "57,516",
-          "postUsers": "39,375"
+          "version": "4.13.13",
+          "getUsers": "61,658",
+          "postUsers": "42,525"
         }
       ]
     },
@@ -232,22 +232,22 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.4.0",
-          "getUsers": "104,519",
-          "postUsers": "93,144",
+          "version": "5.5.0",
+          "getUsers": "115,654",
+          "postUsers": "107,850",
           "nifra": true
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "getUsers": "108,302",
-          "postUsers": "81,594"
+          "getUsers": "117,485",
+          "postUsers": "91,587"
         },
         {
           "name": "Hono",
-          "version": "4.13.7",
-          "getUsers": "106,090",
-          "postUsers": "86,943"
+          "version": "4.13.13",
+          "getUsers": "115,815",
+          "postUsers": "98,018"
         }
       ]
     }
@@ -286,41 +286,41 @@
       "rows": [
         {
           "name": "Nifra + React (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 34143,
-          "p50ms": 1.37,
-          "p99ms": 3.02,
-          "jsGzKb": 76.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 34102,
+          "p50ms": 1.36,
+          "p99ms": 2.99,
+          "jsGzKb": 84.7,
+          "nifra": true
         },
         {
           "name": "Nifra + React (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 28899,
-          "p50ms": 1.69,
-          "p99ms": 3.4,
-          "jsGzKb": 76.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 28894,
+          "p50ms": 1.67,
+          "p99ms": 3.36,
+          "jsGzKb": 84.7,
+          "nifra": true
         },
         {
           "name": "Next.js (Node)",
+          "version": "16.4.2",
           "runtime": "node",
-          "rps": 1426,
-          "p50ms": 34.66,
-          "p99ms": 45.28,
-          "jsGzKb": 172.2,
-          "version": "16.4.2"
+          "rps": 2133,
+          "p50ms": 22.82,
+          "p99ms": 32.92,
+          "jsGzKb": 172.2
         },
         {
           "name": "Remix / React Router (Node)",
+          "version": "8.4.0",
           "runtime": "node",
-          "rps": 2601,
-          "p50ms": 19.3,
-          "p99ms": 24.97,
-          "jsGzKb": 104.9,
-          "version": "8.4.0"
+          "rps": 5479,
+          "p50ms": 9.04,
+          "p99ms": 14.14,
+          "jsGzKb": 104.9
         }
       ]
     },
@@ -329,32 +329,32 @@
       "rows": [
         {
           "name": "Nifra + Solid (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 34120,
-          "p50ms": 1.36,
-          "p99ms": 2.85,
+          "rps": 34191,
+          "p50ms": 1.39,
+          "p99ms": 2.84,
           "jsGzKb": 16.4,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nifra + Solid (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 30031,
-          "p50ms": 1.59,
-          "p99ms": 3.19,
+          "rps": 31102,
+          "p50ms": 1.52,
+          "p99ms": 3.04,
           "jsGzKb": 16.4,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "SolidStart (Node)",
+          "version": "2.0.6",
           "runtime": "node",
-          "rps": 9130,
-          "p50ms": 4.46,
-          "p99ms": 13.41,
-          "jsGzKb": 19.2,
-          "version": "1.4.0"
+          "rps": 16158,
+          "p50ms": 2.42,
+          "p99ms": 7.12,
+          "jsGzKb": 15.9
         }
       ]
     },
@@ -363,32 +363,32 @@
       "rows": [
         {
           "name": "Nifra + Vue (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 36609,
-          "p50ms": 1.24,
-          "p99ms": 2.89,
+          "rps": 37175,
+          "p50ms": 1.19,
+          "p99ms": 2.87,
           "jsGzKb": 19.2,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nifra + Vue (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 25191,
-          "p50ms": 1.85,
-          "p99ms": 3.71,
+          "rps": 25890,
+          "p50ms": 1.78,
+          "p99ms": 3.55,
           "jsGzKb": 19.2,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nuxt (Node)",
+          "version": "4.6.2",
           "runtime": "node",
-          "rps": 3599,
-          "p50ms": 12.16,
-          "p99ms": 33.21,
-          "jsGzKb": 74.7,
-          "version": "4.6.2"
+          "rps": 3958,
+          "p50ms": 13.59,
+          "p99ms": 28.58,
+          "jsGzKb": 74.7
         }
       ]
     },
@@ -397,32 +397,32 @@
       "rows": [
         {
           "name": "Nifra + Svelte (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 46720,
-          "p50ms": 0.95,
-          "p99ms": 2.24,
+          "rps": 48032,
+          "p50ms": 0.91,
+          "p99ms": 2.15,
           "jsGzKb": 16.9,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nifra + Svelte (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 31385,
-          "p50ms": 1.45,
-          "p99ms": 3.03,
+          "rps": 37010,
+          "p50ms": 1.28,
+          "p99ms": 2.61,
           "jsGzKb": 16.9,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "SvelteKit (Node)",
+          "version": "3.1.0",
           "runtime": "node",
-          "rps": 9808,
-          "p50ms": 4.68,
-          "p99ms": 9.81,
-          "jsGzKb": 30,
-          "version": "2.70.3"
+          "rps": 10737,
+          "p50ms": 4.3,
+          "p99ms": 8.99,
+          "jsGzKb": 33
         }
       ]
     },
@@ -431,23 +431,32 @@
       "rows": [
         {
           "name": "Nifra + Preact (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 36285,
-          "p50ms": 1.28,
-          "p99ms": 2.83,
-          "jsGzKb": 19.7,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 37174,
+          "p50ms": 1.19,
+          "p99ms": 2.66,
+          "jsGzKb": 18.8,
+          "nifra": true
         },
         {
           "name": "Nifra + Preact (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 30247,
-          "p50ms": 1.6,
-          "p99ms": 3.19,
-          "jsGzKb": 19.7,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 31869,
+          "p50ms": 1.49,
+          "p99ms": 3,
+          "jsGzKb": 18.8,
+          "nifra": true
+        },
+        {
+          "name": "Raw Preact render (Node, ceiling)",
+          "version": "6.8.1",
+          "runtime": "node",
+          "rps": 50002,
+          "p50ms": 0.93,
+          "p99ms": 1.94,
+          "jsGzKb": 4.7
         }
       ]
     }
@@ -458,71 +467,71 @@
       "rows": [
         {
           "name": "Nifra + React SSG (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 101972,
-          "p50ms": 0.48,
-          "p99ms": 1.03,
-          "jsGzKb": 76.5,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 100532,
+          "p50ms": 0.47,
+          "p99ms": 1.04,
+          "jsGzKb": 85.1,
+          "nifra": true
         },
         {
           "name": "Nifra + React SSG (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 61815,
-          "p50ms": 0.76,
-          "p99ms": 1.6,
-          "jsGzKb": 76.5,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 67628,
+          "p50ms": 0.7,
+          "p99ms": 1.43,
+          "jsGzKb": 85.1,
+          "nifra": true
         },
         {
           "name": "Next.js static (Node)",
+          "version": "16.4.2",
           "runtime": "node",
-          "rps": 7759,
-          "p50ms": 6.17,
-          "p99ms": 10.75,
-          "jsGzKb": 172.2,
-          "version": "16.4.2"
+          "rps": 11124,
+          "p50ms": 4.31,
+          "p99ms": 8.62,
+          "jsGzKb": 172.2
         },
         {
           "name": "Nifra + React ISR (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 99096,
-          "p50ms": 0.49,
-          "p99ms": 1.07,
-          "jsGzKb": 76.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 100273,
+          "p50ms": 0.46,
+          "p99ms": 1.06,
+          "jsGzKb": 84.7,
+          "nifra": true
         },
         {
           "name": "Nifra + React ISR (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 50335,
-          "p50ms": 0.92,
-          "p99ms": 1.9,
-          "jsGzKb": 76.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 53530,
+          "p50ms": 0.87,
+          "p99ms": 1.77,
+          "jsGzKb": 84.7,
+          "nifra": true
         },
         {
           "name": "Next.js ISR (Node)",
+          "version": "16.4.2",
           "runtime": "node",
-          "rps": 7732,
-          "p50ms": 6.18,
-          "p99ms": 10.41,
-          "jsGzKb": 172.2,
-          "version": "16.4.2"
+          "rps": 11100,
+          "p50ms": 4.3,
+          "p99ms": 8.62,
+          "jsGzKb": 172.2
         },
         {
           "name": "Nifra + React SSG files on a static host",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 41371,
-          "p50ms": 1.15,
-          "p99ms": 2.38,
-          "jsGzKb": 76.5,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 43380,
+          "p50ms": 1.1,
+          "p99ms": 2.24,
+          "jsGzKb": 85.1,
+          "nifra": true
         }
       ]
     },
@@ -531,42 +540,42 @@
       "rows": [
         {
           "name": "Nifra + Solid SSG (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 97899,
-          "p50ms": 0.49,
+          "rps": 99149,
+          "p50ms": 0.48,
           "p99ms": 1.04,
           "jsGzKb": 16.7,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nifra + Solid SSG (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 60849,
-          "p50ms": 0.78,
-          "p99ms": 1.62,
+          "rps": 67283,
+          "p50ms": 0.7,
+          "p99ms": 1.43,
           "jsGzKb": 16.7,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "SolidStart static (Node)",
+          "version": "2.0.6",
           "runtime": "node",
-          "rps": 36575,
-          "p50ms": 1.24,
-          "p99ms": 3.02,
-          "jsGzKb": 18.7,
-          "version": "1.4.0"
+          "rps": 48762,
+          "p50ms": 0.99,
+          "p99ms": 1.47,
+          "jsGzKb": 15.4
         },
         {
           "name": "Nifra + Solid SSG files on a static host",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 40746,
-          "p50ms": 1.17,
-          "p99ms": 2.43,
+          "rps": 43179,
+          "p50ms": 1.1,
+          "p99ms": 2.24,
           "jsGzKb": 16.7,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         }
       ]
     },
@@ -575,42 +584,42 @@
       "rows": [
         {
           "name": "Nifra + Vue SSG (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 102831,
-          "p50ms": 0.47,
-          "p99ms": 1.02,
+          "rps": 102880,
+          "p50ms": 0.44,
+          "p99ms": 1.03,
           "jsGzKb": 19.6,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nifra + Vue SSG (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 61592,
-          "p50ms": 0.77,
-          "p99ms": 1.59,
+          "rps": 67861,
+          "p50ms": 0.69,
+          "p99ms": 1.42,
           "jsGzKb": 19.6,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nuxt static (Node)",
+          "version": "4.6.2",
           "runtime": "node",
-          "rps": 38519,
-          "p50ms": 1.22,
-          "p99ms": 2.39,
-          "jsGzKb": 69.2,
-          "version": "4.6.2"
+          "rps": 39869,
+          "p50ms": 1.19,
+          "p99ms": 2.24,
+          "jsGzKb": 69.2
         },
         {
           "name": "Nifra + Vue SSG files on a static host",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 41272,
-          "p50ms": 1.15,
-          "p99ms": 2.39,
+          "rps": 43421,
+          "p50ms": 1.1,
+          "p99ms": 2.22,
           "jsGzKb": 19.6,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         }
       ]
     },
@@ -619,42 +628,42 @@
       "rows": [
         {
           "name": "Nifra + Svelte SSG (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 100980,
-          "p50ms": 0.48,
-          "p99ms": 1.04,
+          "rps": 102245,
+          "p50ms": 0.45,
+          "p99ms": 1.03,
           "jsGzKb": 17.2,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "Nifra + Svelte SSG (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 61622,
-          "p50ms": 0.77,
-          "p99ms": 1.6,
+          "rps": 68207,
+          "p50ms": 0.69,
+          "p99ms": 1.41,
           "jsGzKb": 17.2,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         },
         {
           "name": "SvelteKit static (Node)",
+          "version": "3.1.0",
           "runtime": "node",
-          "rps": 32338,
-          "p50ms": 1.37,
-          "p99ms": 3.22,
-          "jsGzKb": 30.1,
-          "version": "2.70.3"
+          "rps": 27618,
+          "p50ms": 1.6,
+          "p99ms": 3.61,
+          "jsGzKb": 33.1
         },
         {
           "name": "Nifra + Svelte SSG files on a static host",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 41122,
-          "p50ms": 1.16,
-          "p99ms": 2.39,
+          "rps": 43362,
+          "p50ms": 1.1,
+          "p99ms": 2.23,
           "jsGzKb": 17.2,
-          "nifra": true,
-          "version": "5.4.0"
+          "nifra": true
         }
       ]
     },
@@ -663,33 +672,33 @@
       "rows": [
         {
           "name": "Nifra + Preact SSG (Bun)",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 101959,
-          "p50ms": 0.48,
+          "rps": 101798,
+          "p50ms": 0.45,
           "p99ms": 1.03,
-          "jsGzKb": 20.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "jsGzKb": 19.2,
+          "nifra": true
         },
         {
           "name": "Nifra + Preact SSG (Node)",
+          "version": "5.5.0",
           "runtime": "node",
-          "rps": 61373,
-          "p50ms": 0.77,
-          "p99ms": 1.61,
-          "jsGzKb": 20.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 67818,
+          "p50ms": 0.69,
+          "p99ms": 1.42,
+          "jsGzKb": 19.2,
+          "nifra": true
         },
         {
           "name": "Nifra + Preact SSG files on a static host",
+          "version": "5.5.0",
           "runtime": "bun",
-          "rps": 40847,
-          "p50ms": 1.16,
-          "p99ms": 2.46,
-          "jsGzKb": 20.1,
-          "nifra": true,
-          "version": "5.4.0"
+          "rps": 43273,
+          "p50ms": 1.1,
+          "p99ms": 2.23,
+          "jsGzKb": 19.2,
+          "nifra": true
         }
       ]
     }
@@ -701,25 +710,25 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.4.0",
-          "get": "80,861",
-          "post": "77,831",
-          "body": "64,548",
+          "version": "5.5.0",
+          "get": "84,733",
+          "post": "81,933",
+          "body": "65,746",
           "nifra": true
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "get": "82,631",
-          "post": "79,011",
-          "body": "59,567"
+          "get": "81,179",
+          "post": "78,843",
+          "body": "59,479"
         },
         {
           "name": "Hono",
-          "version": "4.13.7",
-          "get": "58,395",
-          "post": "58,456",
-          "body": "41,661"
+          "version": "4.13.13",
+          "get": "60,177",
+          "post": "59,378",
+          "body": "41,665"
         }
       ]
     },
@@ -729,39 +738,39 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.4.0",
-          "get": "74,209",
-          "post": "65,925",
-          "body": "66,669",
+          "version": "5.5.0",
+          "get": "75,155",
+          "post": "69,843",
+          "body": "67,671",
           "nifra": true
         },
         {
           "name": "Fastify",
-          "version": "5.12.5",
-          "get": "75,176",
-          "post": "66,750",
-          "body": "67,769"
+          "version": "5.12.7",
+          "get": "75,475",
+          "post": "70,738",
+          "body": "67,618"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "get": "55,032",
-          "post": "46,405",
-          "body": "38,156"
+          "get": "55,857",
+          "post": "47,307",
+          "body": "39,339"
         },
         {
           "name": "Express",
-          "version": "5.2.1",
-          "get": "46,452",
-          "post": "41,571",
-          "body": "46,070"
+          "version": "5.3.0",
+          "get": "49,010",
+          "post": "44,893",
+          "body": "46,763"
         },
         {
           "name": "Hono",
-          "version": "4.13.7",
-          "get": "29,954",
-          "post": "26,757",
-          "body": "21,742"
+          "version": "4.13.13",
+          "get": "29,629",
+          "post": "26,868",
+          "body": "22,083"
         }
       ]
     },
@@ -771,45 +780,45 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.4.0",
-          "get": "57,489",
-          "post": "66,897",
-          "body": "49,908",
+          "version": "5.5.0",
+          "get": "58,999",
+          "post": "67,977",
+          "body": "50,300",
           "nifra": true
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
-          "get": "53,319",
-          "post": "53,680",
-          "body": "38,554"
+          "get": "54,256",
+          "post": "54,999",
+          "body": "38,654"
         },
         {
           "name": "Hono",
-          "version": "4.13.7",
-          "get": "28,508",
-          "post": "31,261",
-          "body": "12,096"
+          "version": "4.13.13",
+          "get": "28,635",
+          "post": "31,127",
+          "body": "12,408"
         }
       ]
     }
   ],
   "httpWorkloadsCaptured": {
-    "date": "2026-10-17",
+    "date": "2026-10-19",
     "bun": "1.4.3",
     "node": "26.12.0",
-    "deno": "2.9.7",
-    "oha": "1.16.0"
+    "oha": "1.16.0",
+    "deno": "2.9.7"
   },
   "httpRealworldCaptured": {
-    "date": "2026-10-17",
+    "date": "2026-10-19",
     "bun": "1.4.3",
     "node": "26.12.0",
-    "deno": "2.9.7",
-    "oha": "1.16.0"
+    "oha": "1.16.0",
+    "deno": "2.9.7"
   },
   "ssrCaptured": {
-    "date": "2026-10-17",
+    "date": "2026-10-19",
     "bun": "1.4.3",
     "node": "26.12.0",
     "oha": "1.16.0"

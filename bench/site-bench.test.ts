@@ -126,9 +126,18 @@ describe("the committed site dataset", () => {
   })
 
   test("no raw baseline row is published", () => {
+    // Preact has no meta-framework on Node, so its table compares with the bare renderer: the one raw row.
+    const renderer = new Set<unknown>(
+      (data.ssrTables ?? [])
+        .filter((table) => table.framework === "Preact")
+        .flatMap((table) =>
+          table.rows.filter((row) => row.name === "Raw Preact render (Node, ceiling)"),
+        ),
+    )
     for (const [, rows] of published) {
       for (const row of rows) {
         expect(RAW).not.toContain(row.name)
+        if (renderer.has(row)) continue
         expect(row.name).not.toMatch(/\braw\b|ceiling/i)
       }
     }
