@@ -68,6 +68,37 @@ bun create nifra my-app --framework solid      # or react · preact · vue · sv
 # Composes with --target - pick a framework AND a deploy target:
 bun create nifra my-app --framework svelte --target vercel`
 
+const REACT_COMPILER = `// doc-check: skip - needs @babel/core, babel-plugin-react-compiler and @vitejs/plugin-react installed.
+// nifra.config.ts - the React Compiler for nifra build, nifra dev and nifra dev --vite.
+import type { BunPlugin } from "bun"
+import { transformAsync } from "@babel/core"
+import react from "@vitejs/plugin-react"
+
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-react/client"
+
+// Your own components only; packages ship compiled or plain already.
+const reactCompiler: BunPlugin = {
+  name: "react-compiler",
+  setup(build) {
+    build.onLoad({ filter: /\\.[jt]sx$/ }, async ({ path }) => {
+      if (/[\\\\/]node_modules[\\\\/]/.test(path)) return undefined
+      const source = await Bun.file(path).text()
+      const out = await transformAsync(source, {
+        filename: path,
+        babelrc: false,
+        configFile: false,
+        parserOpts: { plugins: path.endsWith(".tsx") ? ["jsx", "typescript"] : ["jsx"] },
+        plugins: ["babel-plugin-react-compiler"],
+      })
+      return { contents: out?.code ?? source, loader: path.endsWith(".tsx") ? "tsx" : "jsx" }
+    })
+  },
+}
+
+export const clientPlugins = [reactCompiler]
+export const vitePlugins = [react({ babel: { plugins: ["babel-plugin-react-compiler"] } })]`
+
 const VUE_SFC = `<!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
 // The plain <script> carries the page's named exports (meta, handle, ...):
@@ -243,6 +274,17 @@ export default function Frameworks() {
         and Svelte update live without a full page reload, and the edited component may remount. Full
         matrix in <a href="/docs/dev">Dev &amp; HMR</a>.
       </p>
+
+      <h2>React Compiler</h2>
+      <p>
+        The React Compiler is a Babel plugin, and nifra builds with Bun, so it runs as a small Bun
+        plugin over your own <code>.tsx</code> and <code>.jsx</code> files. Listed in{" "}
+        <code>clientPlugins</code>, it compiles the client bundle for <code>nifra build</code> and for{" "}
+        <code>nifra dev</code>; <code>nifra dev --vite</code> takes it through{" "}
+        <code>@vitejs/plugin-react</code>. The server bundle stays as written: a compiled component
+        renders the same markup, so pages hydrate as before. Needs React 19.
+      </p>
+      <CodeBlock code={REACT_COMPILER} />
     </div>
   )
 }
