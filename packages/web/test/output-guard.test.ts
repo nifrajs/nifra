@@ -24,6 +24,7 @@ import {
 } from "../src/internal/output-guard.ts"
 import { mergeRouteHalves } from "../src/manifest.ts"
 import { DATA_HEADER } from "../src/router.ts"
+import { guardComponentProps } from "../src/server-components/props.ts"
 
 // Every value a loader, action, boundary loader or server function sends toward the browser passes
 // its declared output schema: undeclared keys are dropped, a wrong-typed declared field fails with
@@ -309,6 +310,86 @@ describe("a declared field of the wrong shape fails", () => {
   })
 })
 
+describe("validation of the projected value", () => {
+  test("a t schema validates it without the key checks projection made redundant", () => {
+    const schema = t.object({ items: t.array(t.object({ id: t.integer(), name: t.string() })) })
+    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+    expect(compiled.validate).not.toBe(schema["~standard"].validate)
+    const value = { items: [{ id: 1, name: "a", passwordHash: "x" }], sessionSecret: "x" }
+    expect(guard(schema, value)).toEqual({ items: [{ id: 1, name: "a" }] })
+  })
+
+  test("a declared field of the wrong shape still fails with its path", async () => {
+    const schema = t.object({ items: t.array(t.object({ id: t.integer(), name: t.string() })) })
+    const error = await refusal(() =>
+      guard(schema, { items: [{ id: 1, name: "a" }, { id: "2", name: "b", extra: 1 }, { id: 3 }] }),
+    )
+    expect(error.paths).toEqual(["/items/1/id", "/items/2/name"])
+  })
+
+  test("a union branch still refuses a key only another branch declares", async () => {
+    const schema = t.object({
+      who: t.union([
+        t.object({ kind: t.literal("user"), name: t.string() }),
+        t.object({ kind: t.literal("team"), members: t.integer() }),
+      ]),
+    })
+    await refusal(() => guard(schema, { who: { kind: "user", name: "Ada", members: 3 } }))
+    expect(guard(schema, { who: { kind: "user", name: "Ada" }, x: 1 })).toEqual({
+      who: { kind: "user", name: "Ada" },
+    })
+  })
+
+  test("a schema projected by another JSON Schema than its validate checks keeps that validate", async () => {
+    const strict = t.object({ id: t.string() })
+    const spoofed = {
+      ...strict,
+      jsonSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        additionalProperties: true,
+      },
+    }
+    expect(outputGuard(spoofed, '"page.backend.ts"', "loaderOutput").validate).toBe(
+      strict["~standard"].validate,
+    )
+    await refusal(() => guard(spoofed, { id: "1", secret: "x" }))
+  })
+
+  test("a deferred value's resolved value is validated the same way", async () => {
+    const schema = t.object({ feed: t.deferred(t.array(t.object({ n: t.integer() }))) })
+    const streamed = (value: unknown): unknown =>
+      typeof value === "object" &&
+      value !== null &&
+      "feed" in value &&
+      typeof value.feed === "object" &&
+      value.feed !== null &&
+      "promise" in value.feed
+        ? value.feed.promise
+        : undefined
+    const ok = guard(schema, { feed: defer(Promise.resolve([{ n: 1, token: "x" }])) })
+    expect(await streamed(ok)).toEqual([{ n: 1 }])
+    const bad = guard(schema, { feed: defer(Promise.resolve([{ n: "1" }])) })
+    expect((await refusal(() => streamed(bad))).paths).toEqual(["/0/n"])
+  })
+
+  test("a non-enumerable property is never sent: no serializer reads one", () => {
+    const row = { id: "1" }
+    Object.defineProperty(row, "passwordHash", { value: "never-sent", enumerable: false })
+    const out = guard(t.object({ list: t.array(t.object({ id: t.string() })) }), { list: [row] })
+    expect(JSON.stringify(out)).toBe('{"list":[{"id":"1"}]}')
+    expect(structuredClone(out)).toEqual({ list: [{ id: "1" }] })
+  })
+
+  test("client component props refuse a non-enumerable property", async () => {
+    const row = { id: "1" }
+    Object.defineProperty(row, "passwordHash", { value: "never-sent", enumerable: false })
+    const props = t.object({ row: t.object({ id: t.string() }) })
+    expect(await guardComponentProps(props, { row: { id: "1" } })).toEqual({ row: { id: "1" } })
+    await expect(guardComponentProps(props, { row })).rejects.toThrow()
+  })
+})
+
 describe("what passes without a schema, and what never does", () => {
   test("nothing, a redirect and an error status pass; data needs a schema", async () => {
     const none = contract(undefined)
@@ -542,6 +623,22 @@ describe("a route's backend half", () => {
     })
     const page = await (await app.fetch(new Request("http://x/page"))).text()
     expect(page).toContain('<main>{"name":"Ada"}</main>')
+    expect(page).not.toContain("never-sent")
+    const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    expect(await data.text()).not.toContain("never-sent")
+  })
+
+  test("a non-enumerable property reaches neither the page nor the data request", async () => {
+    const app = appOf({
+      loader: () => {
+        const row = { name: "Ada" }
+        Object.defineProperty(row, "passwordHash", { value: "never-sent", enumerable: false })
+        return { rows: [row] }
+      },
+      loaderOutput: t.object({ rows: t.array(t.object({ name: t.string() })) }),
+    })
+    const page = await (await app.fetch(new Request("http://x/page"))).text()
+    expect(page).toContain('<main>{"rows":[{"name":"Ada"}]}</main>')
     expect(page).not.toContain("never-sent")
     const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
     expect(await data.text()).not.toContain("never-sent")

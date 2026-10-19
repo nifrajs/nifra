@@ -12,6 +12,11 @@
  * Projection reads the schema's JSON Schema: a nifra schema's `jsonSchema`, or a Standard JSON Schema
  * (`~standard.jsonSchema.output`). A schema that exposes neither is trusted to strip unknown keys in
  * its own `validate` output, as zod and valibot objects do by default.
+ *
+ * Validation then runs on the projected value. A `@nifrajs/schema` schema validates it without the
+ * undeclared-key check of each closed object projection reached, which projection already did. A
+ * non-enumerable property is no key to either: JSON and `structuredClone` skip it and server
+ * component props refuse it, so it never reaches the browser.
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import { markDeferredFree } from "./deferred-free.ts"
@@ -22,6 +27,8 @@ const RESPONSE_RESULT = Symbol.for("nifra.response.result")
 const STATUS_SIGNAL = Symbol.for("nifra.web.status-signal")
 /** Set by `t.deferred(inner)` on its schema node: `inner`'s own validate. */
 const DEFERRED_VALIDATE = Symbol.for("nifra.schema.deferredValidate")
+/** On a `@nifrajs/schema` validate: its variant for a value projected by its own JSON Schema. */
+const VALIDATE_PROJECTED = Symbol.for("nifra.schema.validateProjected")
 
 export const DECLASSIFIED_KEY = "x-nifra-declassified"
 const DEFERRED_KEY = "x-nifra-deferred"
@@ -507,7 +514,7 @@ class Compiler {
     }
     const inner: CompiledGuard = {
       project: this.compile(node.inner, where),
-      validate: validate as CompiledGuard["validate"],
+      validate: validatorFor(validate as CompiledGuard["validate"], node.inner),
       warnDropped: inDevelopment(),
       deferredFree: false,
     }
@@ -609,6 +616,19 @@ export function jsonSchemaOf(schema: StandardSchemaV1): Node | undefined {
   }
 }
 
+/**
+ * `validate`, or the variant its schema offers for a value projected by `json`: one that skips the
+ * undeclared-key check of each closed object the projection already kept to its declared keys.
+ */
+function validatorFor(validate: CompiledGuard["validate"], json: Node): CompiledGuard["validate"] {
+  const variant: unknown = Reflect.get(validate, VALIDATE_PROJECTED)
+  const projected: unknown = typeof variant === "function" ? variant(json) : undefined
+  return isValidate(projected) ? projected : validate
+}
+
+const isValidate = (value: unknown): value is CompiledGuard["validate"] =>
+  typeof value === "function"
+
 const compiled = new WeakMap<object, CompiledGuard>()
 
 /**
@@ -642,7 +662,10 @@ export function outputGuard(schema: unknown, owner: string, exportName: string):
   }
   const guard: CompiledGuard = {
     project,
-    validate: standard["~standard"].validate,
+    validate:
+      json === undefined
+        ? standard["~standard"].validate
+        : validatorFor(standard["~standard"].validate, json),
     warnDropped: inDevelopment(),
     deferredFree,
   }
