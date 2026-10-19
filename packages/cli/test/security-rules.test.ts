@@ -540,6 +540,39 @@ describe("NF-S002 precision", () => {
     ).toEqual([])
   })
 
+  test("two consts loaded from configuration are no timing oracle", async () => {
+    expect(
+      await linesOf(
+        [
+          "const aServiceKey = process.env['A_SERVICE_KEY']",
+          "const bServiceKey = process.env['B_SERVICE_KEY']",
+          "const hmacSecret = (process.env.HMAC_SECRET ?? '').trim()",
+          "if (aServiceKey !== undefined && aServiceKey === bServiceKey) throw new Error('keys must differ')",
+          "if (hmacSecret === aServiceKey || hmacSecret === bServiceKey!) throw new Error('keys must differ')",
+          "function boot() { const signingKey = Bun.env.SIGNING_KEY as string; return signingKey === hmacSecret }",
+        ].join("\n"),
+      ),
+    ).toEqual([])
+  })
+
+  test("a const that is not a configuration read, or not the nearest binding, still flags", async () => {
+    expect(
+      await linesOf(
+        [
+          "const serviceKey = process.env.SERVICE_KEY",
+          "let rotatedSecret = process.env.ROTATED_SECRET",
+          "if (serviceKey === header) x()",
+          "if (rotatedSecret === serviceKey) x()",
+          "function f(serviceKey: string) { return serviceKey === process.env.OTHER_KEY_SECRET }",
+          "const fromBody = body.secret",
+          "if (fromBody === serviceKey) x()",
+          "function g() { for (const serviceKey of keys) if (serviceKey === process.env.A_TOKEN) x() }",
+          "if (privateKey === input || signingKey === input || masterKey === input) x()",
+        ].join("\n"),
+      ),
+    ).toEqual([3, 4, 5, 7, 8, 9, 9, 9])
+  })
+
   test("a configuration read compared with anything else still flags", async () => {
     expect(
       await linesOf(

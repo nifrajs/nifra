@@ -29,7 +29,8 @@ function didNotRun(code: string, title: string): readonly Diagnostic[] {
   ]
 }
 
-const SECRET = /(?:token|secret|apiKey|api_key|signature|hmac|password)/i
+const SECRET =
+  /(?:token|secret|apiKey|api_key|signature|hmac|password|(?:service|private|signing|master|encryption)_?key)/i
 const PII = /(?:email|phone|ssn|password|token|authorization)/i
 // Retired in 5.0.0: it silenced any security finding without a reason. It now silences nothing and
 // only makes the finding name the form that replaced it.
@@ -321,6 +322,76 @@ function isConfigRead(ts: typeof TSApi, node: TSApi.Expression): boolean {
   return CONTEXT_NAMES.has(owner.text) && CONFIG_KEY.test(key) && isParameterRef(ts, owner)
 }
 
+/**
+ * The initializer of the `const` that `id` names, when that const is the nearest binding of the name.
+ * A parameter, a loop or catch variable, a `let` or a function in between disproves it.
+ */
+function constInitializer(ts: typeof TSApi, id: TSApi.Identifier): TSApi.Expression | undefined {
+  for (let node: TSApi.Node | undefined = id.parent; node !== undefined; node = node.parent) {
+    if (ts.isFunctionLike(node) && node.parameters.some((p) => bindsName(ts, p.name, id.text)))
+      return undefined
+    if (
+      (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      node.initializer !== undefined &&
+      ts.isVariableDeclarationList(node.initializer) &&
+      node.initializer.declarations.some((d) => bindsName(ts, d.name, id.text))
+    )
+      return undefined
+    if (
+      ts.isCatchClause(node) &&
+      node.variableDeclaration !== undefined &&
+      bindsName(ts, node.variableDeclaration.name, id.text)
+    )
+      return undefined
+    if (!ts.isBlock(node) && !ts.isSourceFile(node)) continue
+    for (const statement of node.statements) {
+      if (!ts.isVariableStatement(statement)) continue
+      const constant = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+      for (const declaration of statement.declarationList.declarations) {
+        if (!bindsName(ts, declaration.name, id.text)) continue
+        return constant && ts.isIdentifier(declaration.name) ? declaration.initializer : undefined
+      }
+    }
+    if (declaresIn(ts, node.statements, id.text)) return undefined
+  }
+  return undefined
+}
+
+/**
+ * Whether `node` holds deployment configuration: a read {@link isConfigRead} accepts, or a `const`
+ * initialized from one (`const key = process.env.KEY`), through parentheses, `as`, `!`, a `.trim()` and
+ * a `??`/`||` string default.
+ */
+function isConfigValue(ts: typeof TSApi, node: TSApi.Expression, depth = 0): boolean {
+  if (depth > 8) return false
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  )
+    return isConfigValue(ts, node.expression, depth + 1)
+  if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
+    ts.isStringLiteralLike(node.right)
+  )
+    return isConfigValue(ts, node.left, depth + 1)
+  if (
+    ts.isCallExpression(node) &&
+    node.arguments.length === 0 &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "trim"
+  )
+    return isConfigValue(ts, node.expression.expression, depth + 1)
+  if (ts.isIdentifier(node)) {
+    const initializer = constInitializer(ts, node)
+    return initializer !== undefined && isConfigValue(ts, initializer, depth + 1)
+  }
+  return isConfigRead(ts, node)
+}
+
 function secretComparisons(
   ts: typeof TSApi,
   tree: TSApi.SourceFile,
@@ -344,7 +415,7 @@ function secretComparisons(
       if (
         (isSecretName(left) || isSecretName(right)) &&
         !isClientConfirmationPair(browser, left, right) &&
-        !(isConfigRead(ts, node.left) && isConfigRead(ts, node.right))
+        !(isConfigValue(ts, node.left) && isConfigValue(ts, node.right))
       ) {
         const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
         found.push({ node, left, right, line })

@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import {
   aliasMatcher,
   applyDoctorAutoFix,
@@ -653,6 +662,67 @@ export { app }
       expect(result.readiness?.items.every((item) => item.status === "configured")).toBe(true)
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("counts settings a linked source package applies, never a registry install's or nifra's", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "nifra-doctor-readiness-linked-")))
+    try {
+      const app = join(base, "app")
+      const shared = join(base, "shared")
+      const put = async (path: string, text: string): Promise<void> => {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text)
+      }
+      await put(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: {
+            "@team/server": "file:../shared/server",
+            "vendor-kit": "1.0.0",
+            "@nifrajs/core": "5.0.0",
+          },
+        }),
+      )
+      await put(
+        join(app, "backend.ts"),
+        'import { createServer } from "@team/server"\nimport "vendor-kit"\nimport "@nifrajs/core"\nexport const app = createServer()\n',
+      )
+      await put(
+        join(shared, "server", "package.json"),
+        JSON.stringify({ name: "@team/server", dependencies: { "@team/obs": "workspace:*" } }),
+      )
+      await put(
+        join(shared, "server", "src", "index.ts"),
+        'import { log } from "@team/obs"\nexport const createServer = () =>\n  server({ requestTimeoutMs: 30_000, gracefulSignals: true, logger: log })\n',
+      )
+      // Reached only through @team/server, from its workspace root's node_modules.
+      await put(join(shared, "obs", "package.json"), JSON.stringify({ name: "@team/obs" }))
+      await put(join(shared, "obs", "src", "index.ts"), "export const log = jsonLogger()\n")
+      await mkdir(join(shared, "node_modules", "@team"), { recursive: true })
+      await symlink(join(shared, "obs"), join(shared, "node_modules", "@team", "obs"))
+      await mkdir(join(app, "node_modules", "@team"), { recursive: true })
+      await symlink(join(shared, "server"), join(app, "node_modules", "@team", "server"))
+      await put(
+        join(app, "node_modules", "vendor-kit", "index.ts"),
+        "server({ admission: gate })\n",
+      )
+      await put(join(base, "nifra", "core", "src", "index.ts"), "server({ admission: gate })\n")
+      await put(join(base, "nifra", "core", "package.json"), '{"name":"@nifrajs/core"}')
+      await mkdir(join(app, "node_modules", "@nifrajs"), { recursive: true })
+      await symlink(join(base, "nifra", "core"), join(app, "node_modules", "@nifrajs", "core"))
+
+      const result = await collectDoctorResult(app, { target: "bun" })
+      const item = (id: string) => result.readiness?.items.find((entry) => entry.id === id)
+      expect(item("request-timeout")?.evidence).toBe(
+        "../shared/server/src/index.ts:3 via @team/server",
+      )
+      expect(item("graceful-lifecycle")?.status).toBe("configured")
+      expect(item("log-redaction")?.evidence).toBe("../shared/obs/src/index.ts:1 via @team/obs")
+      expect(item("admission")?.status).toBe("absent")
+    } finally {
+      await rm(base, { recursive: true, force: true })
     }
   })
 

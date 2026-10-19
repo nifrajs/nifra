@@ -38,7 +38,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, join, relative, resolve, sep } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { ReflectedHookReport } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
@@ -51,6 +51,7 @@ import {
   renderHookDiff,
 } from "./hooks-report.ts"
 import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import {
   BUN_LOCK,
   describeChange,
@@ -914,24 +915,92 @@ const packageVersionAt = (dir: string): string | undefined => {
   }
 }
 
-/** A repository linked into the project that resolves nifra from its own `node_modules`. */
+/** A package linked into the project that resolves nifra from outside it. */
 export interface LinkedSkew {
   /** The dependency's name, as the manifest declares it. */
   readonly package: string
   /** The project-relative manifest that declares it. */
   readonly declaredIn: string
-  /** The linked repository's real path. */
+  /** The linked package's real path. */
   readonly path: string
-  /** Each fixed-group package it installs itself (for {@link linkedSkew}, at a version other than
-   * the target), at its real path. */
+  /** Each fixed-group package it loads (for {@link linkedSkew}, at a version other than the
+   * target), at its real path. */
   readonly installs: readonly LinkedGroupInstall[]
 }
 
+/** The install a package belongs to: the folder above its last `node_modules`, or the package itself. */
+export const installRootOf = (path: string): string => {
+  const parts = path.split(sep)
+  const last = parts.lastIndexOf("node_modules")
+  return last <= 0 ? path : parts.slice(0, last).join(sep)
+}
+
+/** `name` as Node and Bun resolve it from `dir`: the first `node_modules/<name>` walking up to the root. */
+export function resolvePackageFrom(dir: string, name: string): string | undefined {
+  for (let at = dir; ; ) {
+    if (basename(at) !== "node_modules") {
+      try {
+        return realpathSync(join(at, "node_modules", name))
+      } catch {
+        // Not installed here: Node and Bun look in the parent's node_modules next.
+      }
+    }
+    const parent = dirname(at)
+    if (parent === at) return undefined
+    at = parent
+  }
+}
+
+const RUNTIME_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const
+
 /**
- * Every `link:` or `file:` dependency whose installed folder resolves outside `cwd` and installs
- * fixed-group packages of its own, with those installs. Its imports resolve from its real path, so it
- * loads its own copy whatever this project installs. A copy that resolves back inside `cwd` follows
- * this project's install and is not counted.
+ * Every fixed-group package the package at `dir` loads, each resolved from the real path of the package
+ * that imports it: its own runtime dependencies, whatever its own `node_modules` holds, and the same
+ * through each source package it depends on (a workspace sibling or another link, never a registry
+ * install). A workspace member reads a hoisted copy from the workspace root, not its own folder.
+ */
+function resolvedGroupPackages(dir: string): LinkedGroupInstall[] {
+  const found = new Map<string, LinkedGroupInstall>()
+  const visited = new Set<string>()
+  const visit = (at: string): void => {
+    if (visited.has(at)) return
+    visited.add(at)
+    let manifest: unknown
+    try {
+      manifest = JSON.parse(readFileSync(join(at, "package.json"), "utf8"))
+    } catch {
+      return
+    }
+    const names = new Set(installedGroupPackages(at).map((install) => install.package))
+    const sources: string[] = []
+    for (const field of RUNTIME_FIELDS) {
+      const block: unknown = Reflect.get(Object(manifest), field)
+      if (typeof block !== "object" || block === null) continue
+      for (const name of Object.keys(block)) {
+        if (isFixedGroup(name)) names.add(name)
+        else sources.push(name)
+      }
+    }
+    for (const name of names) {
+      const path = resolvePackageFrom(at, name)
+      const version = path === undefined ? undefined : packageVersionAt(path)
+      if (path !== undefined && version !== undefined && !found.has(path))
+        found.set(path, { package: name, path, version })
+    }
+    for (const name of sources) {
+      const path = resolvePackageFrom(at, name)
+      if (path !== undefined && !path.split(sep).includes("node_modules")) visit(path)
+    }
+  }
+  visit(dir)
+  return [...found.values()]
+}
+
+/**
+ * Every `link:` or `file:` dependency whose installed folder resolves outside `cwd` and loads
+ * fixed-group packages from outside it, with those copies ({@link resolvedGroupPackages}). Its imports
+ * resolve from its real path, so it loads its own copy whatever this project installs. A copy that
+ * resolves back inside `cwd` follows this project's install and is not counted.
  */
 export function linkedRepositories(cwd: string): readonly LinkedSkew[] {
   let root: string
@@ -966,43 +1035,14 @@ export function linkedRepositories(cwd: string): readonly LinkedSkew[] {
         }
         if (path === undefined || inside(path) || seen.has(path)) continue
         seen.add(path)
-        const installs = loadedGroupPackages(path).filter((entry) => !inside(entry.path))
+        const installs = resolvedGroupPackages(path)
+          .filter((entry) => !inside(entry.path))
+          .sort((a, b) => codeUnitOrder(a.package, b.package) || codeUnitOrder(a.path, b.path))
         if (installs.length > 0) found.push({ package: name, declaredIn: rel, path, installs })
       }
     }
   }
   return found
-}
-
-/**
- * The fixed-group packages the package at real path `dir` loads: those its own `node_modules` holds,
- * and each one it declares that is not there, from the nearest ancestor `node_modules` that has it,
- * the way a bare import resolves from a real path. A linked workspace package's dependencies are
- * usually hoisted to its repository root.
- */
-function loadedGroupPackages(dir: string): LinkedGroupInstall[] {
-  const found = new Map<string, LinkedGroupInstall>()
-  for (const { package: name, path, version } of installedGroupPackages(dir)) {
-    found.set(name, { package: name, path, version })
-  }
-  for (const name of groupDependenciesAt(dir)) {
-    if (found.has(name)) continue
-    for (let base = dirname(dir); ; base = dirname(base)) {
-      let path: string | undefined
-      try {
-        path = realpathSync(join(base, "node_modules", name))
-      } catch {
-        path = undefined
-      }
-      const version = path === undefined ? undefined : packageVersionAt(path)
-      if (path !== undefined && version !== undefined) {
-        found.set(name, { package: name, path, version })
-        break
-      }
-      if (dirname(base) === base) break
-    }
-  }
-  return [...found.values()]
 }
 
 /**
@@ -1360,14 +1400,25 @@ function renderLinkedSkew(
   cwd: string,
   allowed: boolean,
 ): string {
+  const display = (path: string): string => relative(cwd, path).split(sep).join("/") || "."
+  // A hoisted workspace member loads the copy at its workspace root, so the upgrade runs there.
+  const roots = [
+    ...new Set(
+      skew.flatMap((entry) => entry.installs.map((install) => installRootOf(install.path))),
+    ),
+  ].sort(codeUnitOrder)
   const lines = [
-    `${allowed ? "Allowed by --allow-linked-skew" : "Blocked"}: ${skew.length} linked repositor${skew.length === 1 ? "y loads" : "ies load"} its own nifra at another version. Its imports resolve from its own node_modules, so after this upgrade a server() it builds cannot be merge()d here ("merge() requires a server() from this copy of @nifrajs/core").`,
+    `${allowed ? "Allowed by --allow-linked-skew" : "Blocked"}: ${roots.length} linked repositor${roots.length === 1 ? "y loads" : "ies load"} its own nifra at another version. Its imports resolve from its own node_modules, so after this upgrade a server() it builds cannot be merge()d here ("merge() requires a server() from this copy of @nifrajs/core").`,
   ]
   for (const entry of skew) {
-    const at = relative(cwd, entry.path).split(sep).join("/") || "."
     lines.push(
-      `  ${entry.package} (${entry.declaredIn}) at ${at}: ${entry.installs.map((install) => `${install.package} ${install.version}`).join(", ")}`,
-      `    cd ${at} && nifra upgrade ${version} --write && bun install`,
+      `  ${entry.package} (${entry.declaredIn}) at ${display(entry.path)}: ${entry.installs.map((install) => `${install.package} ${install.version}`).join(", ")}`,
+    )
+  }
+  for (const root of roots) {
+    const at = display(root)
+    lines.push(
+      `    cd ${/^[\w./-]+$/.test(at) ? at : JSON.stringify(at)} && nifra upgrade ${version} --write && bun install`,
     )
   }
   if (!allowed)

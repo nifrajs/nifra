@@ -55,7 +55,7 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     docs: "/docs/troubleshooting",
   },
   "NF-C009": {
-    why: "A package resolves to more than one physical copy, so module-level state (contexts, registries, instanceof checks) splits between them.",
+    why: "A package resolves to more than one physical copy of one version, so module-level state (contexts, registries, instanceof checks) splits between them. Copies at different versions are NF-C046.",
     fix: "Deduplicate the installs so each resolves to one path, or declare the package single-copy in package.json's nifra.singleCopy and preload the register module.",
     docs: "/docs/troubleshooting",
   },
@@ -247,6 +247,11 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     why: "A route registration returns a new type that records the route. Called as a statement of its own, the route runs, but the exported server's type never includes it, so the typed client has no such call.",
     fix: "Chain the registration onto the server's declaration, or declare the routes on their own server() and merge() it. A route kept off the type on purpose takes `// nifra-expect NF-C045: <reason>` above the statement.",
     docs: "/docs/api#typed-client",
+  },
+  "NF-C046": {
+    why: "A package resolves to copies at more than one version, often one in a linked sibling repository that installs its own. Module state splits as with NF-C009, and the two halves can also disagree on behavior. A singleCopy declaration only collapses copies of one version, so it cannot cover this.",
+    fix: "Install one version everywhere: align the ranges in every install root that carries a copy, or for nifra packages run `nifra upgrade <version>` in this app and in the linked repository, then install in each.",
+    docs: "/docs/troubleshooting",
   },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",

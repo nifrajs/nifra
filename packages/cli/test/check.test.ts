@@ -1291,14 +1291,28 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     const skewed = await fixture("2.0.0")
     try {
       const result = await collectCheckResult(skewed.app, { lintsOnly: true })
-      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      const diagnostic = result.diagnostics.find((d) => d.rule === "version-skew")
       expect(result.ok).toBe(false)
+      expect(result.diagnostics.some((d) => d.rule === "duplicate-install")).toBe(false)
       expect(diagnostic?.severity).toBe("error")
       expect(diagnostic?.message).toContain("shared-state identity preflight found version-skew")
       expect(diagnostic?.fix).toContain("Align dependency ranges")
+      expect(diagnostic?.suggestion?.diff).toBeUndefined()
+      expect(diagnostic?.suggestion?.steps).toContain(
+        "A singleCopy declaration does not cover this: it only collapses copies of one version.",
+      )
       expect(result.identityPreflight?.duplicates.map((finding) => finding.package)).toEqual([
         "shared-state",
       ])
+
+      // Quieting same-version duplicates leaves the skew failing.
+      await writeFile(
+        join(skewed.app, "nifra.check.json"),
+        JSON.stringify({ rules: { "NF-C009": { severity: "info" } } }),
+      )
+      const overridden = await collectCheckResult(skewed.app, { lintsOnly: true })
+      expect(overridden.ok).toBe(false)
+      expect(overridden.diagnostics.find((d) => d.rule === "version-skew")?.severity).toBe("error")
     } finally {
       await rm(skewed.ground, { recursive: true, force: true })
     }

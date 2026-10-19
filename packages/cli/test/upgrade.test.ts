@@ -1203,4 +1203,66 @@ describe("a linked repository that loads its own nifra", () => {
     const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
     expect(value).toBe(true)
   })
+
+  /** An app linking members of a workspace whose install hoists nifra to the workspace root. */
+  async function hoistedLayout(name: string, coreVersion: string): Promise<string> {
+    const base = join(FIXTURES, name)
+    const app = join(base, "app")
+    const repo = join(base, "repo")
+    await mkdir(join(app, "node_modules", "@team"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: {
+          "@nifrajs/core": "^5.0.0",
+          "@team/kit": "file:../repo/packages/kit",
+          "@team/ui": "file:../repo/packages/ui",
+        },
+      }),
+    )
+    await writeFile(
+      join(app, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "5.0.0" }),
+    )
+    await mkdir(join(repo, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await mkdir(join(repo, "node_modules", "@team"), { recursive: true })
+    await writeFile(
+      join(repo, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: coreVersion }),
+    )
+    const member = async (dir: string, manifest: Record<string, unknown>): Promise<void> => {
+      await mkdir(join(repo, "packages", dir), { recursive: true })
+      await writeFile(join(repo, "packages", dir, "package.json"), JSON.stringify(manifest))
+      await symlink(join(repo, "packages", dir), join(repo, "node_modules", "@team", dir))
+    }
+    await member("kit", { name: "@team/kit", dependencies: { "@nifrajs/core": "^5.0.0" } })
+    await member("base", { name: "@team/base", peerDependencies: { "@nifrajs/core": ">=5" } })
+    // Loads nifra only through a workspace sibling, which resolves it from the root as well.
+    await member("ui", { name: "@team/ui", dependencies: { "@team/base": "workspace:*" } })
+    await symlink(join(repo, "packages", "kit"), join(app, "node_modules", "@team", "kit"))
+    await symlink(join(repo, "packages", "ui"), join(app, "node_modules", "@team", "ui"))
+    return app
+  }
+
+  test("a workspace member reads the copy hoisted to its workspace root, directly or through a sibling", async () => {
+    const app = await hoistedLayout("skew-hoisted", "5.0.0")
+    const before = await readFile(join(app, "package.json"), "utf8")
+    const { value, out } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(false)
+    expect(await readFile(join(app, "package.json"), "utf8")).toBe(before)
+    expect(out).toContain("Blocked: 1 linked repository loads its own nifra at another version")
+    expect(out).toContain("@team/kit (package.json) at ../repo/packages/kit: @nifrajs/core 5.0.0")
+    expect(out).toContain("@team/ui (package.json) at ../repo/packages/ui: @nifrajs/core 5.0.0")
+    // One command, at the root the copy is installed under, not one per member folder.
+    expect(out.match(/nifra upgrade 5\.1\.0 --write/g)).toHaveLength(1)
+    expect(out).toContain("cd ../repo && nifra upgrade 5.1.0 --write && bun install")
+  })
+
+  test("a hoisted copy already on the target does not block", async () => {
+    const app = await hoistedLayout("skew-hoisted-none", "5.1.0")
+    const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
+    expect(value).toBe(true)
+  })
 })

@@ -1,4 +1,3 @@
-import { sep } from "node:path"
 import { bunLockDir, staleLinkLocks } from "./lock-links.ts"
 import {
   compareSemverSpec,
@@ -6,6 +5,7 @@ import {
   groupDependenciesAt,
   groupPinVersions,
   installedGroupPackages,
+  installRootOf,
   isFixedGroup,
   type LinkedGroupInstall,
   linkedRepositories,
@@ -89,18 +89,11 @@ export function collectVersionDrift(cwd: string, cliVersion?: string): VersionDr
   }
 }
 
-/** The install a package belongs to: the folder above its last `node_modules`, or the package itself. */
-const installRoot = (path: string): string => {
-  const parts = path.split(sep)
-  const last = parts.lastIndexOf("node_modules")
-  return last <= 0 ? path : parts.slice(0, last).join(sep)
-}
-
 /** Linked installs, one phrase per install and version: a linked repository brings its whole group. */
 function linkedGroups(installs: readonly LinkedGroupInstall[]): string[] {
   const groups = new Map<string, LinkedGroupInstall[]>()
   for (const install of installs) {
-    const key = `${installRoot(install.path)}\0${install.version}`
+    const key = `${installRootOf(install.path)}\0${install.version}`
     groups.set(key, [...(groups.get(key) ?? []), install])
   }
   return [...groups.values()].map((group) => {
@@ -112,7 +105,7 @@ function linkedGroups(installs: readonly LinkedGroupInstall[]): string[] {
       names.length > 3
         ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`
         : names.join(", ")
-    return `${group.length} packages at ${first.version} under ${installRoot(first.path)} (${listed})`
+    return `${group.length} packages at ${first.version} under ${installRootOf(first.path)} (${listed})`
   })
 }
 
