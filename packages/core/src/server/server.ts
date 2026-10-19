@@ -1564,7 +1564,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /**
    * Run before routing on the raw request. Return a `Response` or a `status()` result to
    * short-circuit, or a replacement `Request` to continue routing with a rewritten method/URL/headers.
-   * Global.
+   * Global. A throw or rejection goes to every registered {@link onError} (route-less context), then
+   * the logged default 500.
    */
   onRequest(
     fn: (req: Request, platform?: Platform<EnvOf<Ctx>>) => MaybePromise<OnRequestResult>,
@@ -1668,8 +1669,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500, or 503
    * `auth_unavailable` for a failed {@link authenticate} stage). Order-scoped: captured by routes
-   * declared *after* this call, none before; one added after the last route reaches nothing (see
-   * {@link ServerOptions.unusedScopedHooks}). */
+   * declared *after* this call, none before; one added after the last route reaches no route (see
+   * {@link ServerOptions.unusedScopedHooks}). Every one answers an {@link onRequest} failure. */
   onError<H extends (error: unknown, context: Context & Ctx) => MaybePromise<unknown>>(
     fn: H,
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
@@ -3875,18 +3876,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.wsHookedPasses.set(received, request)
       return resolveWithDeadline(request)
     }
+    // The same boundary as an HTTP request's hooks; the answer is already wrapped, so it is not refused.
+    const failed = (err: unknown): MaybePromise<WebSocketUpgradeOutcome> => {
+      const answer = this.onRequestFailure(
+        err,
+        req,
+        platform,
+        this.finalizeResponse,
+        this.wrapWebResponse,
+      )
+      return answer instanceof Promise
+        ? answer.then((response) => ({ kind: "reject", response }))
+        : { kind: "reject", response: answer }
+    }
     let hooked: MaybePromise<Request | Response>
     try {
       hooked = this.runWebSocketRequestHooks(req, platform)
-    } catch {
-      return refuse(jsonError(500, "internal_error"))
+    } catch (err) {
+      return failed(err)
     }
     if (!(hooked instanceof Promise)) {
       return hooked instanceof Response ? refuse(hooked) : resolveHooked(hooked)
     }
     const pending = hooked.then(
       (result) => (result instanceof Response ? refuse(result) : resolveHooked(result)),
-      () => refuse(jsonError(500, "internal_error")),
+      failed,
     )
     return bounded(
       Promise.resolve(pending).then((result) => result),
@@ -3995,19 +4009,26 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const request = this.nodeRequestContextOf(source)
     for (let i = 0; i < hooks.length; i++) {
       const hook = hooks[i] as NodeRequestHook
-      const outcome = hook(request, platform)
+      let outcome: MaybePromise<Response | undefined>
+      try {
+        outcome = hook(request, platform)
+      } catch (err) {
+        return this.onRequestFailure(err, source, platform, finalize, wrapResponse)
+      }
       if (outcome instanceof Promise) {
-        return outcome.then((early) =>
-          this.continueNodeRequest(
-            early,
-            i + 1,
-            request,
-            source,
-            platform,
-            finalize,
-            wrapResponse,
-            onTimeout,
-          ),
+        return outcome.then(
+          (early) =>
+            this.continueNodeRequest(
+              early,
+              i + 1,
+              request,
+              source,
+              platform,
+              finalize,
+              wrapResponse,
+              onTimeout,
+            ),
+          (err) => this.onRequestFailure(err, source, platform, finalize, wrapResponse),
         )
       }
       if (outcome !== undefined) return wrapResponse(outcome)
@@ -4028,8 +4049,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (first !== undefined) return wrapResponse(first)
     for (let i = nextIndex; i < this.onNodeRequestHooks.length; i++) {
       const hook = this.onNodeRequestHooks[i] as NodeRequestHook
-      const outcome = hook(request, platform)
-      const early = outcome instanceof Promise ? await outcome : outcome
+      let early: Response | undefined
+      try {
+        const outcome = hook(request, platform)
+        early = outcome instanceof Promise ? await outcome : outcome
+      } catch (err) {
+        return this.onRequestFailure(err, source, platform, finalize, wrapResponse)
+      }
       if (early !== undefined) return wrapResponse(early)
     }
     return this.routeAndRun(source, platform, finalize, wrapResponse, onTimeout, false)
@@ -4063,20 +4089,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     let current: RequestSource = source
     for (let i = 0; i < hooks.length; i++) {
       const seen = requestOf(current)
-      const outcome = (hooks[i] as RawOnRequest)(seen, platform)
+      let outcome: MaybePromise<OnRequestResult>
+      try {
+        outcome = (hooks[i] as RawOnRequest)(seen, platform)
+      } catch (err) {
+        return this.onRequestFailure(err, current, platform, finalize, wrapResponse)
+      }
       if (outcome instanceof Promise) {
-        return outcome.then((early) =>
-          this.continueOnRequest(
-            early,
-            i + 1,
-            originalRequest,
-            current,
-            platform,
-            finalize,
-            wrapResponse,
-            onTimeout,
-            webFast,
-          ),
+        return outcome.then(
+          (early) =>
+            this.continueOnRequest(
+              early,
+              i + 1,
+              originalRequest,
+              current,
+              platform,
+              finalize,
+              wrapResponse,
+              onTimeout,
+              webFast,
+            ),
+          (err) => this.onRequestFailure(err, current, platform, finalize, wrapResponse),
         )
       }
       if (outcome instanceof Request) {
@@ -4117,8 +4150,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (index >= this.onRequestHooks.length) break
       seen = requestOf(current)
-      const outcome = (this.onRequestHooks[index] as RawOnRequest)(seen, platform)
-      early = outcome instanceof Promise ? await outcome : outcome
+      try {
+        const outcome = (this.onRequestHooks[index] as RawOnRequest)(seen, platform)
+        early = outcome instanceof Promise ? await outcome : outcome
+      } catch (err) {
+        return this.onRequestFailure(err, current, platform, finalize, wrapResponse)
+      }
       index++
     }
     return this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
@@ -6381,13 +6418,50 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.logRequestError(err, ctx)
       return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
     }
-    return this.runErrorHooks(entry, err, ctx, finalize, wrapResponse, fallback)
+    return this.runErrorHooks(
+      entry.onError,
+      entry.responseContract,
+      err,
+      ctx,
+      finalize,
+      wrapResponse,
+      fallback,
+    )
+  }
+
+  /** An `onRequest` hook threw or rejected. No route has matched, so every `onError` the app holds
+   * answers it, with a route-less context; otherwise the logged default 500, as for a handler. */
+  private onRequestFailure<T>(
+    err: unknown,
+    source: RequestSource,
+    platform: Platform | undefined,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): MaybePromise<T> {
+    if (err instanceof Response || isResponseResult(err)) return wrapResponse(err)
+    const ctx = new RequestContext(
+      source,
+      EMPTY_PARAMS,
+      undefined,
+      getNeverAbortSignal(),
+      getUnboundedRequestBudget(),
+      platform,
+      this.maxBodyBytes,
+      this.protoPoisoning,
+    )
+    if (this.onErrorHooks.length === 0) {
+      this.logRequestError(err, ctx)
+      return this.internalErrorResponse(wrapResponse)
+    }
+    Object.assign(ctx, this.decorations)
+    return this.runErrorHooks(this.onErrorHooks, undefined, err, ctx, finalize, wrapResponse)
   }
 
   /** The `onError` chain, split off {@link handleLifecycleError} so its `await` costs only the routes
    * that registered a hook. A hook may return a custom response; otherwise the default 500 stands. */
   private async runErrorHooks<T>(
-    entry: RouteEntry,
+    hooks: readonly RawErrorHandler[],
+    contract: RouteEntry["responseContract"],
     err: unknown,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
@@ -6396,11 +6470,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
     // the `await` and stay heap-allocated on both engines.
-    for (let i = 0; i < entry.onError.length; i++) {
-      const outcome = entry.onError[i]!(err, ctx)
+    for (let i = 0; i < hooks.length; i++) {
+      const outcome = hooks[i]!(err, ctx)
       const handled = outcome instanceof Promise ? await outcome : outcome
       if (handled === undefined) continue
-      const contract = entry.responseContract
       if (contract === undefined || (handled !== ctx.jsonReply && !isResponseResult(handled)))
         return finalize(handled, responseSet(ctx), ctx)
       // Checked here, not through finishLifecycleContract: a throwing schema must not re-enter onError.

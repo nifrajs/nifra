@@ -3181,6 +3181,13 @@ normal response path, so the body is serialized with its content-type, and decla
 `responseHeaders` and every `onResponse` hook apply to it. A hand-built
 `Response` still works.
 
+An `onRequest` hook that throws or rejects (a rate-limit store that is down, say)
+fails the request the way a handler error does. Every `onError` the app
+registered sees it, in order, with a context that has no route params; the first answer is
+sent. When none answers, the error is logged and the client gets the default
+`500`. A thrown `Response` or `status()` value is sent as
+if returned.
+
 #### Which hooks run where
 
 Where a hook is registered decides which requests it sees. `nifra routes --hooks`
