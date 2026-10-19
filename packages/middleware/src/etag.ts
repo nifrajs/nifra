@@ -115,7 +115,7 @@ export function etag(options: ETagOptions = {}) {
     app.use(
       withResponseObserver<Middleware>({
         onResponseBody(body, headers, req, status) {
-          if (req.method !== "GET" || status !== 200) return undefined
+          if (!isConditionalMethod(req.method) || status !== 200) return undefined
           const bytes = typeof body === "string" ? ETAG_ENCODER.encode(body) : body
           if (bytes.byteLength > maxBytes) return undefined
           const finish = (fingerprint: string): ResponseBodyReplacement | undefined => {
@@ -134,7 +134,11 @@ export function etag(options: ETagOptions = {}) {
           return sha256Tag(bytes).then(finish)
         },
         onResponseRaw(response, req) {
-          if (req.method !== "GET" || response.status !== 200 || response.body === null) {
+          if (
+            !isConditionalMethod(req.method) ||
+            response.status !== 200 ||
+            response.body === null
+          ) {
             return response
           }
           // Hashing reads the body before any of it is sent. A stream meant to arrive as it is
@@ -161,6 +165,9 @@ export function etag(options: ETagOptions = {}) {
     ),
   )
 }
+
+// A HEAD answer carries the validators its GET would (RFC 9110 section 9.3.2).
+const isConditionalMethod = (method: string): boolean => method === "GET" || method === "HEAD"
 
 async function etagRawResponse(
   response: Response,

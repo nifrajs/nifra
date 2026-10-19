@@ -57,6 +57,17 @@ describe("etag", () => {
     expect(res.headers.get("etag")).toBe(tag)
   })
 
+  test("a HEAD carries the ETag its GET gets, and revalidates to 304", async () => {
+    const tag = (await app.fetch(new Request("http://x/"))).headers.get("etag")
+    const head = await app.fetch(new Request("http://x/", { method: "HEAD" }))
+    expect(head.status).toBe(200)
+    expect(head.headers.get("etag")).toBe(tag)
+    const revalidated = await app.fetch(
+      new Request("http://x/", { method: "HEAD", headers: { "if-none-match": tag ?? "" } }),
+    )
+    expect(revalidated.status).toBe(304)
+  })
+
   test("matches If-None-Match lists, wildcard, and weak validators", async () => {
     const tag = (await app.fetch(new Request("http://x/"))).headers.get("etag")!
     const listed = await app.fetch(
