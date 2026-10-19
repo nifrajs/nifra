@@ -14235,7 +14235,10 @@ relabeling Workers KV does not make its reads strongly consistent. No eventual-c
 provided, including when rolling renewal is disabled.
 
 In store mode, `destroy` revokes the entire session family, including later IDs issued by
-`regenerate`. Rotated IDs remain opaque signed cookie values. Store adapters must retain
+`regenerate`. A cookie that a rotation has already replaced does this only for 60 seconds after
+the rotation, while the rotating response may still be on its way to the browser. After that,
+logging out with it drops only that superseded ID, so a kept pre-login cookie cannot end the
+session that replaced it. Rotated IDs remain opaque signed cookie values. Store adapters must retain
 `<id>.rotated` and `<family>.revoked` marker records until their `expiresAt`, including after the
 original session record is deleted. Do not interpret markers as sessions.
 For store adapters, the family is the session's original ID: a rotated ID has the form
@@ -14246,7 +14249,7 @@ when the previous record is missing, rotated, or its family is revoked; otherwis
 marker, delete the old record, and store the replacement in one transaction. Return whether it won.
 The built-in memory store implements this operation. Adapters with only `get`/`set`/`delete` keep
 logout markers separate from rotation markers and check family revocation after writing; concurrent
-rotations can produce multiple replacement IDs, all revoked by logout of any family member.
+rotations can produce multiple replacement IDs, all revoked by one logout of the family.
 
 ## Docs
 
