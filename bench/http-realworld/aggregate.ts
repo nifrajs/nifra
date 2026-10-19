@@ -24,10 +24,10 @@ const TEMPLATE = `# Realistic-shape benchmarks - local results (not committed)
 The bare-route matrix ([BENCHMARKS.md](./BENCHMARKS.md)) measures the framework floor and is what
 nifra's fused Web lane (bare/query/body-only routes) targets. This suite measures the SAME GET/POST
 split, but on a route with what a real API route actually has: security headers, CORS, a request-id
-hook, bearer-token auth via a derive, and a cookie read. On nifra, that combination disqualifies the
-route from every fused lane - it always takes the general lifecycle path. Compare the SAME
-framework's ratio across both files to see the fused-lane premium directly, instead of assuming the
-bare-route ratio generalizes to a real endpoint.
+hook, bearer-token auth via a derive, and a cookie read. On nifra, that combination compiles into the
+fused derive-before lane (body-derive-before for the POST), not the bare/query/body lanes. Compare the
+SAME framework's ratio across both files to see what the middleware work costs directly, instead of
+assuming the bare-route ratio generalizes to a real endpoint.
 
 The third workload (the \`*-body\` rows) adds ONE body-observing middleware to the same GET - an
 x-body-hash header over the final serialized body - via each framework's own idiomatic body tier:
