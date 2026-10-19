@@ -93,8 +93,8 @@ function geoMean(row: HttpRow): number {
 // ---- Backend: the same routes, carrying what a real API route carries ----
 // The bare tables above are the number every framework publishes; this is the one that survives
 // contact with an application. Same GET and POST, but the route has security headers, CORS, a
-// request-id hook, bearer auth through a derive, and a cookie read - which on nifra specifically
-// disqualifies it from every fused fast lane, so this is the pessimistic side of our own numbers.
+// request-id hook, bearer auth through a derive, and a cookie read - the shape most deployed API
+// routes have, which nifra compiles into its fused derive-and-before lane.
 type RealworldRow = HttpRealworldTable["rows"][number]
 
 function realworldGeoMean(row: RealworldRow): number {
@@ -271,9 +271,10 @@ export default function Benchmarks() {
             The tables above are the shape every framework publishes: a bare route doing nothing but
             routing. This is the same GET and POST after the route gains what an actual API route
             has - security headers, CORS, a request-id hook, bearer auth through a derive, and a
-            cookie read. That combination disqualifies the route from every one of Nifra's fused
-            fast lanes, so these are the pessimistic numbers, not the flattering ones. The third
-            column adds one body-observing middleware to the same GET.
+            cookie read. Nifra compiles that shape - one derive, one before hook and a query or body
+            schema - into its fused derive-and-before lane, so these numbers carry real middleware
+            work on a fused route, not a fallback path. The third column adds one body-observing
+            middleware to the same GET.
           </p>
           <div className="bench-grid">
             {HTTP_REALWORLD.map((table) => (
