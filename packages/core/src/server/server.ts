@@ -1156,6 +1156,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
   private bunServer: RunningServer | undefined
+  // Bun's `pendingRequests` leaves out upgraded sockets, so `stop()` closes these itself.
+  private bunSockets: Set<{ close(code?: number): void }> | undefined
+  private signalHandler: (() => void) | undefined
   private sealed: boolean
   private readonly derives: RawDerive[]
   /** Dedicated authentication stages captured by subsequent routes. */
@@ -6826,6 +6829,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     const nativeRoutes =
       wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
+    const sockets = new Set<{ close(code?: number): void }>()
+    this.bunSockets = sockets
     const running = (wsHandlers === undefined
       ? Bun.serve({
           ...listening,
@@ -6843,9 +6848,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
             // limit per listener: the largest cap among this app and the apps mounted on it.
             maxPayloadLength: wsHandlers.maxPayloadLength,
-            open: (ws) => wsHandlers.open(ws),
+            open: (ws) => {
+              sockets.add(ws)
+              wsHandlers.open(ws)
+              // An upgrade accepted while `stop()` drains gets the close the earlier sockets got.
+              if (this.bunServer !== running) ws.close(1001)
+            },
             message: (ws, message) => wsHandlers.message(ws, message),
-            close: (ws, code, reason) => wsHandlers.close(ws, code, reason),
+            close: (ws, code, reason) => {
+              sockets.delete(ws)
+              wsHandlers.close(ws, code, reason)
+            },
           },
         })) as unknown as RunningServer
     this.bunServer = running
@@ -6873,17 +6886,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `stop()`'s promise drops in-flight requests), and decide graceful-vs-forced in
    * ONE call (Bun can't escalate an already-graceful `stop()` to a forced close).
    * New connections may be accepted during the drain window; in a real deploy the
-   * load balancer has already stopped routing here, and `drainMs` bounds it.
+   * load balancer has already stopped routing here, and `drainMs` bounds it. Open WebSockets
+   * get a 1001 close at once and the same window to finish it, before any `onStop` hook runs.
    */
   async stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
+    const onSignal = this.signalHandler
+    if (onSignal !== undefined) {
+      this.signalHandler = undefined
+      process.off("SIGTERM", onSignal).off("SIGINT", onSignal)
+    }
     const server = this.bunServer
     if (server === undefined) return
     this.bunServer = undefined
+    const sockets = this.bunSockets
+    this.bunSockets = undefined
+    if (sockets !== undefined) for (const ws of sockets) ws.close(1001)
+    const busy = (): boolean => server.pendingRequests + (sockets?.size ?? 0) > 0
     const deadline = Date.now() + drainMs
-    while (server.pendingRequests > 0 && Date.now() < deadline) {
+    while (busy() && Date.now() < deadline) {
       await Bun.sleep(DRAIN_POLL_MS)
     }
-    server.stop(server.pendingRequests > 0) // force-close iff stragglers remain past the deadline
+    server.stop(busy()) // force-close iff stragglers remain past the deadline
     if (this.stopHooks.length === 0) return
     const callbacks = this.stopHooks.map((hook) => Promise.resolve().then(hook))
     const settled = Promise.allSettled(callbacks)
@@ -6900,6 +6923,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const onSignal = (): void => {
       void this.stop(drain)
     }
+    this.signalHandler = onSignal
     process.once("SIGTERM", onSignal)
     process.once("SIGINT", onSignal)
   }
