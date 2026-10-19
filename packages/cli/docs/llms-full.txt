@@ -4849,8 +4849,16 @@ rewritten onto, or set `trustHost` when a proxy you control fixes the host. Give
 `createSessions` signs the cookie (HMAC, verified constant-time) and always marks it
 `HttpOnly`. In **store mode** the cookie is just an opaque id and the data lives in
 a `SessionStore`; in **cookie mode** (no store) the data is signed into the cookie.
-Stores mirror the ISR discipline: `MemorySessionStore` is prod-guarded;
-`KVSessionStore` is the durable, shared production store.
+`MemorySessionStore` is prod-guarded. Production store mode needs a strongly
+consistent shared `SessionStore`, such as a transactional adapter or Durable Object.
+Every instance must observe completed writes and deletes, including revocation markers.
+
+`createSessions` refuses `KVSessionStore` and any adapter declaring
+`consistency: "eventual"`. Workers KV can serve stale sessions and missing logout
+markers, allowing a revoked session to be restored. Migrate existing KV-backed sessions to a
+strongly consistent store; the KV adapter remains exported for reading legacy records.
+Custom adapters may declare `consistency: "strong"`; omitting it asserts the same
+contract. Disabling rolling renewal does not make eventually consistent logout safe.
 
 The signature covers the cookie name, so two managers that share a secret never read each
 other's cookies; still, give sessions a secret no other signed value uses. A cookie-mode
@@ -4868,8 +4876,8 @@ import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
 let manager: ReturnType<typeof createSessions> | undefined
 export const getSessions = () => (manager ??= createSessions({
-  secret: process.env.SESSION_SECRET!,          // ≥ 16 chars; rotating it invalidates all sessions
-  store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)
+  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret
+  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore
   // cookie: { secure: false },                 // local http dev only
 }))
 ```
@@ -14212,6 +14220,19 @@ bun add @nifrajs/auth
 ```
 
 ## Store revocation and rotation
+
+Store mode requires strongly consistent reads: every instance must observe completed writes and
+deletes, including revocation markers. `createSessions` refuses adapters declaring
+`consistency: "eventual"`. `KVSessionStore` declares this and is no longer accepted: Workers KV can
+serve a cached session and a cached missing marker after logout, allowing renewal to restore it.
+Its export remains available for reading and migrating legacy records.
+
+Use a strongly consistent shared `SessionStore`, for example a transactional adapter or a Durable
+Object, in production. `MemorySessionStore` remains suitable for development or an explicitly allowed
+single-instance deployment. Custom adapters may declare `consistency: "strong"`; omitting the
+declaration preserves compatibility but asserts the same strong-consistency contract. Wrapping or
+relabeling Workers KV does not make its reads strongly consistent. No eventual-consistency opt-in is
+provided, including when rolling renewal is disabled.
 
 In store mode, `destroy` revokes the entire session family, including later IDs issued by
 `regenerate`. Rotated IDs remain opaque signed cookie values. Store adapters must retain

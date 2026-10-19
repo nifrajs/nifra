@@ -692,7 +692,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVSessionStore} uses. Structural (no `@cloudflare/workers-types` dependency) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
-  A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}) - the durable, shared production store: sessions hold across worker instances and survive restarts. Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so …
+  Legacy Cloudflare Workers KV persistence, retained for reading and migrating existing records. `createSessions` rejects this adapter: cached records and missing revocation markers can resurrect a logged-out session. Use a strongly consistent {@link SessionStore} for authenticated sessions. Records …
 - **MemorySessionStore** _(class)_ - `class MemorySessionStore`
   In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances). Bounded: oldest-inserted entries evict past `max`, sessions and revocation markers each on their ow…
 - **MemorySessionStoreOptions** _(interface)_ - `interface MemorySessionStoreOptions`
@@ -707,7 +707,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionRecord** _(interface)_ - `interface SessionRecord`
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
-  Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun. Logout and rotation also write a revocation marke…
+  Pluggable session backend (store mode). Reads must observe completed writes and deletes, including revocation markers, across all instances. Eventual consistency cannot provide logout guarantees. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionSto…
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
   The response a guard denies a missing session with, in place of the default `401` JSON.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`

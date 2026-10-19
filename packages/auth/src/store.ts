@@ -1,7 +1,7 @@
 /**
  * Session stores (the **store mode** backend) - a pluggable `SessionStore` plus an in-memory
- * implementation (dev / single-instance, prod-guarded) and a Cloudflare Workers KV implementation
- * (the durable, shared production path). The store is dumb persistence: the session *manager* owns the
+ * implementation (dev / single-instance, prod-guarded). The legacy Cloudflare Workers KV adapter is
+ * retained for migration, but is not safe for session revocation. The session *manager* owns the
  * clock and authoritatively enforces expiry, so the store stays clock-free and trivially testable.
  */
 
@@ -13,7 +13,8 @@ export interface SessionRecord {
 }
 
 /**
- * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.
+ * Pluggable session backend (store mode). Reads must observe completed writes and deletes, including
+ * revocation markers, across all instances. Eventual consistency cannot provide logout guarantees.
  * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}
  * prod-guards against the per-instance footgun. Logout and rotation also write a revocation marker, an
  * empty record under `<id>.revoked`, and rotation one under `<id>.rotated`, so a store must accept those
@@ -22,6 +23,8 @@ export interface SessionRecord {
  * rotated generation outlive a logout made with an earlier generation's cookie.
  */
 export interface SessionStore {
+  /** Read consistency. Omission asserts strong consistency for existing custom adapters. */
+  readonly consistency?: "strong" | "eventual"
   /** The record for `id`, or `undefined` on a miss. */
   get(id: string): Promise<SessionRecord | undefined>
   /** Store (or overwrite) the record for `id`. */
@@ -100,6 +103,7 @@ export interface MemorySessionStoreOptions {
  * a logout cannot restore it once the marker is gone.
  */
 export class MemorySessionStore implements SessionStore {
+  readonly consistency = "strong"
   private readonly sessions = new Map<string, SessionRecord>()
   private readonly families = new Map<string, Set<string>>()
   // Apart from the sessions: anonymous sessions written after a logout must not push its marker out.
@@ -112,7 +116,7 @@ export class MemorySessionStore implements SessionStore {
     if (options.allowInProduction !== true && isProd) {
       throw new Error(
         "[nifra/auth] MemorySessionStore is per-instance and unsafe in production (sessions don't hold " +
-          "across instances and are lost on restart). Use a shared store (KVSessionStore, Redis), or " +
+          "across instances and are lost on restart). Use a strongly consistent shared store, or " +
           "pass { allowInProduction: true } for a single-instance deploy.",
       )
     }
@@ -230,14 +234,16 @@ const isSessionRecord = (value: unknown): value is SessionRecord => {
 }
 
 /**
- * A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike})
- * - the durable, shared production store: sessions hold across worker instances and survive restarts.
+ * Legacy Cloudflare Workers KV persistence, retained for reading and migrating existing records.
+ * `createSessions` rejects this adapter: cached records and missing revocation markers can resurrect
+ * a logged-out session. Use a strongly consistent {@link SessionStore} for authenticated sessions.
  * Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so KV
  * auto-evicts the session (a GC backstop - the manager still authoritatively checks expiry on read).
- * Every read is validated, so a corrupt/skewed entry reads as no session. Workers KV has no conditional
- * write, so this store leaves out `replace` and keeps each revocation marker until its `expiresAt`.
+ * Every read is validated, so a corrupt/skewed entry reads as no session.
+ * @deprecated Workers KV is eventually consistent and cannot enforce session revocation.
  */
 export class KVSessionStore implements SessionStore {
+  readonly consistency = "eventual"
   private readonly kv: KVNamespaceLike
   private readonly now: () => number
 

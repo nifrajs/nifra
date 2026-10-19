@@ -59,8 +59,8 @@ import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
 let manager: ReturnType<typeof createSessions> | undefined
 export const getSessions = () => (manager ??= createSessions({
-  secret: process.env.SESSION_SECRET!,          // ≥ 16 chars; rotating it invalidates all sessions
-  store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)
+  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret
+  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore
   // cookie: { secure: false },                 // local http dev only
 }))`
 
@@ -204,8 +204,17 @@ export default function Auth() {
         <code>createSessions</code> signs the cookie (HMAC, verified constant-time) and always marks it{" "}
         <code>HttpOnly</code>. In <b>store mode</b> the cookie is just an opaque id and the data lives in
         a <code>SessionStore</code>; in <b>cookie mode</b> (no store) the data is signed into the cookie.
-        Stores mirror the ISR discipline: <code>MemorySessionStore</code> is prod-guarded;{" "}
-        <code>KVSessionStore</code> is the durable, shared production store.
+        <code>MemorySessionStore</code> is prod-guarded. Production store mode needs a strongly
+        consistent shared <code>SessionStore</code>, such as a transactional adapter or Durable Object.
+        Every instance must observe completed writes and deletes, including revocation markers.
+      </p>
+      <p>
+        <code>createSessions</code> refuses <code>KVSessionStore</code> and any adapter declaring{" "}
+        <code>consistency: "eventual"</code>. Workers KV can serve stale sessions and missing logout
+        markers, allowing a revoked session to be restored. Migrate existing KV-backed sessions to a
+        strongly consistent store; the KV adapter remains exported for reading legacy records.
+        Custom adapters may declare <code>consistency: "strong"</code>; omitting it asserts the same
+        contract. Disabling rolling renewal does not make eventually consistent logout safe.
       </p>
       <p>
         The signature covers the cookie name, so two managers that share a secret never read each

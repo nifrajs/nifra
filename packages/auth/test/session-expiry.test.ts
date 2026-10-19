@@ -4,6 +4,7 @@ import {
   type KVNamespaceLike,
   KVSessionStore,
   type SessionContext,
+  type SessionStore,
 } from "../src/index.ts"
 
 const SECRET = "test-secret-at-least-32-bytes-ok!"
@@ -52,7 +53,14 @@ function setup(rolling = true) {
   let time = 1_000
   const now = () => time
   const kv = new ExpiringKV(now)
-  const store = new KVSessionStore(kv, { now })
+  const serialized = new KVSessionStore(kv, { now })
+  // This in-process fixture has coherent reads; real Workers KV does not and is refused by sessions.
+  const store: SessionStore = {
+    consistency: "strong",
+    get: serialized.get.bind(serialized),
+    set: serialized.set.bind(serialized),
+    delete: serialized.delete.bind(serialized),
+  }
   const sessions = createSessions({ secret: SECRET, maxAge: 120, rolling, store, now })
   return {
     kv,

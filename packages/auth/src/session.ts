@@ -61,7 +61,8 @@ export interface SessionOptions {
    * secret, drop the old one after `maxAge` has elapsed. A bare secret swap (no list) invalidates
    * all existing sessions. */
   readonly secret: string | readonly string[]
-  /** Provide a store for **store mode**; omit for **cookie mode** (stateless). */
+  /** Strongly consistent backend for **store mode**; omit for **cookie mode** (stateless).
+   * Declared eventually consistent stores (including KVSessionStore) are refused. */
   readonly store?: SessionStore
   /** Cookie name. Default `nifra_session`. */
   readonly cookieName?: string
@@ -148,6 +149,14 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   options: SessionOptions,
 ): SessionManager<Data> {
   const { secret, store } = options
+  // A cached marker miss can authenticate or recreate a session after logout, even with fixed expiry.
+  if (store?.consistency !== undefined && store.consistency !== "strong") {
+    throw new Error(
+      "[nifra/auth] sessions require a strongly consistent store for logout and rotation; " +
+        "eventually consistent stores such as KVSessionStore are not supported. " +
+        "Use a strongly consistent shared SessionStore instead.",
+    )
+  }
   const secretList = typeof secret === "string" ? [secret] : secret
   if (secretList.length === 0) {
     throw new Error("[nifra/auth] session secret list cannot be empty")

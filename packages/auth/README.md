@@ -15,6 +15,19 @@ bun add @nifrajs/auth
 
 ## Store revocation and rotation
 
+Store mode requires strongly consistent reads: every instance must observe completed writes and
+deletes, including revocation markers. `createSessions` refuses adapters declaring
+`consistency: "eventual"`. `KVSessionStore` declares this and is no longer accepted: Workers KV can
+serve a cached session and a cached missing marker after logout, allowing renewal to restore it.
+Its export remains available for reading and migrating legacy records.
+
+Use a strongly consistent shared `SessionStore`, for example a transactional adapter or a Durable
+Object, in production. `MemorySessionStore` remains suitable for development or an explicitly allowed
+single-instance deployment. Custom adapters may declare `consistency: "strong"`; omitting the
+declaration preserves compatibility but asserts the same strong-consistency contract. Wrapping or
+relabeling Workers KV does not make its reads strongly consistent. No eventual-consistency opt-in is
+provided, including when rolling renewal is disabled.
+
 In store mode, `destroy` revokes the entire session family, including later IDs issued by
 `regenerate`. Rotated IDs remain opaque signed cookie values. Store adapters must retain
 `<id>.rotated` and `<family>.revoked` marker records until their `expiresAt`, including after the

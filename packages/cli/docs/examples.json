@@ -69,7 +69,7 @@
     "name": "SETUP",
     "topic": "Nifra - Auth & sessions",
     "slug": "auth",
-    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // ≥ 16 chars; rotating it invalidates all sessions\n  store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)\n  // cookie: { secure: false },                 // local http dev only\n}))"
+    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret\n  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore\n  // cookie: { secure: false },                 // local http dev only\n}))"
   },
   {
     "name": "BACKEND",
