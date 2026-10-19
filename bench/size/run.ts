@@ -237,12 +237,15 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
-  "nifra-idempotency": 40.2,
-  "nifra-effect-ledger": 37.8,
-  "nifra-mcp": 36.1,
+  // Hook-handed responses held single-use (onResponse replacement, onRequest answer): idempotency
+  // 41,108 -> 41,198 B, effect-ledger 38,706 -> 38,789, sse 37,535 -> 37,615, mcp 36,934 -> 37,035,
+  // valibot 37,697 -> 37,782 (Bun 1.4.3).
+  "nifra-idempotency": 40.3,
+  "nifra-effect-ledger": 37.9,
+  "nifra-mcp": 36.2,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 36.7,
-  "nifra-valibot": 36.8,
+  "nifra-sse": 36.8,
+  "nifra-valibot": 36.9,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,
