@@ -91,9 +91,11 @@ export interface ServerOptions {
   readonly trustBodyFraming?: boolean
   /**
    * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
-   * socket closes with `1009`. Default: `maxBodyBytes` (1 MB). Bun and Node stop buffering at the cap,
-   * so a huge frame is never held in memory; on Bun a mounted app's smaller cap, and on Deno and
-   * Workers every cap, is checked after the runtime has buffered the whole message.
+   * socket closes with `1009`; when Bun's own frame limit refuses it, Bun drops the connection and the
+   * client sees `1006`, while the `close` handler still gets `1009`. Default: `maxBodyBytes` (1 MB).
+   * Bun and Node stop buffering at the cap, so a huge frame is never held in memory; on Bun a mounted
+   * app's smaller cap, and on Deno and Workers every cap, is checked after the runtime has buffered
+   * the whole message.
    */
   readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */

@@ -373,9 +373,13 @@ describe("app.listen() WebSockets", () => {
   // End-to-end over a real Bun socket: the server option has to reach the runtime, not just the
   // upgrade outcome, or every adapter enforces nothing.
   test("wsMaxPayloadBytes closes a socket that sends an oversize frame", async () => {
+    const handlerSaw = Promise.withResolvers<{ code: number; reason: string }>()
     running = server({ wsMaxPayloadBytes: 8 })
       .use(websocket())
-      .ws("/echo", { message: (ws, data) => ws.send(data) })
+      .ws("/echo", {
+        message: (ws, data) => ws.send(data),
+        close: (_ws, code, reason) => handlerSaw.resolve({ code, reason }),
+      })
       .listen(0, { hostname: "127.0.0.1" })
     const closed = await new Promise<number>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/echo`)
@@ -391,9 +395,9 @@ describe("app.listen() WebSockets", () => {
       })
     })
     // Bun drops the connection outright rather than sending a 1009 close frame, so the client sees
-    // 1006 (abnormal closure); the `attachWebSocket` path used by the other adapters sends 1009.
-    // What matters at this level is that the frame was refused and never reached the handler.
-    expect([1006, 1009]).toContain(closed)
+    // 1006 (abnormal closure); the handler still gets the 1009 a nifra-checked cap sends.
+    expect(closed).toBe(1006)
+    expect(await handlerSaw.promise).toEqual({ code: 1009, reason: "message too large" })
   })
 
   test("each mounted app keeps its own wsMaxPayloadBytes, below or above the parent's", async () => {

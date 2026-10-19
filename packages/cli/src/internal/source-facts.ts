@@ -54,7 +54,8 @@ export interface SourceFacts {
    * the other method registrations, a function value of an `implement(contract, {...})` map, a local
    * function either one names, or a local function a handler returns a call to (one hop). A handler
    * that also returns a plain value keeps the route typed (the client drops a bare `Response` from the
-   * union), and so does a registration that declares `{ response: … }`.
+   * union), and so does a registration that declares `{ response: … }`. A returned call to an imported
+   * function counts as a plain value unless `importReturnsResponse` shows it returns a `Response`.
    */
   untypedResponseRoutes(
     source: TSApi.SourceFile,
@@ -208,8 +209,8 @@ function returnsRawResponse(ts: TypeScriptApi, fn: FunctionNode): boolean {
   })
 }
 
-/** Value imports from relative modules, by local name: `import { json as reply } from "./http"`. */
-function relativeImports(
+/** Named and default value imports, by local name: `import { json as reply } from "./http"`. */
+function valueImports(
   ts: TypeScriptApi,
   source: TSApi.SourceFile,
 ): ReadonlyMap<string, { readonly specifier: string; readonly name: string }> {
@@ -219,7 +220,8 @@ function relativeImports(
       continue
     const specifier = statement.moduleSpecifier.text
     const clause = statement.importClause
-    if (!specifier.startsWith(".") || clause === undefined || clause.isTypeOnly) continue
+    if (clause === undefined || clause.isTypeOnly) continue
+    if (clause.name !== undefined) imports.set(clause.name.text, { specifier, name: "default" })
     const named = clause.namedBindings
     if (named === undefined || !ts.isNamedImports(named)) continue
     for (const element of named.elements) {
@@ -275,7 +277,17 @@ interface RouteHandlerSets {
 
 /** What a handler's returned value is, as far as one file shows: a raw `Response` reached some way,
  * a plain value the client types, or neither for sure. */
-type ReturnKind = "raw" | "held" | "context" | "imported" | "helper" | "plain" | "unknown"
+type ReturnKind =
+  | "raw"
+  | "held"
+  | "context"
+  | "imported"
+  | "helper"
+  | "plain"
+  | "opaque"
+  | "unknown"
+/** A returned value the client may type: a plain value, or an imported call not shown to be a `Response`. */
+const TYPED_KINDS: ReadonlySet<ReturnKind> = new Set(["plain", "opaque"])
 const RESPONSE_KINDS: ReadonlySet<ReturnKind> = new Set([
   "raw",
   "held",
@@ -538,20 +550,22 @@ export function createSourceFacts(
   ): UntypedResponseRoutes => {
     const { direct, undeclared, returned } = handlersOf(source)
     const locals = localFunctions(ts, source)
-    const imports = importReturnsResponse === undefined ? undefined : relativeImports(ts, source)
-    // A call this file cannot see into, or a conditional, may or may not be a Response: it neither
-    // marks a handler untyped nor keeps it typed.
+    const imports = valueImports(ts, source)
+    // A local call this file cannot see into, or a conditional, may or may not be a Response: it
+    // neither marks a handler untyped nor keeps it typed. An imported call keeps it typed unless the
+    // imported module shows a Response: a mapper or serializer from elsewhere is the usual plain return.
     const kindOf = (fn: FunctionNode, isDirect: boolean, value: TSApi.Expression): ReturnKind => {
       if (rawResponseExpression(ts, value)) return "raw"
       if (ts.isConditionalExpression(value) || ts.isNewExpression(value)) return "unknown"
       if (!ts.isCallExpression(value)) return "plain"
       if (isDirect && contextResponseCall(ts, fn, value)) return "context"
       if (!ts.isIdentifier(value.expression)) return "unknown"
-      const imported = imports?.get(value.expression.text)
+      const imported = imports.get(value.expression.text)
       if (imported !== undefined)
-        return importReturnsResponse?.(imported.specifier, imported.name) === true
+        return imported.specifier.startsWith(".") &&
+          importReturnsResponse?.(imported.specifier, imported.name) === true
           ? "imported"
-          : "unknown"
+          : "opaque"
       // From a direct handler, a call to a local helper answers as the helper does (one hop).
       const helpers = isDirect
         ? (locals.get(value.expression.text) ?? []).filter((helper) => returned.has(helper))
@@ -560,7 +574,7 @@ export function createSourceFacts(
       const kinds = helpers.flatMap((helper) =>
         returnKinds(helper, false).map((entry) => entry.kind),
       )
-      if (kinds.some((kind) => kind === "plain")) return "plain"
+      if (kinds.some((kind) => TYPED_KINDS.has(kind))) return "plain"
       return kinds.every((kind) => RESPONSE_KINDS.has(kind)) ? "helper" : "unknown"
     }
     const returnKinds = (fn: FunctionNode, isDirect: boolean) => {
@@ -575,7 +589,7 @@ export function createSourceFacts(
     // No plain return: a Response written anywhere in it (a `.then(() => new Response(…))` too)
     // is what the route answers with.
     const isUntyped = (fn: FunctionNode, isDirect: boolean): boolean =>
-      !returnKinds(fn, isDirect).some((entry) => entry.kind === "plain")
+      !returnKinds(fn, isDirect).some((entry) => TYPED_KINDS.has(entry.kind))
 
     const untyped = new Map<FunctionNode, boolean>()
     for (const handler of direct)
