@@ -66,7 +66,7 @@ export interface HttpWorkloadTable {
  * workload, on a route carrying security headers, CORS, a request-id hook, bearer auth and a cookie
  * read. Kept separate from `httpWorkloads` rather than folded in, because the two answer different
  * questions - the bare tables measure the framework floor (where nifra's fused lane applies), these
- * measure a route shaped like one people deploy (where it does not, for any framework).
+ * measure a route shaped like one people deploy.
  */
 export interface HttpRealworldRow {
   readonly name: string

@@ -102,13 +102,21 @@ export interface SsrTable {
   readonly rows: readonly SsrTableRow[]
 }
 
+function multiplierValue(item: Multiplier): number {
+  const value = Number.parseFloat(item.mult)
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY
+}
+
 export const HERO_SSR = data.heroSsr as readonly BenchRow[]
 export const SSR_TABLES = data.ssrTables as readonly SsrTable[]
 // Table B (cacheable: SSG/ISR) - rendered as separately-labelled tables, never blended with Table A.
 export const SSR_TABLES_B = ((data as { ssrTablesB?: readonly SsrTable[] }).ssrTablesB ??
   []) as readonly SsrTable[]
 export const FRONTEND = data.frontend as readonly BenchRow[]
-export const MULTIPLIERS = data.multipliers as readonly Multiplier[]
+// Largest first, ordered by the published value so a refreshed dataset re-ranks itself.
+export const MULTIPLIERS = [...(data.multipliers as readonly Multiplier[])].sort(
+  (a, b) => multiplierValue(b) - multiplierValue(a),
+)
 export const HTTP_BENCH = data.http as readonly BenchRow[]
 export const HTTP_WORKLOADS = data.httpWorkloads as readonly HttpWorkloadTable[]
 // The realistic-shape slice. Defaulted like SSR_TABLES_B: the aggregate only writes it when all
@@ -140,6 +148,32 @@ export function httpWorkloadRow(runtime: string, framework: string): HttpWorkloa
   return HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
     (row) => row.name === framework,
   )
+}
+
+/** Nifra's bare GET against the fastest other row of the same runtime table. */
+export interface HttpGetTrail {
+  readonly nifra: HttpWorkloadRow
+  readonly rival: HttpWorkloadRow
+  /** How far Nifra's req/s sits below the rival's, in percent of the rival's. */
+  readonly behindPercent: number
+}
+
+/** The bare-GET gap on a runtime, or undefined when Nifra leads that table or a row is missing. */
+export function httpGetTrail(runtime: string): HttpGetTrail | undefined {
+  const rows = HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows ?? []
+  const nifra = rows.find((row) => row.nifra)
+  const nifraRps = parseRps(nifra?.getUsers)
+  if (nifra === undefined || nifraRps === undefined) return undefined
+  let rival: HttpWorkloadRow | undefined
+  let rivalRps = nifraRps
+  for (const row of rows) {
+    const rps = parseRps(row.getUsers)
+    if (row.nifra || rps === undefined || rps <= rivalRps) continue
+    rival = row
+    rivalRps = rps
+  }
+  if (rival === undefined) return undefined
+  return { nifra, rival, behindPercent: (1 - nifraRps / rivalRps) * 100 }
 }
 
 /** Read a measured bare HTTP workload from the canonical benchmark dataset. */
