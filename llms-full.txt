@@ -236,14 +236,14 @@ to full-stack later without a rewrite.
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
-101% of Elysia on `GET /users/:id` and
-101% on the validated `POST` - and
-**level with Fastify on Node** (98% of Fastify on GET,
-101% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 97% of Elysia on
-GET and 114% on the validated `POST`. In the realistic shape (security headers + CORS +
+100% of Elysia on `GET /users/:id` and
+102% on the validated `POST` - and
+**level with Fastify on Node** (102% of Fastify on GET,
+99% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 98% of Elysia on
+GET and 118% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured with
-`oha`) Nifra runs at **98% of Elysia on GET and 99% on POST**. Treat benchmark
+`oha`) Nifra runs at **104% of Elysia on GET and 104% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -11977,8 +11977,8 @@ app.
 
 -
 **Much faster SSR** - the current dynamic-page snapshot reports Nifra at
-20× the throughput of Next.js, 7× Nuxt, and
-3.2× SvelteKit / 3.3× SolidStart, with a fraction
+15× the throughput of Next.js, 7.2× Nuxt, and
+3.9× SvelteKit / 2.2× SolidStart, with a fraction
 of the client JavaScript. See [benchmarks](/benchmarks).
 
 -
