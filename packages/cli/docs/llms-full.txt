@@ -18197,7 +18197,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-vanilla
 
-`HtmlValue`, `RawHtml`, `Template`, `VanillaComponent`, `compose`, `html`, `hydrate`, `raw`, `vanillaAdapter`
+`HtmlValue`, `RawHtml`, `Template`, `VanillaComponent`, `compose`, `html`, `hydrate`, `raw`, `slot`, `vanillaAdapter`
 
 ## @nifrajs/web-vue
 

@@ -35,6 +35,7 @@ import type {
 } from "../manifest.ts"
 import type { NonceResolver } from "../nonce.ts"
 import type { MatchChain, PageLocale, PageLocales, RenderAdapter } from "../render-seam.ts"
+import { SWAP_HEADER } from "../render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
@@ -101,6 +102,21 @@ export interface PageRouteContext<Env = unknown> {
 }
 
 /** Whether `c` is a client navigation's data request. On Node, `req.headers` builds every header. */
+// The slot name is echoed in a response header, so only a plain identifier is honored.
+const SLOT_NAME = /^[A-Za-z][\w-]{0,63}$/
+
+/** The slot an `x-nifra-swap` request names, when it is a valid slot name. */
+function swapSlotOf(req: Request): string | undefined {
+  const name = req.headers.get(SWAP_HEADER)
+  return name !== null && SLOT_NAME.test(name) ? name : undefined
+}
+
+/** The `swapSlot` render option for `req`, empty when it is not a swap request. */
+function swapOption(req: Request): { readonly swapSlot?: string } {
+  const swapSlot = swapSlotOf(req)
+  return swapSlot === undefined ? {} : { swapSlot }
+}
+
 function isDataRequest(c: PageRouteContext<unknown>): boolean {
   return (c.header !== undefined ? c.header(DATA_HEADER) : c.req.headers.get(DATA_HEADER)) !== null
 }
@@ -1171,6 +1187,8 @@ export function createPageRequestExecutor<Env = unknown>(
       }
       if (serverComponents !== undefined) page.serverComponents = serverComponents
       if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
+      const swapSlot = swapSlotOf(req)
+      if (swapSlot !== undefined) page.swapSlot = swapSlot
       if (layoutData !== undefined) page.layoutData = layoutData
       if (boundaryStates !== undefined) page.boundaries = boundaryStates
       if (responseHeaders !== undefined) page.headers = responseHeaders
@@ -1860,6 +1878,7 @@ export function createPageRequestExecutor<Env = unknown>(
           ...(nonce === undefined ? {} : { nonce }),
           ...cspOption,
           ...titleOption,
+          ...swapOption(c.req),
         })
       }),
 

@@ -7119,6 +7119,8 @@ _No named exports (side-effect entrypoint)._
   The tag: `` html`<p>${user.name}</p>` `` → an escaped {@link Template}.
 - **raw** _(function)_ - `raw: (trusted: string) => RawHtml`
   Mark a string as trusted, pre-escaped markup - it is emitted verbatim. The deliberate escape hatch (CMS-sanitized HTML, pre-rendered markdown): every call site is greppable, exactly like React's dangerouslySetInnerHTML, without the JSX.
+- **slot** _(function)_ - `slot: (name: string, content: HtmlValue) => Template`
+  A region of the page that a `data-swap` link or form refreshes on its own. Place it as the only content of the element marked `data-swap-slot="<name>"`:
 - **vanillaAdapter** _(const)_ - `vanillaAdapter: RenderAdapter`
   The zero-framework server render adapter - pass to
 

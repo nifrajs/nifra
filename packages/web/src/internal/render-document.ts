@@ -36,6 +36,7 @@ import {
   LOCALES_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
+  SWAP_HEADER,
 } from "../render-seam.ts"
 import { PRERENDERED_GLOBAL } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
@@ -171,6 +172,11 @@ export interface RenderPageOptions {
   readonly matchChain?: MatchChain
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
+  /**
+   * The slot an `x-nifra-swap` request names. When the adapter renders slots and nothing is
+   * deferred, the response is that slot's HTML alone; otherwise the whole document.
+   */
+  readonly swapSlot?: string
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
    * is ignored (the document is always HTML) and the ISR freshness header is applied after these,
    * so neither can be overridden from here. */
@@ -551,6 +557,16 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     ...(locale === undefined ? {} : { locale }),
   }
 
+  const { swapSlot, ...documentOptions } = options
+  if (swapSlot !== undefined && allDeferred.length === 0 && adapter.renderSlot !== undefined) {
+    const slotPage = (slotHtml: string | undefined): MaybePromise<RenderedPage> =>
+      slotHtml === undefined
+        ? renderPageResult(documentOptions)
+        : new BufferedRenderedPage(slotHtml, status, swapHeaders(headers, swapSlot))
+    const out = adapter.renderSlot(chain, renderProps, swapSlot)
+    return out instanceof Promise ? out.then(slotPage) : slotPage(out)
+  }
+
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
   // whole document in one pass. Progressive streaming only benefits pages with deferred boundaries
   // (those take the streaming path below); for a plain page the streaming pipeline + the framework's
@@ -665,6 +681,27 @@ async function renderStreamedPage(
   const shell = enc.encode(shellOf())
   const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
   return new Response(body, { status, headers })
+}
+
+// A swap response shares its URL with the document, so like a data response it is never stored: a
+// cache keyed on the URL alone would serve one slot in place of the page.
+const DOCUMENT_ONLY_HEADERS = new Set([
+  ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
+  "content-security-policy",
+])
+
+function swapHeaders(
+  document: Readonly<Record<string, string>>,
+  slot: string,
+): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const [name, value] of Object.entries(document))
+    if (!DOCUMENT_ONLY_HEADERS.has(name)) headers[name] = value
+  headers["cache-control"] = "private, no-store"
+  headers.vary = headers.vary === undefined ? SWAP_HEADER : `${headers.vary}, ${SWAP_HEADER}`
+  headers[SWAP_HEADER] = slot
+  return headers
 }
 
 class BufferedRenderedPage implements RenderedPage {
