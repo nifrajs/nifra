@@ -57,7 +57,6 @@ const groups: ReadonlyArray<readonly string[]> = [
     "packages/web-vue/test",
     "packages/web-preact/test",
     "packages/web-vanilla/test",
-    "packages/islets/test",
     "packages/island-trigger/test",
     "packages/web-svelte/test",
     "packages/storage/test",

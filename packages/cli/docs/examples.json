@@ -421,27 +421,21 @@
   },
   {
     "name": "BUS_PATTERN",
-    "topic": "Nifra - Islands: the AI-safe interactivity lane",
+    "topic": "Nifra - Islands: interactivity without hydration",
     "slug": "islands",
     "code": "import { createIslandBus } from \"@nifrajs/web/islands\"\n\n// One typed channel, created once and closed over by every enhancer that needs it.\ntype CartEvents = { \"cart:add\": { sku: string }; \"cart:count\": number }\nconst bus = createIslandBus<CartEvents>()\n\nconst off = bus.on(\"cart:count\", (n) => console.log(\"cart now has\", n, \"items\"))\nbus.emit(\"cart:add\", { sku: \"ABC-1\" })\noff() // unsubscribe - also usable directly as an island's cleanup"
+  },
+  {
+    "name": "SIGNALS",
+    "topic": "Nifra - Islands: interactivity without hydration",
+    "slug": "islands",
+    "code": "import { batch, computed, effect, signal, untrack } from \"@nifrajs/web/islands\"\n\n// A signal is read by calling it and written with .set. Reads inside an effect or computed subscribe.\nconst price = signal(20)\nconst quantity = signal(1)\nconst total = computed(() => price() * quantity())\n\nconst stop = effect(() => console.log(\"total\", total(), \"at\", untrack(price)))\nbatch(() => {\n  price.set(25)\n  quantity.set((n) => n + 1)\n}) // the effect runs once, after both writes: logs \"total 50 at 25\"\nstop()"
   },
   {
     "name": "HONO",
     "topic": "Nifra - Migrate route by route",
     "slug": "migrate-route-by-route",
     "code": "import { Hono } from \"hono\"\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nconst legacy = new Hono()\nlegacy.get(\"/users\", (c) => c.json({ source: \"hono\", users: [] }))\nlegacy.post(\"/users\", async (c) => c.json(await c.req.json()))\n\nexport const app = server()\n  // The wildcard is a literal mount prefix, not a typed Nifra route.\n  .mountFetch(\"/legacy/*\", legacy.fetch, { stripPrefix: true })\n  // Typed routes take precedence, so move one route out of Hono at a time.\n  .get(\"/legacy/users/:id\", (c) => ({ id: c.params.id, source: \"nifra\" }))\n  .post(\n    \"/users\",\n    { body: t.object({ name: t.string() }) },\n    (c) => ({ id: crypto.randomUUID(), name: c.body.name }),\n  )"
-  },
-  {
-    "name": "CORE",
-    "topic": "Nifra - nano: explicit reactivity for small apps",
-    "slug": "nano",
-    "code": "import { signal, computed } from \"@nifrajs/web/nano\"\n\n// State is a signal: reads are .get(), writes are .set(...). Every edge is a call you can see.\nconst count = signal(0)\n\n// Derived state declares its dependencies EXPLICITLY - the array is the whole contract. It\n// recomputes when (and only when) a listed source changes. Object.is-deduped, like signal.\nconst doubled = computed(() => count.get() * 2, [count])\n\nconst off = doubled.subscribe((v) => console.log(\"doubled is now\", v))\ncount.set(5) // logs: doubled is now 10\noff()        // unsubscribe"
-  },
-  {
-    "name": "RESOURCE",
-    "topic": "Nifra - nano: explicit reactivity for small apps",
-    "slug": "nano",
-    "code": "import { signal, resource } from \"@nifrajs/web/nano\"\n\nconst userId = signal(1)\n\n// resource(fetcher, [deps]) is an async cell: it fetches immediately and again whenever a declared\n// dep changes. The fetcher gets an AbortSignal; a superseded fetch is aborted and its late result\n// dropped, so the newest request always wins - no stale-response flicker to hand-guard.\nconst user = resource(async (sig) => {\n  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })\n  return (await res.json()) as { name: string }\n}, [userId])\n\n// The value is an explicit union - status is \"pending\" | \"error\" | \"ready\", never a secret undefined.\nconst off = user.subscribe((s) => {\n  if (s.status === \"ready\") console.log(\"got\", s.value.name)\n})\nuserId.set(2) // refetches; the deps array is what NF-C023 checks against the fetcher's .get() reads\n// ...on teardown: off()"
   },
   {
     "name": "CACHING",

@@ -1942,26 +1942,6 @@
     "doc": "/** How `bindList` turns items into keyed DOM. */"
   },
   {
-    "name": "BindResourceHandlers",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface BindResourceHandlers<T> {\n    ready(el: HTMLElement, value: T): void;\n    pending?(el: HTMLElement): void;\n    error?(el: HTMLElement, error: unknown): void;\n}",
-    "doc": "/** How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a\n * success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden\n * \"still loading\" state can slip through as a rendered `undefined`. */"
-  },
-  {
-    "name": "BindableElement",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface BindableElement {\n    getAttribute(name: string): string | null;\n    setAttribute(name: string, value: string): void;\n    removeAttribute(name: string): void;\n    textContent: string | null;\n    hidden: boolean;\n    value?: string;\n    readonly classList: {\n        toggle(name: string, force?: boolean): unknown;\n    };\n    addEventListener(type: string, listener: (event: Event) => void): void;\n    removeEventListener(type: string, listener: (event: Event) => void): void;\n}",
-    "doc": "/** The element surface the walker needs - structural, so tests can drive it without a real DOM. */"
-  },
-  {
-    "name": "BindableRoot",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface BindableRoot {\n    querySelectorAll(selector: string): Iterable<BindableElement>;\n}"
-  },
-  {
     "name": "Blocker",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -3679,13 +3659,6 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface CompressionOptions {\n    /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body\n     * (see below) since runtimes rarely expose `Content-Length` on a constructed `Response`. */\n    readonly threshold?: number;\n    /** Decide whether a `Content-Type` is worth compressing. Default: text, JSON/+json, JS, XML/+xml,\n     * NDJSON, wasm, SVG. Already-compressed media (images, video, archives) is skipped. */\n    readonly compressible?: (contentType: string) => boolean;\n}"
-  },
-  {
-    "name": "Computed",
-    "kind": "type",
-    "package": "@nifrajs/islets",
-    "signature": "export type Computed<T> = {\n    (): T;\n    dispose(): void;\n};",
-    "doc": "/** A derived value: call it to read (tracking), `.dispose()` to stop recomputing it. */"
   },
   {
     "name": "Computed",
@@ -7544,24 +7517,11 @@
     "doc": "/** Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`. */"
   },
   {
-    "name": "IslandContext",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface IslandContext {\n    /** The island's host element. */\n    readonly root: BindableElement & BindableRoot;\n    /**\n     * A named signal, seeded from `data-island-state`'s value for `key` when present, else\n     * `fallback`. Each key returns the SAME signal across calls - bindings and setup share state.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n}"
-  },
-  {
     "name": "IslandEnhancer",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void;",
     "doc": "/**\n * Enhances one island element with its (typed) props. Return a cleanup function to tear down on\n * `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing.\n * The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.\n */"
-  },
-  {
-    "name": "IslandHost",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface IslandHost extends BindableElement, BindableRoot {\n    setAttribute(name: string, value: string): void;\n}",
-    "doc": "/** The host-element surface `mountIslands` needs beyond bindings. */"
   },
   {
     "name": "IslandInstance",
@@ -7576,29 +7536,9 @@
     "signature": "export interface IslandProps {\n    /** Stable id matching the key in the client's `mountIslands({ <id>: enhancer })`. */\n    readonly id: string;\n    /** Serializable props handed to the enhancer (JSON-encoded inline in `data-island-props`; no closures). */\n    readonly props?: unknown;\n    /** When the enhancer runs (default `load`). `visible` (IntersectionObserver) wins TTI on long pages. */\n    readonly strategy?: IslandStrategy;\n    /** The island's server-rendered content - real HTML, present with JS off. */\n    readonly children?: ReactNode;\n}"
   },
   {
-    "name": "IslandScope",
-    "kind": "type",
-    "package": "@nifrajs/islets",
-    "signature": "export type IslandScope = {\n    readonly signals: Readonly<Record<string, Signal<unknown>>>;\n    readonly handlers: Readonly<Record<string, (event: Event) => void>>;\n};"
-  },
-  {
-    "name": "IslandSetup",
-    "kind": "type",
-    "package": "@nifrajs/islets",
-    "signature": "export type IslandSetup = (ctx: IslandContext) => Record<string, (event: Event) => void> | undefined;",
-    "doc": "/** An island's setup function: read/seed state, return the event handlers the markup names. */"
-  },
-  {
     "name": "IslandStrategy",
     "kind": "type",
     "package": "@nifrajs/island-trigger",
-    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
-    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
-  },
-  {
-    "name": "IslandStrategy",
-    "kind": "type",
-    "package": "@nifrajs/islets",
     "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
     "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
   },
@@ -9336,12 +9276,6 @@
     "kind": "interface",
     "package": "@nifrajs/graphql",
     "signature": "export interface MountGraphqlOptions<Context = unknown, Env = unknown> extends Omit<GraphqlHttpOptions<Context, Env>, \"nifra\"> {\n    /** Endpoint path. Default `/graphql`. */\n    readonly path?: string;\n    /** Enable `GET /graphql` (queries only). Default `true`. */\n    readonly enableGet?: boolean;\n    /**\n     * Enable `graphql-transport-ws` subscriptions on the same path. Pass `true` to reuse `schema`,\n     * `context`, `authorize` (run on the upgrade request) and the query limits, or pass the WS options.\n     * With `authorize` set, WS options must bring their own `authorize` or `onConnect`; the mount throws\n     * otherwise, since every socket would be admitted. Requires `.use(websocket())` and `graphql-ws`.\n     */\n    readonly subscriptions?: boolean | GraphqlWsOptions<Record<string, unknown>>;\n}"
-  },
-  {
-    "name": "MountIslandOptions",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface MountIslandOptions {\n    readonly root?: BindableRoot;\n}"
   },
   {
     "name": "MountOptions",
@@ -11705,13 +11639,6 @@
     "package": "@nifrajs/core",
     "signature": "export type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>;",
     "doc": "/** Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end). */"
-  },
-  {
-    "name": "Readable",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface Readable<T> {\n    get(): T;\n    subscribe(listener: (value: T) => void): () => void;\n}",
-    "doc": "/** A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so\n * `bind`/`bindList` accept either. */"
   },
   {
     "name": "ReasoningDeltaView",
@@ -14686,13 +14613,6 @@
   {
     "name": "Signal",
     "kind": "type",
-    "package": "@nifrajs/islets",
-    "signature": "export type Signal<T> = {\n    (): T;\n    set(next: T | ((prev: T) => T)): void;\n};",
-    "doc": "/** A readable/writable reactive value: call it to read (tracking), `.set` to write. */"
-  },
-  {
-    "name": "Signal",
-    "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type Signal<T> = {\n    (): T;\n    set(next: T | ((prev: T) => T)): void;\n};",
     "doc": "/** A readable/writable reactive value: call it to read (tracking), `.set` to write. */"
@@ -16959,13 +16879,6 @@
   {
     "name": "batch",
     "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function batch<T>(fn: () => T): T;",
-    "doc": "/**\n * Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so\n * `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the\n * flush runs in the same flush.\n */"
-  },
-  {
-    "name": "batch",
-    "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function batch<T>(fn: () => T): T;",
     "doc": "/**\n * Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so\n * `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the\n * flush runs in the same flush.\n */"
@@ -16983,13 +16896,6 @@
     "package": "@nifrajs/better-auth",
     "signature": "export declare function betterAuth(auth: BetterAuthLike, options?: BetterAuthOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
     "doc": "/**\n * Mount a better-auth instance into a nifra app: registers its handler at `${basePath}/*`\n * (default `/api/auth/*`) for `GET` + `POST`, so every better-auth endpoint - sign-in/up/out, OAuth\n * callbacks, session, 2FA, magic links, … - is served by your nifra server.\n *\n * ```ts\n * import { betterAuth, requireSession } from \"@nifrajs/better-auth\"\n * import { auth } from \"./auth\"           // your configured better-auth instance\n *\n * const app = server().use(betterAuth(auth))            // wires /api/auth/*\n *   .get(\"/me\", async (c) => (await requireSession(auth, c.req)).user)\n * ```\n *\n * Idempotent (named `\"better-auth\"` - applying twice mounts once). Read the session with\n * {@link getSession} / {@link requireSession}, which infer your better-auth types.\n */"
-  },
-  {
-    "name": "bind",
-    "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function bind<T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void): () => void;",
-    "doc": "/**\n * Bind one element to a source: `apply(el, value)` runs once immediately and again on every change.\n * Returns the unsubscribe - hand it back as the island's cleanup (or collect several).\n *\n *   bind(count, remaining, (el, n) => { el.textContent = String(n) })\n */"
   },
   {
     "name": "bindComponentRouter",
@@ -17011,20 +16917,6 @@
     "package": "@nifrajs/web",
     "signature": "export declare function bindList<T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<T, E>): () => void;",
     "doc": "/**\n * Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item\n * keeps its node, so focus, selection and input state survive a reorder. A render with no earlier\n * nodes replaces the container's children; later renders move only the nodes outside the longest\n * run already in order. `key`, `create` and `update` run untracked: a signal they read does not\n * re-render the list. Returns the disposer; inside an island the binding also stops on unmount.\n */"
-  },
-  {
-    "name": "bindResource",
-    "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function bindResource<T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>): () => void;",
-    "doc": "/**\n * Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and\n * on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).\n *\n *   bindResource(el, user, {\n *     pending: (n) => { n.textContent = \"Loading…\" },\n *     ready: (n, u) => { n.textContent = u.name },\n *     error: (n) => { n.textContent = \"Failed to load\" },\n *   })\n */"
-  },
-  {
-    "name": "bindScope",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void>;",
-    "doc": "/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for\n * both reactive effects and event listeners. */"
   },
   {
     "name": "bodyLimit",
@@ -17752,13 +17644,6 @@
     "package": "@nifrajs/core",
     "signature": "export declare function computeIdempotencyFingerprint(method: string, path: string, body: Uint8Array, contentType?: string): Promise<string>;",
     "doc": "/**\n * SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes.\n * A collision-resistant hash matters - a weak hash would let a crafted body replay another's response.\n */"
-  },
-  {
-    "name": "computed",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
-    "doc": "/**\n * Derived value, cached into a signal and computed on first read. While an effect (or another\n * computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next\n * input change stops it instead of recomputing, so a dropped computed costs nothing; reading it\n * again starts it afresh. `dispose()` stops it at once.\n */"
   },
   {
     "name": "computed",
@@ -19139,13 +19024,6 @@
   {
     "name": "effect",
     "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function effect(fn: () => void): () => void;",
-    "doc": "/**\n * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies\n * re-track on every run, so conditional reads subscribe to exactly the live branch.\n */"
-  },
-  {
-    "name": "effect",
-    "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function effect(fn: () => void): () => void;",
     "doc": "/**\n * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies\n * re-track on every run, so conditional reads subscribe to exactly the live branch.\n */"
@@ -20379,25 +20257,11 @@
     "doc": "/**\n * Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs\n * on the Bun this agent runs on, so it is always available unless `command` replaces it.\n */"
   },
   {
-    "name": "island",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function island(name: string, setup: IslandSetup): void;",
-    "doc": "/** Register an island's behavior by name (the markup's `data-island` value). */"
-  },
-  {
     "name": "islandProps",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function islandProps(props: Record<string, unknown>): string;",
     "doc": "/** The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer. */"
-  },
-  {
-    "name": "islandState",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function islandState(state: Record<string, unknown>): string;",
-    "doc": "/**\n * Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON - emit it\n * through an escaping renderer (`@nifrajs/web-vanilla`'s `html` escapes quotes in attributes), e.g.\n * `html\\`<div data-island=\"compare\" data-island-state=\"${islandState({ count })}\">…\\``.\n */"
   },
   {
     "name": "jobStoreCertificationProfile",
@@ -20791,13 +20655,6 @@
     "package": "@nifrajs/graphql",
     "signature": "export declare function mountGraphql<Context = unknown, Env = unknown>(app: MountableApp<Env>, options: MountGraphqlOptions<Context, Env>): void;",
     "doc": "/**\n * Mount a GraphQL endpoint. Wires `POST` (and `GET`, unless disabled) on `path`, injecting the nifra\n * route context into your resolver context, and - when `subscriptions` is set - a `graphql-ws` WebSocket\n * on the same path.\n *\n * ```ts\n * import { server } from \"@nifrajs/core\"\n * import { websocket } from \"@nifrajs/core/ws\"\n * import { mountGraphql, createPubSub } from \"@nifrajs/graphql\"\n *\n * const pubsub = createPubSub()\n * const app = server().use(websocket())\n * mountGraphql(app, {\n *   schema,\n *   context: ({ nifra }) => ({ user: nifra?.env, pubsub }),\n *   subscriptions: true,\n * })\n * ```\n */"
-  },
-  {
-    "name": "mountIslands",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function mountIslands(rootOrOptions?: BindableRoot | MountIslandOptions): () => void;",
-    "doc": "/**\n * Mount every registered island under `root` (default: the document). Idempotent - a host is\n * marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only\n * mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of\n * its script, and progressive enhancement means the static content is already correct.\n */"
   },
   {
     "name": "mountIslands",
@@ -23296,13 +23153,6 @@
   {
     "name": "signal",
     "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function signal<T>(initial: T): Signal<T>;",
-    "doc": "/** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */"
-  },
-  {
-    "name": "signal",
-    "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function signal<T>(initial: T): Signal<T>;",
     "doc": "/** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */"
@@ -24134,13 +23984,6 @@
     "package": "nifra",
     "signature": "export declare function unsignValue(signed: string, secret: CookieSecret): Promise<string | null>;",
     "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n *\n * With a {@link CookieSecret} rotation list, tries each secret in order and accepts the first\n * match. Every listed secret must meet the 32-byte floor - a weak entry throws even when an\n * earlier secret would have matched, so a rotation list can't quietly carry a weak key. (Which\n * rotation generation matched is not attacker-meaningful, so the early exit between secrets leaks\n * nothing useful; each individual comparison stays constant-time.)\n */"
-  },
-  {
-    "name": "untrack",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function untrack<T>(fn: () => T): T;",
-    "doc": "/** Run `fn` without subscribing the running effect or computed to the signals it reads. */"
   },
   {
     "name": "untrack",

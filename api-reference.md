@@ -3762,43 +3762,6 @@ _No named exports (side-effect entrypoint)._
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
   Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
 
-## @nifrajs/islets
-
-- **BindableElement** _(interface)_ - `interface BindableElement`
-  The element surface the walker needs - structural, so tests can drive it without a real DOM.
-- **BindableRoot** _(interface)_ - `interface BindableRoot`
-- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
-  A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
-- **IslandContext** _(interface)_ - `interface IslandContext`
-- **IslandHost** _(interface)_ - `interface IslandHost`
-  The host-element surface `mountIslands` needs beyond bindings.
-- **IslandScope** _(type)_ - `type IslandScope = { readonly signals: Readonly<Record<string, Signal<unknown>>> readonly handlers: Readonly<Record<string, (event: Event) => void>> }`
-- **IslandSetup** _(type)_ - `type IslandSetup = (ctx: IslandContext) => Record<string, (event: Event) => void> | undefined`
-  An island's setup function: read/seed state, return the event handlers the markup names.
-- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
-  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
-- **MountIslandOptions** _(interface)_ - `interface MountIslandOptions`
-- **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
-  A readable/writable reactive value: call it to read (tracking), `.set` to write.
-- **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
-  Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
-- **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
-  Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for both reactive effects and event listeners.
-- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
-  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
-- **effect** _(function)_ - `effect: (fn: () => void) => () => void`
-  Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
-- **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`
-  Register an island's behavior by name (the markup's `data-island` value).
-- **islandState** _(function)_ - `islandState: (state: Record<string, unknown>) => string`
-  Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON - emit it through an escaping renderer (`@nifrajs/web-vanilla`'s `html` escapes quotes in attributes), e.g. `html\`<div data-island="compare" data-island-state="${islandState({ count })}">…\``.
-- **mountIslands** _(function)_ - `mountIslands: (rootOrOptions?: BindableRoot | MountIslandOptions) => () => void`
-  Mount every registered island under `root` (default: the document). Idempotent - a host is marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of its script, and progress…
-- **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
-  Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
-- **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
-  Run `fn` without subscribing the running effect or computed to the signals it reads.
-
 ## @nifrajs/jobs
 
 - **Backoff** _(type)_ - `type Backoff = (attempt: number) => number`
@@ -6120,33 +6083,6 @@ _No named exports (side-effect entrypoint)._
   Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
 - **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
   Run `fn` without subscribing the running effect or computed to the signals it reads.
-
-### `@nifrajs/web/nano`
-
-- **BindListOptions** _(interface)_ - `interface BindListOptions<T>`
-  How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the array index) - it is what lets add/remove/reorder touch only the changed rows.
-- **BindResourceHandlers** _(interface)_ - `interface BindResourceHandlers<T>`
-  How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden "still loading" state can slip through as a rendered `undefined`.
-- **Readable** _(interface)_ - `interface Readable<T>`
-  A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so `bind`/`bindList` accept either.
-- **Resource** _(interface)_ - `interface Resource<T>`
-  An async cell: a `Readable` of `ResourceState<T>` plus `refetch()`. This is nano's answer to "suspense" - an explicit pending/error/ready value, never a thrown promise or a magic boundary.
-- **ResourceState** _(type)_ - `type ResourceState<T>`
-  The three states of an async cell. A discriminated union on `status` so a consumer must handle every branch - there is no "value that might secretly be loading", the failure mode of ad-hoc `isLoading` booleans. `value`/`error` are narrowed by `status`.
-- **Signal** _(interface)_ - `interface Signal<T>`
-  A writable cell. `set` notifies subscribers only when the value actually changes (`Object.is`), so a redundant write costs nothing.
-- **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void`
-  Bind one element to a source: `apply(el, value)` runs once immediately and again on every change. Returns the unsubscribe - hand it back as the island's cleanup (or collect several).
-- **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void`
-  Bind a list signal to a container with keyed reconciliation: new items are `create`d, surviving items are `update`d in place (keeping focus, scroll, and selection), removed items are detached, and the children are ordered to match the array. Returns the unsubscribe.
-- **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void`
-  Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).
-- **computed** _(function)_ - `computed: <T>(compute: () => T, deps: readonly Readable<unknown>[]) => Readable<T>`
-  A derived cell. `computed(() => a.get() + b.get(), [a, b])` recomputes whenever a declared dependency changes and notifies its own subscribers when the derived value changes.
-- **resource** _(function)_ - `resource: <T>(fetcher: (signal: AbortSignal) => Promise<T>, deps?: readonly Readable<unknown>[]) => Resource<T>`
-  An async derived cell. `resource(fetcher, [deps])` runs `fetcher` immediately and again whenever a declared dependency changes, exposing the result as an explicit `{ status, value, error }`.
-- **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
-  A current-value cell. `signal(0)` -> `.get()` reads, `.set(1)` writes and notifies.
 
 ### `@nifrajs/web/plugins/css-modules`
 

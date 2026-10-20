@@ -3,8 +3,8 @@ import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/islands",
-  "Nifra - Islands: the AI-safe interactivity lane",
-  "Add interactivity to a zero-runtime vanilla page with islands - imperative DOM enhancers, no framework runtime, no hydration. Explicit code an AI (or a human) gets right first try: mount, coordinate over a typed bus, always return cleanup.",
+  "Nifra - Islands: interactivity without hydration",
+  "Add interactivity to a zero-runtime vanilla page with islands: an imperative DOM enhancer, or signals bound to server-rendered markup by name. No framework runtime, no hydration, and nifra check matches the markup against the code that mounts it.",
 )
 
 // DOM-free, so it is a checked example (nifra_example islands): the coordination primitive by itself.
@@ -20,12 +20,86 @@ off() // unsubscribe - also usable directly as an island's cleanup`
 
 // Enhancers touch the DOM, which the DOM-free doc-check program can't type. They are typechecked in
 // @nifrajs/web under its own DOM lib and exercised at runtime; here they are illustrative.
-const MARKER = `// doc-check: skip - server-rendered island marker (HTML, not a checkable module).
-// In your @nifrajs/web-vanilla page, render the host element with inline JSON props:
-html\`<nifra-island data-island="counter" data-island-props=\${JSON.stringify({ start: 0 })}>
+const MARKER = `// doc-check: skip - server-rendered island host (HTML, not a checkable module).
+// In your @nifrajs/web-vanilla page, mark any element as a host and give it inline JSON props:
+html\`<div data-island="counter" data-island-props=\${JSON.stringify({ start: 0 })}>
   <output>0</output>
   <button type="button">+1</button>
-</nifra-island>\``
+</div>\``
+
+// DOM-free, so it is a checked example (nifra_example islands): the reactive core by itself.
+const SIGNALS = `import { batch, computed, effect, signal, untrack } from "@nifrajs/web/islands"
+
+// A signal is read by calling it and written with .set. Reads inside an effect or computed subscribe.
+const price = signal(20)
+const quantity = signal(1)
+const total = computed(() => price() * quantity())
+
+const stop = effect(() => console.log("total", total(), "at", untrack(price)))
+batch(() => {
+  price.set(25)
+  quantity.set((n) => n + 1)
+}) // the effect runs once, after both writes: logs "total 50 at 25"
+stop()`
+
+const REACTIVE_MARKUP = `// doc-check: skip - server-rendered island host (HTML, not a checkable module).
+html\`<form data-island="search" data-island-props=\${JSON.stringify({ query: "" })}
+    data-bind-on="submit:go">
+  <input name="q" data-bind-value="query" />
+  <button data-bind-attr="disabled:busy">Search</button>
+  <p data-bind-show="busy">Searching...</p>
+  <p><span data-bind-text="count">0</span> results</p>
+</form>\``
+
+const REACTIVE = `// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { bindIsland, mountIslands } from "@nifrajs/web/islands"
+
+const search = bindIsland(({ state, onDispose }) => {
+  // Every data-bind-* name in the markup is a state key here, seeded from data-island-props.
+  const query = state("query", "")
+  const busy = state("busy", false)
+  const count = state("count", 0)
+  const timer = setInterval(() => console.log("still searching for", query()), 5000)
+  onDispose(() => clearInterval(timer))
+
+  // The returned handlers are what data-bind-on names.
+  return {
+    go: async (event) => {
+      event.preventDefault()
+      busy.set(true)
+      const hits: unknown[] = await fetch("/api/search?q=" + encodeURIComponent(query())).then((r) => r.json())
+      count.set(hits.length)
+      busy.set(false)
+    },
+  }
+})
+
+mountIslands({ search })`
+
+const LIST = `// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { bindIsland, bindList, mountIslands, resource } from "@nifrajs/web/islands"
+
+type Hotel = { id: string; name: string }
+
+const hotels = bindIsland(({ root, state }) => {
+  const city = state("city", "paris")
+  // A newer city aborts the older request; only the newest result lands.
+  const found = resource(city, (c, abort) =>
+    fetch("/api/hotels?city=" + c, { signal: abort }).then((r): Promise<Hotel[]> => r.json()),
+  )
+  const list = root.querySelector("ul")
+  if (list)
+    bindList(() => found().value ?? [], list, {
+      key: (h) => h.id, // a stable id, never a position (NF-C022)
+      create: () => document.createElement("li"),
+      update: (li, h) => {
+        li.textContent = h.name
+      },
+    })
+  // A <select data-bind-value="city"> in the markup writes city; nothing else to return.
+})
+
+mountIslands({ hotels })`
 
 const COUNTER = `// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
 import { defineIsland, mountIslands } from "@nifrajs/web/islands"
@@ -96,41 +170,139 @@ mountIslands({ filter, results })`
 export default function Islands() {
   return (
     <div className="prose">
-      <h1 className="page">Islands: the AI-safe interactivity lane</h1>
+      <h1 className="page">Islands: interactivity without hydration</h1>
       <p className="lead">
         A <code>@nifrajs/web-vanilla</code> page ships zero framework runtime. When one corner needs
-        to be interactive, you don&apos;t turn on hydration - you mount an <strong>island</strong>: a
-        small, plain-DOM enhancer over a server-rendered element. Explicit imperative code with no
-        hidden reactivity - the shape an AI agent (or a human) gets right on the first try.
+        to be interactive, you don&apos;t turn on hydration - you mount an <strong>island</strong>{" "}
+        over a server-rendered element. Write it as plain DOM code, or bind signals to the markup by
+        name. Either way <code>nifra check</code> reads the island and the markup together.
       </p>
 
       <h2>Why islands, not hydration</h2>
       <p>
         Vanilla routes set <code>export const hydrate = false</code> in their{" "}
-        <code>.backend.ts</code> half - there is no client framework
-        to hydrate with, and that is the point. The five framework adapters give you a reactive
-        runtime and pay for it in client JS and in the subtle failure modes (stale closures,
-        hydration mismatch, what-re-runs-when) that trip up generated code. Islands take the other
-        trade: no runtime, no reactivity to get wrong. You wire the DOM by hand and hand back a
-        teardown. Reach for a framework adapter when you genuinely need a stateful app UI; reach for
-        islands for widgets on an otherwise-static page.
+        <code>.backend.ts</code> half - there is no client framework to hydrate with, and that is
+        the point. The five framework adapters give you a component runtime and pay for it in client
+        JS and in failure modes (stale closures, hydration mismatch, what-re-runs-when) that trip up
+        generated code. Islands keep the HTML the server sent and attach behavior to it. Reach for a
+        framework adapter when you need client routing or nested views; reach for islands for
+        widgets and small apps on an otherwise-static page.
       </p>
 
       <h2>Mount an island</h2>
       <p>
-        Render a <code>&lt;nifra-island&gt;</code> marker in your page (props are inline JSON), then
-        bundle one entry (in <code>frontend/</code>) that calls <code>mountIslands</code>. Load it
-        with the <code>islandScripts</code> export of the route&apos;s <code>.backend.ts</code> half.
+        Any element with <code>data-island=&quot;id&quot;</code> is a host; its props are inline
+        JSON in <code>data-island-props</code>. Bundle one entry (in <code>frontend/</code>) that
+        calls <code>mountIslands</code> with an enhancer per id, and load it with the{" "}
+        <code>islandScripts</code> export of the route&apos;s <code>.backend.ts</code> half. Calling{" "}
+        <code>mountIslands</code> again after a soft navigation mounts only new hosts, and the
+        disposer it returns tears down every island it mounted.
       </p>
       <CodeBlock code={MARKER} />
+      <p>There are two ways to write the enhancer, and one page can mix both.</p>
+
+      <h2>Imperative islands: defineIsland</h2>
       <CodeBlock code={COUNTER} />
       <p>
         <code>defineIsland&lt;Props&gt;</code> is a zero-cost identity helper - its only job is to
-        type <code>props</code> and <code>el</code> so the body needs no cast. Keep the body
-        imperative: read the DOM, add listeners, <strong>return the cleanup</strong>. The returned
-        function runs on soft-nav teardown; forget it and every navigation leaks the listener -{" "}
-        <code>nifra check</code> flags exactly that as <code>NF-C020</code>.
+        type <code>props</code> and <code>el</code> so the body needs no cast. Read the DOM, add
+        listeners, <strong>return the cleanup</strong>. The returned function runs on teardown;
+        forget it and every navigation leaks the listener - <code>nifra check</code> flags exactly
+        that as <code>NF-C020</code>.
       </p>
+
+      <h2>Reactive islands: bindIsland</h2>
+      <p>
+        For local state, mount the host with <code>bindIsland</code>. The setup declares named
+        state with <code>state(key, fallback)</code> - seeded from the island&apos;s props when they
+        carry the key - and returns its event handlers. The markup then binds them by name:
+      </p>
+      <CodeBlock code={REACTIVE_MARKUP} />
+      <CodeBlock code={REACTIVE} />
+      <table>
+        <thead>
+          <tr>
+            <th>Attribute</th>
+            <th>Effect</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code>data-bind-text=&quot;count&quot;</code>
+            </td>
+            <td>Sets the element&apos;s text to the signal&apos;s value.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-bind-show=&quot;open&quot;</code>
+            </td>
+            <td>Hides the element while the signal is falsy.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-bind-class=&quot;active:open&quot;</code>
+            </td>
+            <td>Toggles a class per pair.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-bind-attr=&quot;aria-expanded:open&quot;</code>
+            </td>
+            <td>
+              Sets an attribute per pair, removing it for <code>false</code> or{" "}
+              <code>null</code>. Never an <code>on*</code> attribute or <code>srcdoc</code>, and a
+              URL attribute takes only an http(s), mailto, tel or relative URL.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-bind-value=&quot;query&quot;</code>
+            </td>
+            <td>Two-way: an input, select or textarea writes the signal back.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-bind-on=&quot;click:add&quot;</code>
+            </td>
+            <td>Adds a returned handler as an event listener per pair.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Values are names, never code, so markup cannot inject behavior. A binding belongs to its
+        nearest island, and nothing inside a <code>data-island-ignore</code> element binds or mounts
+        - render user HTML there. Because both sides are literal, <code>nifra check</code> matches
+        them: <code>NF-C047</code> warns when a name has no <code>state(&quot;...&quot;)</code> key
+        or returned handler, and <code>NF-C048</code> when a binding sits where no{" "}
+        <code>bindIsland</code> host will ever walk it.
+      </p>
+
+      <h2>Signals</h2>
+      <p>
+        The reactive core is exported for code that needs more than markup bindings. A read inside
+        an <code>effect</code> or <code>computed</code> subscribes; <code>batch</code> runs the
+        effects once after several writes, and <code>untrack</code> reads without subscribing.
+        Effects run after every computed they read has settled, so they never see a half-updated
+        value.
+      </p>
+      <CodeBlock code={SIGNALS} />
+      <p>
+        Everything an enhancer creates while it sets up - effects, computeds, lists, resources - is
+        owned by its island and stops when the island unmounts. <code>onDispose(fn)</code> covers
+        timers and requests the setup starts itself. An effect created later, inside an event
+        handler, is not owned: create it during setup.
+      </p>
+
+      <h2>Keyed lists and async state</h2>
+      <p>
+        <code>bindList(source, container, &#123; key, create, update &#125;)</code> renders a list
+        signal into a container. A surviving item keeps its node, so focus and input state survive a
+        reorder, and only the nodes out of order move. <code>resource(source, fetcher)</code> keeps
+        an async value with a <code>pending</code>, <code>ready</code> or <code>error</code> state;
+        a newer key aborts the older request, and an unmounted island drops a late result.
+      </p>
+      <CodeBlock code={LIST} />
 
       <h2>Coordinate islands with a typed bus</h2>
       <p>
@@ -157,10 +329,11 @@ export default function Islands() {
 
       <h2>Load strategies</h2>
       <p>
-        A marker&apos;s <code>data-island-strategy</code> defers its enhancer: <code>load</code> (default),{" "}
-        <code>idle</code>, <code>visible</code> (mount when it scrolls into view), or a{" "}
-        <code>media</code> query. An island with no matching enhancer, or an invalid strategy, stays
-        inert server-rendered HTML - forward-compatible, never a runtime error.
+        A host&apos;s <code>data-island-strategy</code> defers its enhancer: <code>load</code>{" "}
+        (default), <code>idle</code>, <code>visible</code> (mount when it scrolls into view), or{" "}
+        <code>media</code> with the query in <code>data-island-media</code>. A host with no matching
+        enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
+        never a runtime error.
       </p>
     </div>
   )

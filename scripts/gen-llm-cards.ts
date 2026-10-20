@@ -271,11 +271,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/web-vanilla": [
     "Output is **auto-escaping** tagged-template HTML - interpolated values are escaped; opt into raw HTML explicitly, and only for trusted content.",
-    "Interactivity comes from islands (`@nifrajs/web/islands` + `@nifrajs/islets`), not a framework runtime - ~0 KB client JS by default.",
-  ],
-  "@nifrajs/islets": [
-    "Signals are **fine-grained** - read them where you bind, not eagerly into locals, or you lose reactivity.",
-    "This is the client companion to `@nifrajs/web-vanilla`; it ships interactivity in ~1 KB with no framework runtime.",
+    "Interactivity comes from islands (`@nifrajs/web/islands`), not a framework runtime - ~0 KB client JS by default.",
   ],
   "@nifrajs/auth": [
     "nifra owns the **session**, not identity - bring your own auth (Better Auth / Lucia / OAuth). Don't expect user/login primitives here.",

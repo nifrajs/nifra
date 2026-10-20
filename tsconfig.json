@@ -148,7 +148,6 @@
     "packages/web-vue",
     "packages/web-preact",
     "packages/web-vanilla",
-    "packages/islets",
     "packages/web-svelte",
     "examples/web-solid",
     "examples/web-react",
