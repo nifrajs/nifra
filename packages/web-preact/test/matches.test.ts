@@ -50,6 +50,21 @@ test("the mounted router reports what the server rendered", () => {
   )
 })
 
+test("with a boundary holding a target, the page's matches come from the page's own path", () => {
+  const state: RouterState = {
+    routeId: "orgs/[org]",
+    params: { org: "acme" },
+    path: "/photos/2",
+    intercepted: { boundary: "photo", pagePath: "/orgs/acme" },
+    data: { org: "acme" },
+    layoutData: [{ user: "ada" }],
+    pending: false,
+  }
+  expect(render(routeProps(state, undefined, { "orgs/[org]": matchChain }))).toContain(
+    `data-at="page">${expected}`,
+  )
+})
+
 test("a render without a chain reports nothing", () => {
   expect(render({ data: null, path: "/" })).toContain('data-at="page">[]')
 })

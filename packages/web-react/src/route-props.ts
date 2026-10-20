@@ -13,8 +13,11 @@ export function routeProps(
   // Derive this route's typed `search` from the URL query + the route's schema CHAIN (layout schemas +
   // page, merged page-wins), the SAME `searchOfChain` the server ran, so `useSearch` reads an identical
   // value and hydrates with no drift.
-  const q = state.path.indexOf("?")
-  const rawSearch = q === -1 ? "" : state.path.slice(q)
+  // While an intercept boundary holds a target the URL is the target's; the route's props describe the
+  // page underneath, so they read the page's own path.
+  const path = state.intercepted?.pagePath ?? state.path
+  const q = path.indexOf("?")
+  const rawSearch = q === -1 ? "" : path.slice(q)
   return {
     data: state.data,
     ...(state.serverComponents === undefined ? {} : { serverComponents: state.serverComponents }),
@@ -27,7 +30,7 @@ export function routeProps(
     // `params`/`path` feed the routing hooks (useParams/useLocation) via compose's RouterContext -
     // sourced from router state here, matching the SSR render's request-derived values on hydration.
     params: state.params,
-    path: state.path,
+    path,
     search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
     // The in-flight submission (for optimistic UI) - spread only when present.
     ...(state.submission ? { submission: state.submission } : {}),
