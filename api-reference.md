@@ -5207,6 +5207,8 @@ _No named exports (side-effect entrypoint)._
 - **InfiniteQueryOptions** _(interface)_ - `interface InfiniteQueryOptions<T, P>`
   Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the next page from the last page - return `undefined`/`null` to signal there is no next page.
 - **InterceptBoundary** _(type)_ - `type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: { readonly intercept: string } readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **Intercepted** _(interface)_ - `interface Intercepted`
+  Which intercept boundary is open, and the page underneath it.
 - **KVCacheStore** _(class)_ - `class KVCacheStore`
   A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike} binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize…
 - **KVCacheStoreOptions** _(interface)_ - `interface KVCacheStoreOptions`
@@ -5415,6 +5417,8 @@ _No named exports (side-effect entrypoint)._
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware` files are special; othe…
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
+- **closeBoundary** _(function)_ - `closeBoundary: (name: string) => void`
+  Close the intercept boundary `name` and return to the page underneath it: back through the history entries the boundary added when the page's entry is there, otherwise by replacing the boundary's URL with the page's. A no-op on the server, before hydration, and when `name` holds no target.
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createCspPolicy** _(function)_ - `createCspPolicy: (options: CreateCspPolicyOptions) => CspPolicy`
   Create a hash-based Content-Security-Policy for nifra documents, so a page can carry a strict CSP and still be cached.
@@ -5520,8 +5524,8 @@ _No named exports (side-effect entrypoint)._
   Build a static-file handler for `dir`.
 - **setBlockerController** _(function)_ - `setBlockerController: (controller: BlockerController | undefined) => void`
   Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for app use.
-- **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined, router?: ClientRouter) => void`
-  Register (or clear, with `undefined`) the browser navigate and its router - called by `installHistory`. Not for app use.
+- **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined, router?: ClientRouter, close?: (name: string) => void) => void`
+  Register (or clear, with `undefined`) the browser navigate, its router and its boundary close - called by `installHistory`. Not for app use.
 - **setSsrModuleLoader** _(function)_ - `setSsrModuleLoader: (load: SsrModuleLoader | undefined) => void`
   Publish or clear the dev server's SSR module loader.
 - **ssrModuleLoader** _(function)_ - `ssrModuleLoader: () => SsrModuleLoader | undefined`
@@ -5749,6 +5753,8 @@ _No named exports (side-effect entrypoint)._
   Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
   Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so the first…
+- **closeBoundary** _(function)_ - `closeBoundary: (name: string) => void`
+  Close the intercept boundary `name` and return to the page underneath it: back through the history entries the boundary added when the page's entry is there, otherwise by replacing the boundary's URL with the page's. A no-op on the server, before hydration, and when `name` holds no target.
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).

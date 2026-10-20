@@ -104,6 +104,9 @@ export interface BoundaryState {
   readonly data?: unknown
   readonly error?: BoundaryError
   readonly errorId?: string
+  /** While an intercept boundary holds a target: the result of the last action posted to that target,
+   * which the page's own `actionData` never sees. Only on a `"ready"` state. */
+  readonly actionData?: unknown
 }
 
 export type BoundaryStates = Readonly<Record<string, BoundaryState>>

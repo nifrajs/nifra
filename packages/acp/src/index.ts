@@ -71,6 +71,8 @@ const MAX_TOOL_CALLS = 4_096
 const MAX_REPLY_CHARS = 1024 * 1024
 const MAX_PLAN_ENTRIES = 256
 const MAX_STDERR_LINE = 8 * 1024
+// How long an exit waits for stderr's end, which a child the agent left behind can hold open.
+const STDERR_DRAIN_MS = 500
 const KILL_GRACE_MS = 2_000
 const CANCELLED_OUTCOME = Object.freeze({ outcome: Object.freeze({ outcome: "cancelled" }) })
 // JSON-RPC: the method is not one this client serves, its params are wrong, the request was cancelled.
@@ -754,8 +756,19 @@ class AcpConnection {
     private readonly redact: (text: string) => string,
   ) {
     void this.readStdout()
-    void this.readStderr()
-    void process.exited.then((code) => {
+    // Settled either way: a stderr read that fails must not stop the exit from being reported.
+    const stderrDone = Promise.allSettled([this.readStderr()])
+    void process.exited.then(async (code) => {
+      // The exit can land before the reader has taken the agent's last stderr line, the one that
+      // says why it stopped.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        stderrDone,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, STDERR_DRAIN_MS)
+        }),
+      ])
+      clearTimeout(timer)
       const detail = this.lastError === undefined ? "" : `: ${this.lastError}`
       const error = new Error(`the ACP agent exited with code ${code}${detail}`)
       this.exitError = error

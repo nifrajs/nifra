@@ -274,6 +274,27 @@ describe("createClientRouter", () => {
     expect(r.snapshot().data).toEqual({ hydrated: { fromServer: true } })
   })
 
+  test("hydrating a server-rendered status page inside layouts keeps it, with no fetch or reload", async () => {
+    const loaded: string[] = []
+    const r = createClientRouter({
+      patterns: [{ routeId: "index", pattern: "/" }],
+      initial: { ...initial, routeId: "_404", path: "/gone", data: null },
+      statusRoutes: { 404: "_404" },
+      layoutStatusRoutes: { _404: true },
+      fetchData: async () => {
+        throw new Error("hydration must not fetch")
+      },
+      loadModule: async (id) => {
+        loaded.push(id)
+      },
+      routeHooks: { _404: { clientLoader: async ({ serverLoader }) => serverLoader() } },
+    })
+    await r.hydrate()
+    expect(r.snapshot().routeId).toBe("_404")
+    expect(r.snapshot().data).toBeNull()
+    expect(loaded).toEqual([])
+  })
+
   test("clientAction prepares the request and exposes optimistic data, then keeps the server result", async () => {
     const realFetch = globalThis.fetch
     const bodies: string[] = []
@@ -467,6 +488,100 @@ describe("createClientRouter", () => {
     } finally {
       globalThis.fetch = realFetch
     }
+  })
+
+  describe("a revalidation answered with a terminal status", () => {
+    const shown: RouterState = {
+      routeId: "user",
+      params: { id: "7" },
+      path: "/users/7",
+      data: { name: "Ada" },
+      layoutData: [{ shell: true }],
+      actionData: { saved: true },
+      pending: false,
+    }
+    // The action POST succeeds; every loader GET answers `status` as a terminal status.
+    const stubFetch = (status: number): (() => void) => {
+      const spy = spyOn(globalThis, "fetch").mockImplementation(
+        Object.assign(
+          async (_url: string | URL | Request, init?: RequestInit) =>
+            init?.method === "POST"
+              ? new Response(JSON.stringify({ deleted: true }), {
+                  headers: { "content-type": "application/json" },
+                })
+              : new Response(null, {
+                  status,
+                  headers: { "x-nifra-status": String(status) },
+                }),
+          { preconnect: globalThis.fetch.preconnect },
+        ),
+      )
+      return () => spy.mockRestore()
+    }
+    const routerFor = (loaded: Array<readonly [string, string | undefined]>, inLayouts = false) =>
+      createClientRouter({
+        patterns,
+        initial: shown,
+        statusRoutes: { 401: "_401", 404: "_404" },
+        layoutStatusRoutes: inLayouts ? { _401: true, _404: true } : {},
+        loadModule: async (id, path) => {
+          loaded.push([id, path])
+        },
+      })
+    const statusPage = (routeId: string): RouterState => ({
+      routeId,
+      params: {},
+      path: "/users/7",
+      data: null,
+      layoutData: undefined,
+      actionData: undefined,
+      pending: false,
+    })
+
+    test("invalidate renders the status route in the page's place", async () => {
+      const restore = stubFetch(401)
+      try {
+        const loaded: Array<readonly [string, string | undefined]> = []
+        const r = routerFor(loaded)
+        await r.invalidate()
+        expect(loaded).toEqual([["_401", "/users/7"]])
+        expect(r.snapshot()).toEqual(statusPage("_401"))
+      } finally {
+        restore()
+      }
+    })
+
+    test("a submit's revalidation renders the status route and drops the action's result", async () => {
+      const restore = stubFetch(404)
+      try {
+        const loaded: Array<readonly [string, string | undefined]> = []
+        const r = routerFor(loaded)
+        await r.submit("/users/7", new URLSearchParams({ op: "delete" }))
+        expect(loaded).toEqual([
+          ["user", undefined],
+          ["_404", "/users/7"],
+        ])
+        expect(r.snapshot()).toEqual(statusPage("_404"))
+      } finally {
+        restore()
+      }
+    })
+
+    test("a status route inside layouts loads the page as a document instead", async () => {
+      const restore = stubFetch(404)
+      try {
+        const r = routerFor([], true)
+        await expect(r.invalidate()).rejects.toThrow(/_404 renders inside layouts/)
+        expect(r.snapshot()).toEqual(shown)
+        const failure = await r
+          .submit("/users/7", new URLSearchParams({ op: "delete" }))
+          .catch((error: unknown) => error)
+        expect(redirectOf(failure)).toBe("/users/7")
+        expect(r.snapshot()).toEqual(shown)
+      } finally {
+        restore()
+      }
+    })
   })
 
   test("the default fetchData throws on a non-OK response", async () => {

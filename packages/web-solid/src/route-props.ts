@@ -34,15 +34,19 @@ export function routeProps(
     get params() {
       return snapshot().params
     },
+    // While an intercept boundary holds a target the URL is the target's; the route's props describe
+    // the page underneath, so they read the page's own path.
     get path() {
-      return snapshot().path
+      const s = snapshot()
+      return s.intercepted?.pagePath ?? s.path
     },
     get search() {
       // The SAME searchOfChain the server ran, over this snapshot's URL - a same-route search change
       // updates in place (fine-grained), matching the SSR value on hydration.
       const s = snapshot()
-      const idx = s.path.indexOf("?")
-      return searchOfChain(searchSchemas?.[s.routeId] ?? [], idx === -1 ? "" : s.path.slice(idx))
+      const path = s.intercepted?.pagePath ?? s.path
+      const idx = path.indexOf("?")
+      return searchOfChain(searchSchemas?.[s.routeId] ?? [], idx === -1 ? "" : path.slice(idx))
     },
     get submission() {
       return snapshot().submission

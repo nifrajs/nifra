@@ -126,15 +126,27 @@ export type BrowserNavigate = (to: string | number, options?: NavigateOptions) =
 // teardown). Module-scoped: one app per page; absent on the server and before hydration.
 let browserNavigate: BrowserNavigate | undefined
 let browserRouter: ClientRouter | undefined
+let browserCloseBoundary: ((name: string) => void) | undefined
 
-/** Register (or clear, with `undefined`) the browser navigate and its router - called by
- * `installHistory`. Not for app use. */
+/** Register (or clear, with `undefined`) the browser navigate, its router and its boundary close -
+ * called by `installHistory`. Not for app use. */
 export function setBrowserNavigate(
   navigate: BrowserNavigate | undefined,
   router?: ClientRouter,
+  close?: (name: string) => void,
 ): void {
   browserNavigate = navigate
   browserRouter = router
+  browserCloseBoundary = close
+}
+
+/**
+ * Close the intercept boundary `name` and return to the page underneath it: back through the history
+ * entries the boundary added when the page's entry is there, otherwise by replacing the boundary's URL
+ * with the page's. A no-op on the server, before hydration, and when `name` holds no target.
+ */
+export function closeBoundary(name: string): void {
+  browserCloseBoundary?.(name)
 }
 
 /** The mounted client router, or `undefined` on the server / before `installHistory` has run. */
