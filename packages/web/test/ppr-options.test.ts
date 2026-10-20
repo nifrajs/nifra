@@ -37,6 +37,7 @@ describe("PPR options", () => {
       maxUnsentBytes: 256 * 1024 * 1024,
       frameBytes: 256 * 1024,
       minShellBytes: 1024,
+      holeHtmlValidation: "always",
     })
     expect(Object.isFrozen(PPR_DEFAULTS)).toBe(true)
   })
@@ -87,6 +88,16 @@ describe("PPR options", () => {
     )
     expect(() => resolvePprOptions({ maxUnsentBytes: 1024 })).toThrow(
       "maxUnsentBytesPerResponse (1048576) must not exceed maxUnsentBytes (1024)",
+    )
+  })
+
+  test("hole HTML validation is always on unless set to development", () => {
+    expect(resolvePprOptions({ holeHtmlValidation: "development" }).holeHtmlValidation).toBe(
+      "development",
+    )
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an unsupported mode on purpose; the runtime refusal is what this checks.
+    expect(() => resolvePprOptions({ holeHtmlValidation: "never" as never })).toThrow(
+      'holeHtmlValidation must be "always" or "development"',
     )
   })
 

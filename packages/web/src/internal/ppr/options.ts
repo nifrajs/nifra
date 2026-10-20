@@ -48,6 +48,12 @@ export interface PprOptions {
   readonly frameBytes?: number
   /** The shell is padded to at least this many bytes; Safari holds back smaller first chunks. */
   readonly minShellBytes?: number
+  /**
+   * When hole HTML is checked for script, handlers and other escapes before it is framed (I12):
+   * `"always"`, or `"development"` only. The check costs about 20 us per KB of hole HTML; turn it off
+   * in production only when a strict CSP already blocks inline script.
+   */
+  readonly holeHtmlValidation?: "always" | "development"
 }
 
 export type ResolvedPprOptions = {
@@ -86,6 +92,7 @@ export const PPR_DEFAULTS: ResolvedPprOptions = Object.freeze({
   maxUnsentBytes: 256 * MB,
   frameBytes: 256 * 1024,
   minShellBytes: 1_024,
+  holeHtmlValidation: "always",
 })
 
 type NumericKey = {
@@ -115,7 +122,7 @@ export function resolvePprOptions(overrides: PprOptions = {}): ResolvedPprOption
   )
   const resolved: ResolvedPprOptions = { ...PPR_DEFAULTS, ...defined }
   for (const [key, value] of Object.entries(resolved)) {
-    if (key === "blockingFor") continue
+    if (key === "blockingFor" || key === "holeHtmlValidation") continue
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
       throw optionError(`${key} must be a non-negative integer, got ${String(value)}`)
     }
@@ -134,6 +141,11 @@ export function resolvePprOptions(overrides: PprOptions = {}): ResolvedPprOption
   const blockingFor = resolved.blockingFor
   if (!(blockingFor instanceof RegExp) && typeof blockingFor !== "function") {
     throw optionError("blockingFor must be a RegExp or a function of the request")
+  }
+  if (resolved.holeHtmlValidation !== "always" && resolved.holeHtmlValidation !== "development") {
+    throw optionError(
+      `holeHtmlValidation must be "always" or "development", got ${String(resolved.holeHtmlValidation)}`,
+    )
   }
   // A global or sticky pattern keeps `lastIndex` between `test` calls, so one bot would alternate.
   if (blockingFor instanceof RegExp && (blockingFor.global || blockingFor.sticky)) {
