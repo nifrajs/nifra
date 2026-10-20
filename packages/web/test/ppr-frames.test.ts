@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import * as parse5 from "parse5"
 import {
   assertHoleName,
   encodeHoleFrame,
@@ -7,6 +8,21 @@ import {
   validateHoleHtml,
 } from "../src/internal/ppr/frames.ts"
 import { holeInvoker, PPR_RUNTIME, pprScriptHashes } from "../src/internal/ppr/runtime.ts"
+
+type Node5 = {
+  nodeName: string
+  attrs?: Array<{ name: string; value: string }>
+  childNodes?: Node5[]
+  value?: string
+}
+
+/** Every element under `node`, in document order, as an HTML parser built them. */
+const elements = (node: Node5): Array<Node5 & { attrs: Array<{ name: string; value: string }> }> =>
+  (node.childNodes ?? []).flatMap((child) =>
+    child.attrs === undefined ? [] : [{ ...child, attrs: child.attrs }, ...elements(child)],
+  )
+const textOf = (node: Node5 | undefined): string =>
+  (node?.childNodes ?? []).map((child) => child.value ?? "").join("")
 
 /** The JSON text of the one inert frame in `html`, parsed as a browser's `JSON.parse` would. */
 const frameJson = (html: string): unknown => {
@@ -20,7 +36,7 @@ describe("PPR hole frames", () => {
   test("a frame is an inert JSON script then the constant invoker", () => {
     const frame = encodeHoleFrame("cart", { html: "<p>2 items</p>", props: { count: 2 } }, 4096)
     expect(frame).toBe(
-      '<script type="application/json" id="nifra-ppr:cart">{"v":1,"html":"\\u003cp\\u003e2 items\\u003c/p\\u003e","props":{"count":2}}</script><script>__nifraPpr("cart")</script>',
+      '<script type="application/json" id="nifra-ppr:cart">{"v":1,"html":"<p>2 items<\\/p>","props":{"count":2}}</script><script>__nifraPpr("cart")</script>',
     )
     expect(frameJson(frame)).toEqual({ v: 1, html: "<p>2 items</p>", props: { count: 2 } })
   })
@@ -39,14 +55,34 @@ describe("PPR hole frames", () => {
   })
 
   test("nothing in the HTML or props can close the script element or open a comment", () => {
-    const hostile = "</script><script>alert(1)</script><!-- </template>   "
-    const frame = encodeHoleFrame("cart", { html: hostile, props: { note: hostile } }, 4096)
-    const json = frame.slice(frame.indexOf(">") + 1, frame.indexOf("</script>"))
-    expect(json.includes("<")).toBe(false)
-    expect(json.includes(">")).toBe(false)
-    expect(json.includes(" ")).toBe(false)
-    expect(frame.match(/<\/script>/g)).toHaveLength(2)
-    expect(frameJson(frame)).toEqual({ v: 1, html: hostile, props: { note: hostile } })
+    for (const hostile of [
+      "</script><script>alert(1)</script>",
+      "</SCRIPT ><img src=x onerror=alert(1)>",
+      "</script\t/>",
+      "<!--<script></script>--></script>",
+      "<!-- </template> \u2028\u2029",
+    ]) {
+      const frame = encodeHoleFrame("cart", { html: hostile, props: { note: hostile } }, 4096)
+      const body = parse5.parse(`<!doctype html><html><head></head><body>${frame}</body></html>`)
+      const scripts = elements(body).filter((node) => node.nodeName === "script")
+      expect(scripts.map((node) => node.attrs.map((a) => `${a.name}=${a.value}`))).toEqual([
+        ["type=application/json", "id=nifra-ppr:cart"],
+        [],
+      ])
+      expect(elements(body).map((node) => node.nodeName)).toEqual([
+        "html",
+        "head",
+        "body",
+        "script",
+        "script",
+      ])
+      expect(JSON.parse(textOf(scripts[0]))).toEqual({
+        v: 1,
+        html: hostile,
+        props: { note: hostile },
+      })
+      expect(textOf(scripts[1])).toBe('__nifraPpr("cart")')
+    }
   })
 
   test("a frame over the byte limit throws, counting UTF-8 bytes rather than string length", () => {
