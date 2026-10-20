@@ -274,6 +274,27 @@ describe("createClientRouter", () => {
     expect(r.snapshot().data).toEqual({ hydrated: { fromServer: true } })
   })
 
+  test("hydrating a server-rendered status page inside layouts keeps it, with no fetch or reload", async () => {
+    const loaded: string[] = []
+    const r = createClientRouter({
+      patterns: [{ routeId: "index", pattern: "/" }],
+      initial: { ...initial, routeId: "_404", path: "/gone", data: null },
+      statusRoutes: { 404: "_404" },
+      layoutStatusRoutes: { _404: true },
+      fetchData: async () => {
+        throw new Error("hydration must not fetch")
+      },
+      loadModule: async (id) => {
+        loaded.push(id)
+      },
+      routeHooks: { _404: { clientLoader: async ({ serverLoader }) => serverLoader() } },
+    })
+    await r.hydrate()
+    expect(r.snapshot().routeId).toBe("_404")
+    expect(r.snapshot().data).toBeNull()
+    expect(loaded).toEqual([])
+  })
+
   test("clientAction prepares the request and exposes optimistic data, then keeps the server result", async () => {
     const realFetch = globalThis.fetch
     const bodies: string[] = []

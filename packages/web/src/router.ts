@@ -732,15 +732,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       initial,
     )
     if (mine !== generation) return
-    if (loaded.terminalRouteId !== undefined) {
-      await loadModule?.(loaded.terminalRouteId, state.path)
-      state = { ...state, routeId: loaded.terminalRouteId, params: {}, data: null }
-    } else {
-      state = {
-        ...state,
-        ...dataFields(loaded),
-      }
-    }
+    // No terminal status can arrive here: the server already rendered this route (a status page
+    // included) and its data is the only server result the client loader sees.
+    state = { ...state, ...dataFields(loaded) }
     emit()
   }
   let state = options.initial
