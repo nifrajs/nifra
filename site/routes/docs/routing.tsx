@@ -174,6 +174,37 @@ export default function OrgLayout({ children }: { children: ReactNode }) {
   )
 }`
 
+const MODAL_ROUTE = `// routes/_layout.tsx - a link to /photos/:id from any page opens the photo over that page
+import type { Boundary, BoundaryStates } from "@nifrajs/web"
+import type { ReactNode } from "react"
+import type { Route as Photo } from "./photos/+types/[id]"
+
+// No load of its own: the modal shows the target page's loader data.
+const photo: Boundary<Photo.LoaderData, ReactNode> = {
+  name: "photo",
+  mode: { intercept: "/photos/:id" },
+  render: (data) => <h2>{data.title}</h2>,
+}
+
+export const boundaries = [photo]
+
+export default function Layout(props: { children?: ReactNode; boundaries?: BoundaryStates }) {
+  const open = props.boundaries?.photo
+  return (
+    <>
+      {props.children}
+      {open?.status === "ready" ? (
+        <dialog open>
+          {photo.render(open.data as Photo.LoaderData)}
+          <button type="button" onClick={() => history.back()}>
+            Close
+          </button>
+        </dialog>
+      ) : null}
+    </>
+  )
+}`
+
 export default function Routing() {
   return (
     <div className="prose">
@@ -440,6 +471,52 @@ export default function Routing() {
         <code>@nifrajs/web-&lt;framework&gt;/router</code>, as an array on React/Preact, a{" "}
         <code>Ref</code> on Vue, and an accessor on Solid/Svelte.
       </p>
+
+      <h2 id="modal-routes">Opening a route in a modal</h2>
+      <p>
+        A photo grid can open <code>/photos/7</code> over the grid, while a shared link or a reload of
+        that URL shows the photo as its own page. A layout or page declares this with a boundary whose
+        mode is <code>{`{ intercept: "/photos/:id" }`}</code>, in its <code>boundaries</code> export.
+        On a client navigation from a page under that layout (or from that page) to a matching URL,
+        nifra fetches the target route&apos;s data with the usual request, so its middleware, gates
+        and loader all run. The current page stays mounted, the address bar shows the new URL, and the
+        target&apos;s loader data arrives as <code>boundaries.photo</code> with{" "}
+        <code>status: &quot;ready&quot;</code>. Until then the boundary&apos;s status is{" "}
+        <code>&quot;unresolved&quot;</code>.
+      </p>
+      <CodeBlock code={MODAL_ROUTE} lang="tsx" />
+      <ul>
+        <li>
+          The boundary has no <code>load</code>: its data is the target page&apos;s loader data, so
+          type it with that route&apos;s <code>LoaderData</code>. <code>routes/photos/[id].tsx</code>{" "}
+          stays an ordinary page.
+        </li>
+        <li>
+          Back closes the modal and forward reopens it. A link inside the modal to another matching
+          URL replaces its content, and back steps through each one. Navigating anywhere else closes
+          it.
+        </li>
+        <li>
+          A reload, a shared link, or a navigation from a page outside the declaring layout or page
+          renders the target as a full page. That includes coming back to the modal&apos;s URL from a
+          page that does not intercept it.
+        </li>
+        <li>
+          A target that answers with its own status, such as a <code>404</code> or{" "}
+          <code>401</code>, or that throws, never opens in the modal: the browser loads that URL as a
+          full page and gets that answer. A redirect is followed first, and opens in the modal only
+          when it lands on another matching URL.
+        </li>
+        <li>
+          The modal exists only after a client navigation, which pushed a history entry, so{" "}
+          <code>history.back()</code> is always the way to close it.
+        </li>
+        <li>
+          The component renders the boundary itself: it reads <code>boundaries.&lt;name&gt;</code>{" "}
+          from its props and calls the boundary&apos;s <code>render</code> with the data. Every
+          adapter passes <code>boundaries</code> to the layouts and the page.
+        </li>
+      </ul>
 
       <h2>Guarding navigation</h2>
       <p>
