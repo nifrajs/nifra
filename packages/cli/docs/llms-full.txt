@@ -2448,46 +2448,52 @@ if (document.documentElement.hasAttribute("data-nifra-hydrated")) start()
 else document.addEventListener("nifra:hydrated", start, { once: true })
 ```
 
-## Nifra - Islands: the AI-safe interactivity lane
+## Nifra - Islands: interactivity without hydration
 
-> Add interactivity to a zero-runtime vanilla page with islands - imperative DOM enhancers, no framework runtime, no hydration. Explicit code an AI (or a human) gets right first try: mount, coordinate over a typed bus, always return cleanup.
+> Add interactivity to a zero-runtime vanilla page with islands: an imperative DOM enhancer, or signals bound to server-rendered markup by name. No framework runtime, no hydration, and nifra check matches the markup against the code that mounts it.
 
 A `@nifrajs/web-vanilla` page ships zero framework runtime. When one corner needs
-to be interactive, you don't turn on hydration - you mount an **island**: a
-small, plain-DOM enhancer over a server-rendered element. Explicit imperative code with no
-hidden reactivity - the shape an AI agent (or a human) gets right on the first try.
+to be interactive, you don't turn on hydration - you mount an **island**
+over a server-rendered element. Write it as plain DOM code, or bind signals to the markup by
+name. Either way `nifra check` reads the island and the markup together.
 
 ### Why islands, not hydration
 
 Vanilla routes set `export const hydrate = false` in their
-`.backend.ts` half - there is no client framework
-to hydrate with, and that is the point. The five framework adapters give you a reactive
-runtime and pay for it in client JS and in the subtle failure modes (stale closures,
-hydration mismatch, what-re-runs-when) that trip up generated code. Islands take the other
-trade: no runtime, no reactivity to get wrong. You wire the DOM by hand and hand back a
-teardown. Reach for a framework adapter when you genuinely need a stateful app UI; reach for
-islands for widgets on an otherwise-static page.
+`.backend.ts` half - there is no client framework to hydrate with, and that is
+the point. The five framework adapters give you a component runtime and pay for it in client
+JS and in failure modes (stale closures, hydration mismatch, what-re-runs-when) that trip up
+generated code. Islands keep the HTML the server sent and attach behavior to it. Reach for a
+framework adapter when you need client routing or nested views; reach for islands for
+widgets and small apps on an otherwise-static page.
 
 ### Mount an island
 
-Render a `<nifra-island>` marker in your page (props are inline JSON), then
-bundle one entry (in `frontend/`) that calls `mountIslands`. Load it
-with the `islandScripts` export of the route's `.backend.ts` half.
+Any element with `data-island="id"` is a host; its props are inline
+JSON in `data-island-props`. Bundle one entry (in `frontend/`) that
+calls `mountIslands` with an enhancer per id, and load it with the
+`islandScripts` export of the route's `.backend.ts` half. Calling
+`mountIslands` again after a soft navigation mounts only new hosts, and the
+disposer it returns tears down every island it mounted.
 
 ```ts
-// doc-check: skip - server-rendered island marker (HTML, not a checkable module).
-// In your @nifrajs/web-vanilla page, render the host element with inline JSON props:
-html`<nifra-island data-id="counter" data-props=${JSON.stringify({ start: 0 })}>
+// doc-check: skip - server-rendered island host (HTML, not a checkable module).
+// In your @nifrajs/web-vanilla page, mark any element as a host and give it inline JSON props:
+html`<div data-island="counter" data-island-props="${JSON.stringify({ start: 0 })}">
   <output>0</output>
   <button type="button">+1</button>
-</nifra-island>`
+</div>`
 ```
+
+There are two ways to write the enhancer, and one page can mix both.
+
+### Imperative islands: defineIsland
 
 ```ts
 // doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
 import { defineIsland, mountIslands } from "@nifrajs/web/islands"
 
-// defineIsland pins the data-props type; the body is plain imperative DOM. ALWAYS return the
+// defineIsland pins the data-island-props type; the body is plain imperative DOM. ALWAYS return the
 // teardown for anything you wire - mountIslands calls it on soft-nav (NF-C020 warns if you forget).
 const counter = defineIsland<{ start: number }>((el, props) => {
   let n = props.start
@@ -2502,10 +2508,157 @@ mountIslands({ counter })
 ```
 
 `defineIsland<Props>` is a zero-cost identity helper - its only job is to
-type `props` and `el` so the body needs no cast. Keep the body
-imperative: read the DOM, add listeners, **return the cleanup**. The returned
-function runs on soft-nav teardown; forget it and every navigation leaks the listener -
-`nifra check` flags exactly that as `NF-C020`.
+type `props` and `el` so the body needs no cast. Read the DOM, add
+listeners, **return the cleanup**. The returned function runs on teardown;
+forget it and every navigation leaks the listener - `nifra check` flags exactly
+that as `NF-C020`.
+
+### Reactive islands: bindIsland
+
+For local state, mount the host with `bindIsland`. The setup declares named
+state with `state(key, fallback)` - seeded from the island's props when they
+carry the key - and returns its event handlers. The markup then binds them by name:
+
+```ts
+// doc-check: skip - server-rendered island host (HTML, not a checkable module).
+html`<form data-island="search" data-island-props="${JSON.stringify({ query: "" })}"
+    data-bind-on="submit:go">
+  <input name="q" data-bind-value="query" />
+  <button data-bind-attr="disabled:busy">Search</button>
+  <p data-bind-show="busy">Searching...</p>
+  <p><span data-bind-text="count">0</span> results</p>
+</form>`
+```
+
+```ts
+// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { bindIsland, mountIslands } from "@nifrajs/web/islands"
+
+const search = bindIsland(({ state, onDispose }) => {
+  // Every data-bind-* name in the markup is a state key here, seeded from data-island-props.
+  const query = state("query", "")
+  const busy = state("busy", false)
+  const count = state("count", 0)
+  const timer = setInterval(() => console.log("still searching for", query()), 5000)
+  onDispose(() => clearInterval(timer))
+
+  // The returned handlers are what data-bind-on names.
+  return {
+    go: async (event) => {
+      event.preventDefault()
+      busy.set(true)
+      try {
+        const hits: unknown[] = await fetch("/api/search?q=" + encodeURIComponent(query())).then((r) => r.json())
+        count.set(hits.length)
+      } finally {
+        busy.set(false)
+      }
+    },
+  }
+})
+
+mountIslands({ search })
+```
+
+Attribute
+Effect
+
+`data-bind-text="count"`
+
+Sets the element's text to the signal's value.
+
+`data-bind-show="open"`
+
+Hides the element while the signal is falsy.
+
+`data-bind-class="active:open"`
+
+Toggles a class per pair.
+
+`data-bind-attr="aria-expanded:open"`
+
+Sets an attribute per pair, removing it for `false` or
+`null`. Never an `on*` attribute or `srcdoc`, and a
+URL attribute takes only an http(s), mailto, tel or relative URL.
+
+`data-bind-value="query"`
+
+Two-way: an input, select or textarea writes the signal back.
+
+`data-bind-on="click:add"`
+
+Adds a returned handler as an event listener per pair.
+
+Values are names, never code, so markup cannot inject behavior. A binding belongs to its
+nearest island, and nothing inside a `data-island-ignore` element binds or mounts
+- render user HTML there. Because both sides are literal, `nifra check` matches
+them: `NF-C047` warns when a name has no `state("...")` key
+or returned handler, and `NF-C048` when a binding sits where no
+`bindIsland` host will ever walk it.
+
+### Signals
+
+The reactive core is exported for code that needs more than markup bindings. A read inside
+an `effect` or `computed` subscribes; `batch` runs the
+effects once after several writes, and `untrack` reads without subscribing.
+Effects run after every computed they read has settled, so they never see a half-updated
+value.
+
+```ts
+import { batch, computed, effect, signal, untrack } from "@nifrajs/web/islands"
+
+// A signal is read by calling it and written with .set. Reads inside an effect or computed subscribe.
+const price = signal(20)
+const quantity = signal(1)
+const total = computed(() => price() * quantity())
+
+const stop = effect(() => console.log("total", total(), "at", untrack(price)))
+batch(() => {
+  price.set(25)
+  quantity.set((n) => n + 1)
+}) // the effect runs once, after both writes: logs "total 50 at 25"
+stop()
+```
+
+Everything an enhancer creates while it sets up - effects, computeds, lists, resources - is
+owned by its island and stops when the island unmounts. `onDispose(fn)` covers
+timers and requests the setup starts itself. An effect created later, inside an event
+handler, is not owned: create it during setup.
+
+### Keyed lists and async state
+
+`bindList(source, container, { key, create, update })` renders a list
+signal into a container. A surviving item keeps its node, so focus and input state survive a
+reorder, and only the nodes out of order move. `resource(source, fetcher)` keeps
+an async value with a `pending`, `ready` or `error` state;
+a newer key aborts the older request, and an unmounted island drops a late result.
+
+```ts
+// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { bindIsland, bindList, mountIslands, resource } from "@nifrajs/web/islands"
+
+type Hotel = { id: string; name: string }
+
+const hotels = bindIsland(({ root, state }) => {
+  const city = state("city", "paris")
+  // A newer city aborts the older request; only the newest result lands.
+  const found = resource(city, (c, abort) =>
+    fetch("/api/hotels?city=" + encodeURIComponent(c), { signal: abort }).then((r): Promise<Hotel[]> => r.json()),
+  )
+  const list = root.querySelector("ul")
+  if (list)
+    bindList(() => found().value ?? [], list, {
+      key: (h) => h.id, // a stable id, never a position (NF-C022)
+      create: () => document.createElement("li"),
+      update: (li, h) => {
+        li.textContent = h.name
+      },
+    })
+  // A <select data-bind-value="city"> in the markup writes city; nothing else to return.
+})
+
+mountIslands({ hotels })
+```
 
 ### Coordinate islands with a typed bus
 
@@ -2592,230 +2745,11 @@ mountIslands({ filter, results })
 
 ### Load strategies
 
-A marker's `data-strategy` defers its enhancer: `load` (default),
-`idle`, `visible` (mount when it scrolls into view), or a
-`media` query. An island with no matching enhancer, or an invalid strategy, stays
-inert server-rendered HTML - forward-compatible, never a runtime error.
-
-## Nifra - nano: explicit reactivity for small apps
-
-> nano is the AI-safe small-app lane: signal + computed(fn, [deps]) + keyed bindList, no VDOM, no auto-tracking. Every reactive edge is a visible call, so its three mistakes are static lints (NF-C021/C022/C023) with a fix recipe - the same closed loop that makes the backend AI-safe, now on the frontend.
-
-`@nifrajs/web/nano` is the middle lane between a static
-[island](/docs/islands) and a full framework adapter. It gives you a signal, a
-derived `computed`, and a keyed list - enough to build a small app with local
-state a human edits - and nothing else. No virtual DOM, no template compiler, no
-auto-tracking. Every reactive edge is a call you write, which is exactly what lets a tool
-catch the mistakes before runtime.
-
-### Why a fourth lane
-
-A framework fails generated code not because it is unfamiliar but because its reactivity is
-_implicit_: an effect silently tracks what it read, a stale closure captures the wrong
-value, a render mismatches hydration - all silent, all runtime. Preact fixes the
-**size** of that model (3 KB) but copies its footguns faithfully. nano
-fixes the **failure model** for the small-app band: dependencies are an explicit
-array, list keys are a required argument, cleanups are a returned value. Each of those is a
-thing a static check can see. Reach for nano when a page needs local state and a keyed list;
-reach for a [framework adapter](/docs/frameworks) the moment you need client
-routing, nested view state, or suspense.
-
-### Signals and computed
-
-A `signal` holds a value; `.get()` reads it and `.set(...)`
-replaces it (deduped with `Object.is`). A `computed` derives a value and
-declares its sources as an explicit deps array - it recomputes when a listed source changes,
-never by magic. Both are synchronous and framework-free.
-
-```ts
-import { signal, computed } from "@nifrajs/web/nano"
-
-// State is a signal: reads are .get(), writes are .set(...). Every edge is a call you can see.
-const count = signal(0)
-
-// Derived state declares its dependencies EXPLICITLY - the array is the whole contract. It
-// recomputes when (and only when) a listed source changes. Object.is-deduped, like signal.
-const doubled = computed(() => count.get() * 2, [count])
-
-const off = doubled.subscribe((v) => console.log("doubled is now", v))
-count.set(5) // logs: doubled is now 10
-off()        // unsubscribe
-```
-
-The deps array is the whole contract, and its one failure mode is catchable: a
-`computed` whose body reads a signal the array omits will never recompute when that
-signal changes. `nifra check` flags exactly that as `NF-C023` - the
-check reads which signals the body calls `.get()` on and compares them to the
-array. A framework's auto-tracked effect gives a tool nothing to compare, which is why
-the equivalent lint elsewhere is a best-effort warning, not a gate.
-
-### Bind a signal to the DOM
-
-`bind` is the one-value edge: it applies your function immediately and on every
-change, and returns a disposer. **Collect the disposer.** A bare
-`bind(...)` whose return value is discarded leaks its subscription on soft-nav -
-`nifra check` flags it as `NF-C021`.
-
-```ts
-// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
-import { signal, bind } from "@nifrajs/web/nano"
-
-const label = signal("hello")
-
-// bind applies immediately AND on every change; it returns the disposer. COLLECT it - a bare
-// bind(...) that drops its return leaks the subscription on soft-nav (nifra check flags NF-C021).
-const off = bind(document.querySelector("h1")!, label, (el, v) => { el.textContent = v })
-label.set("world") // the <h1> updates synchronously
-// ...on teardown: off()
-```
-
-### Keyed lists with bindList
-
-`bindList` keeps a container's children in sync with an array by key - a keyed
-reconcile like a framework's list diff, but you spell the key out. Add, remove, and
-reorder reuse the matching node (preserving focus and scroll) instead of rebuilding the list.
-Key by a **stable id** on the item; keying by the array index reuses the wrong
-node on reorder, and `nifra check` flags it as `NF-C022`.
-
-```ts
-// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
-import { signal, bindList } from "@nifrajs/web/nano"
-
-interface Todo { id: string; text: string; done: boolean }
-const todos = signal<Todo[]>([])
-
-// bindList keeps a container's children in sync with an array by KEY - a keyed reconcile, like a
-// framework's list diff, but explicit. Add/remove/reorder reuse the right node instead of rebuilding.
-const off = bindList(todos, document.querySelector("ul")!, {
-  key: (t) => t.id, // a STABLE id on the item. Keying by the array index is NF-C022 - reorder breaks.
-  create: (t) => { const li = document.createElement("li"); li.dataset.id = t.id; return li },
-  update: (li, t) => { li.textContent = t.text; li.classList.toggle("done", t.done) },
-})
-
-todos.set([...todos.get(), { id: crypto.randomUUID(), text: "buy milk", done: false }])
-// ...on teardown: off()
-```
-
-### Async state with resource
-
-`resource(fetcher, [deps])` is nano's answer to "suspense" - an
-async cell whose value is an explicit `{ status, value, error }` union.
-It runs the fetcher immediately and again whenever a declared dep changes, and it handles the
-two things people get wrong by hand: the fetcher receives an `AbortSignal`, and a
-superseded request is aborted with its late result dropped, so the newest fetch always wins -
-no stale-response flicker. There is no thrown promise and no magic boundary; it is a value you
-read or bind like any other.
-
-```ts
-import { signal, resource } from "@nifrajs/web/nano"
-
-const userId = signal(1)
-
-// resource(fetcher, [deps]) is an async cell: it fetches immediately and again whenever a declared
-// dep changes. The fetcher gets an AbortSignal; a superseded fetch is aborted and its late result
-// dropped, so the newest request always wins - no stale-response flicker to hand-guard.
-const user = resource(async (sig) => {
-  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })
-  return (await res.json()) as { name: string }
-}, [userId])
-
-// The value is an explicit union - status is "pending" | "error" | "ready", never a secret undefined.
-const off = user.subscribe((s) => {
-  if (s.status === "ready") console.log("got", s.value.name)
-})
-userId.set(2) // refetches; the deps array is what NF-C023 checks against the fetcher's .get() reads
-// ...on teardown: off()
-```
-
-The deps array is checked exactly like `computed`: a `resource` whose
-fetcher reads a signal the array omits won't refetch when it changes, and
-`nifra check` flags it as `NF-C023`. Bind it to the DOM with
-`bindResource`, which dispatches on `status` - one handler per state,
-`ready` required, so a still-loading value can never render as a stray
-`undefined`.
-
-```ts
-// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
-import { signal, resource, bindResource } from "@nifrajs/web/nano"
-
-const userId = signal(1)
-const user = resource(async (sig) => {
-  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })
-  return (await res.json()) as { name: string }
-}, [userId])
-
-// bindResource dispatches on status - one handler per state, ready required. Like bind it returns a
-// disposer (a bare bindResource(...) that drops it is NF-C021).
-const off = bindResource(document.querySelector("[data-user]")!, user, {
-  pending: (el) => { el.textContent = "Loading…" },
-  ready: (el, u) => { el.textContent = u.name },
-  error: (el) => { el.textContent = "Could not load user" },
-})
-// ...on teardown: off()
-```
-
-### nano inside an island
-
-nano owns state and DOM edges; an [island](/docs/islands) owns mount and teardown.
-Put the signals in the enhancer, collect every disposer, and return one cleanup that calls
-them all. Scaffold this shape with
-`nifra_scaffold { path, variant: "stateful" }` on a vanilla
-project - it emits the golden pattern below.
-
-```ts
-// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
-import { defineIsland, mountIslands } from "@nifrajs/web/islands"
-import { signal, computed, bind, bindList } from "@nifrajs/web/nano"
-
-interface Todo { id: string; text: string; done: boolean }
-
-// nano lives INSIDE an island - the island owns mount/teardown, nano owns the state and the DOM edges.
-const todos = defineIsland<{ items: Todo[] }>((el, props) => {
-  const items = signal<Todo[]>(props.items)
-  const remaining = computed(() => items.get().filter((t) => !t.done).length, [items])
-
-  // Collect every disposer; the island's cleanup calls them all (this is what NF-C021 protects).
-  const cleanups: Array<() => void> = []
-  cleanups.push(bind(el.querySelector("[data-count]")!, remaining, (n, v) => {
-    n.textContent = String(v) + " left"
-  }))
-  cleanups.push(bindList(items, el.querySelector("[data-list]")!, {
-    key: (t) => t.id,
-    create: (t) => { const li = document.createElement("li"); li.dataset.id = t.id; return li },
-    update: (li, t) => { li.textContent = t.text; li.classList.toggle("done", t.done) },
-  }))
-
-  const add = (text: string) =>
-    items.set([...items.get(), { id: crypto.randomUUID(), text, done: false }])
-  void add
-
-  return () => { for (const off of cleanups) off() }
-})
-
-mountIslands({ todos })
-```
-
-### The three checks
-
-nano's explicitness is the whole point: because each reactive edge is a visible call, its
-three mistakes are static lints with a fix recipe - the same closed loop (`scaffold`
--> `check` -> `fix` -> `verify`) that makes the
-backend AI-safe, now on the frontend.
-
--
-`NF-C021` - a `bind`/`bindList` whose disposer is
-discarded. Collect it; call it on teardown.
-
--
-`NF-C022` - a `bindList` keyed by the array index. Key by a stable id.
-
--
-`NF-C023` - a `computed` that reads a signal its deps omit. Add it to
-the deps array.
-
-All three _warn_ - a false positive must never fail a build - and each carries a fix
-recipe an agent can apply. Where nano stops (client routing, nested views, suspense), stop
-adding nano and reach for `@nifrajs/web-preact` or another framework adapter.
+A host's `data-island-strategy` defers its enhancer: `load`
+(default), `idle`, `visible` (mount when it scrolls into view), or
+`media` with the query in `data-island-media`. A host with no matching
+enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
+never a runtime error.
 
 ## Nifra - Streaming
 
@@ -16019,8 +15953,8 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/island-trigger
 
-Framework-neutral, browser-side trigger scheduling shared by Nifra’s two island runtimes:
-`@nifrajs/web/islands` and `@nifrajs/islets`.
+Framework-neutral, browser-side trigger scheduling for Nifra’s island runtime,
+`@nifrajs/web/islands`.
 
 It has no DOM or UI-framework dependency. The public contract is the small `scheduleTrigger`
 primitive with these strategies:
@@ -16042,96 +15976,6 @@ registry, signals, and framework integration.
 
 For AI agents, see [`LLM.md`](./LLM.md). The wider reference is in
 [`llms-full.txt`](../../llms-full.txt).
-
-## @nifrajs/islets
-
-Fine-grained signals + declarative DOM bindings for islands - **interactivity in ~2 KB gz**, no
-framework runtime. The client companion to `@nifrajs/web-vanilla`: the server renders real HTML
-(zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
-the markup the server sent IS the initial state.
-
-The full island bundle is about 2 KB gzipped (2,080 B at most), and a size test keeps it there. Use
-it for small interactive widgets where a full framework runtime would be overkill.
-
-## Server side (any adapter - `@nifrajs/web-vanilla` shown)
-
-```ts
-import { html } from "@nifrajs/web-vanilla"
-import { islandState } from "@nifrajs/islets" // safe to import server-side: it's just JSON.stringify
-
-html`<section data-island="compare" data-island-state="${islandState({ count: hotels.length })}">
-  <span data-bind-text="count">${hotels.length}</span>
-  <button data-bind-on="click:add" type="button">Compare</button>
-</section>`
-```
-
-The state attribute is the loader-data → client-signal seam: emit it through an escaping renderer
-(vanilla's `html` escapes attribute quotes) and the island reads it back with `state()` - no
-separate hydration payload, no data globals.
-
-## Client side (an `islandScripts` entry)
-
-```ts
-import { island, mountIslands } from "@nifrajs/islets"
-
-island("compare", ({ state }) => {
-  const count = state("count", 0) // seeded from data-island-state, falls back to 0
-  return { add: () => count.set((n) => n + 1) }
-})
-
-mountIslands() // idempotent - safe to call again after soft navigation
-```
-
-## The binding set (closed - six bindings, no expression language)
-
-| Attribute | Effect |
-| --- | --- |
-| `data-bind-text="sig"` | `textContent ← String(sig())` |
-| `data-bind-show="sig"` | `hidden ← !sig()` |
-| `data-bind-class="active:isOpen,b:sigB"` | `classList.toggle` per pair |
-| `data-bind-attr="aria-expanded:isOpen"` | `setAttribute`; `false`/`null`/`undefined` removes. Never an `on*` handler or `srcdoc`; `href`/`src`/`action` and other URL attributes take only http(s), mailto, tel or relative URLs |
-| `data-bind-value="query"` | two-way `<input>`/`<select>`/`<textarea>` (`input` event) |
-| `data-bind-on="click:inc,submit:save"` | `addEventListener` per pair |
-
-Values are signal/handler **names** resolved in the island's scope - never evaluated code, so
-markup cannot inject behavior. Unknown names warn once and skip; the server-rendered content
-stays as-is (progressive enhancement never throws).
-
-Render user-supplied HTML (comments, rich text) inside an element marked `data-island-ignore`.
-Nothing in it binds or mounts: a sanitizer that keeps `data-*` attributes cannot let that markup
-reach the island's handlers or signals, or mount an island of its own.
-
-```html
-<section data-island="comments">
-  <button data-bind-on="click:save">Save</button>
-  <div data-island-ignore>${sanitizedCommentHtml}</div>
-</section>
-```
-
-Islands may nest. A binding belongs to its nearest island, so an outer island never binds inside a
-nested island. The nested host element itself is the outer island's markup: the outer island may
-bind it, for example to show or hide the nested island.
-
-## Signals
-
-`signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
-per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
-into one flush. Computeds settle before any effect runs, so an effect never sees one that lags its
-inputs. A write or batch runs each affected effect once; an effect runs again only when another
-effect writes one of its inputs during that flush, and its last run sees the settled values. A `computed` runs on first read and stops by itself once nothing reads it: the
-next change to its inputs stops it instead of recomputing, and reading it again computes it afresh.
-Every effect an island's setup creates stops when `mountIslands`' disposer unmounts it; one created
-outside an island runs until its disposer is called. Island-scale by design: if a widget outgrows this (lists, ownership trees,
-async orchestration), that's the signal to use the Solid adapter for that page - both tiers are
-first-class.
-
-## For AI agents
-
-Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
-one cheap read instead of the whole corpus. For the wider framework: the repo's
-[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
-[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
-done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/jobs
 
@@ -18266,10 +18110,6 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/island-trigger
 
 `IslandStrategy`, `MAX_MEDIA_QUERY_LENGTH`, `TriggerOptions`, `scheduleTrigger`
-
-## @nifrajs/islets
-
-`BindableElement`, `BindableRoot`, `Computed`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `IslandStrategy`, `MountIslandOptions`, `Signal`, `batch`, `bindScope`, `computed`, `effect`, `island`, `islandState`, `mountIslands`, `signal`
 
 ## @nifrajs/jobs
 

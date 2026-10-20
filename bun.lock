@@ -463,13 +463,6 @@
       "name": "@nifrajs/island-trigger",
       "version": "5.5.1",
     },
-    "packages/islets": {
-      "name": "@nifrajs/islets",
-      "version": "5.5.1",
-      "dependencies": {
-        "@nifrajs/island-trigger": "workspace:*",
-      },
-    },
     "packages/jobs": {
       "name": "@nifrajs/jobs",
       "version": "5.5.1",
@@ -1313,8 +1306,6 @@
     "@nifrajs/invariants": ["@nifrajs/invariants@workspace:internal/invariants"],
 
     "@nifrajs/island-trigger": ["@nifrajs/island-trigger@workspace:packages/island-trigger"],
-
-    "@nifrajs/islets": ["@nifrajs/islets@workspace:packages/islets"],
 
     "@nifrajs/jobs": ["@nifrajs/jobs@workspace:packages/jobs"],
 

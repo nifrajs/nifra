@@ -10,7 +10,6 @@ import {
 } from "../src/internal/typescript-import.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
 import { islandRules } from "../src/rules/islands.ts"
-import { nanoRules } from "../src/rules/nano.ts"
 import { securityRules } from "../src/rules/security.ts"
 import { projectFacts } from "./rule-facts.ts"
 
@@ -114,7 +113,7 @@ test("fails closed for compiler majors outside the supported 5/6/7 matrix", asyn
   }
 })
 
-test("keeps security, SQL, nano, and island scanners equivalent on TypeScript 5, 6, and 7", async () => {
+test("keeps security, SQL, and island scanners equivalent on TypeScript 5, 6, and 7", async () => {
   const sourceFile = "routes/compiler-matrix.server.ts"
   const source = [
     "function requireAuth() { try { check() } catch { return } }",
@@ -124,22 +123,20 @@ test("keeps security, SQL, nano, and island scanners equivalent on TypeScript 5,
     "return redirect(target, { external: true })",
     "app.use(bodyLimit({ allowLengthless: true }))",
     'ctx.cookie("session", value, { secure: true })',
-    'import { bind, bindList, computed, signal } from "@nifrajs/web/nano"',
-    "const n = signal(0)",
-    "bind(document.body, n, (e, v) => { e.textContent = String(v) })",
+    'import { bindIsland, bindList, defineIsland, mountIslands, signal } from "@nifrajs/web/islands"',
     "const items = signal([])",
     "const off = bindList(items, document.body, { key: (item, i) => i })",
-    "const todos = signal([])",
-    "const remaining = computed(() => todos.get().length, [])",
-    'import { defineIsland } from "@nifrajs/web/islands"',
     'const counter = defineIsland((el) => { el.addEventListener("click", () => {}) })',
+    'const cart = bindIsland(({ state }) => { state("count", 0); return { add: () => {} } })',
+    "mountIslands({ counter, cart })",
+    'const page = html`<div data-island="cart"><b data-bind-text="cuont"></b></div><p data-bind-text="count"></p>`',
   ].join("\n")
   const versions = [
     { label: "5", packageName: "typescript5" },
     { label: "6", packageName: "typescript" },
     { label: "7", packageName: "typescript7" },
   ] as const
-  const results = new Map<string, { security: string[]; nano: string[]; islands: string[] }>()
+  const results = new Map<string, { security: string[]; islands: string[] }>()
 
   for (const version of versions) {
     const root = await mkdtemp(join(tmpdir(), `nifra-ts${version.label}-matrix-`))
@@ -170,13 +167,11 @@ test("keeps security, SQL, nano, and island scanners equivalent on TypeScript 5,
           typescriptSession: loaded.session,
         }
         const security = await runRuleRegistry(context, securityRules)
-        const nano = await runRuleRegistry(context, nanoRules)
         const islands = await runRuleRegistry(context, islandRules)
         const codes = (findings: readonly { readonly code: string }[]) =>
           findings.map((finding) => finding.code).sort()
         results.set(version.label, {
           security: codes(security),
-          nano: codes(nano),
           islands: codes(islands),
         })
 
@@ -193,8 +188,7 @@ test("keeps security, SQL, nano, and island scanners equivalent on TypeScript 5,
   expect(results.get("6")).toEqual(results.get("7"))
   expect(results.get("7")).toEqual({
     security: ["NF-S001", "NF-S002", "NF-S003", "NF-S004", "NF-S005", "NF-S006", "NF-S007"],
-    nano: ["NF-C021", "NF-C022", "NF-C023"],
-    islands: ["NF-C020"],
+    islands: ["NF-C020", "NF-C022", "NF-C047", "NF-C048"],
   })
 })
 
@@ -214,15 +208,13 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
         "return redirect(target, { external: true })",
         "app.use(bodyLimit({ allowLengthless: true }))",
         'ctx.cookie("session", value, { secure: true })',
-        'import { bind, bindList, computed, signal } from "@nifrajs/web/nano"',
-        "const n = signal(0)",
-        "bind(document.body, n, (e, v) => { e.textContent = String(v) })",
+        'import { bindIsland, bindList, defineIsland, mountIslands, signal } from "@nifrajs/web/islands"',
         "const items = signal([])",
         "const off = bindList(items, document.body, { key: (item, i) => i })",
-        "const todos = signal([])",
-        "const remaining = computed(() => todos.get().length, [])",
-        'import { defineIsland } from "@nifrajs/web/islands"',
         'const counter = defineIsland((el) => { el.addEventListener("click", () => {}) })',
+        'const cart = bindIsland(({ state }) => { state("count", 0); return { add: () => {} } })',
+        "mountIslands({ counter, cart })",
+        'const page = html`<div data-island="cart"><b data-bind-text="cuont"></b></div><p data-bind-text="count"></p>`',
         "db.query(`SELECT * FROM users WHERE id = $" + "{input.id}`)",
       ].join("\n"),
       "utf8",
@@ -239,9 +231,9 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
       "NF-S006",
       "NF-S007",
       "NF-C020",
-      "NF-C021",
       "NF-C022",
-      "NF-C023",
+      "NF-C047",
+      "NF-C048",
     ]) {
       expect(codes.has(code)).toBe(true)
     }

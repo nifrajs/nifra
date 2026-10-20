@@ -1,7 +1,7 @@
 /**
  * The declarative binding walker - attaches signal-driven behavior to SERVER-RENDERED markup.
  * No VDOM, no hydration re-render: the HTML the server sent (e.g. via `@nifrajs/web-vanilla`) is
- * already the initial state; bindings update it surgically when signals change.
+ * already the initial state; bindings update it surgically when signals change. `bindIsland` runs it.
  *
  * The attribute set is CLOSED and documented - six bindings, no expression language. Values are
  * signal/handler NAMES looked up in the island's scope, never evaluated code, so markup can't
@@ -13,7 +13,7 @@
  *   data-bind-attr="aria-expanded:isOpen"   setAttribute / removeAttribute (false/null remove);
  *                                           never an `on*` handler or `srcdoc`, and a URL attribute
  *                                           takes only an http(s)/mailto/tel or relative URL
- *   data-bind-value="query"                 two-way <input>/<select>/<textarea> (input event)
+ *   data-bind-value="query"                 two-way <input>/<select>/<textarea> (input and change)
  *   data-bind-on="click:inc,submit:save"    addEventListener per pair
  *
  * Nothing inside a `data-island-ignore` element binds or mounts: render user HTML there, so its
@@ -23,7 +23,7 @@
  * nested host element itself is still the outer island's markup, so the outer island may bind it.
  */
 
-import { effect, type Signal } from "./signals.ts"
+import { type Signal, watch } from "./island-signals.ts"
 
 export type IslandScope = {
   readonly signals: Readonly<Record<string, Signal<unknown>>>
@@ -37,7 +37,7 @@ function warnOnce(kind: string, name: string): void {
   const key = `${kind}:${name}`
   if (warned.has(key)) return
   warned.add(key)
-  console.warn(`[nifra/islets] unknown ${kind} ${JSON.stringify(name)} - binding skipped`)
+  console.warn(`[nifra/islands] unknown ${kind} ${JSON.stringify(name)} - binding skipped`)
 }
 
 // Own keys only: a name such as `constructor` must not resolve to what a plain object inherits.
@@ -84,10 +84,14 @@ export interface BindableRoot {
   querySelectorAll(selector: string): Iterable<BindableElement>
 }
 
-/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for
- * both reactive effects and event listeners. */
-export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void> {
-  const stops: Array<() => void> = []
+/** Walk `root` and attach every `data-bind-*` binding against `scope`. Each binding's disposer
+ * (reactive effect or event listener) goes onto `stops` as it attaches, so a binding that throws
+ * midway leaves the earlier ones disposable; `stops` is returned. */
+export function bindScope(
+  root: BindableRoot,
+  scope: IslandScope,
+  stops: Array<() => void> = [],
+): Array<() => void> {
   // Each element carrying `data-bind-<kind>` outside any ignored subtree and any nested island, with
   // that attribute's value.
   const each = (kind: string): Array<[BindableElement, string]> => {
@@ -103,8 +107,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
-        effect(() => {
-          el.textContent = String(s())
+        watch(s, (v) => {
+          el.textContent = String(v)
         }),
       )
     }
@@ -114,8 +118,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
-        effect(() => {
-          el.hidden = !s()
+        watch(s, (v) => {
+          el.hidden = !v
         }),
       )
     }
@@ -126,8 +130,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       const s = named("signal", scope.signals, name)
       if (s) {
         stops.push(
-          effect(() => {
-            el.classList.toggle(className, !!s())
+          watch(s, (v) => {
+            el.classList.toggle(className, !!v)
           }),
         )
       }
@@ -144,8 +148,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       if (s) {
         const isUrl = URL_ATTRIBUTE.test(attr)
         stops.push(
-          effect(() => {
-            const v = s()
+          watch(s, (v) => {
             if (v === false || v == null || (isUrl && !SAFE_URL.test(String(v).trim())))
               el.removeAttribute(attr)
             else el.setAttribute(attr, String(v))
@@ -159,15 +162,19 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
-        effect(() => {
-          const next = String(s())
+        watch(s, (v) => {
+          const next = String(v)
           // Skip same-value writes: resetting an input's value mid-typing moves the caret.
           if (el.value !== next) el.value = next
         }),
       )
       const input = (): void => s.set(el.value ?? "")
-      el.addEventListener("input", input)
-      stops.push(() => el.removeEventListener("input", input))
+      // A <select> commits on `change`, and browsers disagree on whether `input` comes first. The
+      // second event of a pair writes the same value, which the signal skips.
+      for (const type of ["input", "change"]) {
+        el.addEventListener(type, input)
+        stops.push(() => el.removeEventListener(type, input))
+      }
     }
   }
 

@@ -55,7 +55,6 @@ const DOC_ORDER = [
   "rendering",
   "hydration",
   "islands",
-  "nano",
   "streaming",
   "query",
   "frameworks",

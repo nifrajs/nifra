@@ -87,11 +87,6 @@
       "types": "./dist/islands.d.ts",
       "default": "./dist/islands.js"
     },
-    "./nano": {
-      "bun": "./src/nano.ts",
-      "types": "./dist/nano.d.ts",
-      "default": "./dist/nano.js"
-    },
     "./service-worker": {
       "bun": "./src/service-worker.ts",
       "types": "./dist/service-worker.d.ts",

@@ -93,23 +93,23 @@ describe("scaffoldRoute", () => {
     expect(r.note).toContain("islands")
   })
 
-  test("vanilla + variant stateful emits the golden nano pattern", () => {
+  test("vanilla + variant stateful emits a reactive island", () => {
     const r = scaffoldRoute("/todos", "vanilla", "stateful")
     expect(r.file).toBe("routes/todos.tsx")
     expect(r.backend.content).toContain("export const hydrate = false") // still zero-runtime
     expect(r.content).toContain(
-      'import { signal, computed, bind, bindList } from "@nifrajs/web/nano"',
+      'import { bindIsland, bindList, effect, mountIslands } from "@nifrajs/web/islands"',
     )
-    expect(r.content).toContain("[items])") // computed declares its deps (NF-C023 shape)
-    expect(r.content).toContain("key: (t) => t.id") // stable key, not index (NF-C022 shape)
-    expect(r.content).toContain("cleanups.push(bind") // disposers collected (NF-C021 shape)
-    expect(r.note).toContain("nano")
+    expect(r.content).toContain('data-bind-value="draft"') // markup names state (NF-C047 shape)
+    expect(r.content).toContain('state("draft", "")')
+    expect(r.content).toContain("key: (t) => t.id") // stable key, not position (NF-C022 shape)
+    expect(r.note).toContain("reactive island")
   })
 
   test("variant stateful is a no-op flavour on JSX frameworks", () => {
     const plain = scaffoldRoute("/users/:id", "react")
     const stateful = scaffoldRoute("/users/:id", "react", "stateful")
-    expect(stateful.content).toBe(plain.content) // nano is vanilla-only; JSX falls back to its own stub
+    expect(stateful.content).toBe(plain.content) // stateful is vanilla-only; JSX falls back to its own stub
   })
 })
 
@@ -155,12 +155,12 @@ describe("writeScaffoldRoute", () => {
     }
   })
 
-  test("writes the nano stub for vanilla + variant stateful", async () => {
+  test("writes the reactive island stub for vanilla + variant stateful", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-scaffold-"))
     try {
       const r = await writeScaffoldRoute(dir, "/todos", "vanilla", "stateful")
       expect(r.written).toBe(true)
-      expect(await readFile(join(dir, "routes/todos.tsx"), "utf8")).toContain('@nifrajs/web/nano"')
+      expect(await readFile(join(dir, "routes/todos.tsx"), "utf8")).toContain("bindIsland(")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

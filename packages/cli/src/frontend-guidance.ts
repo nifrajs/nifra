@@ -1,7 +1,7 @@
 /**
  * `nifra_frontend` - a symptom-indexed catalog of the mistakes an agent (or a human) hits on the client
  * side of a nifra app, across every adapter. It is the FRONTEND companion to `nifra_check`: where the
- * check statically flags the footguns nifra's own seam owns (server-only imports, the nano lane), this
+ * check statically flags the footguns nifra's own seam owns (server-only imports, island bindings), this
  * catalog covers the ones a static rule can't own cheaply - hydration nondeterminism, a duplicated
  * framework runtime, and the per-framework reactivity-loss idioms that each ecosystem's own linter is
  * the real authority on.
@@ -102,8 +102,8 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
       "The list is keyed by the array index (or not keyed at all), so add/remove/reorder maps the wrong item to an existing node.",
     fix: "Key each row by a stable, unique id from the item, never its position in the array.",
     verify:
-      "The framework's own linter for JSX keys; on the vanilla nano lane, nifra_check flags an index key as NF-C022.",
-    seeAlso: "list key stable id reconcile nano",
+      "The framework's own linter for JSX keys; for an islands bindList, nifra_check flags a positional key as NF-C022.",
+    seeAlso: "list key stable id reconcile bindList islands",
   },
   {
     id: "vue-lost-reactivity",
@@ -153,16 +153,16 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     seeAlso: "eslint-plugin-react-hooks exhaustive-deps effect closure",
   },
   {
-    id: "prefer-nano-or-island",
+    id: "prefer-reactive-island",
     adapters: ["vanilla"],
     symptom:
       "A vanilla page needs local state or a list a human edits, and hand-written DOM updates are getting fragile.",
     cause:
-      "The islands lane is imperative and has no state primitive, so each update is hand-wired and a list means rebuilding the container.",
-    fix: "Use the nano lane: `signal` + `computed(fn, [deps])` for state, `bindList` for a keyed list, `resource` for async. Every reactive edge is a visible call, so its mistakes are static lints.",
+      "An imperative defineIsland enhancer has no state primitive, so each update is hand-wired and a list means rebuilding the container.",
+    fix: "Mount the island with `bindIsland`: `state(key, fallback)` for state, `data-bind-*` attributes for the markup, `bindList` for a keyed list, `resource` for async. Everything the setup creates stops when the island unmounts.",
     verify:
-      "nifra_check runs NF-C021 (discarded disposer), NF-C022 (index key), NF-C023 (missing dep) over the nano code.",
-    seeAlso: "nano signal computed bindList resource islands",
+      "nifra_check runs NF-C047 (a binding names no state or handler), NF-C048 (a binding outside a bindIsland host) and NF-C022 (a positional list key) over the island code.",
+    seeAlso: "bindIsland state data-bind bindList resource islands",
   },
 ]
 

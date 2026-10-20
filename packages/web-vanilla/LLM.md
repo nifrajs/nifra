@@ -22,4 +22,4 @@ Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template H
 ## Footguns
 
 - Output is **auto-escaping** tagged-template HTML - interpolated values are escaped; opt into raw HTML explicitly, and only for trusted content.
-- Interactivity comes from islands (`@nifrajs/web/islands` + `@nifrajs/islets`), not a framework runtime - ~0 KB client JS by default.
+- Interactivity comes from islands (`@nifrajs/web/islands`), not a framework runtime - ~0 KB client JS by default.
