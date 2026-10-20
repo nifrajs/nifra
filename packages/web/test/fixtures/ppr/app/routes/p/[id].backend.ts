@@ -1,5 +1,5 @@
 import { t } from "@nifrajs/schema"
-import { probe } from "../../lib/probe.ts"
+import { noteSlowAbort, probe } from "../../lib/probe.ts"
 import { visitorName } from "../../lib/session.ts"
 
 export const shellLoader = async (ctx: { readonly params: Readonly<Record<string, string>> }) => {
@@ -12,8 +12,7 @@ const abortable = (signal: AbortSignal, ms: number): Promise<{ at: number }> =>
   new Promise((resolve, reject) => {
     const onAbort = (): void => {
       clearTimeout(timer)
-      probe.slowAborted++
-      probe.abortedAt.push(performance.now())
+      noteSlowAbort()
       reject(signal.reason)
     }
     const timer = setTimeout(() => {

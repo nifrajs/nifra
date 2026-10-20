@@ -1,11 +1,14 @@
 import type {
+  BoundaryError,
   BoundaryRegistration,
   BoundaryRequestCtx,
   BoundaryState,
   BoundaryStates,
 } from "../../boundary.ts"
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
+import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
+import { HoleAdmission, type HoleRun, type HoleSlot, type PprAdmissionStats } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
   assertHoleName,
@@ -22,6 +25,9 @@ export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
 
 /** The error slot a failed, timed-out or refused hole shows. Constant: no thrown message reaches it. */
 const HOLE_ERROR_HTML = '<p data-nifra-hole-error="">This section is unavailable.</p>'
+
+/** The redacted state a blocking render shows for a hole that did not load, as `boundary.ts` does. */
+const HOLE_ERROR_STATE: BoundaryError = { name: "Error", message: "Boundary failed" }
 
 const DOCUMENT_END = "</body></html>"
 
@@ -82,13 +88,52 @@ export class PprShellUnchecked extends Error {
   }
 }
 
+/**
+ * How a response that is not a streamed document gets its holes. `"deferred"`: each hole runs under
+ * admission and its own deadline, and its state carries the result as a deferred value (a soft
+ * navigation's data request). `"settled"`: the same, awaited (the blocking render). `"omitted"`: no
+ * hole runs and every state is an empty host (a prefetch, which must not start work its navigation
+ * cannot cancel).
+ */
+export type HoleStatesMode = "deferred" | "settled" | "omitted"
+
+export interface PprServerStats extends PprAdmissionStats {
+  /** Responses aborted because unsent bytes went over `maxUnsentBytes` (`ppr.slow_aborted`). */
+  readonly slowAborted: number
+  /** Frame bytes queued for clients across every live PPR stream. */
+  readonly unsentBytes: number
+}
+
 export interface PprServer {
   /** Stream one PPR document: the shared shell at once, then each hole as it settles. */
   respond(request: PprRequest): Promise<Response>
   /** The shell data a soft navigation's data request carries. */
   shellData(request: PprRequest): Promise<unknown>
+  /** The hole states of a data request or a blocking render; `signal` is the request's. */
+  holeStates(
+    request: PprRequest,
+    mode: HoleStatesMode,
+    signal: AbortSignal,
+  ): Promise<BoundaryStates>
   /** Abort the response that printed `token`. Unknown tokens do nothing. */
   cancel(token: string): boolean
+  stats(): PprServerStats
+}
+
+interface HoleStart {
+  readonly hole: HoleRegistration
+  readonly run: Promise<HoleRun<unknown>>
+}
+
+/** One streamed response's own queue of frames its client has not read yet (7.7). */
+interface StreamState {
+  readonly queue: Uint8Array[]
+  queued: number
+  overflowed: boolean
+  ending: boolean
+  dead: boolean
+  wake: (() => void) | undefined
+  kill(reason: unknown): void
 }
 
 const pendingStates = (holes: readonly HoleRegistration[]): BoundaryStates => {
@@ -113,25 +158,26 @@ const randomToken = (): string => {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
 }
 
-/** Settles with `promise`, or rejects as soon as `signal` aborts: the response never waits on a
- * loader that ignores its signal (I7). */
-const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
-  signal.aborted
-    ? Promise.reject(signal.reason)
-    : new Promise<T>((resolve, reject) => {
-        const onAbort = (): void => reject(signal.reason)
-        signal.addEventListener("abort", onAbort, { once: true })
-        promise.then(
-          (value) => {
-            signal.removeEventListener("abort", onAbort)
-            resolve(value)
-          },
-          (error: unknown) => {
-            signal.removeEventListener("abort", onAbort)
-            reject(error)
-          },
-        )
-      })
+/** A fresh frozen context per invocation, so no hole sees or changes a sibling's. */
+const holeCtx = (
+  context: Omit<BoundaryRequestCtx, "signal">,
+  signal: AbortSignal,
+): BoundaryRequestCtx =>
+  Object.freeze({
+    request: context.request,
+    params: Object.freeze({ ...context.params }),
+    api: context.api,
+    env: context.env,
+    draft: context.draft,
+    search: Object.freeze({ ...context.search }),
+    signal,
+  })
+
+// Error frames are a few hundred bytes whatever the hole, so no frame limit applies to them.
+const errorFrame = (name: string): string =>
+  encodeHoleFrame(name, { error: true, html: HOLE_ERROR_HTML }, Number.POSITIVE_INFINITY)
+
+const SHED: HoleRun<never> = Object.freeze({ ok: false, reason: "denied" })
 
 export function createPprServer(config: PprServerConfig): PprServer {
   const { options, adapter, deployment, cancelUrl, shellChecks } = config
@@ -151,6 +197,18 @@ export function createPprServer(config: PprServerConfig): PprServer {
   let storedBytes = 0
   const live = new Map<string, AbortController>()
   const cspHeaders = new Map<string, Promise<string | undefined>>()
+  const admission = new HoleAdmission(
+    options,
+    isProduction()
+      ? undefined
+      : (key, ms) =>
+          console.warn(
+            `[nifra/web] ppr: boundary "${key}" settled ${Math.round(ms)} ms after its abort; pass ctx.signal to the work its loader starts`,
+          ),
+  )
+  const streams = new Set<StreamState>()
+  let unsentBytes = 0
+  let slowAborted = 0
 
   const evict = (key: string): void => {
     const entry = settled.get(key)
@@ -240,39 +298,68 @@ export function createPprServer(config: PprServerConfig): PprServer {
     return building
   }
 
-  const frameFor = async (
+  // The log carries the failure's kind only: a thrown message can hold credentials or user data.
+  const logFailure = (request: PprRequest, hole: HoleRegistration, error: unknown): void =>
+    console.error("[nifra/web] ppr: hole failed", {
+      route: request.routeId,
+      hole: hole.name,
+      kind: error instanceof Error ? "error" : typeof error,
+    })
+
+  /** Invoke one hole loader under admission, with its own deadline under `response`. */
+  const runHole = (
+    slot: HoleSlot | undefined,
+    request: PprRequest,
     hole: HoleRegistration,
-    context: Omit<BoundaryRequestCtx, "signal">,
     response: AbortSignal,
-  ): Promise<string> => {
-    const timeout = hole.timeout ?? options.holeTimeoutMs
-    const signal = AbortSignal.any([response, AbortSignal.timeout(timeout)])
-    try {
-      const load = hole.load
-      const data =
-        load === undefined
-          ? undefined
-          : await raceAbort(
-              Promise.resolve().then(() => load({ ...context, signal })),
-              signal,
-            )
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and `data` came from that load.
-      const ui = hole.render(data as never)
-      const html = await renderFragment.call(adapter, ui, {
-        idPrefix: `nifra-${hole.name}-`,
+  ): Promise<HoleRun<unknown>> => {
+    const load = hole.load
+    if (load === undefined) return Promise.resolve({ ok: true, value: undefined })
+    if (slot === undefined) return Promise.resolve(SHED)
+    const signal = AbortSignal.any([
+      response,
+      AbortSignal.timeout(hole.timeout ?? options.holeTimeoutMs),
+    ])
+    return slot
+      .run(`${request.routeId}|${hole.name}`, signal, () =>
+        load(holeCtx(request.holeContext, signal)),
+      )
+      .then((run) => {
+        if (!run.ok && run.reason === "failed") logFailure(request, hole, run.error)
+        return run
       })
-      if (options.holeHtmlValidation === "always" || !isProduction()) {
-        validateHoleHtml(html)
-      }
+  }
+
+  /** Start every hole of one response. No free slot: none is invoked and each gets its error. */
+  const startHoles = (request: PprRequest, response: AbortSignal): HoleStart[] => {
+    const slot = admission.slot()
+    const runs = request.holes.map((hole) => ({
+      hole,
+      run: runHole(slot, request, hole, response),
+    }))
+    slot?.seal()
+    return runs
+  }
+
+  const frameOf = async (
+    request: PprRequest,
+    hole: HoleRegistration,
+    run: HoleRun<unknown>,
+  ): Promise<string> => {
+    if (!run.ok) return errorFrame(hole.name)
+    try {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
+      const ui = hole.render(run.value as never)
+      const html = await renderFragment.call(adapter, ui, { idPrefix: `nifra-${hole.name}-` })
+      if (options.holeHtmlValidation === "always" || !isProduction()) validateHoleHtml(html)
       return encodeHoleFrame(
         hole.name,
-        hole.interactive === true ? { html, props: data } : { html },
+        hole.interactive === true ? { html, props: run.value } : { html },
         options.frameBytes,
       )
     } catch (error) {
-      // A disconnect or cancel is not a failure worth an error line; a timeout or a throw is.
-      if (!response.aborted) console.error(`[nifra/web] ppr: hole "${hole.name}" failed`, error)
-      return encodeHoleFrame(hole.name, { error: true, html: HOLE_ERROR_HTML }, options.frameBytes)
+      logFailure(request, hole, error)
+      return errorFrame(hole.name)
     }
   }
 
@@ -290,33 +377,60 @@ export function createPprServer(config: PprServerConfig): PprServer {
     return header
   }
 
+  const documentHeaders = (csp: string | undefined): Record<string, string> => {
+    const headers: Record<string, string> = {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "private, no-store",
+      "x-accel-buffering": "no",
+    }
+    if (csp !== undefined) headers["content-security-policy"] = csp
+    return headers
+  }
+
+  /** Abort the streams with the most unsent bytes until `bytes` more fit the process budget (7.7). */
+  const makeRoom = (bytes: number): void => {
+    while (unsentBytes + bytes > options.maxUnsentBytes) {
+      let largest: StreamState | undefined
+      for (const stream of streams)
+        if (largest === undefined || stream.queued > largest.queued) largest = stream
+      if (largest === undefined || largest.queued === 0) return
+      slowAborted++
+      largest.kill(new DOMException("PPR unsent byte budget", "AbortError"))
+    }
+  }
+
   return {
     async respond(request) {
+      if (request.request.method === "HEAD") {
+        const [, csp] = await Promise.all([shellFor(request), cspHeader(request)])
+        return new Response(null, { status: 200, headers: documentHeaders(csp) })
+      }
       const controller = new AbortController()
       const onDisconnect = (): void => controller.abort(request.request.signal.reason)
       request.request.signal.addEventListener("abort", onDisconnect, { once: true })
+      const deadlineMs = totalDeadlineMs(
+        options,
+        request.holes.map((hole) => hole.timeout ?? options.holeTimeoutMs),
+      )
       const deadline = setTimeout(
         () => controller.abort(new DOMException("PPR total deadline", "TimeoutError")),
-        totalDeadlineMs(
-          options,
-          request.holes.map((hole) => hole.timeout ?? options.holeTimeoutMs),
-        ),
+        deadlineMs,
       )
       const token = randomToken()
       live.set(token, controller)
       // Any abort (disconnect, deadline, cancel) retires the token at once, not when frames settle.
       controller.signal.addEventListener("abort", () => live.delete(token), { once: true })
+      let lifetime: ReturnType<typeof setTimeout> | undefined
       const cleanup = (): void => {
         clearTimeout(deadline)
+        clearTimeout(lifetime)
         live.delete(token)
         request.request.signal.removeEventListener("abort", onDisconnect)
       }
-      const startHoles = (): Array<Promise<string>> =>
-        request.holes.map((hole) => frameFor(hole, request.holeContext, controller.signal))
       // A cached shell is known at once, so holes start only once it is known to be a page; on a
       // miss they start beside the build, which is where starting early pays.
       const cached = settled.has(shellKey(deployment, request))
-      let frames: Array<Promise<string>> | undefined = cached ? undefined : startHoles()
+      let runs = cached ? undefined : startHoles(request, controller.signal)
       let shell: ShellEntry
       let csp: string | undefined
       try {
@@ -326,52 +440,151 @@ export function createPprServer(config: PprServerConfig): PprServer {
         cleanup()
         throw error
       }
-      frames ??= startHoles()
+      runs ??= startHoles(request, controller.signal)
+
       const encoder = new TextEncoder()
-      let closed = false
-      const body = new ReadableStream<Uint8Array>({
-        start(stream) {
-          stream.enqueue(
-            encoder.encode(
-              shell.prefix +
-                encodeRequestScript(
-                  cancelUrl,
-                  token,
-                  request.holes.map((hole) => hole.name),
-                ),
-            ),
-          )
-          void Promise.all(
-            (frames ?? []).map((frame) =>
-              frame.then((html) => {
-                if (!closed) stream.enqueue(encoder.encode(html))
-              }),
-            ),
-          ).then(() => {
-            if (closed) return
-            closed = true
-            stream.enqueue(encoder.encode(DOCUMENT_END))
-            stream.close()
-            cleanup()
-          })
-        },
-        cancel(reason) {
-          closed = true
+      let sink: ReadableStreamDefaultController<Uint8Array> | undefined
+      const state: StreamState = {
+        queue: [],
+        queued: 0,
+        overflowed: false,
+        ending: false,
+        dead: false,
+        wake: undefined,
+        kill(reason) {
+          if (state.dead) return
+          state.dead = true
+          unsentBytes -= state.queued
+          state.queued = 0
+          state.queue.length = 0
+          streams.delete(state)
           controller.abort(reason)
           cleanup()
+          try {
+            sink?.error(reason)
+          } catch {
+            // Already closed or cancelled by the reader: nothing left to error.
+          }
+          state.wake?.()
         },
-      })
-      const headers: Record<string, string> = {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "private, no-store",
-        "x-accel-buffering": "no",
       }
-      if (csp !== undefined) headers["content-security-policy"] = csp
-      return new Response(body, { status: 200, headers })
+      const wake = (): void => {
+        const resume = state.wake
+        state.wake = undefined
+        resume?.()
+      }
+      const push = (name: string, frame: string): void => {
+        if (state.dead) return
+        let bytes = encoder.encode(frame)
+        // Past the per-response cap every later hole sends its error frame, a few hundred bytes each.
+        if (state.overflowed || state.queued + bytes.length > options.maxUnsentBytesPerResponse) {
+          state.overflowed = true
+          bytes = encoder.encode(errorFrame(name))
+        }
+        makeRoom(bytes.length)
+        if (state.dead) return
+        state.queue.push(bytes)
+        state.queued += bytes.length
+        unsentBytes += bytes.length
+        wake()
+      }
+      streams.add(state)
+      lifetime = setTimeout(
+        () => state.kill(new DOMException("PPR write grace", "TimeoutError")),
+        deadlineMs + options.writeGraceMs,
+      )
+      void Promise.all(
+        runs.map(({ hole, run }) =>
+          run
+            .then((outcome) => frameOf(request, hole, outcome))
+            .then((frame) => push(hole.name, frame)),
+        ),
+      ).then(() => {
+        if (state.dead) return
+        const end = encoder.encode(DOCUMENT_END)
+        state.queue.push(end)
+        state.queued += end.length
+        unsentBytes += end.length
+        state.ending = true
+        wake()
+      })
+
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(stream) {
+            sink = stream
+            stream.enqueue(
+              encoder.encode(
+                shell.prefix +
+                  encodeRequestScript(
+                    cancelUrl,
+                    token,
+                    request.holes.map((hole) => hole.name),
+                  ),
+              ),
+            )
+          },
+          // Pulled only when the reader wants bytes, so unread frames stay counted in `state.queue`.
+          async pull(stream) {
+            while (state.queue.length === 0 && !state.ending && !state.dead) {
+              await new Promise<void>((resolve) => {
+                state.wake = resolve
+              })
+            }
+            if (state.dead) return
+            const chunk = state.queue.shift()
+            if (chunk !== undefined) {
+              state.queued -= chunk.length
+              unsentBytes -= chunk.length
+              stream.enqueue(chunk)
+            }
+            if (state.queue.length === 0 && state.ending) {
+              state.dead = true
+              streams.delete(state)
+              stream.close()
+              cleanup()
+            }
+          },
+          cancel(reason) {
+            state.kill(reason)
+          },
+        },
+        { highWaterMark: 0 },
+      )
+      return new Response(body, { status: 200, headers: documentHeaders(csp) })
     },
 
     async shellData(request) {
       return (await shellFor(request)).data
+    },
+
+    async holeStates(request, mode, signal) {
+      if (mode === "omitted") return pendingStates(request.holes)
+      const entries = await Promise.all(
+        startHoles(request, signal).map(async ({ hole, run }): Promise<[string, BoundaryState]> => {
+          const base: BoundaryState = { name: hole.name, mode: hole.mode, status: "pending" }
+          if (hole.errorId !== undefined) Object.assign(base, { errorId: hole.errorId })
+          if (mode === "deferred") {
+            const value = run.then((outcome) => {
+              if (outcome.ok) return outcome.value
+              // The request's own abort reason, so the stream sees a client that left, not a failure.
+              throw signal.aborted
+                ? signal.reason
+                : new Error(`[nifra/web] ppr: hole "${hole.name}" is unavailable`)
+            })
+            return [hole.name, { ...base, data: defer(value) }]
+          }
+          const outcome = await run
+          if (!outcome.ok) return [hole.name, { ...base, status: "error", error: HOLE_ERROR_STATE }]
+          return [
+            hole.name,
+            outcome.value === undefined
+              ? { ...base, status: "ready" }
+              : { ...base, status: "ready", data: outcome.value },
+          ]
+        }),
+      )
+      return Object.fromEntries(entries)
     },
 
     cancel(token) {
@@ -380,6 +593,10 @@ export function createPprServer(config: PprServerConfig): PprServer {
       live.delete(token)
       controller.abort(new DOMException("PPR cancelled by the client", "AbortError"))
       return true
+    },
+
+    stats() {
+      return { ...admission.stats(), slowAborted, unsentBytes }
     },
   }
 }

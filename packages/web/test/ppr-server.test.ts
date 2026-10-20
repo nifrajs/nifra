@@ -91,6 +91,23 @@ const frames = (html: string): Record<string, unknown> => {
   }
   return out
 }
+const ERROR_FRAME = {
+  v: 1,
+  error: true,
+  html: '<p data-nifra-hole-error="">This section is unavailable.</p>',
+}
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+const readerOf = (res: Response): ReadableStreamDefaultReader<Uint8Array> => {
+  if (res.body === null) throw new Error("no body")
+  return res.body.getReader()
+}
+const readRest = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> => {
+  const decoder = new TextDecoder()
+  let out = ""
+  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read())
+    out += decoder.decode(chunk.value, { stream: true })
+  return out
+}
 const shellOf = (html: string): string =>
   html.slice(0, html.indexOf('<script type="application/json" id="nifra-ppr-req">'))
 const tokenOf = (html: string): string => {
@@ -178,6 +195,7 @@ describe("PPR server", () => {
         good: { v: 1, html: '<p data-prefix="nifra-good-">good:"ok"</p>' },
       })
       expect(errors).toHaveLength(1)
+      expect(JSON.stringify(errors).includes("hunter2")).toBe(false)
     } finally {
       console.error = original
     }
@@ -350,5 +368,212 @@ describe("PPR server", () => {
     for (const hash of await pprScriptHashes(["cart", "greeting"])) expect(header).toContain(hash)
     expect(header.includes("nonce")).toBe(false)
     await res.text()
+  })
+})
+
+describe("PPR server: admission and unsent bytes (7.3, 7.7)", () => {
+  test("no free hole-work slot: every hole gets its error frame and no loader runs", async () => {
+    const server = createPprServer(config({ options: resolvePprOptions({ maxHoleWork: 1 }) }))
+    const held = gate()
+    let invoked = 0
+    const request = pprRequest([
+      hole("cart", () => {
+        invoked++
+        return held.promise
+      }),
+    ])
+    const first = await server.respond(request)
+    const second = await (await server.respond(request)).text()
+    expect(invoked).toBe(1)
+    expect(frames(second)).toEqual({ cart: ERROR_FRAME })
+    expect(server.stats()).toMatchObject({ shed: 1, slotsInUse: 1 })
+    held.release()
+    await first.text()
+    expect(server.stats()).toMatchObject({ slotsInUse: 0, pending: 0 })
+  })
+
+  test("a boundary at its abandoned trip point is denied: its loader never runs, siblings do", async () => {
+    const server = createPprServer(
+      config({ options: resolvePprOptions({ boundaryAbandonedTrip: 1, abandonGraceMs: 0 }) }),
+    )
+    const never = gate()
+    let slowCalls = 0
+    const request = pprRequest([
+      hole("slow", () => {
+        slowCalls++
+        return never.promise
+      }),
+      hole("cart", () => 2),
+    ])
+    await (await server.respond(request)).body?.cancel()
+    await tick()
+    expect(server.stats().abandonedBy).toEqual({ "product/[id]|slow": 1 })
+
+    const html = await (await server.respond(request)).text()
+    expect(slowCalls).toBe(1)
+    expect(frames(html)).toEqual({
+      slow: ERROR_FRAME,
+      cart: { v: 1, html: '<p data-prefix="nifra-cart-">cart:2</p>' },
+    })
+    expect(server.stats().denied).toEqual({ stop: 0, process: 0, boundary: 1 })
+
+    const warnings: unknown[][] = []
+    const original = console.warn
+    console.warn = (...args: unknown[]) => warnings.push(args)
+    try {
+      never.release()
+      await tick()
+    } finally {
+      console.warn = original
+    }
+    expect(String(warnings[0]?.[0])).toContain('boundary "product/[id]|slow" settled')
+    expect(server.stats().abandoned).toBe(0)
+  })
+
+  test("past the per-response unsent cap later holes send their error frames", async () => {
+    const big = "x".repeat(1500)
+    const server = createPprServer(
+      config({ options: resolvePprOptions({ frameBytes: 2000, maxUnsentBytesPerResponse: 2000 }) }),
+    )
+    const res = await server.respond(pprRequest([hole("one", () => big), hole("two", () => big)]))
+    const reader = readerOf(res)
+    await reader.read()
+    await tick()
+    expect(server.stats().unsentBytes).toBeGreaterThan(1500)
+    const rest = await readRest(reader)
+    expect(frames(rest)).toEqual({
+      one: { v: 1, html: `<p data-prefix="nifra-one-">one:"${big}"</p>` },
+      two: ERROR_FRAME,
+    })
+    expect(server.stats().unsentBytes).toBe(0)
+  })
+
+  test("over the process unsent budget the response with the most queued bytes is aborted", async () => {
+    const big = "x".repeat(1500)
+    const server = createPprServer(
+      config({
+        options: resolvePprOptions({
+          frameBytes: 2000,
+          maxUnsentBytesPerResponse: 2000,
+          maxUnsentBytes: 3000,
+        }),
+      }),
+    )
+    const request = pprRequest([hole("one", () => big)])
+    const slow = readerOf(await server.respond(request))
+    await slow.read()
+    await tick()
+    const fast = readerOf(await server.respond(request))
+    await fast.read()
+    await tick()
+    expect(server.stats().slowAborted).toBe(1)
+    await expect(slow.read()).rejects.toThrow("PPR unsent byte budget")
+    expect(frames(await readRest(fast))).toEqual({
+      one: { v: 1, html: `<p data-prefix="nifra-one-">one:"${big}"</p>` },
+    })
+    expect(server.stats().unsentBytes).toBe(0)
+  })
+
+  test("a stream its client stops reading is aborted at the total deadline plus the write grace", async () => {
+    const server = createPprServer(
+      config({
+        options: resolvePprOptions({ holeTimeoutMs: 1, totalDeadlineSlackMs: 0, writeGraceMs: 0 }),
+      }),
+    )
+    const never = gate()
+    let signal: AbortSignal | undefined
+    const res = await server.respond(
+      pprRequest([
+        hole("slow", (ctx) => {
+          signal = ctx.signal
+          return never.promise
+        }),
+      ]),
+    )
+    const reader = readerOf(res)
+    await reader.read()
+    if (signal?.aborted !== true)
+      await new Promise((resolve) => signal?.addEventListener("abort", resolve, { once: true }))
+    await tick()
+    await expect(reader.read()).rejects.toThrow("PPR write grace")
+    expect(server.stats().unsentBytes).toBe(0)
+    never.release()
+  })
+
+  test("HEAD gets the shell's status and headers, no body, and starts no hole", async () => {
+    const server = createPprServer(config())
+    let invoked = 0
+    const res = await server.respond(
+      pprRequest(
+        [
+          hole("cart", () => {
+            invoked++
+            return 1
+          }),
+        ],
+        { request: new Request("https://shop.test/p/1", { method: "HEAD" }) },
+      ),
+    )
+    expect(res.status).toBe(200)
+    expect(res.body).toBeNull()
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
+    expect(invoked).toBe(0)
+  })
+
+  test("hole states: a prefetch runs nothing; a data request defers each; a blocking render awaits each", async () => {
+    const server = createPprServer(config())
+    let invoked = 0
+    const holes = [
+      hole("ok", () => {
+        invoked++
+        return { n: 1 }
+      }),
+      hole("bad", () => {
+        invoked++
+        throw new Error("password=hunter2")
+      }),
+      hole(
+        "slow",
+        (ctx) =>
+          new Promise((_, reject) =>
+            ctx.signal.addEventListener("abort", () => reject(ctx.signal.reason)),
+          ),
+        { timeout: 5 },
+      ),
+    ]
+    const signal = new AbortController().signal
+    const errors: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => errors.push(args)
+    try {
+      const omitted = await server.holeStates(pprRequest(holes), "omitted", signal)
+      expect(invoked).toBe(0)
+      expect(omitted.ok).toEqual({ name: "ok", mode: "dynamic", status: "pending", ppr: true })
+
+      const settled = await server.holeStates(pprRequest(holes), "settled", signal)
+      expect(settled.ok).toEqual({ name: "ok", mode: "dynamic", status: "ready", data: { n: 1 } })
+      const failed = { status: "error", error: { name: "Error", message: "Boundary failed" } }
+      expect(settled.bad).toMatchObject(failed)
+      expect(settled.slow).toMatchObject(failed)
+
+      const deferred = await server.holeStates(pprRequest(holes), "deferred", signal)
+      expect(deferred.ok?.status).toBe("pending")
+      const value = (name: string): Promise<unknown> => {
+        const data = deferred[name]?.data
+        if (typeof data !== "object" || data === null || !("promise" in data)) throw new Error(name)
+        if (!(data.promise instanceof Promise)) throw new Error(name)
+        return data.promise
+      }
+      expect(await value("ok")).toEqual({ n: 1 })
+      const rejection = await value("bad").catch((error: Error) => error.message)
+      expect(rejection).toBe('[nifra/web] ppr: hole "bad" is unavailable')
+      expect(await value("slow").catch((error: Error) => error.message)).toBe(
+        '[nifra/web] ppr: hole "slow" is unavailable',
+      )
+      expect(JSON.stringify(errors).includes("hunter2")).toBe(false)
+      expect(server.stats()).toMatchObject({ slotsInUse: 0, pending: 0 })
+    } finally {
+      console.error = original
+    }
   })
 })

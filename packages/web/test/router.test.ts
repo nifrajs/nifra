@@ -855,6 +855,27 @@ describe("createClientRouter", () => {
     expect(fetches).toBe(2) // one-shot: the cached entry was consumed, so this refetches
   })
 
+  test("a prefetch says so, and a payload with partially prerendered holes is not kept", async () => {
+    const calls: Array<string | null> = []
+    const realFetch = globalThis.fetch
+    // cast: minimal fetch stub for the test - only the (url, init) shape is exercised.
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      calls.push(new Headers(init?.headers).get("x-nifra-prefetch"))
+      const cart = { name: "cart", mode: "dynamic", status: "pending", ppr: true }
+      return new Response(JSON.stringify({ v: 1, data: { id: "7" }, boundaries: { cart } }), {
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.prefetch("/users/7")
+      await r.navigate("/users/7")
+      expect(calls).toEqual(["1", null])
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("prefetch is a no-op when already cached or unmatched", async () => {
     let fetches = 0
     const r = createClientRouter({

@@ -5192,8 +5192,8 @@ _No named exports (side-effect entrypoint)._
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, ) => Promise<unknown>`
-  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream).
+- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, purpose?: "prefetch", ) => Promise<unknown>`
+  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result.
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`
@@ -5319,6 +5319,8 @@ _No named exports (side-effect entrypoint)._
   One URL pattern a nested `_404` answers when no route matches it.
 - **OpenGraphInput** _(interface)_ - `interface OpenGraphInput`
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
+- **PREFETCH_HEADER** _(const)_ - `PREFETCH_HEADER: "x-nifra-prefetch"`
+  Sent beside {@link DATA_HEADER} by a prefetch. A partially prerendered route answers it with its shell data and starts no hole: nothing could cancel that work if the link is never followed.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`
   Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
 - **PageLocale** _(interface)_ - `interface PageLocale`

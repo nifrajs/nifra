@@ -299,6 +299,7 @@ export {
   type Intercepted,
   type MountRouterOptions,
   NAV_FROM_HEADER,
+  PREFETCH_HEADER,
   REDIRECT_HEADER,
   RETAIN_HEADER,
   REVALIDATE_HEADER,

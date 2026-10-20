@@ -12,7 +12,6 @@ import {
 import {
   type BoundaryRegistration,
   type BoundaryRequestCtx,
-  type BoundaryState,
   type BoundaryStates,
   boundaryDescriptors,
   resolveStaticBoundaries,
@@ -41,6 +40,7 @@ import {
   createMatcher,
   DATA_HEADER,
   NAV_FROM_HEADER,
+  PREFETCH_HEADER,
   REDIRECT_HEADER,
   RETAIN_HEADER,
   REVALIDATE_HEADER,
@@ -1634,9 +1634,21 @@ export function createPageRequestExecutor<Env = unknown>(
               }
             }
           }
-          const blockingHoles = pprRequest !== undefined && !isDataRequest(c)
+          // Every PPR hole runs through the PPR server, so each has admission and its own deadline.
+          const holeStates =
+            pprRequest === undefined || ppr === undefined
+              ? undefined
+              : ppr.server.holeStates(
+                  pprRequest,
+                  !isDataRequest(c)
+                    ? "settled"
+                    : c.req.headers.get(PREFETCH_HEADER) === null
+                      ? "deferred"
+                      : "omitted",
+                  c.req.signal,
+                )
           const boundaryBatch =
-            boundaryDefinitions.length === 0
+            boundaryDefinitions.length === 0 || holeStates !== undefined
               ? undefined
               : startDynamicBoundaries(boundaryDefinitions, {
                   request: c.req,
@@ -1705,13 +1717,9 @@ export function createPageRequestExecutor<Env = unknown>(
               options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
             )
           }
-          if (boundaryBatch !== undefined && blockingHoles) {
-            // A PPR page rendered whole (a bot, a draft, an unchecked shell) waits for its holes. Both
-            // lists name every boundary, so each mode's state comes from its own resolver.
-            const whole: Record<string, BoundaryState> = { ...(await boundaryBatch.complete) }
-            for (const [name, state] of Object.entries(staticBoundaries ?? {}))
-              if (state.mode === "static") whole[name] = state
-            boundaryStates = whole
+          if (holeStates !== undefined) {
+            // The static resolver names every boundary, leaving the dynamic ones to the holes.
+            boundaryStates = { ...staticBoundaries, ...(await holeStates) }
           } else if (boundaryBatch !== undefined) {
             const streamed = { ...boundaryBatch.initial, ...(staticBoundaries ?? {}) }
             for (const entry of boundaryBatch.pending) {
