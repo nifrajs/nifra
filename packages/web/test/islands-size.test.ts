@@ -65,7 +65,7 @@ const fixtures = {
   everything: { budget: 3498, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
   // `@nifrajs/web/islands/swap` in place of `mountIslands`: what a page pays for slot swaps.
   swap: {
-    budget: 2935,
+    budget: 2996,
     source: `import { enableSwap } from ${SWAP}\n${IMPERATIVE}enableSwap({ counter })`,
   },
 }

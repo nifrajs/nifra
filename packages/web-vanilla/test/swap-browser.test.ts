@@ -38,7 +38,7 @@ const hold = () => {
 hold()
 
 const Layout: VanillaComponent = ({ children }) =>
-  html`<main>${children}</main><aside data-swap-slot="cart">${slot("cart", html`<b>${cart}</b>`)}</aside>`
+  html`<main id="app">${children}</main><aside data-swap-slot="cart">${slot("cart", html`<b>${cart}</b>`)}</aside>`
 
 const Hotels: VanillaComponent = (props) => {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the loader below returns this shape
@@ -56,7 +56,7 @@ const Hotels: VanillaComponent = (props) => {
     <a id="away" href="/about" data-swap="replace:results">About</a>
     <a id="moved" href="/old" data-swap="replace:results">Old</a>
     <form id="add" method="post" action="/hotels" data-swap="replace:cart"><button name="add" value="1">Add</button></form>
-    <form id="note" method="post" action="/note" data-swap="replace:cart"><button>Note</button></form>
+    <form id="note" method="post" action="/note" data-swap="replace:results"><button>Note</button></form>
     <div data-island-ignore><a id="ignored" href="/hotels?q=Savoy" data-swap="replace:results">Ignored</a></div>
     <ul data-swap-slot="results">${slot("results", [
       ...rows.map((name) => html`<li data-island="row">${name}</li>`),
@@ -65,7 +65,7 @@ const Hotels: VanillaComponent = (props) => {
 }
 
 const Note: VanillaComponent = (props) =>
-  html`<h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1>`
+  html`<main id="app"><h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1><ul><li data-island="row">Note</li></ul></main>`
 
 const manifest = (): Manifest => ({
   routes: [
@@ -101,7 +101,7 @@ const manifest = (): Manifest => ({
       load: async () => ({ default: () => html`<h1>About</h1>`, hydrate: false }),
     },
     {
-      // No layout, so the action's own page has no cart slot and answers a swap whole.
+      // Its page has no results slot, so it answers a swap whole.
       id: "note",
       pattern: "/note",
       layoutIds: [],
@@ -135,7 +135,9 @@ const row = defineIsland((el) => {
   window.__log.push("mount " + name)
   return () => window.__log.push("unmount " + name)
 })
-window.__stop = enableSwap({ row })
+// \`?scoped\` scopes the swaps to the layout's \`#app\` element instead of the document.
+const app = location.search.includes("scoped") ? document.getElementById("app") : null
+window.__stop = enableSwap({ row }, app ? { root: app } : {})
 `
 
 let page: ChromePage | undefined
@@ -313,12 +315,27 @@ test.skipIf(chrome === undefined)(
     expect(notes).toBe(before + 1)
     expect(await path(p)).toBe("/note")
     expect(await swappedIn(p)).toBe(true)
-    expect(requests).toEqual(["POST /note cart"])
+    expect(requests).toEqual(["POST /note results"])
+    expect(await p.evaluate<string[]>("window.__log")).toContain("mount Note")
     // No history entry holds this page, so going back loads the one it left.
     await p.evaluate("history.back()")
     await waitAcrossLoad(p, `location.pathname === "/hotels" && window.__stop !== undefined`)
     expect(await swappedIn(p)).toBe(false)
     expect(notes).toBe(before + 1)
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "an element root carries on as the shown page's element with its id",
+  async () => {
+    const p = await open("/hotels?scoped=1")
+    await p.evaluate(`document.querySelector("#note button").click()`)
+    await p.waitFor(`document.getElementById("saved")?.textContent?.startsWith("Saved ") === true`)
+    expect(await swappedIn(p)).toBe(true)
+    expect(await p.evaluate<string[]>("window.__log")).toContain("mount Note")
+    await p.evaluate("window.__stop()")
+    expect(await p.evaluate<string[]>("window.__log")).toContain("unmount Note")
   },
   30_000,
 )

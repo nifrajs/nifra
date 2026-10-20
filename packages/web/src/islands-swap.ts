@@ -63,7 +63,7 @@ export function enableSwap(
   enhancers: Readonly<Record<string, IslandEnhancer<never>>>,
   options: SwapOptions = {},
 ): () => void {
-  const root: ParentNode & Node = options.root ?? document
+  let root: ParentNode & Node = options.root ?? document
   const stops = new Map<Node, () => void>()
   const pending = new Map<Element, AbortController>()
   let swapped = swappedIn(history.state)
@@ -128,11 +128,18 @@ export function enableSwap(
   const showDocument = (html: string, url: URL): void => {
     const next = new DOMParser().parseFromString(html, "text/html")
     release(document)
+    const id = root instanceof Element ? root.id : ""
     document.replaceChild(document.adoptNode(next.documentElement), document.documentElement)
     replaced = true
     history.pushState(null, "", url)
     scrollTo(0, 0)
-    if (root === document) attach(root)
+    // An element root carries on as the new page's element with its id; without one, nothing mounts.
+    const found = root === document ? root : id === "" ? null : document.getElementById(id)
+    if (found === null) return
+    listen("removeEventListener")
+    root = found
+    listen("addEventListener")
+    attach(root)
   }
 
   const swap = async (
@@ -307,13 +314,16 @@ export function enableSwap(
     for (const [name, slot] of targets) void swap(slot, name, false, new URL(location.href), "GET")
   }
 
+  const listen = (method: "addEventListener" | "removeEventListener"): void => {
+    root[method]("click", onClick)
+    root[method]("submit", onSubmit)
+  }
+
   attach(root)
-  root.addEventListener("click", onClick)
-  root.addEventListener("submit", onSubmit)
+  listen("addEventListener")
   window.addEventListener("popstate", onPopState)
   return () => {
-    root.removeEventListener("click", onClick)
-    root.removeEventListener("submit", onSubmit)
+    listen("removeEventListener")
     window.removeEventListener("popstate", onPopState)
     for (const abort of pending.values()) abort.abort()
     for (const stop of stops.values()) stop()
