@@ -205,6 +205,15 @@ describe("NF-C052 swap URL's page renders no such slot", () => {
       ].join("\n"),
     }
     expect(codes(await scan(list, rows))).toEqual([])
+    const dotted = {
+      file: "routes/list.tsx",
+      content: [
+        'import { html } from "@nifrajs/web-vanilla"',
+        'import { Results } from "./parts/rows.view"',
+        `export default () => html\`<a href="/list?page=2" data-swap="append:results">More</a>\${Results()}\``,
+      ].join("\n"),
+    }
+    expect(codes(await scan(dotted, { ...rows, file: "routes/parts/rows.view.ts" }))).toEqual([])
     const aliased = {
       file: "routes/list.tsx",
       content: [

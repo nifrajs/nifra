@@ -222,8 +222,10 @@ export const slotPlacementRule: CheckRule = {
 
 // Bare imports that look like path aliases may hold the app's own components.
 const ALIAS = /^(?:~|@\/|#)/
-// A stylesheet, an image or another framework's component never calls slot().
-const NOT_SCRIPT = /\.(?!(?:[cm]?[jt]sx?)(?:\?|$))[a-z]+(?:\?.*)?$/i
+// A stylesheet, an image, a font, data or another framework's component never calls slot(). Any other
+// dotted name may be a module (`./cart.client`), so it is resolved like one.
+const NOT_SCRIPT =
+  /\.(?:css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|json|txt|md|html|wasm|mp3|mp4|webm|ogg|wav|svelte|vue)(?:\?.*)?$/i
 const PAGE_FILE = /^routes\/(.+\.(?:tsx|jsx|svelte|vue|mdx))$/
 
 /** Resolve a relative import of `from` among the project's files. */
