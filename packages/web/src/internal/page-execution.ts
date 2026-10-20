@@ -56,6 +56,7 @@ import {
   type PprServer,
   PprShellUnavailable,
   PprShellUnchecked,
+  variationQuery,
 } from "./ppr/server.ts"
 import {
   EMPTY_RETAIN,
@@ -1419,6 +1420,27 @@ export function createPageRequestExecutor<Env = unknown>(
       }
     }
 
+  /**
+   * The declared variations `search` selects. A parameter given twice, or a value outside its set,
+   * selects nothing, so every spelling of one choice maps to one shell.
+   */
+  const variationsOf = (
+    declared: RouteModule["shellVariations"],
+    search: string,
+  ): Readonly<Record<string, string>> => {
+    const lists = declared?.search
+    if (lists === undefined || search === "") return {}
+    const query = new URLSearchParams(search)
+    const chosen: Record<string, string> = {}
+    for (const [name, allowed] of Object.entries(lists)) {
+      const values = query.getAll(name)
+      const value = values[0]
+      if (values.length === 1 && value !== undefined && allowed.includes(value))
+        chosen[name] = value
+    }
+    return chosen
+  }
+
   /** The plan's eligibility rules a route's own files cannot check: its layouts and boundary modes. */
   const assertPprChain = (
     route: RouteEntry,
@@ -1457,10 +1479,13 @@ export function createPageRequestExecutor<Env = unknown>(
     const locale = i18n?.localeOf(path)
     const params = c.params
     const shellOrigin = options.ppr?.origin
+    const variations = variationsOf(mod.shellVariations, urlPartsFor(c.req).search)
+    const shellSearch = variationQuery(variations)
     return {
       routeId: route.id,
       path,
       locale,
+      variations,
       request: c.req,
       holes: boundaries.filter(
         (boundary): boundary is HoleRegistration => boundary.mode === "dynamic",
@@ -1477,6 +1502,7 @@ export function createPageRequestExecutor<Env = unknown>(
           phase: "shell",
           params,
           locale,
+          variations,
           signal,
           api,
           ...(shellOrigin === undefined ? {} : { origin: shellOrigin }),
@@ -1507,7 +1533,10 @@ export function createPageRequestExecutor<Env = unknown>(
           routeId: route.id,
           params,
           path,
-          search: searchOfChain([...layouts.map((m) => m.searchSchema), mod.searchSchema], ""),
+          search: searchOfChain(
+            [...layouts.map((m) => m.searchSchema), mod.searchSchema],
+            shellSearch === "" ? "" : `?${shellSearch}`,
+          ),
           matchChain: matchChainOf(route.layoutIds, layouts, route.id, mod),
           hydrate: mod.hydrate !== false,
           boundaries: { ...statics, ...states },

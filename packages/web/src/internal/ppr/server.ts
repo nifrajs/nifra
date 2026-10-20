@@ -63,6 +63,8 @@ export interface PprRequest {
   /** The request's pathname, without search: the shell renders it, so it is part of the key. */
   readonly path: string
   readonly locale: string | undefined
+  /** The declared variations this request selected, by name; part of the shell key. */
+  readonly variations: Readonly<Record<string, string>>
   readonly request: Request
   /** The route's dynamic boundaries, in declaration order, with their merged (guarded) loaders. */
   readonly holes: readonly HoleRegistration[]
@@ -175,7 +177,16 @@ const pendingStates = (holes: readonly HoleRegistration[]): BoundaryStates => {
 // The pathname, not the matched params, keys the shell: two spellings of one path (percent-encoding)
 // match the same params but render different `path`s. The per-route cap bounds the spellings.
 const shellKey = (deployment: string, request: PprRequest): string =>
-  `ppr:v1|${deployment}|${request.routeId}|${request.locale ?? ""}|${request.path}`
+  `ppr:v1|${deployment}|${request.routeId}|${request.locale ?? ""}|${request.path}|${variationQuery(request.variations)}`
+
+/** `variations` as a query string, sorted by name: the shell key part and the shell's own search. */
+export const variationQuery = (variations: Readonly<Record<string, string>>): string => {
+  let query = ""
+  for (const name of Object.keys(variations).sort()) {
+    query += `${query === "" ? "" : "&"}${encodeURIComponent(name)}=${encodeURIComponent(variations[name] ?? "")}`
+  }
+  return query
+}
 
 const isProduction = (): boolean =>
   typeof process !== "undefined" && process.env?.NODE_ENV === "production"

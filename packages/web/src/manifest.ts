@@ -361,6 +361,12 @@ export interface RouteModule {
   readonly shellLoader?: (ctx: ShellCtx) => unknown
   /** Experimental, backend half only: the schema of what {@link shellLoader} returns. */
   readonly shellOutput?: StandardSchemaV1
+  /**
+   * Experimental, backend half only: query parameters that select a different shell, each with its
+   * closed set of values (`{ search: { color: ["red", "blue"] } }`). Any other parameter, or a value
+   * outside its set, builds the default shell; holes still read the whole query.
+   */
+  readonly shellVariations?: ShellVariations
   /** Optional client-only loader. It runs after hydration and on client navigations. */
   readonly clientLoader?: ClientLoader
   /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
@@ -642,6 +648,51 @@ export const FRONTEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "ssr",
 ])
 
+/** Query parameters that select a shell variant, each with its closed set of values. */
+export interface ShellVariations {
+  readonly search?: Readonly<Record<string, readonly string[]>>
+}
+
+const VARIATION_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+const MAX_VARIATION_KEYS = 8
+const MAX_VARIATION_VALUES = 32
+const MAX_VARIATION_VALUE_LENGTH = 128
+
+/** A closed, small set, so no client can mint unbounded shell keys. */
+function assertShellVariations(backend: string, value: unknown): void {
+  const fail = (why: string): never => {
+    throw routeError(`"${backend}" exports shellVariations ${why}`)
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    fail("that is not an object")
+  const record = value as Readonly<Record<string, unknown>>
+  for (const key of Object.keys(record))
+    if (key !== "search") fail(`with "${key}"; only "search" is read`)
+  const search = record.search
+  if (search === undefined) return
+  if (typeof search !== "object" || search === null || Array.isArray(search))
+    fail("whose search is not an object of value lists")
+  const entries = Object.entries(search as Readonly<Record<string, unknown>>)
+  if (entries.length > MAX_VARIATION_KEYS) fail(`with more than ${MAX_VARIATION_KEYS} parameters`)
+  for (const [name, values] of entries) {
+    if (!VARIATION_NAME.test(name))
+      fail(`with a parameter name "${name}" outside ${VARIATION_NAME.source}`)
+    if (!Array.isArray(values) || values.length === 0 || values.length > MAX_VARIATION_VALUES)
+      fail(`whose "${name}" is not a list of 1 to ${MAX_VARIATION_VALUES} values`)
+    const list = values as readonly unknown[]
+    if (
+      new Set(list).size !== list.length ||
+      list.some(
+        (item) =>
+          typeof item !== "string" || item.length === 0 || item.length > MAX_VARIATION_VALUE_LENGTH,
+      )
+    )
+      fail(
+        `whose "${name}" values are not distinct strings of 1 to ${MAX_VARIATION_VALUE_LENGTH} characters`,
+      )
+  }
+}
+
 /** Exports only the server or the build reads. They live in the route's `x.backend.ts`. */
 export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "loader",
@@ -661,6 +712,7 @@ export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "allowedOrigins",
   "shellLoader",
   "shellOutput",
+  "shellVariations",
 ])
 
 const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)
@@ -748,6 +800,11 @@ export function mergeRouteHalves(
     throw routeError(
       `"${backend}" exports both shellLoader and loader. A partially prerendered page's per-visitor data comes from its dynamic boundaries' loaders`,
     )
+  }
+  if (server.shellVariations !== undefined) {
+    if (shellLoader === undefined)
+      throw routeError(`"${backend}" exports shellVariations but no shellLoader for them to vary`)
+    assertShellVariations(backend, server.shellVariations)
   }
   if (shellLoader !== undefined && server.prerender === true) {
     throw routeError(

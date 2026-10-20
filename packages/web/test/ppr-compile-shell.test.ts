@@ -17,13 +17,25 @@ describe("compileShells", () => {
     })
     expect(record.v).toBe(1)
     expect(record.deployment).toBe("d1")
-    expect(Object.keys(record.routes).sort()).toEqual(["clean", "gated/[id]", "nested/[id]"])
+    expect(Object.keys(record.routes).sort()).toEqual([
+      "ambient-hole",
+      "clean",
+      "gated/[id]",
+      "nested/[id]",
+    ])
     expect(record.routes.clean).toMatch(/^[0-9a-f]{64}$/)
-    expect(failures.map(([id]) => id)).toEqual(["leaky", "loaded/[id]"])
-    expect(String(failures[1]?.[1])).toContain(
+    const failed = new Map(failures)
+    expect([...failed.keys()].sort()).toEqual(["ambient", "leaky", "loaded/[id]"])
+    expect(String(failed.get("loaded/[id]"))).toContain(
       'route "loaded/[id]" has a shellLoader, but its layout "loaded/_layout" has a loader that is not a gate',
     )
-    const [routeId, error] = failures[0] ?? []
+    // nifra's own async-context accessor counts without the app listing it.
+    const ambient = failed.get("ambient")
+    expect(ambient).toBeInstanceOf(ShellCheckError)
+    expect(ambient instanceof ShellCheckError ? ambient.chain.at(-1) : "").toEndWith(
+      "/middleware/src/context-storage.ts",
+    )
+    const [routeId, error] = failures.find(([id]) => id === "leaky") ?? []
     expect(routeId).toBe("leaky")
     expect(error).toBeInstanceOf(ShellCheckError)
     const chain = error instanceof ShellCheckError ? error.chain : []

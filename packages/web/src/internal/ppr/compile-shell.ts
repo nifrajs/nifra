@@ -42,6 +42,16 @@ const toPosix = (path: string): string => path.replaceAll("\\", "/")
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
+/**
+ * nifra's own modules that read the visitor's request from async context. Packages stay external in
+ * the shell bundle, so these are bundled in instead: the output graph then shows whether shell code
+ * calls them, not merely whether a module beside it imports them.
+ */
+const NIFRA_REQUEST_SCOPED: readonly string[] = ["@nifrajs/middleware/context-storage"]
+const NIFRA_REQUEST_SCOPED_FILTER = new RegExp(
+  `^(?:${NIFRA_REQUEST_SCOPED.map(escapeRegExp).join("|")})$`,
+)
+
 /** The import chain from `root` to the first request-scoped module it reaches, breadth first. */
 function requestScopedChain(
   root: string,
@@ -143,6 +153,7 @@ async function compileShell(
     if (layout !== undefined)
       lines.push(`export { default as layout${index} } from ${at(layout.file)}`)
   })
+  const nifraScoped = new Set<string>()
   const result = await Bun.build({
     // Bun reads a `/` in an entry name as a directory, and route ids have them.
     entrypoints: [`${NAMESPACE}:${encodeURIComponent(route.id)}`],
@@ -162,6 +173,17 @@ async function compileShell(
             loader: "ts",
             contents: lines.join("\n"),
           }))
+          build.onResolve({ filter: NIFRA_REQUEST_SCOPED_FILTER }, (args) => {
+            let path: string
+            try {
+              path = toPosix(Bun.resolveSync(args.path, args.resolveDir))
+            } catch {
+              // Not installed, so no shell code can call it.
+              return undefined
+            }
+            nifraScoped.add(path)
+            return { path }
+          })
           // The backend half's other exports are not shell code. A hole loader's `output: t.object()`
           // is a call into a package, which the bundler must keep, and with it every import the
           // hole uses. Eliminating them first scopes the check to `shellLoader`; their imports stay
@@ -214,7 +236,7 @@ async function compileShell(
   for (const [id, module] of Object.entries(graph.modules)) {
     const from = absolute(id)
     if (id.startsWith(`${NAMESPACE}:`)) root = from
-    if (emitted(id) && requestScoped(from)) scoped.add(from)
+    if (emitted(id) && (nifraScoped.has(from) || requestScoped(from))) scoped.add(from)
     next.set(
       from,
       module.imports.flatMap((edge) => (edge.path === undefined ? [] : [absolute(edge.path)])),

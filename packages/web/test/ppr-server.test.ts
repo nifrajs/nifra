@@ -70,6 +70,7 @@ const pprRequest = (
   routeId: "product/[id]",
   path: "/p/1",
   locale: undefined,
+  variations: {},
   request: new Request("https://shop.test/p/1"),
   holes,
   holeContext,
@@ -796,5 +797,24 @@ describe("PPR shell cache (6.3, 6.4)", () => {
     })
     await visitor.run("visitor-1", async () => (await server.respond(request)).text())
     expect(seen).toBeUndefined()
+  })
+
+  test("each declared variation is its own shell; the key does not depend on declaration order", async () => {
+    let builds = 0
+    const server = createPprServer(config())
+    const at = (variations: Readonly<Record<string, string>>) =>
+      pprRequest([hole("cart", () => 1)], {
+        variations,
+        loadShell: async () => {
+          builds++
+          return { title: JSON.stringify(variations) }
+        },
+      })
+    await (await server.respond(at({ color: "red", size: "l" }))).text()
+    await (await server.respond(at({ size: "l", color: "red" }))).text()
+    expect(builds).toBe(1)
+    await (await server.respond(at({ color: "blue", size: "l" }))).text()
+    await (await server.respond(at({}))).text()
+    expect(builds).toBe(3)
   })
 })

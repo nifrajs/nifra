@@ -95,6 +95,22 @@ describe("PPR app: requests that are not a streamed document", () => {
     expect(probe.slowStarted).toBe(started)
   })
 
+  test("a declared variation keys its own shell; other parameters and values share the default", async () => {
+    const shellAt = async (query: string) => {
+      const before = probe.shellBuilds
+      await (await fetch(`${app.origin}/p/20${query}`)).text()
+      return probe.shellBuilds - before
+    }
+    expect(await shellAt("?color=red&utm=1")).toBe(1)
+    expect(probe.shellVariations).toEqual({ color: "red" })
+    expect(await shellAt("?utm=2&color=red")).toBe(0)
+    expect(await shellAt("")).toBe(1)
+    expect(probe.shellVariations).toEqual({})
+    expect(await shellAt("?color=green")).toBe(0)
+    expect(await shellAt("?color=red&color=blue")).toBe(0)
+    expect(await shellAt("?color=blue")).toBe(1)
+  })
+
   test("the fixture's shells hold enough text for WebKit to paint them early", () => {
     expect(app.warnings.filter((line) => line.includes("characters of text"))).toEqual([])
   })

@@ -192,3 +192,36 @@ describe("boundaries", () => {
     ).toThrow('boundaryLoaders["stock"].load in "page.backend.ts" must be a function')
   })
 })
+
+describe("shell variations", () => {
+  const merge = (back: Record<string, unknown>) => () =>
+    mergeRouteHalves("p.tsx", asModule({ default: null }), "p.backend.ts", back)
+  const shellLoader = () => ({})
+
+  test("a closed set of query values beside a shellLoader is accepted", () => {
+    const merged = merge({ shellLoader, shellVariations: { search: { color: ["red", "blue"] } } })()
+    expect(merged.shellVariations).toEqual({ search: { color: ["red", "blue"] } })
+  })
+
+  test("variations without a shellLoader are refused", () => {
+    expect(merge({ shellVariations: { search: { color: ["red"] } } })).toThrow(
+      '"p.backend.ts" exports shellVariations but no shellLoader for them to vary',
+    )
+  })
+
+  test.each([
+    [[], "that is not an object"],
+    [{ cookie: {} }, 'with "cookie"; only "search" is read'],
+    [{ search: { color: [] } }, 'whose "color" is not a list of 1 to 32 values'],
+    [{ search: { color: "red" } }, 'whose "color" is not a list of 1 to 32 values'],
+    [{ search: { color: ["red", "red"] } }, 'whose "color" values are not distinct strings'],
+    [{ search: { color: [""] } }, 'whose "color" values are not distinct strings'],
+    [{ search: { "a b": ["x"] } }, 'with a parameter name "a b"'],
+    [
+      { search: Object.fromEntries("abcdefghi".split("").map((k) => [k, ["x"]])) },
+      "with more than 8 parameters",
+    ],
+  ])("an open or malformed set is refused: %j", (shellVariations, message) => {
+    expect(merge({ shellLoader, shellVariations })).toThrow(message)
+  })
+})

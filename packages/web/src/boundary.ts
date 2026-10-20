@@ -35,6 +35,8 @@ export interface ShellCtx {
   /** Decoded params, as the route pattern matched them. */
   readonly params: Readonly<Record<string, string>>
   readonly locale: string | undefined
+  /** The route's declared `shellVariations` this request selected: declared keys and values only. */
+  readonly variations: Readonly<Record<string, string>>
   /** Aborts on the shell build deadline, never on one visitor's disconnect. */
   readonly signal: AbortSignal
   /** The in-process api, unbound to any request: build-safe calls only, as in a prerender. */

@@ -8,6 +8,7 @@ export const probe = {
   shellBuilds: 0,
   cancels: 0,
   shellOrigin: "",
+  shellVariations: {} as Readonly<Record<string, string>>,
 }
 
 const abortWaiters: Array<() => void> = []
