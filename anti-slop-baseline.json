@@ -415,7 +415,7 @@
     "packages/web/src/module-graph.ts": 3,
     "packages/web/src/plugins/vite-leak-guard.ts": 3,
     "packages/web/src/prerender.ts": 2,
-    "packages/web/src/router.ts": 7,
+    "packages/web/src/router.ts": 8,
     "packages/web/src/vite.ts": 2,
     "packages/web/src/zones.ts": 2,
     "packages/web/test/build-dedupe.test.ts": 1,
