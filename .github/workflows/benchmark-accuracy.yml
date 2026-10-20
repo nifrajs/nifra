@@ -1,0 +1,18 @@
+name: Benchmark accuracy
+
+# A longer, opt-in sampling budget. Reuse the nightly harness so its workload,
+# runtime pins, core isolation, and report format stay identical.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accuracy:
+    uses: ./.github/workflows/benchmarks.yml
+    with:
+      min_runs: 7
+      max_runs: 15
+      max_ci_width: 5
+      timeout_minutes: 360
