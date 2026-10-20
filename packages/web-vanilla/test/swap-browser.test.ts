@@ -48,7 +48,7 @@ const Hotels: VanillaComponent = (props) => {
     found.length > (page + 1) * PAGE_SIZE
       ? html`<li><a id="more" href="/hotels?q=${q}&page=${page + 1}" data-swap="append:results">More</a></li>`
       : ""
-  return html`<form id="search" action="/hotels" data-swap="replace:results"><input name="q" value="${q}"><button>Go</button></form>
+  return html`<form id="search" action="/hotels" method="" data-swap="replace:results"><input name="q" value="${q}"><button>Go</button></form>
     <a id="ritz" href="/hotels?q=Ritz" data-swap="replace:results">Ritz</a>
     <a id="held" href="/hotels?q=held" data-swap="replace:results">Held</a>
     <a id="blank" href="/hotels?q=Savoy" target="_blank" data-swap="replace:results">New tab</a>

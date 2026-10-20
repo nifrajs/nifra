@@ -235,7 +235,8 @@ export function enableSwap(
       submitter?.hasAttribute(`form${name}`)
         ? submitter.getAttribute(`form${name}`)
         : attr(form, name)
-    const method = (pick("method") ?? "get").toUpperCase()
+    // An empty method is a GET, as for the browser.
+    const method = (pick("method") || "get").toUpperCase()
     const target = pick("target")
     const enctype = pick("enctype")?.toLowerCase()
     if (
