@@ -29,7 +29,6 @@ import { islandRules } from "./rules/islands.ts"
 import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
 import { mergeAuthGapRule } from "./rules/merge-auth.ts"
-import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
 import { routeStatementRule } from "./rules/route-statement.ts"
 import { routeRules } from "./rules/routes.ts"
@@ -505,7 +504,6 @@ export async function collectCheckDiagnostics(
     ...dataGuardRules,
     ...secretRules,
     ...islandRules,
-    ...nanoRules,
   ]
   let registryDiagnostics: Diagnostic[] = []
   let builtInsSucceeded = false
@@ -573,7 +571,7 @@ export async function collectCheckDiagnostics(
       continue
     }
     // A structured informational contract note intentionally has no old human/legacy row. Every
-    // other non-legacy rule (security, route, island, nano, or an application pack) retains the
+    // other non-legacy rule (security, route, island, or an application pack) retains the
     // existing fallback row keyed by its stable code.
     if (knownLegacyCodes.has(item.code)) continue
     compatibilityRows.push({

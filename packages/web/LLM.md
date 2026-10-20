@@ -26,7 +26,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void` · from `@nifrajs/web/nano`
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void` · from `@nifrajs/web/server-components/client`
 - **bindIsland** _(function)_ - `bindIsland: <P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void) => IslandEnh…` · from `@nifrajs/web/islands`
-- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<E>, options: BindListOptions<T, E>) =>…` · from `@nifrajs/web/islands`
+- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<…` · from `@nifrajs/web/islands`
 - **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void` · from `@nifrajs/web/nano`
 
 _…and 714 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._

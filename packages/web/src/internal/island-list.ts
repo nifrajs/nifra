@@ -29,7 +29,8 @@ export interface BindListOptions<T, E extends ListNode = HTMLElement> {
  */
 export function bindList<T, E extends ListNode = HTMLElement>(
   source: () => readonly T[],
-  container: ListContainer<E>,
+  // A DOM container's generic methods would drive E to `ListNode`; the row type comes from `create`.
+  container: ListContainer<NoInfer<E>>,
   options: BindListOptions<T, E>,
 ): () => void {
   let nodes = new Map<string | number, E>()

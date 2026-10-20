@@ -6098,7 +6098,7 @@ _No named exports (side-effect entrypoint)._
   Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
 - **bindIsland** _(function)_ - `bindIsland: <P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void) => IslandEnhancer<P>`
   The binding tier: `setup` creates the island's state and returns the event handlers its markup names; the island's `data-bind-*` attributes then bind them.
-- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<E>, options: BindListOptions<T, E>) => () => void`
+- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<T, E>) => () => void`
   Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item keeps its node, so focus, selection and input state survive a reorder. A render with no earlier nodes replaces the container's children; later renders move only the nodes outside the longest run alread…
 - **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
   Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…

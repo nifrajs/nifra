@@ -17009,7 +17009,7 @@
     "name": "bindList",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function bindList<T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<E>, options: BindListOptions<T, E>): () => void;",
+    "signature": "export declare function bindList<T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<T, E>): () => void;",
     "doc": "/**\n * Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item\n * keeps its node, so focus, selection and input state survive a reorder. A render with no earlier\n * nodes replaces the container's children; later renders move only the nodes outside the longest\n * run already in order. `key`, `create` and `update` run untracked: a signal they read does not\n * re-render the list. Returns the disposer; inside an island the binding also stops on unmount.\n */"
   },
   {

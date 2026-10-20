@@ -45,7 +45,7 @@ function setup(initial: Item[]) {
   const list = signal(initial)
   const container = new List()
   let creates = 0
-  const stop = bindList(list, container, {
+  const stop = bindList<Item, Row>(list, container, {
     key: (item) => item.id,
     create: (item) => {
       creates++
@@ -123,7 +123,7 @@ describe("bindList", () => {
     const list = signal(items("a"))
     const mark = signal("*")
     let updates = 0
-    bindList(list, new List(), {
+    bindList<Item, Row>(list, new List(), {
       key: (item) => item.id,
       create: (item) => new Row(item.id),
       update: (el, item) => {
@@ -152,12 +152,40 @@ describe("bindList", () => {
     const prefix = signal("a")
     const shown = computed(() => all().filter((item) => item.id.startsWith(prefix())))
     const container = new List()
-    bindList(shown, container, {
+    bindList<Item, Row>(shown, container, {
       key: (item) => item.id,
       create: (item) => new Row(item.id),
     })
     expect(container.keys()).toEqual(["anvil", "axle"])
     prefix.set("b")
     expect(container.keys()).toEqual(["bolt"])
+  })
+
+  test("real DOM containers and rows typecheck, with the row type taken from create", () => {
+    // Compiled by the repository typecheck; never run, since the test runtime has no document.
+    const typed = (
+      todos: () => ReadonlyArray<{ id: string; text: string }>,
+      ul: HTMLUListElement,
+    ) => [
+      bindList(todos, ul, {
+        key: (t) => t.id,
+        create: () => document.createElement("li"),
+        update: (li, t) => {
+          li.textContent = t.text
+        },
+      }),
+      bindList(todos, document.createElement("table"), {
+        key: (t) => t.id,
+        create: (t) => {
+          const tr = document.createElement("tr")
+          tr.id = t.id
+          return tr
+        },
+        update: (tr) => {
+          tr.deleteCell(0)
+        },
+      }),
+    ]
+    expect(typeof typed).toBe("function")
   })
 })
