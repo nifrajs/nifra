@@ -2248,8 +2248,8 @@ const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cd
 -
 **Cloudflare zone** (`cloudflareZone`): needs a Cache Rule that makes HTML
 eligible for cache, and, because the zone cache ignores `Vary`, that bypasses the
-cache when the request has an `x-nifra-data` header (soft navigations fetch the
-page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+cache when the request has an `x-nifra-data` or `x-nifra-swap` header
+(soft navigations and slot swaps fetch the page URL with them). The Free plan allows 5 purge calls a minute; purges arriving together go
 out as one call.
 
 -
@@ -9595,8 +9595,9 @@ response carrying `Set-Cookie`).
 URL as the document with an `x-nifra-data` request header, so its response is
 always `cache-control: private, no-store` with `vary: x-nifra-data`,
 and a document that carries loader headers gets `x-nifra-data` added to its
-`vary`. A CDN that ignores `Vary` needs `x-nifra-data` in
-its cache key when it caches documents.
+`vary`. A slot swap's response (`x-nifra-swap`) is
+`private, no-store` with `vary: x-nifra-swap` too. A CDN that ignores
+`Vary` must bypass its cache for both headers when it caches documents.
 
 -
 **Write before you return.** The controls close when the loader or action

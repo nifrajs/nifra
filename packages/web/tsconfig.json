@@ -19,6 +19,7 @@
   "include": [
     "src/client.ts",
     "src/islands.ts",
+    "src/islands-swap.ts",
     "test/islands.test.ts",
     "test/apply-head.test.ts",
     "test/client-browser.test.ts",

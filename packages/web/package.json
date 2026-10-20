@@ -87,6 +87,11 @@
       "types": "./dist/islands.d.ts",
       "default": "./dist/islands.js"
     },
+    "./islands/swap": {
+      "bun": "./src/islands-swap.ts",
+      "types": "./dist/islands-swap.d.ts",
+      "default": "./dist/islands-swap.js"
+    },
     "./service-worker": {
       "bun": "./src/service-worker.ts",
       "types": "./dist/service-worker.d.ts",

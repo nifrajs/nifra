@@ -32,7 +32,8 @@ export interface CloudflareZoneOptions {
 /**
  * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,
  * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries
- * `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.
+ * `x-nifra-data` or `x-nifra-swap` (soft navigations and slot swaps fetch the page URL with those
+ * headers). `nifra cdn-check` tests all three.
  */
 export function cloudflareZone(options: CloudflareZoneOptions): CdnProvider {
   if (!/^[a-f0-9]{32}$/.test(options.zoneId)) {

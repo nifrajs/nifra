@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { gzipSync } from "bun"
 
 const ISLANDS = JSON.stringify(fileURLToPath(new URL("../src/islands.ts", import.meta.url)))
+const SWAP = JSON.stringify(fileURLToPath(new URL("../src/islands-swap.ts", import.meta.url)))
 
 // Bundling the bare entry measures nothing (tree-shaking drops unused exports), so each fixture is a
 // realistic island module for one way of writing islands, and every one pays for the bus.
@@ -62,6 +63,11 @@ const fixtures = {
   markup: { budget: 2672, source: `${MARKUP}mountIslands({ compare })` },
   js: { budget: 2410, source: `${JS}mountIslands({ todos })` },
   everything: { budget: 3498, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
+  // `@nifrajs/web/islands/swap` in place of `mountIslands`: what a page pays for slot swaps.
+  swap: {
+    budget: 2789,
+    source: `import { enableSwap } from ${SWAP}\n${IMPERATIVE}enableSwap({ counter })`,
+  },
 }
 
 for (const [name, { budget, source }] of Object.entries(fixtures)) {

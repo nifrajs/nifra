@@ -15326,6 +15326,13 @@
     "signature": "export interface SvgToJsxOptions {\n    /** The JSX prop name for `class`. `\"className\"` for React/Preact; `\"class\"` for Solid. */\n    readonly classProp?: string;\n}"
   },
   {
+    "name": "SwapOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface SwapOptions {\n    /** Default `document`. */\n    readonly root?: Document | Element;\n}",
+    "doc": "/** Where `enableSwap` looks for links, forms, slots and islands. */"
+  },
+  {
     "name": "TableCatalogs",
     "kind": "interface",
     "package": "@nifrajs/i18n",
@@ -17425,7 +17432,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function cloudflareZone(options: CloudflareZoneOptions): CdnProvider;",
-    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.\n */"
+    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` or `x-nifra-swap` (soft navigations and slot swaps fetch the page URL with those\n * headers). `nifra cdn-check` tests all three.\n */"
   },
   {
     "name": "collectAssuranceReport",
@@ -19089,6 +19096,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function enableDraft(c: {\n    readonly set: DraftCookieControls;\n}, secret: string, options?: EnableDraftOptions): Promise<void>;",
     "doc": "/**\n * Turn draft mode **on** for this client by setting a signed, HttpOnly `__nifra_draft` cookie. Call it\n * from a route you've already authorized. `secret` signs the cookie - pass the SAME secret to\n * `createWebApp({ draftSecret })` and `withISR({ draftSecret })` so the framework can verify it.\n */"
+  },
+  {
+    "name": "enableSwap",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function enableSwap(enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions): () => void;",
+    "doc": "/**\n * Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and form under\n * `root` refresh its slot in place. Call it instead of `mountIslands`.\n *\n * - `data-swap=\"replace:<slot>\"` replaces the content of the `data-swap-slot=\"<slot>\"` element;\n *   `append:<slot>` adds to it, and a link or form inside that slot is spent: the slot's child holding\n *   it is removed when the next content arrives, so a \"more\" link at the end of a list gives way to\n *   the next page and its own \"more\" link.\n * - A replacing GET pushes its URL, so a filtered list survives reload and can be shared; back and\n *   forward fetch the slots again for the URL they land on.\n * - The islands inside a slot mount with it and unmount when it is replaced.\n * - While a slot loads it carries `aria-busy=\"true\"`; a newer swap of the same slot cancels the\n *   older one. When the request fails, the page stays as it is and the link or form gets\n *   `data-swap-error`.\n *\n * Nothing inside a `data-island-ignore` element swaps. Returns a disposer that removes the listeners,\n * cancels pending swaps and unmounts every island.\n */"
   },
   {
     "name": "encode",
