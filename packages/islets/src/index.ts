@@ -37,4 +37,12 @@ export {
   type MountIslandOptions,
   mountIslands,
 } from "./island.ts"
-export { batch, type Computed, computed, effect, type Signal, signal } from "./signals.ts"
+export {
+  batch,
+  type Computed,
+  computed,
+  effect,
+  type Signal,
+  signal,
+  untrack,
+} from "./signals.ts"

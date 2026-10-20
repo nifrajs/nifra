@@ -24080,6 +24080,13 @@
     "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n *\n * With a {@link CookieSecret} rotation list, tries each secret in order and accepts the first\n * match. Every listed secret must meet the 32-byte floor - a weak entry throws even when an\n * earlier secret would have matched, so a rotation list can't quietly carry a weak key. (Which\n * rotation generation matched is not attacker-meaningful, so the early exit between secrets leaks\n * nothing useful; each individual comparison stays constant-time.)\n */"
   },
   {
+    "name": "untrack",
+    "kind": "function",
+    "package": "@nifrajs/islets",
+    "signature": "export declare function untrack<T>(fn: () => T): T;",
+    "doc": "/** Run `fn` without subscribing the running effect or computed to the signals it reads. */"
+  },
+  {
     "name": "url",
     "kind": "function",
     "package": "@nifrajs/env",

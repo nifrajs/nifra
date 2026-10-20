@@ -5,7 +5,7 @@ framework runtime. The client companion to `@nifrajs/web-vanilla`: the server re
 (zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
-The full island bundle is about 2 KB gzipped (2,080 B at most), and a size test keeps it there. Use
+The full island bundle is about 2 KB gzipped (2,350 B at most), and a size test keeps it there. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
 ## Server side (any adapter - `@nifrajs/web-vanilla` shown)

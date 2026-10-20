@@ -18,14 +18,14 @@ Fine-grained signals + declarative DOM bindings for nifra islands - interactivit
 - **islandState** _(function)_ - `islandState: (state: Record<string, unknown>) => string`
 - **mountIslands** _(function)_ - `mountIslands: (rootOrOptions?: BindableRoot | MountIslandOptions) => () => void`
 - **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
+- **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
 - **BindableElement** _(interface)_ - `interface BindableElement`
 - **BindableRoot** _(interface)_ - `interface BindableRoot`
 - **IslandContext** _(interface)_ - `interface IslandContext`
 - **IslandHost** _(interface)_ - `interface IslandHost`
 - **MountIslandOptions** _(interface)_ - `interface MountIslandOptions`
-- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
 
-_…and 4 more - see [`api-reference.md`](../../api-reference.md#nifrajsislets) for the complete list._
+_…and 5 more - see [`api-reference.md`](../../api-reference.md#nifrajsislets) for the complete list._
 
 ## Footguns
 

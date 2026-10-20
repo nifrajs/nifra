@@ -23,7 +23,7 @@
  * nested host element itself is still the outer island's markup, so the outer island may bind it.
  */
 
-import { effect, type Signal } from "./signals.ts"
+import { type Signal, watch } from "./signals.ts"
 
 export type IslandScope = {
   readonly signals: Readonly<Record<string, Signal<unknown>>>
@@ -103,8 +103,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
-        effect(() => {
-          el.textContent = String(s())
+        watch(s, (v) => {
+          el.textContent = String(v)
         }),
       )
     }
@@ -114,8 +114,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
-        effect(() => {
-          el.hidden = !s()
+        watch(s, (v) => {
+          el.hidden = !v
         }),
       )
     }
@@ -126,8 +126,8 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       const s = named("signal", scope.signals, name)
       if (s) {
         stops.push(
-          effect(() => {
-            el.classList.toggle(className, !!s())
+          watch(s, (v) => {
+            el.classList.toggle(className, !!v)
           }),
         )
       }
@@ -144,8 +144,7 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
       if (s) {
         const isUrl = URL_ATTRIBUTE.test(attr)
         stops.push(
-          effect(() => {
-            const v = s()
+          watch(s, (v) => {
             if (v === false || v == null || (isUrl && !SAFE_URL.test(String(v).trim())))
               el.removeAttribute(attr)
             else el.setAttribute(attr, String(v))
@@ -159,15 +158,19 @@ export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => v
     const s = named("signal", scope.signals, name)
     if (s) {
       stops.push(
-        effect(() => {
-          const next = String(s())
+        watch(s, (v) => {
+          const next = String(v)
           // Skip same-value writes: resetting an input's value mid-typing moves the caret.
           if (el.value !== next) el.value = next
         }),
       )
       const input = (): void => s.set(el.value ?? "")
-      el.addEventListener("input", input)
-      stops.push(() => el.removeEventListener("input", input))
+      // A <select> commits on `change`, and browsers disagree on whether `input` comes first. The
+      // second event of a pair writes the same value, which the signal skips.
+      for (const type of ["input", "change"]) {
+        el.addEventListener(type, input)
+        stops.push(() => el.removeEventListener(type, input))
+      }
     }
   }
 

@@ -3796,6 +3796,8 @@ _No named exports (side-effect entrypoint)._
   Mount every registered island under `root` (default: the document). Idempotent - a host is marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of its script, and progress…
 - **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
   Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
+- **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
+  Run `fn` without subscribing the running effect or computed to the signals it reads.
 
 ## @nifrajs/jobs
 

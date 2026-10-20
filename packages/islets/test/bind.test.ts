@@ -94,6 +94,15 @@ describe("bindScope - the closed attribute set", () => {
     expect(el.value).toBe("typed")
   })
 
+  test("value: a change event alone updates the signal, as a <select> sends", () => {
+    const size = signal<unknown>("small")
+    const el = new FakeElement({ "data-bind-value": "size" })
+    bindScope(new FakeRoot([el]), scopeOf({ size }))
+    el.value = "large"
+    el.dispatch("change")
+    expect(size()).toBe("large")
+  })
+
   test("on: pair list attaches handlers; events fire them", () => {
     const calls: string[] = []
     const el = new FakeElement({ "data-bind-on": "click:inc, keydown:nav" })

@@ -11,9 +11,17 @@
 
 interface EffectNode {
   run: () => void
-  readonly deps: Set<Set<EffectNode>>
+  /** Each source's reader set, mapped to the run (`v`) that last read it. */
+  readonly deps: Map<Set<EffectNode>, number>
+  v: number
+  /** Sources read so far in this run. */
+  n: number
+  /** Running now: a write during the run requeues it only for a source this run already read. */
+  r?: boolean
   /** Set on a computed's node: it recomputes on the write instead of queueing. */
   readonly c?: boolean | undefined
+  /** Queued for the current flush. */
+  q?: boolean
 }
 
 let currentEffect: EffectNode | undefined
@@ -33,8 +41,19 @@ export function owned<T>(kids: Array<() => void>, fn: () => T): T {
   }
 }
 
+/** Run `fn` without subscribing the running effect or computed to the signals it reads. */
+export function untrack<T>(fn: () => T): T {
+  const prev = currentEffect
+  currentEffect = undefined
+  try {
+    return fn()
+  } finally {
+    currentEffect = prev
+  }
+}
+
 let batchDepth = 0
-const pendingEffects = new Set<EffectNode>()
+const queue: EffectNode[] = []
 
 /** A readable/writable reactive value: call it to read (tracking), `.set` to write. */
 export type Signal<T> = {
@@ -52,31 +71,85 @@ export function batch<T>(fn: () => T): T {
   try {
     return fn()
   } finally {
-    try {
-      // The flush still counts as a batch: a write an effect makes here queues, so none runs twice.
-      while (batchDepth === 1 && pendingEffects.size) {
-        const [next] = pendingEffects
-        pendingEffects.delete(next as EffectNode)
-        ;(next as EffectNode).run()
-      }
-    } finally {
-      batchDepth--
-    }
+    flush()
   }
 }
 
+// Closes one batch level; the outermost runs the queue.
+function flush(): void {
+  let i = 0
+  try {
+    // The flush still counts as a batch: a write an effect makes here queues, so none runs twice.
+    while (batchDepth === 1 && i < queue.length) {
+      const next = queue[i++] as EffectNode
+      if (next.q) {
+        next.q = false
+        next.run()
+      }
+    }
+  } finally {
+    // A throwing effect leaves the rest queued for the next flush.
+    if (i === queue.length) queue.length = 0
+    else queue.splice(0, i)
+    batchDepth--
+  }
+}
+
+// Each plain signal's reader set, so `watch` can subscribe without tracking.
+const readers = new WeakMap<Signal<unknown>, Set<EffectNode>>()
+
 /** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */
 export function signal<T>(initial: T): Signal<T> {
-  return readable(initial, new Set())
+  const subs = new Set<EffectNode>()
+  const s = readable(initial, subs)
+  readers.set(s as Signal<unknown>, subs)
+  return s
+}
+
+/**
+ * Call `fn` with `source`'s value now and after each change, queued and batched like an effect but
+ * subscribed once instead of tracking reads. Internal to the binding walker, whose bindings each
+ * read one named signal; not exported from the package.
+ */
+export function watch<T>(source: Signal<T>, fn: (value: T) => void): () => void {
+  const subs = readers.get(source as Signal<unknown>)
+  if (!subs) return effect(() => fn(source()))
+  const e: EffectNode = {
+    deps: new Map([[subs, 0]]),
+    v: 0,
+    n: 1,
+    run: () => {
+      const prev = currentEffect
+      currentEffect = undefined
+      try {
+        fn(source())
+      } finally {
+        currentEffect = prev
+      }
+    },
+  }
+  const stop = (): void => {
+    subs.delete(e)
+    e.q = false
+  }
+  subs.add(e)
+  owner?.push(stop)
+  e.run()
+  return stop
 }
 
 // A signal whose readers are `subs`, so a computed can see whether anything still reads it.
 function readable<T>(initial: T, subs: Set<EffectNode>): Signal<T> {
   let value = initial
   const read = (() => {
-    if (currentEffect) {
-      subs.add(currentEffect)
-      currentEffect.deps.add(subs)
+    const e = currentEffect
+    if (e) {
+      const seen = e.deps.get(subs)
+      if (seen !== e.v) {
+        if (seen === undefined) subs.add(e)
+        e.deps.set(subs, e.v)
+        e.n++
+      }
     }
     return value
   }) as Signal<T>
@@ -84,10 +157,21 @@ function readable<T>(initial: T, subs: Set<EffectNode>): Signal<T> {
     const resolved = typeof next === "function" ? (next as (prev: T) => T)(value) : next
     if (Object.is(resolved, value)) return
     value = resolved
-    // Snapshot: a computed re-run resubscribes; iterating the live set would loop.
-    batch(() => {
-      for (const e of [...subs]) e.c ? e.run() : pendingEffects.add(e)
-    })
+    // Snapshot: an effect created while this write flushes must not run in it.
+    batchDepth++
+    try {
+      for (const e of [...subs]) {
+        // A running effect is requeued only by a source its current run has already read.
+        if (e.r && e.deps.get(subs) !== e.v) continue
+        if (e.c) e.run()
+        else if (!e.q) {
+          e.q = true
+          queue.push(e)
+        }
+      }
+    } finally {
+      flush()
+    }
   }
   return read
 }
@@ -132,21 +216,34 @@ export function computed<T>(fn: () => T): Computed<T> {
 export function effect(fn: () => void): () => void
 export function effect(fn: () => void, c?: boolean): () => void {
   const stop = (): void => {
-    for (const subs of e.deps) subs.delete(e)
+    for (const subs of e.deps.keys()) subs.delete(e)
     e.deps.clear()
-    pendingEffects.delete(e)
+    e.q = false
   }
   const e: EffectNode = {
     c,
-    deps: new Set(),
+    deps: new Map(),
+    v: 0,
+    n: 0,
+    // Subscriptions persist across runs; a source this run did not read is dropped afterwards.
     run: () => {
-      stop()
+      ++e.v
+      e.n = 0
+      e.q = false
+      e.r = true
       const prev = currentEffect
       currentEffect = e
       try {
         fn()
       } finally {
         currentEffect = prev
+        e.r = false
+        if (e.n < e.deps.size)
+          for (const [subs, seen] of e.deps)
+            if (seen !== e.v) {
+              subs.delete(e)
+              e.deps.delete(subs)
+            }
       }
     },
   }
