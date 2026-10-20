@@ -6076,7 +6076,7 @@ _No named exports (side-effect entrypoint)._
 - **defineIsland** _(function)_ - `defineIsland: <P = unknown>(enhancer: IslandEnhancer<P>) => IslandEnhancer<P>`
   Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is to pin the props shape so `el` and `props` are typed inside the body and the enhancer is assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
-  Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
+  Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch. Every run, the first included, finishes before the effects its writes trigger run, itself among them.
 - **islandProps** _(function)_ - `islandProps: (props: Record<string, unknown>) => string`
   The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted attribute (`data-island-props="${...}"`): unquoted, a space in the JSON ends the value and the rest parses as attributes.
 - **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: { readonly root?: ParentNode; }) => () => void`

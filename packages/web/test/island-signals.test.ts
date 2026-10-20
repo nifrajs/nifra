@@ -167,6 +167,24 @@ describe("signals core", () => {
     expect(s()).toBe(3)
   })
 
+  test("a write in a first run waits for that run to finish, so no stale value lands after it", () => {
+    const s = signal(0)
+    const other = signal(-1)
+    effect(() => {
+      const v = s()
+      if (v < 3) s.set(v + 1)
+      other.set(v)
+    })
+    expect([s(), other()]).toEqual([3, 3])
+    const t = signal(0)
+    const seen = signal(-1)
+    watch(t, (v) => {
+      if (v < 3) t.set(v + 1)
+      seen.set(v)
+    })
+    expect([t(), seen()]).toEqual([3, 3])
+  })
+
   test("untrack reads without subscribing", () => {
     const tracked = signal(1)
     const quiet = signal(10)

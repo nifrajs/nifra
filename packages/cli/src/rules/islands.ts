@@ -311,6 +311,21 @@ function literalKeys(
   return keys
 }
 
+/** Whether `node` names a property (`x.state`, `{ state: 1 }`, `{ state() {} }`) rather than a value. */
+function isPropertyName(ts: typeof TSApi, node: TSApi.Identifier): boolean {
+  const parent = node.parent
+  return (
+    ((ts.isPropertyAccessExpression(parent) ||
+      ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent)) &&
+      parent.name === node) ||
+    (ts.isBindingElement(parent) && parent.propertyName === node)
+  )
+}
+
 /** The state keys and handler names of a `bindIsland(setup)` whose setup is an inline function. */
 function bindIslandNames(
   ts: typeof TSApi,
@@ -333,21 +348,37 @@ function bindIslandNames(
     } else return UNKNOWN
   }
   let state: Set<string> | undefined = new Set()
+  const ctxProperty = (node: TSApi.Node): node is TSApi.PropertyAccessExpression =>
+    ctxName !== undefined &&
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === ctxName
+  // The keys are known only while `state` is called directly: an alias, a destructuring or a helper
+  // that receives `state` or the context may declare keys this walk cannot see.
   const walk = (node: TSApi.Node): void => {
+    if (state === undefined) return
     if (ts.isCallExpression(node)) {
       const callee = node.expression
-      const isState =
-        (stateName !== undefined && ts.isIdentifier(callee) && callee.text === stateName) ||
-        (ctxName !== undefined &&
-          ts.isPropertyAccessExpression(callee) &&
-          ts.isIdentifier(callee.expression) &&
-          callee.expression.text === ctxName &&
-          callee.name.text === "state")
-      if (isState) {
+      if (
+        (ts.isIdentifier(callee) && callee.text === stateName) ||
+        (ctxProperty(callee) && callee.name.text === "state")
+      ) {
         const key = node.arguments[0]
-        if (key !== undefined && ts.isStringLiteralLike(key)) state?.add(key.text)
+        if (key !== undefined && ts.isStringLiteralLike(key)) state.add(key.text)
         else state = undefined
+        for (const arg of node.arguments) walk(arg)
+        return
       }
+    }
+    // `ctx.root`, `ctx.props` and `ctx.onDispose` reach no state; `ctx.state` read as a value does.
+    if (ctxProperty(node)) {
+      if (node.name.text === "state") state = undefined
+      return
+    }
+    if (ts.isIdentifier(node)) {
+      if ((node.text === stateName || node.text === ctxName) && !isPropertyName(ts, node))
+        state = undefined
+      return
     }
     ts.forEachChild(node, walk)
   }

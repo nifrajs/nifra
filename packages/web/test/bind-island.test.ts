@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import {
   bindIsland,
   computed,
@@ -16,6 +16,10 @@ import { FakeElement, FakeHost, FakeRoot } from "./_island-fake-dom.ts"
 const rootOf = (...hosts: FakeElement[]): ParentNode => new FakeRoot(hosts) as unknown as ParentNode
 
 describe("bindIsland", () => {
+  afterEach(() => {
+    spyOn(console, "error").mockRestore()
+  })
+
   test("state seeds from data-island-props; bindings and handlers are live", () => {
     const text = new FakeElement({ "data-bind-text": "count" })
     const btn = new FakeElement({ "data-bind-on": "click:add" })
@@ -152,6 +156,58 @@ describe("bindIsland", () => {
     await settled
     expect(timers).toEqual(["started", "cleared"])
   })
+
+  test("a setup that throws stops the effects and cleanups it started", () => {
+    const error = spyOn(console, "error").mockImplementation(() => {})
+    const n = signal(0)
+    const runs: number[] = []
+    let cleaned = 0
+    const i = bindIsland(({ onDispose }) => {
+      effect(() => {
+        runs.push(n())
+      })
+      onDispose(() => cleaned++)
+      throw new Error("setup")
+    })
+    mountIslands({ i }, { root: rootOf(new FakeHost({ "data-island": "i" }, [])) })
+    n.set(1)
+    expect(runs).toEqual([0])
+    expect(cleaned).toBe(1)
+    expect(error).toHaveBeenCalledTimes(1)
+  })
+
+  test("a binding that throws stops the bindings attached before it, and itself", () => {
+    spyOn(console, "error").mockImplementation(() => {})
+    const text = new FakeElement({ "data-bind-text": "n" })
+    const bad = new FakeElement({ "data-bind-attr": "a b:n" })
+    bad.setAttribute = () => {
+      throw new Error("InvalidCharacterError")
+    }
+    let n: ReturnType<typeof signal<number>> | undefined
+    const i = bindIsland(({ state }) => {
+      n = state("n", 0)
+    })
+    mountIslands({ i }, { root: rootOf(new FakeHost({ "data-island": "i" }, [text, bad])) })
+    expect(text.textContent).toBe("0")
+    expect(() => n?.set(1)).not.toThrow()
+    expect(text.textContent).toBe("0")
+  })
+
+  test("a cleanup that throws is logged and the other cleanups still run", () => {
+    const error = spyOn(console, "error").mockImplementation(() => {})
+    const ran: string[] = []
+    const i = bindIsland(({ onDispose }) => {
+      onDispose(() => ran.push("first"))
+      onDispose(() => {
+        throw new Error("cleanup")
+      })
+      onDispose(() => ran.push("last"))
+    })
+    const unmount = mountIslands({ i }, { root: rootOf(new FakeHost({ "data-island": "i" }, [])) })
+    unmount()
+    expect(ran).toEqual(["last", "first"])
+    expect(error).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("mountIslands", () => {
@@ -181,7 +237,7 @@ describe("mountIslands", () => {
   test("enhancers with different props types mount from one map", () => {
     const seen: unknown[] = []
     const counter = defineIsland<{ start: number }>((_el, props) => void seen.push(props.start))
-    const label = bindIsland<{ text: string }>(({ props }) => void seen.push(props.text))
+    const label = bindIsland<{ text: string }>(({ props }) => void seen.push(props?.text))
     const root = rootOf(
       new FakeHost(
         { "data-island": "counter", "data-island-props": islandProps({ start: 3 }) },

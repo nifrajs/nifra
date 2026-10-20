@@ -1931,7 +1931,7 @@
     "name": "BindIslandContext",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BindIslandContext<P> {\n    /** The island's host element. */\n    readonly root: HTMLElement;\n    /** The parsed `data-island-props`, or `undefined` when absent or malformed. */\n    readonly props: P;\n    /**\n     * The signal the markup binds as `key`, seeded from `props[key]` when present, else `fallback`.\n     * Each key returns the same signal across calls.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n    /**\n     * Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. Called\n     * after the island unmounted (say, once an awaited request settles), it runs `fn` at once.\n     */\n    onDispose(fn: () => void): void;\n}",
+    "signature": "export interface BindIslandContext<P> {\n    /** The island's host element. */\n    readonly root: HTMLElement;\n    /** The parsed `data-island-props`, or `undefined` when absent or malformed. */\n    readonly props: P | undefined;\n    /**\n     * The signal the markup binds as `key`, seeded from `props[key]` when present, else `fallback`.\n     * Each key returns the same signal across calls.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n    /**\n     * Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. Called\n     * after the island unmounted (say, once an awaited request settles), it runs `fn` at once.\n     */\n    onDispose(fn: () => void): void;\n}",
     "doc": "/** What a `bindIsland` setup receives. */"
   },
   {
@@ -16916,7 +16916,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function bindIsland<P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void): IslandEnhancer<P>;",
-    "doc": "/**\n * The binding tier: `setup` creates the island's state and returns the event handlers its markup\n * names; the island's `data-bind-*` attributes then bind them.\n *\n *   data-bind-text=\"count\"   data-bind-show=\"open\"   data-bind-class=\"active:open\"\n *   data-bind-attr=\"aria-expanded:open\"   data-bind-value=\"query\"   data-bind-on=\"click:add\"\n *\n * Attribute values are signal and handler names, never code; an unknown name warns once and the\n * server-rendered content stays as it is. A binding belongs to its nearest island.\n */"
+    "doc": "/**\n * The binding tier: `setup` creates the island's state and returns the event handlers its markup\n * names; the island's `data-bind-*` attributes then bind them.\n *\n *   data-bind-text=\"count\"   data-bind-show=\"open\"   data-bind-class=\"active:open\"\n *   data-bind-attr=\"aria-expanded:open\"   data-bind-value=\"query\"   data-bind-on=\"click:add\"\n *\n * Attribute values are signal and handler names, never code; an unknown name warns once and the\n * server-rendered content stays as it is. A binding belongs to its nearest island.\n *\n * A setup or binding that throws stops everything the island started before the error reaches\n * `mountIslands`. On unmount every cleanup runs; one that throws is logged and the rest still run.\n */"
   },
   {
     "name": "bindList",
@@ -19040,7 +19040,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function effect(fn: () => void): () => void;",
-    "doc": "/**\n * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies\n * re-track on every run, so conditional reads subscribe to exactly the live branch.\n */"
+    "doc": "/**\n * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies\n * re-track on every run, so conditional reads subscribe to exactly the live branch. Every run,\n * the first included, finishes before the effects its writes trigger run, itself among them.\n */"
   },
   {
     "name": "effectLedger",

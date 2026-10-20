@@ -126,7 +126,7 @@ export function watch<T>(source: () => T, fn: (value: T) => void): () => void {
   }
   subs.add(e)
   adopt(stop)
-  e.run()
+  batch(e.run)
   return stop
 }
 
@@ -205,7 +205,8 @@ export function computed<T>(fn: () => T): Computed<T> {
 
 /**
  * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies
- * re-track on every run, so conditional reads subscribe to exactly the live branch.
+ * re-track on every run, so conditional reads subscribe to exactly the live branch. Every run,
+ * the first included, finishes before the effects its writes trigger run, itself among them.
  */
 export function effect(fn: () => void): () => void
 export function effect(fn: () => void, c?: boolean): () => void {
@@ -242,6 +243,7 @@ export function effect(fn: () => void, c?: boolean): () => void {
     },
   }
   adopt(stop)
-  e.run()
+  // Batched, so a write in the first run cannot re-enter it before it finishes.
+  batch(e.run)
   return stop
 }

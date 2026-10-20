@@ -59,9 +59,9 @@ const ALL =
 // Measured on Bun 1.4.3 + 2%. Raise a cap only in the commit that explains the new bytes.
 const fixtures = {
   imperative: { budget: 1140, source: `${IMPERATIVE}mountIslands({ counter })` },
-  markup: { budget: 2610, source: `${MARKUP}mountIslands({ compare })` },
+  markup: { budget: 2672, source: `${MARKUP}mountIslands({ compare })` },
   js: { budget: 2410, source: `${JS}mountIslands({ todos })` },
-  everything: { budget: 3430, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
+  everything: { budget: 3498, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
 }
 
 for (const [name, { budget, source }] of Object.entries(fixtures)) {

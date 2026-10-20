@@ -25,7 +25,7 @@ import {
   MAX_MEDIA_QUERY_LENGTH,
   scheduleTrigger,
 } from "@nifrajs/island-trigger"
-import { bindScope, type IslandScope } from "./internal/island-bindings.ts"
+import { bindScope } from "./internal/island-bindings.ts"
 import { owned } from "./internal/island-owner.ts"
 import { type Signal, signal } from "./internal/island-signals.ts"
 
@@ -85,7 +85,7 @@ export interface BindIslandContext<P> {
   /** The island's host element. */
   readonly root: HTMLElement
   /** The parsed `data-island-props`, or `undefined` when absent or malformed. */
-  readonly props: P
+  readonly props: P | undefined
   /**
    * The signal the markup binds as `key`, seeded from `props[key]` when present, else `fallback`.
    * Each key returns the same signal across calls.
@@ -107,6 +107,9 @@ export interface BindIslandContext<P> {
  *
  * Attribute values are signal and handler names, never code; an unknown name warns once and the
  * server-rendered content stays as it is. A binding belongs to its nearest island.
+ *
+ * A setup or binding that throws stops everything the island started before the error reaches
+ * `mountIslands`. On unmount every cleanup runs; one that throws is logged and the rest still run.
  */
 export function bindIsland<P = Record<string, unknown>>(
   setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void,
@@ -130,12 +133,24 @@ export function bindIsland<P = Record<string, unknown>>(
         else fn()
       },
     }
-    const scope: IslandScope = { signals, handlers: owned(stops, () => setup(ctx)) ?? {} }
-    stops.push(...bindScope(root, scope))
-    return () => {
+    const dispose = (): void => {
       live = false
-      for (let stop = stops.pop(); stop !== undefined; stop = stops.pop()) stop()
+      for (let stop = stops.pop(); stop !== undefined; stop = stops.pop()) {
+        try {
+          stop()
+        } catch (err) {
+          console.error("[nifra/islands] cleanup failed:", err)
+        }
+      }
     }
+    try {
+      // Owned, so a binding whose first run throws is registered before it throws.
+      owned(stops, () => bindScope(root, { signals, handlers: setup(ctx) ?? {} }, stops))
+    } catch (err) {
+      dispose()
+      throw err
+    }
+    return dispose
   }
 }
 

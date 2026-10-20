@@ -185,6 +185,41 @@ describe("NF-C047 island binding names", () => {
       ),
     ).toEqual([])
   })
+
+  test("stays silent when state or the context escapes the direct call forms", async () => {
+    const client = {
+      file: "routes/e.client.ts",
+      content: [
+        'import { bindIsland, mountIslands } from "@nifrajs/web/islands"',
+        "const a = bindIsland((ctx) => { const { state } = ctx; state('n', 0) })",
+        "const b = bindIsland((ctx) => { const s = ctx.state; s('n', 0) })",
+        "const c = bindIsland(({ state }) => { declareAll(state) })",
+        "const d = bindIsland((ctx) => { declareAll(ctx) })",
+        "mountIslands({ a, b, c, d })",
+      ].join("\n"),
+    }
+    const markup = ["a", "b", "c", "d"]
+      .map(
+        (id) =>
+          `<div data-island="${id}"><b data-bind-text="n"></b><i data-bind-text="zz"></i></div>`,
+      )
+      .join("")
+    expect(codes(await scan(client, page(markup)))).toEqual([])
+  })
+
+  test("property names and the context's other members leave the keys known", async () => {
+    const client = {
+      file: "routes/k.client.ts",
+      content: [
+        'import { bindIsland, mountIslands } from "@nifrajs/web/islands"',
+        "const k = bindIsland((ctx) => { ctx.state('n', 0); ctx.onDispose(() => ctx.root.remove()); const o = { state: 1, ctx: 2 }; return { go() { log(o.state, other.ctx) } } })",
+        "mountIslands({ k })",
+      ].join("\n"),
+    }
+    const markup =
+      '<div data-island="k"><b data-bind-text="n"></b><i data-bind-text="zz"></i></div>'
+    expect(codes(await scan(client, page(markup)))).toEqual(["NF-C047"])
+  })
 })
 
 describe("NF-C048 island binding host", () => {

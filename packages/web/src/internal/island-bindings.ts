@@ -84,10 +84,14 @@ export interface BindableRoot {
   querySelectorAll(selector: string): Iterable<BindableElement>
 }
 
-/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for
- * both reactive effects and event listeners. */
-export function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void> {
-  const stops: Array<() => void> = []
+/** Walk `root` and attach every `data-bind-*` binding against `scope`. Each binding's disposer
+ * (reactive effect or event listener) goes onto `stops` as it attaches, so a binding that throws
+ * midway leaves the earlier ones disposable; `stops` is returned. */
+export function bindScope(
+  root: BindableRoot,
+  scope: IslandScope,
+  stops: Array<() => void> = [],
+): Array<() => void> {
   // Each element carrying `data-bind-<kind>` outside any ignored subtree and any nested island, with
   // that attribute's value.
   const each = (kind: string): Array<[BindableElement, string]> => {
