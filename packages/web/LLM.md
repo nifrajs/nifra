@@ -22,14 +22,14 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **assertCssLoadingCompatible** _(function)_ - `assertCssLoadingCompatible: (cssCodeSplit: boolean, cssLoading: CssLoadingMode) => void` · from `@nifrajs/web`
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>` · from `@nifrajs/web`
 - **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: Reado…` · from `@nifrajs/web`
+- **batch** _(function)_ - `batch: <T>(fn: () => T) => T` · from `@nifrajs/web/islands`
 - **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void` · from `@nifrajs/web/nano`
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void` · from `@nifrajs/web/server-components/client`
-- **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void` · from `@nifrajs/web/nano`
+- **bindIsland** _(function)_ - `bindIsland: <P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void) => IslandEnh…` · from `@nifrajs/web/islands`
+- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<E>, options: BindListOptions<T, E>) =>…` · from `@nifrajs/web/islands`
 - **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void` · from `@nifrajs/web/nano`
-- **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
-- **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 
-_…and 705 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 714 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

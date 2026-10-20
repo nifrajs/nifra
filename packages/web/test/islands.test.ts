@@ -7,10 +7,10 @@ function island(
   id: string,
   opts: { strategy?: string; media?: string; props?: string } = {},
 ): HTMLElement {
-  const dataset: Record<string, string> = { id }
-  if (opts.strategy !== undefined) dataset.strategy = opts.strategy
-  if (opts.media !== undefined) dataset.media = opts.media
-  if (opts.props !== undefined) dataset.props = opts.props
+  const dataset: Record<string, string> = { island: id }
+  if (opts.strategy !== undefined) dataset.islandStrategy = opts.strategy
+  if (opts.media !== undefined) dataset.islandMedia = opts.media
+  if (opts.props !== undefined) dataset.islandProps = opts.props
   return { dataset } as unknown as HTMLElement
 }
 const rootOf = (els: HTMLElement[]): ParentNode =>
@@ -48,7 +48,7 @@ describe("mountIslands", () => {
     expect(ran).toBe(false)
   })
 
-  test("malformed data-props → props is undefined (never throws)", () => {
+  test("malformed data-island-props → props is undefined (never throws)", () => {
     let seen: unknown = "untouched"
     mountIslands(
       {

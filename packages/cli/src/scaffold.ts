@@ -178,7 +178,7 @@ export default function Page({ data }: Route.ComponentProps) {
 }
 
 // --- Add interactivity the AI-safe way (islands), NOT hydration ---------------------------------
-// 1. Render a marker in the page above:  html\`<nifra-island data-id="counter" data-props=\${JSON.stringify({ start: 0 })}></nifra-island>\`
+// 1. Render a marker in the page above:  html\`<nifra-island data-island="counter" data-island-props=\${JSON.stringify({ start: 0 })}></nifra-island>\`
 // 2. Wire the route to its enhancer bundle, in ${basename(backendFileOf(file))}:
 //    export const islandScripts = [/* built URL of ./counter.client.ts */]
 // 3. Write ./counter.client.ts as an imperative enhancer that ALWAYS returns its cleanup:
@@ -217,10 +217,10 @@ import { html } from "@nifrajs/web-vanilla"
 import type { Route } from "${typesOf(file)}"
 
 export default function Page({ data }: Route.ComponentProps) {
-  // The island marker: data-props is the initial state the client reads on mount.
+  // The island marker: data-island-props is the initial state the client reads on mount.
   return html\`<main>
     <h1>\${data.title}</h1>
-    <nifra-island data-id="todos" data-props=\${JSON.stringify({ items: [] })}></nifra-island>
+    <nifra-island data-island="todos" data-island-props=\${JSON.stringify({ items: [] })}></nifra-island>
   </main>\`
 }
 

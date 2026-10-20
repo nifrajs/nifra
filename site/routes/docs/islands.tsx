@@ -22,7 +22,7 @@ off() // unsubscribe - also usable directly as an island's cleanup`
 // @nifrajs/web under its own DOM lib and exercised at runtime; here they are illustrative.
 const MARKER = `// doc-check: skip - server-rendered island marker (HTML, not a checkable module).
 // In your @nifrajs/web-vanilla page, render the host element with inline JSON props:
-html\`<nifra-island data-id="counter" data-props=\${JSON.stringify({ start: 0 })}>
+html\`<nifra-island data-island="counter" data-island-props=\${JSON.stringify({ start: 0 })}>
   <output>0</output>
   <button type="button">+1</button>
 </nifra-island>\``
@@ -30,7 +30,7 @@ html\`<nifra-island data-id="counter" data-props=\${JSON.stringify({ start: 0 })
 const COUNTER = `// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
 import { defineIsland, mountIslands } from "@nifrajs/web/islands"
 
-// defineIsland pins the data-props type; the body is plain imperative DOM. ALWAYS return the
+// defineIsland pins the data-island-props type; the body is plain imperative DOM. ALWAYS return the
 // teardown for anything you wire - mountIslands calls it on soft-nav (NF-C020 warns if you forget).
 const counter = defineIsland<{ start: number }>((el, props) => {
   let n = props.start
@@ -157,7 +157,7 @@ export default function Islands() {
 
       <h2>Load strategies</h2>
       <p>
-        A marker&apos;s <code>data-strategy</code> defers its enhancer: <code>load</code> (default),{" "}
+        A marker&apos;s <code>data-island-strategy</code> defers its enhancer: <code>load</code> (default),{" "}
         <code>idle</code>, <code>visible</code> (mount when it scrolls into view), or a{" "}
         <code>media</code> query. An island with no matching enhancer, or an invalid strategy, stays
         inert server-rendered HTML - forward-compatible, never a runtime error.

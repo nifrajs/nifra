@@ -6068,6 +6068,12 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/islands`
 
+- **BindIslandContext** _(interface)_ - `interface BindIslandContext<P>`
+  What a `bindIsland` setup receives.
+- **BindListOptions** _(interface)_ - `interface BindListOptions<T, E extends ListNode = HTMLElement>`
+  How `bindList` turns items into keyed DOM.
+- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
+  A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
 - **IslandBusUnsubscribe** _(type)_ - `type IslandBusUnsubscribe = () => void`
   Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it straight back as its `IslandCleanup`.
 - **IslandCleanup** _(type)_ - `type IslandCleanup = () => void`
@@ -6076,16 +6082,44 @@ _No named exports (side-effect entrypoint)._
   Enhances one island element with its (typed) props. Return a cleanup function to tear down on `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing. The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.
 - **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
   When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **ListContainer** _(interface)_ - `interface ListContainer<E extends ListNode>`
+  The container surface `bindList` uses; an `Element` has it.
+- **ListNode** _(interface)_ - `interface ListNode`
+  The node surface `bindList` uses; an `Element` has it.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
+- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T> /** Fetch the current key again. */ refetch(): void /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
+  Call it to read the current state (tracking, like a signal).
+- **ResourceState** _(type)_ - `type ResourceState<T>`
+  An async value's state. `status` narrows `value` and `error`, so no branch can be skipped.
+- **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
+  A readable/writable reactive value: call it to read (tracking), `.set` to write.
+- **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
+  Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
+- **bindIsland** _(function)_ - `bindIsland: <P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void) => IslandEnhancer<P>`
+  The binding tier: `setup` creates the island's state and returns the event handlers its markup names; the island's `data-bind-*` attributes then bind them.
+- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<E>, options: BindListOptions<T, E>) => () => void`
+  Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item keeps its node, so focus, selection and input state survive a reorder. A render with no earlier nodes replaces the container's children; later renders move only the nodes outside the longest run alread…
+- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
+  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
 - **createIslandBus** _(function)_ - `createIslandBus: <Events extends Record<string, unknown> = Record<string, unknown>>() => { emit<K extends keyof Events>(type: K, detail: Events[K]): void; on<K extends keyof Events>(type: K, handler: (detail: Events[K])…`
   A typed publish/subscribe channel for coordinating islands that must talk to each other without a shared reactive store - a cart badge reacting to an "add to cart" island, a filter island driving a results island. Create ONE bus in your mount entry and close over it in each enhancer; there is no im…
 - **defineIsland** _(function)_ - `defineIsland: <P = unknown>(enhancer: IslandEnhancer<P>) => IslandEnhancer<P>`
-  Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
-- **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer>>, options?: { readonly root?: ParentNode; }) => () => void`
-  Find every `<nifra-island data-id>` under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-strategy`. An island whose `id` has no enhancer is left as inert SSR HTML (forward-compatible). An enhancer that throws is isolated - it never blocks the others (eac…
+  Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is to pin the props shape so `el` and `props` are typed inside the body and the enhancer is assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
+- **effect** _(function)_ - `effect: (fn: () => void) => () => void`
+  Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
+- **islandProps** _(function)_ - `islandProps: (props: Record<string, unknown>) => string`
+  The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer.
+- **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: { readonly root?: ParentNode; }) => () => void`
+  Find every `[data-island]` element under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that is already mounted, is left alone, so calling again after a soft navigation mounts only new hosts. An en…
+- **resource** _(function)_ - `resource: <K, T>(source: () => K, fetcher: (key: K, abort: AbortSignal) => Promise<T>) => Resource<T>`
+  An async value keyed by `source`. `source` runs tracked, so a write to any signal it reads starts a new fetch; `fetcher` runs untracked with that key, so nothing it reads (before or after an `await`) is a dependency. A newer fetch aborts the older one and only the newest result lands. Inside an isl…
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
   Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
+- **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
+  Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
+- **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
+  Run `fn` without subscribing the running effect or computed to the signals it reads.
 
 ### `@nifrajs/web/nano`
 
@@ -6752,7 +6786,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-react/island`
 
 - **Island** _(function)_ - `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode`
-  Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-props`; React escapes the attribute value and the client reads the decoded `dataset.props`.
+  Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes the attribute value and the client reads the decoded `dataset.islandProps`.
 - **IslandProps** _(interface)_ - `interface IslandProps`
 
 ### `@nifrajs/web-react/query`
