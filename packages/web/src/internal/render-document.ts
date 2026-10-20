@@ -36,10 +36,12 @@ import {
   LOCALES_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
+  SWAP_HEADER,
 } from "../render-seam.ts"
 import { PRERENDERED_GLOBAL } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
 import { isStaticMeta, mergeHeads } from "./head-merge.ts"
+import { isRequestAbort } from "./request-abort.ts"
 import { PRE_HYDRATION_GUARD } from "./runtime-contract.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./script-types.ts"
 
@@ -171,6 +173,11 @@ export interface RenderPageOptions {
   readonly matchChain?: MatchChain
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
+  /**
+   * The slot an `x-nifra-swap` request names. When the adapter renders slots and nothing is
+   * deferred, the response is that slot's HTML alone; otherwise the whole document.
+   */
+  readonly swapSlot?: string
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
    * is ignored (the document is always HTML) and the ISR freshness header is applied after these,
    * so neither can be overridden from here. */
@@ -205,6 +212,9 @@ export interface RenderPageOptions {
   /** CSP nonce applied to every framework-owned executable script in this document. Nonce-bearing
    * documents are marked `private, no-store` so a request-specific nonce is never replayed. */
   readonly nonce?: string
+  /** The request's abort signal. A deferred value that rejects because it aborted is the client
+   * leaving, not a failure, so the server log skips it. Omit ⇒ every rejection is logged. */
+  readonly signal?: AbortSignal
   /**
    * A hash-based Content-Security-Policy from `createCspPolicy`. The document then carries `nonce`
    * only when it needs one (it defers a value, or a head tag names the nonce); otherwise it renders
@@ -551,6 +561,16 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     ...(locale === undefined ? {} : { locale }),
   }
 
+  const { swapSlot, ...documentOptions } = options
+  if (swapSlot !== undefined && allDeferred.length === 0 && adapter.renderSlot !== undefined) {
+    const slotPage = (slotHtml: string | undefined): MaybePromise<RenderedPage> =>
+      slotHtml === undefined
+        ? renderPageResult(documentOptions)
+        : new BufferedRenderedPage(slotHtml, status, swapHeaders(headers, swapSlot))
+    const out = adapter.renderSlot(chain, renderProps, swapSlot)
+    return out instanceof Promise ? out.then(slotPage) : slotPage(out)
+  }
+
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
   // whole document in one pass. Progressive streaming only benefits pages with deferred boundaries
   // (those take the streaming path below); for a plain page the streaming pipeline + the framework's
@@ -571,6 +591,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       headers,
       streamNonce,
       streamNonce === nonce ? nonceAttr : ` nonce="${escapeAttr(streamNonce ?? "")}"`,
+      options.signal,
     ).then((response) => new ResponseRenderedPage(response))
   const last = chain[chain.length - 1]
   const leaf = isWeakKey(last) ? last : undefined
@@ -643,6 +664,7 @@ async function renderStreamedPage(
   headers: Record<string, string>,
   nonce: string | undefined,
   nonceAttr: string,
+  signal: AbortSignal | undefined,
 ): Promise<Response> {
   // Streaming path - required for `defer()` (progressive `<Await>` resolution) and used by any adapter
   // that doesn't implement `renderToString`. Awaiting `renderToStream` resolves on shell-readiness
@@ -663,8 +685,38 @@ async function renderStreamedPage(
         : await adapter.renderToStream(chain, renderProps, { nonce })
   // After the render: an adapter fills its document parts before handing back the stream.
   const shell = enc.encode(shellOf())
-  const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
+  const body = streamDocument(
+    shell,
+    appStream,
+    closeRoot,
+    allDeferred,
+    tail,
+    enc,
+    nonceAttr,
+    signal,
+  )
   return new Response(body, { status, headers })
+}
+
+// A swap response shares its URL with the document, so like a data response it is never stored: a
+// cache keyed on the URL alone would serve one slot in place of the page.
+const DOCUMENT_ONLY_HEADERS = new Set([
+  ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
+  "content-security-policy",
+])
+
+function swapHeaders(
+  document: Readonly<Record<string, string>>,
+  slot: string,
+): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const [name, value] of Object.entries(document))
+    if (!DOCUMENT_ONLY_HEADERS.has(name)) headers[name] = value
+  headers["cache-control"] = "private, no-store"
+  headers.vary = headers.vary === undefined ? SWAP_HEADER : `${headers.vary}, ${SWAP_HEADER}`
+  headers[SWAP_HEADER] = slot
+  return headers
 }
 
 class BufferedRenderedPage implements RenderedPage {
@@ -732,6 +784,7 @@ function streamDocument(
   tail: Uint8Array,
   enc: TextEncoder,
   nonceAttr: string,
+  signal: AbortSignal | undefined,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader()
   // A client that goes away cancels the body: the renderer stops, and nothing more is written.
@@ -756,7 +809,7 @@ function streamDocument(
         // A rejected (or unserializable) deferred streams __nifraReject (the client `<Await>`
         // surfaces it) - it must not break the whole body. Redact: stream a stable opaque code,
         // never the raw error text; log the real reason server-side.
-        console.error("[nifra/web] deferred value rejected:", err)
+        if (!isRequestAbort(signal, err)) console.error("[nifra/web] deferred value rejected:", err)
         return `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
       }),
   )

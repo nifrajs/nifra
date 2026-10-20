@@ -821,6 +821,31 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
   expect(html).not.toContain("boom secret detail")
 })
 
+test("renderPage logs a deferred value that failed, not one that gave up on the request's abort", async () => {
+  const request = new AbortController()
+  request.abort()
+  const logged = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const gaveUp = new Promise((_, reject) => setTimeout(() => reject(request.signal.reason), 1))
+    const failed = new Promise((_, reject) => setTimeout(() => reject(new Error("db down")), 1))
+    const html = await (
+      await renderPage({
+        adapter: stub,
+        chain: [null],
+        data: { gaveUp: defer(gaveUp), failed: defer(failed) },
+        clientEntry: "/c.js",
+        signal: request.signal,
+      })
+    ).text()
+    expect(html).toContain('window.__nifraReject(0,"deferred_error")')
+    expect(html).toContain('window.__nifraReject(1,"deferred_error")')
+    expect(logged).toHaveBeenCalledTimes(1)
+    expect(String(logged.mock.calls[0]?.[1])).toContain("db down")
+  } finally {
+    logged.mockRestore()
+  }
+})
+
 test("a deferred value that cannot be serialized streams __nifraReject, not a broken body", async () => {
   const logged = spyOn(console, "error").mockImplementation(() => {})
   try {

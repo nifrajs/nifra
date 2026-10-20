@@ -57,6 +57,9 @@ function parsedTree(
 
 type EnhancerFn = TSApi.ArrowFunction | TSApi.FunctionExpression
 
+// The calls that mount islands from an enhancer map.
+const MOUNT_CALLS = new Set(["mountIslands", "enableSwap"])
+
 function isEnhancerFn(ts: typeof TSApi, node: TSApi.Node): node is EnhancerFn {
   return ts.isArrowFunction(node) || ts.isFunctionExpression(node)
 }
@@ -101,7 +104,7 @@ function returnsCleanup(ts: typeof TSApi, fn: EnhancerFn): boolean {
 }
 
 /** The inline enhancer functions authored in `file`: the argument to `defineIsland(...)` and every
- * function-typed value of a `mountIslands({ ... })` object literal. */
+ * function-typed value of a `mountIslands({ ... })` or `enableSwap({ ... })` object literal. */
 function enhancerFns(ts: typeof TSApi, tree: TSApi.SourceFile): EnhancerFn[] {
   const out: EnhancerFn[] = []
   const visit = (node: TSApi.Node): void => {
@@ -110,7 +113,7 @@ function enhancerFns(ts: typeof TSApi, tree: TSApi.SourceFile): EnhancerFn[] {
       if (callee === "defineIsland") {
         const arg = node.arguments[0]
         if (arg !== undefined && isEnhancerFn(ts, arg)) out.push(arg)
-      } else if (callee === "mountIslands") {
+      } else if (MOUNT_CALLS.has(callee)) {
         const arg = node.arguments[0]
         if (arg !== undefined && ts.isObjectLiteralExpression(arg)) {
           for (const prop of arg.properties) {
@@ -176,10 +179,10 @@ export const islandCleanupRule: CheckRule = {
   },
 }
 
-const lineOf = (tree: TSApi.SourceFile, node: TSApi.Node): number =>
+export const lineOf = (tree: TSApi.SourceFile, node: TSApi.Node): number =>
   tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
 
-function toolchainMissing(code: string, title: string): Diagnostic {
+export function toolchainMissing(code: string, title: string): Diagnostic {
   return diagnostic({
     code,
     severity: "warn",
@@ -296,7 +299,7 @@ type IslandNames =
     }
   | { readonly kind: "imperative" }
 
-const UNKNOWN = Symbol("unknown")
+export const UNKNOWN = Symbol("unknown")
 
 function literalKeys(
   ts: typeof TSApi,
@@ -447,7 +450,7 @@ function mountedIslands(
       if (
         ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
-        node.expression.text === "mountIslands"
+        MOUNT_CALLS.has(node.expression.text)
       ) {
         const map = node.arguments[0]
         if (map !== undefined && ts.isObjectLiteralExpression(map)) mounts.push(map)
@@ -484,11 +487,46 @@ interface MarkupBinding {
   readonly names: ReadonlyArray<{ readonly name: string; readonly handler: boolean }>
   /** The nearest enclosing host's id: `null` when there is none, UNKNOWN when it is not literal. */
   readonly island: string | null | typeof UNKNOWN
+  /** A `data-swap-slot` between the binding and its host, whose swap replaces the bound element. */
+  readonly slot: string | null | typeof UNKNOWN
   readonly node: TSApi.Node
+  /** The line of its tag, when `node` is the whole template. */
+  readonly line?: number
+}
+
+/** A `data-swap` link or form, or a `data-swap-slot` element. */
+export interface SwapMarkup {
+  readonly kind: "swap" | "slot"
+  readonly tag: string
+  /** The attribute's value: UNKNOWN when it is not literal. */
+  readonly value: string | typeof UNKNOWN
+  /** A link's `href` or a form's `action`, interpolations as HOLE: `undefined` when absent, UNKNOWN
+   * when a JSX value is not literal. */
+  readonly url: string | undefined | typeof UNKNOWN
+  /** A slot's content in an `html` template, interpolations as HOLE, with their expressions in
+   * order. Absent in JSX and when the element does not close in its template. */
+  content?: { readonly text: string; readonly holes: readonly TSApi.Expression[] }
+  readonly jsx: boolean
+  readonly node: TSApi.Node
+  /** The line of its tag, when `node` is the whole template. */
+  readonly line?: number
+}
+
+/** Where an interpolation of an `html` template sits: inside which slot, and whether it is the
+ * slot's whole content. */
+export interface HolePlacement {
+  readonly slot: string | null | typeof UNKNOWN
+  readonly sole: boolean
+}
+
+interface MarkupFacts {
+  readonly hasHost: boolean
+  readonly bindings: MarkupBinding[]
+  readonly swaps: SwapMarkup[]
 }
 
 // Where an interpolation sat in a template; an attribute value holding one is not literal.
-const HOLE = "\u0000"
+export const HOLE = "\u0000"
 
 function bindingNames(attribute: string, value: string): MarkupBinding["names"] | undefined {
   if (value.includes(HOLE)) return undefined
@@ -554,22 +592,66 @@ function tagAttributes(inside: string): Array<[string, string]> {
   return out
 }
 
-/** The `data-bind-*` attributes of an `html` template's text, and whether it holds an island host.
- * A linear scan: an unclosed tag ends it. */
-function templateBindings(
-  text: string,
-  node: TSApi.Node,
-): { readonly hasHost: boolean; readonly bindings: MarkupBinding[] } {
-  const stack: Array<{ readonly tag: string; readonly island: string | null | typeof UNKNOWN }> = []
-  const bindings: MarkupBinding[] = []
-  let hasHost = false
-  const owner = (): string | null | typeof UNKNOWN => {
-    for (let i = stack.length - 1; i >= 0; i--) {
-      const island = stack[i]?.island ?? null
-      if (island !== null) return island
-    }
-    return null
+interface OpenElement {
+  readonly tag: string
+  readonly island: string | null | typeof UNKNOWN
+  readonly slot: SwapMarkup | undefined
+  /** Where the element's content starts in the template text. */
+  readonly start: number
+}
+
+/** The island a binding belongs to, and a slot between them, from the elements open around it. */
+function ownerOf(stack: readonly OpenElement[]): Pick<MarkupBinding, "island" | "slot"> {
+  let slot: string | null | typeof UNKNOWN = null
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const entry = stack[i]
+    if (entry === undefined) continue
+    if (entry.slot !== undefined && slot === null) slot = entry.slot.value
+    if (entry.island !== null) return { island: entry.island, slot }
   }
+  return { island: null, slot: null }
+}
+
+/**
+ * The bindings, swap links, forms and slots of an `html` template's text, and whether it holds an
+ * island host. `holes` are the template's interpolations, in order; `placement` learns where each
+ * one sits. A linear scan: an unclosed tag ends it.
+ */
+function templateMarkup(
+  text: string,
+  holes: readonly TSApi.Expression[],
+  node: TSApi.Node,
+  placement: Map<TSApi.Node, HolePlacement>,
+  lineAt: (offset: number) => number,
+): MarkupFacts {
+  const stack: OpenElement[] = []
+  const bindings: MarkupBinding[] = []
+  const swaps: SwapMarkup[] = []
+  const positions: number[] = []
+  for (let i = text.indexOf(HOLE); i >= 0; i = text.indexOf(HOLE, i + 1)) positions.push(i)
+  const holesIn = (from: number, to: number): TSApi.Expression[] => {
+    const out: TSApi.Expression[] = []
+    positions.forEach((position, i) => {
+      const hole = holes[i]
+      if (position >= from && position < to && hole !== undefined) out.push(hole)
+    })
+    return out
+  }
+  // Innermost first, so each interpolation is placed in the element nearest to it.
+  const close = (from: number, at: number): void => {
+    for (let i = stack.length - 1; i >= from; i--) {
+      const entry = stack[i]
+      if (entry === undefined) continue
+      const inside = holesIn(entry.start, at)
+      const sole = entry.slot !== undefined && text.slice(entry.start, at).trim() === HOLE
+      for (const hole of inside)
+        if (!placement.has(hole)) placement.set(hole, { slot: entry.slot?.value ?? null, sole })
+      if (entry.slot !== undefined)
+        entry.slot.content = { text: text.slice(entry.start, at), holes: inside }
+    }
+    stack.length = from
+  }
+  let hasHost = false
   let at = text.indexOf("<")
   while (at >= 0) {
     let end = at + 1
@@ -584,27 +666,76 @@ function templateBindings(
     }
     if (end >= text.length) break
     const inside = text.slice(at + 1, end)
+    // An interpolation in a tag is an attribute value, never content.
+    for (const hole of holesIn(at, end)) placement.set(hole, { slot: null, sole: false })
+    const tagAt = at
     at = text.indexOf("<", end + 1)
     if (inside.startsWith("/")) {
       const tag = inside.slice(1).trim().toLowerCase()
       const open = stack.map((entry) => entry.tag).lastIndexOf(tag)
-      if (open >= 0) stack.length = open
+      if (open >= 0) close(open, tagAt)
       continue
     }
     const tag = /^[a-zA-Z][\w-]*/.exec(inside)?.[0]?.toLowerCase()
     if (tag === undefined) continue
     const attributes = tagAttributes(inside.slice(tag.length))
-    const hostId = attributes.find(([name]) => name === "data-island")?.[1]
-    const island = hostId === undefined ? null : hostId.includes(HOLE) ? UNKNOWN : hostId
+    const attribute = (name: string): string | undefined =>
+      attributes.find(([key]) => key === name)?.[1]
+    const literal = (value: string): string | typeof UNKNOWN =>
+      value.includes(HOLE) ? UNKNOWN : value
+    const hostId = attribute("data-island")
+    const island = hostId === undefined ? null : literal(hostId)
     if (island !== null) hasHost = true
+    const owner = ownerOf(stack)
+    const line = lineAt(tagAt)
     for (const [name, value] of attributes) {
       if (!name.startsWith("data-bind-")) continue
       const names = bindingNames(name, value)
-      if (names !== undefined) bindings.push({ attribute: name, names, island: owner(), node })
+      if (names !== undefined) bindings.push({ attribute: name, names, ...owner, node, line })
     }
-    if (!VOID_ELEMENTS.has(tag) && !inside.trimEnd().endsWith("/")) stack.push({ tag, island })
+    const swap = attribute("data-swap")
+    const url = tag === "a" ? attribute("href") : tag === "form" ? attribute("action") : undefined
+    if (swap !== undefined)
+      swaps.push({ kind: "swap", tag, value: literal(swap), url, jsx: false, node, line })
+    const slotName = attribute("data-swap-slot")
+    const slot: SwapMarkup | undefined =
+      slotName === undefined
+        ? undefined
+        : { kind: "slot", tag, value: literal(slotName), url: undefined, jsx: false, node, line }
+    if (slot !== undefined) swaps.push(slot)
+    if (!VOID_ELEMENTS.has(tag) && !inside.trimEnd().endsWith("/"))
+      stack.push({ tag, island, slot, start: end + 1 })
   }
-  return { hasHost, bindings }
+  return { hasHost, bindings, swaps }
+}
+
+/** The source line of an offset in a template's text: its newlines, and the lines each
+ * interpolation spans in the source. */
+function templateLines(
+  tree: TSApi.SourceFile,
+  template: TSApi.TemplateLiteral,
+  text: string,
+  spans: readonly TSApi.TemplateSpan[],
+): (offset: number) => number {
+  const lineOfPosition = (position: number): number =>
+    tree.getLineAndCharacterOfPosition(position).line + 1
+  const first = lineOfPosition(template.getStart(tree))
+  return (offset) => {
+    let line = first
+    let hole = 0
+    for (let i = 0; i < offset && i < text.length; i++) {
+      const c = text.charAt(i)
+      if (c === "\n") line++
+      else if (c === HOLE) {
+        const span = spans[hole++]
+        if (span !== undefined)
+          line +=
+            lineOfPosition(span.literal.getStart(tree)) -
+            lineOfPosition(span.expression.getStart(tree))
+      }
+    }
+    return line
+  }
 }
 
 /** The text of an `html\`...\`` template, each interpolation replaced by HOLE. */
@@ -638,26 +769,29 @@ function jsxAttribute(
   return undefined
 }
 
-/** The `data-bind-*` attributes of one outermost JSX tree, and whether it holds an island host. */
-function jsxBindings(
+/** The bindings, swap links, forms and slots of one outermost JSX tree, and whether it holds an
+ * island host. */
+function jsxMarkup(
   ts: typeof TSApi,
   root: TSApi.JsxElement | TSApi.JsxSelfClosingElement | TSApi.JsxFragment,
-): { readonly hasHost: boolean; readonly bindings: MarkupBinding[] } {
+): MarkupFacts {
   const bindings: MarkupBinding[] = []
+  const swaps: SwapMarkup[] = []
   let hasHost = false
-  const walk = (node: TSApi.Node, island: string | null | typeof UNKNOWN): void => {
+  const walk = (node: TSApi.Node, owner: Pick<MarkupBinding, "island" | "slot">): void => {
     let opening: TSApi.JsxOpeningLikeElement | undefined
     if (ts.isJsxElement(node)) opening = node.openingElement
     else if (ts.isJsxSelfClosingElement(node)) opening = node
-    let inner = island
+    let inner = owner
     if (opening !== undefined) {
-      const isIslandComponent = opening.tagName.getText() === "Island"
-      const host = isIslandComponent
-        ? jsxAttribute(ts, opening, "id")
-        : jsxAttribute(ts, opening, "data-island")
+      const tag = opening.tagName.getText()
+      const host =
+        tag === "Island"
+          ? jsxAttribute(ts, opening, "id")
+          : jsxAttribute(ts, opening, "data-island")
       if (host !== undefined) {
         hasHost = true
-        inner = host
+        inner = { island: host, slot: null }
       }
       for (const attr of opening.attributes.properties) {
         if (ts.isJsxSpreadAttribute(attr)) continue
@@ -666,21 +800,73 @@ function jsxBindings(
         const value = jsxAttribute(ts, opening, name)
         if (value === UNKNOWN || value === undefined) continue
         const names = bindingNames(name, value)
-        if (names !== undefined) bindings.push({ attribute: name, names, island, node: attr })
+        if (names !== undefined) bindings.push({ attribute: name, names, ...owner, node: attr })
+      }
+      const swap = jsxAttribute(ts, opening, "data-swap")
+      if (swap !== undefined) {
+        const url =
+          tag === "a"
+            ? jsxAttribute(ts, opening, "href")
+            : tag === "form"
+              ? jsxAttribute(ts, opening, "action")
+              : undefined
+        swaps.push({ kind: "swap", tag, value: swap, url, jsx: true, node: opening })
+      }
+      const slot = jsxAttribute(ts, opening, "data-swap-slot")
+      if (slot !== undefined) {
+        swaps.push({ kind: "slot", tag, value: slot, url: undefined, jsx: true, node: opening })
+        inner = { island: inner.island, slot }
       }
     }
     ts.forEachChild(node, (child) => walk(child, inner))
   }
-  walk(root, null)
-  return { hasHost, bindings }
+  walk(root, { island: null, slot: null })
+  return { hasHost, bindings, swaps }
 }
 
-/** Every markup tree in the project that holds an island host, flattened to its bindings. */
-function markupBindings(ts: typeof TSApi, tree: TSApi.SourceFile): MarkupBinding[] {
-  const out: MarkupBinding[] = []
-  const take = (found: { readonly hasHost: boolean; readonly bindings: MarkupBinding[] }): void => {
+/** The `slot` names a file imports from `@nifrajs/web-vanilla`. */
+function slotImports(ts: typeof TSApi, tree: TSApi.SourceFile): Set<string> {
+  const names = new Set<string>()
+  for (const statement of tree.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== "@nifrajs/web-vanilla"
+    )
+      continue
+    const bound = statement.importClause?.namedBindings
+    if (bound === undefined || !ts.isNamedImports(bound)) continue
+    for (const element of bound.elements)
+      if ((element.propertyName ?? element.name).text === "slot") names.add(element.name.text)
+  }
+  return names
+}
+
+/** One `slot(name, content)` call of `@nifrajs/web-vanilla`. */
+export interface SlotCall {
+  readonly name: string | typeof UNKNOWN
+  readonly node: TSApi.CallExpression
+}
+
+/** The markup of one file: every tree's bindings (those with a host), swap uses and slot calls. */
+function fileMarkup(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+): {
+  readonly bindings: MarkupBinding[]
+  readonly swaps: SwapMarkup[]
+  readonly slotCalls: SlotCall[]
+  readonly placement: Map<TSApi.Node, HolePlacement>
+} {
+  const bindings: MarkupBinding[] = []
+  const swaps: SwapMarkup[] = []
+  const slotCalls: SlotCall[] = []
+  const placement = new Map<TSApi.Node, HolePlacement>()
+  const slotNames = slotImports(ts, tree)
+  const take = (found: MarkupFacts): void => {
     // A fragment with no host of its own may render inside one elsewhere, so it is not judged.
-    if (found.hasHost) out.push(...found.bindings)
+    if (found.hasHost) bindings.push(...found.bindings)
+    swaps.push(...found.swaps)
   }
   const visit = (node: TSApi.Node): void => {
     if (
@@ -688,19 +874,33 @@ function markupBindings(ts: typeof TSApi, tree: TSApi.SourceFile): MarkupBinding
       ts.isIdentifier(node.tag) &&
       node.tag.text === "html"
     ) {
-      take(templateBindings(templateText(ts, node.template), node))
+      const spans = ts.isTemplateExpression(node.template) ? node.template.templateSpans : []
+      const text = templateText(ts, node.template)
+      const holes = spans.map((span) => span.expression)
+      const lineAt = templateLines(tree, node.template, text, spans)
+      take(templateMarkup(text, holes, node, placement, lineAt))
     } else if (
       ts.isJsxElement(node) ||
       ts.isJsxSelfClosingElement(node) ||
       ts.isJsxFragment(node)
     ) {
-      take(jsxBindings(ts, node))
+      take(jsxMarkup(ts, node))
       return
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      slotNames.has(node.expression.text)
+    ) {
+      const first = node.arguments[0]
+      slotCalls.push({
+        name: first !== undefined && ts.isStringLiteralLike(first) ? first.text : UNKNOWN,
+        node,
+      })
     }
     ts.forEachChild(node, visit)
   }
   visit(tree)
-  return out
+  return { bindings, swaps, slotCalls, placement }
 }
 
 interface MarkupFinding {
@@ -710,21 +910,41 @@ interface MarkupFinding {
   readonly islands: Map<string, IslandNames | typeof UNKNOWN>
 }
 
-// NF-C047 and NF-C048 judge the same bindings, so one walk of the project serves both.
-const markupCache = new WeakMap<SourceIndex, MarkupFinding[]>()
+/** A file's markup facts, for the swap rules. */
+export interface FileMarkup {
+  readonly file: string
+  readonly tree: TSApi.SourceFile
+  readonly swaps: readonly SwapMarkup[]
+  readonly slotCalls: readonly SlotCall[]
+  readonly placement: ReadonlyMap<TSApi.Node, HolePlacement>
+}
 
-/** Markup bindings across the project, each with the island map they are judged against. */
-async function projectMarkup(
+export interface ProjectMarkup {
+  readonly bindings: readonly MarkupFinding[]
+  readonly files: readonly FileMarkup[]
+}
+
+// NF-C047, NF-C048 and the swap rules judge the same markup, so one walk of the project serves all.
+const markupCache = new WeakMap<SourceIndex, ProjectMarkup>()
+
+/** Markup across the project: each binding with the island map it is judged against, and each
+ * file's swap facts. */
+export async function projectMarkup(
   ctx: Parameters<CheckRule["scan"]>[0],
   code: string,
   title: string,
-): Promise<{ readonly diagnostics?: readonly Diagnostic[]; readonly found: MarkupFinding[] }> {
+): Promise<{
+  readonly diagnostics?: readonly Diagnostic[]
+  readonly ts?: typeof TSApi
+  readonly markup: ProjectMarkup
+}> {
+  const empty: ProjectMarkup = { bindings: [], files: [] }
   const loaded = await loadRuleTypeScript(ctx)
-  if (loaded.diagnostics !== undefined) return { diagnostics: loaded.diagnostics, found: [] }
+  if (loaded.diagnostics !== undefined) return { diagnostics: loaded.diagnostics, markup: empty }
   const ts = loaded.compiler
-  if (ts === undefined) return { diagnostics: [toolchainMissing(code, title)], found: [] }
+  if (ts === undefined) return { diagnostics: [toolchainMissing(code, title)], markup: empty }
   const cached = markupCache.get(ctx.project.source)
-  if (cached !== undefined) return { found: cached }
+  if (cached !== undefined) return { ts, markup: cached }
   const trees: Array<{ readonly file: string; readonly tree: TSApi.SourceFile }> = []
   for (const file of ctx.project.source.files) {
     const tree = parsedTree(ts, ctx.project.source, file)
@@ -734,22 +954,27 @@ async function projectMarkup(
     ts,
     trees.map((entry) => entry.tree),
   )
-  const found: MarkupFinding[] = []
-  for (const { file, tree } of trees)
-    for (const binding of markupBindings(ts, tree))
-      found.push({ file, line: lineOf(tree, binding.node), binding, islands })
-  markupCache.set(ctx.project.source, found)
-  return { found }
+  const bindings: MarkupFinding[] = []
+  const files: FileMarkup[] = []
+  for (const { file, tree } of trees) {
+    const found = fileMarkup(ts, tree)
+    for (const binding of found.bindings)
+      bindings.push({ file, line: binding.line ?? lineOf(tree, binding.node), binding, islands })
+    files.push({ file, tree, ...found })
+  }
+  const markup = { bindings, files }
+  markupCache.set(ctx.project.source, markup)
+  return { ts, markup }
 }
 
 export const islandBindingNameRule: CheckRule = {
   code: "NF-C047",
   title: "Island binding name check",
   async scan(ctx) {
-    const { diagnostics, found } = await projectMarkup(ctx, "NF-C047", "Island binding name check")
+    const { diagnostics, markup } = await projectMarkup(ctx, "NF-C047", "Island binding name check")
     if (diagnostics !== undefined) return diagnostics
     const findings: Diagnostic[] = []
-    for (const { file, line, binding, islands } of found) {
+    for (const { file, line, binding, islands } of markup.bindings) {
       if (typeof binding.island !== "string") continue
       const names = islands.get(binding.island)
       if (names === undefined || names === UNKNOWN || names.kind !== "bind") continue
@@ -780,29 +1005,34 @@ export const islandBindingHostRule: CheckRule = {
   code: "NF-C048",
   title: "Island binding outside a bindIsland host",
   async scan(ctx) {
-    const { diagnostics, found } = await projectMarkup(
+    const { diagnostics, markup } = await projectMarkup(
       ctx,
       "NF-C048",
       "Island binding outside a bindIsland host",
     )
     if (diagnostics !== undefined) return diagnostics
     const findings: Diagnostic[] = []
-    for (const { file, line, binding, islands } of found) {
-      let reason: string | undefined
-      if (binding.island === null) reason = "it sits outside every data-island host"
+    for (const { file, line, binding, islands } of markup.bindings) {
+      let message: string | undefined
+      if (binding.island === null)
+        message = `${binding.attribute} never binds: it sits outside every data-island host. Move it inside a host mounted with bindIsland`
       else if (typeof binding.island === "string") {
         const names = islands.get(binding.island)
         if (names !== undefined && names !== UNKNOWN && names.kind === "imperative")
-          reason = `island "${binding.island}" is mounted with an imperative enhancer, which runs no bindings`
+          message = `${binding.attribute} never binds: island "${binding.island}" is mounted with an imperative enhancer, which runs no bindings. Move it inside a host mounted with bindIsland`
       }
-      if (reason === undefined) continue
+      if (message === undefined && binding.island !== null && binding.slot !== null) {
+        const slot = typeof binding.slot === "string" ? `"${binding.slot}"` : "around it"
+        message = `${binding.attribute} sits in data-swap-slot ${slot} but belongs to an island outside it: a swap replaces its element and the binding stops. Bind it from an island inside the slot`
+      }
+      if (message === undefined) continue
       findings.push(
         diagnostic({
           code: "NF-C048",
           severity: "warn",
           file,
           line,
-          message: `${binding.attribute} never binds: ${reason}. Move it inside a host mounted with bindIsland`,
+          message,
           evidence: [binding.attribute],
           fix: { recipe: "islands.binding-host", command: "nifra_docs islands" },
           verify: "nifra check --lints-only",

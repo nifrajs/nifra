@@ -250,7 +250,27 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
   },
   "NF-C048": {
     why: "A data-bind-* attribute sits outside every data-island host, or inside a host mounted with defineIsland or a plain enhancer. Only bindIsland walks bindings, so this one never binds.",
-    fix: "Move the element inside a host mounted with bindIsland, or mount that host with bindIsland.",
+    fix: "Move the element inside a host mounted with bindIsland, or mount that host with bindIsland. A binding inside a data-swap-slot belongs to an island inside that slot, which a swap mounts again.",
+    docs: "/docs/islands",
+  },
+  "NF-C049": {
+    why: "A data-swap attribute sits on an element other than <a href> or <form>, its value is not replace:<slot> or append:<slot>, or it is in JSX, where no page can answer a slot swap. The link or form behaves as if the attribute were not there.",
+    fix: "Put data-swap on a link with an href or on a form, write replace:<slot> or append:<slot>, and render the page with @nifrajs/web-vanilla.",
+    docs: "/docs/islands",
+  },
+  "NF-C050": {
+    why: "A data-swap link or form names a slot that no data-swap-slot element in the project declares, so there is nothing to swap and every click loads the page normally.",
+    fix: 'Fix the slot name, or mark the region to refresh with data-swap-slot="<name>" and render its content with slot("<name>", ...).',
+    docs: "/docs/islands",
+  },
+  "NF-C051": {
+    why: 'A data-swap-slot element must hold slot("<name>", ...) and nothing else: the server answers a swap with what slot() renders and the client replaces the whole element content with it. Content beside it is lost on the first swap; without it, the server has nothing to answer with; a slot() outside its element swaps nothing.',
+    fix: 'Make slot("<name>", content) the only content of the element marked data-swap-slot="<name>", and move anything else outside it.',
+    docs: "/docs/islands",
+  },
+  "NF-C052": {
+    why: "A data-swap link or form goes to a page whose module and layouts render no slot() of the name it swaps, so the server answers with the whole document and every swap loads the page normally.",
+    fix: "Point the link or form at the page that renders the slot, or render the slot in that page.",
     docs: "/docs/islands",
   },
   "NF-D001": {

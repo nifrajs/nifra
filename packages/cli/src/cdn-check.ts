@@ -1,11 +1,12 @@
 /**
  * `nifra cdn-check <url>` - is a deployed page actually served by the CDN the way `withCdn` intends?
  *
- * Read-only: two GETs of the page and one shaped like a soft navigation (`x-nifra-data: 1`). It names
- * the CDN from its status header, and fails when nifra's internal headers reach the visitor or when
- * the CDN answers a navigation data request with the cached document (Cloudflare's zone cache ignores
- * `Vary`, so it needs a rule that bypasses the cache for that header). CLI only: an agent-facing tool
- * that fetches arbitrary URLs from this machine could reach its private network.
+ * Read-only: two GETs of the page, one shaped like a soft navigation (`x-nifra-data: 1`) and one like a
+ * slot swap (`x-nifra-swap`). It names the CDN from its status header, and fails when nifra's internal
+ * headers reach the visitor or when the CDN answers a navigation or swap request with the cached
+ * document (Cloudflare's zone cache ignores `Vary`, so it needs a rule that bypasses the cache for
+ * those headers). CLI only: an agent-facing tool that fetches arbitrary URLs from this machine could
+ * reach its private network.
  */
 import type { CommandSpec } from "./command-catalog.ts"
 
@@ -17,7 +18,7 @@ export interface CdnCheckInput {
 export type CdnName = "cloudflare" | "vercel" | "fastly" | "unknown"
 
 export interface CdnCheckRequest {
-  readonly kind: "first" | "second" | "data"
+  readonly kind: "first" | "second" | "data" | "swap"
   readonly status: number
   readonly cache?: string | undefined
   readonly age?: string | undefined
@@ -147,6 +148,9 @@ export async function runCdnCheck(
   requests.push(summarize("second", second))
   const data = await record({ "x-nifra-data": "1" })
   requests.push(summarize("data", data))
+  // A slot no page renders: the app answers with the document, so only the cache status tells.
+  const swap = await record({ "x-nifra-swap": "nifra-cdn-check" })
+  requests.push(summarize("swap", swap))
 
   for (const res of [first, second, data]) {
     const leaked = INTERNAL.filter((name) => res.headers.has(name))
@@ -206,6 +210,16 @@ export async function runCdnCheck(
         cdn === "cloudflare"
           ? "a soft navigation (x-nifra-data: 1) got the cached document. The zone cache ignores Vary: add a Cache Rule that bypasses the cache when the request has an x-nifra-data header"
           : "a soft navigation (x-nifra-data: 1) got the cached document instead of the page data; the CDN is not honoring Vary: x-nifra-data",
+    })
+  }
+  if (isHit(cacheStatus(cdn, swap.headers))) {
+    findings.push({
+      level: "fail",
+      code: "swap-served-from-cache",
+      message:
+        cdn === "cloudflare"
+          ? "a slot swap (x-nifra-swap) was answered from cache. The zone cache ignores Vary: the Cache Rule that bypasses x-nifra-data must bypass requests with an x-nifra-swap header too"
+          : "a slot swap (x-nifra-swap) was answered from cache; the CDN must bypass its cache for requests carrying that header",
     })
   }
   return { url: input.url, cdn, requests, findings }
