@@ -1518,6 +1518,32 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     expect(found.map((f) => f.snippet)).toEqual(['.get("/real", () => send())'])
   })
 
+  test("an imported call as the plain return keeps a route with a raw Response branch typed", () => {
+    const wire = [
+      "export const shelf = (id: string) => ({ id })",
+      'export const refuse = () => new Response("no", { status: 409 })',
+      "",
+    ].join("\n")
+    const app = [
+      'import { server } from "@nifrajs/core"',
+      'import { shelf, refuse } from "./wire"',
+      'import { toLoan } from "loan-mapper"',
+      "const app = server()",
+      '  .get("/a", (c) => {\n    if (!c.query.id) return new Response("bad", { status: 400 })\n    return shelf(c.query.id)\n  })',
+      '  .get("/b", (c) => {\n    if (!c.query.id) return new Response("bad", { status: 400 })\n    return toLoan(c.query.id)\n  })',
+      '  .get("/c", (c) => {\n    if (!c.query.id) return new Response("bad", { status: 400 })\n    return refuse()\n  })',
+      '  .get("/d", (c) => {\n    if (!c.query.id) return new Response("bad", { status: 400 })\n    return c.query.list()\n  })',
+      "",
+    ].join("\n")
+    const project = new Map([
+      ["src/app.ts", app],
+      ["src/wire.ts", wire],
+    ])
+    // /c only ever answers a Response; /d's method call says nothing either way, so its raw branch stays.
+    const found = scanResponseRoutes("src/app.ts", app, createSourceFacts(ts), project)
+    expect(found.map((f) => f.line)).toEqual([14, 15, 18])
+  })
+
   test("collectCheckResult follows an imported helper to each route that returns it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
     try {

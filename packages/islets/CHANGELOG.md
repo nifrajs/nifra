@@ -1,5 +1,11 @@
 # @nifrajs/islets
 
+## 5.5.1
+
+### Patch Changes
+
+- @nifrajs/island-trigger@5.5.1
+
 ## 5.5.0
 
 ### Patch Changes

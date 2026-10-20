@@ -149,6 +149,8 @@ function dispatchWsCallback(
   }
 }
 
+const BUN_TOO_BIG_REASON = "Received too big message"
+
 /**
  * The shared Bun `websocket` dispatcher config for one app - each connection's `ws.data.handler` is
  * the matched route's handler, set by `server.upgrade`.
@@ -204,7 +206,16 @@ export function createBunWsHandlers(
       // Registry mode: drop topic subscriptions so it never holds a dead socket. Native mode: Bun
       // unsubscribes the socket from every topic on close, so there is nothing to sweep here.
       if (!nativePubsub) (ws.data.pubsub ?? topics).unsubscribeAll(nifra)
-      dispatchWsCallback(() => ws.data.handler.close?.(nifra, code, reason), nifra, ws.data.handler)
+      // Bun's own maxPayloadLength drops the connection without a close frame, so the peer sees 1006;
+      // the handler gets the 1009 every other payload cap reports.
+      const oversize = code === 1006 && reason === BUN_TOO_BIG_REASON
+      const closeCode = oversize ? 1009 : code
+      const closeReason = oversize ? "message too large" : reason
+      dispatchWsCallback(
+        () => ws.data.handler.close?.(nifra, closeCode, closeReason),
+        nifra,
+        ws.data.handler,
+      )
     },
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/pi",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "description": "Optional Pi coding-agent backend for the Nifra agent protocol.",
   "keywords": [
     "bun",
