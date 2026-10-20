@@ -387,8 +387,10 @@ export default function Islands() {
         Any other answer - a redirect, another origin, a page without that slot, an error - loads
         the URL normally, as does a page whose Trusted Types policy refuses the HTML. A POST that
         gets a whole page back without a redirect has already run, so that page is shown in place
-        at the action&apos;s URL, and going back loads the page before it. A form POST is never
-        sent twice. Without the script, the links and
+        at the action&apos;s URL, and going back loads the page before it. If Trusted Types
+        refuses that page too, the URL loads with a plain GET: the form is not sent again, but the
+        action&apos;s result is not shown. A form POST is never sent twice. Without the script, the
+        links and
         forms work as plain HTML. A loading slot carries{" "}
         <code>aria-busy=&quot;true&quot;</code>, a newer swap of the same slot cancels the older
         one, and a failed request leaves the page as it is and sets <code>data-swap-error</code> on
