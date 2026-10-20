@@ -13,6 +13,9 @@ export default function Layout(props: { readonly children?: ReactNode }) {
         <a id="to-p2" href="/p/2">
           p2
         </a>{" "}
+        <a id="to-p2-slow" href="/p/2?slow=5000">
+          p2 slow
+        </a>{" "}
         <a id="to-other" href="/other">
           other
         </a>

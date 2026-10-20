@@ -15,7 +15,7 @@ import {
   validateHoleHtml,
 } from "./frames.ts"
 import { type ResolvedPprOptions, totalDeadlineMs } from "./options.ts"
-import { PPR_RUNTIME, pprScriptHashes } from "./runtime.ts"
+import { PPR_BOOT, PPR_RUNTIME, pprScriptHashes } from "./runtime.ts"
 
 /** Where the runtime's cancel beacon goes, under the app's base path. */
 export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
@@ -24,6 +24,8 @@ export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
 const HOLE_ERROR_HTML = '<p data-nifra-hole-error="">This section is unavailable.</p>'
 
 const DOCUMENT_END = "</body></html>"
+
+const MODULE_SCRIPT = /<script type="module" src="([^"]*)"><\/script>/g
 
 /** The boundary fields G6 reads beyond the neutral registration. */
 export type HoleRegistration = Extract<BoundaryRegistration, { readonly mode: "dynamic" }> & {
@@ -190,9 +192,9 @@ export function createPprServer(config: PprServerConfig): PprServer {
       throw new Error(`[nifra/web] ppr: route "${request.routeId}" shell has no head`)
     // The client entry must not wait for the end of the document, which is the slowest hole.
     let prefix =
-      `${html.slice(0, headEnd)}<script>${PPR_RUNTIME}</script>${html.slice(headEnd, -DOCUMENT_END.length)}`.replaceAll(
-        '<script type="module" src="',
-        '<script type="module" async src="',
+      `${html.slice(0, headEnd)}<script>${PPR_RUNTIME}</script>${html.slice(headEnd, -DOCUMENT_END.length)}`.replace(
+        MODULE_SCRIPT,
+        `<link rel="modulepreload" href="$1"><script>${PPR_BOOT}</script>`,
       )
     const fallbacks = new Map<string, string>()
     for (const hole of request.holes) {

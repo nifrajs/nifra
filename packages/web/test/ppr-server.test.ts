@@ -114,7 +114,10 @@ describe("PPR server", () => {
     const html = await res.text()
     const shell = shellOf(html)
     expect(shell).toContain(`<script>${PPR_RUNTIME}</script></head>`)
-    expect(shell).toContain('<script type="module" async src="/entry.js">')
+    expect(shell).toContain(
+      '<link rel="modulepreload" href="/entry.js"><script>__nifraPpr.boot()</script>',
+    )
+    expect(shell.includes('type="module"')).toBe(false)
     expect(shell).toContain(
       '<div data-nifra-hole="greeting" aria-busy="true"><p data-prefix="">loading greeting</p></div>',
     )

@@ -77,7 +77,10 @@ export async function startPprApp(): Promise<PprApp> {
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    fetch: (request) => app.fetch(request),
+    fetch: (request) => {
+      if (request.method === "POST" && request.url.endsWith("/__nifra/ppr/cancel")) probe.cancels++
+      return app.fetch(request)
+    },
   })
   return {
     origin: `http://127.0.0.1:${server.port}`,

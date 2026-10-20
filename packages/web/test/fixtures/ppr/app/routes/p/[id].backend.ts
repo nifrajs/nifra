@@ -10,17 +10,17 @@ export const shellOutput = t.object({ title: t.string() })
 
 const abortable = (signal: AbortSignal, ms: number): Promise<{ at: number }> =>
   new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve({ at: ms }), ms)
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer)
-        probe.slowAborted++
-        probe.abortedAt.push(performance.now())
-        reject(signal.reason)
-      },
-      { once: true },
-    )
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      probe.slowAborted++
+      probe.abortedAt.push(performance.now())
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolve({ at: ms })
+    }, ms)
+    signal.addEventListener("abort", onAbort, { once: true })
   })
 
 export const boundaryLoaders = {

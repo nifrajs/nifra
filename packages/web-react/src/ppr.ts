@@ -91,10 +91,12 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
       suppressHydrationWarning: true,
     })
   }
-  if (state === undefined || state.status === "unresolved") return hole.fallback ?? null
+  if (state === undefined) return hole.fallback ?? null
   if (state.status === "error") return props.error ?? null
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a ready state carries this boundary's loader output, through its output guard.
   if (state.status === "ready") return render(state.data as Data)
+  // A streamed hole's data is its deferred loader output, whatever status the payload names.
+  if (state.data === undefined) return hole.fallback ?? null
   return Await<Data>({
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a pending streamed state carries this boundary's deferred loader output.
     resolve: state.data as Data,

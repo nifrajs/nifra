@@ -12,6 +12,7 @@ import {
 import {
   type BoundaryRegistration,
   type BoundaryRequestCtx,
+  type BoundaryState,
   type BoundaryStates,
   boundaryDescriptors,
   resolveStaticBoundaries,
@@ -1705,8 +1706,12 @@ export function createPageRequestExecutor<Env = unknown>(
             )
           }
           if (boundaryBatch !== undefined && blockingHoles) {
-            // A PPR page rendered whole (a bot, a draft, an unchecked shell) waits for its holes.
-            boundaryStates = { ...(await boundaryBatch.complete), ...(staticBoundaries ?? {}) }
+            // A PPR page rendered whole (a bot, a draft, an unchecked shell) waits for its holes. Both
+            // lists name every boundary, so each mode's state comes from its own resolver.
+            const whole: Record<string, BoundaryState> = { ...(await boundaryBatch.complete) }
+            for (const [name, state] of Object.entries(staticBoundaries ?? {}))
+              if (state.mode === "static") whole[name] = state
+            boundaryStates = whole
           } else if (boundaryBatch !== undefined) {
             const streamed = { ...boundaryBatch.initial, ...(staticBoundaries ?? {}) }
             for (const entry of boundaryBatch.pending) {

@@ -179,9 +179,9 @@ describe("PPR runtime", () => {
     const first = await pprScriptHashes(["cart", "recs"])
     const second = await pprScriptHashes(["cart", "recs"])
     expect(first).toEqual(second)
-    expect(first).toHaveLength(3)
+    expect(first).toHaveLength(4)
     for (const source of first) expect(source).toMatch(/^'sha256-[A-Za-z0-9+/]+=*'$/)
-    expect(new Set(first).size).toBe(3)
+    expect(new Set(first).size).toBe(4)
   })
 
   test("the runtime holds no nonce, token or request value and parses as a script", () => {
