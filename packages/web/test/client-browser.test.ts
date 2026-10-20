@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { installForms, installHistory, signalHydrated } from "../src/client.ts"
-import { type Blocker, getBrowserNavigate, registerBlocker } from "../src/navigation.ts"
-import type { ClientRouter } from "../src/router.ts"
+import {
+  type Blocker,
+  closeBoundary,
+  getBrowserNavigate,
+  registerBlocker,
+} from "../src/navigation.ts"
+import type { ClientRouter, RouterState } from "../src/router.ts"
 
 type Listener = (event: Event) => void
 
@@ -56,9 +61,10 @@ class FakeElement {
 
   closest(selector: string): FakeElement | null {
     if (selector === "a") return this.tagName === "a" ? this : null
-    if (selector !== "[data-nifra-prefetch]") return null
+    const attribute = /^\[([a-z-]+)\]$/.exec(selector)?.[1]
+    if (attribute === undefined) return null
     for (let el: FakeElement | null = this; el !== null; el = el.parent) {
-      if (el.hasAttribute("data-nifra-prefetch")) return el
+      if (el.hasAttribute(attribute)) return el
     }
     return null
   }
@@ -787,6 +793,7 @@ test("form integration intercepts app POSTs, preserves revalidation choice and f
       submissions.push({ path, revalidate: options.revalidate })
       if (reject !== undefined) throw reject
     },
+    snapshot: () => ({ pending: false, path: "/current" }),
   } as unknown as ClientRouter
   const stop = installForms(router)
 
@@ -829,11 +836,18 @@ test("controls named like form properties do not change how the form submits", a
       submissions.push(path)
       if (reject !== undefined) throw reject
     },
+    snapshot: () => ({
+      routeId: "submit",
+      params: {},
+      path: "/current",
+      data: null,
+      pending: false,
+    }),
   } as ClientRouter
   const stop = installForms(router)
   const form = new FakeFormElement()
   // A browser resolves `form.<name>` to the control with that name before the form's own property.
-  for (const name of ["method", "action", "target", "requestSubmit", "getAttribute"]) {
+  for (const name of ["method", "action", "target", "requestSubmit", "getAttribute", "closest"]) {
     Object.defineProperty(form, name, { value: new FakeElement("input") })
   }
 
@@ -862,6 +876,7 @@ test("an enhanced submit goes through its button: name and value, formaction, fo
       submissions.push({ path, submitter: Reflect.get(body, "submitter") })
       if (reject !== undefined) throw reject
     },
+    snapshot: () => ({ routeId: "r", params: {}, path: "/current", data: null, pending: false }),
   } as ClientRouter
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 5; i++) await Promise.resolve()
@@ -1113,4 +1128,237 @@ test("useBlocker arms beforeunload only when it would block, and teardown unwire
   const afterStop = fakeBeforeUnload()
   windowHub.emit("beforeunload", afterStop)
   expect(afterStop.defaultPrevented).toBe(false)
+})
+
+// A router stub whose navigations under /photos/ open the `photo` intercept boundary over `/current`.
+// With `held`, each navigation waits until its release is called.
+function interceptingRouter(held?: (() => void)[]): {
+  readonly router: ClientRouter
+  readonly navigated: string[]
+} {
+  const navigated: string[] = []
+  let subscriber: (() => void) | undefined
+  const page: RouterState = {
+    routeId: "page",
+    params: {},
+    path: "/current",
+    data: null,
+    pending: false,
+  }
+  let state = page
+  const stub: Pick<ClientRouter, "match" | "navigate" | "prefetch" | "subscribe" | "snapshot"> = {
+    match: (path) => ({ routeId: path, params: {} }),
+    navigate: async (path) => {
+      if (held !== undefined) await new Promise<void>((resolve) => held.push(resolve))
+      navigated.push(path)
+      state = path.startsWith("/photos/")
+        ? { ...page, path, intercepted: { boundary: "photo", pagePath: "/current" } }
+        : { ...page, path }
+      subscriber?.()
+    },
+    prefetch: async () => {},
+    subscribe: (listener) => {
+      subscriber = listener
+      return () => {
+        subscriber = undefined
+      }
+    },
+    snapshot: () => state,
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: installHistory calls only match, navigate, prefetch, subscribe and snapshot
+  return { router: stub as ClientRouter, navigated }
+}
+
+test("a boundary opened over the page keeps its scroll, and closeBoundary goes back to the page's entry", async () => {
+  resetBrowser()
+  const { router, navigated } = interceptingRouter()
+  const stop = installHistory(router)
+  const click = async (href: string): Promise<void> => {
+    document.emit("click", fakeEvent(fakeAnchor(`http://example.test${href}`)))
+    await Bun.sleep(0)
+  }
+
+  await click("/photos/2")
+  await click("/photos/3")
+  expect(navigated).toEqual(["/photos/2", "/photos/3"])
+  expect(scrollCalls).toEqual([])
+
+  closeBoundary("cart") // not the boundary that is open
+  expect(historyCalls.filter(([kind]) => kind === "go")).toEqual([])
+  closeBoundary("photo")
+  expect(historyCalls.at(-1)).toEqual(["go", -2])
+
+  // The browser lands on the page's entry: the page restores the scroll it had.
+  historyState = { nifraIndex: 0, nifraScroll: [5, 6] }
+  locationState.pathname = "/current"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(navigated.at(-1)).toBe("/current")
+  expect(scrollCalls).toEqual([[5, 6]])
+
+  // Forward into the boundary again: the entry it was opened from is the page's.
+  historyState = { nifraIndex: 1 }
+  locationState.pathname = "/photos/2"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  closeBoundary("photo")
+  expect(historyCalls.at(-1)).toEqual(["go", -1])
+  stop()
+})
+
+test("closeBoundary goes back to the page even when a second target was opened before the first settled", async () => {
+  resetBrowser()
+  // Each navigation stays pending until released, so the second click lands before the first settles.
+  const settle: (() => void)[] = []
+  const { router, navigated } = interceptingRouter(settle)
+  const stop = installHistory(router)
+  const click = async (href: string): Promise<void> => {
+    document.emit("click", fakeEvent(fakeAnchor(`http://example.test${href}`)))
+    await Bun.sleep(0)
+  }
+  await click("/photos/2")
+  await click("/photos/3")
+  settle.at(-1)?.()
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/photos/3"])
+  closeBoundary("photo")
+  expect(historyCalls.at(-1)).toEqual(["go", -2])
+  stop()
+})
+
+test("closeBoundary never goes back to a page entry a later push cut off", async () => {
+  resetBrowser()
+  const { router, navigated } = interceptingRouter()
+  const stop = installHistory(router)
+  const click = async (href: string): Promise<void> => {
+    document.emit("click", fakeEvent(fakeAnchor(`http://example.test${href}`)))
+    await Bun.sleep(0)
+  }
+  await click("/photos/2") // entry 1, over the page at entry 0
+  await click("/about") // entry 2: the page is now here
+  historyState = { nifraIndex: 1 }
+  locationState.pathname = "/photos/2"
+  windowHub.emit("popstate", new Event("popstate")) // back into entry 1
+  await Bun.sleep(0)
+  await click("/photos/3") // entry 2 again: the page's entry is gone
+  await click("/photos/4") // entry 3
+  const before = historyCalls.length
+  closeBoundary("photo")
+  await Bun.sleep(0)
+  expect(historyCalls.slice(before).map(([kind]) => kind)).toEqual(["replace"])
+  expect(navigated.at(-1)).toBe("/current")
+  stop()
+})
+
+test("a boundary opened by replacing the page's entry closes by replacing its URL with the page's", async () => {
+  resetBrowser()
+  const { router, navigated } = interceptingRouter()
+  const stop = installHistory(router)
+  getBrowserNavigate()?.("/photos/4", { replace: true })
+  await Bun.sleep(0)
+  const before = historyCalls.length
+  closeBoundary("photo")
+  await Bun.sleep(0)
+  expect(historyCalls.slice(before).map(([kind]) => kind)).toEqual(["replace"])
+  expect(navigated.at(-1)).toBe("/current")
+  stop()
+  // Torn down: nothing left to close.
+  closeBoundary("photo")
+})
+
+test("while a boundary holds a target, a form with no action posts to the route that rendered it", async () => {
+  resetBrowser()
+  const submissions: string[] = []
+  let reject: Error | undefined
+  let intercepted: { boundary: string; pagePath: string } | undefined = {
+    boundary: "photo",
+    pagePath: "/current?sort=new",
+  }
+  const stub: Pick<ClientRouter, "match" | "submit" | "snapshot"> = {
+    match: (path) => ({ routeId: path, params: {} }),
+    submit: async (path) => {
+      submissions.push(path)
+      if (reject !== undefined) throw reject
+    },
+    snapshot: () => {
+      const state: RouterState = {
+        routeId: "page",
+        params: {},
+        path: "/photos/2",
+        data: null,
+        pending: false,
+      }
+      return intercepted === undefined ? state : { ...state, intercepted }
+    },
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: installForms calls only match, submit and snapshot
+  const router = stub as ClientRouter
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+  }
+  const stop = installForms(router)
+  const submit = async (form: FakeFormElement, submitter: FakeElement | null = null) => {
+    document.emit("submit", fakeEvent(form, submitter))
+    await settle()
+    return submissions.at(-1)
+  }
+  // The document URL is the target's, so that is what an unset action resolves to.
+  const onPage = new FakeFormElement()
+  onPage.action = "http://example.test/photos/2"
+  expect(await submit(onPage)).toBe("/current?sort=new")
+
+  const holder = new FakeElement("dialog")
+  holder.setAttribute("data-nifra-boundary", "photo")
+  const inBoundary = new FakeFormElement()
+  inBoundary.action = "http://example.test/photos/2"
+  inBoundary.parent = holder
+  expect(await submit(inBoundary)).toBe("/photos/2")
+
+  const otherHolder = new FakeElement("aside")
+  otherHolder.setAttribute("data-nifra-boundary", "cart")
+  const inOther = new FakeFormElement()
+  inOther.action = "http://example.test/photos/2"
+  inOther.parent = otherHolder
+  expect(await submit(inOther)).toBe("/current?sort=new")
+
+  // An empty action is the document URL too; a named one is kept.
+  const empty = new FakeFormElement()
+  empty.setAttribute("action", " ")
+  empty.action = "http://example.test/photos/2"
+  expect(await submit(empty)).toBe("/current?sort=new")
+  const named = new FakeFormElement()
+  named.setAttribute("action", "/elsewhere")
+  named.action = "http://example.test/elsewhere"
+  expect(await submit(named)).toBe("/elsewhere")
+  const viaButton = new FakeButtonElement({ formaction: "/other" })
+  viaButton.formAction = "http://example.test/other"
+  expect(await submit(onPage, viaButton)).toBe("/other")
+  const blankButton = new FakeButtonElement({ formaction: "" })
+  blankButton.formAction = "http://example.test/photos/2"
+  expect(await submit(inBoundary, blankButton)).toBe("/photos/2")
+
+  // Properties named by controls cannot steer it.
+  const shadowed = new FakeFormElement()
+  shadowed.action = "http://example.test/photos/2"
+  shadowed.parent = holder
+  for (const name of ["closest", "getAttribute", "setAttribute"]) {
+    Object.defineProperty(shadowed, name, { value: new FakeElement("input") })
+  }
+  expect(await submit(shadowed)).toBe("/photos/2")
+
+  // Nothing reached the server: the native post goes to the same route, not the document URL.
+  reject = new Error("offline")
+  await submit(onPage)
+  expect(onPage.nativeSubmits).toBe(1)
+  expect(onPage.getAttribute("action")).toBe("http://example.test/current?sort=new")
+  await submit(inBoundary, blankButton)
+  expect(blankButton.getAttribute("formaction")).toBe("http://example.test/photos/2")
+  reject = undefined
+
+  // No boundary open: the document URL, as always.
+  intercepted = undefined
+  const plain = new FakeFormElement()
+  plain.action = "http://example.test/photos/2"
+  expect(await submit(plain)).toBe("/photos/2")
+  stop()
 })

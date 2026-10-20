@@ -255,6 +255,14 @@ export function installHistory(
   let reversing = false
   // The path the router was last seen loading, so a redirect it follows shows up as a change.
   let expected: string | undefined
+  // The entry holding the page last shown without an intercept boundary, so closing a boundary opened
+  // over it can go back there. Cleared once that entry is replaced or cut off by a push.
+  let pageEntry: number | undefined = index
+  // Before writing the entry at `index` (replace) or pushing past it, which drops every later entry.
+  const writingEntry = (mode: "push" | "replace"): void => {
+    if (mode === "replace" ? pageEntry === index : pageEntry !== undefined && pageEntry > index)
+      pageEntry = undefined
+  }
   type Registration = {
     readonly shouldBlock: BlockerFunction
     readonly emit: (blocker: Blocker) => void
@@ -364,6 +372,7 @@ export function installHistory(
     // whole object on back/forward for free.
     const entryState =
       state !== undefined ? { nifraIndex: index, nifraState: state } : { nifraIndex: index }
+    writingEntry(mode)
     if (mode === "replace") {
       // Replace the current entry (same index) with the new URL. The entry we're leaving is discarded, so
       // its scroll isn't worth saving; the new route scrolls to its fragment target, else the top.
@@ -417,7 +426,15 @@ export function installHistory(
     }
     go(to, navOptions?.replace === true ? "replace" : "push", navOptions?.state)
   }
-  setBrowserNavigate(navigate, router)
+  // Back through the entries the boundary added to the page underneath; without that entry, replace
+  // the boundary's URL with the page's.
+  const closeBoundary = (name: string): void => {
+    const intercepted = router.snapshot().intercepted
+    if (intercepted === undefined || intercepted.boundary !== name) return
+    if (pageEntry !== undefined && pageEntry < index) history.go(pageEntry - index)
+    else go(intercepted.pagePath, "replace")
+  }
+  setBrowserNavigate(navigate, router, closeBoundary)
 
   // Publish the guard registry through the DOM-free bridge (`@nifrajs/web`'s `registerBlocker`, which an
   // adapter's `useBlocker` calls). One slot, latest registration wins; the unregister clears it only if
@@ -555,6 +572,7 @@ export function installHistory(
   // form post back to the page it was on adds nothing.
   const follow = (path: string): void => {
     if (path !== location.pathname + location.search) {
+      writingEntry(expected === undefined ? "push" : "replace")
       if (expected === undefined) {
         history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
         index += 1
@@ -573,13 +591,15 @@ export function installHistory(
   // A settle with no navigation (a submit's revalidation) scrolls nothing. Either way the rendered
   // page is then scanned for links to warm.
   const settled = (): void => {
-    const { pending, pendingPath } = router.snapshot()
+    const { pending, pendingPath, intercepted } = router.snapshot()
     if (pending) {
       if (pendingPath !== undefined && pendingPath !== expected) follow(pendingPath)
       return
     }
     expected = undefined
-    const target = pendingScroll
+    if (intercepted === undefined) pageEntry = index
+    // A boundary opened over the page leaves the page where it was scrolled.
+    const target = intercepted === undefined ? pendingScroll : null
     pendingScroll = null
     requestAnimationFrame(() => {
       if (target !== null && "hash" in target) {
@@ -693,6 +713,31 @@ export function applyHead(head: Meta, path?: string): void {
   }
 }
 
+/**
+ * The route path a form with no action posts to while an intercept boundary holds a target. The
+ * document URL is then the target's, but the form belongs to whichever route rendered it: the target
+ * when it sits inside the boundary's `data-nifra-boundary="<name>"` element, otherwise the page
+ * underneath. `undefined` when the form names its action, or no boundary holds a target.
+ */
+function implicitActionOwner(
+  router: ClientRouter,
+  form: HTMLFormElement,
+  actionFrom: Element,
+): string | undefined {
+  const { intercepted, path } = router.snapshot()
+  if (intercepted === undefined) return undefined
+  const named = Element.prototype.getAttribute.call(actionFrom, actionAttribute(actionFrom, form))
+  if (named !== null && named.trim() !== "") return undefined
+  const holder = Element.prototype.closest.call(form, "[data-nifra-boundary]")
+  const inside =
+    holder !== null &&
+    Element.prototype.getAttribute.call(holder, "data-nifra-boundary") === intercepted.boundary
+  return inside ? path : intercepted.pagePath
+}
+
+const actionAttribute = (actionFrom: Element, form: HTMLFormElement): string =>
+  actionFrom === form ? "action" : "formaction"
+
 // A control named like a form property shadows it (`<input name="target">` makes `form.target` that
 // input), so the form's own state is read through the prototype accessors.
 function formProperty(form: HTMLFormElement, name: "action" | "method" | "target"): string {
@@ -726,8 +771,14 @@ export function installForms(router: ClientRouter): () => void {
       : formProperty(form, "target")
     if (target !== "" && target !== "_self") return // it loads in another browsing context
     // Resolved (or the current document URL if unset).
+    const actionFrom = submitter?.hasAttribute("formaction") ? submitter : form
+    const owner = implicitActionOwner(router, form, actionFrom)
     const url = sameDocumentUrl(
-      submitter?.hasAttribute("formaction") ? submitter.formAction : formProperty(form, "action"),
+      owner !== undefined
+        ? appUrl(owner)
+        : actionFrom === submitter
+          ? submitter.formAction
+          : formProperty(form, "action"),
     )
     if (url === null) return
     if (router.match(url.pathname) === null) return // not an app route → native submit
@@ -742,8 +793,14 @@ export function installForms(router: ClientRouter): () => void {
       // The server answered: load the page that shows the result rather than run the action again.
       if (to !== undefined) location.assign(to)
       else {
-        // Nothing reached the server - post natively, through the same button.
+        // Nothing reached the server - post natively, through the same button, to the same route.
         native.add(form)
+        if (owner !== undefined)
+          Element.prototype.setAttribute.call(
+            actionFrom,
+            actionAttribute(actionFrom, form),
+            url.href,
+          )
         HTMLFormElement.prototype.requestSubmit.call(form, submitter)
       }
     })

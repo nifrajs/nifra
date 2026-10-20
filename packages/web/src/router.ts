@@ -7,7 +7,7 @@
 import { decodeRouteParams } from "@nifrajs/core/pattern"
 import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
-import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
+import type { BoundaryDescriptor, BoundaryState, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 import { appUrl, requestPattern } from "./internal/route-path.ts"
@@ -136,7 +136,8 @@ export interface RouterState {
   readonly serverComponents?: import("./server-components/types.ts").ComponentState | undefined
   readonly routeId: string
   readonly params: Record<string, string>
-  /** The current URL path (used to revalidate the active loader after an action). */
+  /** The current URL path (used to revalidate the active loader after an action). While
+   * {@link intercepted} is set it is the target shown in the boundary, not the page's own. */
   readonly path: string
   readonly data: unknown
   /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no
@@ -154,6 +155,16 @@ export interface RouterState {
   readonly pendingPath?: string | undefined
   /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */
   readonly submission?: Submission
+  /** Set while an intercept boundary shows a navigation's target over the page: the boundary holding
+   * it, and the path the page underneath was loaded from. The page revalidates under `pagePath`, the
+   * boundary under `path`. */
+  readonly intercepted?: Intercepted
+}
+
+/** Which intercept boundary is open, and the page underneath it. */
+export interface Intercepted {
+  readonly boundary: string
+  readonly pagePath: string
 }
 
 /** A route id paired with its nifra pattern (e.g. `":id"` segments) - the matcher input. */
@@ -542,6 +553,52 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     serverComponents: value.serverComponents,
     ...(value.boundaries === undefined ? {} : { boundaries: value.boundaries }),
   })
+  // The path the page on screen was loaded from. While a boundary holds an intercepted target, `path`
+  // is that target's URL, so anything that reloads or caches the page must read this instead.
+  const pagePathOf = (current: RouterState): string => current.intercepted?.pagePath ?? current.path
+  // `boundaries` with `name` holding a target's outcome. The URL names one target, so every other
+  // intercept boundary goes back to unresolved. A target that answered with a status, or failed, is
+  // an error state: its data never reaches the boundary.
+  const holdTarget = (
+    boundaries: BoundaryStates | undefined,
+    descriptor: Omit<BoundaryDescriptor, "hasLoad">,
+    outcome: LoadedRouteData | undefined,
+  ): BoundaryStates => {
+    const next: Record<string, BoundaryState> = {}
+    for (const [name, boundary] of Object.entries(boundaries ?? {})) {
+      next[name] =
+        typeof boundary.mode === "string" || name === descriptor.name
+          ? boundary
+          : {
+              name: boundary.name,
+              mode: boundary.mode,
+              status: "unresolved",
+              ...(boundary.errorId === undefined ? {} : { errorId: boundary.errorId }),
+            }
+    }
+    const base = {
+      name: descriptor.name,
+      mode: descriptor.mode,
+      ...(descriptor.errorId === undefined ? {} : { errorId: descriptor.errorId }),
+    }
+    next[descriptor.name] =
+      outcome === undefined || outcome.terminalRouteId !== undefined
+        ? { ...base, status: "error", error: { name: "Error", message: "Boundary failed" } }
+        : { ...base, status: "ready", data: outcome.data }
+    return next
+  }
+  // `boundaries` with `name`'s action result set (or cleared, for `undefined`). Only a boundary showing
+  // its target's data carries one.
+  const withActionData = (
+    boundaries: BoundaryStates | undefined,
+    name: string,
+    actionData: unknown,
+  ): BoundaryStates | undefined => {
+    const held = boundaries?.[name]
+    if (held === undefined || held.status !== "ready") return boundaries
+    const { actionData: _previous, ...rest } = held
+    return { ...boundaries, [name]: actionData === undefined ? rest : { ...rest, actionData } }
+  }
   const loadRouteData = async (
     path: string,
     match: { routeId: string; params: Record<string, string> },
@@ -550,7 +607,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     keepLayouts?: boolean,
   ): Promise<LoadedRouteData> => {
     const retainFrom = keepLayouts
-      ? state.layoutData && { path: state.path, layoutData: state.layoutData }
+      ? state.layoutData && { path: pagePathOf(state), layoutData: state.layoutData }
       : undefined
     const retain = retainFrom?.layoutData.map((_, index) => index) ?? []
     const payload = await fetchData(
@@ -638,7 +695,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       params: target.params,
       signal,
       body,
-      serverLoader: async () => state.data,
+      // An action posted to the target an intercept boundary holds belongs to that target.
+      serverLoader: async () =>
+        state.intercepted !== undefined && pathnameOf(action) === pathnameOf(state.path)
+          ? state.boundaries?.[state.intercepted.boundary]?.data
+          : state.data,
     })
     if (result === undefined) return { body }
     if (!isClientActionResult(result)) {
@@ -819,9 +880,67 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     }
   }
 
-  // Refetch the active route + republish, single-flight via the shared `generation`. Shared by `invalidate`
-  // and targeted revalidation. Rejects if the fetch fails (clearing its own `pending` first).
-  const refetchActive = async (): Promise<void> => {
+  // Reload what is on screen: the page under its own path when `page`, and, while an intercept boundary
+  // holds a target, that target under its URL when `target`. The part not reloaded is kept as shown.
+  // Returns the fields to publish, both parts together. A target that fails becomes its boundary's
+  // error state rather than failing the page, as a dynamic boundary's load does.
+  const reloadActive = async (
+    signal: AbortSignal,
+    page: boolean,
+    target: boolean,
+  ): Promise<ReturnType<typeof dataFields>> => {
+    const pagePath = pagePathOf(state)
+    const intercepted = state.intercepted
+    const targetPath = state.path
+    const pageRoute = { routeId: state.routeId, params: state.params }
+    const targetRoute = intercepted !== undefined && target ? match(targetPath) : null
+    const [loaded, targetOutcome] = await Promise.all([
+      page
+        ? applyClientLoader(pagePath, pageRoute, signal, () =>
+            loadRouteData(pagePath, pageRoute, signal),
+          )
+        : dataFields(state),
+      targetRoute === null
+        ? undefined
+        : (async (): Promise<LoadedRouteData | undefined> => {
+            try {
+              await loadModule?.(targetRoute.routeId, targetPath)
+              const outcome = await applyClientLoader(targetPath, targetRoute, signal, () =>
+                loadRouteData(targetPath, targetRoute, signal),
+              )
+              cachePut(targetPath, outcome)
+              return outcome
+            } catch {
+              return undefined
+            }
+          })(),
+    ])
+    if (page) cachePut(pagePath, loaded)
+    const fields = dataFields(loaded)
+    if (intercepted === undefined) return fields
+    const held = state.boundaries?.[intercepted.boundary]
+    if (held === undefined) return fields
+    if (targetRoute === null)
+      return {
+        ...fields,
+        boundaries: { ...(fields.boundaries ?? {}), [intercepted.boundary]: held },
+      }
+    // A reload keeps the result of the last action posted to the target, as the page keeps its own.
+    const boundaries = withActionData(
+      holdTarget(fields.boundaries, held, targetOutcome),
+      intercepted.boundary,
+      held.actionData,
+    )
+    return { ...fields, ...(boundaries === undefined ? {} : { boundaries }) }
+  }
+
+  // Refetch what is on screen + republish, single-flight via the shared `generation`. Shared by
+  // `invalidate` and targeted revalidation: `inScope` says which paths to refresh, and a page or held
+  // target outside it is kept. Rejects if the page's fetch fails (clearing its own `pending` first).
+  const refetchActive = async (inScope?: (path: string) => boolean): Promise<void> => {
+    const page = inScope === undefined || inScope(pagePathOf(state))
+    const target = state.intercepted !== undefined && (inScope === undefined || inScope(state.path))
+    if (!page && !target) return
     const mine = ++generation
     navAbort?.abort()
     const ac = new AbortController()
@@ -829,15 +948,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     state = { ...state, pending: true }
     emit()
     try {
-      const active = { routeId: state.routeId, params: state.params }
-      const loaded = await applyClientLoader(state.path, active, ac.signal, () =>
-        loadRouteData(state.path, active, ac.signal),
-      )
+      const fields = await reloadActive(ac.signal, page, target)
       if (mine !== generation) return // superseded - drop the stale result
-      cachePut(state.path, loaded)
       state = {
         ...state,
-        ...dataFields(loaded),
+        ...fields,
         pending: false,
       }
       emit()
@@ -874,7 +989,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // swallowed - a failed targeted refresh must not fail the mutation that triggered it.
   const refreshMounted = async (paths: readonly string[], skipActive: boolean): Promise<void> => {
     const jobs: Promise<void>[] = []
-    if (!skipActive && paths.includes(state.path)) jobs.push(refetchActive().catch(() => {}))
+    if (!skipActive) jobs.push(refetchActive((path) => paths.includes(path)).catch(() => {}))
     for (const entry of fetchers.values()) jobs.push(entry.refreshIfShowing(paths))
     await Promise.all(jobs)
   }
@@ -1001,6 +1116,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       // normal match → fetch → publish below, so data is never stale. Abort an in-flight fetch first: a
       // rapid `?tab` after a real nav must not let the older fetch overwrite this synchronous update.
       if (
+        state.intercepted === undefined &&
         matched.routeId === state.routeId &&
         pathnameOf(path) === pathnameOf(state.path) &&
         isClientOnlySearchChange(
@@ -1026,8 +1142,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const [to, target, loaded] = await loadFollowing(mine, path, matched, ac.signal, true, true)
         if (mine !== generation) return // a newer navigation superseded this one - drop the stale result
         cachePut(to, loaded) // keep the keyed cache coherent with what we publish
+        // The page's own URL is never intercepted: navigating there (Back out of a boundary, a link
+        // to itself) shows the page, even when a boundary's pattern matches it.
+        const pagePath = pagePathOf(state)
         const interception =
-          loaded.terminalRouteId === undefined
+          loaded.terminalRouteId === undefined && pathnameOf(to) !== pathnameOf(pagePath)
             ? interceptionFor(state.routeId, to, target)
             : undefined
         if (interception !== undefined) {
@@ -1038,16 +1157,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           state = {
             ...state,
             path: to,
-            boundaries: {
-              ...(state.boundaries ?? {}),
-              [interception.name]: {
-                name: interception.name,
-                mode: interception.mode,
-                status: "ready",
-                data: loaded.data,
-                ...(interception.errorId === undefined ? {} : { errorId: interception.errorId }),
-              },
-            },
+            boundaries: holdTarget(state.boundaries, interception, loaded),
+            intercepted: { boundary: interception.name, pagePath },
             actionData: undefined,
             pending: false,
             pendingPath: undefined,
@@ -1077,6 +1188,22 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     submit: async (action, body, opts) => {
       const mine = ++generation
       const previousActionData = state.actionData
+      // An action posted to the target an intercept boundary holds answers that boundary, not the page.
+      const actionBoundary =
+        state.intercepted !== undefined && pathnameOf(action) === pathnameOf(state.path)
+          ? state.intercepted.boundary
+          : undefined
+      const previousBoundaryActionData =
+        actionBoundary === undefined ? undefined : state.boundaries?.[actionBoundary]?.actionData
+      // The state with `value` as the action's result, on whichever owns the action.
+      const answered = (
+        current: { readonly boundaries?: BoundaryStates | undefined },
+        value: unknown,
+      ): Partial<RouterState> => {
+        if (actionBoundary === undefined) return { actionData: value }
+        const boundaries = withActionData(current.boundaries, actionBoundary, value)
+        return boundaries === undefined ? {} : { boundaries }
+      }
       // A superseding navigation/submit aborts this submit's FOLLOW-UP reads (revalidation / redirect
       // fetch + their NDJSON drains) - not the mutation POST itself, which should complete.
       // Wire into `navAbort` like `navigate`/`refetchActive`, so a later nav cancels the in-flight read.
@@ -1097,7 +1224,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       try {
         const prepared = await prepareClientAction(action, body, ac.signal)
         if (Object.hasOwn(prepared, "optimisticData")) {
-          state = { ...state, actionData: prepared.optimisticData }
+          state = { ...state, ...answered(state, prepared.optimisticData) }
           emit()
         }
         const res = await fetch(appUrl(action), {
@@ -1145,31 +1272,30 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // Routes the action declared changed (via the `revalidate()` helper → `X-Nifra-Revalidate`),
         // validated against the manifest.
         const changed = parseRevalidate(res.headers.get(REVALIDATE_HEADER))
-        // Revalidate the active route's loader so the mutation is reflected - unless the caller opted
-        // out (`revalidate: false`). A server-declared revalidate of the active path overrides the
-        // opt-out (the server says it changed, so stale data would be wrong). Default is to revalidate.
-        const skipActive = opts?.revalidate === false && !changed.includes(state.path)
-        const active = { routeId: state.routeId, params: state.params }
-        const loaded = skipActive
-          ? {
-              ...dataFields(state),
-            }
-          : await applyClientLoader(state.path, active, ac.signal, () =>
-              loadRouteData(state.path, active, ac.signal),
-            )
+        // Revalidate what is on screen so the mutation is reflected - the page, and a target an
+        // intercept boundary holds - unless the caller opted out (`revalidate: false`). A
+        // server-declared revalidate of a path on screen overrides the opt-out (the server says it
+        // changed, so stale data would be wrong). Default is to revalidate.
+        const pagePath = pagePathOf(state)
+        const reloadPage = opts?.revalidate !== false || changed.includes(pagePath)
+        const reloadTarget =
+          state.intercepted !== undefined &&
+          (opts?.revalidate !== false || changed.includes(state.path))
+        const fields = await reloadActive(ac.signal, reloadPage, reloadTarget)
         if (mine !== generation) return
-        cachePut(state.path, loaded) // the revalidated (or kept) data is now the cache's truth
         // Mark the OTHER changed routes stale so the next access refetches.
-        markStale(changed.filter((p) => p !== state.path))
+        markStale(changed.filter((p) => p !== pagePath && (!reloadTarget || p !== state.path)))
         // Reconcile: publish the revalidated data + actionData; omit `submission` (the optimistic
         // window is over - the real data now drives the view).
         state = {
           routeId: state.routeId,
           params: state.params,
           path: state.path,
-          ...dataFields(loaded),
-          actionData,
+          ...fields,
+          actionData: previousActionData,
+          ...answered(fields, actionData),
           pending: false,
+          ...(state.intercepted === undefined ? {} : { intercepted: state.intercepted }),
         }
         emit()
         // Refresh any mounted fetcher showing one of the changed routes (the active route was just
@@ -1185,7 +1311,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             path: state.path,
             ...dataFields(state),
             actionData: previousActionData,
+            ...(actionBoundary === undefined
+              ? {}
+              : answered(dataFields(state), previousBoundaryActionData)),
             pending: false,
+            ...(state.intercepted === undefined ? {} : { intercepted: state.intercepted }),
           }
           emit()
         }
@@ -1204,7 +1334,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       // or an invalidate-all) + any fetcher showing a targeted path. The active refetch rejects on
       // failure (the caller asked to refresh); fetcher refreshes are best-effort (swallowed).
       const jobs: Promise<void>[] = []
-      if (paths === undefined || paths.includes(state.path)) jobs.push(refetchActive())
+      jobs.push(refetchActive(paths === undefined ? undefined : (path) => paths.includes(path)))
       for (const entry of fetchers.values()) jobs.push(entry.refreshIfShowing(targets))
       await Promise.all(jobs)
     },

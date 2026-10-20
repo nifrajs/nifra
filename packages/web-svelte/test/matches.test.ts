@@ -67,6 +67,25 @@ test("the mounted router reports what the server rendered", async () => {
   `)
 })
 
+test("with a boundary holding a target, the page's matches come from the page's own path", async () => {
+  await run(`${setup}
+    const state = {
+      routeId: "orgs/[org]", params: { org: "acme" }, path: "/photos/2", data: { org: "acme" },
+      layoutData: [{ user: "ada" }], pending: false,
+      intercepted: { boundary: "photo", pagePath: "/orgs/acme" },
+    };
+    const router = { snapshot: () => state, subscribe: () => () => {} };
+    const html = render(Router, {
+      props: {
+        router, routes: { "orgs/[org]": [Report, Report] }, searchSchemas: undefined,
+        matchChains: { "orgs/[org]": matchChain },
+      },
+    }).body;
+    expectReports(html, "layout", expected);
+    expectReports(html, "page", expected);
+  `)
+})
+
 test("a render without a chain reports nothing", async () => {
   await run(`${setup}
     expectReports(await svelteAdapter.renderToString([Report], { data: null, path: "/" }), "page", "[]");

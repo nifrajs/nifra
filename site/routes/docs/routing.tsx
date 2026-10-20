@@ -175,7 +175,7 @@ export default function OrgLayout({ children }: { children: ReactNode }) {
 }`
 
 const MODAL_ROUTE = `// routes/_layout.tsx - a link to /photos/:id from any page opens the photo over that page
-import type { Boundary, BoundaryStates } from "@nifrajs/web"
+import { type Boundary, type BoundaryStates, closeBoundary } from "@nifrajs/web"
 import type { ReactNode } from "react"
 import type { Route as Photo } from "./photos/+types/[id]"
 
@@ -193,10 +193,11 @@ export default function Layout(props: { children?: ReactNode; boundaries?: Bound
   return (
     <>
       {props.children}
-      {open?.status === "ready" ? (
-        <dialog open>
-          {photo.render(open.data as Photo.LoaderData)}
-          <button type="button" onClick={() => history.back()}>
+      {open?.status === "ready" || open?.status === "error" ? (
+        // A form in here with no action posts to the photo's route, not the page's.
+        <dialog open data-nifra-boundary="photo">
+          {open.status === "ready" ? photo.render(open.data as Photo.LoaderData) : <p>Could not load.</p>}
+          <button type="button" onClick={() => closeBoundary("photo")}>
             Close
           </button>
         </dialog>
@@ -508,8 +509,40 @@ export default function Routing() {
           when it lands on another matching URL.
         </li>
         <li>
-          The modal exists only after a client navigation, which pushed a history entry, so{" "}
-          <code>history.back()</code> is always the way to close it.
+          <code>closeBoundary(&quot;photo&quot;)</code> from <code>@nifrajs/web</code> closes it: it
+          goes back through the entries the modal added, or replaces the modal&apos;s URL with the
+          page&apos;s when those entries are not in this tab&apos;s history (the modal was opened with
+          a replace navigation). It does nothing when that boundary holds no target.
+        </li>
+        <li>
+          While the modal is open, the route props and hooks describe the page underneath:{" "}
+          <code>useLocation</code>, <code>useSearch</code>, <code>useParams</code> and{" "}
+          <code>useMatches</code> report the page&apos;s path, query and params, while the address bar
+          shows the modal&apos;s URL.
+        </li>
+        <li>
+          Opening the modal keeps the page&apos;s scroll position, and closing it restores the
+          page&apos;s entry with its scroll. A link to the page&apos;s own URL is a normal navigation,
+          never an interception, and only one intercept boundary is open at a time: opening another
+          closes the first.
+        </li>
+        <li>
+          An action submitted while the modal is open revalidates both routes: the page reloads
+          under its own URL and the target under the modal&apos;s, each with its own cache entry.
+          With <code>revalidate: false</code>, only the paths the server names as changed reload.{" "}
+          <code>invalidate()</code> reloads both, and <code>invalidate(paths)</code> reloads the ones
+          listed. If the target answers a reload with a status or throws, the modal stays open and
+          the boundary&apos;s status becomes <code>&quot;error&quot;</code> with a generic error, so
+          none of that answer reaches the page.
+        </li>
+        <li>
+          A form with no <code>action</code> (or a submitter with no <code>formaction</code>) posts to
+          the route that owns it: the target&apos;s URL when the form sits inside an element with{" "}
+          <code>data-nifra-boundary=&quot;photo&quot;</code>, otherwise the page&apos;s URL. A form
+          with an explicit action posts where it says. The result of an action posted to the
+          target arrives as <code>boundaries.photo.actionData</code>, and the page&apos;s own{" "}
+          <code>actionData</code> stays the page&apos;s. An action that redirects renders the
+          redirect&apos;s target as a full page, never in the modal.
         </li>
         <li>
           The component renders the boundary itself: it reads <code>boundaries.&lt;name&gt;</code>{" "}
