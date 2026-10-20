@@ -105,6 +105,8 @@ export interface RouteDataEnvelope {
   /** Terminal status signalled by a loader. Added by the browser transport after reading
    * `X-Nifra-Status`; old servers and static data files simply omit it. */
   readonly status?: number
+  /** A live load's handle, carried through to {@link RouterState.live} untouched. */
+  readonly live?: unknown
 }
 
 /** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */
@@ -159,6 +161,8 @@ export interface RouterState {
    * it, and the path the page underneath was loaded from. The page revalidates under `pagePath`, the
    * boundary under `path`. */
   readonly intercepted?: Intercepted
+  /** Opaque: which live load the page data on screen came from (`@nifrajs/web/live-client`). */
+  readonly live?: unknown
 }
 
 /** Which intercept boundary is open, and the page underneath it. */
@@ -432,6 +436,25 @@ const targetUrl = (to: string): URL | undefined => {
 const redirected = (to: string, cause?: unknown): Error =>
   Object.assign(new Error(`[nifra/web] redirected to ${to}`, { cause }), { redirectTo: to })
 
+/**
+ * A route data response as `fetchData` resolves it: a loader's in-app redirect rejects with its
+ * target, a terminal status becomes an envelope carrying it, and any other failure rejects.
+ */
+export const routeDataOf = async (
+  res: Response,
+  path: string,
+  signal?: AbortSignal,
+): Promise<unknown> => {
+  const redirectTo = res.headers.get(REDIRECT_HEADER)
+  if (redirectTo !== null) throw redirected(redirectTo)
+  const status = Number(res.headers.get(STATUS_HEADER))
+  if (Number.isInteger(status) && status >= 400 && status <= 599) {
+    return { v: 1, data: null, status } satisfies RouteDataEnvelope
+  }
+  if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
+  return readResponseData(res, signal)
+}
+
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
@@ -454,15 +477,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     headers.set(RETAIN_HEADER, navigation.retain.join(","))
     headers.set(NAV_FROM_HEADER, navigation.from)
   }
-  const res = await fetch(appUrl(path), { headers, signal: signal ?? null })
-  const redirectTo = res.headers.get(REDIRECT_HEADER)
-  if (redirectTo !== null) throw redirected(redirectTo)
-  const status = Number(res.headers.get(STATUS_HEADER))
-  if (Number.isInteger(status) && status >= 400 && status <= 599) {
-    return { v: 1, data: null, status } satisfies RouteDataEnvelope
-  }
-  if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
-  return readResponseData(res, signal)
+  return routeDataOf(await fetch(appUrl(path), { headers, signal: signal ?? null }), path, signal)
 }
 
 /**
@@ -549,11 +564,13 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     readonly layoutData?: readonly unknown[] | undefined
     readonly terminalRouteId?: string | undefined
     readonly boundaries?: BoundaryStates
+    readonly live?: unknown
   }
   const dataFields = (value: LoadedRouteData) => ({
     data: value.data,
     layoutData: value.layoutData,
     serverComponents: value.serverComponents,
+    live: value.live,
     ...(value.boundaries === undefined ? {} : { boundaries: value.boundaries }),
   })
   // The path the page on screen was loaded from. While a boundary holds an intercepted target, `path`
@@ -587,7 +604,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     next[descriptor.name] =
       outcome === undefined || outcome.terminalRouteId !== undefined
         ? { ...base, status: "error", error: { name: "Error", message: "Boundary failed" } }
-        : { ...base, status: "ready", data: outcome.data }
+        : { ...base, status: "ready", data: outcome.data, live: outcome.live }
     return next
   }
   // `boundaries` with `name`'s action result set (or cleared, for `undefined`). Only a boundary showing
@@ -644,6 +661,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       data: payload.data,
       layoutData,
       serverComponents: payload.serverComponents,
+      live: payload.live,
       ...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),
     }
   }
@@ -1379,9 +1397,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     hydrate,
     invalidate: async (paths) => {
       // Mark targeted cache entries stale (all entries when no `paths`) - unmounted ones refetch
-      // lazily on next access.
+      // lazily on next access. A warmed prefetch of a target is dropped: it would show the old data.
       const targets = paths ?? [...cache.keys()]
       markStale(targets)
+      if (paths === undefined) prefetched.clear()
+      else for (const path of paths) prefetched.delete(path)
       // Refresh mounted readers now: the active route (when in scope - an explicit list including it,
       // or an invalidate-all) + any fetcher showing a targeted path. The active refetch rejects on
       // failure (the caller asked to refresh); fetcher refreshes are best-effort (swallowed).

@@ -228,14 +228,15 @@ export class LiveHub {
     const state = ws.data
     const now = Date.now()
     const prepared: Prepared[] = []
-    const frames = new Set<string>()
+    // One grant per path: the page and each open boundary show different URLs.
+    const paths = new Set<string>()
     for (const token of watch.grants) {
       const grant = await this.ring.open(token, now)
       if (grant === undefined || grant.claims.sid !== state.sid) {
         return this.drop(ws, CLOSE_BAD_GRANT, "grant")
       }
-      if (frames.has(grant.claims.frame)) return this.drop(ws, CLOSE_PROTOCOL, "protocol")
-      frames.add(grant.claims.frame)
+      if (paths.has(grant.claims.path)) return this.drop(ws, CLOSE_PROTOCOL, "protocol")
+      paths.add(grant.claims.path)
       const owners: { id: string; w: number; hashes: number[] }[] = []
       const tags: string[] = []
       for (const [id, owner] of Object.entries(grant.claims.owners)) {
@@ -278,16 +279,20 @@ export class LiveHub {
       this.members.set(tag, (this.members.get(tag) ?? 0) + 1)
       ws.subscribe(this.topic(tag))
     }
-    const stale: string[] = []
+    // Per grant, in watch order: two frames can hold an owner of the same id.
+    const stale: string[][] = []
     let exp = Number.POSITIVE_INFINITY
     for (const { grant, owners } of prepared) {
       exp = Math.min(exp, grant.claims.exp * 1000)
+      const changed: string[] = []
       for (const owner of owners) {
-        const changed =
+        if (
           !this.history.known(owner.w) ||
           owner.hashes.some((hash) => this.history.changedSince(hash, owner.w))
-        if (changed && !stale.includes(owner.id)) stale.push(owner.id)
+        )
+          changed.push(owner.id)
       }
+      stale.push(changed)
     }
     state.exp = exp
     this.send(ws, JSON.stringify({ t: "ready", gen: watch.gen, stale }))

@@ -214,7 +214,7 @@ async function watching(served: Served, client: Client, gen = 1): Promise<LoadRe
   const loaded = await liveLoad(served, client.sid)
   expect(loaded.grant).toBeDefined()
   client.ws.send(JSON.stringify({ t: "watch", gen, grants: [loaded.grant] }))
-  expect(await client.next()).toEqual({ t: "ready", gen, stale: [] })
+  expect(await client.next()).toEqual({ t: "ready", gen, stale: [[]] })
   return loaded
 }
 
@@ -253,7 +253,7 @@ for (const jsRegistry of [false, true]) {
       await published
       const after = await client.drain()
       expect(ready).toMatchObject({ t: "ready", gen: 1 })
-      const stale = ready === "p" ? [] : ready.stale
+      const stale: unknown = ready === "p" || !Array.isArray(ready.stale) ? [] : ready.stale[0]
       const heard = after.some(
         (frame) => frame.t === "changed" && frame.tag === tagOf(loaded, PAGE),
       )
@@ -435,7 +435,7 @@ test("rotation across processes: a grant under the demoted secret hears changes 
   const client = await connect(newProcess.base)
   const loaded = await liveLoad({ app: oldProcess.app, base: newProcess.base }, client.sid)
   client.ws.send(JSON.stringify({ t: "watch", gen: 1, grants: [loaded.grant] }))
-  expect(await client.next()).toEqual({ t: "ready", gen: 1, stale: [] })
+  expect(await client.next()).toEqual({ t: "ready", gen: 1, stale: [[]] })
   jest.useFakeTimers()
   await oldProcess.runtime.publish("post:42")
   expect(await client.drain()).toEqual([{ t: "changed", tag: tagOf(loaded, PAGE), spread: 0 }])

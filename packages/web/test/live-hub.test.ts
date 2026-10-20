@@ -194,7 +194,7 @@ async function watched(
 ): Promise<FakeSocket> {
   const ws = connect(r)
   await watch(r, ws, 1, [await grantFor(r, ws, owners, extra)])
-  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: [] }])
+  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: [[]] }])
   return ws
 }
 
@@ -320,7 +320,7 @@ test("ready marks exactly the owners whose keys changed after their watermark", 
   const grant = await grantFor(r, ws, { "L:root": ["site:nav"], "P:a": ["post:1"] })
   await change(r, "post:1")
   await watch(r, ws, 1, [grant])
-  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: ["P:a"] }])
+  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: [["P:a"]] }])
 })
 
 test("a watermark outside the recorded history marks the owner stale", async () => {
@@ -333,11 +333,11 @@ test("a watermark outside the recorded history marks the owner stale", async () 
   // The oldest entry left the ring: anything at or below it is unknown.
   expect(r.history.known(r.history.floor - 1)).toBe(false)
   await watch(r, ws, 1, [early])
-  expect(readies(ws).at(-1)).toEqual({ t: "ready", gen: 1, stale: ["L:root"] })
+  expect(readies(ws).at(-1)).toEqual({ t: "ready", gen: 1, stale: [["L:root"]] })
   // A watermark this process has not reached yet (another process ran ahead) is unknown too.
   const ahead = await grantFor(r, ws, { "L:root": ["site:nav"] }, { s: r.history.last + 1 })
   await watch(r, ws, 2, [ahead])
-  expect(readies(ws).at(-1)).toEqual({ t: "ready", gen: 2, stale: ["L:root"] })
+  expect(readies(ws).at(-1)).toEqual({ t: "ready", gen: 2, stale: [["L:root"]] })
 })
 
 test("history entries older than two minutes are pruned and read as unknown", async () => {
@@ -349,7 +349,7 @@ test("history entries older than two minutes are pruned and read as unknown", as
   setSystemTime(new Date(start + 121_000))
   await change(r, "other:2")
   await watch(r, ws, 1, [grant])
-  expect(readies(ws).at(-1)).toEqual({ t: "ready", gen: 1, stale: ["L:root"] })
+  expect(readies(ws).at(-1)).toEqual({ t: "ready", gen: 1, stale: [["L:root"]] })
 })
 
 test("an event while a watch installs is reported in ready.stale, and ready precedes later frames", async () => {
@@ -370,7 +370,7 @@ test("an event while a watch installs is reported in ready.stale, and ready prec
   release()
   await installing
   expect(frames(ws).map((frame) => frame.t)).toEqual(["welcome", "ready"])
-  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: ["P:a"] }])
+  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: [["P:a"]] }])
   jest.advanceTimersByTime(COALESCE_MS)
   await change(r, "post:1")
   expect(frames(ws).map((frame) => frame.t)).toEqual(["welcome", "ready", "changed"])
@@ -392,7 +392,7 @@ test("a lower or repeated gen is ignored, and a newer watch supersedes one still
   expect(watch(r, ws, 4, [grant])).toBeUndefined()
   release()
   await Promise.all([third, fourth])
-  expect(readies(ws)).toEqual([{ t: "ready", gen: 4, stale: [] }])
+  expect(readies(ws)).toEqual([{ t: "ready", gen: 4, stale: [[]] }])
 })
 
 test("a watch replaces the socket's frames: dropped tags stop arriving", async () => {
@@ -450,7 +450,7 @@ test("the first accepted grant binds the socket's subject; another subject close
   const mixed = connect(r)
   await watch(r, mixed, 1, [
     await grantFor(r, mixed, { "P:a": ["post:1"] }),
-    await grantFor(r, mixed, { "B:m": ["post:2"] }, { sub: "bob", frame: "modal" }),
+    await grantFor(r, mixed, { "P:b": ["post:2"] }, { sub: "bob", path: "/photos/2" }),
   ])
   expect(mixed.closed?.code).toBe(CLOSE_SCOPE)
 
@@ -466,12 +466,28 @@ test("the first accepted grant binds the socket's subject; another subject close
   expect(unbound.data.sub).toBe("bob")
 })
 
-test("two grants for one frame in a watch close 1008", async () => {
+test("two grants for one path in a watch close 1008", async () => {
   const r = await rig()
   const ws = connect(r)
   const grant = await grantFor(r, ws, { "P:a": ["post:1"] })
   await watch(r, ws, 1, [grant, grant])
   expect(ws.closed?.code).toBe(CLOSE_PROTOCOL)
+})
+
+test("a page and an open boundary watch together; ready.stale is per grant, so a shared owner id stays apart", async () => {
+  const r = await rig()
+  const ws = connect(r)
+  const page = await grantFor(r, ws, { "L:root": ["site:nav"], "P:a": ["post:1"] })
+  const boundary = await grantFor(
+    r,
+    ws,
+    { "L:root": ["site:footer"], "P:b": ["photo:9"] },
+    { path: "/photos/9" },
+  )
+  await change(r, "site:footer")
+  await watch(r, ws, 1, [page, boundary])
+  expect(ws.closed).toBeUndefined()
+  expect(readies(ws)).toEqual([{ t: "ready", gen: 1, stale: [[], ["L:root"]] }])
 })
 
 test("issued-not-installed: revoke and revokeAll refuse a grant before its first watch", async () => {

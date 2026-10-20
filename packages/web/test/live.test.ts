@@ -183,6 +183,7 @@ interface LiveJson {
     grant?: string
     tags?: Record<string, string[]>
     page?: string
+    ttl?: number
   }
   error?: string
 }
@@ -546,6 +547,42 @@ test("a retained live load sends x-nifra-from and x-nifra-retain as the router d
   expect(seen[0]?.headers.get(NAV_FROM_HEADER)).toBe("/posts/42")
 })
 
+test("a navigation presenting the page it leaves keeps only the layouts a router navigation would", async () => {
+  const seen: Request[] = []
+  const fx = fixture({
+    use: (app) =>
+      app.onRequest((req) => {
+        seen.push(req)
+      }),
+  })
+  const first = await load(fx.app)
+  const grant = first.json.live?.grant
+  const navigate = async (path: string, mode: "load" | "renew" = "load") => {
+    for (const key of Object.keys(fx.calls)) delete fx.calls[key]
+    seen.length = 0
+    const { json } = await load(fx.app, { path, mode, retain: ALL, grants: [grant] })
+    return { json, calls: { ...fx.calls }, from: seen[0]?.headers.get(NAV_FROM_HEADER) ?? null }
+  }
+
+  // The shared root layout carries over; the page loader always runs on another path.
+  const about = await navigate("/about")
+  expect(about.calls).toEqual({ about: 1 })
+  expect(about.from).toBe("/posts/42")
+  expect(about.json.live?.page).toBeUndefined()
+  expect(about.json.live?.ttl).toBe(600)
+  const kept = await opened(about.json.live?.grant)
+  expect(Object.keys(kept?.owners ?? {}).sort()).toEqual([ROOT, "P:about"])
+  expect(kept?.owners[ROOT]).toEqual((await opened(grant))?.owners[ROOT])
+
+  const sibling = await navigate("/posts/43")
+  expect(sibling.calls).toEqual({ gate: 1, page: 1 })
+
+  // A query change re-runs every layout, as it does for the router.
+  expect((await navigate("/posts/43?tab=1")).calls).toEqual({ root: 1, posts: 1, gate: 1, page: 1 })
+  // A renewal is for its own page only.
+  expect((await navigate("/about", "renew")).calls).toEqual({ root: 1, about: 1 })
+})
+
 test("a retained live load keeps layouts exactly as the router's navigation would", async () => {
   const fx = fixture()
   const { json } = await reload(fx, [ROOT, POSTS])
@@ -651,21 +688,13 @@ test("owners an app hook adds to the retain header without a grant behind them g
 
 // --- Grant binding -----------------------------------------------------------------------------
 
-test("a grant for another socket, path or frame keeps nothing", async () => {
+test("a grant for another socket or frame keeps nothing", async () => {
   const fx = fixture()
   const first = await load(fx.app)
   const grant = first.json.live?.grant
-  for (const [body, path] of [
-    [{ sid: OTHER_SID }, "/posts/42"],
-    [{ path: "/posts/43" }, "/posts/43"],
-  ] as const) {
-    for (const key of Object.keys(fx.calls)) delete fx.calls[key]
-    await load(fx.app, { retain: ALL, grants: [grant], ...body })
-    expect({ path, calls: fx.calls }).toEqual({
-      path,
-      calls: { root: 1, posts: 1, gate: 1, page: 1 },
-    })
-  }
+  for (const key of Object.keys(fx.calls)) delete fx.calls[key]
+  await load(fx.app, { retain: ALL, grants: [grant], sid: OTHER_SID })
+  expect(fx.calls).toEqual({ root: 1, posts: 1, gate: 1, page: 1 })
   const modal = await (await testKeyring()).seal(
     {
       sid: SID,

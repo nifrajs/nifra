@@ -107,6 +107,8 @@ export interface BoundaryState {
   /** While an intercept boundary holds a target: the result of the last action posted to that target,
    * which the page's own `actionData` never sees. Only on a `"ready"` state. */
   readonly actionData?: unknown
+  /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */
+  readonly live?: unknown
 }
 
 export type BoundaryStates = Readonly<Record<string, BoundaryState>>

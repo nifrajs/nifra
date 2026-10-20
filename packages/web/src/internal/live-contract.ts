@@ -72,6 +72,8 @@ export interface LiveEnvelope {
   readonly tags?: Readonly<Record<string, readonly string[]>>
   /** The page loader did not run: the client keeps its page data. */
   readonly page?: "retained"
+  /** Seconds the grant stays valid from now; the client renews a minute before. */
+  readonly ttl?: number
 }
 
 /** `createWebApp` reads the runtime through this symbol, so it is not public API on the object. */

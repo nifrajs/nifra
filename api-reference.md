@@ -6114,6 +6114,12 @@ _No named exports (side-effect entrypoint)._
 - **nextSeq** _(const)_ - `nextSeq: (last: number, nowMs: number) => number`
   The seq a clock reading allows, never at or below `last`.
 
+### `@nifrajs/web/live-client`
+
+- **LiveClient** _(interface)_ - `interface LiveClient`
+- **LiveClientOptions** _(interface)_ - `interface LiveClientOptions`
+- **liveClient** _(function)_ - `liveClient: (options?: LiveClientOptions) => LiveClient`
+
 ### `@nifrajs/web/nano`
 
 - **BindListOptions** _(interface)_ - `interface BindListOptions<T>`

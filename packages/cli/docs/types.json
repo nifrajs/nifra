@@ -2204,7 +2204,7 @@
     "name": "BoundaryState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n    /** While an intercept boundary holds a target: the result of the last action posted to that target,\n     * which the page's own `actionData` never sees. Only on a `\"ready\"` state. */\n    readonly actionData?: unknown;\n}",
+    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n    /** While an intercept boundary holds a target: the result of the last action posted to that target,\n     * which the page's own `actionData` never sees. Only on a `\"ready\"` state. */\n    readonly actionData?: unknown;\n    /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */\n    readonly live?: unknown;\n}",
     "doc": "/** Serializable boundary state passed to the adapter's render seam. */"
   },
   {
@@ -6499,7 +6499,7 @@
     "name": "GenerateClientEntryOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface GenerateClientEntryOptions {\n    /**\n     * Module specifier for the adapter's client runtime, e.g. `\"@nifrajs/web-solid/client\"`.\n     *\n     * **Contract:** the module MUST export `mountRouter({ router, routes, container })`. The generated\n     * bootstrap imports the specifier and calls it - so a self-executing entry that mounts on import\n     * builds cleanly and then does nothing, which is the trap this contract exists to name. The type is\n     * a bare `string` because a specifier is resolved by the bundler, not the type system, so the\n     * requirement is enforced by the bootstrap instead: it throws immediately, naming this module and\n     * the missing export, rather than failing later as `mountRouter is not a function`.\n     */\n    readonly clientModule: string;\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */\n    readonly resolve: (file: string) => string;\n    readonly serverComponents?: boolean;\n    /** The build moved copy tables into per-locale chunks: the handover carries the chunk URLs, and a\n     * navigation loads the copy of the URL it goes to beside the route's code. */\n    readonly copyChunks?: boolean;\n}"
+    "signature": "export interface GenerateClientEntryOptions {\n    /**\n     * Module specifier for the adapter's client runtime, e.g. `\"@nifrajs/web-solid/client\"`.\n     *\n     * **Contract:** the module MUST export `mountRouter({ router, routes, container })`. The generated\n     * bootstrap imports the specifier and calls it - so a self-executing entry that mounts on import\n     * builds cleanly and then does nothing, which is the trap this contract exists to name. The type is\n     * a bare `string` because a specifier is resolved by the bundler, not the type system, so the\n     * requirement is enforced by the bootstrap instead: it throws immediately, naming this module and\n     * the missing export, rather than failing later as `mountRouter is not a function`.\n     */\n    readonly clientModule: string;\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */\n    readonly resolve: (file: string) => string;\n    readonly serverComponents?: boolean;\n    /** The build moved copy tables into per-locale chunks: the handover carries the chunk URLs, and a\n     * navigation loads the copy of the URL it goes to beside the route's code. */\n    readonly copyChunks?: boolean;\n    /**\n     * The server runs `createWebApp({ live })`: route loads go through its live load endpoint and the\n     * entry keeps what is on screen fresh (`@nifrajs/web/live-client`). Give the endpoints when the\n     * runtime moves them. Absent, the entry is exactly the non-live one.\n     */\n    readonly live?: {\n        readonly path?: string;\n        readonly loadPath?: string;\n    };\n}"
   },
   {
     "name": "GenerateRegressionTestOptions",
@@ -8182,6 +8182,18 @@
     "package": "@nifrajs/web",
     "signature": "export interface LiveChange {\n    readonly type: \"change\";\n    readonly keys: readonly string[];\n}",
     "doc": "/** Something a loader declared with `ctx.live` changed. */"
+  },
+  {
+    "name": "LiveClient",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveClient {\n    /** Pass as `createClientRouter({ fetchData })`: every route load goes through the live load endpoint. */\n    readonly fetchData: FetchRouteData;\n    /** Keep what `router` shows fresh. Returns a function that stops and closes the socket. */\n    attach(router: ClientRouter): () => void;\n}"
+  },
+  {
+    "name": "LiveClientOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveClientOptions {\n    /** The live socket, as `live({ path })` serves it. Default `/_nifra/live`. */\n    readonly path?: string;\n    /** The live load endpoint, as `live({ loadPath })` serves it. Default `/_nifra/live/load`. */\n    readonly loadPath?: string;\n    /**\n     * Sends every live load. Give one that adds an `Authorization` header when the app authenticates\n     * that way; cookies are sent by default.\n     */\n    readonly fetch?: (input: string, init: RequestInit) => Promise<Response>;\n    /** Route id to its layout ids, outermost first. The generated client entry passes its own table. */\n    readonly layoutIdsOf?: Readonly<Record<string, readonly string[]>>;\n}"
   },
   {
     "name": "LiveOptions",
@@ -13208,7 +13220,7 @@
     "name": "RouterState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouterState {\n    readonly serverComponents?: import(\"./server-components/types.js\").ComponentState | undefined;\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). While\n     * {@link intercepted} is set it is the target shown in the boundary, not the page's own. */\n    readonly path: string;\n    readonly data: unknown;\n    /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no\n     * layout in that chain has a loader. */\n    readonly layoutData?: readonly unknown[] | undefined;\n    /** Neutral named-boundary states for the active route. */\n    readonly boundaries?: BoundaryStates;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation or a submit's redirect is loading while `pending`; a redirect the router\n     * follows moves it to the target. Lets a `NavLink` know whether its own `to` is the one loading;\n     * `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */\n    readonly submission?: Submission;\n    /** Set while an intercept boundary shows a navigation's target over the page: the boundary holding\n     * it, and the path the page underneath was loaded from. The page revalidates under `pagePath`, the\n     * boundary under `path`. */\n    readonly intercepted?: Intercepted;\n}",
+    "signature": "export interface RouterState {\n    readonly serverComponents?: import(\"./server-components/types.js\").ComponentState | undefined;\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). While\n     * {@link intercepted} is set it is the target shown in the boundary, not the page's own. */\n    readonly path: string;\n    readonly data: unknown;\n    /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no\n     * layout in that chain has a loader. */\n    readonly layoutData?: readonly unknown[] | undefined;\n    /** Neutral named-boundary states for the active route. */\n    readonly boundaries?: BoundaryStates;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation or a submit's redirect is loading while `pending`; a redirect the router\n     * follows moves it to the target. Lets a `NavLink` know whether its own `to` is the one loading;\n     * `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */\n    readonly submission?: Submission;\n    /** Set while an intercept boundary shows a navigation's target over the page: the boundary holding\n     * it, and the path the page underneath was loaded from. The page revalidates under `pagePath`, the\n     * boundary under `path`. */\n    readonly intercepted?: Intercepted;\n    /** Opaque: which live load the page data on screen came from (`@nifrajs/web/live-client`). */\n    readonly live?: unknown;\n}",
     "doc": "/** The router's observable state. A new object is published on every transition. */"
   },
   {
@@ -20538,6 +20550,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function live(options: LiveOptions): Live;",
     "doc": "/** Create the live runtime for one app. */"
+  },
+  {
+    "name": "liveClient",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function liveClient(options?: LiveClientOptions): LiveClient;"
   },
   {
     "name": "loadAssuranceConfig",

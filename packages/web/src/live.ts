@@ -398,7 +398,10 @@ export function live(options: LiveOptions): Live {
         const opened = await c.ring.open(token, now)
         if (opened === undefined) continue
         const claims = opened.claims
-        if (claims.sid !== body.sid || claims.path !== path || claims.frame !== body.frame) continue
+        if (claims.sid !== body.sid || claims.frame !== body.frame) continue
+        // A navigation presents the grant of the page it leaves: only its layouts can carry over, and
+        // only where the layout itself would keep its data. A renewal is for the same page.
+        if (claims.path !== path && body.mode === "renew") continue
         if (c.revocations.grantRevoked(claims)) continue
         grant = opened
         break
@@ -423,15 +426,17 @@ export function live(options: LiveOptions): Live {
           if (owner.startsWith("L:")) {
             const index = match.layoutIds.indexOf(owner.slice(2))
             if (index !== -1 && !layouts.includes(index)) layouts.push(index)
-          } else if (owner === `P:${match.routeId}`) {
+          } else if (owner === `P:${match.routeId}` && claims.path === path) {
             retainPage = true
           }
         }
       }
       const headers = internalHeaders(req.headers)
-      if (layouts.length > 0) {
+      if (grant !== undefined && layouts.length > 0) {
+        // The page the grant was issued for: the retention rule compares each layout's params there
+        // with the target's, exactly as for a router navigation.
         headers.set(RETAIN_HEADER, layouts.sort((a, b) => a - b).join(","))
-        headers.set(NAV_FROM_HEADER, path)
+        headers.set(NAV_FROM_HEADER, grant.claims.path)
       }
       const target = new Request(new URL(path, req.url), {
         method: "GET",
@@ -639,7 +644,7 @@ export function live(options: LiveOptions): Live {
           if (owner.k.includes(key)) owning.push(name)
         tags[await ring.tag(key)] = owning
       }
-      return { ...bare, grant, tags }
+      return { ...bare, grant, tags, ttl }
     }
   }
 

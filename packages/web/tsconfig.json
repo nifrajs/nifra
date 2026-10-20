@@ -18,12 +18,14 @@
   },
   "include": [
     "src/client.ts",
+    "src/live-client.ts",
     "src/islands.ts",
     "src/nano.ts",
     "test/islands.test.ts",
     "test/nano.test.ts",
     "test/apply-head.test.ts",
     "test/client-browser.test.ts",
-    "test/css-loading.test.ts"
+    "test/css-loading.test.ts",
+    "test/live-client.test.ts"
   ]
 }
