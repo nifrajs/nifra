@@ -1137,6 +1137,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     navigate: async (path) => {
       const matched = match(path)
       if (matched === null) return
+      // The target an open boundary already shows (a `#fragment` entry inside it, a link to itself):
+      // reloading it would rebuild the boundary and drop its action result.
+      if (state.intercepted !== undefined && !state.pending && path === state.path) {
+        emit()
+        return
+      }
       // Client-only search fast path: same route + same pathname, and every changed search key is
       // declared client-only. Publish the new URL (so `useSearch`/`useLocation` update) WITHOUT a data
       // fetch - the loader's inputs did not change. Any loader-affecting key change falls through to the

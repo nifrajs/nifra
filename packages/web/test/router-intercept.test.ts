@@ -516,4 +516,27 @@ describe("an open intercept boundary", () => {
     expect(state.routeId).toBe("user")
     expect(state.data).toEqual({ from: "/users/7", n: 3 })
   })
+
+  test("navigating to the target the boundary already shows keeps it, with its action result, and fetches nothing", async () => {
+    const { calls, fetchData } = server()
+    const router = await opened(fetchData)
+    const spy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(async () => Response.json({ commented: true }), {
+        preconnect: globalThis.fetch.preconnect,
+      }),
+    )
+    restore = () => spy.mockRestore()
+    await router.submit("/photos/2", new FormData())
+    const before = router.snapshot()
+    calls.length = 0
+    let emitted = 0
+    router.subscribe(() => {
+      emitted++
+    })
+    await router.navigate("/photos/2")
+    expect(calls).toEqual([])
+    expect(emitted).toBe(1)
+    expect(router.snapshot()).toBe(before)
+    expect(router.snapshot().boundaries?.photo?.actionData).toEqual({ commented: true })
+  })
 })
