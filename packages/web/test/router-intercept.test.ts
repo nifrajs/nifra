@@ -456,4 +456,33 @@ describe("an open intercept boundary", () => {
       .catch((error: unknown) => error)
     expect(redirectOf(targetAction)).toBe("/photos/2")
   })
+
+  test("a page that answers a reload with a status is replaced by its status route, closing the boundary", async () => {
+    const status: Record<string, number> = {}
+    const { fetchData } = server(status)
+    const router = await opened(fetchData)
+    status["/"] = 404
+    await router.invalidate()
+    const state = router.snapshot()
+    expect(state.routeId).toBe("404")
+    expect(state.path).toBe("/photos/2")
+    expect(state.intercepted).toBeUndefined()
+    expect(state.data).toBeNull()
+    expect(state.boundaries).toBeUndefined()
+  })
+
+  test("an action whose page reload answers with a status shows the status route, not the boundary", async () => {
+    const status: Record<string, number> = {}
+    const { fetchData } = server(status)
+    const router = await opened(fetchData)
+    const { spy } = actionAnswers()
+    restore = () => spy.mockRestore()
+    status["/"] = 404
+    await router.submit("/photos/2", new FormData())
+    const state = router.snapshot()
+    expect(state.routeId).toBe("404")
+    expect(state.intercepted).toBeUndefined()
+    expect(state.actionData).toBeUndefined()
+    expect(state.boundaries).toBeUndefined()
+  })
 })

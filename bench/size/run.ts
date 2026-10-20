@@ -250,8 +250,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
-  // closeBoundary): 16,559 -> 17,437 B (Bun 1.4.3).
-  "nifra-web-client": 17.1,
+  // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
+  // 17,437 -> 17,540 B (Bun 1.4.3).
+  "nifra-web-client": 17.2,
   "nifra-i18n": 4.3,
 }
 

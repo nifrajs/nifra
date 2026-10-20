@@ -276,7 +276,8 @@ export interface ClientRouter {
    * the action already returned everything that changed, saving the extra round-trip). A redirect
    * always loads its target regardless. Rejects on failure (caller falls back); once the server has
    * answered, at any status, the rejection's `redirectTo` names the page to load instead of posting
-   * again.
+   * again. A revalidation answered with a terminal status renders that status route in the page's
+   * place.
    */
   submit: (
     action: string,
@@ -291,6 +292,8 @@ export interface ClientRouter {
    * refreshes immediately - refetched + republished - whenever it's in scope (an explicit list that
    * includes it, or an invalidate-all); other stale entries refetch lazily when next read (a
    * fetcher, or the next navigation/access). Rejects if the active refetch fails (like `navigate`).
+   * A refetch answered with a terminal status renders that status route in the page's place; one
+   * whose status page renders inside layouts rejects, so the caller can load the page as a document.
    * The keyed substrate for targeted revalidation (the `X-Nifra-Revalidate` header) and fetchers.
    */
   invalidate: (paths?: readonly string[]) => Promise<void>
@@ -834,6 +837,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     return target === null ? undefined : [path, target]
   }
 
+  // Load the status route a terminal answer for `at` renders. One inside layouts needs those layouts'
+  // loaders, which only a document request runs, so the caller loads `at` as a document instead.
+  const loadTerminal = async (routeId: string, at: string): Promise<void> => {
+    await loadModule?.(routeId, at)
+    if (options.layoutStatusRoutes?.[routeId] === true) {
+      throw new Error(`[nifra/web] ${routeId} renders inside layouts; loading ${at} as a document`)
+    }
+  }
+
   // Load `path` for the navigation or submit `mine`, following the redirects its loaders answer with
   // while they stay in the app (20 at most, as a browser allows).
   const loadFollowing = async (
@@ -863,14 +875,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           () => loadRouteData(at, route, signal, keepLayouts),
           prefetchedData,
         )
-        if (loaded.terminalRouteId !== undefined) {
-          await loadModule?.(loaded.terminalRouteId, at)
-          if (options.layoutStatusRoutes?.[loaded.terminalRouteId] === true) {
-            throw new Error(
-              `[nifra/web] ${loaded.terminalRouteId} renders inside layouts; loading ${at} as a document`,
-            )
-          }
-        }
+        if (loaded.terminalRouteId !== undefined) await loadTerminal(loaded.terminalRouteId, at)
         return [at, route, loaded]
       } catch (error) {
         const next = hops < 20 ? appRedirect(redirectOf(error)) : undefined
@@ -882,26 +887,27 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   // Reload what is on screen: the page under its own path when `page`, and, while an intercept boundary
   // holds a target, that target under its URL when `target`. The part not reloaded is kept as shown.
-  // Returns the fields to publish, both parts together. A target that fails becomes its boundary's
-  // error state rather than failing the page, as a dynamic boundary's load does. Nothing is cached once
-  // `mine` is superseded: a newer action's reload owns the cache.
+  // Returns the fields to publish, both parts together, or the status route the page itself answered
+  // with, which replaces the page and any boundary over it. A target that fails becomes its
+  // boundary's error state rather than failing the page, as a dynamic boundary's load does. Nothing is
+  // cached once `mine` is superseded: a newer action's reload owns the cache.
   const reloadActive = async (
     signal: AbortSignal,
     page: boolean,
     target: boolean,
     mine: number,
-  ): Promise<ReturnType<typeof dataFields>> => {
+  ): Promise<{ readonly fields: ReturnType<typeof dataFields>; readonly terminal?: string }> => {
     const pagePath = pagePathOf(state)
     const intercepted = state.intercepted
     const targetPath = state.path
     const pageRoute = { routeId: state.routeId, params: state.params }
     const targetRoute = intercepted !== undefined && target ? match(targetPath) : null
-    const [loaded, targetOutcome] = await Promise.all([
+    const [reloaded, targetOutcome] = await Promise.all([
       page
         ? applyClientLoader(pagePath, pageRoute, signal, () =>
             loadRouteData(pagePath, pageRoute, signal),
           )
-        : dataFields(state),
+        : undefined,
       targetRoute === null
         ? undefined
         : (async (): Promise<LoadedRouteData | undefined> => {
@@ -917,15 +923,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             }
           })(),
     ])
-    if (page && mine === generation) cachePut(pagePath, loaded)
-    const fields = dataFields(loaded)
-    if (intercepted === undefined) return fields
+    if (reloaded?.terminalRouteId !== undefined)
+      await loadTerminal(reloaded.terminalRouteId, pagePath)
+    if (reloaded !== undefined && mine === generation) cachePut(pagePath, reloaded)
+    const fields = dataFields(reloaded ?? state)
+    if (reloaded?.terminalRouteId !== undefined)
+      return { fields, terminal: reloaded.terminalRouteId }
+    if (intercepted === undefined) return { fields }
     const held = state.boundaries?.[intercepted.boundary]
-    if (held === undefined) return fields
+    if (held === undefined) return { fields }
     if (targetRoute === null)
       return {
-        ...fields,
-        boundaries: { ...(fields.boundaries ?? {}), [intercepted.boundary]: held },
+        fields: {
+          ...fields,
+          boundaries: { ...(fields.boundaries ?? {}), [intercepted.boundary]: held },
+        },
       }
     // A reload keeps the result of the last action posted to the target, as the page keeps its own.
     const boundaries = withActionData(
@@ -933,7 +945,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       intercepted.boundary,
       held.actionData,
     )
-    return { ...fields, ...(boundaries === undefined ? {} : { boundaries }) }
+    return { fields: { ...fields, ...(boundaries === undefined ? {} : { boundaries }) } }
   }
 
   // Refetch what is on screen + republish, single-flight via the shared `generation`. Shared by
@@ -950,13 +962,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     state = { ...state, pending: true }
     emit()
     try {
-      const fields = await reloadActive(ac.signal, page, target, mine)
+      const { fields, terminal } = await reloadActive(ac.signal, page, target, mine)
       if (mine !== generation) return // superseded - drop the stale result
-      state = {
-        ...state,
-        ...fields,
-        pending: false,
-      }
+      // A terminal answer for the page (the session expired, the record is gone) replaces it, and any
+      // boundary over it, with its status route, as a navigation to this URL would.
+      state =
+        terminal === undefined
+          ? { ...state, ...fields, pending: false }
+          : {
+              routeId: terminal,
+              params: {},
+              path: state.path,
+              ...fields,
+              actionData: undefined,
+              pending: false,
+            }
       emit()
     } catch (err) {
       if (mine === generation) {
@@ -1282,22 +1302,34 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const reloadTarget =
           state.intercepted !== undefined &&
           (opts?.revalidate !== false || changed.includes(state.path))
-        const fields = await reloadActive(ac.signal, reloadPage, reloadTarget, mine)
+        const { fields, terminal } = await reloadActive(ac.signal, reloadPage, reloadTarget, mine)
         if (mine !== generation) return
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== pagePath && (!reloadTarget || p !== state.path)))
         // Reconcile: publish the revalidated data + actionData; omit `submission` (the optimistic
-        // window is over - the real data now drives the view).
-        state = {
-          routeId: state.routeId,
-          params: state.params,
-          path: state.path,
-          ...fields,
-          actionData: previousActionData,
-          ...answered(fields, actionData),
-          pending: false,
-          ...(state.intercepted === undefined ? {} : { intercepted: state.intercepted }),
-        }
+        // window is over - the real data now drives the view). A terminal answer for the page renders
+        // its status route in the page's place, closing any boundary, and the action's result goes
+        // with the page.
+        state =
+          terminal === undefined
+            ? {
+                routeId: state.routeId,
+                params: state.params,
+                path: state.path,
+                ...fields,
+                actionData: previousActionData,
+                ...answered(fields, actionData),
+                pending: false,
+                ...(state.intercepted === undefined ? {} : { intercepted: state.intercepted }),
+              }
+            : {
+                routeId: terminal,
+                params: {},
+                path: state.path,
+                ...fields,
+                actionData: undefined,
+                pending: false,
+              }
         emit()
         // Refresh any mounted fetcher showing one of the changed routes (the active route was just
         // revalidated inline above, so skip it here). Best-effort - never rejects the submit.
