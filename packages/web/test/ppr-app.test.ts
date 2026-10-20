@@ -82,6 +82,19 @@ describe("PPR app: requests that are not a streamed document", () => {
     expect(JSON.stringify(data).includes('member":true')).toBe(false)
   })
 
+  test("a shell loader's notFound() renders the 404 page, and while cached starts no hole", async () => {
+    const first = await fetch(`${app.origin}/p/missing`)
+    expect(first.status).toBe(404)
+    await first.text()
+    const builds = probe.shellBuilds
+    const started = probe.slowStarted
+    const again = await fetch(`${app.origin}/p/missing`)
+    expect(again.status).toBe(404)
+    await again.text()
+    expect(probe.shellBuilds).toBe(builds)
+    expect(probe.slowStarted).toBe(started)
+  })
+
   test("the fixture's shells hold enough text for WebKit to paint them early", () => {
     expect(app.warnings.filter((line) => line.includes("characters of text"))).toEqual([])
   })

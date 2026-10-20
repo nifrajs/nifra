@@ -1,4 +1,5 @@
 import { t } from "@nifrajs/schema"
+import { notFound } from "../../../../../../src/internal/render-document.ts"
 import { noteSlowAbort, probe } from "../../lib/probe.ts"
 import { visitorName } from "../../lib/session.ts"
 
@@ -8,6 +9,7 @@ export const shellLoader = async (ctx: {
 }) => {
   probe.shellBuilds++
   probe.shellOrigin = ctx.origin ?? ""
+  if (ctx.params.id === "missing") notFound()
   return { title: `Product ${ctx.params.id}` }
 }
 export const shellOutput = t.object({ title: t.string() })

@@ -8,6 +8,7 @@ import type {
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
+import { isStatusSignal } from "../render-document.ts"
 import { HoleAdmission, type HoleRun, type HoleSlot, type PprAdmissionStats } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
@@ -47,6 +48,13 @@ interface ShellEntry {
   /** The shell loader's output, for a soft navigation's data request. */
   readonly data: unknown
   readonly bytes: number
+  readonly builtAt: number
+  readonly tags: readonly string[]
+  /** The shell loader's `notFound()`, rethrown for every request until the entry expires. */
+  readonly notFound?: unknown
+  /** Background rebuilds that failed in a row; the next waits `2 ** failures` seconds. */
+  failures: number
+  retryAt: number
 }
 
 /** What the page executor hands over for one PPR request. */
@@ -62,6 +70,10 @@ export interface PprRequest {
   readonly loadShell: (signal: AbortSignal) => Promise<unknown>
   /** Render the full document for `shellData` with every hole pending, under no nonce. */
   readonly renderShellDocument: (shellData: unknown, states: BoundaryStates) => Promise<string>
+  /** The route's `revalidate`, in seconds: an older shell is served while one rebuild runs. */
+  readonly revalidate: number | undefined
+  /** The route's `revalidateTags` for this request, read only when a shell is built. */
+  readonly tags: () => readonly string[]
 }
 
 export interface PprServerConfig {
@@ -77,14 +89,26 @@ export interface PprServerConfig {
    * the check and is refused in production.
    */
   readonly shellChecks: ShellCheckRecord | "unchecked-development"
+  /** Milliseconds, for shell freshness. Tests pass their own clock. */
+  readonly now?: () => number
 }
 
-/** Thrown when a route's shell has no passing import-check record: the caller renders it blocking. */
-export class PprShellUnchecked extends Error {
+/** The shell cannot be served now; the caller renders the page whole for this request (7.6). */
+export class PprShellUnavailable extends Error {}
+
+/** Thrown when a route's shell has no passing import-check record. */
+export class PprShellUnchecked extends PprShellUnavailable {
   constructor(routeId: string) {
     super(
       `[nifra/web] ppr: route "${routeId}" has no passing shell import check; rendered blocking`,
     )
+  }
+}
+
+/** Thrown when a route already runs `shellBuildConcurrency` shell builds: no request waits on one. */
+export class PprShellBusy extends PprShellUnavailable {
+  constructor(routeId: string) {
+    super(`[nifra/web] ppr: route "${routeId}" is at its shell build limit; rendered blocking`)
   }
 }
 
@@ -117,6 +141,11 @@ export interface PprServer {
   ): Promise<BoundaryStates>
   /** Abort the response that printed `token`. Unknown tokens do nothing. */
   cancel(token: string): boolean
+  /**
+   * Drop every shell carrying `tag`. A build that started before the call is not stored when it
+   * finishes, so a shell built from data read before the purge never outlives it.
+   */
+  invalidateTag(tag: string): void
   stats(): PprServerStats
 }
 
@@ -221,6 +250,13 @@ const textLength = (html: string): number => {
 
 const SHED: HoleRun<never> = Object.freeze({ ok: false, reason: "denied" })
 
+/** What a cached `notFound()` counts against the store's byte budget, beside its key. */
+const NOT_FOUND_ENTRY_BYTES = 256
+
+/** A 404 entry answers as the shell loader's own `notFound()` did. */
+const served = (entry: ShellEntry): ShellEntry | Promise<never> =>
+  entry.notFound === undefined ? entry : Promise.reject(entry.notFound)
+
 export function createPprServer(config: PprServerConfig): PprServer {
   const { options, adapter, deployment, cancelUrl, shellChecks } = config
   const renderFragment = adapter.renderFragment
@@ -233,10 +269,20 @@ export function createPprServer(config: PprServerConfig): PprServer {
   const checked = (routeId: string): boolean =>
     shellChecks === "unchecked-development" ||
     (shellChecks.deployment === deployment && Object.hasOwn(shellChecks.routes, routeId))
-  const shells = new Map<string, Promise<ShellEntry>>()
+  const now = config.now ?? Date.now
+  // Captured outside any request, so an on-demand build sees no visitor's async context (I1).
+  const detached: <T>(fn: () => T) => T =
+    globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage?.snapshot?.() ??
+    ((fn) => fn())
   const settled = new Map<string, ShellEntry>()
   const routeCounts = new Map<string, number>()
   let storedBytes = 0
+  const builds = new Map<string, Promise<ShellEntry>>()
+  const buildsByRoute = new Map<string, number>()
+  // A build records the count when it starts and is not stored if one of its tags was invalidated
+  // since. Only running builds read the map, so it empties whenever none run.
+  let invalidations = 0
+  const invalidatedAt = new Map<string, number>()
   const live = new Map<string, AbortController>()
   const cspHeaders = new Map<string, Promise<string | undefined>>()
   const thinWarned = new Set<string>()
@@ -255,7 +301,6 @@ export function createPprServer(config: PprServerConfig): PprServer {
 
   const evict = (key: string): void => {
     const entry = settled.get(key)
-    shells.delete(key)
     if (entry === undefined) return
     settled.delete(key)
     storedBytes -= entry.bytes
@@ -263,6 +308,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
   }
 
   const store = (key: string, entry: ShellEntry): void => {
+    evict(key)
     settled.set(key, entry)
     storedBytes += entry.bytes
     routeCounts.set(entry.routeId, (routeCounts.get(entry.routeId) ?? 0) + 1)
@@ -316,38 +362,108 @@ export function createPprServer(config: PprServerConfig): PprServer {
     }
     const size = new TextEncoder().encode(prefix).length
     if (size < options.minShellBytes) prefix += `<!--${" ".repeat(options.minShellBytes - size)}-->`
-    return { routeId: request.routeId, prefix, data, bytes: Math.max(size, options.minShellBytes) }
+    return {
+      routeId: request.routeId,
+      prefix,
+      data,
+      bytes: Math.max(size, options.minShellBytes),
+      builtAt: now(),
+      tags: request.tags(),
+      failures: 0,
+      retryAt: 0,
+    }
   }
+
+  const startBuild = (key: string, request: PprRequest): Promise<ShellEntry> => {
+    const routeId = request.routeId
+    buildsByRoute.set(routeId, (buildsByRoute.get(routeId) ?? 0) + 1)
+    const startedAt = invalidations
+    const signal = AbortSignal.timeout(options.maxHoleTimeoutMs)
+    const building = detached(() =>
+      request.loadShell(signal).then(
+        async (data) =>
+          finishShell(
+            await request.renderShellDocument(data, pendingStates(request.holes)),
+            request,
+            data,
+          ),
+        (error: unknown): ShellEntry => {
+          // A missing record is cached briefly, so a flood of unknown ids runs no loader twice.
+          if (!isStatusSignal(error) || error.status !== 404) throw error
+          return {
+            routeId,
+            prefix: "",
+            data: undefined,
+            bytes: NOT_FOUND_ENTRY_BYTES + key.length,
+            builtAt: now(),
+            tags: request.tags(),
+            notFound: error,
+            failures: 0,
+            retryAt: 0,
+          }
+        },
+      ),
+    )
+    builds.set(key, building)
+    const done = (): void => {
+      builds.delete(key)
+      const running = (buildsByRoute.get(routeId) ?? 1) - 1
+      if (running === 0) buildsByRoute.delete(routeId)
+      else buildsByRoute.set(routeId, running)
+      if (builds.size === 0) invalidatedAt.clear()
+    }
+    building.then((entry) => {
+      const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
+      done()
+      if (!fenced) store(key, entry)
+    }, done)
+    return building
+  }
+
+  /** Behind a stale shell: one rebuild per key, within the route's build limit, backing off on failure. */
+  const rebuild = (key: string, request: PprRequest, stale: ShellEntry): void => {
+    if (builds.has(key) || now() < stale.retryAt) return
+    if ((buildsByRoute.get(request.routeId) ?? 0) >= options.shellBuildConcurrency) return
+    startBuild(key, request).catch((error: unknown) => {
+      stale.failures++
+      stale.retryAt = now() + Math.min(2 ** stale.failures, request.revalidate ?? 1) * 1000
+      console.error("[nifra/web] ppr: shell rebuild failed; serving the stale shell", {
+        route: request.routeId,
+        kind: error instanceof Error ? "error" : typeof error,
+      })
+    })
+  }
+
+  const staleLimitMs = (revalidate: number): number =>
+    (revalidate +
+      Math.min(revalidate * options.staleOnErrorFactor, options.maxStaleOnErrorSeconds)) *
+    1000
 
   const shellFor = (request: PprRequest): Promise<ShellEntry> => {
     const key = shellKey(deployment, request)
-    const known = shells.get(key)
-    if (known !== undefined) {
-      const entry = settled.get(key)
-      if (entry !== undefined) {
-        settled.delete(key)
-        settled.set(key, entry)
+    const entry = settled.get(key)
+    if (entry !== undefined) {
+      settled.delete(key)
+      settled.set(key, entry)
+      const age = now() - entry.builtAt
+      if (entry.notFound !== undefined) {
+        if (age < options.notFoundTtlSeconds * 1000) return Promise.reject(entry.notFound)
+      } else if (request.revalidate === undefined || age < request.revalidate * 1000) {
+        return Promise.resolve(entry)
+      } else if (age < staleLimitMs(request.revalidate)) {
+        rebuild(key, request, entry)
+        return Promise.resolve(entry)
       }
-      return known
+      evict(key)
     }
+    const running = builds.get(key)
+    if (running !== undefined) return running.then(served)
     if (!checked(request.routeId)) return Promise.reject(new PprShellUnchecked(request.routeId))
+    if ((buildsByRoute.get(request.routeId) ?? 0) >= options.shellBuildConcurrency) {
+      return Promise.reject(new PprShellBusy(request.routeId))
+    }
     for (const hole of request.holes) assertHoleName(hole.name)
-    const signal = AbortSignal.timeout(options.maxHoleTimeoutMs)
-    const building = request
-      .loadShell(signal)
-      .then(async (data) =>
-        finishShell(
-          await request.renderShellDocument(data, pendingStates(request.holes)),
-          request,
-          data,
-        ),
-      )
-    shells.set(key, building)
-    building.then(
-      (entry) => store(key, entry),
-      () => shells.delete(key),
-    )
-    return building
+    return startBuild(key, request).then(served)
   }
 
   // The log carries the failure's kind only: a thrown message can hold credentials or user data.
@@ -637,6 +753,12 @@ export function createPprServer(config: PprServerConfig): PprServer {
         }),
       )
       return Object.fromEntries(entries)
+    },
+
+    invalidateTag(tag) {
+      invalidations++
+      if (builds.size > 0) invalidatedAt.set(tag, invalidations)
+      for (const [key, entry] of settled) if (entry.tags.includes(tag)) evict(key)
     },
 
     cancel(token) {

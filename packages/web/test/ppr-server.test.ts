@@ -8,8 +8,10 @@ import {
   type HoleRegistration,
   type PprRequest,
   type PprServerConfig,
+  PprShellBusy,
   PprShellUnchecked,
 } from "../src/internal/ppr/server.ts"
+import { notFound } from "../src/internal/render-document.ts"
 import type { RenderAdapter } from "../src/render-seam.ts"
 
 const adapter: RenderAdapter = {
@@ -73,6 +75,8 @@ const pprRequest = (
   holeContext,
   loadShell: async () => ({ title: "Tea" }),
   renderShellDocument: async (data, states) => document(data, states),
+  revalidate: undefined,
+  tags: () => [],
   ...overrides,
 })
 
@@ -599,5 +603,198 @@ describe("PPR server: admission and unsent bytes (7.3, 7.7)", () => {
     } finally {
       console.warn = original
     }
+  })
+})
+
+describe("PPR shell cache (6.3, 6.4)", () => {
+  const clock = () => {
+    let at = 1_000_000
+    return {
+      now: () => at,
+      advance(ms: number) {
+        at += ms
+      },
+    }
+  }
+  const titled = (counter: { builds: number }, title?: () => string) => ({
+    loadShell: async () => {
+      counter.builds++
+      return { title: title?.() ?? `build ${counter.builds}` }
+    },
+  })
+  const titleOf = (html: string): string => /<h1>([^<]*)<\/h1>/.exec(html)?.[1] ?? ""
+
+  test("a notFound() shell is cached for its TTL and starts no hole while cached", async () => {
+    const time = clock()
+    const server = createPprServer(config({ now: time.now }))
+    let builds = 0
+    let holeCalls = 0
+    const request = pprRequest(
+      [
+        hole("cart", () => {
+          holeCalls++
+          return 1
+        }),
+      ],
+      {
+        loadShell: async () => {
+          builds++
+          notFound()
+        },
+      },
+    )
+    const first = await server.respond(request).catch((error: unknown) => error)
+    expect(first).toBeInstanceOf(Response)
+    expect(first instanceof Response ? first.status : 0).toBe(404)
+    const callsAfterMiss = holeCalls
+    const again = await server.respond(request).catch((error: unknown) => error)
+    expect(again).toBe(first)
+    expect(builds).toBe(1)
+    expect(holeCalls).toBe(callsAfterMiss)
+    time.advance(60_000)
+    await server.respond(request).catch(() => {})
+    expect(builds).toBe(2)
+  })
+
+  test("a stale shell is served while one rebuild runs behind it", async () => {
+    const time = clock()
+    const server = createPprServer(config({ now: time.now }))
+    const counter = { builds: 0 }
+    const release = gate()
+    let held = false
+    const request = pprRequest([hole("cart", () => 1)], {
+      revalidate: 10,
+      loadShell: async () => {
+        counter.builds++
+        if (held) await release.promise
+        return { title: `build ${counter.builds}` }
+      },
+    })
+    expect(titleOf(await (await server.respond(request)).text())).toBe("build 1")
+    time.advance(5_000)
+    expect(titleOf(await (await server.respond(request)).text())).toBe("build 1")
+    expect(counter.builds).toBe(1)
+
+    time.advance(6_000)
+    held = true
+    const stale = await Promise.all([server.respond(request), server.respond(request)])
+    for (const res of stale) expect(titleOf(await res.text())).toBe("build 1")
+    expect(counter.builds).toBe(2)
+    release.release()
+    await tick()
+    expect(titleOf(await (await server.respond(request)).text())).toBe("build 2")
+  })
+
+  test("a failing rebuild keeps the stale shell, backs off, and gives up at the stale limit", async () => {
+    const time = clock()
+    const server = createPprServer(
+      config({
+        now: time.now,
+        options: resolvePprOptions({ staleOnErrorFactor: 2, maxStaleOnErrorSeconds: 100 }),
+      }),
+    )
+    let builds = 0
+    let failing = false
+    const request = pprRequest([hole("cart", () => 1)], {
+      revalidate: 10,
+      loadShell: async () => {
+        builds++
+        if (failing) throw new Error("password=hunter2")
+        return { title: "fresh" }
+      },
+    })
+    const errors: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => errors.push(args)
+    try {
+      await (await server.respond(request)).text()
+      failing = true
+      time.advance(11_000)
+      expect(titleOf(await (await server.respond(request)).text())).toBe("fresh")
+      await tick()
+      expect(builds).toBe(2)
+      time.advance(1_000)
+      await (await server.respond(request)).text()
+      expect(builds).toBe(2) // backing off: the first retry waits 2 s
+      time.advance(1_500)
+      await (await server.respond(request)).text()
+      await tick()
+      expect(builds).toBe(3)
+      expect(JSON.stringify(errors).includes("hunter2")).toBe(false)
+
+      // revalidate 10 + min(10 * 2, 100) = 30 s: past it the stale shell is dropped.
+      time.advance(20_000)
+      await expect(server.respond(request)).rejects.toThrow("password=hunter2")
+    } finally {
+      console.error = original
+    }
+  })
+
+  test("over the build limit a route's next miss is refused; the same key shares one build", async () => {
+    const server = createPprServer(
+      config({ options: resolvePprOptions({ shellBuildConcurrency: 1 }) }),
+    )
+    const release = gate()
+    let builds = 0
+    const at = (path: string) =>
+      pprRequest([hole("cart", () => 1)], {
+        path,
+        loadShell: async () => {
+          builds++
+          await release.promise
+          return { title: path }
+        },
+      })
+    const first = server.respond(at("/p/1"))
+    const same = server.respond(at("/p/1"))
+    await expect(server.respond(at("/p/2"))).rejects.toBeInstanceOf(PprShellBusy)
+    release.release()
+    await Promise.all([(await first).text(), (await same).text()])
+    expect(builds).toBe(1)
+    await (await server.respond(at("/p/2"))).text()
+    expect(builds).toBe(2)
+  })
+
+  test("invalidating a tag drops its shells, and a build that started before is not stored", async () => {
+    const server = createPprServer(config())
+    const counter = { builds: 0 }
+    const release = gate()
+    let held = false
+    const request = pprRequest([hole("cart", () => 1)], {
+      tags: () => ["product:1"],
+      loadShell: async () => {
+        counter.builds++
+        if (held) await release.promise
+        return { title: `build ${counter.builds}` }
+      },
+    })
+    await (await server.respond(request)).text()
+    server.invalidateTag("other")
+    await (await server.respond(request)).text()
+    expect(counter.builds).toBe(1)
+    server.invalidateTag("product:1")
+    held = true
+    const racing = server.respond(request)
+    await tick()
+    server.invalidateTag("product:1")
+    release.release()
+    expect(titleOf(await (await racing).text())).toBe("build 2")
+    held = false
+    expect(titleOf(await (await server.respond(request)).text())).toBe("build 3")
+  })
+
+  test("an on-demand build sees no async context of the request that triggered it (I1)", async () => {
+    const { AsyncLocalStorage } = await import("node:async_hooks")
+    const visitor = new AsyncLocalStorage<string>()
+    const server = createPprServer(config())
+    let seen: string | undefined = "unset"
+    const request = pprRequest([hole("cart", () => 1)], {
+      loadShell: async () => {
+        seen = visitor.getStore()
+        return { title: "t" }
+      },
+    })
+    await visitor.run("visitor-1", async () => (await server.respond(request)).text())
+    expect(seen).toBeUndefined()
   })
 })

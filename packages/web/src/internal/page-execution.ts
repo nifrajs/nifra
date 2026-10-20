@@ -54,6 +54,7 @@ import {
   type HoleRegistration,
   type PprRequest,
   type PprServer,
+  PprShellUnavailable,
   PprShellUnchecked,
 } from "./ppr/server.ts"
 import {
@@ -1465,6 +1466,11 @@ export function createPageRequestExecutor<Env = unknown>(
         (boundary): boundary is HoleRegistration => boundary.mode === "dynamic",
       ),
       holeContext: { request: c.req, params, api: requestApi, env: c.env, draft, search },
+      revalidate: mod.revalidate,
+      tags: () =>
+        mod.revalidateTags === undefined
+          ? []
+          : routeTags(mod.revalidateTags, { params, url: new URL(c.req.url) }, route.id),
       // The unbound `api`: a shell is built for every visitor, so no visitor's platform reaches it.
       loadShell: async (signal) =>
         shellLoader({
@@ -1644,8 +1650,8 @@ export function createPageRequestExecutor<Env = unknown>(
                 const streamed = await ppr.server.respond(pprRequest)
                 return withDocumentHeaders(streamed, controls.documentHeaders())
               } catch (error) {
-                if (!(error instanceof PprShellUnchecked)) throw error
-                warnUncheckedShell(route.id, error)
+                if (!(error instanceof PprShellUnavailable)) throw error
+                if (error instanceof PprShellUnchecked) warnUncheckedShell(route.id, error)
               }
             }
           }
@@ -1689,7 +1695,7 @@ export function createPageRequestExecutor<Env = unknown>(
                 : ppr.server
                     .shellData(pprRequest)
                     .catch((error: unknown) =>
-                      error instanceof PprShellUnchecked
+                      error instanceof PprShellUnavailable
                         ? pprRequest.loadShell(c.req.signal)
                         : Promise.reject(error),
                     )
