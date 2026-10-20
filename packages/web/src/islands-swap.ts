@@ -9,8 +9,9 @@
  * The request is the one the link or form makes anyway, plus an `x-nifra-swap: <slot>` header. The
  * server runs the page as usual and answers with that slot's HTML alone (`slot()` in
  * `@nifrajs/web-vanilla`), so the fragment is a slice of the real page. Any other answer - a redirect,
- * another origin, a page without that slot - loads the URL normally: a swap only ever speeds up what
- * the link or form already does, and without this script the page works the same way.
+ * another origin, a page without that slot - loads the URL normally, except a POST's own page, which
+ * is shown in place because the action has already run: a swap only ever speeds up what the link or
+ * form already does, and without this script the page works the same way.
  */
 
 import { type IslandEnhancer, mountIslands } from "./islands.ts"
@@ -67,6 +68,8 @@ export function enableSwap(
   const pending = new Map<Element, AbortController>()
   let swapped = swappedIn(history.state)
   let shown = here()
+  // Set once a POST's whole answer replaced the page: no history entry matches what is shown then.
+  let replaced = false
 
   const own = (node: Node, stop: () => void): void => {
     const before = stops.get(node)
@@ -86,9 +89,9 @@ export function enableSwap(
       own(slot, mountIslands(enhancers, { root: slot }))
     own(scope, mountIslands(enhancers, { root: scope }))
   }
-  const release = (slot: Element): void => {
+  const release = (scope: Node): void => {
     for (const [node, stop] of stops)
-      if (slot.contains(node)) {
+      if (scope.contains(node)) {
         stops.delete(node)
         stop()
       }
@@ -121,6 +124,17 @@ export function enableSwap(
     }
   }
 
+  // The page a native submit would show. Its scripts never run: this one is already running here.
+  const showDocument = (html: string, url: URL): void => {
+    const next = new DOMParser().parseFromString(html, "text/html")
+    release(document)
+    document.replaceChild(document.adoptNode(next.documentElement), document.documentElement)
+    replaced = true
+    history.pushState(null, "", url)
+    scrollTo(0, 0)
+    if (root === document) attach(root)
+  }
+
   const swap = async (
     slot: Element,
     name: string,
@@ -151,10 +165,23 @@ export function enableSwap(
       }
       if (
         response.type !== "basic" ||
-        response.headers.get(SWAP_HEADER) !== name ||
         !response.headers.get("content-type")?.startsWith("text/html")
       ) {
         load()
+        return
+      }
+      if (response.headers.get(SWAP_HEADER) !== name) {
+        // A POST that did not redirect has run and this is its page: loading the URL again would
+        // drop the action's result.
+        if (get || response.redirected) load()
+        else {
+          const page = await response.text()
+          try {
+            showDocument(page, url)
+          } catch {
+            load()
+          }
+        }
         return
       }
       const html = await response.text()
@@ -261,7 +288,8 @@ export function enableSwap(
   }
 
   const onPopState = (event: PopStateEvent): void => {
-    if (here() === shown) return
+    if (replaced) location.reload()
+    if (replaced || here() === shown) return
     shown = here()
     const reached = swappedIn(event.state)
     // Every slot a swap changed between the entry left and the one reached is in the later one's list.

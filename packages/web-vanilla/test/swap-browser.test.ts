@@ -26,6 +26,7 @@ const HOTELS = ["Ritz", "Savoy", "Claridge's", "Dorchester", "Langham"]
 const PAGE_SIZE = 2
 
 let cart = 0
+let notes = 0
 // A request for `q=held` waits here until the test lets it go.
 let held: {
   readonly arrived: PromiseWithResolvers<Request>
@@ -55,6 +56,7 @@ const Hotels: VanillaComponent = (props) => {
     <a id="away" href="/about" data-swap="replace:results">About</a>
     <a id="moved" href="/old" data-swap="replace:results">Old</a>
     <form id="add" method="post" action="/hotels" data-swap="replace:cart"><button name="add" value="1">Add</button></form>
+    <form id="note" method="post" action="/note" data-swap="replace:cart"><button>Note</button></form>
     <div data-island-ignore><a id="ignored" href="/hotels?q=Savoy" data-swap="replace:results">Ignored</a></div>
     <ul data-swap-slot="results">${slot("results", [
       ...rows.map((name) => html`<li data-island="row">${name}</li>`),
@@ -94,6 +96,22 @@ const manifest = (): Manifest => ({
       layoutIds: [],
       file: "about.ts",
       load: async () => ({ default: () => html`<h1>About</h1>`, hydrate: false }),
+    },
+    {
+      // No layout, so the action's own page has no cart slot and answers a swap whole.
+      id: "note",
+      pattern: "/note",
+      layoutIds: [],
+      file: "note.ts",
+      load: async () => ({
+        default: (props) =>
+          html`<h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1>`,
+        hydrate: false,
+        action: async () => {
+          notes++
+          return notes
+        },
+      }),
     },
     {
       id: "old",
@@ -279,6 +297,26 @@ test.skipIf(chrome === undefined)(
     expect(await path(p)).toBe("/hotels")
     expect(await swappedIn(p)).toBe(true)
     expect(requests).toEqual(["POST /hotels cart", "GET /hotels cart"])
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "a POST answered with a whole page shows that page in place and never fetches the URL again",
+  async () => {
+    const p = await open()
+    const before = notes
+    await p.evaluate(`document.querySelector("#note button").click()`)
+    await p.waitFor(`document.getElementById("saved")?.textContent === "Saved ${before + 1}"`)
+    expect(notes).toBe(before + 1)
+    expect(await path(p)).toBe("/note")
+    expect(await swappedIn(p)).toBe(true)
+    expect(requests).toEqual(["POST /note cart"])
+    // No history entry holds this page, so going back loads the one it left.
+    await p.evaluate("history.back()")
+    await waitAcrossLoad(p, `location.pathname === "/hotels" && window.__stop !== undefined`)
+    expect(await swappedIn(p)).toBe(false)
+    expect(notes).toBe(before + 1)
   },
   30_000,
 )
