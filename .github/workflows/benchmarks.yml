@@ -15,10 +15,27 @@ on:
     inputs:
       min_runs:
         description: Whole-matrix runs before the noise check (4 rounds each; 2 is the minimum for a 95% interval)
-        default: "3"
+        type: number
+        default: 3
       max_runs:
         description: Run budget per job when rows stay noisy
-        default: "5"
+        type: number
+        default: 5
+      max_ci_width:
+        description: Target width of the 95% interval in percentage points
+        type: number
+        default: 10
+  workflow_call:
+    inputs:
+      min_runs:
+        type: number
+        default: 3
+      max_runs:
+        type: number
+        default: 5
+      max_ci_width:
+        type: number
+        default: 10
   # Only for a PR a maintainer labels `bench`; every push to it re-runs until the label comes off.
   pull_request:
     types: [labeled, synchronize, reopened]
@@ -27,7 +44,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmarks-${{ github.event.pull_request.number || github.ref }}
+  group: benchmarks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -37,8 +54,13 @@ jobs:
       (contains(github.event.pull_request.labels.*.name, 'bench') &&
       (github.event.action != 'labeled' || github.event.label.name == 'bench'))
     name: ${{ matrix.suite }} on ${{ matrix.runtime }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    # The manual accuracy workflow can collect up to 15 whole-matrix runs.
+    timeout-minutes: 360
+    env:
+      MIN_RUNS: ${{ inputs.min_runs || '3' }}
+      MAX_RUNS: ${{ inputs.max_runs || '5' }}
+      MAX_CI_WIDTH: ${{ inputs.max_ci_width || '10' }}
     strategy:
       fail-fast: false
       matrix:
@@ -70,11 +92,23 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Runner identity
+        env:
+          SUITE: ${{ matrix.suite }}
+          RUNTIME: ${{ matrix.runtime }}
         run: |
-          bun --revision
-          uname -srm
-          lscpu
-          oha --version
+          mkdir -p bench-ci/metadata
+          {
+            printf 'commit=%s\nrun_id=%s\nattempt=%s\nsuite=%s\nruntime=%s\nmin_runs=%s\nmax_runs=%s\nmax_ci_width=%s\n' \
+              "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$SUITE" "$RUNTIME" "$MIN_RUNS" "$MAX_RUNS" "$MAX_CI_WIDTH"
+            date -u +%FT%TZ
+            bun --version
+            bun --revision
+            node --version
+            deno --version
+            uname -srm
+            lscpu
+            oha --version
+          } | tee "bench-ci/metadata/$SUITE-$RUNTIME.txt"
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -88,18 +122,17 @@ jobs:
         run: bun test bench/ci bench/rounds.test.ts
 
       - name: Measure
-        env:
-          MIN_RUNS: ${{ inputs.min_runs || '3' }}
-          MAX_RUNS: ${{ inputs.max_runs || '5' }}
         run: >-
           bun run bench/ci/run.ts --suite ${{ matrix.suite }} --runtime ${{ matrix.runtime }}
-          --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --pin
+          --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --max-ci-width "$MAX_CI_WIDTH" --pin
           --out bench-ci/${{ matrix.suite }}-${{ matrix.runtime }}.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: bench-${{ matrix.suite }}-${{ matrix.runtime }}
-          path: bench-ci/${{ matrix.suite }}-${{ matrix.runtime }}.json
+          path: |
+            bench-ci/${{ matrix.suite }}-${{ matrix.runtime }}.json
+            bench-ci/metadata/${{ matrix.suite }}-${{ matrix.runtime }}.txt
           if-no-files-found: error
           retention-days: 90
 
