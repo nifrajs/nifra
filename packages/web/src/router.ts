@@ -883,11 +883,13 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // Reload what is on screen: the page under its own path when `page`, and, while an intercept boundary
   // holds a target, that target under its URL when `target`. The part not reloaded is kept as shown.
   // Returns the fields to publish, both parts together. A target that fails becomes its boundary's
-  // error state rather than failing the page, as a dynamic boundary's load does.
+  // error state rather than failing the page, as a dynamic boundary's load does. Nothing is cached once
+  // `mine` is superseded: a newer action's reload owns the cache.
   const reloadActive = async (
     signal: AbortSignal,
     page: boolean,
     target: boolean,
+    mine: number,
   ): Promise<ReturnType<typeof dataFields>> => {
     const pagePath = pagePathOf(state)
     const intercepted = state.intercepted
@@ -908,14 +910,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
               const outcome = await applyClientLoader(targetPath, targetRoute, signal, () =>
                 loadRouteData(targetPath, targetRoute, signal),
               )
-              cachePut(targetPath, outcome)
+              if (mine === generation) cachePut(targetPath, outcome)
               return outcome
             } catch {
               return undefined
             }
           })(),
     ])
-    if (page) cachePut(pagePath, loaded)
+    if (page && mine === generation) cachePut(pagePath, loaded)
     const fields = dataFields(loaded)
     if (intercepted === undefined) return fields
     const held = state.boundaries?.[intercepted.boundary]
@@ -948,7 +950,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     state = { ...state, pending: true }
     emit()
     try {
-      const fields = await reloadActive(ac.signal, page, target)
+      const fields = await reloadActive(ac.signal, page, target, mine)
       if (mine !== generation) return // superseded - drop the stale result
       state = {
         ...state,
@@ -1159,7 +1161,6 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             path: to,
             boundaries: holdTarget(state.boundaries, interception, loaded),
             intercepted: { boundary: interception.name, pagePath },
-            actionData: undefined,
             pending: false,
             pendingPath: undefined,
           }
@@ -1281,7 +1282,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const reloadTarget =
           state.intercepted !== undefined &&
           (opts?.revalidate !== false || changed.includes(state.path))
-        const fields = await reloadActive(ac.signal, reloadPage, reloadTarget)
+        const fields = await reloadActive(ac.signal, reloadPage, reloadTarget, mine)
         if (mine !== generation) return
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== pagePath && (!reloadTarget || p !== state.path)))
@@ -1321,7 +1322,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         if (!posted) throw err
         if (mine !== generation) return // a newer navigation or submit owns the page
-        throw redirectOf(err) === undefined ? redirected(landing ?? state.path, err) : err
+        // Otherwise show the route that owns the action, as a native post to it would.
+        const owner = actionBoundary === undefined ? pagePathOf(state) : state.path
+        throw redirectOf(err) === undefined ? redirected(landing ?? owner, err) : err
       }
     },
     hydrate,

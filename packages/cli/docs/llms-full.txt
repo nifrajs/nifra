@@ -807,7 +807,8 @@ While the modal is open, the route props and hooks describe the page underneath:
 shows the modal's URL.
 
 -
-Opening the modal keeps the page's scroll position, and closing it restores the
+Opening the modal keeps the page's scroll position and its
+`actionData`, and closing it restores the
 page's entry with its scroll. A link to the page's own URL is a normal navigation,
 never an interception, and only one intercept boundary is open at a time: opening another
 closes the first.
@@ -822,8 +823,8 @@ the boundary's status becomes `"error"` with a generic error, so
 none of that answer reaches the page.
 
 -
-A form with no `action` (or a submitter with no `formaction`) posts to
-the route that owns it: the target's URL when the form sits inside an element with
+A form with no `action` (or a submitter with no `formaction`), POST
+or GET, submits to the route that owns it: the target's URL when the form sits inside an element with
 `data-nifra-boundary="photo"`, otherwise the page's URL. A form
 with an explicit action posts where it says. The result of an action posted to the
 target arrives as `boundaries.photo.actionData`, and the page's own

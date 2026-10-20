@@ -738,6 +738,18 @@ function implicitActionOwner(
 const actionAttribute = (actionFrom: Element, form: HTMLFormElement): string =>
   actionFrom === form ? "action" : "formaction"
 
+// Point the implicit action at `href` for one native submission; the returned function puts the
+// attribute back, so a form that outlives the boundary (one in a layout) keeps posting to its page.
+function pointAction(actionFrom: Element, form: HTMLFormElement, href: string): () => void {
+  const name = actionAttribute(actionFrom, form)
+  const previous = Element.prototype.getAttribute.call(actionFrom, name)
+  Element.prototype.setAttribute.call(actionFrom, name, href)
+  return () => {
+    if (previous === null) Element.prototype.removeAttribute.call(actionFrom, name)
+    else Element.prototype.setAttribute.call(actionFrom, name, previous)
+  }
+}
+
 // A control named like a form property shadows it (`<input name="target">` makes `form.target` that
 // input), so the form's own state is read through the prototype accessors.
 function formProperty(form: HTMLFormElement, name: "action" | "method" | "target"): string {
@@ -765,14 +777,20 @@ export function installForms(router: ClientRouter): () => void {
     const method = submitter?.hasAttribute("formmethod")
       ? submitter.formMethod
       : formProperty(form, "method")
-    if (method.toLowerCase() !== "post") return // GET forms submit natively
+    const actionFrom = submitter?.hasAttribute("formaction") ? submitter : form
+    const owner = implicitActionOwner(router, form, actionFrom)
+    if (method.toLowerCase() !== "post") {
+      // GET forms submit natively. The browser reads the action after this event, so one the page
+      // rendered under a boundary is pointed at the page for this submission, then restored.
+      if (owner !== undefined)
+        setTimeout(pointAction(actionFrom, form, new URL(appUrl(owner), location.href).href), 0)
+      return
+    }
     const target = submitter?.hasAttribute("formtarget")
       ? submitter.formTarget
       : formProperty(form, "target")
     if (target !== "" && target !== "_self") return // it loads in another browsing context
     // Resolved (or the current document URL if unset).
-    const actionFrom = submitter?.hasAttribute("formaction") ? submitter : form
-    const owner = implicitActionOwner(router, form, actionFrom)
     const url = sameDocumentUrl(
       owner !== undefined
         ? appUrl(owner)
@@ -795,13 +813,13 @@ export function installForms(router: ClientRouter): () => void {
       else {
         // Nothing reached the server - post natively, through the same button, to the same route.
         native.add(form)
-        if (owner !== undefined)
-          Element.prototype.setAttribute.call(
-            actionFrom,
-            actionAttribute(actionFrom, form),
-            url.href,
-          )
-        HTMLFormElement.prototype.requestSubmit.call(form, submitter)
+        // requestSubmit reads the action synchronously, so the attribute is restored right after.
+        const restore = owner === undefined ? undefined : pointAction(actionFrom, form, url.href)
+        try {
+          HTMLFormElement.prototype.requestSubmit.call(form, submitter)
+        } finally {
+          restore?.()
+        }
       }
     })
   }

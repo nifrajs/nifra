@@ -9,6 +9,7 @@ import {
   type FetchRouteData,
   type RouterState,
 } from "../src/index.ts"
+import { redirectOf } from "../src/router.ts"
 
 const patterns = [
   { routeId: "index", pattern: "/" },
@@ -427,5 +428,32 @@ describe("an open intercept boundary", () => {
     await expect(submitted).rejects.toThrow()
     expect(router.snapshot().actionData).toBeUndefined()
     expect(router.snapshot().boundaries?.photo?.actionData).toBeUndefined()
+  })
+
+  test("opening the boundary leaves the page's actionData as it was", async () => {
+    const { fetchData } = server()
+    const router = createClientRouter({
+      patterns,
+      initial: { ...initial, actionData: { saved: true } },
+      fetchData,
+      routeHooks: hooks,
+      statusRoutes: { 404: "404" },
+    })
+    await router.navigate("/photos/2")
+    expect(router.snapshot().intercepted).toEqual({ boundary: "photo", pagePath: "/" })
+    expect(router.snapshot().actionData).toEqual({ saved: true })
+  })
+
+  test("when the reload after a posted action fails, the full load goes to the route that owns it", async () => {
+    const { fetchData } = server({}, new Set(["/"]))
+    const router = await opened(fetchData)
+    const { spy } = actionAnswers()
+    restore = () => spy.mockRestore()
+    const pageAction = await router.submit("/", new FormData()).catch((error: unknown) => error)
+    expect(redirectOf(pageAction)).toBe("/")
+    const targetAction = await router
+      .submit("/photos/2", new FormData())
+      .catch((error: unknown) => error)
+    expect(redirectOf(targetAction)).toBe("/photos/2")
   })
 })

@@ -84,6 +84,10 @@ class FakeElement {
     return this.attrs.has(name)
   }
 
+  removeAttribute(name: string): void {
+    this.attrs.delete(name)
+  }
+
   scrollIntoView(): void {
     this.scrolled++
   }
@@ -95,6 +99,8 @@ class FakeFormElement extends FakeElement {
   #action = "http://example.test/submit"
   nativeSubmits = 0
   readonly nativeSubmitters: Array<FakeElement | null> = []
+  /** The action attribute the browser would have read for each native post. */
+  readonly nativeActions: Array<string | null> = []
 
   constructor() {
     super("form")
@@ -127,6 +133,11 @@ class FakeFormElement extends FakeElement {
     if (event.defaultPrevented) return
     this.nativeSubmits++
     this.nativeSubmitters.push(submitter)
+    this.nativeActions.push(
+      submitter?.hasAttribute("formaction")
+        ? submitter.getAttribute("formaction")
+        : FakeElement.prototype.getAttribute.call(this, "action"),
+    )
   }
 }
 
@@ -1346,14 +1357,29 @@ test("while a boundary holds a target, a form with no action posts to the route 
   }
   expect(await submit(shadowed)).toBe("/photos/2")
 
-  // Nothing reached the server: the native post goes to the same route, not the document URL.
+  // Nothing reached the server: the native post goes to the same route, not the document URL, and
+  // the attribute is put back once it has been read.
   reject = new Error("offline")
   await submit(onPage)
-  expect(onPage.nativeSubmits).toBe(1)
-  expect(onPage.getAttribute("action")).toBe("http://example.test/current?sort=new")
+  expect(onPage.nativeActions).toEqual(["http://example.test/current?sort=new"])
+  expect(onPage.getAttribute("action")).toBeNull()
   await submit(inBoundary, blankButton)
-  expect(blankButton.getAttribute("formaction")).toBe("http://example.test/photos/2")
+  expect(inBoundary.nativeActions).toEqual(["http://example.test/photos/2"])
+  expect(blankButton.getAttribute("formaction")).toBe("")
   reject = undefined
+
+  // A GET form submits natively; one the page rendered is pointed at the page for that submission.
+  const search = new FakeFormElement()
+  search.method = "get"
+  document.emit("submit", fakeEvent(search, null))
+  expect(search.getAttribute("action")).toBe("http://example.test/current?sort=new")
+  await Bun.sleep(1)
+  expect(search.getAttribute("action")).toBeNull()
+  const before = submissions.length
+  search.setAttribute("action", "/search")
+  document.emit("submit", fakeEvent(search, null))
+  expect(search.getAttribute("action")).toBe("/search")
+  expect(submissions.length).toBe(before)
 
   // No boundary open: the document URL, as always.
   intercepted = undefined

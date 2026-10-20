@@ -521,7 +521,8 @@ export default function Routing() {
           shows the modal&apos;s URL.
         </li>
         <li>
-          Opening the modal keeps the page&apos;s scroll position, and closing it restores the
+          Opening the modal keeps the page&apos;s scroll position and its{" "}
+          <code>actionData</code>, and closing it restores the
           page&apos;s entry with its scroll. A link to the page&apos;s own URL is a normal navigation,
           never an interception, and only one intercept boundary is open at a time: opening another
           closes the first.
@@ -536,8 +537,8 @@ export default function Routing() {
           none of that answer reaches the page.
         </li>
         <li>
-          A form with no <code>action</code> (or a submitter with no <code>formaction</code>) posts to
-          the route that owns it: the target&apos;s URL when the form sits inside an element with{" "}
+          A form with no <code>action</code> (or a submitter with no <code>formaction</code>), POST
+          or GET, submits to the route that owns it: the target&apos;s URL when the form sits inside an element with{" "}
           <code>data-nifra-boundary=&quot;photo&quot;</code>, otherwise the page&apos;s URL. A form
           with an explicit action posts where it says. The result of an action posted to the
           target arrives as <code>boundaries.photo.actionData</code>, and the page&apos;s own{" "}
