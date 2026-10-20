@@ -881,8 +881,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   // Reload what is on screen: the page under its own path when `page`, and, while an intercept boundary
   // holds a target, that target under its URL when `target`. The part not reloaded is kept as shown.
-  // Returns the fields to publish, both parts together, or the status route the page itself answered
-  // with, which replaces the page and any boundary over it. A target that fails becomes its
+  // Returns the fields to publish, both parts together. `route` is set when the page's reload names
+  // another route - the status route it answered with, or, on a status page, its URL's own route
+  // answering again - which then replaces the page and any boundary over it, so data is only ever
+  // rendered by the route it was loaded for. A target that fails becomes its
   // boundary's error state rather than failing the page, as a dynamic boundary's load does. Nothing is
   // cached once `mine` is superseded: a newer action's reload owns the cache.
   const reloadActive = async (
@@ -890,17 +892,25 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     page: boolean,
     target: boolean,
     mine: number,
-  ): Promise<{ readonly fields: ReturnType<typeof dataFields>; readonly terminal?: string }> => {
+  ): Promise<{
+    readonly fields: ReturnType<typeof dataFields>
+    readonly route?: { readonly routeId: string; readonly params: Record<string, string> }
+  }> => {
     const pagePath = pagePathOf(state)
     const intercepted = state.intercepted
     const targetPath = state.path
-    const pageRoute = { routeId: state.routeId, params: state.params }
+    // The route the page's URL matches: the one on screen, except on a status page.
+    const pageRoute = match(pagePath) ?? { routeId: state.routeId, params: state.params }
+    const rematched = pageRoute.routeId !== state.routeId
     const targetRoute = intercepted !== undefined && target ? match(targetPath) : null
     const [reloaded, targetOutcome] = await Promise.all([
       page
-        ? applyClientLoader(pagePath, pageRoute, signal, () =>
-            loadRouteData(pagePath, pageRoute, signal),
-          )
+        ? (async (): Promise<LoadedRouteData> => {
+            if (rematched) await loadModule?.(pageRoute.routeId, pagePath)
+            return applyClientLoader(pagePath, pageRoute, signal, () =>
+              loadRouteData(pagePath, pageRoute, signal),
+            )
+          })()
         : undefined,
       targetRoute === null
         ? undefined
@@ -922,7 +932,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     if (reloaded !== undefined && mine === generation) cachePut(pagePath, reloaded)
     const fields = dataFields(reloaded ?? state)
     if (reloaded?.terminalRouteId !== undefined)
-      return { fields, terminal: reloaded.terminalRouteId }
+      return { fields, route: { routeId: reloaded.terminalRouteId, params: {} } }
+    if (reloaded !== undefined && rematched) return { fields, route: pageRoute }
     if (intercepted === undefined) return { fields }
     const held = state.boundaries?.[intercepted.boundary]
     if (held === undefined) return { fields }
@@ -956,16 +967,16 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     state = { ...state, pending: true }
     emit()
     try {
-      const { fields, terminal } = await reloadActive(ac.signal, page, target, mine)
+      const { fields, route } = await reloadActive(ac.signal, page, target, mine)
       if (mine !== generation) return // superseded - drop the stale result
       // A terminal answer for the page (the session expired, the record is gone) replaces it, and any
       // boundary over it, with its status route, as a navigation to this URL would.
       state =
-        terminal === undefined
+        route === undefined
           ? { ...state, ...fields, pending: false }
           : {
-              routeId: terminal,
-              params: {},
+              routeId: route.routeId,
+              params: route.params,
               path: state.path,
               ...fields,
               actionData: undefined,
@@ -1296,16 +1307,16 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const reloadTarget =
           state.intercepted !== undefined &&
           (opts?.revalidate !== false || changed.includes(state.path))
-        const { fields, terminal } = await reloadActive(ac.signal, reloadPage, reloadTarget, mine)
+        const { fields, route } = await reloadActive(ac.signal, reloadPage, reloadTarget, mine)
         if (mine !== generation) return
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== pagePath && (!reloadTarget || p !== state.path)))
         // Reconcile: publish the revalidated data + actionData; omit `submission` (the optimistic
-        // window is over - the real data now drives the view). A terminal answer for the page renders
-        // its status route in the page's place, closing any boundary, and the action's result goes
-        // with the page.
+        // window is over - the real data now drives the view). A reload that names another route (a
+        // terminal answer for the page) renders it in the page's place, closing any boundary, and the
+        // action's result goes with the page.
         state =
-          terminal === undefined
+          route === undefined
             ? {
                 routeId: state.routeId,
                 params: state.params,
@@ -1317,8 +1328,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
                 ...(state.intercepted === undefined ? {} : { intercepted: state.intercepted }),
               }
             : {
-                routeId: terminal,
-                params: {},
+                routeId: route.routeId,
+                params: route.params,
                 path: state.path,
                 ...fields,
                 actionData: undefined,

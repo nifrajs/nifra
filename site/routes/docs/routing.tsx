@@ -175,7 +175,9 @@ export default function OrgLayout({ children }: { children: ReactNode }) {
 }`
 
 const MODAL_ROUTE = `// routes/_layout.tsx - a link to /photos/:id from any page opens the photo over that page
-import { type Boundary, type BoundaryStates, closeBoundary } from "@nifrajs/web"
+import type { Boundary, BoundaryStates } from "@nifrajs/web"
+// /client, not the root: the root carries the server, which a browser bundle must not load.
+import { closeBoundary } from "@nifrajs/web/client"
 import type { ReactNode } from "react"
 import type { Route as Photo } from "./photos/+types/[id]"
 
@@ -509,7 +511,7 @@ export default function Routing() {
           when it lands on another matching URL.
         </li>
         <li>
-          <code>closeBoundary(&quot;photo&quot;)</code> from <code>@nifrajs/web</code> closes it: it
+          <code>closeBoundary(&quot;photo&quot;)</code> from <code>@nifrajs/web/client</code> closes it: it
           goes back through the entries the modal added, or replaces the modal&apos;s URL with the
           page&apos;s when those entries are not in this tab&apos;s history (the modal was opened with
           a replace navigation). It does nothing when that boundary holds no target.

@@ -61,10 +61,12 @@ class FakeElement {
 
   closest(selector: string): FakeElement | null {
     if (selector === "a") return this.tagName === "a" ? this : null
-    const attribute = /^\[([a-z-]+)\]$/.exec(selector)?.[1]
-    if (attribute === undefined) return null
+    const parts = /^\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(selector)
+    if (parts === null) return null
+    const [, attribute = "", value] = parts
     for (let el: FakeElement | null = this; el !== null; el = el.parent) {
-      if (el.hasAttribute(attribute)) return el
+      const held = FakeElement.prototype.getAttribute.call(el, attribute)
+      if (value === undefined ? held !== null : held === value) return el
     }
     return null
   }
@@ -453,6 +455,9 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   }
   const fallback: string[] = []
   const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  // installing numbers the document's first entry; what follows is the navigation's own
+  expect(historyCalls).toEqual([["replace", { nifraIndex: 0 }]])
+  historyCalls = []
 
   const anchorTarget = new FakeElement("div")
   const anchor = new FakeElement("a")
@@ -559,6 +564,9 @@ test("the address bar follows a redirect the router follows", async () => {
     snapshot: () => state,
   } as unknown as ClientRouter
   const stop = installHistory(router)
+  // installing numbers the document's first entry; what follows is the navigation's own
+  expect(historyCalls).toEqual([["replace", { nifraIndex: 0 }]])
+  historyCalls = []
 
   // A navigation's redirect replaces the entry it pushed, keeping the link's fragment.
   const link = new FakeElement("a")
@@ -709,6 +717,9 @@ test("programmatic navigation hard-loads unmatched paths but rejects cross-origi
   const { router, navigated } = makeRouter()
   const fallback: string[] = []
   const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  // installing numbers the document's first entry; what follows is the navigation's own
+  expect(historyCalls).toEqual([["replace", { nifraIndex: 0 }]])
+  historyCalls = []
 
   getBrowserNavigate()?.("/outside")
   await Bun.sleep(0)
@@ -781,6 +792,9 @@ test("a malformed programmatic target is rejected before an active blocker inspe
   resetBrowser()
   const { router } = makeRouter()
   const stop = installHistory(router)
+  // installing numbers the document's first entry; what follows is the navigation's own
+  expect(historyCalls).toEqual([["replace", { nifraIndex: 0 }]])
+  historyCalls = []
   const unregister = registerBlocker(
     () => false,
     () => {},
@@ -1237,6 +1251,31 @@ test("closeBoundary goes back to the page even when a second target was opened b
   stop()
 })
 
+test("a fragment link inside the boundary is counted, so closeBoundary still reaches the page", async () => {
+  resetBrowser()
+  const { router } = interceptingRouter()
+  const stop = installHistory(router)
+  const click = async (href: string): Promise<void> => {
+    document.emit("click", fakeEvent(fakeAnchor(`http://example.test${href}`)))
+    await Bun.sleep(0)
+  }
+  await click("/photos/2") // entry 1, over the page at entry 0
+  // The browser handles `#comments` itself: it pushes an entry with no state, then fires popstate and
+  // hashchange.
+  historyState = null
+  locationState.pathname = "/photos/2"
+  locationState.hash = "#comments"
+  windowHub.emit("popstate", new Event("popstate"))
+  windowHub.emit("hashchange", new Event("hashchange"))
+  await Bun.sleep(0)
+  expect(historyCalls.at(-1)).toEqual(["replace", { nifraIndex: 2 }])
+  locationState.hash = ""
+  await click("/photos/3") // entry 3
+  closeBoundary("photo")
+  expect(historyCalls.at(-1)).toEqual(["go", -3])
+  stop()
+})
+
 test("closeBoundary never goes back to a page entry a later push cut off", async () => {
   resetBrowser()
   const { router, navigated } = interceptingRouter()
@@ -1324,6 +1363,15 @@ test("while a boundary holds a target, a form with no action posts to the route 
   inBoundary.action = "http://example.test/photos/2"
   inBoundary.parent = holder
   expect(await submit(inBoundary)).toBe("/photos/2")
+
+  // A marker for another boundary nested inside the open one leaves the form with the open one.
+  const nested = new FakeElement("section")
+  nested.setAttribute("data-nifra-boundary", "cart")
+  nested.parent = holder
+  const inNested = new FakeFormElement()
+  inNested.action = "http://example.test/photos/2"
+  inNested.parent = nested
+  expect(await submit(inNested)).toBe("/photos/2")
 
   const otherHolder = new FakeElement("aside")
   otherHolder.setAttribute("data-nifra-boundary", "cart")

@@ -485,4 +485,35 @@ describe("an open intercept boundary", () => {
     expect(state.actionData).toBeUndefined()
     expect(state.boundaries).toBeUndefined()
   })
+
+  test("after the page answered a status, the next reload loads the URL's own route, never into the status page", async () => {
+    const status: Record<string, number> = {}
+    const { calls, fetchData } = server(status)
+    const router = await opened(fetchData)
+    status["/"] = 404
+    await router.invalidate()
+    expect(router.snapshot().routeId).toBe("404")
+
+    // The URL is still the photo's: its own route reloads it, with its own data.
+    calls.length = 0
+    await router.invalidate()
+    expect(calls.map((call) => `${call.routeId} ${call.path}`)).toEqual(["photo /photos/2"])
+    let state = router.snapshot()
+    expect(state.routeId).toBe("photo")
+    expect(state.params).toEqual({ id: "2" })
+    expect(state.data).toEqual({ from: "/photos/2", n: 3 })
+
+    // A status page whose URL still answers with a status stays the status page, with no data.
+    await router.navigate("/users/7")
+    status["/users/7"] = 404
+    await router.invalidate()
+    state = router.snapshot()
+    expect(state.routeId).toBe("404")
+    expect(state.data).toBeNull()
+    delete status["/users/7"]
+    await router.invalidate()
+    state = router.snapshot()
+    expect(state.routeId).toBe("user")
+    expect(state.data).toEqual({ from: "/users/7", n: 3 })
+  })
 })

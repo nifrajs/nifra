@@ -44,6 +44,7 @@ export function currentDocumentNonce(): string | undefined {
  */
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
 export {
+  closeBoundary,
   getBrowserNavigate,
   IDLE_BLOCKER,
   registerBlocker,
@@ -262,6 +263,40 @@ export function installHistory(
   const writingEntry = (mode: "push" | "replace"): void => {
     if (mode === "replace" ? pageEntry === index : pageEntry !== undefined && pageEntry > index)
       pageEntry = undefined
+  }
+  // Every entry this document owns carries its index, the first one included, so an entry without one
+  // is one the browser pushed itself: a same-page fragment link, which this router leaves native.
+  // Number it as the push it was, or index deltas (a guard's reversal, closeBoundary) count wrong.
+  const numbered = (): boolean => {
+    const current: unknown = history.state
+    return (
+      typeof current === "object" &&
+      current !== null &&
+      "nifraIndex" in current &&
+      typeof current.nifraIndex === "number"
+    )
+  }
+  const stampEntry = (): void => {
+    const current: unknown = history.state
+    history.replaceState(
+      Object.assign({}, typeof current === "object" ? current : null, { nifraIndex: index }),
+      "",
+    )
+  }
+  const adoptNativeEntry = (): boolean => {
+    if (numbered()) return false
+    writingEntry("push")
+    index += 1
+    stampEntry()
+    here = location.pathname + location.search + (location.hash ?? "")
+    return true
+  }
+  // An opaque or file: document routes nothing, so its history is left alone. A refused write (a
+  // browser's rate limit) only leaves fragment entries uncounted, as before.
+  if (location.origin !== "null" && location.protocol !== "file:" && !numbered()) {
+    try {
+      stampEntry()
+    } catch {}
   }
   type Registration = {
     readonly shouldBlock: BlockerFunction
@@ -532,10 +567,12 @@ export function installHistory(
       reversing = false
       return
     }
+    adoptNativeEntry()
     const newIndex = (history.state as { nifraIndex?: number } | null)?.nifraIndex ?? 0
     const dest = location.pathname + location.search + (location.hash ?? "")
     const delta = newIndex - index
-    if (guard(dest, () => history.go(delta))) {
+    // A fragment entry the browser just pushed is not a move between entries to reverse.
+    if (delta !== 0 && guard(dest, () => history.go(delta))) {
       reversing = true
       history.go(-delta)
       return
@@ -619,6 +656,8 @@ export function installHistory(
   document.addEventListener("pointerover", onPrefetch)
   document.addEventListener("focusin", onPrefetch)
   window.addEventListener("popstate", onPopState)
+  // Where a fragment link fires no popstate, its entry is still numbered here.
+  window.addEventListener("hashchange", adoptNativeEntry)
   window.addEventListener("beforeunload", onBeforeUnload)
   return () => {
     unsubscribe()
@@ -629,6 +668,7 @@ export function installHistory(
     document.removeEventListener("pointerover", onPrefetch)
     document.removeEventListener("focusin", onPrefetch)
     window.removeEventListener("popstate", onPopState)
+    window.removeEventListener("hashchange", adoptNativeEntry)
     window.removeEventListener("beforeunload", onBeforeUnload)
   }
 }
@@ -728,12 +768,16 @@ function implicitActionOwner(
   if (intercepted === undefined) return undefined
   const named = Element.prototype.getAttribute.call(actionFrom, actionAttribute(actionFrom, form))
   if (named !== null && named.trim() !== "") return undefined
-  const holder = Element.prototype.closest.call(form, "[data-nifra-boundary]")
+  // Any ancestor marking the open boundary owns it, so a marker nested inside the modal (another
+  // boundary's) does not hand the form to the page. Boundary names are validated identifiers; the
+  // check keeps the selector literal regardless.
   const inside =
-    holder !== null &&
-    Element.prototype.getAttribute.call(holder, "data-nifra-boundary") === intercepted.boundary
+    BOUNDARY_NAME.test(intercepted.boundary) &&
+    Element.prototype.closest.call(form, `[data-nifra-boundary="${intercepted.boundary}"]`) !== null
   return inside ? path : intercepted.pagePath
 }
+
+const BOUNDARY_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/
 
 const actionAttribute = (actionFrom: Element, form: HTMLFormElement): string =>
   actionFrom === form ? "action" : "formaction"

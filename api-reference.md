@@ -5788,6 +5788,8 @@ _No named exports (side-effect entrypoint)._
   Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
   Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so the first…
+- **closeBoundary** _(function)_ - `closeBoundary: (name: string) => void`
+  Close the intercept boundary `name` and return to the page underneath it: back through the history entries the boundary added when the page's entry is there, otherwise by replacing the boundary's URL with the page's. A no-op on the server, before hydration, and when `name` holds no target.
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).

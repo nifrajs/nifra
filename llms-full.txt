@@ -741,7 +741,9 @@ target's loader data arrives as `boundaries.photo` with
 
 ```tsx
 // routes/_layout.tsx - a link to /photos/:id from any page opens the photo over that page
-import { type Boundary, type BoundaryStates, closeBoundary } from "@nifrajs/web"
+import type { Boundary, BoundaryStates } from "@nifrajs/web"
+// /client, not the root: the root carries the server, which a browser bundle must not load.
+import { closeBoundary } from "@nifrajs/web/client"
 import type { ReactNode } from "react"
 import type { Route as Photo } from "./photos/+types/[id]"
 
@@ -795,7 +797,7 @@ full page and gets that answer. A redirect is followed first, and opens in the m
 when it lands on another matching URL.
 
 -
-`closeBoundary("photo")` from `@nifrajs/web` closes it: it
+`closeBoundary("photo")` from `@nifrajs/web/client` closes it: it
 goes back through the entries the modal added, or replaces the modal's URL with the
 page's when those entries are not in this tab's history (the modal was opened with
 a replace navigation). It does nothing when that boundary holds no target.
