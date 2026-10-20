@@ -431,6 +431,7 @@ export function createWebApp<Env = unknown>(
   // gate and loader sees that path once, as a navigation would.
   const liveAttachment: LiveAttachment | undefined = options.live?.[LIVE_ATTACH]({
     matchRoute: (path) => pageExecutor.matchRoute(path),
+    app,
   })
   if (liveAttachment !== undefined) app.onRequest(liveAttachment.onRequest)
   // Before the mount hooks and before every page route, so the order-scoped hooks (`derive`,

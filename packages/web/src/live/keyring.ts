@@ -27,6 +27,11 @@ const HOUR_SECONDS = 3600
 const IAT_SKEW_SECONDS = 60
 const SUBKEY_CACHE_SIZE = 1024
 const TAG_BYTES = 16
+/**
+ * Seals under one subkey before it refuses more. Random 96-bit nonces stay safe for about 2^32
+ * encryptions per key; an hourly per-process subkey at 10,000 grants a second sees 3.6e7.
+ */
+export const MAX_SEALS_PER_SUBKEY = 2 ** 31
 
 const INFO_SECRET_ID = TEXT.encode("nifra live secret id v1")
 const INFO_GRANT = TEXT.encode("nifra live grant v1")
@@ -68,7 +73,10 @@ export interface Keyring {
   /** Grant lifetime in seconds. */
   readonly ttl: number
   readonly secretCount: number
-  /** Encrypt under the first secret; `undefined` when the token would exceed {@link MAX_GRANT_CHARS}. */
+  /**
+   * Encrypt under the first secret; `undefined` when the token would exceed {@link MAX_GRANT_CHARS} or
+   * the hour's subkey reached {@link MAX_SEALS_PER_SUBKEY}.
+   */
   seal(input: GrantInput, nowMs: number): Promise<string | undefined>
   /** Authenticate and decrypt, or `undefined` for anything not issued by this keyring and still valid. */
   open(token: unknown, nowMs: number): Promise<OpenedGrant | undefined>
@@ -87,6 +95,8 @@ export interface KeyringOptions {
   readonly ttl: number
   /** Fixed per process; random when omitted. Tests pin it. */
   readonly processId?: Uint8Array
+  /** Tests lower it; see {@link MAX_SEALS_PER_SUBKEY}. */
+  readonly maxSealsPerSubkey?: number
 }
 
 interface SecretEntry {
@@ -173,6 +183,10 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
 
   const ttl = options.ttl
   const appId = options.appId
+  const maxSeals = options.maxSealsPerSubkey ?? MAX_SEALS_PER_SUBKEY
+  // The subkey `seal` uses changes with the hour, and only `seal` encrypts.
+  let sealHour = -1
+  let seals = 0
 
   return {
     appId,
@@ -180,11 +194,18 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
     secretCount: entries.length,
     async seal(input, nowMs) {
       const iat = Math.floor(nowMs / 1000)
+      const hour = Math.floor(iat / HOUR_SECONDS)
+      if (hour !== sealHour) {
+        sealHour = hour
+        seals = 0
+      }
+      if (seals >= maxSeals) return undefined
+      seals++
       const claims: GrantClaims = { v: 1, ...input, iat, exp: iat + ttl, aud: appId }
       const kid = new Uint8Array(KID_BYTES)
       kid.set(first.id, 0)
       kid.set(processId, 4)
-      writeU32(kid, 12, Math.floor(iat / HOUR_SECONDS))
+      writeU32(kid, 12, hour)
       const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
       const sealed = new Uint8Array(
         await crypto.subtle.encrypt(

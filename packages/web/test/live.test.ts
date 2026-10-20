@@ -8,7 +8,7 @@ import {
   type RenderAdapter,
 } from "../src/index.ts"
 import { createKeyring, type GrantInput, type LiveSecrets } from "../src/live/keyring.ts"
-import { type Live, type LiveOptions, live } from "../src/live.ts"
+import { type Live, type LiveOptions, live, memoryBus } from "../src/live.ts"
 import type { LoaderContext } from "../src/manifest.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
 
@@ -207,6 +207,9 @@ const load = async (
   return { res, json }
 }
 
+/** A seq no older than any fixture's bus head. */
+const nowSeq = (): number => Date.now() * 1000
+
 const testKeyring = (secrets: LiveSecrets = [SECRET], ttl = 600) =>
   createKeyring({ secrets, appId: APP_ID, ttl })
 
@@ -384,24 +387,24 @@ test("over 64 keys in production issues no grant and logs the route and count, n
 })
 
 test("retained and fresh keys together past the budget issue no grant in production", async () => {
-  const keyring = await testKeyring()
-  // 61 kept plus the 4 the fresh owners declare: one over.
-  const many = Array.from({ length: 61 }, (_, i) => `kept:${i}`)
-  const grant = await keyring.seal(
-    {
-      sid: SID,
-      sub: "alice",
-      path: "/posts/42",
-      frame: "page",
-      owners: { [ROOT]: { k: many, w: 0 } },
-      s: 0,
-    },
-    Date.now(),
-  )
   process.env.NODE_ENV = "production"
   const error = spyOn(console, "error").mockImplementation(() => {})
   try {
     const fx = fixture()
+    const keyring = await testKeyring()
+    // 61 kept plus the 4 the fresh owners declare: one over.
+    const many = Array.from({ length: 61 }, (_, i) => `kept:${i}`)
+    const grant = await keyring.seal(
+      {
+        sid: SID,
+        sub: "alice",
+        path: "/posts/42",
+        frame: "page",
+        owners: { [ROOT]: { k: many, w: 0 } },
+        s: nowSeq(),
+      },
+      Date.now(),
+    )
     const { json } = await load(fx.app, { retain: [ROOT], grants: [grant] })
     expect(fx.calls.root).toBeUndefined()
     expect(json.live?.grant).toBeUndefined()
@@ -424,7 +427,7 @@ test("a grant too large to carry is not issued; the client polls", async () => {
     })
     const { json } = await load(fx.app)
     expect(json.live?.grant).toBeUndefined()
-    expect(String(error.mock.calls[0]?.[0])).toContain("exceeds")
+    expect(String(error.mock.calls[0]?.[0])).toContain("no grant issued")
   } finally {
     error.mockRestore()
   }
@@ -518,8 +521,10 @@ test("retained owners keep their watermarks; fresh owners take the load's seq", 
   const before = await opened(first.json.live?.grant)
   const after = await opened(json.live?.grant)
   expect(after?.owners[ROOT]?.w).toBe(before?.owners[ROOT]?.w ?? -1)
-  expect(after?.owners[PAGE]?.w).toBe((before?.owners[PAGE]?.w ?? -1) + 1)
-  expect(after?.s).toBe((before?.s ?? -1) + 1)
+  expect(after?.owners[PAGE]?.w).toBeGreaterThan(
+    before?.owners[PAGE]?.w ?? Number.POSITIVE_INFINITY,
+  )
+  expect(after?.s).toBeGreaterThan(before?.s ?? Number.POSITIVE_INFINITY)
 })
 
 test("a retained live load sends x-nifra-from and x-nifra-retain as the router does", async () => {
@@ -616,18 +621,6 @@ test("a load an app hook replaces is still the same live load", async () => {
 })
 
 test("owners an app hook adds to the retain header without a grant behind them get no grant", async () => {
-  const keyring = await testKeyring()
-  const grant = await keyring.seal(
-    {
-      sid: SID,
-      sub: "alice",
-      path: "/posts/42",
-      frame: "page",
-      owners: { [ROOT]: { k: ["site:nav"], w: 0 } },
-      s: 0,
-    },
-    Date.now(),
-  )
   const fx = fixture({
     use: (app) =>
       app.onRequest((req) => {
@@ -637,6 +630,18 @@ test("owners an app hook adds to the retain header without a grant behind them g
         return new Request(req.url, { headers })
       }),
   })
+  const keyring = await testKeyring()
+  const grant = await keyring.seal(
+    {
+      sid: SID,
+      sub: "alice",
+      path: "/posts/42",
+      frame: "page",
+      owners: { [ROOT]: { k: ["site:nav"], w: 0 } },
+      s: nowSeq(),
+    },
+    Date.now(),
+  )
   const { json } = await load(fx.app, { retain: [ROOT], grants: [grant] })
   expect(json.retained).toEqual([0, 1])
   expect(json.live?.grant).toBeUndefined()
@@ -666,7 +671,7 @@ test("a grant for another socket, path or frame keeps nothing", async () => {
       path: "/posts/42",
       frame: "modal",
       owners: { [ROOT]: { k: [], w: 0 } },
-      s: 0,
+      s: nowSeq(),
     },
     Date.now(),
   )
@@ -704,7 +709,7 @@ test("an expired grant, a forged one or another app's keeps nothing", async () =
     path: "/posts/42",
     frame: "page",
     owners,
-    s: 0,
+    s: nowSeq(),
   }
   const expired = await (await testKeyring()).seal(claims, Date.now() - 601_000)
   const otherApp = await (
@@ -729,9 +734,11 @@ test("the first matching grant of up to three is used", async () => {
 })
 
 test("rotation: a grant under a demoted secret still keeps; the reissue moves to the new secret", async () => {
-  const before = fixture({ live: { secret: OLD_SECRET } })
+  // Two processes on one bus: the second honors grants the first issued.
+  const bus = memoryBus()
+  const before = fixture({ live: { secret: OLD_SECRET, bus } })
   const first = await load(before.app)
-  const fx = fixture({ live: { secret: [SECRET, OLD_SECRET] } })
+  const fx = fixture({ live: { secret: [SECRET, OLD_SECRET], bus } })
   const { json } = await load(fx.app, { retain: [ROOT], grants: [first.json.live?.grant] })
   expect(fx.calls.root).toBeUndefined()
   expect(await opened(json.live?.grant)).toBeDefined()

@@ -6095,9 +6095,22 @@ _No named exports (side-effect entrypoint)._
 
 - **Live** _(interface)_ - `interface Live`
   A live runtime: pass it to `createWebApp({ live })`.
+- **LiveBus** _(interface)_ - `interface LiveBus`
+- **LiveBusEvent** _(type)_ - `type LiveBusEvent = LiveBusInput & { readonly seq: number }`
+- **LiveBusInput** _(type)_ - `type LiveBusInput = LiveChange | LiveRevocation`
+- **LiveBusListener** _(interface)_ - `interface LiveBusListener`
+- **LiveBusSubscription** _(interface)_ - `interface LiveBusSubscription`
+- **LiveChange** _(interface)_ - `interface LiveChange`
+  Something a loader declared with `ctx.live` changed.
 - **LiveOptions** _(interface)_ - `interface LiveOptions`
+- **LiveRevocation** _(interface)_ - `interface LiveRevocation`
+  Grants issued before this event stop working: every grant (`sub` and `key` null), one subject's (`key` null), or, with `key`, any grant holding that key (for everyone, or for `sub`).
 - **live** _(function)_ - `live: (options: LiveOptions) => Live`
   Create the live runtime for one app.
+- **memoryBus** _(function)_ - `memoryBus: () => LiveBus`
+  The single-process bus: an in-memory clock, events delivered to every subscriber before `append` resolves. Processes do not share it; run several behind a shared bus instead.
+- **nextSeq** _(const)_ - `nextSeq: (last: number, nowMs: number) => number`
+  The seq a clock reading allows, never at or below `last`.
 
 ### `@nifrajs/web/nano`
 

@@ -2,6 +2,7 @@
  * The seam between page execution and a configured live runtime (`@nifrajs/web/live`): types and one
  * symbol. An app without `live` imports nothing from the live module itself.
  */
+import type { IdentityPlugin, WebSocketHandler } from "@nifrajs/core/server"
 import type { LoaderContext } from "../manifest.ts"
 
 /** What `createWebApp` tells the runtime about its routes. */
@@ -10,9 +11,17 @@ export interface LiveRouteMatch {
   readonly layoutIds: readonly string[]
 }
 
+/** The app the live socket registers on. */
+export interface LiveHostApp {
+  use(plugin: IdentityPlugin): unknown
+  ws<Data>(path: string, handler: WebSocketHandler<Data>): unknown
+  publish(topic: string, data: string): void
+}
+
 export interface LiveAttachInput {
   /** The route a canonical `pathname + search` renders, or `null`. */
   readonly matchRoute: (path: string) => LiveRouteMatch | null
+  readonly app: LiveHostApp
 }
 
 export interface LiveAttachment {

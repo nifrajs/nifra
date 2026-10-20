@@ -12,8 +12,10 @@
  *
  * Every live load is a `POST` to the load endpoint that runs the target page as a `GET` through the
  * whole app: every hook, middleware, gate and loader sees the target path, exactly as a navigation.
+ * Changes reach open pages over one WebSocket per tab, as opaque tags of the keys they watch.
  */
 import { isSameOriginForm, replacedRequestOf } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
 import {
   LIVE_ATTACH,
   type LiveAttachInput,
@@ -23,10 +25,12 @@ import {
   type LiveLoad,
   type LiveRuntimeHandle,
 } from "./internal/live-contract.ts"
+import { type LiveBus, type LiveBusEvent, memoryBus } from "./live/bus.ts"
+import { History, keyHasher } from "./live/history.ts"
+import { CLOSE_CAPACITY, LiveHub, type LiveSocket } from "./live/hub.ts"
 import {
   assertLiveSecrets,
   createKeyring,
-  type GrantClaims,
   type GrantOwner,
   KEY_PATTERN,
   type Keyring,
@@ -36,8 +40,20 @@ import {
   SID_PATTERN,
   toBase64Url,
 } from "./live/keyring.ts"
+import { Revocations } from "./live/revocations.ts"
 import type { LoaderContext } from "./manifest.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "./router.ts"
+
+export type {
+  LiveBus,
+  LiveBusEvent,
+  LiveBusInput,
+  LiveBusListener,
+  LiveBusSubscription,
+  LiveChange,
+  LiveRevocation,
+} from "./live/bus.ts"
+export { memoryBus, nextSeq } from "./live/bus.ts"
 
 export interface LiveOptions {
   /**
@@ -56,10 +72,27 @@ export interface LiveOptions {
   readonly grantTtl?: number
   /** The live load endpoint. Default `/_nifra/live/load`. */
   readonly loadPath?: string
-  /** Origins besides the app's own that may call the load endpoint. */
+  /** The live socket. Default `/_nifra/live`. */
+  readonly path?: string
+  /** Origins besides the app's own that may call the load endpoint and open the socket. */
   readonly trustedOrigins?: readonly string[]
   /** Live loads running at once in this process; past it the endpoint answers 503. Default 64. */
   readonly maxConcurrentLoads?: number
+  /** Live sockets in this process; past it a socket is closed with 1013. Default 10,000. */
+  readonly maxSockets?: number
+  /** Refuse new sockets while the process's resident memory is above this many bytes. */
+  readonly maxRssBytes?: number
+  /**
+   * The ordered log every process serving the app shares. Default: an in-process bus, right for one
+   * process only.
+   */
+  readonly bus?: LiveBus
+  /** Processes serving the app, for spreading reloads. Default 1. */
+  readonly instances?: number
+  /** Live loads per second the deployment absorbs after one change, for spreading reloads. Default 500. */
+  readonly reloadRate?: number
+  /** The least time, in ms, clients spread their reloads over. Default 0. */
+  readonly spreadFloor?: number
   /**
    * Re-check the keys of owners a load keeps without running their loaders. With it, `renew`
    * re-signs a grant without loaders; without it, `renew` runs a full load. `false` issues no grant.
@@ -69,22 +102,31 @@ export interface LiveOptions {
 
 /** A live runtime: pass it to `createWebApp({ live })`. */
 export interface Live extends LiveRuntimeHandle {
-  /** Resolves once the secrets are derived; rejects when two of them share a secret id. */
+  /** Resolves once the secrets are derived and the bus is read; rejects on a duplicate secret id. */
   readonly ready: Promise<void>
-  /** Refuse every grant issued to `subject` before now. */
+  /**
+   * `keys` changed: every open page watching one reloads it. Call it after the write is visible to
+   * loaders; resolves once this process has applied it.
+   */
+  publish(...keys: string[]): Promise<void>
+  /** Refuse every grant issued to `subject` before now, and close its sockets. */
   revoke(subject: string): Promise<void>
-  /** Refuse every grant issued before now. */
+  /** Refuse every grant issued before now, and close every socket. */
   revokeAll(): Promise<void>
   /**
-   * Access to `key` was removed (for everyone, or for one subject): no grant issued before now keeps or
-   * re-signs it, so the next load runs that owner's loader, which decides again.
+   * Access to `key` was removed (for everyone, or for one subject): every watcher gets one last change
+   * for it and stops watching it, and no grant issued before now keeps or re-signs it, so the next load
+   * runs that owner's loader, which decides again.
    */
   revokeKey(key: string, subject?: string): Promise<void>
 }
 
 const DEFAULT_LOAD_PATH = "/_nifra/live/load"
+const DEFAULT_SOCKET_PATH = "/_nifra/live"
 const DEFAULT_TTL_SECONDS = 600
 const DEFAULT_MAX_LOADS = 64
+const DEFAULT_MAX_SOCKETS = 10_000
+const DEFAULT_RELOAD_RATE = 500
 const DEFAULT_APP_ID = "nifra"
 const MAX_BODY_BYTES = 65_536
 const MAX_PATH_CHARS = 2048
@@ -115,10 +157,18 @@ interface LoadBody {
   readonly grants: readonly string[]
 }
 
-interface Stamp {
-  readonly seq: number
-  readonly at: number
+/** What the runtime holds once the keyring is derived and the bus subscribed. */
+interface Core {
+  readonly ring: Keyring
+  readonly history: History
+  readonly revocations: Revocations
+  readonly hub: LiveHub
 }
+
+type Queued =
+  | { readonly kind: "event"; readonly event: LiveBusEvent }
+  | { readonly kind: "gap"; readonly head: number }
+  | { readonly kind: "down" }
 
 /** Create the live runtime for one app. */
 export function live(options: LiveOptions): Live {
@@ -131,13 +181,20 @@ export function live(options: LiveOptions): Live {
       "[nifra/web] live: `grantTtl` must be a whole number of seconds from 60 to 86400",
     )
   }
-  const maxLoads = options.maxConcurrentLoads ?? DEFAULT_MAX_LOADS
-  if (!Number.isSafeInteger(maxLoads) || maxLoads < 1) {
-    throw new TypeError("[nifra/web] live: `maxConcurrentLoads` must be a positive whole number")
+  const maxLoads = positive(options.maxConcurrentLoads, DEFAULT_MAX_LOADS, "maxConcurrentLoads")
+  const maxSockets = positive(options.maxSockets, DEFAULT_MAX_SOCKETS, "maxSockets")
+  const instances = positive(options.instances, 1, "instances")
+  const reloadRate = positive(options.reloadRate, DEFAULT_RELOAD_RATE, "reloadRate")
+  const spreadFloor = options.spreadFloor ?? 0
+  if (!Number.isSafeInteger(spreadFloor) || spreadFloor < 0 || spreadFloor > 5000) {
+    throw new TypeError("[nifra/web] live: `spreadFloor` must be a whole number of ms up to 5000")
   }
-  const loadPath = options.loadPath ?? DEFAULT_LOAD_PATH
-  if (!loadPath.startsWith("/") || loadPath.startsWith("//") || /[?#\s]/.test(loadPath)) {
-    throw new TypeError("[nifra/web] live: `loadPath` must be an absolute path with no query")
+  const maxRssBytes = options.maxRssBytes
+  if (maxRssBytes !== undefined) positive(maxRssBytes, 1, "maxRssBytes")
+  const loadPath = endpointPath(options.loadPath ?? DEFAULT_LOAD_PATH, "loadPath")
+  const socketPath = endpointPath(options.path ?? DEFAULT_SOCKET_PATH, "path")
+  if (socketPath === loadPath) {
+    throw new TypeError("[nifra/web] live: `path` and `loadPath` must differ")
   }
   const appId = options.appId ?? DEFAULT_APP_ID
   if (typeof appId !== "string" || appId === "" || appId.length > 128) {
@@ -147,47 +204,148 @@ export function live(options: LiveOptions): Live {
   }
   const secrets = secretsOf(options.secret)
   assertLiveSecrets(secrets)
-  const keyring = createKeyring({ secrets, appId, ttl })
   const trusted = new Set(options.trustedOrigins ?? [])
   const authorize = options.authorize
   const subjectOf = options.subject
   const production = isProduction()
+  const bus = options.bus ?? memoryBus()
+  const hash = keyHasher()
+  const publishers: ((topic: string, frame: string) => void)[] = []
 
-  // In-process sequence and revocation log. Phase 3 replaces both with the bus.
-  let seq = 0
-  let revokedAll: Stamp | undefined
-  const revokedSubjects = new Map<string, Stamp>()
-  const revokedKeys = new Map<string, Stamp>()
-  const revokedSubjectKeys = new Map<string, Map<string, Stamp>>()
-  const stamp = (): Stamp => {
-    seq++
-    const at = Date.now()
-    // A revocation older than one grant lifetime can refuse nothing: every grant issued before it
-    // has expired.
-    const horizon = at - ttl * 1000
-    for (const map of [revokedSubjects, revokedKeys]) {
-      for (const [name, entry] of map) if (entry.at < horizon) map.delete(name)
-    }
-    for (const [key, subjects] of revokedSubjectKeys) {
-      for (const [name, entry] of subjects) if (entry.at < horizon) subjects.delete(name)
-      if (subjects.size === 0) revokedSubjectKeys.delete(key)
-    }
-    return { seq, at }
+  // Bus events wait here until the core exists, then apply in seq order: their tags are derived
+  // first (async), then each is recorded and fanned out in one synchronous step.
+  const queue: Queued[] = []
+  let draining = false
+  let core: Core | undefined
+  /** The last bus seq this process applied: a load reads it before any loader runs. */
+  let seen = 0
+  const waiters: { readonly seq: number; readonly resolve: () => void }[] = []
+
+  const started: Promise<Core> = (async () => {
+    const ring = await createKeyring({ secrets, appId, ttl })
+    const subscription = await bus.subscribe({
+      event: (event) => enqueue({ kind: "event", event }),
+      gap: (head) => enqueue({ kind: "gap", head }),
+      down: () => enqueue({ kind: "down" }),
+    })
+    seen = subscription.head
+    const history = new History(subscription.head)
+    const revocations = new Revocations(subscription.head, ttl * 1000)
+    const hub = new LiveHub(
+      ring,
+      history,
+      revocations,
+      { appId, trusted, maxSockets, maxRssBytes, reloadRate, instances, spreadFloor, hash },
+      publishers,
+    )
+    core = { ring, history, revocations, hub }
+    void drain()
+    return core
+  })()
+  // `ready` carries a failed start; nothing else may leave it unhandled.
+  started.catch(() => {})
+
+  function enqueue(item: Queued): void {
+    queue.push(item)
+    void drain()
   }
-  const above = (entry: Stamp | undefined, s: number): boolean =>
-    entry !== undefined && entry.seq > s
-  const grantRevoked = (claims: GrantClaims): boolean =>
-    above(revokedAll, claims.s) ||
-    (claims.sub !== null && above(revokedSubjects.get(claims.sub), claims.s))
-  const keyRevoked = (key: string, claims: GrantClaims): boolean =>
-    above(revokedKeys.get(key), claims.s) ||
-    (claims.sub !== null && above(revokedSubjectKeys.get(key)?.get(claims.sub), claims.s))
+
+  async function drain(): Promise<void> {
+    if (draining || core === undefined) return
+    draining = true
+    try {
+      for (let item = queue.shift(); item !== undefined; item = queue.shift()) {
+        await apply(core, item)
+      }
+    } finally {
+      draining = false
+    }
+  }
+
+  async function apply(c: Core, item: Queued): Promise<void> {
+    if (item.kind === "down") {
+      c.hub.down = true
+      c.hub.closeAll(CLOSE_CAPACITY, "unavailable")
+      return
+    }
+    if (item.kind === "gap") return forgetUntil(c, item.head)
+    const event = item.event
+    // At-least-once delivery: a repeat is already applied.
+    if (!Number.isSafeInteger(event.seq) || event.seq <= seen) return
+    try {
+      if (event.type === "change") {
+        const keys = event.keys.filter((key) => typeof key === "string" && KEY_PATTERN.test(key))
+        const tags = await Promise.all(keys.map((key) => c.hub.tagsOf(key)))
+        // One synchronous step: history first, then the frames.
+        c.history.record(
+          event.seq,
+          keys.map((key) => hash(key)),
+          Date.now(),
+        )
+        c.hub.change(keys, tags)
+      } else {
+        if (!validRevocation(event)) throw new TypeError("malformed revocation")
+        const tags = event.key === null ? [] : await c.hub.tagsOf(event.key)
+        c.revocations.apply(event, Date.now())
+        c.history.advance(event.seq, Date.now())
+        c.hub.revoke(event, tags)
+      }
+      settle(event.seq)
+    } catch (err) {
+      // An event this process could not apply leaves its history and revocations unknown.
+      console.error("[nifra/web] live: a bus event could not be applied; closing live sockets", err)
+      forgetUntil(c, event.seq)
+    }
+  }
+
+  /** Everything up to `head` is unknown: refuse older grants, report all owners stale, reconnect. */
+  function forgetUntil(c: Core, head: number): void {
+    // Never behind what this process applied: loads already issued watermarks up to `seen`.
+    const at = Math.max(head, seen)
+    c.history.reset(at)
+    c.revocations.raise(at)
+    c.hub.down = false
+    c.hub.closeAll(CLOSE_CAPACITY, "resync")
+    settle(at)
+  }
+
+  function settle(seq: number): void {
+    if (seq > seen) seen = seq
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const waiter = waiters[i]
+      if (waiter !== undefined && waiter.seq <= seen) {
+        waiters.splice(i, 1)
+        waiter.resolve()
+      }
+    }
+  }
+
+  /** Append to the bus, then wait until this process has applied it. */
+  async function append(input: Parameters<LiveBus["append"]>[0]): Promise<void> {
+    await started
+    const seq = await bus.append(input)
+    if (seq <= seen) return
+    await new Promise<void>((resolve) => waiters.push({ seq, resolve }))
+  }
 
   let inflight = 0
   let entering = 0
 
   const attach = (input: LiveAttachInput): LiveAttachment => {
     const loads = new WeakMap<Request, LoadState>()
+    const app = input.app
+    publishers.push((topic, frame) => app.publish(topic, frame))
+    // The socket carries no authority before a watch, so it is registered before any app guard.
+    app.use(websocket())
+    app.ws<LiveSocket>(socketPath, {
+      // Decided in `upgrade`, which has the request: a missing or `null` Origin is refused there.
+      allowedOrigins: () => true,
+      upgrade: async (c) => (await started).hub.upgrade(c.req),
+      // A socket opens only after its `upgrade` awaited the start, so the core exists by then.
+      open: (ws) => core?.hub.open(ws),
+      message: (ws, data) => core?.hub.message(ws, data),
+      close: (ws) => core?.hub.close(ws),
+    })
 
     const admitLoad = async (req: Request): Promise<Request | Response> => {
       const origin = req.headers.get("origin")
@@ -219,18 +377,19 @@ export function live(options: LiveOptions): Live {
       if (body === undefined) return refusal(400, "bad_request")
       const path = canonicalPath(body.path, req.url)
       if (path === undefined) return refusal(400, "bad_path")
-      const ring = await keyring
+      const c = await started
       // Read before any hook, middleware or loader runs: every owner loaded fresh is at least this new.
-      const loadSeq = seq
+      const loadSeq = seen
       const match = input.matchRoute(path)
       const now = Date.now()
       let grant: OpenedGrant | undefined
-      for (const token of body.grants) {
-        const opened = await ring.open(token, now)
+      // With the bus unreachable, revocations are unknown: nothing presented is honored.
+      for (const token of c.hub.down ? [] : body.grants) {
+        const opened = await c.ring.open(token, now)
         if (opened === undefined) continue
         const claims = opened.claims
         if (claims.sid !== body.sid || claims.path !== path || claims.frame !== body.frame) continue
-        if (grantRevoked(claims)) continue
+        if (c.revocations.grantRevoked(claims)) continue
         grant = opened
         break
       }
@@ -250,7 +409,7 @@ export function live(options: LiveOptions): Live {
           const held = Object.hasOwn(claims.owners, owner) ? claims.owners[owner] : undefined
           if (held === undefined) continue
           // A key revoked since issuance is never kept or re-signed: its loader runs and decides again.
-          if (held.k.some((key) => keyRevoked(key, claims))) continue
+          if (held.k.some((key) => c.revocations.keyRevoked(key, claims))) continue
           if (owner.startsWith("L:")) {
             const index = match.layoutIds.indexOf(owner.slice(2))
             if (index !== -1 && !layouts.includes(index)) layouts.push(index)
@@ -271,7 +430,7 @@ export function live(options: LiveOptions): Live {
       })
       loads.set(
         target,
-        new LoadState(ring, body, path, loadSeq, grant, match?.routeId ?? "", retainPage),
+        new LoadState(c, body, path, loadSeq, grant, match?.routeId ?? "", retainPage),
       )
       return target
     }
@@ -303,7 +462,7 @@ export function live(options: LiveOptions): Live {
     private readonly collectors = new Map<string, { keys: Set<string>; sealed: boolean }>()
 
     constructor(
-      private readonly ring: Keyring,
+      private readonly core: Core,
       private readonly body: LoadBody,
       private readonly path: string,
       private readonly seq: number,
@@ -395,9 +554,12 @@ export function live(options: LiveOptions): Live {
 
     async finish(input: LiveFinish): Promise<LiveEnvelope> {
       for (const entry of this.collectors.values()) entry.sealed = true
-      const subject = await this.ring.subjectTag(this.subject)
+      const ring = this.core.ring
+      const subject = await ring.subjectTag(this.subject)
       const pageRetained = input.retained.some((owner) => owner.startsWith("P:"))
       const bare: LiveEnvelope = pageRetained ? { subject, page: "retained" } : { subject }
+      // No socket would accept a grant now, and revocations are unknown: the client polls.
+      if (this.core.hub.down) return bare
       const owners: Record<string, GrantOwner> = {}
       const carried = new Set<string>()
       for (const owner of input.retained) {
@@ -434,7 +596,7 @@ export function live(options: LiveOptions): Live {
         )
         return bare
       }
-      const grant = await this.ring.seal(
+      const grant = await ring.seal(
         {
           sid: this.body.sid,
           sub: this.subject,
@@ -447,7 +609,7 @@ export function live(options: LiveOptions): Live {
       )
       if (grant === undefined) {
         console.error(
-          `[nifra/web] live: the grant for route "${this.routeId}" exceeds ${MAX_GRANT_CHARS} characters; no grant issued, the client polls`,
+          `[nifra/web] live: no grant issued for route "${this.routeId}" (over ${MAX_GRANT_CHARS} characters, or the subkey's seal limit); the client polls`,
         )
         return bare
       }
@@ -457,40 +619,69 @@ export function live(options: LiveOptions): Live {
         const owning: string[] = []
         for (const [name, owner] of Object.entries(owners))
           if (owner.k.includes(key)) owning.push(name)
-        tags[await this.ring.tag(key)] = owning
+        tags[await ring.tag(key)] = owning
       }
       return { ...bare, grant, tags }
     }
   }
 
+  const checkKey = (key: unknown, method: string): string => {
+    if (typeof key !== "string" || !KEY_PATTERN.test(key)) {
+      throw new TypeError(`[nifra/web] live.${method} takes keys in the ctx.live() charset`)
+    }
+    return key
+  }
+
   return {
-    ready: keyring.then(() => undefined),
+    ready: started.then(() => undefined),
+    async publish(...keys) {
+      for (const key of keys) checkKey(key, "publish")
+      if (keys.length === 0) return
+      await append({ type: "change", keys: [...new Set(keys)] })
+    },
     async revoke(subject) {
       if (typeof subject !== "string")
         throw new TypeError("[nifra/web] live.revoke takes a subject")
-      revokedSubjects.set(subject, stamp())
+      await append({ type: "revoke", sub: subject, key: null })
     },
     async revokeAll() {
-      revokedAll = stamp()
+      await append({ type: "revoke", sub: null, key: null })
     },
     async revokeKey(key, subject) {
-      if (typeof key !== "string" || !KEY_PATTERN.test(key)) {
-        throw new TypeError("[nifra/web] live.revokeKey takes a key in the ctx.live() charset")
+      checkKey(key, "revokeKey")
+      if (subject !== undefined && typeof subject !== "string") {
+        throw new TypeError("[nifra/web] live.revokeKey takes an optional subject string")
       }
-      const entry = stamp()
-      if (subject === undefined) {
-        revokedKeys.set(key, entry)
-        return
-      }
-      let subjects = revokedSubjectKeys.get(key)
-      if (subjects === undefined) {
-        subjects = new Map()
-        revokedSubjectKeys.set(key, subjects)
-      }
-      subjects.set(subject, entry)
+      await append({ type: "revoke", sub: subject ?? null, key })
     },
     [LIVE_ATTACH]: attach,
   }
+}
+
+function validRevocation(event: LiveBusEvent): boolean {
+  if (event.type !== "revoke") return false
+  if (event.sub !== null && typeof event.sub !== "string") return false
+  return event.key === null || (typeof event.key === "string" && KEY_PATTERN.test(event.key))
+}
+
+function positive(value: number | undefined, fallback: number, name: string): number {
+  const resolved = value ?? fallback
+  if (!Number.isSafeInteger(resolved) || resolved < 1) {
+    throw new TypeError(`[nifra/web] live: \`${name}\` must be a positive whole number`)
+  }
+  return resolved
+}
+
+function endpointPath(path: string, name: string): string {
+  if (
+    typeof path !== "string" ||
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    /[?#\s]/.test(path)
+  ) {
+    throw new TypeError(`[nifra/web] live: \`${name}\` must be an absolute path with no query`)
+  }
+  return path
 }
 
 function secretsOf(secret: LiveOptions["secret"]): readonly unknown[] {

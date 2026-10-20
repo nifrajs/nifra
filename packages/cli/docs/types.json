@@ -8143,14 +8143,58 @@
     "name": "Live",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface Live extends LiveRuntimeHandle {\n    /** Resolves once the secrets are derived; rejects when two of them share a secret id. */\n    readonly ready: Promise<void>;\n    /** Refuse every grant issued to `subject` before now. */\n    revoke(subject: string): Promise<void>;\n    /** Refuse every grant issued before now. */\n    revokeAll(): Promise<void>;\n    /**\n     * Access to `key` was removed (for everyone, or for one subject): no grant issued before now keeps or\n     * re-signs it, so the next load runs that owner's loader, which decides again.\n     */\n    revokeKey(key: string, subject?: string): Promise<void>;\n}",
+    "signature": "export interface Live extends LiveRuntimeHandle {\n    /** Resolves once the secrets are derived and the bus is read; rejects on a duplicate secret id. */\n    readonly ready: Promise<void>;\n    /**\n     * `keys` changed: every open page watching one reloads it. Call it after the write is visible to\n     * loaders; resolves once this process has applied it.\n     */\n    publish(...keys: string[]): Promise<void>;\n    /** Refuse every grant issued to `subject` before now, and close its sockets. */\n    revoke(subject: string): Promise<void>;\n    /** Refuse every grant issued before now, and close every socket. */\n    revokeAll(): Promise<void>;\n    /**\n     * Access to `key` was removed (for everyone, or for one subject): every watcher gets one last change\n     * for it and stops watching it, and no grant issued before now keeps or re-signs it, so the next load\n     * runs that owner's loader, which decides again.\n     */\n    revokeKey(key: string, subject?: string): Promise<void>;\n}",
     "doc": "/** A live runtime: pass it to `createWebApp({ live })`. */"
+  },
+  {
+    "name": "LiveBus",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveBus {\n    /** Append one event; resolves with its seq. */\n    append(input: LiveBusInput): Promise<number>;\n    /** Deliver every event after the returned head to `listener`, in seq order. */\n    subscribe(listener: LiveBusListener): Promise<LiveBusSubscription>;\n}"
+  },
+  {
+    "name": "LiveBusEvent",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type LiveBusEvent = LiveBusInput & {\n    readonly seq: number;\n};"
+  },
+  {
+    "name": "LiveBusInput",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type LiveBusInput = LiveChange | LiveRevocation;"
+  },
+  {
+    "name": "LiveBusListener",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveBusListener {\n    /** The next event, in seq order. */\n    event(event: LiveBusEvent): void;\n    /**\n     * Events up to `head` may be lost (a trimmed stream, a reconnect): what happened before `head` is\n     * unknown, and delivery resumes with the events after it.\n     */\n    gap(head: number): void;\n    /** The bus is unreachable; the next {@link gap} reports where delivery resumes. */\n    down(): void;\n}"
+  },
+  {
+    "name": "LiveBusSubscription",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveBusSubscription {\n    /** The seq of the last event before delivery starts. */\n    readonly head: number;\n    close(): void;\n}"
+  },
+  {
+    "name": "LiveChange",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveChange {\n    readonly type: \"change\";\n    readonly keys: readonly string[];\n}",
+    "doc": "/** Something a loader declared with `ctx.live` changed. */"
   },
   {
     "name": "LiveOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface LiveOptions {\n    /**\n     * The grant secret, or a rotation list with the newest first (at most 3, each at least 32 bytes).\n     * Required in production; development falls back to a random per-process secret.\n     */\n    readonly secret?: string | readonly string[] | undefined;\n    /**\n     * Who the viewer is: a stable id, or `null` for an anonymous viewer. Called once per live load,\n     * after middleware. A grant is only honored for the subject it was issued to.\n     */\n    readonly subject: (ctx: LoaderContext) => string | null | Promise<string | null>;\n    /** Separates this app's tags from another app's that shares a secret. Default `\"nifra\"`. */\n    readonly appId?: string;\n    /** Grant lifetime in seconds. Default 600. */\n    readonly grantTtl?: number;\n    /** The live load endpoint. Default `/_nifra/live/load`. */\n    readonly loadPath?: string;\n    /** Origins besides the app's own that may call the load endpoint. */\n    readonly trustedOrigins?: readonly string[];\n    /** Live loads running at once in this process; past it the endpoint answers 503. Default 64. */\n    readonly maxConcurrentLoads?: number;\n    /**\n     * Re-check the keys of owners a load keeps without running their loaders. With it, `renew`\n     * re-signs a grant without loaders; without it, `renew` runs a full load. `false` issues no grant.\n     */\n    readonly authorize?: (keys: readonly string[], ctx: LoaderContext) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface LiveOptions {\n    /**\n     * The grant secret, or a rotation list with the newest first (at most 3, each at least 32 bytes).\n     * Required in production; development falls back to a random per-process secret.\n     */\n    readonly secret?: string | readonly string[] | undefined;\n    /**\n     * Who the viewer is: a stable id, or `null` for an anonymous viewer. Called once per live load,\n     * after middleware. A grant is only honored for the subject it was issued to.\n     */\n    readonly subject: (ctx: LoaderContext) => string | null | Promise<string | null>;\n    /** Separates this app's tags from another app's that shares a secret. Default `\"nifra\"`. */\n    readonly appId?: string;\n    /** Grant lifetime in seconds. Default 600. */\n    readonly grantTtl?: number;\n    /** The live load endpoint. Default `/_nifra/live/load`. */\n    readonly loadPath?: string;\n    /** The live socket. Default `/_nifra/live`. */\n    readonly path?: string;\n    /** Origins besides the app's own that may call the load endpoint and open the socket. */\n    readonly trustedOrigins?: readonly string[];\n    /** Live loads running at once in this process; past it the endpoint answers 503. Default 64. */\n    readonly maxConcurrentLoads?: number;\n    /** Live sockets in this process; past it a socket is closed with 1013. Default 10,000. */\n    readonly maxSockets?: number;\n    /** Refuse new sockets while the process's resident memory is above this many bytes. */\n    readonly maxRssBytes?: number;\n    /**\n     * The ordered log every process serving the app shares. Default: an in-process bus, right for one\n     * process only.\n     */\n    readonly bus?: LiveBus;\n    /** Processes serving the app, for spreading reloads. Default 1. */\n    readonly instances?: number;\n    /** Live loads per second the deployment absorbs after one change, for spreading reloads. Default 500. */\n    readonly reloadRate?: number;\n    /** The least time, in ms, clients spread their reloads over. Default 0. */\n    readonly spreadFloor?: number;\n    /**\n     * Re-check the keys of owners a load keeps without running their loaders. With it, `renew`\n     * re-signs a grant without loaders; without it, `renew` runs a full load. `false` issues no grant.\n     */\n    readonly authorize?: (keys: readonly string[], ctx: LoaderContext) => boolean | Promise<boolean>;\n}"
+  },
+  {
+    "name": "LiveRevocation",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LiveRevocation {\n    readonly type: \"revoke\";\n    readonly sub: string | null;\n    readonly key: string | null;\n}",
+    "doc": "/**\n * Grants issued before this event stop working: every grant (`sub` and `key` null), one subject's\n * (`key` null), or, with `key`, any grant holding that key (for everyone, or for `sub`).\n */"
   },
   {
     "name": "LoadGoogleFontIO",
@@ -20668,6 +20712,13 @@
     "doc": "/**\n * A disposable in-memory port for tests. Retains payloads up to a small byte budget and throws past\n * it, refusing any load that resembles durable use. NEVER use outside tests - it has no persistence,\n * no tenancy, and no eviction beyond the hard cap.\n */"
   },
   {
+    "name": "memoryBus",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function memoryBus(): LiveBus;",
+    "doc": "/**\n * The single-process bus: an in-memory clock, events delivered to every subscriber before `append`\n * resolves. Processes do not share it; run several behind a shared bus instead.\n */"
+  },
+  {
     "name": "memoryChannelHub",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -20907,6 +20958,13 @@
     "package": "@nifrajs/cron",
     "signature": "export declare function nextRun(fields: CronFields, from: Date): Date | null;",
     "doc": "/**\n * The next instant at/after `from` (exclusive of the current minute's already-started second) that\n * matches. Steps minute-by-minute with a safety cap (~5 years) so a never-matching expression\n * returns `null` instead of looping forever.\n */"
+  },
+  {
+    "name": "nextSeq",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const nextSeq: (last: number, nowMs: number) => number;",
+    "doc": "/** The seq a clock reading allows, never at or below `last`. */"
   },
   {
     "name": "nifraScriptHashes",
