@@ -158,7 +158,7 @@
     "@nifrajs/web": "workspace:*",
     "@types/bun": "^1.4.3",
     "@types/express": "^5.0.6",
-    "@upstash/context7-mcp": "4.0.2",
+    "@upstash/context7-mcp": "4.4.4",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.4.30",

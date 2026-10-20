@@ -37,5 +37,6 @@ export const recipe: UpgradeRecipe = {
     "Effects, computeds, `bindList` and `resource` created while an enhancer sets up stop when its island unmounts, so the disposers nano asked you to collect can go. An effect created later, inside an event handler, is not owned.",
     "`nifra check` adds NF-C047 (a `data-bind-*` name its `bindIsland` setup never declares) and NF-C048 (a binding no `bindIsland` host walks), and NF-C022 now checks the islands `bindList` key. NF-C021 and NF-C023 are retired; a `nifra.check.json` override of either no longer does anything.",
     "`nifra scaffold --variant stateful` emits a reactive island where it emitted the nano pattern.",
+    "The server-component pipeline is certified on Vite 8.3.4: set `vite` to exactly 8.3.4. Until it matches, the plugin's guard stops the build and `nifra check` names the installed version.",
   ],
 }

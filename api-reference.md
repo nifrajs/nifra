@@ -5732,7 +5732,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflareWorkersCache** _(function)_ - `cloudflareWorkersCache: (options: CloudflareWorkersCacheOptions) => CdnProvider`
   Workers Cache in front of the Worker serving the app. Purges are scoped to the calling entrypoint.
 - **cloudflareZone** _(function)_ - `cloudflareZone: (options: CloudflareZoneOptions) => CdnProvider`
-  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.
+  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` or `x-nifra-swap` (soft navigations and slot swaps fetch the page URL with those header…
 - **createInvalidator** _(function)_ - `createInvalidator: (options: InvalidatorOptions) => { invalidate(target: { readonly tags?: readonly string[]; readonly paths?: readonly string[]; }, platform?: ISRPlatform): Promise<InvalidateResult>; }`
   Purge pages after a mutation, from app code: `await invalidate({ tags: ["product:42"] })`. The origin store goes first, so a CDN refetch cannot repopulate from a stale origin entry. At most 32 tags and 100 paths a call.
 - **defineCdnProvider** _(function)_ - `defineCdnProvider: (definition: CdnProviderDefinition, options?: PurgeQueueOptions) => CdnProvider`
@@ -6089,6 +6089,13 @@ _No named exports (side-effect entrypoint)._
   Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
 - **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
   Run `fn` without subscribing the running effect or computed to the signals it reads.
+
+### `@nifrajs/web/islands/swap`
+
+- **SwapOptions** _(interface)_ - `interface SwapOptions`
+  Where `enableSwap` looks for links, forms, slots and islands.
+- **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
+  Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and form under `root` refresh its slot in place. Call it instead of `mountIslands`.
 
 ### `@nifrajs/web/plugins/css-modules`
 
@@ -7119,6 +7126,8 @@ _No named exports (side-effect entrypoint)._
   The tag: `` html`<p>${user.name}</p>` `` → an escaped {@link Template}.
 - **raw** _(function)_ - `raw: (trusted: string) => RawHtml`
   Mark a string as trusted, pre-escaped markup - it is emitted verbatim. The deliberate escape hatch (CMS-sanitized HTML, pre-rendered markdown): every call site is greppable, exactly like React's dangerouslySetInnerHTML, without the JSX.
+- **slot** _(function)_ - `slot: (name: string, content: HtmlValue) => Template`
+  A region of the page that a `data-swap` link or form refreshes on its own. Place it as the only content of the element marked `data-swap-slot="<name>"`:
 - **vanillaAdapter** _(const)_ - `vanillaAdapter: RenderAdapter`
   The zero-framework server render adapter - pass to
 

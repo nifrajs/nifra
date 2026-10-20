@@ -8,9 +8,10 @@ import {
   importProjectTypeScript,
   loadProjectTypeScript,
 } from "../src/internal/typescript-import.ts"
-import { runRuleRegistry } from "../src/rules/index.ts"
+import { runRuleRegistry, sourceIndex } from "../src/rules/index.ts"
 import { islandRules } from "../src/rules/islands.ts"
 import { securityRules } from "../src/rules/security.ts"
+import { swapRules } from "../src/rules/swap.ts"
 import { projectFacts } from "./rule-facts.ts"
 
 /** Write a `node_modules/typescript` into `root` with the given entry contents. */
@@ -130,13 +131,22 @@ test("keeps security, SQL, and island scanners equivalent on TypeScript 5, 6, an
     'const cart = bindIsland(({ state }) => { state("count", 0); return { add: () => {} } })',
     "mountIslands({ counter, cart })",
     'const page = html`<div data-island="cart"><b data-bind-text="cuont"></b></div><p data-bind-text="count"></p>`',
+    'import { slot } from "@nifrajs/web-vanilla"',
+    'const list = html`<button data-swap="replace:results">x</button><a href="/x" data-swap="replace:nowhere">x</a><ul data-swap-slot="results"><h2>t</h2>$' +
+      '{slot("results", [])}</ul>`',
+  ].join("\n")
+  // A page that swaps a slot it never renders, for NF-C052.
+  const listFile = "routes/list.tsx"
+  const listPage = [
+    'import { html } from "@nifrajs/web-vanilla"',
+    'export default () => html`<a href="/list" data-swap="replace:results">More</a>`',
   ].join("\n")
   const versions = [
     { label: "5", packageName: "typescript5" },
     { label: "6", packageName: "typescript" },
     { label: "7", packageName: "typescript7" },
   ] as const
-  const results = new Map<string, { security: string[]; islands: string[] }>()
+  const results = new Map<string, { security: string[]; islands: string[]; swap: string[] }>()
 
   for (const version of versions) {
     const root = await mkdtemp(join(tmpdir(), `nifra-ts${version.label}-matrix-`))
@@ -147,6 +157,7 @@ test("keeps security, SQL, and island scanners equivalent on TypeScript 5, 6, an
       const contents = new Map([
         [sourceFile, source],
         ["routes/query.ts", sql],
+        [listFile, listPage],
       ])
       const loaded = await loadProjectTypeScript(root, undefined, {
         files: [...contents.keys()],
@@ -159,7 +170,13 @@ test("keeps security, SQL, and island scanners equivalent on TypeScript 5, 6, an
         if (loaded.compiler === undefined || loaded.session === undefined)
           throw new Error(`failed to load TypeScript ${version.label} test compiler`)
 
-        const facts = projectFacts(sourceFile, source)
+        const facts = {
+          ...projectFacts(sourceFile, source),
+          source: sourceIndex([
+            { file: sourceFile, content: source },
+            { file: listFile, content: listPage },
+          ]),
+        }
         const context = {
           root,
           sources: facts.source,
@@ -168,11 +185,13 @@ test("keeps security, SQL, and island scanners equivalent on TypeScript 5, 6, an
         }
         const security = await runRuleRegistry(context, securityRules)
         const islands = await runRuleRegistry(context, islandRules)
+        const swap = await runRuleRegistry(context, swapRules)
         const codes = (findings: readonly { readonly code: string }[]) =>
           findings.map((finding) => finding.code).sort()
         results.set(version.label, {
           security: codes(security),
           islands: codes(islands),
+          swap: codes(swap),
         })
 
         expect(scanInterpolatedSql("routes/query.ts", sql, loaded.compiler)).toHaveLength(1)
@@ -189,6 +208,7 @@ test("keeps security, SQL, and island scanners equivalent on TypeScript 5, 6, an
   expect(results.get("7")).toEqual({
     security: ["NF-S001", "NF-S002", "NF-S003", "NF-S004", "NF-S005", "NF-S006", "NF-S007"],
     islands: ["NF-C020", "NF-C022", "NF-C047", "NF-C048"],
+    swap: ["NF-C049", "NF-C050", "NF-C051", "NF-C052"],
   })
 })
 
@@ -215,8 +235,16 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
         'const cart = bindIsland(({ state }) => { state("count", 0); return { add: () => {} } })',
         "mountIslands({ counter, cart })",
         'const page = html`<div data-island="cart"><b data-bind-text="cuont"></b></div><p data-bind-text="count"></p>`',
+        'import { slot } from "@nifrajs/web-vanilla"',
+        'const list = html`<button data-swap="replace:results">x</button><a href="/x" data-swap="replace:nowhere">x</a><ul data-swap-slot="results"><h2>t</h2>$' +
+          '{slot("results", [])}</ul>`',
         "db.query(`SELECT * FROM users WHERE id = $" + "{input.id}`)",
       ].join("\n"),
+      "utf8",
+    )
+    await writeFile(
+      join(root, "routes", "list.tsx"),
+      'import { html } from "@nifrajs/web-vanilla"\nexport default () => html`<a href="/list" data-swap="replace:results">More</a>`\n',
       "utf8",
     )
 
@@ -234,6 +262,10 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
       "NF-C022",
       "NF-C047",
       "NF-C048",
+      "NF-C049",
+      "NF-C050",
+      "NF-C051",
+      "NF-C052",
     ]) {
       expect(codes.has(code)).toBe(true)
     }

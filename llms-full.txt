@@ -2248,8 +2248,8 @@ const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cd
 -
 **Cloudflare zone** (`cloudflareZone`): needs a Cache Rule that makes HTML
 eligible for cache, and, because the zone cache ignores `Vary`, that bypasses the
-cache when the request has an `x-nifra-data` header (soft navigations fetch the
-page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+cache when the request has an `x-nifra-data` or `x-nifra-swap` header
+(soft navigations and slot swaps fetch the page URL with them). The Free plan allows 5 purge calls a minute; purges arriving together go
 out as one call.
 
 -
@@ -2742,6 +2742,84 @@ const results = defineIsland((el) =>
 
 mountIslands({ filter, results })
 ```
+
+### Refresh part of the page: swap
+
+A search form or a "more" link on a vanilla page reloads the whole document.
+To refresh one region instead, mark it with `data-swap-slot`, render its content
+with `slot()` from `@nifrajs/web-vanilla`, and point the link or form
+at it with `data-swap="replace:<slot>"` or
+`data-swap="append:<slot>"`:
+
+```ts
+// doc-check: skip - html template markup, which the sample check cannot tell from JSX.
+import { html, slot } from "@nifrajs/web-vanilla"
+
+type Books = { q: string; page: number; titles: string[]; more: boolean }
+
+export default ({ data }: { data: Books }) => html`
+  <form action="/books" data-swap="replace:results">
+    <input name="q" value="${data.q}" />
+    <button>Search</button>
+  </form>
+  <ul data-swap-slot="results">${slot("results", [
+    ...data.titles.map((title) => html`<li data-island="book">${title}</li>`),
+    data.more
+      ? html`<li><a href="/books?q=${encodeURIComponent(data.q)}&page=${data.page + 1}" data-swap="append:results">More</a></li>`
+      : "",
+  ])}</ul>`
+```
+
+Then call `enableSwap` from `@nifrajs/web/islands/swap` in place of
+`mountIslands` in the island entry. A page that does not import it pays nothing.
+
+```ts
+// doc-check: skip - browser DOM entry, typechecked in @nifrajs/web under its DOM lib.
+import { defineIsland } from "@nifrajs/web/islands"
+import { enableSwap } from "@nifrajs/web/islands/swap"
+
+const book = defineIsland((el) => {
+  const onClick = () => el.classList.toggle("picked")
+  el.addEventListener("click", onClick)
+  return () => el.removeEventListener("click", onClick)
+})
+
+// In place of mountIslands: mounts the islands, then refreshes slots from data-swap links and forms.
+enableSwap({ book })
+```
+
+The link or form makes its usual request with an `x-nifra-swap` header. The
+server runs the page as usual - middleware, loader, action - and answers with that
+slot's HTML alone, so the fragment is a slice of the real page, never a second
+template. `replace` swaps the slot's content and, for a GET, pushes the
+URL, so a filtered list survives a reload and back and forward work. `append`
+adds to it, and a link or form inside the slot is spent: the slot's child that holds it
+is removed when the next page arrives.
+
+Any other answer - a redirect, another origin, a page without that slot, an error - loads
+the URL normally, as does a page whose Trusted Types policy refuses the HTML. A POST that
+gets a whole page back without a redirect has already run, so that page is shown in place
+at the action's URL, and going back loads the page before it. If Trusted Types
+refuses that page too, the URL loads with a plain GET: the form is not sent again, but the
+action's result is not shown. A form POST is never sent twice. Without the script, the
+links and
+forms work as plain HTML. A loading slot carries
+`aria-busy="true"`, a newer swap of the same slot cancels the older
+one, and a failed request leaves the page as it is and sets `data-swap-error` on
+the link or form. Islands inside a slot
+mount with it and unmount when it is replaced, so interactivity inside a slot comes from
+islands in it, not from bindings of an island around it. Only
+`@nifrajs/web-vanilla` pages answer a swap.
+
+A swap response is `private, no-store` with `vary: x-nifra-swap`, and
+ISR never serves or stores one. A CDN that ignores `Vary`, such as a Cloudflare
+zone, needs its cache rule to bypass requests carrying `x-nifra-swap`;
+`nifra cdn-check` tests that. `nifra check` reads both sides:
+`NF-C049` flags `data-swap` on anything but a link or form, or a mode
+other than `replace` and `append`; `NF-C050` a slot name
+nothing declares; `NF-C051` a slot whose content is not its `slot()`
+alone; `NF-C052` a URL whose page renders no such slot; and `NF-C048`
+a binding inside a slot that belongs to an island outside it.
 
 ### Load strategies
 
@@ -9610,8 +9688,9 @@ response carrying `Set-Cookie`).
 URL as the document with an `x-nifra-data` request header, so its response is
 always `cache-control: private, no-store` with `vary: x-nifra-data`,
 and a document that carries loader headers gets `x-nifra-data` added to its
-`vary`. A CDN that ignores `Vary` needs `x-nifra-data` in
-its cache key when it caches documents.
+`vary`. A slot swap's response (`x-nifra-swap`) is
+`private, no-store` with `vary: x-nifra-swap` too. A CDN that ignores
+`Vary` must bypass its cache for both headers when it caches documents.
 
 -
 **Write before you return.** The controls close when the loader or action
@@ -17726,6 +17805,8 @@ Vanilla is the render adapter an agent gets right on the first try. It ships no 
 
 Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
 
+To refresh one region from a link or form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. See [Refresh part of the page](https://nifra.dev/docs/islands).
+
 Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
 
 ## Install
@@ -18212,7 +18293,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-vanilla
 
-`HtmlValue`, `RawHtml`, `Template`, `VanillaComponent`, `compose`, `html`, `hydrate`, `raw`, `vanillaAdapter`
+`HtmlValue`, `RawHtml`, `Template`, `VanillaComponent`, `compose`, `html`, `hydrate`, `raw`, `slot`, `vanillaAdapter`
 
 ## @nifrajs/web-vue
 

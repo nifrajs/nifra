@@ -21,9 +21,11 @@
 
 import type { RenderAdapter, RenderProps } from "@nifrajs/web"
 import { compose } from "./compose.ts"
+import { captureSlot } from "./slot.ts"
 
 export { compose, type VanillaComponent } from "./compose.ts"
 export { type HtmlValue, html, RawHtml, raw, Template } from "./html.ts"
+export { slot } from "./slot.ts"
 
 const ENCODER = new TextEncoder()
 
@@ -49,5 +51,9 @@ export const vanillaAdapter: RenderAdapter = {
   // No client runtime ⇒ no per-document bootstrap markup.
   hydrationHead(): string {
     return ""
+  },
+  // A swap request renders the same chain and keeps one `slot()`'s HTML.
+  renderSlot(chain: readonly unknown[], props: RenderProps, name: string): string | undefined {
+    return captureSlot(name, () => compose(chain, props))
   },
 }

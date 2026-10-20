@@ -87,6 +87,11 @@
       "types": "./dist/islands.d.ts",
       "default": "./dist/islands.js"
     },
+    "./islands/swap": {
+      "bun": "./src/islands-swap.ts",
+      "types": "./dist/islands-swap.d.ts",
+      "default": "./dist/islands-swap.js"
+    },
     "./service-worker": {
       "bun": "./src/service-worker.ts",
       "types": "./dist/service-worker.d.ts",
@@ -386,7 +391,7 @@
     "solid-js": "1.9.14",
     "svelte": "5.56.8",
     "svelte-check": "4.7.6",
-    "vite": "8.2.1",
+    "vite": "8.3.4",
     "vite-plugin-solid": "2.11.14",
     "vue": "3.5.40",
     "vue-tsc": "3.3.12",
