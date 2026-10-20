@@ -174,6 +174,40 @@ export default function OrgLayout({ children }: { children: ReactNode }) {
   )
 }`
 
+const MODAL_ROUTE = `// routes/_layout.tsx - a link to /photos/:id from any page opens the photo over that page
+import type { Boundary, BoundaryStates } from "@nifrajs/web"
+// /client, not the root: the root carries the server, which a browser bundle must not load.
+import { closeBoundary } from "@nifrajs/web/client"
+import type { ReactNode } from "react"
+import type { Route as Photo } from "./photos/+types/[id]"
+
+// No load of its own: the modal shows the target page's loader data.
+const photo: Boundary<Photo.LoaderData, ReactNode> = {
+  name: "photo",
+  mode: { intercept: "/photos/:id" },
+  render: (data) => <h2>{data.title}</h2>,
+}
+
+export const boundaries = [photo]
+
+export default function Layout(props: { children?: ReactNode; boundaries?: BoundaryStates }) {
+  const open = props.boundaries?.photo
+  return (
+    <>
+      {props.children}
+      {open?.status === "ready" || open?.status === "error" ? (
+        // A form in here with no action posts to the photo's route, not the page's.
+        <dialog open data-nifra-boundary="photo">
+          {open.status === "ready" ? photo.render(open.data as Photo.LoaderData) : <p>Could not load.</p>}
+          <button type="button" onClick={() => closeBoundary("photo")}>
+            Close
+          </button>
+        </dialog>
+      ) : null}
+    </>
+  )
+}`
+
 export default function Routing() {
   return (
     <div className="prose">
@@ -440,6 +474,85 @@ export default function Routing() {
         <code>@nifrajs/web-&lt;framework&gt;/router</code>, as an array on React/Preact, a{" "}
         <code>Ref</code> on Vue, and an accessor on Solid/Svelte.
       </p>
+
+      <h2 id="modal-routes">Opening a route in a modal</h2>
+      <p>
+        A photo grid can open <code>/photos/7</code> over the grid, while a shared link or a reload of
+        that URL shows the photo as its own page. A layout or page declares this with a boundary whose
+        mode is <code>{`{ intercept: "/photos/:id" }`}</code>, in its <code>boundaries</code> export.
+        On a client navigation from a page under that layout (or from that page) to a matching URL,
+        nifra fetches the target route&apos;s data with the usual request, so its middleware, gates
+        and loader all run. The current page stays mounted, the address bar shows the new URL, and the
+        target&apos;s loader data arrives as <code>boundaries.photo</code> with{" "}
+        <code>status: &quot;ready&quot;</code>. Until then the boundary&apos;s status is{" "}
+        <code>&quot;unresolved&quot;</code>.
+      </p>
+      <CodeBlock code={MODAL_ROUTE} lang="tsx" />
+      <ul>
+        <li>
+          The boundary has no <code>load</code>: its data is the target page&apos;s loader data, so
+          type it with that route&apos;s <code>LoaderData</code>. <code>routes/photos/[id].tsx</code>{" "}
+          stays an ordinary page.
+        </li>
+        <li>
+          Back closes the modal and forward reopens it. A link inside the modal to another matching
+          URL replaces its content, and back steps through each one. Navigating anywhere else closes
+          it.
+        </li>
+        <li>
+          A reload, a shared link, or a navigation from a page outside the declaring layout or page
+          renders the target as a full page. That includes coming back to the modal&apos;s URL from a
+          page that does not intercept it.
+        </li>
+        <li>
+          A target that answers with its own status, such as a <code>404</code> or{" "}
+          <code>401</code>, or that throws, never opens in the modal: the browser loads that URL as a
+          full page and gets that answer. A redirect is followed first, and opens in the modal only
+          when it lands on another matching URL.
+        </li>
+        <li>
+          <code>closeBoundary(&quot;photo&quot;)</code> from <code>@nifrajs/web/client</code> closes it: it
+          goes back through the entries the modal added, or replaces the modal&apos;s URL with the
+          page&apos;s when those entries are not in this tab&apos;s history (the modal was opened with
+          a replace navigation). It does nothing when that boundary holds no target.
+        </li>
+        <li>
+          While the modal is open, the route props and hooks describe the page underneath:{" "}
+          <code>useLocation</code>, <code>useSearch</code>, <code>useParams</code> and{" "}
+          <code>useMatches</code> report the page&apos;s path, query and params, while the address bar
+          shows the modal&apos;s URL.
+        </li>
+        <li>
+          Opening the modal keeps the page&apos;s scroll position and its{" "}
+          <code>actionData</code>, and closing it restores the
+          page&apos;s entry with its scroll. A link to the page&apos;s own URL is a normal navigation,
+          never an interception, and only one intercept boundary is open at a time: opening another
+          closes the first.
+        </li>
+        <li>
+          An action submitted while the modal is open revalidates both routes: the page reloads
+          under its own URL and the target under the modal&apos;s, each with its own cache entry.
+          With <code>revalidate: false</code>, only the paths the server names as changed reload.{" "}
+          <code>invalidate()</code> reloads both, and <code>invalidate(paths)</code> reloads the ones
+          listed. If the target answers a reload with a status or throws, the modal stays open and
+          the boundary&apos;s status becomes <code>&quot;error&quot;</code> with a generic error, so
+          none of that answer reaches the page.
+        </li>
+        <li>
+          A form with no <code>action</code> (or a submitter with no <code>formaction</code>), POST
+          or GET, submits to the route that owns it: the target&apos;s URL when the form sits inside an element with{" "}
+          <code>data-nifra-boundary=&quot;photo&quot;</code>, otherwise the page&apos;s URL. A form
+          with an explicit action posts where it says. The result of an action posted to the
+          target arrives as <code>boundaries.photo.actionData</code>, and the page&apos;s own{" "}
+          <code>actionData</code> stays the page&apos;s. An action that redirects renders the
+          redirect&apos;s target as a full page, never in the modal.
+        </li>
+        <li>
+          The component renders the boundary itself: it reads <code>boundaries.&lt;name&gt;</code>{" "}
+          from its props and calls the boundary&apos;s <code>render</code> with the data. Every
+          adapter passes <code>boundaries</code> to the layouts and the page.
+        </li>
+      </ul>
 
       <h2>Guarding navigation</h2>
       <p>

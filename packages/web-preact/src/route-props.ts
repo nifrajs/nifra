@@ -12,8 +12,11 @@ export function routeProps(
   const matchChain = matchChains?.[state.routeId]
   // Derive this route's typed `search` from the URL + the route's schema chain (the SAME `searchOfChain`
   // the server ran), so `useSearch` reads an identical value and hydrates with no drift.
-  const q = state.path.indexOf("?")
-  const rawSearch = q === -1 ? "" : state.path.slice(q)
+  // While an intercept boundary holds a target the URL is the target's; the route's props describe the
+  // page underneath, so they read the page's own path.
+  const path = state.intercepted?.pagePath ?? state.path
+  const q = path.indexOf("?")
+  const rawSearch = q === -1 ? "" : path.slice(q)
   return {
     data: state.data,
     // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
@@ -23,7 +26,7 @@ export function routeProps(
     pending: state.pending,
     // The same `params`/`path` the server render received, so `useMatches` reports the same chain.
     params: state.params,
-    path: state.path,
+    path,
     search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
     // The in-flight submission (for optimistic UI) - spread only when present.
     ...(state.submission ? { submission: state.submission } : {}),

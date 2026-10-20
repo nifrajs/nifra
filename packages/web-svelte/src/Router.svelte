@@ -30,7 +30,10 @@
   let props = $derived.by(() => {
     // This route's typed search from the URL + schema chain (the SAME searchOfChain the server ran), so
     // useSearch stays reactive across navigation and matches the SSR value on hydration.
-    const q = snapshot.path.indexOf("?")
+    // While an intercept boundary holds a target the URL is the target's; the route's props describe
+    // the page underneath, so they read the page's own path.
+    const path = snapshot.intercepted?.pagePath ?? snapshot.path
+    const q = path.indexOf("?")
     return {
       data: snapshot.data,
       ...(snapshot.serverComponents === undefined ? {} : { serverComponents: snapshot.serverComponents }),
@@ -38,8 +41,8 @@
       pending: snapshot.pending,
       // The same `params`/`path` the server render received, so `useMatches` reports the same chain.
       params: snapshot.params,
-      path: snapshot.path,
-      search: searchOfChain(searchSchemas?.[snapshot.routeId] ?? [], q === -1 ? "" : snapshot.path.slice(q)),
+      path,
+      search: searchOfChain(searchSchemas?.[snapshot.routeId] ?? [], q === -1 ? "" : path.slice(q)),
       ...(snapshot.submission ? { submission: snapshot.submission } : {}),
       ...(snapshot.boundaries !== undefined ? { boundaries: snapshot.boundaries } : {}),
       // The chain `useMatches` reports - the server passed the same one to the SSR render.
