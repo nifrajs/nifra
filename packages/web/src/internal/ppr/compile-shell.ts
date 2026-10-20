@@ -34,6 +34,8 @@ export interface CompileShellsOptions {
   readonly requestScoped: (moduleId: string) => boolean
   /** Called for each route that fails; the route is left out of the record. Default: rethrow. */
   readonly onFailure?: (routeId: string, error: unknown) => void
+  /** Bun plugins the server build uses for route files, such as `svelteBunPlugin("ssr")`. */
+  readonly plugins?: readonly import("bun").BunPlugin[]
 }
 
 const NAMESPACE = "nifra-ppr-shell"
@@ -97,6 +99,7 @@ export async function compileShells(options: CompileShellsOptions): Promise<Shel
         route,
         route.backend,
         options.requestScoped,
+        options.plugins ?? [],
       )
       if (hash !== undefined) routes[route.id] = hash
     } catch (error) {
@@ -128,6 +131,7 @@ async function compileShell(
   route: RouteEntry,
   backend: string,
   requestScoped: (moduleId: string) => boolean,
+  plugins: readonly import("bun").BunPlugin[],
 ): Promise<string | undefined> {
   const backendModule = await readModule(dir, backend)
   if (!backendModule.exports.includes("shellLoader")) return undefined
@@ -162,6 +166,7 @@ async function compileShell(
     metafile: true,
     throw: false,
     plugins: [
+      // Ours first: its resolve and load hooks claim the entry and the backend half before theirs.
       {
         name: NAMESPACE,
         setup(build) {
@@ -200,6 +205,7 @@ async function compileShell(
           }))
         },
       },
+      ...plugins,
     ],
   })
   if (!result.success) {

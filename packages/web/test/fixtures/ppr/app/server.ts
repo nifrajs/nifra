@@ -1,7 +1,8 @@
 /**
- * The G6 Phase 1a fixture: a real `createWebApp` with `experimental.ppr`, its client built by
+ * The G6 Phase 1 fixture: a real `createWebApp` with `experimental.ppr`, its client built by
  * `buildClient` and its shells checked by `compileShells` at start. `startPprApp()` serves it on
- * 127.0.0.1 and returns its origin; `app-browser.ts` drives it.
+ * 127.0.0.1 and returns its origin; `app-browser.ts` drives it. The Svelte twin in
+ * `web-svelte/test/fixtures/ppr-app` passes its own `PprFixtureSetup`.
  */
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -12,6 +13,7 @@ import { createCspPolicy } from "../../../../src/csp.ts"
 import { discoverRoutes } from "../../../../src/fs.ts"
 import { compileShells } from "../../../../src/internal/ppr/compile-shell.ts"
 import { createWebApp } from "../../../../src/internal/web-app.ts"
+import type { RenderAdapter } from "../../../../src/render-seam.ts"
 import { probe } from "./lib/probe.ts"
 
 export interface PprApp {
@@ -21,15 +23,33 @@ export interface PprApp {
   stop(): Promise<void>
 }
 
-export async function startPprApp(): Promise<PprApp> {
-  const routesDir = `${import.meta.dir}/routes`
+/** What differs between the framework twins of this app; the routes, ids and texts do not. */
+export interface PprFixtureSetup {
+  readonly routesDir: string
+  readonly adapter: RenderAdapter
+  readonly clientModule: string
+  readonly clientPlugins: readonly import("bun").BunPlugin[]
+  readonly serverPlugins: readonly import("bun").BunPlugin[]
+}
+
+const REACT: PprFixtureSetup = {
+  routesDir: `${import.meta.dir}/routes`,
+  adapter: reactAdapter,
+  clientModule: "@nifrajs/web-react/client",
+  clientPlugins: [],
+  serverPlugins: [],
+}
+
+export async function startPprApp(setup: PprFixtureSetup = REACT): Promise<PprApp> {
+  const { routesDir } = setup
   const outDir = mkdtempSync(join(tmpdir(), "nifra-ppr-app-"))
   const assets = await buildClient({
     routesDir,
     outDir,
-    clientModule: "@nifrajs/web-react/client",
+    clientModule: setup.clientModule,
     conditions: ["bun", "browser"],
     define: { "process.env.NODE_ENV": '"production"' },
+    plugins: setup.clientPlugins,
   })
   const manifest = discoverRoutes(routesDir)
   const shellFailures: Array<readonly [string, string]> = []
@@ -38,6 +58,7 @@ export async function startPprApp(): Promise<PprApp> {
     manifest,
     deployment: assets.entry,
     requestScoped: (id) => id.endsWith("/ppr/app/lib/session.ts"),
+    plugins: setup.serverPlugins,
     onFailure: (routeId, error) =>
       shellFailures.push([routeId, error instanceof Error ? error.message : String(error)]),
   })
@@ -51,7 +72,7 @@ export async function startPprApp(): Promise<PprApp> {
       `default-src 'self'; script-src 'self' ${sources}; style-src 'self'; object-src 'none'; base-uri 'none'`,
   })
   const app = createWebApp({
-    adapter: reactAdapter,
+    adapter: setup.adapter,
     manifest,
     clientEntry: assets.entry,
     routePreload: assets.routes,

@@ -10,6 +10,7 @@ import type { RenderAdapter, RenderProps, RenderStreamOptions } from "@nifrajs/w
 import { ssrModuleLoader } from "@nifrajs/web"
 import type { Component } from "svelte"
 import { render as runtimeRender } from "svelte/server"
+import { isSvelteUI } from "./ppr.ts"
 
 /**
  * `Chain.svelte` is loaded on FIRST RENDER, not at module load.
@@ -126,6 +127,23 @@ export const svelteAdapter: RenderAdapter = {
     return Chain instanceof Promise
       ? Chain.then((C) => oneChunk(bodyOf(C, props$, options)))
       : oneChunk(bodyOf(Chain, props$, options))
+  },
+  // A partially prerendered hole's HTML, from a `ui(Component, props)` value. Svelte puts its own `-`
+  // before the id counter and refuses a prefix with `--`, so the seam's trailing `-` is dropped. The
+  // client reads each id back from its comment marker, so the hole's root needs no prefix of its own.
+  async renderFragment(ui, options) {
+    if (!isSvelteUI(ui)) {
+      throw new TypeError(
+        "[nifra/web-svelte] a hole's render and fallback must return ui(Component, props)",
+      )
+    }
+    // `render` is the dev server's copy once Chain comes from there; see loadChain.
+    await loadChain()
+    const idPrefix = options.idPrefix?.replace(/-$/, "")
+    return render(
+      ui.component,
+      idPrefix === undefined ? { props: ui.props } : { props: ui.props, idPrefix },
+    ).body
   },
   // Svelte's client `hydrate` reconciles against the existing DOM; no per-document bootstrap script is
   // needed (contrast Solid's generateHydrationScript) - the seam allows the empty string.

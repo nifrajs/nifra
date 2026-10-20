@@ -99,9 +99,21 @@ describe("PPR hole frames", () => {
   })
 
   test("hole names are narrow enough to be ids, attribute values and hashed scripts", () => {
-    for (const name of ["cart", "a", "recs-2", "x".repeat(32)])
+    for (const name of ["cart", "a", "recs-2", "a-b-c", "x".repeat(32)])
       expect(() => assertHoleName(name)).not.toThrow()
-    for (const name of ["", "Cart", "2cart", "cart_x", "c art", 'c"', "x".repeat(33), "-a"]) {
+    // `--` and a trailing `-` would put `--` into a renderer's id prefix, which Svelte refuses.
+    for (const name of [
+      "",
+      "Cart",
+      "2cart",
+      "cart_x",
+      "c art",
+      'c"',
+      "x".repeat(33),
+      "-a",
+      "a-",
+      "a--b",
+    ]) {
       expect(() => assertHoleName(name)).toThrow("must match")
     }
   })

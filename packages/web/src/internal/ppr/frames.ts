@@ -2,8 +2,11 @@ import { validateComponentHTML } from "../../server-components/html.ts"
 import { serializeData } from "../render-document.ts"
 import { holeInvoker } from "./runtime.ts"
 
-/** A hole name: it becomes a DOM id, an attribute value and a hashed script, so it stays this narrow. */
-export const HOLE_NAME: RegExp = /^[a-z][a-z0-9-]{0,31}$/
+/**
+ * A hole name: it becomes a DOM id, an attribute value, a hashed script and part of a renderer's id
+ * prefix, so it stays this narrow. No `--` and no trailing `-`: Svelte refuses an id prefix with `--`.
+ */
+export const HOLE_NAME: RegExp = /^(?=[a-z0-9-]{1,32}$)[a-z](?:-?[a-z0-9])*$/
 
 /** What one hole sends: its server HTML, plus props when it hydrates. An error carries the error
  * slot's HTML only, never the thrown message (I6). */

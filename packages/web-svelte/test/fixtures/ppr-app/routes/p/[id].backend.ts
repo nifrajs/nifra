@@ -1,0 +1,51 @@
+import { t } from "@nifrajs/schema"
+import { notFound } from "../../../../../../web/src/internal/render-document.ts"
+import { noteSlowAbort, probe } from "../../../../../../web/test/fixtures/ppr/app/lib/probe.ts"
+import { visitorName } from "../../../../../../web/test/fixtures/ppr/app/lib/session.ts"
+
+export const shellLoader = async (ctx: {
+  readonly params: Readonly<Record<string, string>>
+  readonly origin?: string
+  readonly variations: Readonly<Record<string, string>>
+}) => {
+  probe.shellBuilds++
+  probe.shellOrigin = ctx.origin ?? ""
+  probe.shellVariations = ctx.variations
+  if (ctx.params.id === "missing") notFound()
+  return { title: `Product ${ctx.params.id}` }
+}
+export const shellOutput = t.object({ title: t.string() })
+export const shellVariations = { search: { color: ["red", "blue"] } }
+
+const abortable = (signal: AbortSignal, ms: number): Promise<{ at: number }> =>
+  new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      noteSlowAbort()
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolve({ at: ms })
+    }, ms)
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
+
+export const boundaryLoaders = {
+  greeting: {
+    load: (ctx: { readonly request: Request }) => ({ name: visitorName(ctx.request) }),
+    output: t.object({ name: t.string() }),
+  },
+  cart: {
+    load: () => ({ count: 2 }),
+    output: t.object({ count: t.number() }),
+  },
+  slow: {
+    load: (ctx: { readonly request: Request; readonly signal: AbortSignal }) => {
+      probe.slowStarted++
+      const ms = Number(new URL(ctx.request.url).searchParams.get("slow") ?? "50")
+      return abortable(ctx.signal, ms)
+    },
+    output: t.object({ at: t.number() }),
+  },
+}

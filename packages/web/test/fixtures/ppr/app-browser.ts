@@ -3,12 +3,13 @@
  * a hash-only CSP: a PPR page fills and hydrates its holes; leaving it, by hard-loaded beacon or by a
  * soft navigation's NDJSON abort, stops its pending hole loader on the server (latency measured); an
  * unrelated fetch survives; an unchecked shell renders blocking. Chromium also checks the heap stays
- * flat over 1000 soft navigations. Run: `bun packages/web/test/fixtures/ppr/app-browser.ts`.
+ * flat over 1000 soft navigations. Run: `bun packages/web/test/fixtures/ppr/app-browser.ts`, with
+ * `FRAMEWORK=svelte` for the Svelte twin of the app.
  */
 import assert from "node:assert/strict"
 import { type Browser, chromium, firefox, type Page, webkit } from "playwright"
 import { probe } from "./app/lib/probe.ts"
-import { startPprApp } from "./app/server.ts"
+import type { PprApp } from "./app/server.ts"
 
 declare global {
   interface Window {
@@ -18,7 +19,10 @@ declare global {
 
 const NAVS = Number(process.env.NAVS ?? "1000")
 const ENGINES = (process.env.ENGINES ?? "chromium,firefox,webkit").split(",")
-const app = await startPprApp()
+const app: PprApp =
+  process.env.FRAMEWORK === "svelte"
+    ? await (await import("../../../../web-svelte/test/fixtures/ppr-app/server.ts")).startPprApp()
+    : await (await import("./app/server.ts")).startPprApp()
 const { origin } = app
 
 assert.deepEqual(
