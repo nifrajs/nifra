@@ -64,6 +64,9 @@ const Hotels: VanillaComponent = (props) => {
     ])}</ul>`
 }
 
+const Note: VanillaComponent = (props) =>
+  html`<h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1>`
+
 const manifest = (): Manifest => ({
   routes: [
     {
@@ -104,8 +107,7 @@ const manifest = (): Manifest => ({
       layoutIds: [],
       file: "note.ts",
       load: async () => ({
-        default: (props) =>
-          html`<h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1>`,
+        default: Note,
         hydrate: false,
         action: async () => {
           notes++
