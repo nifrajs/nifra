@@ -444,6 +444,18 @@
     "code": "import { signal, resource } from \"@nifrajs/web/nano\"\n\nconst userId = signal(1)\n\n// resource(fetcher, [deps]) is an async cell: it fetches immediately and again whenever a declared\n// dep changes. The fetcher gets an AbortSignal; a superseded fetch is aborted and its late result\n// dropped, so the newest request always wins - no stale-response flicker to hand-guard.\nconst user = resource(async (sig) => {\n  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })\n  return (await res.json()) as { name: string }\n}, [userId])\n\n// The value is an explicit union - status is \"pending\" | \"error\" | \"ready\", never a secret undefined.\nconst off = user.subscribe((s) => {\n  if (s.status === \"ready\") console.log(\"got\", s.value.name)\n})\nuserId.set(2) // refetches; the deps array is what NF-C023 checks against the fetcher's .get() reads\n// ...on teardown: off()"
   },
   {
+    "name": "BACKEND",
+    "topic": "Nifra - Partial prerendering (experimental)",
+    "slug": "partial-prerendering",
+    "code": "import { t } from \"@nifrajs/schema\"\nimport type { BoundaryRequestCtx } from \"@nifrajs/web\"\nimport { defineShellLoader } from \"@nifrajs/web/ppr\"\n\nconst titles: Readonly<Record<string, string>> = { \"1\": \"Sencha\", \"2\": \"Hojicha\" }\nconst cartCount = (request: Request): number => (request.headers.has(\"cookie\") ? 2 : 0)\n\n// The shell: no request, no cookies. It is built once and shared by every visitor.\nexport const shellLoader = defineShellLoader(async ({ params }) => ({\n  title: titles[params.id ?? \"\"] ?? \"Tea\",\n}))\nexport const shellOutput = t.object({ title: t.string() })\nexport const revalidate = 60\nexport const revalidateTags = [\"catalog\"]\nexport const shellVariations = { search: { size: [\"50g\", \"100g\"] } }\n\n// The holes: each runs per request, under its own deadline.\nexport const boundaryLoaders = {\n  cart: {\n    load: (ctx: BoundaryRequestCtx) => ({ count: cartCount(ctx.request) }),\n    output: t.object({ count: t.number() }),\n  },\n}"
+  },
+  {
+    "name": "SERVER",
+    "topic": "Nifra - Partial prerendering (experimental)",
+    "slug": "partial-prerendering",
+    "code": "import { createCspPolicy, createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { compileShells, partialPrerendering } from \"@nifrajs/web/ppr\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nconst routesDir = \"./routes\"\nconst manifest = discoverRoutes(routesDir)\n// The content-hashed client entry from your build; a shell check record is valid for it only.\nconst clientEntry = \"/assets/entry-4c5ndncr.js\"\n\n// Fails a route whose shell reaches a module that reads the visitor. That route renders whole.\nconst shellChecks = await compileShells({\n  routesDir,\n  manifest,\n  deployment: clientEntry,\n  requestScoped: (file) => file.endsWith(\"/lib/session.ts\"),\n  onFailure: (routeId, error) => console.warn(routeId, error),\n})\n\nexport const app = createWebApp({\n  adapter: reactAdapter,\n  manifest,\n  clientEntry,\n  // Hashes, not a nonce: a shell is one document for every visitor.\n  csp: createCspPolicy({\n    header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,\n  }),\n  experimental: {\n    ppr: partialPrerendering({ shellChecks, origin: \"https://shop.example\" }),\n  },\n})"
+  },
+  {
     "name": "CACHING",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

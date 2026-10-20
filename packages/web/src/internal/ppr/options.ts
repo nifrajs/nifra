@@ -159,14 +159,6 @@ export function resolvePprOptions(overrides: PprOptions = {}): ResolvedPprOption
   return Object.freeze(resolved)
 }
 
-/** Whether `request` gets the blocking render under `options`. */
-export function wantsBlockingRender(options: ResolvedPprOptions, request: Request): boolean {
-  const rule = options.blockingFor
-  if (typeof rule === "function") return rule(request)
-  const agent = request.headers.get("user-agent")
-  return agent !== null && rule.test(agent)
-}
-
 /** A route's total deadline: its largest hole timeout plus the slack, capped. */
 export function totalDeadlineMs(
   options: ResolvedPprOptions,
@@ -176,3 +168,5 @@ export function totalDeadlineMs(
   for (const timeout of holeTimeouts) if (timeout > largest) largest = timeout
   return Math.min(largest + options.totalDeadlineSlackMs, options.maxHoleTimeoutMs)
 }
+
+export { wantsBlockingRender } from "./contract.ts"

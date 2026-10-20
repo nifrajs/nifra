@@ -1,5 +1,5 @@
+import { Hole } from "@nifrajs/web-react/ppr"
 import { type ReactNode, useState } from "react"
-import { Hole } from "../../../../../../../web-react/src/ppr.ts"
 
 function Cart(props: { readonly count: number }): ReactNode {
   const [count, setCount] = useState(props.count)

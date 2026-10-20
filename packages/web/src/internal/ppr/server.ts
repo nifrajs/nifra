@@ -1,6 +1,5 @@
 import type {
   BoundaryError,
-  BoundaryRegistration,
   BoundaryRequestCtx,
   BoundaryState,
   BoundaryStates,
@@ -9,8 +8,16 @@ import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../cs
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
 import { isStatusSignal } from "../render-document.ts"
-import { HoleAdmission, type HoleRun, type HoleSlot, type PprAdmissionStats } from "./admission.ts"
+import { HoleAdmission, type HoleRun, type HoleSlot } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
+import {
+  type HoleRegistration,
+  type PprRequest,
+  type PprServer,
+  PprShellBusy,
+  PprShellUnchecked,
+  variationQuery,
+} from "./contract.ts"
 import {
   assertHoleName,
   encodeHoleFrame,
@@ -21,11 +28,19 @@ import {
 import { type ResolvedPprOptions, totalDeadlineMs } from "./options.ts"
 import { PPR_BOOT, PPR_RUNTIME, pprScriptHashes } from "./runtime.ts"
 
-/** An app built with `experimental.ppr` carries its {@link PprServer} under this key. */
-export const PPR_SERVER: unique symbol = Symbol.for("nifra.web.ppr")
-
-/** Where the runtime's cancel beacon goes, under the app's base path. */
-export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
+export {
+  type HoleRegistration,
+  type HoleStatesMode,
+  PPR_CANCEL_PATH,
+  PPR_SERVER,
+  type PprRequest,
+  type PprServer,
+  type PprServerStats,
+  PprShellBusy,
+  PprShellUnavailable,
+  PprShellUnchecked,
+  variationQuery,
+} from "./contract.ts"
 
 /** The error slot a failed, timed-out or refused hole shows. Constant: no thrown message reaches it. */
 const HOLE_ERROR_HTML = '<p data-nifra-hole-error="">This section is unavailable.</p>'
@@ -36,12 +51,6 @@ const HOLE_ERROR_STATE: BoundaryError = { name: "Error", message: "Boundary fail
 const DOCUMENT_END = "</body></html>"
 
 const MODULE_SCRIPT = /<script type="module" src="([^"]*)"><\/script>/g
-
-/** The boundary fields G6 reads beyond the neutral registration. */
-export type HoleRegistration = Extract<BoundaryRegistration, { readonly mode: "dynamic" }> & {
-  readonly interactive?: boolean
-  readonly timeout?: number
-}
 
 /** A built shell, shared by every visitor whose request maps to its key. */
 interface ShellEntry {
@@ -60,27 +69,6 @@ interface ShellEntry {
   retryAt: number
 }
 
-/** What the page executor hands over for one PPR request. */
-export interface PprRequest {
-  readonly routeId: string
-  /** The request's pathname, without search: the shell renders it, so it is part of the key. */
-  readonly path: string
-  readonly locale: string | undefined
-  /** The declared variations this request selected, by name; part of the shell key. */
-  readonly variations: Readonly<Record<string, string>>
-  readonly request: Request
-  /** The route's dynamic boundaries, in declaration order, with their merged (guarded) loaders. */
-  readonly holes: readonly HoleRegistration[]
-  readonly holeContext: Omit<BoundaryRequestCtx, "signal">
-  readonly loadShell: (signal: AbortSignal) => Promise<unknown>
-  /** Render the full document for `shellData` with every hole pending, under no nonce. */
-  readonly renderShellDocument: (shellData: unknown, states: BoundaryStates) => Promise<string>
-  /** The route's `revalidate`, in seconds: an older shell is served while one rebuild runs. */
-  readonly revalidate: number | undefined
-  /** The route's `revalidateTags` for this request, read only when a shell is built. */
-  readonly tags: () => readonly string[]
-}
-
 export interface PprServerConfig {
   readonly options: ResolvedPprOptions
   readonly adapter: RenderAdapter
@@ -96,62 +84,6 @@ export interface PprServerConfig {
   readonly shellChecks: ShellCheckRecord | "unchecked-development"
   /** Milliseconds, for shell freshness. Tests pass their own clock. */
   readonly now?: () => number
-}
-
-/** The shell cannot be served now; the caller renders the page whole for this request (7.6). */
-export class PprShellUnavailable extends Error {}
-
-/** Thrown when a route's shell has no passing import-check record. */
-export class PprShellUnchecked extends PprShellUnavailable {
-  constructor(routeId: string) {
-    super(
-      `[nifra/web] ppr: route "${routeId}" has no passing shell import check; rendered blocking`,
-    )
-  }
-}
-
-/** Thrown when a route already runs `shellBuildConcurrency` shell builds: no request waits on one. */
-export class PprShellBusy extends PprShellUnavailable {
-  constructor(routeId: string) {
-    super(`[nifra/web] ppr: route "${routeId}" is at its shell build limit; rendered blocking`)
-  }
-}
-
-/**
- * How a response that is not a streamed document gets its holes. `"deferred"`: each hole runs under
- * admission and its own deadline, and its state carries the result as a deferred value (a soft
- * navigation's data request). `"settled"`: the same, awaited (the blocking render). `"omitted"`: no
- * hole runs and every state is an empty host (a prefetch, which must not start work its navigation
- * cannot cancel).
- */
-export type HoleStatesMode = "deferred" | "settled" | "omitted"
-
-export interface PprServerStats extends PprAdmissionStats {
-  /** Responses aborted because unsent bytes went over `maxUnsentBytes` (`ppr.slow_aborted`). */
-  readonly slowAborted: number
-  /** Frame bytes queued for clients across every live PPR stream. */
-  readonly unsentBytes: number
-}
-
-export interface PprServer {
-  /** Stream one PPR document: the shared shell at once, then each hole as it settles. */
-  respond(request: PprRequest): Promise<Response>
-  /** The shell data a soft navigation's data request carries. */
-  shellData(request: PprRequest): Promise<unknown>
-  /** The hole states of a data request or a blocking render; `signal` is the request's. */
-  holeStates(
-    request: PprRequest,
-    mode: HoleStatesMode,
-    signal: AbortSignal,
-  ): Promise<BoundaryStates>
-  /** Abort the response that printed `token`. Unknown tokens do nothing. */
-  cancel(token: string): boolean
-  /**
-   * Drop every shell carrying `tag`. A build that started before the call is not stored when it
-   * finishes, so a shell built from data read before the purge never outlives it.
-   */
-  invalidateTag(tag: string): void
-  stats(): PprServerStats
 }
 
 interface HoleStart {
@@ -181,15 +113,6 @@ const pendingStates = (holes: readonly HoleRegistration[]): BoundaryStates => {
 // match the same params but render different `path`s. The per-route cap bounds the spellings.
 const shellKey = (deployment: string, request: PprRequest): string =>
   `ppr:v1|${deployment}|${request.routeId}|${request.locale ?? ""}|${request.path}|${variationQuery(request.variations)}`
-
-/** `variations` as a query string, sorted by name: the shell key part and the shell's own search. */
-export const variationQuery = (variations: Readonly<Record<string, string>>): string => {
-  let query = ""
-  for (const name of Object.keys(variations).sort()) {
-    query += `${query === "" ? "" : "&"}${encodeURIComponent(name)}=${encodeURIComponent(variations[name] ?? "")}`
-  }
-  return query
-}
 
 const isProduction = (): boolean =>
   typeof process !== "undefined" && process.env?.NODE_ENV === "production"

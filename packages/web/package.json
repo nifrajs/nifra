@@ -62,6 +62,11 @@
       "types": "./dist/cdn.d.ts",
       "default": "./dist/cdn.js"
     },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./diagnostic-prompt": {
       "bun": "./src/diagnostic-prompt.ts",
       "types": "./dist/diagnostic-prompt.d.ts",

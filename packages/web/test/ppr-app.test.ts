@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
+import { partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, PREFETCH_HEADER } from "../src/router.ts"
 import { nextSlowAbort, probe } from "./fixtures/ppr/app/lib/probe.ts"
 import { type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
@@ -118,23 +119,8 @@ describe("PPR app: requests that are not a streamed document", () => {
 
 describe("PPR app configuration", () => {
   test("an origin with a path, a query or another scheme is refused at startup", () => {
-    const adapter: RenderAdapter = {
-      renderToStream: () => new ReadableStream(),
-      hydrationHead: () => "",
-      renderFragment: () => "",
-    }
-    const manifest: Manifest = {
-      routes: [],
-      layouts: {},
-      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
-    }
     const start = (origin: string) =>
-      createWebApp({
-        adapter,
-        manifest,
-        clientEntry: "/c.js",
-        experimental: { ppr: { shellChecks: "unchecked-development", origin } },
-      })
+      partialPrerendering({ shellChecks: "unchecked-development", origin })
     for (const origin of [
       "https://shop.example/",
       "https://shop.example/shop",
@@ -145,5 +131,72 @@ describe("PPR app configuration", () => {
       expect(() => start(origin)).toThrow("experimental.ppr.origin must be an http(s) origin")
     }
     expect(() => start("http://127.0.0.1:3000")).not.toThrow()
+  })
+
+  test("a PPR route needs 1 to maxHolesPerRoute holes, each timeout a whole number up to the cap", async () => {
+    const adapter: RenderAdapter = {
+      renderToStream: () => new ReadableStream(),
+      renderToString: () => "<p>page</p>",
+      hydrationHead: () => "",
+      renderFragment: () => "",
+    }
+    const hole = (name: string, timeout?: number) => ({
+      name,
+      mode: "dynamic" as const,
+      render: () => "",
+      load: () => 1,
+      ...(timeout === undefined ? {} : { timeout }),
+    })
+    /** The error a GET of the route logs; core answers a bare 500 after logging it to stderr. */
+    const failureOf = async (boundaries: readonly ReturnType<typeof hole>[]) => {
+      const manifest: Manifest = {
+        routes: [
+          {
+            id: "p",
+            pattern: "/p",
+            layoutIds: [],
+            file: "p.tsx",
+            load: async () => ({ default: "page", shellLoader: () => ({}), boundaries }),
+          },
+        ],
+        layouts: {},
+        notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+      }
+      const app = createWebApp({
+        adapter,
+        manifest,
+        clientEntry: "/c.js",
+        experimental: {
+          ppr: partialPrerendering({
+            shellChecks: "unchecked-development",
+            options: { maxHolesPerRoute: 2 },
+          }),
+        },
+      })
+      const write = process.stderr.write
+      let logged = ""
+      process.stderr.write = (chunk: string | Uint8Array) => {
+        logged += String(chunk)
+        return true
+      }
+      try {
+        const response = await app.fetch(new Request("http://x/p"))
+        await response.text()
+        return response.status === 500 ? logged : `status ${response.status}`
+      } finally {
+        process.stderr.write = write
+      }
+    }
+    expect(await failureOf([])).toContain("0 dynamic boundaries; it needs 1 to 2")
+    expect(await failureOf([hole("a"), hole("b"), hole("c")])).toContain(
+      "3 dynamic boundaries; it needs 1 to 2",
+    )
+    for (const timeout of [0, 1.5, 30_001, Number.NaN]) {
+      expect(await failureOf([hole("a", timeout)])).toContain(
+        "it must be a whole number of milliseconds from 1 to 30000",
+      )
+    }
+    // Past the rules, the next failure is the stub rendering no host for the hole.
+    expect(await failureOf([hole("a", 30_000), hole("b", 1)])).toContain('hole \\"a\\" has no host')
   })
 })

@@ -10,7 +10,7 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 
 ## Public entrypoints
 
-`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/hole` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/ppr` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
 
 ## Key exports
 
@@ -25,11 +25,11 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 - **svelteMdxBunPlugin** _(function)_ - `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/mdx`
 - **svelteSvgComponentBunPlugin** _(function)_ - `svelteSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/svg`
 - **svgToSvelte** _(function)_ - `svgToSvelte: (xml: string) => string` · from `@nifrajs/web-svelte/svg`
+- **ui** _(function)_ - `ui: <Props extends Record<string, unknown>>(component: Component<Props>, ...props: Record<string, never> extends Props ? [props?: Props] : …` · from `@nifrajs/web-svelte/ppr`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>` · from `@nifrajs/web-svelte/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
-- **useFetchers** _(function)_ - `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
 
-_…and 26 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 29 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

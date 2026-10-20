@@ -1,6 +1,6 @@
 <script module>
-  import Hole from "../../../../../src/Hole.svelte"
-  import { ui } from "../../../../../src/ppr.ts"
+  import Hole from "@nifrajs/web-svelte/hole"
+  import { ui } from "@nifrajs/web-svelte/ppr"
   import Cart from "../../frontend/Cart.svelte"
   import Text from "../../frontend/Text.svelte"
 

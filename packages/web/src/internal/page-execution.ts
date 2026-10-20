@@ -49,15 +49,7 @@ import {
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
 import { prepareModules } from "./module-preparation.ts"
-import { type ResolvedPprOptions, wantsBlockingRender } from "./ppr/options.ts"
-import {
-  type HoleRegistration,
-  type PprRequest,
-  type PprServer,
-  PprShellUnavailable,
-  PprShellUnchecked,
-  variationQuery,
-} from "./ppr/server.ts"
+import { isHole, type PprIntegration, type PprRequest } from "./ppr/contract.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -114,24 +106,6 @@ export interface PageRouteContext<Env = unknown> {
 /** Whether `c` is a client navigation's data request. On Node, `req.headers` builds every header. */
 function isDataRequest(c: PageRouteContext<unknown>): boolean {
   return (c.header !== undefined ? c.header(DATA_HEADER) : c.req.headers.get(DATA_HEADER)) !== null
-}
-
-// The stream sets its own type, caching and CSP; a middleware or gate header joins the rest.
-const PPR_OWN_HEADERS: ReadonlySet<string> = new Set([
-  "content-type",
-  "cache-control",
-  "content-security-policy",
-  "content-length",
-])
-
-/** A PPR response with the headers middleware and gates wrote for this request. */
-function withDocumentHeaders(
-  response: Response,
-  written: Readonly<Record<string, string>> | undefined,
-): Response {
-  for (const [name, value] of Object.entries(written ?? {}))
-    if (!PPR_OWN_HEADERS.has(name)) response.headers.set(name, value)
-  return response
 }
 
 /** The page slot of an `ssr = false` route with no `HydrateFallback`: a component that renders nothing. */
@@ -285,12 +259,7 @@ export interface PageExecutionOptions<Env = unknown> {
    * server logs it, so this runs only where the server never sees the throw. */
   readonly logBoundaryError?: (error: unknown, request: Request) => void
   /** Experimental partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
-  readonly ppr?: {
-    readonly server: PprServer
-    readonly options: ResolvedPprOptions
-    /** The configured public origin a shell may use; never a visitor's Host. */
-    readonly origin?: string
-  }
+  readonly ppr?: PprIntegration
 }
 
 type PageResponse = Response | ResponseResult | RenderedPage
@@ -1420,50 +1389,6 @@ export function createPageRequestExecutor<Env = unknown>(
       }
     }
 
-  /**
-   * The declared variations `search` selects. A parameter given twice, or a value outside its set,
-   * selects nothing, so every spelling of one choice maps to one shell.
-   */
-  const variationsOf = (
-    declared: RouteModule["shellVariations"],
-    search: string,
-  ): Readonly<Record<string, string>> => {
-    const lists = declared?.search
-    if (lists === undefined || search === "") return {}
-    const query = new URLSearchParams(search)
-    const chosen: Record<string, string> = {}
-    for (const [name, allowed] of Object.entries(lists)) {
-      const values = query.getAll(name)
-      const value = values[0]
-      if (values.length === 1 && value !== undefined && allowed.includes(value))
-        chosen[name] = value
-    }
-    return chosen
-  }
-
-  /** The plan's eligibility rules a route's own files cannot check: its layouts and boundary modes. */
-  const assertPprChain = (
-    route: RouteEntry,
-    layouts: LoadedLayoutModules,
-    boundaries: readonly BoundaryRegistration[],
-  ): void => {
-    // `compileShells` refuses the same chain at startup; this catches a record made from other files.
-    layouts.forEach((layout, index) => {
-      if (layout.loader !== undefined && layout.gate !== true) {
-        throw new Error(
-          `[nifra/web] ppr: route "${route.id}" has a shellLoader, but its layout "${route.layoutIds[index]}" has a loader that is not a gate. A layout loader reads the request, so its output cannot be in a shared shell`,
-        )
-      }
-    })
-    for (const boundary of boundaries) {
-      if (typeof boundary.mode === "object") {
-        throw new Error(
-          `[nifra/web] ppr: route "${route.id}" has a shellLoader and an intercepting boundary "${boundary.name}", which partial prerendering does not support yet`,
-        )
-      }
-    }
-  }
-
   const pprRequestFor = (
     c: PageRouteContext<Env>,
     route: RouteEntry,
@@ -1479,17 +1404,16 @@ export function createPageRequestExecutor<Env = unknown>(
     const locale = i18n?.localeOf(path)
     const params = c.params
     const shellOrigin = options.ppr?.origin
-    const variations = variationsOf(mod.shellVariations, urlPartsFor(c.req).search)
-    const shellSearch = variationQuery(variations)
+    const variations =
+      options.ppr?.variationsOf(mod.shellVariations, urlPartsFor(c.req).search) ?? {}
+    const shellSearch = options.ppr?.variationQuery(variations) ?? ""
     return {
       routeId: route.id,
       path,
       locale,
       variations,
       request: c.req,
-      holes: boundaries.filter(
-        (boundary): boundary is HoleRegistration => boundary.mode === "dynamic",
-      ),
+      holes: boundaries.filter(isHole),
       holeContext: { request: c.req, params, api: requestApi, env: c.env, draft, search },
       revalidate: mod.revalidate,
       tags: () =>
@@ -1555,13 +1479,6 @@ export function createPageRequestExecutor<Env = unknown>(
         return rendered.text()
       },
     }
-  }
-
-  const uncheckedWarned = new Set<string>()
-  const warnUncheckedShell = (routeId: string, error: PprShellUnchecked): void => {
-    if (uncheckedWarned.has(routeId)) return
-    uncheckedWarned.add(routeId)
-    console.warn(error.message)
   }
 
   return {
@@ -1661,7 +1578,7 @@ export function createPageRequestExecutor<Env = unknown>(
             componentRequest === undefined && !componentOwner ? mod.shellLoader : undefined
           let pprRequest: PprRequest | undefined
           if (ppr !== undefined && shellLoader !== undefined) {
-            assertPprChain(route, run.modules, boundaryDefinitions)
+            ppr.assertRoute(route, run.modules, boundaryDefinitions)
             pprRequest = pprRequestFor(
               c,
               route,
@@ -1674,14 +1591,9 @@ export function createPageRequestExecutor<Env = unknown>(
               effectiveSearch,
             )
             // A draft is the editor's alone, so it never reads or fills the shared shell.
-            if (!draft && !isDataRequest(c) && !wantsBlockingRender(ppr.options, c.req)) {
-              try {
-                const streamed = await ppr.server.respond(pprRequest)
-                return withDocumentHeaders(streamed, controls.documentHeaders())
-              } catch (error) {
-                if (!(error instanceof PprShellUnavailable)) throw error
-                if (error instanceof PprShellUnchecked) warnUncheckedShell(route.id, error)
-              }
+            if (!draft && !isDataRequest(c)) {
+              const streamed = await ppr.stream(pprRequest, () => controls.documentHeaders())
+              if (streamed !== undefined) return streamed
             }
           }
           // Every PPR hole runs through the PPR server, so each has admission and its own deadline.
@@ -1721,13 +1633,7 @@ export function createPageRequestExecutor<Env = unknown>(
             pprRequest !== undefined && ppr !== undefined
               ? draft
                 ? pprRequest.loadShell(c.req.signal)
-                : ppr.server
-                    .shellData(pprRequest)
-                    .catch((error: unknown) =>
-                      error instanceof PprShellUnavailable
-                        ? pprRequest.loadShell(c.req.signal)
-                        : Promise.reject(error),
-                    )
+                : ppr.shellData(pprRequest, c.req.signal)
               : mod.loader
                 ? mod.loader({ ...ctx, search: effectiveSearch })
                 : null

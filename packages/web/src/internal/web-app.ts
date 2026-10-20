@@ -28,9 +28,7 @@ import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
-import type { ShellCheckRecord } from "./ppr/compile-shell.ts"
-import { type PprOptions, resolvePprOptions } from "./ppr/options.ts"
-import { createPprServer, PPR_CANCEL_PATH, PPR_SERVER } from "./ppr/server.ts"
+import { PPR_SERVER, PPR_SETUP, type PprSetup } from "./ppr/contract.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import { requestPattern } from "./route-path.ts"
 
@@ -107,21 +105,11 @@ export interface CreateWebAppOptions<Env = unknown> {
   /** Experimental and unstable: features whose API may change in any release. */
   readonly experimental?: {
     /**
-     * Partial prerendering. A route whose backend half exports `shellLoader` streams a shell shared by
-     * every visitor, then each `dynamic` boundary as it settles. Needs `csp` (hashes), not `nonce`.
+     * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
+     * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
+     * as it settles. Needs `csp` (hashes), not `nonce`.
      */
-    readonly ppr?: {
-      /** From `compileShells` for this deployment; `"unchecked-development"` is refused in production. */
-      readonly shellChecks: ShellCheckRecord | "unchecked-development"
-      /** Overrides for the defaults in `PPR_DEFAULTS`. */
-      readonly options?: PprOptions
-      /**
-       * The deployment's public origin, such as `https://shop.example`, given to `shellLoader` and to
-       * the shell's `meta` as `origin`. Without it both get `""`: a shell is shared, so no visitor's
-       * Host header may supply it.
-       */
-      readonly origin?: string
-    }
+    readonly ppr?: PprSetup
   }
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
@@ -389,17 +377,6 @@ function evidenceProviderOf(value: unknown): ComposedEvidenceProvider | undefine
   return typeof provider === "function" ? (provider as ComposedEvidenceProvider) : undefined
 }
 
-/** `value` is exactly an http(s) origin: a scheme, a host and an optional port, nothing after. */
-function isOrigin(value: string): boolean {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return false
-  }
-  return (url.protocol === "https:" || url.protocol === "http:") && url.origin === value
-}
-
 function mountPathPrefix(path: string): string {
   const withoutWildcard = path.endsWith("/*") ? path.slice(0, -2) : path
   if (withoutWildcard === "" || withoutWildcard === "/") return ""
@@ -544,35 +521,13 @@ export function createWebApp<Env = unknown>(
   const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
-  const pprConfig = options.experimental?.ppr
-  if (pprConfig !== undefined && options.nonce !== undefined) {
-    throw new TypeError(
-      "[nifra/web] experimental.ppr needs `csp: createCspPolicy(...)`, not `nonce`: a per-request nonce would make every shell unique",
-    )
-  }
-  const pprOptions = pprConfig === undefined ? undefined : resolvePprOptions(pprConfig.options)
-  const pprOrigin = pprConfig?.origin
-  if (pprOrigin !== undefined && !isOrigin(pprOrigin)) {
-    throw new TypeError(
-      `[nifra/web] experimental.ppr.origin must be an http(s) origin such as "https://shop.example", with no path; got ${JSON.stringify(pprOrigin)}`,
-    )
-  }
-  const ppr =
-    pprConfig === undefined || pprOptions === undefined
-      ? undefined
-      : {
-          options: pprOptions,
-          ...(pprOrigin === undefined ? {} : { origin: pprOrigin }),
-          server: createPprServer({
-            options: pprOptions,
-            adapter,
-            ...(options.csp === undefined ? {} : { csp: options.csp }),
-            // The content-hashed entry changes with every client build; the store is per process.
-            deployment: clientEntry,
-            cancelUrl: PPR_CANCEL_PATH,
-            shellChecks: pprConfig.shellChecks,
-          }),
-        }
+  const ppr = options.experimental?.ppr?.[PPR_SETUP]({
+    adapter,
+    ...(options.csp === undefined ? {} : { csp: options.csp }),
+    // The content-hashed entry changes with every client build; the store is per process.
+    deployment: clientEntry,
+    perRequestNonce: options.nonce !== undefined,
+  })
   const pageExecutor = createPageRequestExecutor<Env>({
     ...(options.cacheRouteModules === undefined
       ? {}
@@ -624,14 +579,9 @@ export function createWebApp<Env = unknown>(
   })
   if (ppr !== undefined) {
     Object.defineProperty(app, PPR_SERVER, { value: ppr.server })
-    // A beacon carries one 22-character token; anything longer is not one. The token is unguessable,
-    // so the answer is the same whether it named a live response or not.
-    app.register("POST", PPR_CANCEL_PATH, undefined, async (c: { readonly req: Request }) => {
-      const length = Number(c.req.headers.get("content-length") ?? "NaN")
-      if (!(length > 0 && length <= 64)) return new Response(null, { status: 400 })
-      ppr.server.cancel(await c.req.text())
-      return new Response(null, { status: 204 })
-    })
+    app.register("POST", ppr.cancelPath, undefined, (c: { readonly req: Request }) =>
+      ppr.cancel(c.req),
+    )
   }
 
   // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.

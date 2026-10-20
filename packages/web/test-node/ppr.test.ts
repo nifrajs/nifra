@@ -11,6 +11,7 @@ import { test } from "node:test"
 import { serve } from "@nifrajs/node"
 import type { BoundaryStates, Manifest, RenderAdapter, RouteModule } from "@nifrajs/web"
 import { createWebApp } from "@nifrajs/web"
+import { partialPrerendering } from "@nifrajs/web/ppr"
 
 const PROSE = "Loose leaf tea, packed by hand and shipped the same day it is weighed. ".repeat(4)
 
@@ -61,7 +62,7 @@ function appWith(signals: Array<(signal: AbortSignal) => void>) {
     adapter,
     manifest,
     clientEntry: "/c.js",
-    experimental: { ppr: { shellChecks: "unchecked-development" } },
+    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
   })
 }
 

@@ -7,12 +7,13 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { reactAdapter } from "../../../../../web-react/src/index.ts"
+import { reactAdapter } from "@nifrajs/web-react"
 import { buildClient } from "../../../../src/build.ts"
 import { createCspPolicy } from "../../../../src/csp.ts"
 import { discoverRoutes } from "../../../../src/fs.ts"
 import { compileShells } from "../../../../src/internal/ppr/compile-shell.ts"
 import { createWebApp } from "../../../../src/internal/web-app.ts"
+import { partialPrerendering } from "../../../../src/ppr.ts"
 import type { RenderAdapter } from "../../../../src/render-seam.ts"
 import { probe } from "./lib/probe.ts"
 
@@ -78,7 +79,7 @@ export async function startPprApp(setup: PprFixtureSetup = REACT): Promise<PprAp
     routePreload: assets.routes,
     styles: assets.css ?? [],
     csp,
-    experimental: { ppr: { shellChecks, origin: "https://shop.example" } },
+    experimental: { ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }) },
   })
   app.get("/assets/*", async (c) => {
     const name = new URL(c.req.url).pathname.slice("/assets/".length)

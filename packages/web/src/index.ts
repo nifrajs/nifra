@@ -29,6 +29,7 @@ export {
   type PendingBoundary,
   resolveDynamicBoundaries,
   resolveStaticBoundaries,
+  type ShellCtx,
   type StaticBoundary,
   type StaticBoundaryCache,
   type StaticBoundaryImportEdge,

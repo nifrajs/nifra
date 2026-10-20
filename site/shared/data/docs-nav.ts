@@ -47,6 +47,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
       { href: "/docs/webmcp", label: "WebMCP & predictive UI" },
       { href: "/docs/query", label: "Query cache" },
       { href: "/docs/streaming", label: "Streaming" },
+      { href: "/docs/partial-prerendering", label: "Partial prerendering" },
       { href: "/docs/hydration", label: "Hydration" },
       { href: "/docs/islands", label: "Islands" },
       { href: "/docs/nano", label: "nano (small apps)" },

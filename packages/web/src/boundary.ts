@@ -61,6 +61,10 @@ export type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & {
 export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {
   readonly mode: "dynamic"
   readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>
+  /** Experimental, partial prerendering: the hole ships its props and hydrates. Default `false`. */
+  readonly interactive?: boolean
+  /** Experimental, partial prerendering: the hole's deadline in milliseconds. Default 5000. */
+  readonly timeout?: number
 }
 
 export type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & {

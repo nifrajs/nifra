@@ -252,8 +252,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
   // 17,437 -> 17,540 B; numbered fragment entries, closeBoundary on /client and status-page
-  // re-matching: 17,540 -> 17,718 B (Bun 1.4.3).
-  "nifra-web-client": 17.4,
+  // re-matching: 17,540 -> 17,718 B; partial prerendering's prefetch marker and its leave hook on
+  // navigation: 17,741 -> 17,844 B (Bun 1.4.3).
+  "nifra-web-client": 17.5,
   "nifra-i18n": 4.3,
 }
 

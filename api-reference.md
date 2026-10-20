@@ -5188,7 +5188,7 @@ _No named exports (side-effect entrypoint)._
   Markup a render produced for outside the app root, which an adapter that sets {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render settles: `renderToString` resolving, or `renderToStream` returning its stream.
 - **DraftCookieControls** _(interface)_ - `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
-- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic" readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI>`
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
@@ -5408,6 +5408,8 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
+- **ShellCtx** _(interface)_ - `interface ShellCtx`
+  Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
   A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
 - **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
@@ -6259,6 +6261,33 @@ _No named exports (side-effect entrypoint)._
 - **viteServerFnStub** _(function)_ - `viteServerFnStub: () => ServerFnStubPlugin`
   Replace every `*.fn` module with its client stubs.
 
+### `@nifrajs/web/ppr`
+
+- **CompileShellsOptions** _(interface)_ - `interface CompileShellsOptions`
+- **PPR_DEFAULTS** _(const)_ - `PPR_DEFAULTS: ResolvedPprOptions`
+- **PprConfig** _(interface)_ - `interface PprConfig`
+- **PprOptions** _(interface)_ - `interface PprOptions`
+  Overrides for {@link PPR_DEFAULTS}. Every field is optional; an omitted one keeps its default.
+- **PprSetup** _(interface)_ - `interface PprSetup`
+  What `partialPrerendering()` returns for `createWebApp({ experimental: { ppr } })`.
+- **PprShells** _(interface)_ - `interface PprShells`
+  One app's shell cache.
+- **PprStats** _(type)_ - `type PprStats = PprServerStats`
+  Admission, shedding and unsent-byte counters of one app's partially prerendered responses.
+- **ShellCheckError** _(class)_ - `class ShellCheckError`
+- **ShellCheckRecord** _(interface)_ - `interface ShellCheckRecord`
+  Which routes passed the shell check for one deployment. The server shares a shell only for a route listed here under its own deployment; anything else renders blocking (fail closed).
+- **ShellCtx** _(interface)_ - `interface ShellCtx`
+  Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
+- **compileShells** _(function)_ - `compileShells: (options: CompileShellsOptions) => Promise<ShellCheckRecord>`
+  Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else) and refuse it when the emitted code reaches a request-scoped module (plan 5.2). A module counts only when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose b…
+- **defineShellLoader** _(const)_ - `defineShellLoader: <Data>(loader: (ctx: ShellCtx) => Data | Promise<Data>) => ((ctx: ShellCtx) => Data | Promise<Data>)`
+  Types a backend half's `shellLoader` from its context; returns it unchanged.
+- **partialPrerendering** _(function)_ - `partialPrerendering: (config: PprConfig) => PprSetup`
+  Experimental: partial prerendering for `createWebApp({ experimental: { ppr } })`. Options are checked here, at startup; each app the value is given to gets its own shell cache.
+- **pprShells** _(function)_ - `pprShells: (app: object) => PprShells`
+  The shell cache of an app made with `experimental.ppr`. Pass it in `createInvalidator`'s `dataCaches` so a purge by tag also drops the shells built from the purged data.
+
 ### `@nifrajs/web/pwa-manifest`
 
 - **ManifestDir** _(type)_ - `type ManifestDir = "ltr" | "rtl" | "auto"`
@@ -6761,6 +6790,14 @@ _No named exports (side-effect entrypoint)._
   Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-props`; React escapes the attribute value and the client reads the decoded `dataset.props`.
 - **IslandProps** _(interface)_ - `interface IslandProps`
 
+### `@nifrajs/web-react/ppr`
+
+- **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode`
+  Experimental: one `dynamic` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
+
 ### `@nifrajs/web-react/query`
 
 - **DehydratedState** _(interface)_ - `interface DehydratedState`
@@ -7087,6 +7124,14 @@ _No named exports (side-effect entrypoint)._
 - **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
 - **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }`
   The same hot-patch boundary as the Bun pipeline's, in the shape `@sveltejs/vite-plugin-svelte` takes:
+
+### `@nifrajs/web-svelte/ppr`
+
+- **SvelteUI** _(interface)_ - `interface SvelteUI`
+  What a Svelte boundary's `render` and `fallback` return: a component and the props it renders with. Svelte components compile from files, so a hole's output is this pair instead of a node.
+- **isSvelteUI** _(const)_ - `isSvelteUI: (value: unknown) => value is SvelteUI`
+- **ui** _(function)_ - `ui: <Props extends Record<string, unknown>>(component: Component<Props>, ...props: Record<string, never> extends Props ? [props?: Props] : [props: Props]) => SvelteUI`
+  Experimental: `component` rendered with `props`, for a partially prerendered hole.
 
 ### `@nifrajs/web-svelte/query`
 

@@ -1,5 +1,5 @@
 <script module>
-  import { ui } from "../../../../../src/ppr.ts"
+  import { ui } from "@nifrajs/web-svelte/ppr"
   import Text from "../../frontend/Text.svelte"
 
   export const boundaries = [

@@ -1,4 +1,4 @@
-import { Hole } from "../../../../../../../web-react/src/ppr.ts"
+import { Hole } from "@nifrajs/web-react/ppr"
 
 const note = {
   name: "note",
