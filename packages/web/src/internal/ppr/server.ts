@@ -6,6 +6,7 @@ import type {
 } from "../../boundary.ts"
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
+import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
   assertHoleName,
   encodeHoleFrame,
@@ -49,8 +50,6 @@ export interface PprRequest {
   /** The route's dynamic boundaries, in declaration order, with their merged (guarded) loaders. */
   readonly holes: readonly HoleRegistration[]
   readonly holeContext: Omit<BoundaryRequestCtx, "signal">
-  /** Content hash of the route's checked shell entry, matched against `shellChecks`. */
-  readonly entryHash: string | undefined
   readonly loadShell: (signal: AbortSignal) => Promise<unknown>
   /** Render the full document for `shellData` with every hole pending, under no nonce. */
   readonly renderShellDocument: (shellData: unknown, states: BoundaryStates) => Promise<string>
@@ -64,11 +63,11 @@ export interface PprServerConfig {
   readonly deployment: string
   readonly cancelUrl: string
   /**
-   * Route id -> the content hash its build-time shell import check passed for. A route with no
-   * matching record gets no shared shell (fail closed). `"unchecked-development"` waives the check and
-   * is refused in production.
+   * The routes whose shell import check passed, for this deployment. A route not listed, or a record
+   * made for another deployment, gets no shared shell (fail closed). `"unchecked-development"` waives
+   * the check and is refused in production.
    */
-  readonly shellChecks: ReadonlyMap<string, string> | "unchecked-development"
+  readonly shellChecks: ShellCheckRecord | "unchecked-development"
 }
 
 /** Thrown when a route's shell has no passing import-check record: the caller renders it blocking. */
@@ -143,6 +142,9 @@ export function createPprServer(config: PprServerConfig): PprServer {
   if (shellChecks === "unchecked-development" && isProduction()) {
     throw new TypeError("[nifra/web] ppr: production needs the build's shell check records")
   }
+  const checked = (routeId: string): boolean =>
+    shellChecks === "unchecked-development" ||
+    (shellChecks.deployment === deployment && Object.hasOwn(shellChecks.routes, routeId))
   const shells = new Map<string, Promise<ShellEntry>>()
   const settled = new Map<string, ShellEntry>()
   const routeCounts = new Map<string, number>()
@@ -218,12 +220,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       }
       return known
     }
-    if (shellChecks !== "unchecked-development") {
-      const checked = shellChecks.get(request.routeId)
-      if (checked === undefined || checked !== request.entryHash) {
-        return Promise.reject(new PprShellUnchecked(request.routeId))
-      }
-    }
+    if (!checked(request.routeId)) return Promise.reject(new PprShellUnchecked(request.routeId))
     for (const hole of request.holes) assertHoleName(hole.name)
     const signal = AbortSignal.timeout(options.maxHoleTimeoutMs)
     const building = request

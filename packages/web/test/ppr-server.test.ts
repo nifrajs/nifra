@@ -68,7 +68,6 @@ const pprRequest = (
   request: new Request("https://shop.test/p/1"),
   holes,
   holeContext,
-  entryHash: "h1",
   loadShell: async () => ({ title: "Tea" }),
   renderShellDocument: async (data, states) => document(data, states),
   ...overrides,
@@ -79,7 +78,7 @@ const config = (overrides: Partial<PprServerConfig> = {}): PprServerConfig => ({
   adapter,
   deployment: "d1",
   cancelUrl: "/__nifra/ppr/cancel",
-  shellChecks: new Map([["product/[id]", "h1"]]),
+  shellChecks: { v: 1, deployment: "d1", routes: { "product/[id]": "h1" } },
   ...overrides,
 })
 
@@ -265,11 +264,15 @@ describe("PPR server", () => {
   })
 
   test("a route with no passing shell check gets no shared shell (fail closed)", async () => {
-    const unchecked = createPprServer(config({ shellChecks: new Map() }))
+    const unchecked = createPprServer(
+      config({ shellChecks: { v: 1, deployment: "d1", routes: {} } }),
+    )
     await expect(unchecked.respond(pprRequest([hole("a", () => 1)]))).rejects.toBeInstanceOf(
       PprShellUnchecked,
     )
-    const stale = createPprServer(config({ shellChecks: new Map([["product/[id]", "old"]]) }))
+    const stale = createPprServer(
+      config({ shellChecks: { v: 1, deployment: "d0", routes: { "product/[id]": "h1" } } }),
+    )
     await expect(stale.respond(pprRequest([hole("a", () => 1)]))).rejects.toBeInstanceOf(
       PprShellUnchecked,
     )
@@ -295,7 +298,11 @@ describe("PPR server", () => {
     }
     const store = config()
     const a = createPprServer(store)
-    const b = createPprServer({ ...store, deployment: "d2" })
+    const b = createPprServer({
+      ...store,
+      deployment: "d2",
+      shellChecks: { v: 1, deployment: "d2", routes: { "product/[id]": "h1" } },
+    })
     await (await a.respond(pprRequest([hole("x", () => 1)], { loadShell }))).text()
     await (await b.respond(pprRequest([hole("x", () => 1)], { loadShell }))).text()
     expect(builds).toBe(2)
