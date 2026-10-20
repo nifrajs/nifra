@@ -36,9 +36,6 @@ on:
       max_ci_width:
         type: number
         default: 10
-      timeout_minutes:
-        type: number
-        default: 120
   # Only for a PR a maintainer labels `bench`; every push to it re-runs until the label comes off.
   pull_request:
     types: [labeled, synchronize, reopened]
@@ -58,7 +55,8 @@ jobs:
       (github.event.action != 'labeled' || github.event.label.name == 'bench'))
     name: ${{ matrix.suite }} on ${{ matrix.runtime }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.timeout_minutes || 120 }}
+    # The manual accuracy workflow can collect up to 15 whole-matrix runs.
+    timeout-minutes: 360
     env:
       MIN_RUNS: ${{ inputs.min_runs || '3' }}
       MAX_RUNS: ${{ inputs.max_runs || '5' }}
