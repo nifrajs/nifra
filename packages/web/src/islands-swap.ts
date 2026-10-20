@@ -145,18 +145,27 @@ export function enableSwap(
         // and the page it lands on is never sent the form a second time.
         redirect: get ? "manual" : "follow",
       })
+      const load = (): void => {
+        if (source === undefined) location.reload()
+        else location.assign(response.redirected ? response.url : url)
+      }
       if (
         response.type !== "basic" ||
         response.headers.get(SWAP_HEADER) !== name ||
         !response.headers.get("content-type")?.startsWith("text/html")
       ) {
-        if (source === undefined) location.reload()
-        else location.assign(response.redirected ? response.url : url)
+        load()
         return
       }
       const html = await response.text()
       if (!slot.isConnected) return
-      put(slot, html, append, source)
+      try {
+        put(slot, html, append, source)
+      } catch {
+        // Trusted Types without a default policy refuses the HTML before the slot changes.
+        load()
+        return
+      }
       if (get && !append && source !== undefined) {
         if (!swapped.includes(name)) swapped = [...swapped, name]
         history.pushState({ [HISTORY_KEY]: swapped }, "", url)

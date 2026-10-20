@@ -385,7 +385,8 @@ export default function Islands() {
       </p>
       <p>
         Any other answer - a redirect, another origin, a page without that slot, an error - loads
-        the URL normally, and a form POST is never sent twice. Without the script, the links and
+        the URL normally, as does a page whose Trusted Types policy refuses the HTML, and a form
+        POST is never sent twice. Without the script, the links and
         forms work as plain HTML. A loading slot carries{" "}
         <code>aria-busy=&quot;true&quot;</code>, a newer swap of the same slot cancels the older
         one, and a failed request leaves the page as it is and sets <code>data-swap-error</code> on

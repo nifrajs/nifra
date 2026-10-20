@@ -136,7 +136,7 @@ beforeAll(async () => {
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request) => {
+    fetch: async (request) => {
       const url = new URL(request.url)
       if (url.pathname === "/favicon.ico") return new Response(null, { status: 404 })
       if (url.pathname === "/swap.js")
@@ -144,7 +144,12 @@ beforeAll(async () => {
       requests.push(
         `${request.method} ${url.pathname}${url.search} ${request.headers.get("x-nifra-swap") ?? "-"}`,
       )
-      return app.fetch(request)
+      const response = await app.fetch(request)
+      if (!url.searchParams.has("tt")) return response
+      // A document that enforces Trusted Types, with no policy to let HTML through.
+      const headers = new Headers(response.headers)
+      headers.append("content-security-policy", "require-trusted-types-for 'script'")
+      return new Response(response.body, { status: response.status, headers })
     },
   })
   page = await launchChrome(chrome)
@@ -333,6 +338,27 @@ test.skipIf(chrome === undefined)(
     await waitAcrossLoad(p, `location.search === "?q=Savoy" && window.__stop !== undefined`)
     expect(await swappedIn(p)).toBe(false)
     expect(await rows(p)).toEqual(["Savoy"])
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "a page that refuses the HTML under Trusted Types loads the URL instead",
+  async () => {
+    const p = await open("/hotels?tt=1")
+    const refused = await p.evaluate<boolean>(`(() => {
+      try {
+        document.createElement("template").innerHTML = "<b></b>"
+        return false
+      } catch {
+        return true
+      }
+    })()`)
+    expect(refused).toBe(true)
+    await p.evaluate(`document.getElementById("ritz").click()`)
+    await waitAcrossLoad(p, `location.search === "?q=Ritz" && window.__stop !== undefined`)
+    expect(await swappedIn(p)).toBe(false)
+    expect(await rows(p)).toEqual(["Ritz"])
   },
   30_000,
 )
