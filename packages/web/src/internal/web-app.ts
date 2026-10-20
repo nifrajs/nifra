@@ -11,7 +11,7 @@ import {
   preRouteMountPaths,
 } from "@nifrajs/core/mount"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
-import { type ServerOptions, server } from "@nifrajs/core/server"
+import { replacedRequestOf, type ServerOptions, server } from "@nifrajs/core/server"
 import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
 import {
@@ -26,6 +26,7 @@ import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
+import { INVALIDATION, type InvalidationOp } from "./invalidation-contract.ts"
 import { LIVE_ATTACH, type LiveAttachment, type LiveRuntimeHandle } from "./live-contract.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
@@ -486,6 +487,38 @@ export function createWebApp<Env = unknown>(
       cacheChannel.enabled = true
     },
   })
+  // One owner per write. A cache wrapper that opened the channel runs the whole pipeline and takes
+  // the operation here, by the request it passed in; without one, the app publishes the write's keys
+  // and tags itself, and a write with nothing to publish needs nothing at all.
+  const handedOver = new WeakMap<Request, InvalidationOp>()
+  const live = options.live
+  const publish =
+    live === undefined ? undefined : (keys: readonly string[]) => live.publish(...keys)
+  Object.defineProperty(app, INVALIDATION, {
+    value: {
+      take: (request: Request): InvalidationOp | undefined => {
+        const op = handedOver.get(request)
+        handedOver.delete(request)
+        return op
+      },
+      publish,
+    },
+  })
+  const invalidate = async (op: InvalidationOp, request: Request): Promise<void> => {
+    if (cacheChannel.enabled) {
+      // Every request in a hook's replacement chain: the wrapper holds the first one.
+      for (
+        let held: Request | undefined = request;
+        held !== undefined;
+        held = replacedRequestOf(held)
+      )
+        handedOver.set(held, op)
+      return
+    }
+    if (publish === undefined || op.keys.length + op.tags.length === 0) return
+    const { settleInvalidation } = await import("./invalidation.ts")
+    await settleInvalidation(op, { publish }, request, undefined)
+  }
   // Mount the in-process backend over HTTP at `apiPrefix`, when one is given, BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
@@ -571,6 +604,7 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
+    invalidate,
     liveLoadOf: liveAttachment?.loadOf,
   })
 

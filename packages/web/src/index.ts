@@ -104,6 +104,7 @@ export {
   type RenderedPage,
   type RenderPageInput,
   type RenderPageOptions,
+  type RevalidateOptions,
   type RevalidateResult,
   redirect,
   renderPage,

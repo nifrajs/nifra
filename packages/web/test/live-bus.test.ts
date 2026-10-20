@@ -14,6 +14,7 @@ const claims = (s: number, sub: string | null = "alice"): GrantClaims => ({
   frame: "page",
   owners: {},
   s,
+  r: 0,
   iat: 0,
   exp: 600,
   aud: "app",
@@ -149,7 +150,7 @@ test("each hour's subkey seals at most its limit of grants", async () => {
     ttl: 600,
     maxSealsPerSubkey: 2,
   })
-  const input = { sid: "0".repeat(32), sub: null, path: "/", frame: "page", owners: {}, s: 0 }
+  const input = { sid: "0".repeat(32), sub: null, path: "/", frame: "page", owners: {}, s: 0, r: 0 }
   const hour = 1_800_000_000_000 - (1_800_000_000_000 % 3_600_000)
   expect(await ring.seal(input, hour)).toBeString()
   expect(await ring.seal(input, hour + 1000)).toBeString()

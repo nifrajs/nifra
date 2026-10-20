@@ -95,9 +95,16 @@ export interface LiveOptions {
   readonly spreadFloor?: number
   /**
    * Re-check the keys of owners a load keeps without running their loaders. With it, `renew`
-   * re-signs a grant without loaders; without it, `renew` runs a full load. `false` issues no grant.
+   * re-signs a grant without loaders (every third renewal still runs them all, so a lost change is
+   * found within about 27 minutes); without it, `renew` runs a full load. `false` issues no grant.
    */
   readonly authorize?: (keys: readonly string[], ctx: LoaderContext) => boolean | Promise<boolean>
+  /**
+   * Resolves once a committed write is readable by every loader, such as a read replica catching up.
+   * `publish` waits for it, so no client reloads before its data can show the change. Replica-backed
+   * reads need it; without it a publish goes out as soon as it is called.
+   */
+  readonly visible?: () => void | Promise<void>
 }
 
 /** A live runtime: pass it to `createWebApp({ live })`. */
@@ -134,6 +141,8 @@ const MAX_GRANTS = 3
 const MAX_RETAIN = 64
 const MAX_OWNER_CHARS = 512
 const PAGE_FRAME = "page"
+/** Renewals re-signed without loaders before one runs them all. */
+const MAX_QUIET_RENEWALS = 2
 
 const HOP_BY_HOP = [
   "connection",
@@ -206,6 +215,7 @@ export function live(options: LiveOptions): Live {
   assertLiveSecrets(secrets)
   const trusted = new Set(options.trustedOrigins ?? [])
   const authorize = options.authorize
+  const visible = options.visible
   const subjectOf = options.subject
   const production = isProduction()
   const bus = options.bus ?? memoryBus()
@@ -398,7 +408,7 @@ export function live(options: LiveOptions): Live {
           ? []
           : body.mode === "load"
             ? body.retain
-            : authorize === undefined
+            : authorize === undefined || grant.claims.r >= MAX_QUIET_RENEWALS
               ? []
               : Object.keys(grant.claims.owners)
       const layouts: number[] = []
@@ -552,6 +562,13 @@ export function live(options: LiveOptions): Live {
       if (entry !== undefined) entry.sealed = true
     }
 
+    /** A renewal that kept owners counts one more; a load that ran every loader starts over. */
+    private renewals(kept: boolean): number {
+      const previous = this.grant?.claims.r ?? 0
+      if (!kept) return 0
+      return this.body.mode === "renew" ? previous + 1 : previous
+    }
+
     async finish(input: LiveFinish): Promise<LiveEnvelope> {
       for (const entry of this.collectors.values()) entry.sealed = true
       const ring = this.core.ring
@@ -604,6 +621,7 @@ export function live(options: LiveOptions): Live {
           frame: this.body.frame,
           owners,
           s: this.seq,
+          r: this.renewals(input.retained.length > 0),
         },
         Date.now(),
       )
@@ -637,6 +655,7 @@ export function live(options: LiveOptions): Live {
     async publish(...keys) {
       for (const key of keys) checkKey(key, "publish")
       if (keys.length === 0) return
+      await visible?.()
       await append({ type: "change", keys: [...new Set(keys)] })
     },
     async revoke(subject) {

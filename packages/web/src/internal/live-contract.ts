@@ -79,4 +79,6 @@ export const LIVE_ATTACH: unique symbol = Symbol.for("nifra.web.live.attach")
 
 export interface LiveRuntimeHandle {
   readonly [LIVE_ATTACH]: (input: LiveAttachInput) => LiveAttachment
+  /** Announce changed keys; resolves once this process applied the change. */
+  publish(...keys: string[]): Promise<void>
 }

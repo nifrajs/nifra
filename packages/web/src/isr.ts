@@ -9,6 +9,13 @@
 import { isAuthenticatedRequest, writableResponse } from "@nifrajs/core/server"
 import { readBoundedBytes, TransportCodecError } from "@nifrajs/core/transport-codec"
 import { isDraftEnabled } from "./draft.ts"
+import {
+  type InvalidationReport,
+  type InvalidationTargets,
+  runInvalidation,
+  settleInvalidation,
+} from "./internal/invalidation.ts"
+import { INVALIDATION, type InvalidationHandoff } from "./internal/invalidation-contract.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
 /** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */
@@ -608,6 +615,20 @@ export interface ISROptions {
    * the request; set it when the store is a network service.
    */
   readonly storeTimeoutMs?: number
+  /**
+   * Caches below the pages whose entries carry the same tags, such as a `@nifrajs/cache` holding loader
+   * data. An action's `revalidate(paths, data, { tags })` invalidates them first, then this store, then
+   * publishes to live pages, then purges `cdn`; a cache that fails stops the rest, so no client reloads
+   * stale data.
+   */
+  readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
+  /** A CDN an action's invalidation purges last (a `@nifrajs/web/cdn` provider). */
+  readonly cdn?: CdnPurgeTarget
+  /**
+   * An action's invalidation that still failed after its retries; the action's own answer never
+   * changes. Default: one `console.error` line naming the operation id and stage.
+   */
+  readonly onInvalidationError?: (report: InvalidationReport) => void
 }
 
 /** The store operation an {@link ISROptions.onStoreError} report is about. */
@@ -915,6 +936,30 @@ export function withISR(
   }
   const regenerating = new Set<string>()
   openCacheChannel(app)
+  // This wrapper owns the app's invalidation pipeline from here on: an action's operation comes back
+  // by its request, and every stage runs in order before the action's answer leaves.
+  const handoff: unknown = Reflect.get(app, INVALIDATION)
+  const taken = isHandoff(handoff) ? handoff : undefined
+  const targets: InvalidationTargets = {
+    dataCaches: options.dataCaches,
+    store,
+    keyOf: (path, req) => keyOf(new Request(new URL(new URL(req.url).origin + path).href)),
+    publish: taken?.publish,
+    cdn: options.cdn,
+  }
+  const passThrough = async (
+    req: Request,
+    platform: ISRPlatform | undefined,
+  ): Promise<Response> => {
+    const res = withoutCacheChannel(await app.fetch(req, platform))
+    const op = taken?.take(req)
+    if (op !== undefined) {
+      await settleInvalidation(op, targets, req, platform, {
+        onError: options.onInvalidationError,
+      })
+    }
+    return res
+  }
   // An outer cache layer (`withCdn`) opens this wrapper's own channel: cached responses then carry how
   // much freshness they have left and their tags, so the CDN never holds a page longer than ISR would.
   let channelOpen = false
@@ -1082,12 +1127,12 @@ export function withISR(
       !ownsPrivate
         ? keyOf(req)
         : null
-    if (key === null) return withoutCacheChannel(await app.fetch(req, platform))
+    if (key === null) return passThrough(req, platform)
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so
     // unpublished content can't leak into the public cache (and the editor isn't served a stale page).
     if (draftSecret !== undefined && (await isDraftEnabled(req, draftSecret))) {
-      return withoutCacheChannel(await app.fetch(req, platform))
+      return passThrough(req, platform)
     }
 
     // A cookie or Authorization request may be personalized: under the default key it never reads
@@ -1122,6 +1167,9 @@ export function withISR(
 
 const jsonError = (status: number, error: string): Response =>
   Response.json({ ok: false, error }, { status })
+
+const isHandoff = (value: unknown): value is InvalidationHandoff =>
+  typeof value === "object" && value !== null && typeof Reflect.get(value, "take") === "function"
 
 /** What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused. */
 export interface CdnPurgeOutcome {
@@ -1172,6 +1220,11 @@ export interface RevalidateEndpointOptions {
    * page store is touched, so a retry purges everything again. Path purges do not reach them.
    */
   readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
+  /**
+   * The app's live runtime: a purge also tells live pages watching a purged tag to reload, after the
+   * caches and before the CDN. A publish that fails answers `502` with `origin: "done"`.
+   */
+  readonly live?: { publish(...keys: string[]): Promise<void> }
 }
 
 const stringList = (value: unknown): string[] | null | undefined => {
@@ -1263,47 +1316,51 @@ export function revalidateEndpoint(
       return jsonError(501, "tag_invalidation_not_supported")
     }
 
-    if (tags.length > 0 && options.dataCaches !== undefined) {
-      try {
-        for (const cache of options.dataCaches) {
-          for (const candidate of tags) await cache.invalidateTag(candidate)
-        }
-      } catch {
-        return Response.json(
-          { ok: false, error: "data_cache_invalidation_failed" },
-          { status: 500 },
-        )
-      }
-    }
-    for (const key of keys) await options.store.delete(key)
-    for (const candidate of tags) await invalidateTag?.call(options.store, candidate)
+    // The same pipeline an action's `revalidate()` runs: data caches, this store, live, then the CDN.
+    const live = options.live
+    const report = await runInvalidation(
+      { id: crypto.randomUUID(), paths, tags, keys: [] },
+      {
+        dataCaches: options.dataCaches,
+        store: options.store,
+        keyOf: (candidate) => keys[paths.indexOf(candidate)] ?? null,
+        publish: live === undefined ? undefined : (names) => live.publish(...names),
+        cdn: options.cdn,
+      },
+      req,
+      platform,
+    )
+    const stageOf = (stage: string) => report.stages.find((each) => each.stage === stage)
+    if (stageOf("data")?.ok === false) return jsonError(500, "data_cache_invalidation_failed")
+    if (stageOf("pages")?.ok === false) return jsonError(500, "page_store_invalidation_failed")
     const done =
       path !== null
         ? { revalidated: path }
         : tag !== null
           ? { revalidatedTag: tag }
           : { revalidated: paths, revalidatedTags: tags }
-    if (options.cdn === undefined) return Response.json(done)
-
-    let outcome: CdnPurgeOutcome
-    try {
-      outcome = await options.cdn.purge({ tags, paths }, platform)
-    } catch {
-      outcome = { cdn: "failed", retryable: true, error: "cdn_purge_threw" }
-    }
-    if (outcome.cdn === "failed") {
+    const published = stageOf("publish")
+    const cdn = stageOf("cdn")
+    if (cdn?.ok === false) {
       const failure: Record<string, unknown> = {
         ok: false,
         error: "cdn_purge_failed",
         origin: "done",
-        retryable: outcome.retryable,
+        retryable: cdn.retryable,
       }
-      if (outcome.error !== undefined) failure.reason = outcome.error
+      if (cdn.error !== undefined && cdn.error !== "cdn_failed") failure.reason = cdn.error
       return Response.json(failure, { status: 502 })
     }
+    if (published?.ok === false) {
+      return Response.json(
+        { ok: false, error: "live_publish_failed", origin: "done", retryable: true },
+        { status: 502 },
+      )
+    }
+    if (cdn === undefined) return Response.json(done)
     return Response.json(
-      { ...done, cdn: outcome.cdn },
-      { status: outcome.cdn === "queued" ? 202 : 200 },
+      { ...done, cdn: cdn.queued === true ? "queued" : "accepted" },
+      { status: cdn.queued === true ? 202 : 200 },
     )
   }
 }

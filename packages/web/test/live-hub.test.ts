@@ -145,6 +145,7 @@ async function grantFor(
         Object.entries(owners).map(([id, k]) => [id, { k: [...k], w: watermark }]),
       ),
       s: r.history.last,
+      r: 0,
       ...extra,
     },
     nowMs,

@@ -46,6 +46,7 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
+import type { InvalidationOp } from "./invalidation-contract.ts"
 import type { LiveEnvelope, LiveFinish, LiveLoad, LiveRouteMatch } from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
 import {
@@ -53,6 +54,7 @@ import {
   type HeadersLike,
   isControlFlow,
   isResponseResult,
+  isRevalidateResult,
   isStatusSignal,
   type LoadedLayoutModules,
   layoutErrorId,
@@ -265,6 +267,11 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly csp?: CspPolicy
   /** Set once a cache wrapper attaches; until then a route's freshness and tags stay off the response. */
   readonly cacheChannel?: { readonly enabled: boolean }
+  /**
+   * Run, or hand to the cache wrapper, what an action's `revalidate()` made stale. Awaited before the
+   * action answers; it never throws and never changes the answer.
+   */
+  readonly invalidate?: (op: InvalidationOp, request: Request) => Promise<void>
   /** The live load a request belongs to; only set when the app configures `live`. */
   readonly liveLoadOf?: ((request: Request) => LiveLoad | undefined) | undefined
   readonly onLoaderError?: (
@@ -289,6 +296,18 @@ export interface PageRequestExecutor<Env = unknown> {
   fallback(ctx: PageRouteContext<Env>): Promise<PageResponse>
   /** The route a `pathname + search` renders, with its layout chain. */
   matchRoute(path: string): LiveRouteMatch | null
+}
+
+/** The operation an action's `revalidate()` names: its paths, cache tags and live keys. */
+function invalidationOf(revalidation: RevalidateResult<unknown>): InvalidationOp {
+  return {
+    id: crypto.randomUUID(),
+    paths: revalidation.__nifraRevalidate.filter(
+      (path) => typeof path === "string" && path.startsWith("/"),
+    ),
+    tags: revalidation.__nifraInvalidate?.tags ?? [],
+    keys: revalidation.__nifraInvalidate?.keys ?? [],
+  }
 }
 
 /** One URL pattern a nested `_404` answers, as the executor indexes it. */
@@ -1808,16 +1827,17 @@ export function createPageRequestExecutor<Env = unknown>(
           if (isControlFlow(err)) return err
           throw err
         }
-        const isRevalidate =
-          result !== null && typeof result === "object" && "__nifraRevalidate" in result
-        const actionResult = isRevalidate ? (result as RevalidateResult<unknown>).data : result
-        const revalidateHeader: Record<string, string> = isRevalidate
-          ? {
-              [REVALIDATE_HEADER]: (result as RevalidateResult<unknown>).__nifraRevalidate.join(
-                ",",
-              ),
-            }
-          : {}
+        const revalidation = isRevalidateResult(result) ? result : undefined
+        const actionResult = revalidation === undefined ? result : revalidation.data
+        const revalidateHeader: Record<string, string> =
+          revalidation === undefined
+            ? {}
+            : { [REVALIDATE_HEADER]: revalidation.__nifraRevalidate.join(",") }
+        // The write is done, whatever the action answers with (a redirect included): what it made
+        // stale is invalidated before the answer leaves.
+        if (revalidation !== undefined && options.invalidate !== undefined) {
+          await options.invalidate(invalidationOf(revalidation), c.req)
+        }
         if (isControlFlow(actionResult)) return actionResult
         if (isDataRequest) {
           // Headers shape the document only, but a bad one fails here too, so a navigation and a full

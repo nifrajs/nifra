@@ -55,6 +55,8 @@ export interface GrantClaims {
   readonly owners: Readonly<Record<string, GrantOwner>>
   /** The seq read at issuance: revocations above it refuse the grant. */
   readonly s: number
+  /** Renewals re-signed without loaders since the last load that ran them all. */
+  readonly r: number
   readonly iat: number
   readonly exp: number
   readonly aud: string
@@ -279,12 +281,12 @@ function validClaims(
   nowSeconds: number,
 ): value is GrantClaims {
   if (!isRecord(value)) return false
-  const { v, sid, sub, path, frame, owners, s, iat, exp, aud } = value
+  const { v, sid, sub, path, frame, owners, s, r, iat, exp, aud } = value
   if (v !== 1 || aud !== appId) return false
   if (typeof sid !== "string" || !SID_PATTERN.test(sid)) return false
   if (sub !== null && typeof sub !== "string") return false
   if (typeof path !== "string" || typeof frame !== "string") return false
-  if (!isCount(s) || !isInteger(iat) || !isInteger(exp)) return false
+  if (!isCount(s) || !isCount(r) || !isInteger(iat) || !isInteger(exp)) return false
   if (iat > nowSeconds + IAT_SKEW_SECONDS) return false
   if (Math.floor(iat / HOUR_SECONDS) !== hour) return false
   if (exp - iat !== ttl || exp <= nowSeconds) return false

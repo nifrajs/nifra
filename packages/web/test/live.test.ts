@@ -402,6 +402,7 @@ test("retained and fresh keys together past the budget issue no grant in product
         frame: "page",
         owners: { [ROOT]: { k: many, w: 0 } },
         s: nowSeq(),
+        r: 0,
       },
       Date.now(),
     )
@@ -639,6 +640,7 @@ test("owners an app hook adds to the retain header without a grant behind them g
       frame: "page",
       owners: { [ROOT]: { k: ["site:nav"], w: 0 } },
       s: nowSeq(),
+      r: 0,
     },
     Date.now(),
   )
@@ -672,6 +674,7 @@ test("a grant for another socket, path or frame keeps nothing", async () => {
       frame: "modal",
       owners: { [ROOT]: { k: [], w: 0 } },
       s: nowSeq(),
+      r: 0,
     },
     Date.now(),
   )
@@ -710,6 +713,7 @@ test("an expired grant, a forged one or another app's keeps nothing", async () =
     frame: "page",
     owners,
     s: nowSeq(),
+    r: 0,
   }
   const expired = await (await testKeyring()).seal(claims, Date.now() - 601_000)
   const otherApp = await (
@@ -869,6 +873,26 @@ test("renew with live.authorize re-signs the grant without loaders; gates still 
   const before = await opened(first.json.live?.grant)
   const after = await opened(json.live?.grant)
   expect(after?.owners).toEqual(before?.owners ?? {})
+})
+
+test("a quiet renewal chain is bounded: the third renew runs every loader and starts over", async () => {
+  const fx = fixture({ live: { authorize: () => true } })
+  let grant = (await load(fx.app)).json.live?.grant
+  expect((await opened(grant))?.r).toBe(0)
+  for (const expected of [1, 2]) {
+    for (const key of Object.keys(fx.calls)) delete fx.calls[key]
+    const renewed = await load(fx.app, { mode: "renew", grants: [grant] })
+    expect(fx.calls).toEqual({ gate: 1 })
+    grant = renewed.json.live?.grant
+    expect((await opened(grant))?.r).toBe(expected)
+  }
+  // A retained load keeps the count: only a full load clears it.
+  const kept = await load(fx.app, { retain: [ROOT], grants: [grant] })
+  expect((await opened(kept.json.live?.grant))?.r).toBe(2)
+  for (const key of Object.keys(fx.calls)) delete fx.calls[key]
+  const full = await load(fx.app, { mode: "renew", grants: [grant] })
+  expect(fx.calls).toEqual({ root: 1, posts: 1, gate: 1, page: 1 })
+  expect((await opened(full.json.live?.grant))?.r).toBe(0)
 })
 
 test("live.authorize refusing issues no grant", async () => {

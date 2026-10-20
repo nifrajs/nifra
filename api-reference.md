@@ -5376,6 +5376,8 @@ _No named exports (side-effect entrypoint)._
   Per-document options for {@link RenderAdapter.renderToStream}.
 - **RenderedPage** _(interface)_ - `interface RenderedPage`
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
+- **RevalidateOptions** _(interface)_ - `interface RevalidateOptions`
+  Cache tags and live keys an action's write made stale, beside its paths.
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`
   The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and …
 - **RevalidateTags** _(type)_ - `type RevalidateTags = | readonly string[] | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]`
@@ -5539,7 +5541,7 @@ _No named exports (side-effect entrypoint)._
   Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
 - **resolveStaticBoundaries** _(function)_ - `resolveStaticBoundaries: (boundaries: readonly BoundaryRegistration[], context: StaticCtx, cache?: StaticBoundaryCache) => Promise<BoundaryStates>`
   Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic and intercepting boundaries remain unresolved. Values are cached by boundary object identity in the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per request. A r…
-- **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
+- **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T, options?: RevalidateOptions) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…

@@ -27,6 +27,7 @@ const input = (overrides: Partial<GrantInput> = {}): GrantInput => ({
   frame: "page",
   owners: { "L:_layout": { k: ["site:nav"], w: 3 }, "P:posts/[id]": { k: ["post:42"], w: 3 } },
   s: 3,
+  r: 0,
   ...overrides,
 })
 

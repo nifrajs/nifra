@@ -1071,6 +1071,42 @@ export function statusPage(status: number, options: StatusPageOptions = {}): nev
 export interface RevalidateResult<T> {
   readonly __nifraRevalidate: readonly string[]
   readonly data: T
+  /** What else the write made stale: cache tags and live keys. */
+  readonly __nifraInvalidate?: {
+    readonly tags: readonly string[]
+    readonly keys: readonly string[]
+  }
+}
+
+/** `value` is what {@link revalidate} returned. */
+export function isRevalidateResult(value: unknown): value is RevalidateResult<unknown> {
+  return typeof value === "object" && value !== null && "__nifraRevalidate" in value
+}
+
+/** Cache tags and live keys an action's write made stale, beside its paths. */
+export interface RevalidateOptions {
+  /** Cache tags: data caches, the page store and the CDN drop entries carrying them; live pages watching a tag as a key reload. */
+  readonly tags?: readonly string[]
+  /** Live keys (`ctx.live`): every open page watching one reloads it. */
+  readonly keys?: readonly string[]
+}
+
+const INVALIDATION_NAME = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
+const MAX_INVALIDATION_NAMES = 64
+
+function invalidationNames(names: readonly string[] | undefined, kind: string): readonly string[] {
+  if (names === undefined) return []
+  if (!Array.isArray(names) || names.length > MAX_INVALIDATION_NAMES) {
+    throw new TypeError(`[nifra/web] revalidate() takes at most ${MAX_INVALIDATION_NAMES} ${kind}`)
+  }
+  for (const name of names) {
+    if (typeof name !== "string" || !INVALIDATION_NAME.test(name)) {
+      throw new TypeError(
+        `[nifra/web] revalidate() ${kind} are a letter followed by up to 127 of A-Z a-z 0-9 . _ : / -`,
+      )
+    }
+  }
+  return [...new Set(names)]
 }
 
 /**
@@ -1080,8 +1116,15 @@ export interface RevalidateResult<T> {
  * so a mutation can refresh views beyond the one that was submitted. `data` is still surfaced to the
  * component as `actionData` (the wrapper is transparent to `ActionData<typeof action>`).
  */
-export function revalidate<T>(paths: readonly string[], data: T): RevalidateResult<T> {
-  return { __nifraRevalidate: paths, data }
+export function revalidate<T>(
+  paths: readonly string[],
+  data: T,
+  options?: RevalidateOptions,
+): RevalidateResult<T> {
+  if (options === undefined) return { __nifraRevalidate: paths, data }
+  const tags = invalidationNames(options.tags, "tags")
+  const keys = invalidationNames(options.keys, "keys")
+  return { __nifraRevalidate: paths, data, __nifraInvalidate: { tags, keys } }
 }
 
 /**
