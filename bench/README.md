@@ -95,6 +95,17 @@ the way its framework ships it, measured in interleaved rounds against the compa
 
 ## In CI
 
+The `Benchmark accuracy` workflow (`.github/workflows/benchmark-accuracy.yml`) is an on-demand
+run of the same six HTTP suite/runtime combinations with a larger sampling budget: at least 7
+whole-matrix runs, up to 15, targeting a 95% interval no wider than 5 percentage points. With
+four interleaved rounds per run, that collects 28-60 samples per row. Each job has a six-hour
+limit. Start it from GitHub Actions with **Run workflow** on the branch to measure.
+
+Both workflows save raw rounds, CPU topology and steal time, the commit SHA, run ID, exact runtime
+versions, and sampling settings in downloadable artifacts retained for 90 days. Compare the ratios
+and interval widths within each report; a shared runner can still leave noisy rows after the larger
+budget is spent. Those rows remain marked unsettled, and benchmark measurements do not gate merges.
+
 `.github/workflows/benchmarks.yml` runs both HTTP matrices nightly, on demand, and on a PR labelled
 `bench`: one job per suite x runtime, each through `bench/ci/run.ts`. A job splits the runner's
 physical cores in two (`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset

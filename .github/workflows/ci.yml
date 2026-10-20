@@ -8,29 +8,27 @@ on:
   workflow_dispatch:
 
 jobs:
-  check:
+  checks:
+    name: check (${{ matrix.group }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [static, coverage, tests, cli-isolation, docs, site, packages, consumers, cold-start]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          # Full history: the changeset-coverage gate anchors on the last commit that consumed
-          # changesets, which is many commits back. The default shallow clone cannot reach it, and
-          # the gate reports that as inconclusive rather than guessing.
+          # Changeset coverage needs the last commit that consumed changesets.
           fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.3
 
-      # The version ALONE does not identify a build: two Bun binaries reporting 1.3.14 can behave
-      # differently, and that difference is invisible from a developer machine where everything passes.
-      # Printing the revision and arch turns "works locally, fails on CI" into a comparison rather than a
-      # guess - the Vite build was debugged as a nifra bug for several rounds because this line did not
-      # exist and the runtime was assumed identical.
-      - name: Runtime identity (version alone does not identify a build)
+      - name: Runtime identity
         run: |
           bun --version
           bun --revision
@@ -39,120 +37,106 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      # Cross-package imports (e.g. cli → @nifrajs/web) resolve via each package's built
-      # .d.ts, not via tsconfig paths - so typecheck needs dist. check:publish re-packs later.
+      # Cross-package imports resolve built declarations. Each group owns its build so
+      # concurrent gates cannot mutate one another's fixtures or generated output.
       - name: Build
         run: bun run build
 
       - name: Lint
+        if: matrix.group == 'static'
         run: bun run lint
 
-      - name: Typecheck (also runs the *.test-d.ts type-level tests)
+      - name: Typecheck (including type-level tests)
+        if: matrix.group == 'static'
         run: bun run typecheck
 
-      # The coverage run is also the test run for the library suites: it fails on any failing test, so
-      # `bun run test` would run the same files a second time. `test:rest` runs what it leaves out.
-      # The floor in bunfig says "≥90%". This says "not less than last time". A file at 99% can shed
-      # coverage indefinitely without tripping a floor, and the drop only surfaces years later as
-      # somebody else's failing build - so the erosion is caught where it happens.
-      - name: Test with coverage ratchet (no file may lose coverage against the committed baseline)
+      - name: Test with coverage ratchet
+        if: matrix.group == 'coverage'
         run: bun run test:coverage && bun run check:coverage
 
-      # The static-file invariants run the generated Deno entry on Deno; on CI they fail without it.
+      # The static-file invariants execute the generated Deno entry.
       - name: Set up Deno
+        if: matrix.group == 'tests'
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: 2.9.7
 
-      - name: Test the suites outside the coverage run (MCP stdio servers, scripts, invariants)
+      - name: Test suites outside the coverage run
+        if: matrix.group == 'tests'
         run: bun run test:rest
 
-      # Fixture roots are unique, but shared state can still hide an order dependency. Bun prints the
-      # seed on failure; deriving it from the run number makes each CI run explore a different order
-      # while keeping a failing run exactly reproducible (`--seed=<run number>`).
       - name: CLI fixture isolation (randomized test order)
+        if: matrix.group == 'cli-isolation'
         run: bun run check:cli-isolation
         env:
           NIFRA_TEST_SEED: ${{ github.run_number }}
 
-      # Enforce the doc gates in CI (not just `bun run check` locally): documented snippets must
-      # typecheck against the live API, and api-reference.md + the per-package LLM.md cards must be
-      # regenerated - so docs/example drift can't merge. Needs the build above (snippets resolve
-      # @nifrajs/* subpaths via the built dist types).
-      # `check:corpus` covers the four agent-facing corpora (llms.txt, llms-full.txt, examples.json,
-      # types.json), API reference, package cards, and the Node outcome contract. They were the only
-      # generated artifacts with no gate, so they were as fresh as whoever last remembered to run
-      # `gen:llms` - and `types.json` is what the `nifra_types` MCP tool answers from, so stale is not
-      # cosmetic: it hands an agent a signature the code no longer has. `check:sitemap` fails when a
-      # docs page is added or removed without regenerating site/public/sitemap.xml.
-      - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora + sitemap fresh)
+      - name: Doc gates (samples, generated corpora, sitemap)
+        if: matrix.group == 'docs'
         run: bun run check:docs && bun run check:corpus && bun run check:sitemap
 
-      # The release deploys this build only after npm has the packages, so a build the zone rules refuse
-      # must fail here, before a release PR can merge.
-      - name: Site production build (what the release deploys)
+      - name: Site production build
+        if: matrix.group == 'site'
         run: bun run check:site
 
-      - name: Build + publish-readiness (publint + arethetypeswrong)
+      - name: Publish-readiness (packed files, publint, arethetypeswrong)
+        if: matrix.group == 'packages'
         run: bun run check:publish
 
-      # The names to scan for are themselves private, so they arrive as a repository secret rather
-      # than living in the tree. A fork's pull request has no secrets, so there the step enforces the
-      # structural half (seams exported, no runtime builtins in an edge seam); a push to main must scan.
-      - name: Public boundary (seam exports, edge portability, private markers)
+      # Fork PRs enforce the structural boundary; main pushes also require private markers.
+      - name: Public boundary
+        if: matrix.group == 'static'
         run: bun run check:public-boundary
         env:
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
           RELEASE_MODE: ${{ github.event_name == 'push' && '1' || '' }}
 
-      - name: Public product manifest (README package map is generated)
+      - name: Public product manifest
+        if: matrix.group == 'static'
         run: bun run check:public-manifest
 
-      # The skills bundle ships as an npm package, a Pi skills dir, and a Claude Code plugin, each read
-      # through a different manifest. Nothing links them, so the plugin version drifted a major behind.
-      - name: Agent surface manifests (skills package, plugin, marketplace)
+      - name: Agent surface manifests
+        if: matrix.group == 'static'
         run: bun run check:plugin
 
-      # attw and the workspace can resolve undeclared internal packages through hoisted siblings. Pack
-      # selected public packages, install each one with npm's nested strategy, and typecheck its public
-      # entry from a three-line external consumer so only declared dependencies are visible.
       - name: Publish-consumer matrix (isolated declarations, no hoisting)
+        if: matrix.group == 'consumers'
         run: bun run check:consumers
 
-      # Cold-start gate: the `bun create nifra` → `bun install` → `bun run build` path a fresh external
-      # user takes. alpha.4's templates pinned `@nifrajs/*@^0.1.0` (excludes the published prerelease) →
-      # every scaffolded app failed to install; the package-level gates never look at the templates.
-      # Static pin-satisfiability + a functional scaffold/install/build against the packed current source.
-      - name: Cold-start gate (templates install + build for a fresh user)
+      - name: Cold-start gate (templates install and build)
+        if: matrix.group == 'cold-start'
         run: bun run check:cold-start
 
-      # Bundle-size gate: per-feature gzip budgets (FEATURE_GZIP_BUDGET_KB in bench/size/run.ts).
-      # What ships in a user's server artifact is a headline claim, and the marginal cost of a
-      # feature is only visible at the moment it lands - a byte-count regression is invisible in
-      # review and unattributable a release later. Deterministic (same minifier, fixed app shapes,
-      # pinned Bun), so it belongs in CI where wall-clock throughput does not: `bench:http` measures
-      # requests/sec via `oha`, and shared runners have noisy neighbours that swing that severalfold
-      # run to run. A gate that cries wolf gets disabled, so CI gates only the reproducible number;
-      # throughput gets same-job ratios in the report-only benchmarks.yml.
-      - name: Bundle-size gate (per-feature gzip budgets)
+      # Bundle sizes are deterministic. Timing measurements stay in benchmarks.yml.
+      - name: Bundle-size gate
+        if: matrix.group == 'packages'
         run: bun run check:size
 
-      # Release-notes gate: a package whose src moved since the last release must be named by a
-      # pending changeset. Versioning here is `fixed`, so a missing entry does not change the version
-      # that ships - it removes the CHANGELOG line, and the omission is invisible until a consumer
-      # upgrades into an undocumented change. That has already happened once: a client type change
-      # rode in under a changeset naming three other packages, so the client's notes for that release
-      # described a different commit entirely.
-      - name: Changeset coverage (a changed package must say it changed)
+      - name: Changeset coverage
+        if: matrix.group == 'static'
         run: bun run check:changesets
 
-      # Keep the declarative release plan and this hand-authored workflow from drifting in either
-      # direction. Shared-runner performance is the one explicit plan exception: it remains a local
-      # release gate because request throughput is too noisy to require on CI.
       - name: Verification plan / CI parity
+        if: matrix.group == 'static'
         run: bun run check:verification-parity
+
       - name: Server component contracts
+        if: matrix.group == 'static'
         run: bun run check:server-components:contracts
+
+  # Preserve the required check name; a failed or skipped matrix must never appear green.
+  check:
+    name: check
+    needs: checks
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every check group passed
+        run: test "$RESULT" = success
+        env:
+          RESULT: ${{ needs.checks.result }}
 
   server-components:
     # The browser x runtime matrix runs once per release, in release verification. This job is the
