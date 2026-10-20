@@ -390,7 +390,10 @@ describe("dynamic boundaries beside static ones under createWebApp", () => {
     expect(html).toContain('"nav":{"name":"nav","mode":"static","status":"ready","data":"menu"}')
   })
 
-  test("a client that leaves mid-stream is not reported as a failed load", async () => {
+  test.each([
+    ["soft navigation", { "x-nifra-data": "1" }],
+    ["document", {}],
+  ])("a client that leaves a %s mid-stream is not reported as a failed load", async (_, headers) => {
     const app = appWith(
       ({ signal }) =>
         new Promise((_, reject) => {
@@ -401,7 +404,8 @@ describe("dynamic boundaries beside static ones under createWebApp", () => {
     )
     const client = new AbortController()
     const reported = await captureServerErrors(async () => {
-      const reader = (await app.fetch(dataRequest({ signal: client.signal }))).body!.getReader()
+      const request = new Request("http://shop.example/", { headers, signal: client.signal })
+      const reader = (await app.fetch(request)).body!.getReader()
       await reader.read()
       client.abort()
       await reader.cancel("client went away")
