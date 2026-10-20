@@ -1,4 +1,6 @@
 // A scripted ACP agent: flags shape the handshake, the prompt text picks the turn.
+import { spawn } from "node:child_process"
+
 const flags = new Set(process.argv.slice(2))
 const SESSION = "acp-session-1"
 const waiting = new Map()
@@ -48,6 +50,13 @@ async function handle(message) {
   }
   switch (message.method) {
     case "initialize":
+      if (flags.has("--die-on-init-late-stderr")) {
+        // A child keeps stderr open and writes the reason only once this process is gone.
+        const script = `const gone = () => { try { process.kill(${process.pid}, 0); return false } catch { return true } };
+const wait = setInterval(() => { if (gone()) { clearInterval(wait); process.stderr.write("fatal: no credentials\\n") } }, 2)`
+        spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "inherit"] }).unref()
+        process.exit(2)
+      }
       if (flags.has("--die-on-init")) {
         process.stderr.write("\u001b[31mfatal: no credentials for sk-abcdefghijklmnop\u001b[0m\n")
         process.exit(2)
