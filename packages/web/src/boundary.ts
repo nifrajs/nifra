@@ -107,6 +107,9 @@ export interface BoundaryState {
   /** While an intercept boundary holds a target: the result of the last action posted to that target,
    * which the page's own `actionData` never sees. Only on a `"ready"` state. */
   readonly actionData?: unknown
+  /** Set on a hole of a partially prerendered shell: the adapter renders an opaque host the PPR
+   * runtime fills, not the boundary's content. */
+  readonly ppr?: true
 }
 
 export type BoundaryStates = Readonly<Record<string, BoundaryState>>

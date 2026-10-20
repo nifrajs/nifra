@@ -160,6 +160,19 @@ const preparedSources = (policy: CspPolicy, adapter: RenderAdapter): AdapterSour
 }
 
 /**
+ * The policy value for a partially prerendered document: the adapter's hash sources plus `extra`
+ * (the PPR runtime and invoker hashes), with no nonce. Prepare the policy for `adapter` first.
+ */
+export function cspHeaderWithSources(
+  policy: CspPolicy,
+  adapter: RenderAdapter,
+  extra: string,
+): string | undefined {
+  const { sources } = preparedSources(policy, adapter)
+  return policy[CSP_POLICY].header({ sources: sources === "" ? extra : `${sources} ${extra}` })
+}
+
+/**
  * The nonce one document carries under `policy`: `undefined` unless the document needs one -
  * `needsNonce` (a deferred value or a head tag naming the nonce), or an adapter whose hydration head
  * no longer matches the one the policy hashed. A needed nonce reuses the caller's, else is generated.

@@ -168,6 +168,12 @@ export interface RenderAdapter {
   /** Per-document bootstrap markup injected into `<head>` for client hydration. */
   hydrationHead(nonce?: string): string
   /**
+   * Render one piece of UI (a boundary's `render` result or `fallback`) to an HTML string on its own,
+   * outside the route chain. `idPrefix` namespaces any ids the framework generates, so two fragments
+   * rendered separately never collide. Required for partial prerendering; optional otherwise.
+   */
+  renderFragment?(ui: unknown, options: { readonly idPrefix?: string }): string | Promise<string>
+  /**
    * Set when a render can produce markup that belongs outside the app root. Every render is then
    * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.
    */
