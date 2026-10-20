@@ -59,6 +59,20 @@ describe("NF-C049 swap link or form misdeclared", () => {
     expect(findings[0]?.message).toContain("only a @nifrajs/web-vanilla page answers")
   })
 
+  test("names the line of its tag, past an interpolation that spans lines", async () => {
+    const content = [
+      'import { html } from "@nifrajs/web-vanilla"',
+      "export default () => html`<main>",
+      `  \${[`,
+      "    1,",
+      "  ]}",
+      '  <div data-swap="replace:x">y</div>',
+      "</main>`",
+    ].join("\n")
+    const findings = await scan({ file: "routes/a.tsx", content })
+    expect(findings.filter((f) => f.code === "NF-C049").map((f) => f.line)).toEqual([6])
+  })
+
   test("does not judge an interpolated value", async () => {
     const markup = `<a href="/x" data-swap="\${mode}:results">x</a>${LIST}`
     expect(codes(await scan(page("routes/hotels.tsx", markup)))).toEqual([])

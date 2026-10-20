@@ -490,6 +490,8 @@ interface MarkupBinding {
   /** A `data-swap-slot` between the binding and its host, whose swap replaces the bound element. */
   readonly slot: string | null | typeof UNKNOWN
   readonly node: TSApi.Node
+  /** The line of its tag, when `node` is the whole template. */
+  readonly line?: number
 }
 
 /** A `data-swap` link or form, or a `data-swap-slot` element. */
@@ -506,6 +508,8 @@ export interface SwapMarkup {
   content?: { readonly text: string; readonly holes: readonly TSApi.Expression[] }
   readonly jsx: boolean
   readonly node: TSApi.Node
+  /** The line of its tag, when `node` is the whole template. */
+  readonly line?: number
 }
 
 /** Where an interpolation of an `html` template sits: inside which slot, and whether it is the
@@ -618,6 +622,7 @@ function templateMarkup(
   holes: readonly TSApi.Expression[],
   node: TSApi.Node,
   placement: Map<TSApi.Node, HolePlacement>,
+  lineAt: (offset: number) => number,
 ): MarkupFacts {
   const stack: OpenElement[] = []
   const bindings: MarkupBinding[] = []
@@ -682,25 +687,55 @@ function templateMarkup(
     const island = hostId === undefined ? null : literal(hostId)
     if (island !== null) hasHost = true
     const owner = ownerOf(stack)
+    const line = lineAt(tagAt)
     for (const [name, value] of attributes) {
       if (!name.startsWith("data-bind-")) continue
       const names = bindingNames(name, value)
-      if (names !== undefined) bindings.push({ attribute: name, names, ...owner, node })
+      if (names !== undefined) bindings.push({ attribute: name, names, ...owner, node, line })
     }
     const swap = attribute("data-swap")
     const url = tag === "a" ? attribute("href") : tag === "form" ? attribute("action") : undefined
     if (swap !== undefined)
-      swaps.push({ kind: "swap", tag, value: literal(swap), url, jsx: false, node })
+      swaps.push({ kind: "swap", tag, value: literal(swap), url, jsx: false, node, line })
     const slotName = attribute("data-swap-slot")
     const slot: SwapMarkup | undefined =
       slotName === undefined
         ? undefined
-        : { kind: "slot", tag, value: literal(slotName), url: undefined, jsx: false, node }
+        : { kind: "slot", tag, value: literal(slotName), url: undefined, jsx: false, node, line }
     if (slot !== undefined) swaps.push(slot)
     if (!VOID_ELEMENTS.has(tag) && !inside.trimEnd().endsWith("/"))
       stack.push({ tag, island, slot, start: end + 1 })
   }
   return { hasHost, bindings, swaps }
+}
+
+/** The source line of an offset in a template's text: its newlines, and the lines each
+ * interpolation spans in the source. */
+function templateLines(
+  tree: TSApi.SourceFile,
+  template: TSApi.TemplateLiteral,
+  text: string,
+  spans: readonly TSApi.TemplateSpan[],
+): (offset: number) => number {
+  const lineOfPosition = (position: number): number =>
+    tree.getLineAndCharacterOfPosition(position).line + 1
+  const first = lineOfPosition(template.getStart(tree))
+  return (offset) => {
+    let line = first
+    let hole = 0
+    for (let i = 0; i < offset && i < text.length; i++) {
+      const c = text.charAt(i)
+      if (c === "\n") line++
+      else if (c === HOLE) {
+        const span = spans[hole++]
+        if (span !== undefined)
+          line +=
+            lineOfPosition(span.literal.getStart(tree)) -
+            lineOfPosition(span.expression.getStart(tree))
+      }
+    }
+    return line
+  }
 }
 
 /** The text of an `html\`...\`` template, each interpolation replaced by HOLE. */
@@ -839,10 +874,11 @@ function fileMarkup(
       ts.isIdentifier(node.tag) &&
       node.tag.text === "html"
     ) {
-      const holes = ts.isTemplateExpression(node.template)
-        ? node.template.templateSpans.map((span) => span.expression)
-        : []
-      take(templateMarkup(templateText(ts, node.template), holes, node, placement))
+      const spans = ts.isTemplateExpression(node.template) ? node.template.templateSpans : []
+      const text = templateText(ts, node.template)
+      const holes = spans.map((span) => span.expression)
+      const lineAt = templateLines(tree, node.template, text, spans)
+      take(templateMarkup(text, holes, node, placement, lineAt))
     } else if (
       ts.isJsxElement(node) ||
       ts.isJsxSelfClosingElement(node) ||
@@ -923,7 +959,7 @@ export async function projectMarkup(
   for (const { file, tree } of trees) {
     const found = fileMarkup(ts, tree)
     for (const binding of found.bindings)
-      bindings.push({ file, line: lineOf(tree, binding.node), binding, islands })
+      bindings.push({ file, line: binding.line ?? lineOf(tree, binding.node), binding, islands })
     files.push({ file, tree, ...found })
   }
   const markup = { bindings, files }

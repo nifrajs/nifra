@@ -10,4 +10,6 @@
 - NF-C052 (warning): a `data-swap` URL goes to a page whose module, layouts and the local files they import render no `slot()` of that name.
 - NF-C048 also flags a binding inside a `data-swap-slot` that belongs to an island outside it, and the island lints treat `enableSwap({ ... })` like `mountIslands({ ... })`.
 
+A finding in an `html` template, these and NF-C047/NF-C048 alike, now names the line of its tag rather than the template's first line.
+
 `nifra cdn-check` also sends a swap-shaped request and fails when the CDN answers it from cache.

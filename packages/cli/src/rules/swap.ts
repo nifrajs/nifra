@@ -72,7 +72,7 @@ export const swapAttributeRule: CheckRule = {
           code: "NF-C049",
           severity: "warn",
           file: file.file,
-          line: lineOf(file.tree, use.node),
+          line: use.line ?? lineOf(file.tree, use.node),
           message,
           evidence: [`data-swap=${typeof use.value === "string" ? use.value : "(interpolated)"}`],
           fix,
@@ -107,7 +107,7 @@ export const swapTargetRule: CheckRule = {
           code: "NF-C050",
           severity: "warn",
           file: file.file,
-          line: lineOf(file.tree, use.node),
+          line: use.line ?? lineOf(file.tree, use.node),
           message: `data-swap="${use.value}" names slot "${name}", which no data-swap-slot in the project declares, so the ${use.tag === "form" ? "form submits" : "link loads"} normally`,
           evidence: [`data-swap-slot="${name}" not found`],
           fix,
@@ -135,18 +135,13 @@ export const slotPlacementRule: CheckRule = {
     )
     if (diagnostics !== undefined || ts === undefined) return diagnostics ?? []
     const findings: Diagnostic[] = []
-    const report = (
-      file: FileMarkup,
-      node: TSApi.Node,
-      message: string,
-      evidence: string,
-    ): void => {
+    const report = (file: FileMarkup, line: number, message: string, evidence: string): void => {
       findings.push(
         diagnostic({
           code: "NF-C051",
           severity: "warn",
           file: file.file,
-          line: lineOf(file.tree, node),
+          line,
           message,
           evidence: [evidence],
           fix,
@@ -163,7 +158,7 @@ export const slotPlacementRule: CheckRule = {
         if (!SLOT_NAME.test(name)) {
           report(
             file,
-            use.node,
+            use.line ?? lineOf(file.tree, use.node),
             `data-swap-slot="${name}" is never swapped: a slot name is a letter then up to 63 letters, digits, _ or -`,
             evidence,
           )
@@ -174,7 +169,7 @@ export const slotPlacementRule: CheckRule = {
         if (names.has(name)) {
           report(
             file,
-            use.node,
+            use.line ?? lineOf(file.tree, use.node),
             `a second data-swap-slot="${name}" in this markup is never swapped: a swap answers and fills the first slot of a name`,
             evidence,
           )
@@ -190,7 +185,7 @@ export const slotPlacementRule: CheckRule = {
           if (call === undefined || call.name === UNKNOWN || call.name === name) continue
           report(
             file,
-            use.node,
+            use.line ?? lineOf(file.tree, use.node),
             `data-swap-slot="${name}" holds slot("${call.name}", ...): the server answers a swap of "${name}" from a slot() of that name, so this one is never swapped`,
             evidence,
           )
@@ -199,7 +194,7 @@ export const slotPlacementRule: CheckRule = {
         const holds = content.holes.some((hole) => slotCallOf(file, hole)?.name === name)
         report(
           file,
-          use.node,
+          use.line ?? lineOf(file.tree, use.node),
           holds
             ? `data-swap-slot="${name}" holds content beside slot("${name}", ...): a swap replaces it all with what slot() renders, so that content is lost. Move it out of the slot element`
             : `data-swap-slot="${name}" holds no slot("${name}", ...): the server has nothing to answer a swap of it with, so every swap loads the page normally. Make slot("${name}", content) its only content`,
@@ -215,7 +210,7 @@ export const slotPlacementRule: CheckRule = {
         if (placed === undefined || placed.slot !== null) continue
         report(
           file,
-          call.node,
+          lineOf(file.tree, call.node),
           `slot("${call.name}", ...) is not the content of a data-swap-slot element, so nothing on the page is swapped with it. Wrap it: <div data-swap-slot="${call.name}">\${slot("${call.name}", ...)}</div>`,
           `slot("${call.name}")`,
         )
@@ -385,7 +380,7 @@ export const swapRouteRule: CheckRule = {
           code: "NF-C052",
           severity: "warn",
           file: file.file,
-          line: lineOf(file.tree, use.node),
+          line: use.line ?? lineOf(file.tree, use.node),
           message: `data-swap="${value}" goes to ${route.pattern}, whose page and layouts render no slot("${name}", ...), so every swap loads the page normally`,
           evidence: [`${route.pattern} -> ${chain.join(", ")}`],
           fix,
