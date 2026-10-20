@@ -10,7 +10,7 @@ export type ResourceState<T> =
 /** Call it to read the current state (tracking, like a signal). */
 export type Resource<T> = {
   (): ResourceState<T>
-  /** Fetch the current key again. */
+  /** Fetch the current key again; once disposed, nothing. */
   refetch(): void
   /** Stop refetching and abort the request in flight; its result is dropped. */
   dispose(): void
@@ -30,6 +30,7 @@ export function resource<K, T>(
 ): Resource<T> {
   const state = signal<ResourceState<T>>(PENDING)
   let generation = 0
+  let live = true
   let controller: AbortController | undefined
   let key: K
   const run = (): void => {
@@ -61,8 +62,11 @@ export function resource<K, T>(
   })
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `refetch` and `dispose` are assigned below
   const read = (() => state()) as Resource<T>
-  read.refetch = () => untrack(run)
+  read.refetch = () => {
+    if (live) untrack(run)
+  }
   read.dispose = () => {
+    live = false
     stop()
     generation++
     controller?.abort()

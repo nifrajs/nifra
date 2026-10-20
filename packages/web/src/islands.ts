@@ -91,7 +91,10 @@ export interface BindIslandContext<P> {
    * Each key returns the same signal across calls.
    */
   state<T>(key: string, fallback: T): Signal<T>
-  /** Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. */
+  /**
+   * Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. Called
+   * after the island unmounted (say, once an awaited request settles), it runs `fn` at once.
+   */
   onDispose(fn: () => void): void
 }
 
@@ -110,6 +113,7 @@ export function bindIsland<P = Record<string, unknown>>(
 ): IslandEnhancer<P> {
   return (root, props) => {
     const stops: Array<() => void> = []
+    let live = true
     const seeded: Record<string, unknown> = typeof props === "object" && props !== null ? props : {}
     // No prototype: a state key like `constructor` is an entry like any other.
     const signals: Record<string, Signal<unknown>> = Object.create(null)
@@ -122,18 +126,24 @@ export function bindIsland<P = Record<string, unknown>>(
         return signals[key] as Signal<T>
       },
       onDispose: (fn) => {
-        stops.push(fn)
+        if (live) stops.push(fn)
+        else fn()
       },
     }
     const scope: IslandScope = { signals, handlers: owned(stops, () => setup(ctx)) ?? {} }
     stops.push(...bindScope(root, scope))
     return () => {
+      live = false
       for (let stop = stops.pop(); stop !== undefined; stop = stops.pop()) stop()
     }
   }
 }
 
-/** The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer. */
+/**
+ * The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted
+ * attribute (`data-island-props="${...}"`): unquoted, a space in the JSON ends the value and the rest
+ * parses as attributes.
+ */
 export function islandProps(props: Record<string, unknown>): string {
   return JSON.stringify(props)
 }

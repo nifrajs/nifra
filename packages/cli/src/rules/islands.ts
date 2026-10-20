@@ -189,8 +189,31 @@ function toolchainMissing(code: string, title: string): Diagnostic {
   })
 }
 
-/** A `bindList` key that reads a position: a second parameter (`bindList` passes none, so every key is
- * `undefined`) or an `indexOf`/`findIndex` call, which shifts on every insert and removal. */
+/** The names a parameter binds: its identifier, or each identifier its destructuring pattern binds. */
+function boundNames(
+  ts: typeof TSApi,
+  name: TSApi.BindingName,
+  out = new Set<string>(),
+): Set<string> {
+  if (ts.isIdentifier(name)) out.add(name.text)
+  else
+    for (const element of name.elements)
+      if (!ts.isOmittedExpression(element)) boundNames(ts, element.name, out)
+  return out
+}
+
+/** Whether `node` reads any of `names` (a property name such as the `id` of `x.id` is not a read). */
+function readsAny(ts: typeof TSApi, node: TSApi.Node, names: ReadonlySet<string>): boolean {
+  if (ts.isIdentifier(node)) return names.has(node.text)
+  if (ts.isPropertyAccessExpression(node)) return readsAny(ts, node.expression, names)
+  return ts.forEachChild(node, (child) => readsAny(ts, child, names) || undefined) ?? false
+}
+
+const POSITION_CALLS = new Set(["indexOf", "lastIndexOf", "findIndex", "findLastIndex"])
+
+/** A `bindList` key that reads a position: a second parameter it reads (`bindList` passes none, so
+ * it is always `undefined`) or an `indexOf`-family call handed the item, which shifts on every insert
+ * and removal. An `indexOf` over the item's own data, such as `u.email.indexOf("@")`, is not one. */
 function positionalKey(ts: typeof TSApi, call: TSApi.CallExpression): EnhancerFn | undefined {
   const options = call.arguments[2]
   if (options === undefined || !ts.isObjectLiteralExpression(options)) return undefined
@@ -203,22 +226,19 @@ function positionalKey(ts: typeof TSApi, call: TSApi.CallExpression): EnhancerFn
     )
       continue
     const key = prop.initializer
-    if (key.parameters.length >= 2) return key
-    let found = false
-    const walk = (node: TSApi.Node): void => {
-      if (found) return
-      if (
-        ts.isCallExpression(node) &&
+    const [item, position] = key.parameters
+    if (position !== undefined && readsAny(ts, key.body, boundNames(ts, position.name))) return key
+    // A destructured second parameter throws on the `undefined` bindList passes.
+    if (position !== undefined && !ts.isIdentifier(position.name)) return key
+    if (item === undefined) continue
+    const itemNames = boundNames(ts, item.name)
+    const handedTheItem = (node: TSApi.Node): true | undefined =>
+      (ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        (node.expression.name.text === "indexOf" || node.expression.name.text === "findIndex")
-      ) {
-        found = true
-        return
-      }
-      ts.forEachChild(node, walk)
-    }
-    ts.forEachChild(key, walk)
-    if (found) return key
+        POSITION_CALLS.has(node.expression.name.text) &&
+        node.arguments.some((arg) => readsAny(ts, arg, itemNames))) ||
+      ts.forEachChild(node, handedTheItem)
+    if (ts.forEachChild(key, handedTheItem)) return key
   }
   return undefined
 }
@@ -659,6 +679,9 @@ interface MarkupFinding {
   readonly islands: Map<string, IslandNames | typeof UNKNOWN>
 }
 
+// NF-C047 and NF-C048 judge the same bindings, so one walk of the project serves both.
+const markupCache = new WeakMap<SourceIndex, MarkupFinding[]>()
+
 /** Markup bindings across the project, each with the island map they are judged against. */
 async function projectMarkup(
   ctx: Parameters<CheckRule["scan"]>[0],
@@ -669,6 +692,8 @@ async function projectMarkup(
   if (loaded.diagnostics !== undefined) return { diagnostics: loaded.diagnostics, found: [] }
   const ts = loaded.compiler
   if (ts === undefined) return { diagnostics: [toolchainMissing(code, title)], found: [] }
+  const cached = markupCache.get(ctx.project.source)
+  if (cached !== undefined) return { found: cached }
   const trees: Array<{ readonly file: string; readonly tree: TSApi.SourceFile }> = []
   for (const file of ctx.project.source.files) {
     const tree = parsedTree(ts, ctx.project.source, file)
@@ -682,6 +707,7 @@ async function projectMarkup(
   for (const { file, tree } of trees)
     for (const binding of markupBindings(ts, tree))
       found.push({ file, line: lineOf(tree, binding.node), binding, islands })
+  markupCache.set(ctx.project.source, found)
   return { found }
 }
 

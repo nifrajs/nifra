@@ -22,7 +22,7 @@ off() // unsubscribe - also usable directly as an island's cleanup`
 // @nifrajs/web under its own DOM lib and exercised at runtime; here they are illustrative.
 const MARKER = `// doc-check: skip - server-rendered island host (HTML, not a checkable module).
 // In your @nifrajs/web-vanilla page, mark any element as a host and give it inline JSON props:
-html\`<div data-island="counter" data-island-props=\${JSON.stringify({ start: 0 })}>
+html\`<div data-island="counter" data-island-props="\${JSON.stringify({ start: 0 })}">
   <output>0</output>
   <button type="button">+1</button>
 </div>\``
@@ -43,7 +43,7 @@ batch(() => {
 stop()`
 
 const REACTIVE_MARKUP = `// doc-check: skip - server-rendered island host (HTML, not a checkable module).
-html\`<form data-island="search" data-island-props=\${JSON.stringify({ query: "" })}
+html\`<form data-island="search" data-island-props="\${JSON.stringify({ query: "" })}"
     data-bind-on="submit:go">
   <input name="q" data-bind-value="query" />
   <button data-bind-attr="disabled:busy">Search</button>
@@ -67,9 +67,12 @@ const search = bindIsland(({ state, onDispose }) => {
     go: async (event) => {
       event.preventDefault()
       busy.set(true)
-      const hits: unknown[] = await fetch("/api/search?q=" + encodeURIComponent(query())).then((r) => r.json())
-      count.set(hits.length)
-      busy.set(false)
+      try {
+        const hits: unknown[] = await fetch("/api/search?q=" + encodeURIComponent(query())).then((r) => r.json())
+        count.set(hits.length)
+      } finally {
+        busy.set(false)
+      }
     },
   }
 })
@@ -85,7 +88,7 @@ const hotels = bindIsland(({ root, state }) => {
   const city = state("city", "paris")
   // A newer city aborts the older request; only the newest result lands.
   const found = resource(city, (c, abort) =>
-    fetch("/api/hotels?city=" + c, { signal: abort }).then((r): Promise<Hotel[]> => r.json()),
+    fetch("/api/hotels?city=" + encodeURIComponent(c), { signal: abort }).then((r): Promise<Hotel[]> => r.json()),
   )
   const list = root.querySelector("ul")
   if (list)

@@ -1931,7 +1931,7 @@
     "name": "BindIslandContext",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BindIslandContext<P> {\n    /** The island's host element. */\n    readonly root: HTMLElement;\n    /** The parsed `data-island-props`, or `undefined` when absent or malformed. */\n    readonly props: P;\n    /**\n     * The signal the markup binds as `key`, seeded from `props[key]` when present, else `fallback`.\n     * Each key returns the same signal across calls.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n    /** Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. */\n    onDispose(fn: () => void): void;\n}",
+    "signature": "export interface BindIslandContext<P> {\n    /** The island's host element. */\n    readonly root: HTMLElement;\n    /** The parsed `data-island-props`, or `undefined` when absent or malformed. */\n    readonly props: P;\n    /**\n     * The signal the markup binds as `key`, seeded from `props[key]` when present, else `fallback`.\n     * Each key returns the same signal across calls.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n    /**\n     * Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. Called\n     * after the island unmounted (say, once an awaited request settles), it runs `fn` at once.\n     */\n    onDispose(fn: () => void): void;\n}",
     "doc": "/** What a `bindIsland` setup receives. */"
   },
   {
@@ -12206,7 +12206,7 @@
     "name": "Resource",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type Resource<T> = {\n    (): ResourceState<T>;\n    /** Fetch the current key again. */\n    refetch(): void;\n    /** Stop refetching and abort the request in flight; its result is dropped. */\n    dispose(): void;\n};",
+    "signature": "export type Resource<T> = {\n    (): ResourceState<T>;\n    /** Fetch the current key again; once disposed, nothing. */\n    refetch(): void;\n    /** Stop refetching and abort the request in flight; its result is dropped. */\n    dispose(): void;\n};",
     "doc": "/** Call it to read the current state (tracking, like a signal). */"
   },
   {
@@ -20275,7 +20275,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function islandProps(props: Record<string, unknown>): string;",
-    "doc": "/** The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer. */"
+    "doc": "/**\n * The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted\n * attribute (`data-island-props=\"${...}\"`): unquoted, a space in the JSON ends the value and the rest\n * parses as attributes.\n */"
   },
   {
     "name": "jobStoreCertificationProfile",

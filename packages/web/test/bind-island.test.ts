@@ -132,6 +132,26 @@ describe("bindIsland", () => {
     unmount()
     expect(timers).toEqual(["started", "cleared"])
   })
+
+  test("onDispose registered after unmount, once an awaited request settles, runs at once", async () => {
+    const btn = new FakeElement({ "data-bind-on": "click:load" })
+    const host = new FakeHost({ "data-island": "i" }, [btn])
+    const timers: string[] = []
+    let settled: Promise<void> | undefined
+    const i = bindIsland(({ onDispose }) => ({
+      load: () => {
+        settled = Promise.resolve().then(() => {
+          timers.push("started")
+          onDispose(() => timers.push("cleared"))
+        })
+      },
+    }))
+    const unmount = mountIslands({ i }, { root: rootOf(host) })
+    btn.dispatch("click")
+    unmount()
+    await settled
+    expect(timers).toEqual(["started", "cleared"])
+  })
 })
 
 describe("mountIslands", () => {

@@ -6057,7 +6057,7 @@ _No named exports (side-effect entrypoint)._
   The node surface `bindList` uses; an `Element` has it.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
-- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T> /** Fetch the current key again. */ refetch(): void /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
+- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T> /** Fetch the current key again; once disposed, nothing. */ refetch(): void /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
   Call it to read the current state (tracking, like a signal).
 - **ResourceState** _(type)_ - `type ResourceState<T>`
   An async value's state. `status` narrows `value` and `error`, so no branch can be skipped.
@@ -6078,7 +6078,7 @@ _No named exports (side-effect entrypoint)._
 - **effect** _(function)_ - `effect: (fn: () => void) => () => void`
   Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
 - **islandProps** _(function)_ - `islandProps: (props: Record<string, unknown>) => string`
-  The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer.
+  The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted attribute (`data-island-props="${...}"`): unquoted, a space in the JSON ends the value and the rest parses as attributes.
 - **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: { readonly root?: ParentNode; }) => () => void`
   Find every `[data-island]` element under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that is already mounted, is left alone, so calling again after a soft navigation mounts only new hosts. An en…
 - **resource** _(function)_ - `resource: <K, T>(source: () => K, fetcher: (key: K, abort: AbortSignal) => Promise<T>) => Resource<T>`

@@ -119,7 +119,7 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     docs: "/docs/islands",
   },
   "NF-C022": {
-    why: "A bindList key reads the item's position (a second parameter, which bindList never passes, or an indexOf/findIndex call), so adding, removing or reordering items hands a node and its state to the wrong item.",
+    why: "A bindList key reads the item's position (a second parameter, which bindList never passes, or an indexOf/findIndex call handed the item), so adding, removing or reordering items hands a node and its state to the wrong item.",
     fix: "Key each item by a stable id on the item.",
     docs: "/docs/islands",
   },

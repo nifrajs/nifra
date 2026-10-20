@@ -55,11 +55,25 @@ describe("NF-C022 bindList key", () => {
     expect(codes(await scan(list("(item) => items().findIndex((x) => x === item)")))).toEqual([
       "NF-C022",
     ])
+    expect(
+      codes(await scan(list("({ id }) => items().findLastIndex((x) => x.id === id)"))),
+    ).toEqual(["NF-C022"])
+  })
+
+  test("flags a destructured second parameter, which throws on the undefined bindList passes", async () => {
+    expect(codes(await scan(list("(item, { at }) => item.id")))).toEqual(["NF-C022"])
   })
 
   test("does not flag a stable id key", async () => {
     expect(codes(await scan(list("(item) => item.id")))).toEqual([])
     expect(codes(await scan(list("keyOf")))).toEqual([])
+    expect(codes(await scan(list("() => crypto.randomUUID()")))).toEqual([])
+  })
+
+  test("does not flag an indexOf over the item's own data, or a second parameter it never reads", async () => {
+    expect(codes(await scan(list('(u) => u.email.slice(0, u.email.indexOf("@"))')))).toEqual([])
+    expect(codes(await scan(list("(item) => items().indexOf(other.item)")))).toEqual([])
+    expect(codes(await scan(list("(item, _i) => item.id")))).toEqual([])
   })
 })
 

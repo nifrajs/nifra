@@ -115,6 +115,7 @@ describe("resource", () => {
     await settle()
     expect(r().status).toBe("pending")
     q.set("b")
+    r.refetch()
     expect(calls).toHaveLength(1)
   })
 
