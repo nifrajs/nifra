@@ -1138,8 +1138,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       const matched = match(path)
       if (matched === null) return
       // The target an open boundary already shows (a `#fragment` entry inside it, a link to itself):
-      // reloading it would rebuild the boundary and drop its action result.
-      if (state.intercepted !== undefined && !state.pending && path === state.path) {
+      // reloading it would rebuild the boundary and drop its action result. One in its error state
+      // loads again, so a link can retry it.
+      if (
+        state.intercepted !== undefined &&
+        state.boundaries?.[state.intercepted.boundary]?.status === "ready" &&
+        !state.pending &&
+        path === state.path
+      ) {
         emit()
         return
       }

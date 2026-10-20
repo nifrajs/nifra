@@ -539,4 +539,19 @@ describe("an open intercept boundary", () => {
     expect(router.snapshot()).toBe(before)
     expect(router.snapshot().boundaries?.photo?.actionData).toEqual({ commented: true })
   })
+
+  test("navigating to the target of a boundary in its error state loads it again", async () => {
+    const failing = new Set<string>()
+    const { calls, fetchData } = server({}, failing)
+    const router = await opened(fetchData)
+    failing.add("/photos/2")
+    await router.invalidate()
+    expect(router.snapshot().boundaries?.photo?.status).toBe("error")
+    failing.delete("/photos/2")
+    calls.length = 0
+    await router.navigate("/photos/2")
+    expect(calls.map((call) => call.path)).toEqual(["/photos/2"])
+    expect(router.snapshot().boundaries?.photo?.status).toBe("ready")
+    expect(router.snapshot().intercepted).toEqual({ boundary: "photo", pagePath: "/" })
+  })
 })

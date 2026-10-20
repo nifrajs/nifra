@@ -756,7 +756,8 @@ class AcpConnection {
     private readonly redact: (text: string) => string,
   ) {
     void this.readStdout()
-    const stderrDone = this.readStderr().catch(() => {})
+    // Settled either way: a stderr read that fails must not stop the exit from being reported.
+    const stderrDone = Promise.allSettled([this.readStderr()])
     void process.exited.then(async (code) => {
       // The exit can land before the reader has taken the agent's last stderr line, the one that
       // says why it stopped.
