@@ -246,6 +246,31 @@ test("ndjsonStream: a value settling after the client cancelled writes nothing a
   }
 })
 
+test("ndjsonStream: a value giving up on the request's abort is not logged, a real failure still is", async () => {
+  const request = new AbortController()
+  request.abort()
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const gaveUp = new Promise((_, reject) => setTimeout(() => reject(request.signal.reason), 1))
+    const lines = await readLines(
+      ndjsonStream(
+        {},
+        [
+          { id: 0, promise: gaveUp },
+          { id: 1, promise: rejection("upstream failed") },
+        ],
+        undefined,
+        request.signal,
+      ),
+    )
+    expect(lines).toHaveLength(3)
+    expect(errors).toHaveBeenCalledTimes(1)
+    expect(String(errors.mock.calls[0]?.[1])).toContain("upstream failed")
+  } finally {
+    errors.mockRestore()
+  }
+})
+
 describe("parseNdjsonData (client soft-nav transport)", () => {
   // Build an NDJSON stream from explicit text chunks (with optional delay) to drive the parser.
   const streamOf = (

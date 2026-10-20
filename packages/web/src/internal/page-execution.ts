@@ -1143,7 +1143,7 @@ export function createPageRequestExecutor<Env = unknown>(
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
       }
-      return new Response(ndjsonStream(payload, allDeferred), {
+      return new Response(ndjsonStream(payload, allDeferred, undefined, req.signal), {
         headers: {
           "content-type": "application/x-ndjson; charset=utf-8",
           ...DATA_RESPONSE_HEADERS,
@@ -1550,7 +1550,11 @@ export function createPageRequestExecutor<Env = unknown>(
             )
           }
           if (boundaryBatch !== undefined) {
-            const streamed = { ...boundaryBatch.initial, ...(staticBoundaries ?? {}) }
+            // Each resolver returns a state for every boundary and marks the other's modes
+            // `unresolved`, so a slot takes its state from the resolver of its own mode.
+            const streamed = { ...boundaryBatch.initial }
+            for (const [name, state] of Object.entries(staticBoundaries ?? {}))
+              if (state.mode === "static") streamed[name] = state
             for (const entry of boundaryBatch.pending) {
               const initial = streamed[entry.name]
               if (initial !== undefined)
@@ -1711,7 +1715,7 @@ export function createPageRequestExecutor<Env = unknown>(
               headers: { ...DATA_RESPONSE_HEADERS, ...revalidateHeader },
             })
           }
-          return new Response(ndjsonStream(forClient, deferred), {
+          return new Response(ndjsonStream(forClient, deferred, undefined, c.req.signal), {
             headers: {
               "content-type": "application/x-ndjson; charset=utf-8",
               ...DATA_RESPONSE_HEADERS,

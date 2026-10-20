@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import {
   assertStaticBoundaryImports,
   type Boundary,
@@ -320,5 +321,92 @@ describe("static boundaries under createWebApp", () => {
     expect(await boundariesOf(app, "http://shop.example/")).toContain('"status":"ready"')
     expect(await boundariesOf(app, "http://shop.example/")).toContain('"status":"ready"')
     expect(calls).toBe(2)
+  })
+})
+
+describe("dynamic boundaries beside static ones under createWebApp", () => {
+  const streamingAdapter: RenderAdapter = {
+    renderToString: () => "",
+    renderToStream: () =>
+      new ReadableStream({
+        start(controller) {
+          controller.close()
+        },
+      }),
+    hydrationHead: () => "",
+  }
+  const appWith = (feed: (ctx: BoundaryRequestCtx) => Promise<unknown>) => {
+    const page: RouteModule = {
+      default: () => null,
+      boundaries: [
+        { name: "nav", mode: "static", render: (data: unknown) => data },
+        { name: "feed", mode: "dynamic", render: (data: unknown) => data },
+        { name: "plain", mode: "dynamic", render: () => null },
+      ],
+    }
+    const backendHalf: Pick<RouteModule, "boundaryLoaders"> = {
+      boundaryLoaders: {
+        nav: { load: () => "menu", output: t.string() },
+        feed: { load: feed, output: t.string() },
+      },
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a backend half has no `default` export, and the importer type names the merged module
+    const backend = backendHalf as RouteModule
+    return createWebApp({
+      adapter: streamingAdapter,
+      manifest: buildManifest(
+        ["index.tsx", "index.backend.ts"],
+        (file) => () => Promise.resolve(file.endsWith(".backend.ts") ? backend : page),
+      ),
+      clientEntry: "/c.js",
+      staticBoundaryCache: new MemoryStaticBoundaryCache(),
+    })
+  }
+  const dataRequest = (init?: RequestInit) =>
+    new Request("http://shop.example/", { ...init, headers: { "x-nifra-data": "1" } })
+
+  test("a soft navigation streams each slot with its own mode's state", async () => {
+    const app = appWith(async () => "posts")
+    const response = await app.fetch(dataRequest())
+    const lines = (await response.text())
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line))
+    expect(lines[0].boundaries).toEqual({
+      nav: { name: "nav", mode: "static", status: "ready", data: "menu" },
+      feed: { name: "feed", mode: "dynamic", status: "pending", data: { __nifra_deferred: 0 } },
+      plain: { name: "plain", mode: "dynamic", status: "ready" },
+    })
+    expect(lines[1]).toEqual({ i: 0, v: "posts" })
+  })
+
+  test("the document hands over a streamed slot as pending", async () => {
+    const app = appWith(async () => "posts")
+    const html = await (await app.fetch(new Request("http://shop.example/"))).text()
+    expect(html).toContain(
+      '"feed":{"name":"feed","mode":"dynamic","status":"pending","data":{"__nifra_deferred":0}}',
+    )
+    expect(html).toContain('"plain":{"name":"plain","mode":"dynamic","status":"ready"}')
+    expect(html).toContain('"nav":{"name":"nav","mode":"static","status":"ready","data":"menu"}')
+  })
+
+  test("a client that leaves mid-stream is not reported as a failed load", async () => {
+    const app = appWith(
+      ({ signal }) =>
+        new Promise((_, reject) => {
+          signal.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          )
+        }),
+    )
+    const client = new AbortController()
+    const reported = await captureServerErrors(async () => {
+      const reader = (await app.fetch(dataRequest({ signal: client.signal }))).body!.getReader()
+      await reader.read()
+      client.abort()
+      await reader.cancel("client went away")
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+    })
+    expect(reported).toEqual([])
   })
 })
