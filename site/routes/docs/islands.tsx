@@ -170,6 +170,36 @@ const results = defineIsland((el) =>
 
 mountIslands({ filter, results })`
 
+const SWAP_PAGE = `// doc-check: skip - html template markup, which the sample check cannot tell from JSX.
+import { html, slot } from "@nifrajs/web-vanilla"
+
+type Books = { q: string; page: number; titles: string[]; more: boolean }
+
+export default ({ data }: { data: Books }) => html\`
+  <form action="/books" data-swap="replace:results">
+    <input name="q" value="\${data.q}" />
+    <button>Search</button>
+  </form>
+  <ul data-swap-slot="results">\${slot("results", [
+    ...data.titles.map((title) => html\`<li data-island="book">\${title}</li>\`),
+    data.more
+      ? html\`<li><a href="/books?q=\${data.q}&page=\${data.page + 1}" data-swap="append:results">More</a></li>\`
+      : "",
+  ])}</ul>\``
+
+const SWAP_ENTRY = `// doc-check: skip - browser DOM entry, typechecked in @nifrajs/web under its DOM lib.
+import { defineIsland } from "@nifrajs/web/islands"
+import { enableSwap } from "@nifrajs/web/islands/swap"
+
+const book = defineIsland((el) => {
+  const onClick = () => el.classList.toggle("picked")
+  el.addEventListener("click", onClick)
+  return () => el.removeEventListener("click", onClick)
+})
+
+// In place of mountIslands: mounts the islands, then refreshes slots from data-swap links and forms.
+enableSwap({ book })`
+
 export default function Islands() {
   return (
     <div className="prose">
@@ -329,6 +359,52 @@ export default function Islands() {
         island owns only its own DOM; they meet on the channel, never in a shared store.
       </p>
       <CodeBlock code={FILTER} />
+
+      <h2>Refresh part of the page: swap</h2>
+      <p>
+        A search form or a &ldquo;more&rdquo; link on a vanilla page reloads the whole document.
+        To refresh one region instead, mark it with <code>data-swap-slot</code>, render its content
+        with <code>slot()</code> from <code>@nifrajs/web-vanilla</code>, and point the link or form
+        at it with <code>data-swap=&quot;replace:&lt;slot&gt;&quot;</code> or{" "}
+        <code>data-swap=&quot;append:&lt;slot&gt;&quot;</code>:
+      </p>
+      <CodeBlock code={SWAP_PAGE} />
+      <p>
+        Then call <code>enableSwap</code> from <code>@nifrajs/web/islands/swap</code> in place of{" "}
+        <code>mountIslands</code> in the island entry. A page that does not import it pays nothing.
+      </p>
+      <CodeBlock code={SWAP_ENTRY} />
+      <p>
+        The link or form makes its usual request with an <code>x-nifra-swap</code> header. The
+        server runs the page as usual - middleware, loader, action - and answers with that
+        slot&apos;s HTML alone, so the fragment is a slice of the real page, never a second
+        template. <code>replace</code> swaps the slot&apos;s content and, for a GET, pushes the
+        URL, so a filtered list survives a reload and back and forward work. <code>append</code>{" "}
+        adds to it, and a link or form inside the slot is spent: the slot&apos;s child that holds it
+        is removed when the next page arrives.
+      </p>
+      <p>
+        Any other answer - a redirect, another origin, a page without that slot, an error - loads
+        the URL normally, and a form POST is never sent twice. Without the script, the links and
+        forms work as plain HTML. A loading slot carries{" "}
+        <code>aria-busy=&quot;true&quot;</code>, a newer swap of the same slot cancels the older
+        one, and a failed request leaves the page as it is and sets <code>data-swap-error</code> on
+        the link or form. Islands inside a slot
+        mount with it and unmount when it is replaced, so interactivity inside a slot comes from
+        islands in it, not from bindings of an island around it. Only{" "}
+        <code>@nifrajs/web-vanilla</code> pages answer a swap.
+      </p>
+      <p>
+        A swap response is <code>private, no-store</code> with <code>vary: x-nifra-swap</code>, and
+        ISR never serves or stores one. A CDN that ignores <code>Vary</code>, such as a Cloudflare
+        zone, needs its cache rule to bypass requests carrying <code>x-nifra-swap</code>;{" "}
+        <code>nifra cdn-check</code> tests that. <code>nifra check</code> reads both sides:{" "}
+        <code>NF-C049</code> flags <code>data-swap</code> on anything but a link or form, or a mode
+        other than <code>replace</code> and <code>append</code>; <code>NF-C050</code> a slot name
+        nothing declares; <code>NF-C051</code> a slot whose content is not its <code>slot()</code>{" "}
+        alone; <code>NF-C052</code> a URL whose page renders no such slot; and <code>NF-C048</code>{" "}
+        a binding inside a slot that belongs to an island outside it.
+      </p>
 
       <h2>Load strategies</h2>
       <p>

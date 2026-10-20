@@ -164,6 +164,18 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
       "nifra_check runs NF-C047 (a binding names no state or handler), NF-C048 (a binding outside a bindIsland host) and NF-C022 (a positional list key) over the island code.",
     seeAlso: "bindIsland state data-bind bindList resource islands",
   },
+  {
+    id: "swap-a-region",
+    adapters: ["vanilla"],
+    symptom:
+      'A search form, a filter or a "more" link on a vanilla page reloads the whole document to change one region.',
+    cause:
+      "A plain link or form always loads a full page, and a vanilla page has no client router to fetch only the part that changed.",
+    fix: 'Mark the region `data-swap-slot="results"` and make `slot("results", content)` its only content, add `data-swap="replace:results"` (or `append:results`) to the link or form, and call `enableSwap` from `@nifrajs/web/islands/swap` in place of `mountIslands`. The server answers with that slot of the same page; anything else loads normally.',
+    verify:
+      "nifra_check runs NF-C049 to NF-C052 over the swap markup and NF-C048 over bindings inside a slot.",
+    seeAlso: "data-swap data-swap-slot slot enableSwap islands",
+  },
 ]
 
 const ADAPTER_ALIASES: Record<string, GuidanceAdapter> = {
