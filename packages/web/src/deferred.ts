@@ -335,7 +335,8 @@ export async function parseNdjsonData(
   let buffer = ""
   // `{ once: true }` + explicit removal in the drain's `finally` so a reused long-lived signal doesn't
   // accumulate listeners across navigations (a per-nav signal would be GC'd, but don't rely on it).
-  const onAbort = (): void => void reader.cancel()
+  // A body the abort has already errored (WebKit errors it first) rejects the cancel.
+  const onAbort = (): void => void reader.cancel().catch(() => {})
   if (signal) signal.addEventListener("abort", onAbort, { once: true })
   let ended = false
   // Every way out, a malformed line included, detaches from the signal and the body: a source left

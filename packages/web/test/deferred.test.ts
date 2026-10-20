@@ -370,6 +370,34 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(outcome).toBe("pending") // neither settled nor rejected (detached + GC'd, no flash)
   })
 
+  test("an abort that has already errored the body leaves no unhandled rejection", async () => {
+    // WebKit errors a fetch body when its signal aborts, before the parser's own abort listener
+    // runs; cancelling an errored stream rejects.
+    const ac = new AbortController()
+    const enc = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode('{"feed":{"__nifra_deferred":0}}\n'))
+        ac.signal.addEventListener("abort", () =>
+          c.error(new DOMException("Fetch is aborted", "AbortError")),
+        )
+      },
+    })
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on("unhandledRejection", onUnhandled)
+    try {
+      await parseNdjsonData(body, ac.signal)
+      ac.abort()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
   test("duplicate placeholder ids in line 1 alias one promise - neither marker leaks", async () => {
     const data = (await parseNdjsonData(
       streamOf([
