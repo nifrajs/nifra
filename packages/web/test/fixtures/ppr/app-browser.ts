@@ -145,6 +145,68 @@ async function checkEngine(name: string, browser: Browser): Promise<Record<strin
   return report
 }
 
+/**
+ * The paths that never stream holes: a listed bot gets the page whole, a browser without scripts
+ * keeps each hole's fallback, and hovering a link prefetches no hole (13.2).
+ */
+async function checkWholePaths(name: string, browser: Browser): Promise<Record<string, unknown>> {
+  const bot = await browser.newContext({ userAgent: "Slackbot-LinkExpanding 1.0" })
+  await bot.addCookies([{ name: "name", value: "ada", url: origin }])
+  await bot.addInitScript(() => {
+    window.__violations = []
+    document.addEventListener("securitypolicyviolation", (event) =>
+      window.__violations.push(`${event.violatedDirective} ${event.blockedURI}`),
+    )
+  })
+  const page = await bot.newPage()
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(error.message))
+  await page.goto(`${origin}/p/3?slow=40`)
+  const whole = await page.evaluate(() => ({
+    runtime: "__nifraPpr" in window,
+    greeting: document.querySelector("#greeting")?.textContent ?? null,
+    slow: document.querySelector("#slow") !== null,
+    fallbacks: document.querySelectorAll("[id$='-fallback']").length,
+  }))
+  assert.deepEqual(
+    whole,
+    { runtime: false, greeting: "hello ada", slow: true, fallbacks: 0 },
+    `${name}: a bot gets every hole inline and no PPR runtime`,
+  )
+  await hydrated(page)
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>("#cart")?.click())
+  await page.waitForFunction(() => document.querySelector("#cart")?.textContent === "cart 3")
+  assert.deepEqual(await page.evaluate(() => window.__violations), [], `${name}: bot page CSP`)
+  assert.deepEqual(errors, [], `${name}: bot page errors`)
+  await bot.close()
+
+  const noScript = await browser.newContext({ javaScriptEnabled: false })
+  const plain = await noScript.newPage()
+  await plain.goto(`${origin}/p/4?slow=40`)
+  const placeholders = await plain.evaluate(() => ({
+    fallback: document.querySelector("#slow-fallback") !== null,
+    filled: document.querySelector("#slow") !== null,
+  }))
+  assert.deepEqual(
+    placeholders,
+    { fallback: true, filled: false },
+    `${name}: no scripts, fallbacks stay`,
+  )
+  await noScript.close()
+
+  const hover = await browser.newContext()
+  const linked = await hover.newPage()
+  await linked.goto(`${origin}/other`)
+  await hydrated(linked)
+  const started = probe.slowStarted
+  const prefetched = linked.waitForRequest((request) => request.url().includes("/p/2?slow=5000"))
+  await linked.hover("#to-p2-slow")
+  await (await prefetched).response()
+  assert.equal(probe.slowStarted, started, `${name}: a hover prefetch starts no hole`)
+  await hover.close()
+  return { engine: name, bot: "whole, hydrated", noScript: "fallbacks", prefetch: "no hole" }
+}
+
 /** Soft navigations between the PPR route and another page; the heap after a forced GC must stay flat. */
 async function checkHeap(browser: Browser): Promise<Record<string, unknown>> {
   const context = await browser.newContext()
@@ -205,6 +267,7 @@ try {
     const browser = await type.launch({ headless: true })
     try {
       console.log(JSON.stringify(await checkEngine(name, browser)))
+      console.log(JSON.stringify(await checkWholePaths(name, browser)))
       if (name === "chromium") console.log(JSON.stringify(await checkHeap(browser)))
     } finally {
       await browser.close()

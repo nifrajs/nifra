@@ -21,6 +21,9 @@ import {
 import { type ResolvedPprOptions, totalDeadlineMs } from "./options.ts"
 import { PPR_BOOT, PPR_RUNTIME, pprScriptHashes } from "./runtime.ts"
 
+/** An app built with `experimental.ppr` carries its {@link PprServer} under this key. */
+export const PPR_SERVER: unique symbol = Symbol.for("nifra.web.ppr")
+
 /** Where the runtime's cancel beacon goes, under the app's base path. */
 export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
 

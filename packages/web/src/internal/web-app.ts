@@ -30,7 +30,7 @@ import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
 import type { ShellCheckRecord } from "./ppr/compile-shell.ts"
 import { type PprOptions, resolvePprOptions } from "./ppr/options.ts"
-import { createPprServer, PPR_CANCEL_PATH } from "./ppr/server.ts"
+import { createPprServer, PPR_CANCEL_PATH, PPR_SERVER } from "./ppr/server.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import { requestPattern } from "./route-path.ts"
 
@@ -623,6 +623,7 @@ export function createWebApp<Env = unknown>(
     ...(ppr === undefined ? {} : { ppr }),
   })
   if (ppr !== undefined) {
+    Object.defineProperty(app, PPR_SERVER, { value: ppr.server })
     // A beacon carries one 22-character token; anything longer is not one. The token is unguessable,
     // so the answer is the same whether it named a live response or not.
     app.register("POST", PPR_CANCEL_PATH, undefined, async (c: { readonly req: Request }) => {
