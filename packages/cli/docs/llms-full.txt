@@ -11977,8 +11977,8 @@ app.
 
 -
 **Much faster SSR** - the current dynamic-page snapshot reports Nifra at
-13× the throughput of Next.js, 6.5× Nuxt, and
-3.4× SvelteKit / 1.9× SolidStart, with a fraction
+15× the throughput of Next.js, 7.2× Nuxt, and
+3.9× SvelteKit / 2.2× SolidStart, with a fraction
 of the client JavaScript. See [benchmarks](/benchmarks).
 
 -
