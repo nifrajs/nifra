@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
 import { DATA_HEADER, PREFETCH_HEADER } from "../src/router.ts"
 import { nextSlowAbort, probe } from "./fixtures/ppr/app/lib/probe.ts"
 import { type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
@@ -52,5 +53,49 @@ describe("PPR app: requests that are not a streamed document", () => {
     expect(html).toContain('<p id="slow">slow <!-- -->50</p>')
     expect(html).toContain('id="cart"')
     expect(html.includes("nifra-ppr:")).toBe(false)
+  })
+
+  test("a shell gets the configured origin, never the request's Host", async () => {
+    const res = await fetch(`${app.origin}/p/8`, { headers: { host: "evil.example" } })
+    const html = await res.text()
+    expect(probe.shellOrigin).toBe("https://shop.example")
+    expect(html).toContain('<link rel="canonical" href="https://shop.example/p/8"')
+    expect(html.includes("evil.example")).toBe(false)
+  })
+
+  test("the fixture's shells hold enough text for WebKit to paint them early", () => {
+    expect(app.warnings.filter((line) => line.includes("characters of text"))).toEqual([])
+  })
+})
+
+describe("PPR app configuration", () => {
+  test("an origin with a path, a query or another scheme is refused at startup", () => {
+    const adapter: RenderAdapter = {
+      renderToStream: () => new ReadableStream(),
+      hydrationHead: () => "",
+      renderFragment: () => "",
+    }
+    const manifest: Manifest = {
+      routes: [],
+      layouts: {},
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    }
+    const start = (origin: string) =>
+      createWebApp({
+        adapter,
+        manifest,
+        clientEntry: "/c.js",
+        experimental: { ppr: { shellChecks: "unchecked-development", origin } },
+      })
+    for (const origin of [
+      "https://shop.example/",
+      "https://shop.example/shop",
+      "https://shop.example?x=1",
+      "ftp://shop.example",
+      "shop.example",
+    ]) {
+      expect(() => start(origin)).toThrow("experimental.ppr.origin must be an http(s) origin")
+    }
+    expect(() => start("http://127.0.0.1:3000")).not.toThrow()
   })
 })

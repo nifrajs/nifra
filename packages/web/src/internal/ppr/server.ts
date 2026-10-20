@@ -177,6 +177,48 @@ const holeCtx = (
 const errorFrame = (name: string): string =>
   encodeHoleFrame(name, { error: true, html: HOLE_ERROR_HTML }, Number.POSITIVE_INFINITY)
 
+/**
+ * WebKit paints a loading document only once it holds about this many characters of text, so a
+ * sparser shell shows nothing in Safari until its slowest hole ends (measured in WebKit 2026-10: a
+ * 171-character paragraph stayed blank, 228 painted at once). Fewer than this never paints early.
+ */
+const WEBKIT_PAINT_CHARS = 200
+
+const SKIPPED_ELEMENTS: ReadonlySet<string> = new Set(["script", "style", "template", "noscript"])
+
+/** Characters of text in `html` with whitespace collapsed, outside tags, comments and scripts.
+ * An `indexOf` scan, not a lazy regex, so an unclosed opener stays linear. */
+const textLength = (html: string): number => {
+  let count = 0
+  let blank = true
+  let at = 0
+  while (at < html.length) {
+    const open = html.indexOf("<", at)
+    const end = open === -1 ? html.length : open
+    for (let i = at; i < end; i++) {
+      const code = html.charCodeAt(i)
+      const space = code === 32 || (code >= 9 && code <= 13)
+      if (!space || !blank) count++
+      blank = space
+    }
+    if (open === -1) break
+    if (html.startsWith("<!--", open)) {
+      const close = html.indexOf("-->", open + 4)
+      at = close === -1 ? html.length : close + 3
+      continue
+    }
+    const close = html.indexOf(">", open)
+    if (close === -1) break
+    at = close + 1
+    const name = /^<([a-zA-Z]+)/.exec(html.slice(open, open + 12))?.[1]?.toLowerCase()
+    if (name !== undefined && SKIPPED_ELEMENTS.has(name)) {
+      const endTag = html.indexOf(`</${name}`, at)
+      at = endTag === -1 ? html.length : endTag
+    }
+  }
+  return count
+}
+
 const SHED: HoleRun<never> = Object.freeze({ ok: false, reason: "denied" })
 
 export function createPprServer(config: PprServerConfig): PprServer {
@@ -197,6 +239,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
   let storedBytes = 0
   const live = new Map<string, AbortController>()
   const cspHeaders = new Map<string, Promise<string | undefined>>()
+  const thinWarned = new Set<string>()
   const admission = new HoleAdmission(
     options,
     isProduction()
@@ -262,6 +305,15 @@ export function createPprServer(config: PprServerConfig): PprServer {
       )
     }
     prefix = injectHoleFallbacks(prefix, fallbacks)
+    if (!isProduction() && !thinWarned.has(request.routeId)) {
+      const text = textLength(prefix.slice(Math.max(prefix.indexOf("<body"), 0)))
+      if (text < WEBKIT_PAINT_CHARS) {
+        thinWarned.add(request.routeId)
+        console.warn(
+          `[nifra/web] ppr: the shell of "${request.routeId}" has ${text} characters of text. Safari paints a loading document only once it holds about ${WEBKIT_PAINT_CHARS}, so it shows this page only when its slowest hole ends`,
+        )
+      }
+    }
     const size = new TextEncoder().encode(prefix).length
     if (size < options.minShellBytes) prefix += `<!--${" ".repeat(options.minShellBytes - size)}-->`
     return { routeId: request.routeId, prefix, data, bytes: Math.max(size, options.minShellBytes) }

@@ -283,7 +283,12 @@ export interface PageExecutionOptions<Env = unknown> {
    * server logs it, so this runs only where the server never sees the throw. */
   readonly logBoundaryError?: (error: unknown, request: Request) => void
   /** Experimental partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
-  readonly ppr?: { readonly server: PprServer; readonly options: ResolvedPprOptions }
+  readonly ppr?: {
+    readonly server: PprServer
+    readonly options: ResolvedPprOptions
+    /** The configured public origin a shell may use; never a visitor's Host. */
+    readonly origin?: string
+  }
 }
 
 type PageResponse = Response | ResponseResult | RenderedPage
@@ -1449,6 +1454,7 @@ export function createPageRequestExecutor<Env = unknown>(
     const path = urlPartsFor(c.req).pathname
     const locale = i18n?.localeOf(path)
     const params = c.params
+    const shellOrigin = options.ppr?.origin
     return {
       routeId: route.id,
       path,
@@ -1459,7 +1465,15 @@ export function createPageRequestExecutor<Env = unknown>(
       ),
       holeContext: { request: c.req, params, api: requestApi, env: c.env, draft, search },
       // The unbound `api`: a shell is built for every visitor, so no visitor's platform reaches it.
-      loadShell: async (signal) => shellLoader({ phase: "shell", params, locale, signal, api }),
+      loadShell: async (signal) =>
+        shellLoader({
+          phase: "shell",
+          params,
+          locale,
+          signal,
+          api,
+          ...(shellOrigin === undefined ? {} : { origin: shellOrigin }),
+        }),
       renderShellDocument: async (shellData, states) => {
         const statics = boundaries.some((boundary) => boundary.mode === "static")
           ? await resolveStaticBoundaries(
@@ -1472,8 +1486,8 @@ export function createPageRequestExecutor<Env = unknown>(
           layouts,
           undefined,
           mod,
-          // A Host header is the client's to choose, so a shared shell's meta gets no origin from it.
-          { data: shellData, pageData: shellData, params, origin: "" },
+          // A Host header is the client's to choose, so a shared shell's meta gets the configured one.
+          { data: shellData, pageData: shellData, params, origin: shellOrigin ?? "" },
           serverLeafOf(route, mod),
         )
         // Nothing here reads the request beyond its pathname: no origin, search, nonce or headers.

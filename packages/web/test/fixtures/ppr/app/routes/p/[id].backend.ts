@@ -2,8 +2,12 @@ import { t } from "@nifrajs/schema"
 import { noteSlowAbort, probe } from "../../lib/probe.ts"
 import { visitorName } from "../../lib/session.ts"
 
-export const shellLoader = async (ctx: { readonly params: Readonly<Record<string, string>> }) => {
+export const shellLoader = async (ctx: {
+  readonly params: Readonly<Record<string, string>>
+  readonly origin?: string
+}) => {
   probe.shellBuilds++
+  probe.shellOrigin = ctx.origin ?? ""
   return { title: `Product ${ctx.params.id}` }
 }
 export const shellOutput = t.object({ title: t.string() })

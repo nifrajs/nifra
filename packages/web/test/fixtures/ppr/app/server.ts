@@ -57,7 +57,7 @@ export async function startPprApp(): Promise<PprApp> {
     routePreload: assets.routes,
     styles: assets.css ?? [],
     csp,
-    experimental: { ppr: { shellChecks } },
+    experimental: { ppr: { shellChecks, origin: "https://shop.example" } },
   })
   app.get("/assets/*", async (c) => {
     const name = new URL(c.req.url).pathname.slice("/assets/".length)

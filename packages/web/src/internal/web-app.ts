@@ -115,6 +115,12 @@ export interface CreateWebAppOptions<Env = unknown> {
       readonly shellChecks: ShellCheckRecord | "unchecked-development"
       /** Overrides for the defaults in `PPR_DEFAULTS`. */
       readonly options?: PprOptions
+      /**
+       * The deployment's public origin, such as `https://shop.example`, given to `shellLoader` and to
+       * the shell's `meta` as `origin`. Without it both get `""`: a shell is shared, so no visitor's
+       * Host header may supply it.
+       */
+      readonly origin?: string
     }
   }
   /**
@@ -383,6 +389,17 @@ function evidenceProviderOf(value: unknown): ComposedEvidenceProvider | undefine
   return typeof provider === "function" ? (provider as ComposedEvidenceProvider) : undefined
 }
 
+/** `value` is exactly an http(s) origin: a scheme, a host and an optional port, nothing after. */
+function isOrigin(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  return (url.protocol === "https:" || url.protocol === "http:") && url.origin === value
+}
+
 function mountPathPrefix(path: string): string {
   const withoutWildcard = path.endsWith("/*") ? path.slice(0, -2) : path
   if (withoutWildcard === "" || withoutWildcard === "/") return ""
@@ -534,11 +551,18 @@ export function createWebApp<Env = unknown>(
     )
   }
   const pprOptions = pprConfig === undefined ? undefined : resolvePprOptions(pprConfig.options)
+  const pprOrigin = pprConfig?.origin
+  if (pprOrigin !== undefined && !isOrigin(pprOrigin)) {
+    throw new TypeError(
+      `[nifra/web] experimental.ppr.origin must be an http(s) origin such as "https://shop.example", with no path; got ${JSON.stringify(pprOrigin)}`,
+    )
+  }
   const ppr =
     pprConfig === undefined || pprOptions === undefined
       ? undefined
       : {
           options: pprOptions,
+          ...(pprOrigin === undefined ? {} : { origin: pprOrigin }),
           server: createPprServer({
             options: pprOptions,
             adapter,

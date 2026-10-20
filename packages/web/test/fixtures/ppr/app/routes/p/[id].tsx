@@ -32,6 +32,11 @@ const slow = {
 
 export const boundaries = [greeting, cart, slow]
 
+export const meta = (args: {
+  readonly origin: string
+  readonly params: Readonly<Record<string, string>>
+}) => ({ link: [{ rel: "canonical", href: `${args.origin}/p/${args.params.id}` }] })
+
 type BoundaryStates = Readonly<
   Record<
     string,

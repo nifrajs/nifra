@@ -18,8 +18,11 @@ const adapter: RenderAdapter = {
   renderFragment: (ui, options) => `<p data-prefix="${options.idPrefix ?? ""}">${String(ui)}</p>`,
 }
 
+// Enough text that WebKit paints the shell early, so only the sparse-shell test warns.
+const PROSE = `<p>${"Loose-leaf tea, packed by hand and shipped the same day. ".repeat(4)}</p>`
+
 const document = (data: unknown, states: BoundaryStates): string =>
-  `<!doctype html><html><head><title>t</title></head><body><div id="root"><h1>${typeof data === "object" && data !== null && "title" in data ? String(data.title) : ""}</h1>${Object.keys(
+  `<!doctype html><html><head><title>t</title></head><body>${PROSE}<div id="root"><h1>${typeof data === "object" && data !== null && "title" in data ? String(data.title) : ""}</h1>${Object.keys(
     states,
   )
     .map((name) => `<div data-nifra-hole="${name}" aria-busy="true"></div>`)
@@ -574,6 +577,27 @@ describe("PPR server: admission and unsent bytes (7.3, 7.7)", () => {
       expect(server.stats()).toMatchObject({ slotsInUse: 0, pending: 0 })
     } finally {
       console.error = original
+    }
+  })
+
+  test("a shell too sparse for WebKit to paint early warns once per route in development", async () => {
+    const warnings: unknown[][] = []
+    const original = console.warn
+    console.warn = (...args: unknown[]) => warnings.push(args)
+    try {
+      const server = createPprServer(config({ shellChecks: "unchecked-development" }))
+      const sparse = (path: string) =>
+        pprRequest([hole("cart", () => 1)], {
+          path,
+          renderShellDocument: async (data, states) => document(data, states).replace(PROSE, ""),
+        })
+      await (await server.respond(sparse("/p/1"))).text()
+      await (await server.respond(sparse("/p/2"))).text()
+      await (await server.respond(pprRequest([hole("cart", () => 1)], { routeId: "rich" }))).text()
+      expect(warnings).toHaveLength(1)
+      expect(String(warnings[0]?.[0])).toContain('the shell of "product/[id]" has 15 characters')
+    } finally {
+      console.warn = original
     }
   })
 })
