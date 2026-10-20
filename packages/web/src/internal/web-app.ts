@@ -26,6 +26,7 @@ import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
+import { LIVE_ATTACH, type LiveAttachment, type LiveRuntimeHandle } from "./live-contract.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
@@ -221,6 +222,11 @@ export interface CreateWebAppOptions<Env = unknown> {
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
    * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */
   readonly draftSecret?: string
+  /**
+   * Live data refresh, from `live()` in `@nifrajs/web/live`. Loaders declare keys with `ctx.live()`;
+   * the app answers live loads at the runtime's load endpoint. Omit and nothing live is loaded.
+   */
+  readonly live?: LiveRuntimeHandle
   /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own
    * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,
    * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */
@@ -421,6 +427,12 @@ export function createWebApp<Env = unknown>(
     }
     app.use(hostPolicyGate(options.hostPolicy, options.buildAssets))
   }
+  // Before every app hook: a live load becomes the target page's GET here, so each hook, middleware,
+  // gate and loader sees that path once, as a navigation would.
+  const liveAttachment: LiveAttachment | undefined = options.live?.[LIVE_ATTACH]({
+    matchRoute: (path) => pageExecutor.matchRoute(path),
+  })
+  if (liveAttachment !== undefined) app.onRequest(liveAttachment.onRequest)
   // Before the mount hooks and before every page route, so the order-scoped hooks (`derive`,
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
@@ -558,6 +570,7 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
+    liveLoadOf: liveAttachment?.loadOf,
   })
 
   // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.

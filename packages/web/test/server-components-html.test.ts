@@ -37,6 +37,7 @@ async function render(html: string) {
     api: undefined,
     env: undefined,
     draft: false,
+    live() {},
     search: {},
     set: { headers: {}, cookie() {}, deleteCookie() {} },
     signal: request.signal,

@@ -102,6 +102,11 @@
       "types": "./dist/pwa-manifest.d.ts",
       "default": "./dist/pwa-manifest.js"
     },
+    "./live": {
+      "bun": "./src/live.ts",
+      "types": "./dist/live.d.ts",
+      "default": "./dist/live.js"
+    },
     "./zones": {
       "bun": "./src/zones.ts",
       "types": "./dist/zones.d.ts",

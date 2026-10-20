@@ -6091,6 +6091,14 @@ _No named exports (side-effect entrypoint)._
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
   Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
 
+### `@nifrajs/web/live`
+
+- **Live** _(interface)_ - `interface Live`
+  A live runtime: pass it to `createWebApp({ live })`.
+- **LiveOptions** _(interface)_ - `interface LiveOptions`
+- **live** _(function)_ - `live: (options: LiveOptions) => Live`
+  Create the live runtime for one app.
+
 ### `@nifrajs/web/nano`
 
 - **BindListOptions** _(interface)_ - `interface BindListOptions<T>`

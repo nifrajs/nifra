@@ -49,6 +49,7 @@ test("inProcessClient + a typed loader resolve data in-process (no network)", as
     api,
     env: undefined,
     draft: false,
+    live() {},
     set,
     search: {},
   })
@@ -119,6 +120,7 @@ test("an action with ActionArgs runs in-process and returns its data branch", as
     api,
     env: undefined,
     draft: false,
+    live() {},
     set,
     search: {},
   })
