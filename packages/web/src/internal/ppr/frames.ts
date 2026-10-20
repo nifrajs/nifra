@@ -9,7 +9,7 @@ import { holeInvoker } from "./runtime.ts"
 export const HOLE_NAME: RegExp = /^(?=[a-z0-9-]{1,32}$)[a-z](?:-?[a-z0-9])*$/
 
 /** What one hole sends: its server HTML, plus props when it hydrates. An error carries the error
- * slot's HTML only, never the thrown message (I6). */
+ * slot's HTML only, never the thrown message. */
 export type HoleOutcome =
   | { readonly html: string; readonly props?: unknown; readonly error?: undefined }
   | { readonly html: string; readonly error: true }
@@ -22,7 +22,7 @@ export const assertHoleName = (name: string): void => {
   }
 }
 
-/** Refuse hole HTML that could run script or escape its host (I12), with the policy server
+/** Refuse hole HTML that could run script or escape its host, with the policy server
  * components already enforce. Throws; the caller sends that hole's error frame instead. */
 export const validateHoleHtml = (html: string): void => validateComponentHTML(html)
 
@@ -59,13 +59,13 @@ export function encodeHoleFrame(name: string, outcome: HoleOutcome, maxBytes: nu
   return frame
 }
 
-/** The per-response facts the runtime needs to send a cancel beacon. Inert JSON: never cached (I2). */
+/** The per-response facts the runtime needs to send a cancel beacon. Inert JSON: never cached. */
 export const encodeRequestScript = (cancelUrl: string, token: string, holes: readonly string[]) =>
   `<script type="application/json" id="nifra-ppr-req">${serializeData({ cancel: cancelUrl, token, holes })}</script>`
 
 /**
  * Put each hole's fallback HTML into its empty host in a rendered shell, once per shell build. Every
- * declared hole must have exactly one host and that host must be empty (I5): the adapter renders
+ * declared hole must have exactly one host and that host must be empty: the adapter renders
  * it opaque, so anything inside would be framework output the fill would destroy.
  */
 export function injectHoleFallbacks(shell: string, fallbacks: ReadonlyMap<string, string>): string {

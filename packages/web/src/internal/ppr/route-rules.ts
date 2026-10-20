@@ -48,6 +48,11 @@ export function assertPprRoute(
     }
     if (!isHole(boundary)) continue
     holes++
+    if (typeof boundary.load !== "function") {
+      throw new Error(
+        `[nifra/web] ppr: boundary "${boundary.name}" of route "${route.id}" has no boundaryLoaders entry; a hole is filled from its own loader`,
+      )
+    }
     const { timeout } = boundary
     const max = limits.maxHoleTimeoutMs
     if (timeout !== undefined && !(Number.isInteger(timeout) && timeout >= 1 && timeout <= max)) {

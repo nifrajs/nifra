@@ -12473,6 +12473,20 @@ export default function Tea(props: { data: { title: string }; boundaries?: Bound
 </main>
 ```
 
+The import check cannot see visitor data an app keeps in module state, such as a variable
+middleware writes. `checkShellCanaries` requests each path once with unique values
+in a cookie, `Authorization`, a header and the query, and reports each value found
+in the shared shell.
+
+```ts
+// doc-check: skip - continues the server snippet above (`app`).
+import { checkShellCanaries } from "@nifrajs/web/ppr"
+
+// Run before the app serves traffic: a shell already cached was built without the canaries.
+const leaks = await checkShellCanaries(app, ["/tea/1", "/tea/2"])
+if (leaks.length > 0) throw new Error(`visitor data in a shared shell: ${JSON.stringify(leaks)}`)
+```
+
 ### Which routes qualify
 
 -
@@ -12497,7 +12511,9 @@ or refuse, and its data reaches no response. Intercepting boundaries are not sup
 shell. Any other parameter or value shares the default shell.
 
 -
-The app uses `csp: createCspPolicy(...)`, not `nonce`.
+The app uses `csp: createCspPolicy(...)`, not `nonce`. Under enforced
+Trusted Types, its `trusted-types` directive lists `nifra-ppr`,
+beside any policy the UI framework creates (Svelte's is `svelte-trusted-html`).
 
 ### What each request gets
 
@@ -12517,6 +12533,10 @@ A listed bot (`blockingFor`), a draft, or a route whose shell is unchecked
 or at its build limit
 
 The whole page, every hole rendered in place
+
+A hole cannot redirect or set a status: the shell's status and headers are already sent, so a
+hole whose loader returns or throws a redirect or a status renders its error state. A page
+cache such as `withISR` never stores the route's response, however it rendered.
 
 A shell older than `revalidate` is served while one rebuild runs; a failing
 rebuild keeps the old one for up to ten times `revalidate`, at most a day. A shell

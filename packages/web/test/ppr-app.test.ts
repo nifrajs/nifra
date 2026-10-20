@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import type { BoundaryRegistration } from "../src/boundary.ts"
+import { DRAFT_COOKIE, enableDraft } from "../src/draft.ts"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
-import { partialPrerendering } from "../src/ppr.ts"
+import { type CachedResponse, type CacheStore, withISR } from "../src/isr.ts"
+import { checkShellCanaries, partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, PREFETCH_HEADER } from "../src/router.ts"
 import { nextSlowAbort, probe } from "./fixtures/ppr/app/lib/probe.ts"
-import { type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
+import { DRAFT_SECRET, type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
 
 let app: PprApp
 beforeAll(async () => {
@@ -12,6 +15,26 @@ beforeAll(async () => {
 afterAll(async () => {
   await app.stop()
 })
+
+/** A streamed document up to its per-response script: the bytes every visitor shares. */
+const shellOf = (html: string): string =>
+  html.slice(0, html.indexOf('<script type="application/json" id="nifra-ppr-req">'))
+
+const draftCookie = async (): Promise<string> => {
+  let value = ""
+  await enableDraft(
+    {
+      set: {
+        cookie: (_name, signed) => {
+          value = signed
+        },
+        deleteCookie: () => {},
+      },
+    },
+    DRAFT_SECRET,
+  )
+  return `${DRAFT_COOKIE}=${value}`
+}
 
 const firstLine = (text: string): { readonly boundaries?: Record<string, unknown> } =>
   JSON.parse(text.slice(0, text.indexOf("\n") === -1 ? undefined : text.indexOf("\n")))
@@ -112,8 +135,139 @@ describe("PPR app: requests that are not a streamed document", () => {
     expect(await shellAt("?color=blue")).toBe(1)
   })
 
+  test("visitors with different cookies, headers, Host and query share one shell holding none of them", async () => {
+    const visit = async (headers: Record<string, string>, query: string) =>
+      shellOf(await (await fetch(`${app.origin}/p/50${query}`, { headers })).text())
+    const first = await visit(
+      { cookie: "name=ada; session=cookie-canary-1" },
+      "?utm=query-canary-1",
+    )
+    const second = await visit(
+      {
+        cookie: "name=grace; session=cookie-canary-2",
+        authorization: "Bearer auth-canary-2",
+        "x-forwarded-host": "evil.example",
+        "accept-language": "fr",
+      },
+      "?utm=query-canary-2",
+    )
+    expect(first.length).toBeGreaterThan(0)
+    expect(second).toBe(first)
+    for (const canary of ["canary", "ada", "grace", "evil.example", "hello "])
+      expect(first.includes(canary)).toBe(false)
+  })
+
+  test("the canary check passes the fixture's shells, gated ones included", async () => {
+    const proxy = {
+      fetch: (request: Request) => {
+        const url = new URL(request.url)
+        return fetch(`${app.origin}${url.pathname}${url.search}`, { headers: request.headers })
+      },
+    }
+    expect(await checkShellCanaries(proxy, ["/p/54", "/members/54"])).toEqual([])
+  })
+
+  test("an output schema keeps a hole loader's undeclared keys out of every response", async () => {
+    const headers = { cookie: "name=ada" }
+    const document = await (await fetch(`${app.origin}/p/51`, { headers })).text()
+    const data = await (
+      await fetch(`${app.origin}/p/51`, { headers: { ...headers, [DATA_HEADER]: "1" } })
+    ).text()
+    const whole = await (
+      await fetch(`${app.origin}/p/51`, { headers: { ...headers, "user-agent": "Twitterbot/1.0" } })
+    ).text()
+    expect(document).toContain('"props":{"count":2}')
+    for (const body of [document, data, whole]) expect(body.includes("staff-only")).toBe(false)
+  })
+
+  test("a draft renders whole from a fresh shell loader call and never fills the shared shell", async () => {
+    const cookie = `${await draftCookie()}; name=ada`
+    const before = probe.shellBuilds
+    const draft = await (await fetch(`${app.origin}/p/52`, { headers: { cookie } })).text()
+    expect(draft.includes("__nifraPpr")).toBe(false)
+    expect(draft).toContain(
+      '"greeting":{"name":"greeting","mode":"dynamic","status":"ready","data":{"name":"ada"}}',
+    )
+    expect(probe.shellBuilds - before).toBe(1)
+    await (await fetch(`${app.origin}/p/52`)).text()
+    expect(probe.shellBuilds - before).toBe(2)
+  })
+
+  // Anonymous requests: withISR passes any request with a cookie straight through.
+  test("withISR stores no response of a PPR route that declares revalidate", async () => {
+    const stored: string[] = []
+    const entries = new Map<string, CachedResponse>()
+    const store: CacheStore = {
+      get: async (key) => entries.get(key),
+      set: async (key, value) => {
+        stored.push(key)
+        entries.set(key, value)
+      },
+      delete: async (key) => {
+        entries.delete(key)
+      },
+    }
+    const served = withISR(
+      {
+        fetch: (request) => {
+          const url = new URL(request.url)
+          return fetch(`${app.origin}${url.pathname}${url.search}`, { headers: request.headers })
+        },
+      },
+      { store, revalidate: 60, now: Date.now },
+    )
+    const page = await served(new Request("https://shop.example/p/53", {}))
+    expect(page.headers.get("cache-control")).toBe("private, no-store")
+    await page.text()
+    const bot = await served(
+      new Request("https://shop.example/p/53", {
+        headers: { "user-agent": "Twitterbot/1.0" },
+      }),
+    )
+    expect(await bot.text()).toContain('"data":{"name":"guest"}')
+    await (
+      await served(
+        new Request("https://shop.example/p/53", {
+          headers: { [DATA_HEADER]: "1" },
+        }),
+      )
+    ).text()
+    expect(stored).toEqual([])
+  })
+
   test("the fixture's shells hold enough text for WebKit to paint them early", () => {
     expect(app.warnings.filter((line) => line.includes("characters of text"))).toEqual([])
+  })
+})
+
+describe("PPR app behind compression()", () => {
+  test("the gzipped stream delivers the shell and early holes while a slow hole runs", async () => {
+    const zipped = await startPprApp(undefined, { compress: true })
+    const leaving = new AbortController()
+    try {
+      const res = await fetch(`${zipped.origin}/p/57?slow=5000`, {
+        headers: { cookie: "name=ada", "accept-encoding": "gzip" },
+        signal: leaving.signal,
+      })
+      expect(res.headers.get("content-encoding")).toBe("gzip")
+      if (res.body === null) throw new Error("no body")
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let text = ""
+      while (!text.includes('__nifraPpr("greeting")')) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        text += decoder.decode(chunk.value, { stream: true })
+      }
+      expect(text).toContain('<h1 id="title">Product 57</h1>')
+      expect(text).toContain('id="nifra-ppr:greeting"')
+      expect(text.includes('id="nifra-ppr:slow"')).toBe(false)
+      const aborted = nextSlowAbort()
+      leaving.abort()
+      await aborted
+    } finally {
+      await zipped.stop()
+    }
   })
 })
 
@@ -133,7 +287,7 @@ describe("PPR app configuration", () => {
     expect(() => start("http://127.0.0.1:3000")).not.toThrow()
   })
 
-  test("a PPR route needs 1 to maxHolesPerRoute holes, each timeout a whole number up to the cap", async () => {
+  test("a PPR route needs 1 to maxHolesPerRoute holes, each with a loader and a timeout up to the cap", async () => {
     const adapter: RenderAdapter = {
       renderToStream: () => new ReadableStream(),
       renderToString: () => "<p>page</p>",
@@ -148,7 +302,7 @@ describe("PPR app configuration", () => {
       ...(timeout === undefined ? {} : { timeout }),
     })
     /** The error a GET of the route logs; core answers a bare 500 after logging it to stderr. */
-    const failureOf = async (boundaries: readonly ReturnType<typeof hole>[]) => {
+    const failureOf = async (boundaries: readonly BoundaryRegistration[]) => {
       const manifest: Manifest = {
         routes: [
           {
@@ -196,6 +350,9 @@ describe("PPR app configuration", () => {
         "it must be a whole number of milliseconds from 1 to 30000",
       )
     }
+    expect(await failureOf([{ name: "a", mode: "dynamic", render: () => "" }])).toContain(
+      'boundary \\"a\\" of route \\"p\\" has no boundaryLoaders entry',
+    )
     // Past the rules, the next failure is the stub rendering no host for the hole.
     expect(await failureOf([hole("a", 30_000), hole("b", 1)])).toContain('hole \\"a\\" has no host')
   })

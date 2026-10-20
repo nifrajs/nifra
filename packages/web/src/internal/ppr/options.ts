@@ -1,5 +1,5 @@
 /**
- * Partial prerendering (G6) limits and defaults. Internal while the feature is experimental: every
+ * Partial prerendering limits and defaults. Internal while the feature is experimental: every
  * number the plan names lives here once, so a deployment overrides it in one object and the request
  * path reads the resolved copy rather than a scattered constant.
  */
@@ -49,7 +49,7 @@ export interface PprOptions {
   /** The shell is padded to at least this many bytes; Safari holds back smaller first chunks. */
   readonly minShellBytes?: number
   /**
-   * When hole HTML is checked for script, handlers and other escapes before it is framed (I12):
+   * When hole HTML is checked for script, handlers and other escapes before it is framed:
    * `"always"`, or `"development"` only. The check costs about 20 us per KB of hole HTML; turn it off
    * in production only when a strict CSP already blocks inline script.
    */

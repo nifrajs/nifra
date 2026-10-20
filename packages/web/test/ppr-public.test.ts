@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
-import { defineShellLoader, PPR_DEFAULTS, partialPrerendering, pprShells } from "../src/ppr.ts"
+import {
+  checkShellCanaries,
+  defineShellLoader,
+  PPR_DEFAULTS,
+  partialPrerendering,
+  pprShells,
+} from "../src/ppr.ts"
 
 const adapter: RenderAdapter = {
   renderToStream: () => new ReadableStream(),
@@ -65,4 +71,44 @@ test("the documented defaults are the ones a deployment overrides", () => {
   expect(PPR_DEFAULTS.holeTimeoutMs).toBe(5_000)
   expect(PPR_DEFAULTS.maxHoleTimeoutMs).toBe(30_000)
   expect(Object.isFrozen(PPR_DEFAULTS)).toBe(true)
+})
+
+test("the canary check finds visitor data kept in module state, and passes a shell that keeps none", async () => {
+  // App code that stores the visitor where a shell loader reads it: no import check sees this.
+  const current = { visitor: "" }
+  const app = createWebApp({
+    adapter: {
+      ...adapter,
+      renderToString: (_chain, props) =>
+        `<main>${JSON.stringify(props.data)}<div data-nifra-hole="a" aria-busy="true"></div></main>`,
+    },
+    manifest: {
+      routes: ["/leaky", "/clean"].map((pattern) => ({
+        id: pattern.slice(1),
+        pattern,
+        layoutIds: [],
+        file: `${pattern.slice(1)}.tsx`,
+        load: async () => ({
+          default: "page",
+          shellLoader: () =>
+            pattern === "/leaky" ? { who: current.visitor } : { who: "everyone" },
+          boundaries: [{ name: "a", mode: "dynamic", render: () => "", load: () => 1 }],
+        }),
+      })),
+      layouts: {},
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    },
+    clientEntry: "/c.js",
+    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+  })
+  const withMiddleware = {
+    fetch: (request: Request) => {
+      current.visitor = `${request.headers.get("cookie")} ${request.headers.get("x-nifra-canary")}`
+      return app.fetch(request)
+    },
+  }
+  expect(await checkShellCanaries(withMiddleware, ["/leaky", "/clean"])).toEqual([
+    { path: "/leaky", via: "cookie" },
+    { path: "/leaky", via: "header" },
+  ])
 })

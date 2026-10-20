@@ -6263,6 +6263,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/ppr`
 
+- **CanaryCarrier** _(type)_ - `type CanaryCarrier = "cookie" | "authorization" | "header" | "query"`
+  Where a canary value went into the request whose shell carried it.
 - **CompileShellsOptions** _(interface)_ - `interface CompileShellsOptions`
 - **PPR_DEFAULTS** _(const)_ - `PPR_DEFAULTS: ResolvedPprOptions`
 - **PprConfig** _(interface)_ - `interface PprConfig`
@@ -6274,13 +6276,17 @@ _No named exports (side-effect entrypoint)._
   One app's shell cache.
 - **PprStats** _(type)_ - `type PprStats = PprServerStats`
   Admission, shedding and unsent-byte counters of one app's partially prerendered responses.
+- **ShellCanaryFinding** _(interface)_ - `interface ShellCanaryFinding`
+- **ShellCanaryOptions** _(interface)_ - `interface ShellCanaryOptions`
 - **ShellCheckError** _(class)_ - `class ShellCheckError`
 - **ShellCheckRecord** _(interface)_ - `interface ShellCheckRecord`
   Which routes passed the shell check for one deployment. The server shares a shell only for a route listed here under its own deployment; anything else renders blocking (fail closed).
 - **ShellCtx** _(interface)_ - `interface ShellCtx`
   Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
+- **checkShellCanaries** _(function)_ - `checkShellCanaries: (app: { fetch(request: Request): Response | Promise<Response>; }, paths: readonly string[], options?: ShellCanaryOptions) => Promise<readonly ShellCanaryFinding[]>`
+  The canary check. Each path is requested once through the app's own middleware and gates with a unique value in a cookie, an `Authorization` header, a custom header and the query, and the shell that request built is scanned for every value. It catches visitor data the app keeps in module state, whi…
 - **compileShells** _(function)_ - `compileShells: (options: CompileShellsOptions) => Promise<ShellCheckRecord>`
-  Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else) and refuse it when the emitted code reaches a request-scoped module (plan 5.2). A module counts only when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose b…
+  Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else) and refuse it when the emitted code reaches a request-scoped module. A module counts only when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose backend half…
 - **defineShellLoader** _(const)_ - `defineShellLoader: <Data>(loader: (ctx: ShellCtx) => Data | Promise<Data>) => ((ctx: ShellCtx) => Data | Promise<Data>)`
   Types a backend half's `shellLoader` from its context; returns it unchanged.
 - **partialPrerendering** _(function)_ - `partialPrerendering: (config: PprConfig) => PprSetup`

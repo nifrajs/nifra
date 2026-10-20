@@ -1,6 +1,6 @@
 import { t } from "@nifrajs/schema"
 import { notFound } from "../../../../../../src/internal/render-document.ts"
-import { noteSlowAbort, probe } from "../../lib/probe.ts"
+import { holdHole, noteSlowAbort, probe } from "../../lib/probe.ts"
 import { visitorName } from "../../lib/session.ts"
 
 export const shellLoader = async (ctx: {
@@ -16,6 +16,8 @@ export const shellLoader = async (ctx: {
 }
 export const shellOutput = t.object({ title: t.string() })
 export const shellVariations = { search: { color: ["red", "blue"] } }
+export const revalidate = 60
+export const revalidateTags = ["catalog"]
 
 const abortable = (signal: AbortSignal, ms: number): Promise<{ at: number }> =>
   new Promise((resolve, reject) => {
@@ -37,7 +39,11 @@ export const boundaryLoaders = {
     output: t.object({ name: t.string() }),
   },
   cart: {
-    load: () => ({ count: 2 }),
+    // `coupon` is not in the output schema, so no response may carry it.
+    load: async (ctx: { readonly request: Request }) => {
+      if (new URL(ctx.request.url).searchParams.has("hold")) await holdHole()
+      return { count: 2, coupon: "staff-only-coupon" }
+    },
     output: t.object({ count: t.number() }),
   },
   slow: {

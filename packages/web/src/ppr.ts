@@ -22,6 +22,12 @@ import { createPprIntegration } from "./internal/ppr/integration.ts"
 import { type PprOptions, resolvePprOptions } from "./internal/ppr/options.ts"
 
 export {
+  type CanaryCarrier,
+  checkShellCanaries,
+  type ShellCanaryFinding,
+  type ShellCanaryOptions,
+} from "./internal/ppr/canary.ts"
+export {
   type CompileShellsOptions,
   compileShells,
   ShellCheckError,

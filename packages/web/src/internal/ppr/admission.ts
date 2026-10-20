@@ -1,6 +1,6 @@
 import type { ResolvedPprOptions } from "./options.ts"
 
-/** Which admission level denied an invocation (plan 7.3), checked in this order. */
+/** Which admission level denied an invocation, checked in this order. */
 export type DenialLevel = "stop" | "process" | "boundary"
 
 /** How one hole invocation ended, as its response sees it. */
@@ -58,7 +58,7 @@ const bump = (counts: Map<string, number>, key: string, by: number): void => {
 }
 
 /**
- * Bounds the hole work a process runs without letting one bad loader starve the rest (plan 7.3).
+ * Bounds the hole work a process runs without letting one bad loader starve the rest.
  *
  * An invocation is abandoned once its signal aborted more than `abandonGraceMs` ago and its promise
  * is still pending; it stays counted until the promise settles. Only abandoned invocations count
@@ -176,7 +176,7 @@ export class HoleAdmission {
 }
 
 /** Settles with `promise`, or as soon as `signal` aborts: a response never waits on a loader that
- * ignores its signal (I7). */
+ * ignores its signal. */
 const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
   signal.aborted
     ? Promise.reject(signal.reason)
@@ -195,7 +195,7 @@ const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
         )
       })
 
-/** One response's hole-work slot. Released exactly once (plan 7.3). */
+/** One response's hole-work slot. Released exactly once. */
 export class HoleSlot {
   readonly #admission: HoleAdmission
   readonly #release: () => void

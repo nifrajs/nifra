@@ -1,5 +1,5 @@
 /**
- * The G6 Phase 1 fixture: a real `createWebApp` with `experimental.ppr`, its client built by
+ * The partial prerendering fixture: a real `createWebApp` with `experimental.ppr`, its client built by
  * `buildClient` and its shells checked by `compileShells` at start. `startPprApp()` serves it on
  * 127.0.0.1 and returns its origin; `app-browser.ts` drives it. The Svelte twin in
  * `web-svelte/test/fixtures/ppr-app` passes its own `PprFixtureSetup`.
@@ -7,6 +7,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { compression } from "@nifrajs/middleware"
 import { reactAdapter } from "@nifrajs/web-react"
 import { buildClient } from "../../../../src/build.ts"
 import { createCspPolicy } from "../../../../src/csp.ts"
@@ -16,6 +17,9 @@ import { createWebApp } from "../../../../src/internal/web-app.ts"
 import { partialPrerendering } from "../../../../src/ppr.ts"
 import type { RenderAdapter } from "../../../../src/render-seam.ts"
 import { probe } from "./lib/probe.ts"
+
+/** Signs the fixture's draft cookies; a test value, as `enableDraft` documents. */
+export const DRAFT_SECRET = "ppr-fixture-draft-secret-not-for-production"
 
 export interface PprApp {
   readonly origin: string
@@ -41,7 +45,10 @@ const REACT: PprFixtureSetup = {
   serverPlugins: [],
 }
 
-export async function startPprApp(setup: PprFixtureSetup = REACT): Promise<PprApp> {
+export async function startPprApp(
+  setup: PprFixtureSetup = REACT,
+  { compress = false }: { readonly compress?: boolean } = {},
+): Promise<PprApp> {
   const { routesDir } = setup
   const outDir = mkdtempSync(join(tmpdir(), "nifra-ppr-app-"))
   const assets = await buildClient({
@@ -79,6 +86,7 @@ export async function startPprApp(setup: PprFixtureSetup = REACT): Promise<PprAp
     routePreload: assets.routes,
     styles: assets.css ?? [],
     csp,
+    draftSecret: DRAFT_SECRET,
     experimental: { ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }) },
   })
   app.get("/assets/*", async (c) => {
@@ -91,6 +99,7 @@ export async function startPprApp(setup: PprFixtureSetup = REACT): Promise<PprAp
       : "text/javascript; charset=utf-8"
     return new Response(file, { headers: { "content-type": type } })
   })
+  if (compress) app.use(compression())
   app.get("/__probe", () => Response.json(probe))
   app.get("/__unrelated", async () => {
     await new Promise((resolve) => setTimeout(resolve, 400))

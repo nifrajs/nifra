@@ -7,7 +7,7 @@ import type {
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
-import { isStatusSignal } from "../render-document.ts"
+import { isControlFlow, isStatusSignal } from "../render-document.ts"
 import { HoleAdmission, type HoleRun, type HoleSlot } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
@@ -73,7 +73,7 @@ export interface PprServerConfig {
   readonly options: ResolvedPprOptions
   readonly adapter: RenderAdapter
   readonly csp?: CspPolicy
-  /** Part of every shell key, so a shell built by one deployment is never served by another (I11). */
+  /** Part of every shell key, so a shell built by one deployment is never served by another. */
   readonly deployment: string
   readonly cancelUrl: string
   /**
@@ -91,7 +91,7 @@ interface HoleStart {
   readonly run: Promise<HoleRun<unknown>>
 }
 
-/** One streamed response's own queue of frames its client has not read yet (7.7). */
+/** One streamed response's own queue of frames its client has not read yet. */
 interface StreamState {
   readonly queue: Uint8Array[]
   queued: number
@@ -207,7 +207,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     shellChecks === "unchecked-development" ||
     (shellChecks.deployment === deployment && Object.hasOwn(shellChecks.routes, routeId))
   const now = config.now ?? Date.now
-  // Captured outside any request, so an on-demand build sees no visitor's async context (I1).
+  // Captured outside any request, so an on-demand build sees no visitor's async context.
   const detached: <T>(fn: () => T) => T =
     globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage?.snapshot?.() ??
     ((fn) => fn())
@@ -264,7 +264,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     request: PprRequest,
     data: unknown,
   ): Promise<ShellEntry> => {
-    // A component that copied the nonce into the shell would hand it to every visitor (I2).
+    // A component that copied the nonce into the shell would hand it to every visitor.
     if (html.includes(" nonce=")) {
       throw new Error(`[nifra/web] ppr: route "${request.routeId}" rendered a nonce into its shell`)
     }
@@ -430,8 +430,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
         load(holeCtx(request.holeContext, signal)),
       )
       .then((run) => {
-        if (!run.ok && run.reason === "failed") logFailure(request, hole, run.error)
-        return run
+        // The shell's status and headers are already sent, so a hole has no redirect or status to give.
+        const settled: HoleRun<unknown> =
+          run.ok && (isControlFlow(run.value) || isStatusSignal(run.value))
+            ? { ok: false, reason: "failed", error: new TypeError("returned a redirect or status") }
+            : run
+        if (!settled.ok && settled.reason === "failed") logFailure(request, hole, settled.error)
+        return settled
       })
   }
 
@@ -492,7 +497,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     return headers
   }
 
-  /** Abort the streams with the most unsent bytes until `bytes` more fit the process budget (7.7). */
+  /** Abort the streams with the most unsent bytes until `bytes` more fit the process budget. */
   const makeRoom = (bytes: number): void => {
     while (unsentBytes + bytes > options.maxUnsentBytes) {
       let largest: StreamState | undefined

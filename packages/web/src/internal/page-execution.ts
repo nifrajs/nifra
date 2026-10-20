@@ -1595,6 +1595,8 @@ export function createPageRequestExecutor<Env = unknown>(
               const streamed = await ppr.stream(pprRequest, () => controls.documentHeaders())
               if (streamed !== undefined) return streamed
             }
+            // Its holes are one visitor's, so no cache may store the page they render into.
+            controls.personalize()
           }
           // Every PPR hole runs through the PPR server, so each has admission and its own deadline.
           const holeStates =

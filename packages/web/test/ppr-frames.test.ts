@@ -126,7 +126,7 @@ describe("PPR hole frames", () => {
   })
 })
 
-describe("hole HTML validation (I12)", () => {
+describe("hole HTML validation", () => {
   test("ordinary framework output passes", () => {
     expect(() =>
       validateHoleHtml(
@@ -151,7 +151,7 @@ describe("hole HTML validation (I12)", () => {
   })
 })
 
-describe("shell fallbacks (I5)", () => {
+describe("shell fallbacks", () => {
   const shell =
     '<main><h1>Tea</h1><div data-nifra-hole="cart" aria-busy="true"></div><aside><div data-nifra-hole="recs" aria-busy="true"></div></aside></main>'
 

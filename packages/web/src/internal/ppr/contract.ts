@@ -20,7 +20,7 @@ export const PPR_SETUP: unique symbol = Symbol.for("nifra.web.ppr.setup")
 /** Where the runtime's cancel beacon goes, under the app's base path. */
 export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
 
-/** The boundary fields G6 reads beyond the neutral registration. */
+/** The boundary fields partial prerendering reads beyond the neutral registration. */
 export type HoleRegistration = Extract<BoundaryRegistration, { readonly mode: "dynamic" }> & {
   readonly interactive?: boolean
   readonly timeout?: number
@@ -50,7 +50,7 @@ export interface PprRequest {
   readonly tags: () => readonly string[]
 }
 
-/** The shell cannot be served now; the caller renders the page whole for this request (7.6). */
+/** The shell cannot be served now; the caller renders the page whole for this request. */
 export class PprShellUnavailable extends Error {}
 
 /** Thrown when a route's shell has no passing import-check record. */
@@ -110,7 +110,7 @@ export interface PprServer {
 export interface PprEnvironment {
   readonly adapter: RenderAdapter
   readonly csp?: CspPolicy
-  /** Part of every shell key, so a shell built by one deployment is never served by another (I11). */
+  /** Part of every shell key, so a shell built by one deployment is never served by another. */
   readonly deployment: string
   /** The app authorizes scripts with a per-request nonce, which would make every shell unique. */
   readonly perRequestNonce: boolean

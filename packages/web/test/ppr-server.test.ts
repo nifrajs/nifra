@@ -11,7 +11,7 @@ import {
   PprShellBusy,
   PprShellUnchecked,
 } from "../src/internal/ppr/server.ts"
-import { notFound } from "../src/internal/render-document.ts"
+import { notFound, redirect } from "../src/internal/render-document.ts"
 import type { RenderAdapter } from "../src/render-seam.ts"
 
 const adapter: RenderAdapter = {
@@ -157,7 +157,7 @@ describe("PPR server", () => {
     expect(html.endsWith("</body></html>")).toBe(true)
   })
 
-  test("two visitors get byte-identical shells and different tokens; the shell builds once (I1, I2)", async () => {
+  test("two visitors get byte-identical shells and different tokens; the shell builds once", async () => {
     let builds = 0
     const server = createPprServer(config())
     const request = pprRequest([hole("cart", () => 1)], {
@@ -177,7 +177,7 @@ describe("PPR server", () => {
     expect(shellOf(a).includes(tokenOf(a))).toBe(false)
   })
 
-  test("a failing hole sends only the error slot; its siblings are intact (I6)", async () => {
+  test("a failing hole sends only the error slot; its siblings are intact", async () => {
     const server = createPprServer(config())
     const errors: unknown[][] = []
     const original = console.error
@@ -209,7 +209,7 @@ describe("PPR server", () => {
     }
   })
 
-  test("a hole that ignores its signal gets the error frame at its timeout; the response never waits (I7)", async () => {
+  test("a hole that ignores its signal gets the error frame at its timeout; the response never waits", async () => {
     const server = createPprServer(config())
     let seen: AbortSignal | undefined
     const never = gate()
@@ -307,7 +307,7 @@ describe("PPR server", () => {
     )
   })
 
-  test("a shell that rendered a nonce is refused (I2)", async () => {
+  test("a shell that rendered a nonce is refused", async () => {
     const server = createPprServer(config())
     await expect(
       server.respond(
@@ -319,7 +319,7 @@ describe("PPR server", () => {
     ).rejects.toThrow("rendered a nonce into its shell")
   })
 
-  test("a different deployment never reuses a shell (I11)", async () => {
+  test("a different deployment never reuses a shell", async () => {
     let builds = 0
     const loadShell = async () => {
       builds++
@@ -617,12 +617,6 @@ describe("PPR shell cache (6.3, 6.4)", () => {
       },
     }
   }
-  const titled = (counter: { builds: number }, title?: () => string) => ({
-    loadShell: async () => {
-      counter.builds++
-      return { title: title?.() ?? `build ${counter.builds}` }
-    },
-  })
   const titleOf = (html: string): string => /<h1>([^<]*)<\/h1>/.exec(html)?.[1] ?? ""
 
   test("a notFound() shell is cached for its TTL and starts no hole while cached", async () => {
@@ -784,7 +778,7 @@ describe("PPR shell cache (6.3, 6.4)", () => {
     expect(titleOf(await (await server.respond(request)).text())).toBe("build 3")
   })
 
-  test("an on-demand build sees no async context of the request that triggered it (I1)", async () => {
+  test("an on-demand build sees no async context of the request that triggered it", async () => {
     const { AsyncLocalStorage } = await import("node:async_hooks")
     const visitor = new AsyncLocalStorage<string>()
     const server = createPprServer(config())
@@ -816,5 +810,103 @@ describe("PPR shell cache (6.3, 6.4)", () => {
     await (await server.respond(at({ color: "blue", size: "l" }))).text()
     await (await server.respond(at({}))).text()
     expect(builds).toBe(3)
+  })
+})
+
+describe("PPR server: what a hole cannot do, and when its slot frees", () => {
+  test("a hole that returns or throws a redirect or a status gets its error frame and no header", async () => {
+    const server = createPprServer(config())
+    const original = console.error
+    console.error = () => {}
+    try {
+      const holes = [
+        hole("thrown", () => {
+          throw redirect("/login")
+        }),
+        hole("returned", () => redirect("/login")),
+        hole("missing", () => notFound()),
+        hole("cart", () => 2),
+      ]
+      const res = await server.respond(pprRequest(holes))
+      const html = await res.text()
+      expect(res.status).toBe(200)
+      expect(res.headers.get("location")).toBeNull()
+      expect(frames(html)).toEqual({
+        thrown: ERROR_FRAME,
+        returned: ERROR_FRAME,
+        missing: ERROR_FRAME,
+        cart: { v: 1, html: '<p data-prefix="nifra-cart-">cart:2</p>' },
+      })
+      const states = await server.holeStates(
+        pprRequest(holes),
+        "settled",
+        new AbortController().signal,
+      )
+      expect(
+        Object.fromEntries(Object.entries(states).map(([name, state]) => [name, state.status])),
+      ).toEqual({ thrown: "error", returned: "error", missing: "error", cart: "ready" })
+    } finally {
+      console.error = original
+    }
+  })
+
+  test("a client that stops reading keeps its slot while a hole runs, and frees it once they settle", async () => {
+    const server = createPprServer(config({ options: resolvePprOptions({ maxHoleWork: 1 }) }))
+    const held = gate()
+    const idle = readerOf(await server.respond(pprRequest([hole("cart", () => held.promise)])))
+    await idle.read()
+    const shed = await (await server.respond(pprRequest([hole("cart", () => 1)]))).text()
+    expect(frames(shed)).toEqual({ cart: ERROR_FRAME })
+    held.release(2)
+    await tick()
+    await tick()
+    // Its frame waits unread in its own queue, and the slot is already free.
+    expect(server.stats()).toMatchObject({ slotsInUse: 0 })
+    expect(server.stats().unsentBytes).toBeGreaterThan(0)
+    const served = await (await server.respond(pprRequest([hole("cart", () => 1)]))).text()
+    expect(frames(served)).toEqual({
+      cart: { v: 1, html: '<p data-prefix="nifra-cart-">cart:1</p>' },
+    })
+    await idle.cancel()
+  })
+
+  test("a shell build that fails aborts the holes started beside it; their slot frees once", async () => {
+    // No grace: a loader still running after its abort counts as abandoned at once, freeing the slot.
+    const server = createPprServer(
+      config({ options: resolvePprOptions({ maxHoleWork: 1, abandonGraceMs: 0 }) }),
+    )
+    const held = gate()
+    let signal: AbortSignal | undefined
+    const holes = [
+      hole("cart", (ctx) => {
+        signal = ctx.signal
+        return held.promise
+      }),
+    ]
+    await expect(
+      server.respond(
+        pprRequest(holes, {
+          loadShell: async () => {
+            throw new Error("catalog down")
+          },
+        }),
+      ),
+    ).rejects.toThrow("catalog down")
+    expect(signal?.aborted).toBe(true)
+    await tick()
+    expect(server.stats()).toMatchObject({ slotsInUse: 0, shed: 0, abandoned: 1 })
+    const original = console.warn
+    console.warn = () => {}
+    try {
+      held.release(1)
+      await tick()
+    } finally {
+      console.warn = original
+    }
+    expect(server.stats()).toMatchObject({ slotsInUse: 0, abandoned: 0 })
+    const served = await (await server.respond(pprRequest([hole("cart", () => 1)]))).text()
+    expect(frames(served)).toEqual({
+      cart: { v: 1, html: '<p data-prefix="nifra-cart-">cart:1</p>' },
+    })
   })
 })

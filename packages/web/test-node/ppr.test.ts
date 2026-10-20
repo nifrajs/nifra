@@ -1,13 +1,16 @@
 /**
  * Partially prerendered pages on Node itself, through both adapter lanes (`serve(app)`, which takes the
  * node-direct path, and `serve({ fetch })`): the shell streams before a slow hole, and a hang-up or the
- * cancel beacon aborts the hole loader still running (plan 13.3).
+ * cancel beacon aborts the hole loader still running, and behind `compression()` the gzipped shell
+ * still arrives before the slow hole.
  */
 
 import assert from "node:assert/strict"
 import { once } from "node:events"
 import { type IncomingMessage, request } from "node:http"
 import { test } from "node:test"
+import { createGunzip } from "node:zlib"
+import { compression } from "@nifrajs/middleware"
 import { serve } from "@nifrajs/node"
 import type { BoundaryStates, Manifest, RenderAdapter, RouteModule } from "@nifrajs/web"
 import { createWebApp } from "@nifrajs/web"
@@ -66,9 +69,13 @@ function appWith(signals: Array<(signal: AbortSignal) => void>) {
   })
 }
 
-function get(port: number, path: string): Promise<IncomingMessage> {
+function get(
+  port: number,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port, path }, resolve)
+    const req = request({ host: "127.0.0.1", port, path, headers }, resolve)
     req.on("error", reject)
     req.end()
   })
@@ -111,6 +118,33 @@ for (const [lane, handler] of lanes) {
       const shell = String(first)
       assert.match(shell, /data-nifra-hole="slow"/)
       assert.doesNotMatch(shell, /nifra-ppr:slow/)
+      const signal = await seen.promise
+      assert.equal(signal.aborted, false)
+      res.destroy()
+      await aborted(signal)
+    } finally {
+      await handle.stop()
+    }
+  })
+
+  test(`${lane}: behind compression(), the gzipped shell arrives before a slow hole`, {
+    timeout: 10_000,
+  }, async () => {
+    const seen = Promise.withResolvers<AbortSignal>()
+    const app = appWith([seen.resolve])
+    app.use(compression())
+    const handle = await serve(handler(app), { port: 0, hostname: "127.0.0.1" })
+    try {
+      const res = await get(handle.port, "/p", { "accept-encoding": "gzip" })
+      assert.equal(res.headers["content-encoding"], "gzip")
+      const gunzip = createGunzip()
+      res.pipe(gunzip)
+      let text = ""
+      while (!text.includes('data-nifra-hole="slow"')) {
+        const [chunk] = (await once(gunzip, "data")) as [Buffer]
+        text += String(chunk)
+      }
+      assert.doesNotMatch(text, /nifra-ppr:slow/)
       const signal = await seen.promise
       assert.equal(signal.aborted, false)
       res.destroy()

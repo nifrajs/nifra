@@ -122,6 +122,13 @@ const { invalidate } = createInvalidator({ store, origin: "https://shop.example"
 await invalidate({ tags: ["catalog"] }) // shells listing "catalog" are rebuilt on their next request
 console.log(shells.stats()) // admitted, denied and shed holes, aborted slow readers, unsent bytes`
 
+const CANARY = `// doc-check: skip - continues the server snippet above (\`app\`).
+import { checkShellCanaries } from "@nifrajs/web/ppr"
+
+// Run before the app serves traffic: a shell already cached was built without the canaries.
+const leaks = await checkShellCanaries(app, ["/tea/1", "/tea/2"])
+if (leaks.length > 0) throw new Error(\`visitor data in a shared shell: \${JSON.stringify(leaks)}\`)`
+
 const OPTIONS = `// doc-check: skip - an excerpt of the server snippet's partialPrerendering call.
 partialPrerendering({
   shellChecks,
@@ -160,6 +167,13 @@ export default function PartialPrerendering() {
       <p>The page places each hole with the adapter's hole component.</p>
       <CodeBlock code={REACT_PAGE} lang="tsx" />
       <CodeBlock code={SVELTE_PAGE} lang="svelte" />
+      <p>
+        The import check cannot see visitor data an app keeps in module state, such as a variable
+        middleware writes. <code>checkShellCanaries</code> requests each path once with unique values
+        in a cookie, <code>Authorization</code>, a header and the query, and reports each value found
+        in the shared shell.
+      </p>
+      <CodeBlock code={CANARY} lang="ts" />
 
       <h2>Which routes qualify</h2>
       <ul>
@@ -185,7 +199,9 @@ export default function PartialPrerendering() {
           shell. Any other parameter or value shares the default shell.
         </li>
         <li>
-          The app uses <code>csp: createCspPolicy(...)</code>, not <code>nonce</code>.
+          The app uses <code>csp: createCspPolicy(...)</code>, not <code>nonce</code>. Under enforced
+          Trusted Types, its <code>trusted-types</code> directive lists <code>nifra-ppr</code>,
+          beside any policy the UI framework creates (Svelte's is <code>svelte-trusted-html</code>).
         </li>
       </ul>
 
@@ -219,6 +235,11 @@ export default function PartialPrerendering() {
           </tr>
         </tbody>
       </table>
+      <p>
+        A hole cannot redirect or set a status: the shell's status and headers are already sent, so a
+        hole whose loader returns or throws a redirect or a status renders its error state. A page
+        cache such as <code>withISR</code> never stores the route's response, however it rendered.
+      </p>
       <p>
         A shell older than <code>revalidate</code> is served while one rebuild runs; a failing
         rebuild keeps the old one for up to ten times <code>revalidate</code>, at most a day. A shell

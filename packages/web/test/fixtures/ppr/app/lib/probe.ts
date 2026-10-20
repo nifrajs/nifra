@@ -25,3 +25,17 @@ export const noteSlowAbort = (): void => {
   probe.abortedAt.push(performance.now())
   for (const resolve of abortWaiters.splice(0)) resolve()
 }
+
+const holds: Array<() => void> = []
+
+/** Resolves once `releaseHeld` runs; a browser check holds a hole to fill it after hydration. */
+export const holdHole = (): Promise<void> =>
+  new Promise((resolve) => {
+    holds.push(resolve)
+  })
+
+export const releaseHeld = (): number => {
+  const released = holds.splice(0)
+  for (const resolve of released) resolve()
+  return released.length
+}

@@ -72,7 +72,7 @@ async function abandon(
   clock.advance(OPTIONS.abandonGraceMs + 1)
 }
 
-describe("PPR hole admission (plan 7.3)", () => {
+describe("PPR hole admission", () => {
   test("a boundary at its trip point is denied without invocation; siblings stay admitted", async () => {
     const clock = manualTimers()
     const admission = new HoleAdmission(OPTIONS, undefined, clock.timers)

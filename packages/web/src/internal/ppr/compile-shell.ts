@@ -83,7 +83,7 @@ function requestScopedChain(
 
 /**
  * Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else)
- * and refuse it when the emitted code reaches a request-scoped module (plan 5.2). A module counts only
+ * and refuse it when the emitted code reaches a request-scoped module. A module counts only
  * when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose
  * backend half has no `shellLoader` are skipped. Bun only.
  */
