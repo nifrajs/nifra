@@ -97,6 +97,21 @@ export async function compileShells(options: CompileShellsOptions): Promise<Shel
   return { v: 1, deployment: options.deployment, routes }
 }
 
+interface SourceModule {
+  readonly path: string
+  readonly loader: "ts" | "tsx"
+  readonly source: string
+  /** The names it exports, read from its source without running it. */
+  readonly exports: readonly string[]
+}
+
+async function readModule(dir: string, file: string): Promise<SourceModule> {
+  const path = toPosix(resolve(dir, file))
+  const loader = /\.[cm]?tsx$|\.jsx$/.test(path) ? "tsx" : "ts"
+  const source = await Bun.file(path).text()
+  return { path, loader, source, exports: new Bun.Transpiler({ loader }).scan(source).exports }
+}
+
 async function compileShell(
   dir: string,
   manifest: Manifest,
@@ -104,11 +119,20 @@ async function compileShell(
   backend: string,
   requestScoped: (moduleId: string) => boolean,
 ): Promise<string | undefined> {
-  const backendPath = toPosix(resolve(dir, backend))
-  const backendLoader = /\.[cm]?tsx$|\.jsx$/.test(backendPath) ? "tsx" : "ts"
-  const backendSource = await Bun.file(backendPath).text()
-  const backendExports = new Bun.Transpiler({ loader: backendLoader }).scan(backendSource).exports
-  if (!backendExports.includes("shellLoader")) return undefined
+  const backendModule = await readModule(dir, backend)
+  if (!backendModule.exports.includes("shellLoader")) return undefined
+  // A gate's loader runs for its redirect or refusal and its data never reaches the shell; any other
+  // layout loader reads the request for data the shell would show every visitor.
+  for (const id of route.layoutIds) {
+    const layoutBackend = manifest.layouts[id]?.backend
+    if (layoutBackend === undefined) continue
+    const names = (await readModule(dir, layoutBackend)).exports
+    if (names.includes("loader") && !names.includes("gate")) {
+      throw new Error(
+        `[nifra/web] ppr: route "${route.id}" has a shellLoader, but its layout "${id}" has a loader that is not a gate. Its output would be in a shell shared by every visitor; move that data into a dynamic boundary, or mark the layout \`gate\` if it loads only to redirect or refuse`,
+      )
+    }
+  }
   const at = (file: string): string => JSON.stringify(toPosix(resolve(dir, file)))
   const lines = [
     `export { shellLoader } from ${at(backend)}`,
@@ -142,13 +166,15 @@ async function compileShell(
           // is a call into a package, which the bundler must keep, and with it every import the
           // hole uses. Eliminating them first scopes the check to `shellLoader`; their imports stay
           // as bare imports, so a module with top-level effects still counts.
-          build.onLoad({ filter: new RegExp(`^${escapeRegExp(backendPath)}$`) }, () => ({
+          build.onLoad({ filter: new RegExp(`^${escapeRegExp(backendModule.path)}$`) }, () => ({
             loader: "js",
             contents: new Bun.Transpiler({
-              loader: backendLoader,
+              loader: backendModule.loader,
               trimUnusedImports: true,
-              exports: { eliminate: backendExports.filter((name) => name !== "shellLoader") },
-            }).transformSync(backendSource),
+              exports: {
+                eliminate: backendModule.exports.filter((name) => name !== "shellLoader"),
+              },
+            }).transformSync(backendModule.source),
           }))
         },
       },

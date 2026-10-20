@@ -17,9 +17,12 @@ describe("compileShells", () => {
     })
     expect(record.v).toBe(1)
     expect(record.deployment).toBe("d1")
-    expect(Object.keys(record.routes).sort()).toEqual(["clean", "nested/[id]"])
+    expect(Object.keys(record.routes).sort()).toEqual(["clean", "gated/[id]", "nested/[id]"])
     expect(record.routes.clean).toMatch(/^[0-9a-f]{64}$/)
-    expect(failures).toHaveLength(1)
+    expect(failures.map(([id]) => id)).toEqual(["leaky", "loaded/[id]"])
+    expect(String(failures[1]?.[1])).toContain(
+      'route "loaded/[id]" has a shellLoader, but its layout "loaded/_layout" has a loader that is not a gate',
+    )
     const [routeId, error] = failures[0] ?? []
     expect(routeId).toBe("leaky")
     expect(error).toBeInstanceOf(ShellCheckError)

@@ -63,6 +63,25 @@ describe("PPR app: requests that are not a streamed document", () => {
     expect(html.includes("evil.example")).toBe(false)
   })
 
+  test("a gate layout refuses before the shell, and its data reaches no PPR response", async () => {
+    const refused = await fetch(`${app.origin}/members/3`)
+    expect(refused.status).toBe(401)
+    expect(await refused.text()).toBe("members only")
+
+    const page = await (
+      await fetch(`${app.origin}/members/3`, { headers: { cookie: "s=1" } })
+    ).text()
+    expect(page).toContain('data-member="no"')
+    expect(page.includes('"member":true')).toBe(false)
+    expect(page).toContain("nifra-ppr:note")
+    const data = firstLine(
+      await (
+        await fetch(`${app.origin}/members/3`, { headers: { cookie: "s=1", [DATA_HEADER]: "1" } })
+      ).text(),
+    )
+    expect(JSON.stringify(data).includes('member":true')).toBe(false)
+  })
+
   test("the fixture's shells hold enough text for WebKit to paint them early", () => {
     expect(app.warnings.filter((line) => line.includes("characters of text"))).toEqual([])
   })

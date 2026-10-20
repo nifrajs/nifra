@@ -1424,10 +1424,11 @@ export function createPageRequestExecutor<Env = unknown>(
     layouts: LoadedLayoutModules,
     boundaries: readonly BoundaryRegistration[],
   ): void => {
+    // `compileShells` refuses the same chain at startup; this catches a record made from other files.
     layouts.forEach((layout, index) => {
-      if (layout.loader !== undefined) {
+      if (layout.loader !== undefined && layout.gate !== true) {
         throw new Error(
-          `[nifra/web] ppr: route "${route.id}" has a shellLoader, but its layout "${route.layoutIds[index]}" has a loader. A layout loader reads the request, so its output cannot be in a shared shell`,
+          `[nifra/web] ppr: route "${route.id}" has a shellLoader, but its layout "${route.layoutIds[index]}" has a loader that is not a gate. A layout loader reads the request, so its output cannot be in a shared shell`,
         )
       }
     })
@@ -1702,7 +1703,9 @@ export function createPageRequestExecutor<Env = unknown>(
                 ? await Promise.all([pageResult, run.pending])
                 : await Promise.all([pageResult, run.pending, staticBoundaryPromise])
           data = pageData
-          layoutData = run.layoutData
+          // A gate on a PPR route runs for its redirect or refusal only. Its data reaches no response,
+          // so a soft navigation renders the layouts exactly as the shared shell did.
+          layoutData = pprRequest === undefined ? run.layoutData : undefined
           if (componentOwner) {
             for (let i = 0; i < (layoutData?.length ?? 0); i++) {
               const outcome = layoutData?.[i]
