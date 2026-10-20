@@ -709,9 +709,10 @@ export default function Security() {
         re-running the side effect. The key is claimed in <code>onRequest</code>, so a concurrent retry gets
         a <code>409</code>; the stored response is replayed from <code>beforeHandle</code>, <i>after</i> the
         route's authentication accepts the retry, so a credential revoked since the first request gets the
-        route's current answer. Declare routes after <code>.use(idempotency())</code>:{" "}
-        <code>beforeHandle</code> is order-scoped, and a route declared earlier replays from{" "}
-        <code>onRequest</code>.
+        route's current answer. Install authorization guards first, then <code>.use(idempotency())</code>,
+        then declare its protected routes. Installing it after a protected route throws instead of
+        allowing a replay to bypass that route's admission. Older stored records without an admission
+        marker are refused.
       </p>
       <CodeBlock code={IDEMPOTENCY} />
       <ul>
@@ -732,10 +733,23 @@ export default function Security() {
           caller still gets their cookie - replays just don't carry it.
         </li>
         <li>
+          Stores can implement <code>renew(key, reservation, lockTtlMs)</code> to keep active work's lease
+          alive. Without renewal, pending reservations last at least <code>ttlMs</code>. A lost lease or
+          failed completion returns <code>503 idempotency_reservation_lost</code>; external effects still
+          need their own durable deduplication or fencing.
+        </li>
+        <li>
+          A response over <code>maxBytes</code> reaches its first caller intact, while its key retains a
+          terminal record. Retries receive <code>507 idempotency_response_too_large</code> and never
+          repeat the operation. A response-body capture failure also retains a terminal outcome.
+        </li>
+        <li>
           Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
           Transient <code>5xx</code> aren't cached, and neither are <code>401</code>, <code>403</code>,{" "}
           <code>408</code>, <code>409</code>, <code>425</code>, or <code>429</code>: each says the call
-          never ran, so it stays retryable under the same key.
+          stays retryable under the same key by default. A handler can fail after an effect: use the
+          core route-level idempotency lane or an appropriate <code>shouldCache</code> policy for those
+          operations.
         </li>
         <li>
           The key is not bound to the body: a key reused with a different body replays the first answer. A

@@ -2846,7 +2846,8 @@ A client that stops reading is dropped once it has `maxBufferedBytes` (default 1
 MiB) of events unread: `stream.signal` aborts with `sse_client_too_slow`,
 the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
 server memory without limit. Raise it for a burst larger than that sent before the client can
-read, or pass `Infinity` to turn the limit off.
+read, or pass `Infinity` to turn the limit off. A single frame over the cap is refused
+immediately, even if no further frame is sent.
 
 ### Typed SSE routes
 
@@ -4186,9 +4187,10 @@ A dropped connection or an impatient double-tap shouldn't double-charge a card. 
 re-running the side effect. The key is claimed in `onRequest`, so a concurrent retry gets
 a `409`; the stored response is replayed from `beforeHandle`, _after_ the
 route's authentication accepts the retry, so a credential revoked since the first request gets the
-route's current answer. Declare routes after `.use(idempotency())`:
-`beforeHandle` is order-scoped, and a route declared earlier replays from
-`onRequest`.
+route's current answer. Install authorization guards first, then `.use(idempotency())`,
+then declare its protected routes. Installing it after a protected route throws instead of
+allowing a replay to bypass that route's admission. Older stored records without an admission
+marker are refused.
 
 ```ts
 // doc-check: skip - fragment: `app`, `chargeCard`, and `id` are your application's.
@@ -4226,10 +4228,23 @@ replaying it to a second caller (key collision or abuse) would leak/fixate a ses
 caller still gets their cookie - replays just don't carry it.
 
 -
+Stores can implement `renew(key, reservation, lockTtlMs)` to keep active work's lease
+alive. Without renewal, pending reservations last at least `ttlMs`. A lost lease or
+failed completion returns `503 idempotency_reservation_lost`; external effects still
+need their own durable deduplication or fencing.
+
+-
+A response over `maxBytes` reaches its first caller intact, while its key retains a
+terminal record. Retries receive `507 idempotency_response_too_large` and never
+repeat the operation. A response-body capture failure also retains a terminal outcome.
+
+-
 Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
 Transient `5xx` aren't cached, and neither are `401`, `403`,
 `408`, `409`, `425`, or `429`: each says the call
-never ran, so it stays retryable under the same key.
+stays retryable under the same key by default. A handler can fail after an effect: use the
+core route-level idempotency lane or an appropriate `shouldCache` policy for those
+operations.
 
 -
 The key is not bound to the body: a key reused with a different body replays the first answer. A

@@ -135,7 +135,8 @@ export default function Streaming() {
         MiB) of events unread: <code>stream.signal</code> aborts with <code>sse_client_too_slow</code>,
         the queued frames are released, and later sends do nothing, so one stalled reader cannot hold
         server memory without limit. Raise it for a burst larger than that sent before the client can
-        read, or pass <code>Infinity</code> to turn the limit off.
+        read, or pass <code>Infinity</code> to turn the limit off. A single frame over the cap is refused
+        immediately, even if no further frame is sent.
       </p>
 
       <h2 id="typed-sse">Typed SSE routes</h2>

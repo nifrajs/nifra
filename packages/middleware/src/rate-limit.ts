@@ -13,6 +13,8 @@ export interface RateLimitResult {
   readonly count: number
   /** Epoch-ms when the current window resets. */
   readonly resetAt: number
+  /** No new key can be admitted without discarding an active quota. */
+  readonly limited?: boolean
 }
 
 /**
@@ -27,15 +29,15 @@ export interface RateLimitStore {
 export interface MemoryStoreOptions {
   /** Allow the in-memory store in production. Off by default - a per-instance limiter is unsafe across instances. */
   readonly allowInProduction?: boolean
-  /** Hard cap on tracked client keys; expired keys are evicted first, then oldest active keys. Default `100_000`.
+  /** Hard cap on tracked client keys; expired keys are reclaimed, and new keys fail closed at capacity. Default `100_000`.
    * Bounds memory against an unbounded key space (bot scans, per-IP buckets). */
   readonly maxKeys?: number
   /** Minimum interval (ms) between amortized sweeps of expired windows. Default `30_000`. */
   readonly sweepIntervalMs?: number
 }
 
-/** Max entries scanned (oldest-first) per eviction looking for an expired victim before falling back
- * to evicting the oldest-inserted. Bounds eviction to O(1) per insertion instead of a full O(n) sweep
+/** Max entries scanned (oldest-first) looking for expired capacity before refusing a new key.
+ * Bounds reclamation to O(1) per insertion instead of a full O(n) sweep
  * under a distinct-key flood - the abuse the key cap defends against. */
 const MAX_EVICTION_SCAN = 64
 
@@ -44,7 +46,7 @@ const MAX_EVICTION_SCAN = 64
  *
  * Bounded against unbounded growth: expired windows are swept lazily (amortized, at most once per
  * `sweepIntervalMs`) and the key set is hard-capped at `maxKeys` (expired keys are evicted first,
- * then oldest active keys).
+ * then new keys are refused without resetting live quotas).
  * Without this, expired entries for keys never seen again - and the unbounded key space of a bot scan
  * - would accumulate in the map forever and OOM a single-instance deploy.
  */
@@ -89,9 +91,11 @@ export class MemoryStore implements RateLimitStore {
     }
     const current = this.windows.get(key)
     if (current === undefined || now >= current.resetAt) {
+      if (current === undefined && this.windows.size >= this.maxKeys && !this.reclaimExpired(now)) {
+        return Promise.resolve({ count: 0, resetAt: now + windowMs, limited: true })
+      }
       const fresh = { count: 1, resetAt: now + windowMs }
       this.windows.set(key, fresh)
-      this.enforceMaxKeys(now)
       return Promise.resolve({ count: fresh.count, resetAt: fresh.resetAt })
     }
     current.count += 1
@@ -102,28 +106,19 @@ export class MemoryStore implements RateLimitStore {
     for (const [k, v] of this.windows) if (now >= v.resetAt) this.windows.delete(k)
   }
 
-  private enforceMaxKeys(now: number): void {
-    if (this.windows.size <= this.maxKeys) return
-    // Prefer evicting an expired window over an active user's, but bound the work. A full sweep on
-    // every insertion is O(n)/request under a distinct-key flood - the exact abuse the cap defends
-    // against. Scan only a small fixed budget (oldest-first, where expired entries cluster) for a
-    // victim; if none is found, evict the oldest-inserted (O(1)). Expired entries beyond the budget
-    // are still reclaimed by the amortized sweep in `hit`.
-    while (this.windows.size > this.maxKeys) {
-      let victim: string | undefined
-      let scanned = 0
-      for (const [k, v] of this.windows) {
-        this.evictionScans++
-        if (now >= v.resetAt) {
-          victim = k
-          break
-        }
-        if (++scanned >= MAX_EVICTION_SCAN) break
+  private reclaimExpired(now: number): boolean {
+    // Evicting a live quota lets a key flood reset blocked callers. Reclaim only expired entries;
+    // a bounded scan keeps overflow requests from turning into full-map CPU work.
+    let scanned = 0
+    for (const [key, window] of this.windows) {
+      this.evictionScans++
+      if (now >= window.resetAt) {
+        this.windows.delete(key)
+        return true
       }
-      if (victim === undefined) victim = this.windows.keys().next().value
-      if (victim === undefined) break
-      this.windows.delete(victim)
+      if (++scanned >= MAX_EVICTION_SCAN) break
     }
+    return false
   }
 }
 
@@ -317,10 +312,14 @@ function limiter(
     if (typeof key !== "string" || key.trim() === "") {
       return Response.json({ ok: false, error: "rate_limit_key_unavailable" }, { status: 500 })
     }
-    const { count, resetAt } = await store.hit(bucket.scope + key, bucket.windowMs)
+    const { count, resetAt, limited } = await store.hit(bucket.scope + key, bucket.windowMs)
     const resetSeconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
-    const info = { limit: bucket.max, remaining: Math.max(0, bucket.max - count), resetSeconds }
-    if (count > bucket.max) {
+    const info = {
+      limit: bucket.max,
+      remaining: limited ? 0 : Math.max(0, bucket.max - count),
+      resetSeconds,
+    }
+    if (limited || count > bucket.max) {
       return {
         info,
         reject: new Response(JSON.stringify({ ok: false, error: "rate_limited" }), {
