@@ -2765,7 +2765,7 @@ export default ({ data }: { data: Books }) => html`
   <ul data-swap-slot="results">${slot("results", [
     ...data.titles.map((title) => html`<li data-island="book">${title}</li>`),
     data.more
-      ? html`<li><a href="/books?q=${data.q}&page=${data.page + 1}" data-swap="append:results">More</a></li>`
+      ? html`<li><a href="/books?q=${encodeURIComponent(data.q)}&page=${data.page + 1}" data-swap="append:results">More</a></li>`
       : "",
   ])}</ul>`
 ```
@@ -2797,8 +2797,10 @@ adds to it, and a link or form inside the slot is spent: the slot's child that h
 is removed when the next page arrives.
 
 Any other answer - a redirect, another origin, a page without that slot, an error - loads
-the URL normally, as does a page whose Trusted Types policy refuses the HTML, and a form
-POST is never sent twice. Without the script, the links and
+the URL normally, as does a page whose Trusted Types policy refuses the HTML. A POST that
+gets a whole page back without a redirect has already run, so that page is shown in place
+at the action's URL, and going back loads the page before it. A form POST is never
+sent twice. Without the script, the links and
 forms work as plain HTML. A loading slot carries
 `aria-busy="true"`, a newer swap of the same slot cancels the older
 one, and a failed request leaves the page as it is and sets `data-swap-error` on

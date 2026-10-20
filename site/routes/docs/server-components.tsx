@@ -101,7 +101,7 @@ const TUPLE = [
   ["Svelte / plugin-svelte", "5.56.8 / 7.3.1"],
   ["Solid / vite-plugin-solid", "1.9.14 / 2.11.14"],
   ["Preact / render-to-string / preset-vite", "10.29.8 / 6.7.0 / 2.10.5"],
-  ["Vite / plugin-rsc", "8.2.1 / 0.5.35"],
+  ["Vite / plugin-rsc", "8.3.4 / 0.5.35"],
   ["TypeScript", "6.0.3"],
 ] as const
 
