@@ -17,7 +17,7 @@ describe("compileShells", () => {
     })
     expect(record.v).toBe(1)
     expect(record.deployment).toBe("d1")
-    expect(Object.keys(record.routes)).toEqual(["clean"])
+    expect(Object.keys(record.routes).sort()).toEqual(["clean", "nested/[id]"])
     expect(record.routes.clean).toMatch(/^[0-9a-f]{64}$/)
     expect(failures).toHaveLength(1)
     const [routeId, error] = failures[0] ?? []

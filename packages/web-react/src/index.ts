@@ -4,6 +4,7 @@ import type { RenderAdapter } from "@nifrajs/web"
  * `renderToReadableStream`; the layout-chain fold is in `./compose`. Client hydration lives in
  * `@nifrajs/web-react/client`. React's JSX is Bun-native - no build plugin needed.
  */
+import type { ReactNode } from "react"
 import { compose } from "./compose.ts"
 import { reactDomServer } from "./react-dom-server.ts"
 import { explainRenderError } from "./render-error.ts"
@@ -42,6 +43,17 @@ export const reactAdapter: RenderAdapter = {
       throw explainRenderError(error)
     }
     return html.includes(CLIENT_RENDERED_BOUNDARY) ? undefined : html
+  },
+  // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
+  // with the page's, which the client root it hydrates into repeats.
+  async renderFragment(ui, options) {
+    const { renderToString } = await reactDomServer()
+    try {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns React output; the seam erases it to unknown.
+      return renderToString(ui as ReactNode, { identifierPrefix: options.idPrefix ?? "" })
+    } catch (error) {
+      throw explainRenderError(error)
+    }
   },
   async renderToStream(chain, props, options) {
     // Resolves a Web `ReadableStream<Uint8Array>` once the shell is renderable; Suspense

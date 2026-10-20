@@ -23,6 +23,24 @@ export interface StaticCtx {
   readonly origin?: string
 }
 
+/**
+ * Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or
+ * search: the shell is shared by every visitor whose URL maps to the same params and locale.
+ */
+export interface ShellCtx {
+  /** `"shell"`: built on demand at runtime, under the same rules as a build. */
+  readonly phase: "build" | "shell"
+  /** The deployment's origin from config, never from a Host header. */
+  readonly origin?: string
+  /** Decoded params, as the route pattern matched them. */
+  readonly params: Readonly<Record<string, string>>
+  readonly locale: string | undefined
+  /** Aborts on the shell build deadline, never on one visitor's disconnect. */
+  readonly signal: AbortSignal
+  /** The in-process api, unbound to any request: build-safe calls only, as in a prerender. */
+  readonly api: unknown
+}
+
 export type BoundaryMode = "static" | "dynamic" | { readonly intercept: string }
 
 interface BoundaryBase<Data, UI> {

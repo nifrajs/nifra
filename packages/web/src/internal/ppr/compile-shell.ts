@@ -40,6 +40,8 @@ const NAMESPACE = "nifra-ppr-shell"
 
 const toPosix = (path: string): string => path.replaceAll("\\", "/")
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
 /** The import chain from `root` to the first request-scoped module it reaches, breadth first. */
 function requestScopedChain(
   root: string,
@@ -70,8 +72,8 @@ function requestScopedChain(
 /**
  * Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else)
  * and refuse it when the emitted code reaches a request-scoped module (plan 5.2). A module counts only
- * when its code reached the output: an import used only by a hole loader is tree-shaken to zero bytes
- * and is not a leak. Routes whose backend half has no `shellLoader` are skipped. Bun only.
+ * when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose
+ * backend half has no `shellLoader` are skipped. Bun only.
  */
 export async function compileShells(options: CompileShellsOptions): Promise<ShellCheckRecord> {
   const dir = resolve(options.routesDir)
@@ -102,6 +104,11 @@ async function compileShell(
   backend: string,
   requestScoped: (moduleId: string) => boolean,
 ): Promise<string | undefined> {
+  const backendPath = toPosix(resolve(dir, backend))
+  const backendLoader = /\.[cm]?tsx$|\.jsx$/.test(backendPath) ? "tsx" : "ts"
+  const backendSource = await Bun.file(backendPath).text()
+  const backendExports = new Bun.Transpiler({ loader: backendLoader }).scan(backendSource).exports
+  if (!backendExports.includes("shellLoader")) return undefined
   const at = (file: string): string => JSON.stringify(toPosix(resolve(dir, file)))
   const lines = [
     `export { shellLoader } from ${at(backend)}`,
@@ -113,7 +120,8 @@ async function compileShell(
       lines.push(`export { default as layout${index} } from ${at(layout.file)}`)
   })
   const result = await Bun.build({
-    entrypoints: [`${NAMESPACE}:${route.id}`],
+    // Bun reads a `/` in an entry name as a directory, and route ids have them.
+    entrypoints: [`${NAMESPACE}:${encodeURIComponent(route.id)}`],
     target: "bun",
     packages: "external",
     metafile: true,
@@ -129,6 +137,18 @@ async function compileShell(
           build.onLoad({ filter: /.*/, namespace: NAMESPACE }, () => ({
             loader: "ts",
             contents: lines.join("\n"),
+          }))
+          // The backend half's other exports are not shell code. A hole loader's `output: t.object()`
+          // is a call into a package, which the bundler must keep, and with it every import the
+          // hole uses. Eliminating them first scopes the check to `shellLoader`; their imports stay
+          // as bare imports, so a module with top-level effects still counts.
+          build.onLoad({ filter: new RegExp(`^${escapeRegExp(backendPath)}$`) }, () => ({
+            loader: "js",
+            contents: new Bun.Transpiler({
+              loader: backendLoader,
+              trimUnusedImports: true,
+              exports: { eliminate: backendExports.filter((name) => name !== "shellLoader") },
+            }).transformSync(backendSource),
           }))
         },
       },
@@ -148,7 +168,6 @@ async function compileShell(
   )
   if (entry === undefined)
     throw new Error(`[nifra/web] ppr: no output for the shell of "${route.id}"`)
-  if (!(entry.exports ?? []).includes("shellLoader")) return undefined
   // Re-exports and the virtual entry have zero bytes too, so every edge stays and only the
   // request-scoped test reads bytes.
   const emitted = (id: string): boolean => {

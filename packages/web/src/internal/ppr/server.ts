@@ -44,7 +44,8 @@ interface ShellEntry {
 /** What the page executor hands over for one PPR request. */
 export interface PprRequest {
   readonly routeId: string
-  readonly params: Readonly<Record<string, string>>
+  /** The request's pathname, without search: the shell renders it, so it is part of the key. */
+  readonly path: string
   readonly locale: string | undefined
   readonly request: Request
   /** The route's dynamic boundaries, in declaration order, with their merged (guarded) loaders. */
@@ -95,13 +96,10 @@ const pendingStates = (holes: readonly HoleRegistration[]): BoundaryStates => {
   return states
 }
 
-const shellKey = (deployment: string, request: PprRequest): string => {
-  const params = Object.keys(request.params)
-    .sort()
-    .map((name) => `${encodeURIComponent(name)}=${encodeURIComponent(request.params[name] ?? "")}`)
-    .join("&")
-  return `ppr:v1|${deployment}|${request.routeId}|${request.locale ?? ""}|${params}`
-}
+// The pathname, not the matched params, keys the shell: two spellings of one path (percent-encoding)
+// match the same params but render different `path`s. The per-route cap bounds the spellings.
+const shellKey = (deployment: string, request: PprRequest): string =>
+  `ppr:v1|${deployment}|${request.routeId}|${request.locale ?? ""}|${request.path}`
 
 const isProduction = (): boolean =>
   typeof process !== "undefined" && process.env?.NODE_ENV === "production"

@@ -12,7 +12,7 @@ import {
   paramConstraint,
 } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
-import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
+import type { BoundaryDescriptor, BoundaryRegistration, ShellCtx } from "./boundary.ts"
 import { guardChannel, outputGuard } from "./internal/output-guard.ts"
 import type { RevalidateTags } from "./isr.ts"
 
@@ -354,6 +354,13 @@ export interface RouteModule {
   readonly loaderOutput?: StandardSchemaV1
   /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */
   readonly actionOutput?: StandardSchemaV1
+  /**
+   * Experimental, backend half only: the loader of a partially prerendered page's shared shell. It
+   * receives no request, so its output is the same for every visitor and the shell is cached.
+   */
+  readonly shellLoader?: (ctx: ShellCtx) => unknown
+  /** Experimental, backend half only: the schema of what {@link shellLoader} returns. */
+  readonly shellOutput?: StandardSchemaV1
   /** Optional client-only loader. It runs after hydration and on client navigations. */
   readonly clientLoader?: ClientLoader
   /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
@@ -652,6 +659,8 @@ export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "gate",
   "shouldRevalidate",
   "allowedOrigins",
+  "shellLoader",
+  "shellOutput",
 ])
 
 const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)
@@ -731,12 +740,25 @@ export function mergeRouteHalves(
     action,
     loaderOutput,
     actionOutput,
+    shellLoader,
+    shellOutput,
     ...server
   } = back
-  const guarded: { loader?: unknown; action?: unknown } = {}
+  if (shellLoader !== undefined && loader !== undefined) {
+    throw routeError(
+      `"${backend}" exports both shellLoader and loader. A partially prerendered page's per-visitor data comes from its dynamic boundaries' loaders`,
+    )
+  }
+  if (shellLoader !== undefined && server.prerender === true) {
+    throw routeError(
+      `"${backend}" exports shellLoader with prerender = true. A page with no per-visitor part needs no shellLoader`,
+    )
+  }
+  const guarded: { loader?: unknown; action?: unknown; shellLoader?: unknown } = {}
   for (const [name, fn, schema, schemaName] of [
     ["loader", loader, loaderOutput, "loaderOutput"],
     ["action", action, actionOutput, "actionOutput"],
+    ["shellLoader", shellLoader, shellOutput, "shellOutput"],
   ] as const) {
     if (fn === undefined) {
       if (schema !== undefined) {

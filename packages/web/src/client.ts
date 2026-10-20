@@ -227,6 +227,14 @@ function sameDocumentUrl(href: string): URL | null {
   }
 }
 
+/** Once the router owns the page, a partially prerendered first document stops filling its holes and
+ * cancels the ones still loading on the server. */
+const leavePprDocument = (): void => {
+  const runtime: unknown = Reflect.get(globalThis, "__nifraPpr")
+  if (typeof runtime === "function" && "leave" in runtime && typeof runtime.leave === "function")
+    runtime.leave()
+}
+
 /**
  * Attach history + link interception to a router. Returns a teardown function that removes the
  * listeners. A data-fetch failure during a client navigation falls back to a full-page load, so
@@ -425,6 +433,7 @@ export function installHistory(
     here = url.pathname + url.search + url.hash
     expected = routePath
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
+    leavePprDocument()
     transition(() => router.navigate(routePath).catch((error) => leave(error, path)))
     settle()
   }
@@ -582,6 +591,7 @@ export function installHistory(
     pendingScroll = { pos: scrollOf(history.state) }
     const routePath = location.pathname + location.search
     expected = routePath
+    leavePprDocument()
     transition(() => router.navigate(routePath).catch((error) => leave(error, dest)))
     settle()
   }

@@ -28,6 +28,9 @@ import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
+import type { ShellCheckRecord } from "./ppr/compile-shell.ts"
+import { type PprOptions, resolvePprOptions } from "./ppr/options.ts"
+import { createPprServer, PPR_CANCEL_PATH } from "./ppr/server.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import { requestPattern } from "./route-path.ts"
 
@@ -101,6 +104,19 @@ export interface CreateWebAppOptions<Env = unknown> {
    * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.
    */
   readonly csp?: CspPolicy
+  /** Experimental and unstable: features whose API may change in any release. */
+  readonly experimental?: {
+    /**
+     * Partial prerendering. A route whose backend half exports `shellLoader` streams a shell shared by
+     * every visitor, then each `dynamic` boundary as it settles. Needs `csp` (hashes), not `nonce`.
+     */
+    readonly ppr?: {
+      /** From `compileShells` for this deployment; `"unchecked-development"` is refused in production. */
+      readonly shellChecks: ShellCheckRecord | "unchecked-development"
+      /** Overrides for the defaults in `PPR_DEFAULTS`. */
+      readonly options?: PprOptions
+    }
+  }
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -511,6 +527,28 @@ export function createWebApp<Env = unknown>(
   const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
+  const pprConfig = options.experimental?.ppr
+  if (pprConfig !== undefined && options.nonce !== undefined) {
+    throw new TypeError(
+      "[nifra/web] experimental.ppr needs `csp: createCspPolicy(...)`, not `nonce`: a per-request nonce would make every shell unique",
+    )
+  }
+  const pprOptions = pprConfig === undefined ? undefined : resolvePprOptions(pprConfig.options)
+  const ppr =
+    pprConfig === undefined || pprOptions === undefined
+      ? undefined
+      : {
+          options: pprOptions,
+          server: createPprServer({
+            options: pprOptions,
+            adapter,
+            ...(options.csp === undefined ? {} : { csp: options.csp }),
+            // The content-hashed entry changes with every client build; the store is per process.
+            deployment: clientEntry,
+            cancelUrl: PPR_CANCEL_PATH,
+            shellChecks: pprConfig.shellChecks,
+          }),
+        }
   const pageExecutor = createPageRequestExecutor<Env>({
     ...(options.cacheRouteModules === undefined
       ? {}
@@ -558,7 +596,18 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
+    ...(ppr === undefined ? {} : { ppr }),
   })
+  if (ppr !== undefined) {
+    // A beacon carries one 22-character token; anything longer is not one. The token is unguessable,
+    // so the answer is the same whether it named a live response or not.
+    app.register("POST", PPR_CANCEL_PATH, undefined, async (c: { readonly req: Request }) => {
+      const length = Number(c.req.headers.get("content-length") ?? "NaN")
+      if (!(length > 0 && length <= 64)) return new Response(null, { status: 400 })
+      ppr.server.cancel(await c.req.text())
+      return new Response(null, { status: 204 })
+    })
+  }
 
   // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.
   const prerendered =

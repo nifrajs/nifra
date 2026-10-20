@@ -63,7 +63,7 @@ const pprRequest = (
   overrides: Partial<PprRequest> = {},
 ): PprRequest => ({
   routeId: "product/[id]",
-  params: { id: "1" },
+  path: "/p/1",
   locale: undefined,
   request: new Request("https://shop.test/p/1"),
   holes,
@@ -317,7 +317,7 @@ describe("PPR server", () => {
       (
         await server.respond(
           pprRequest([hole("x", () => 1)], {
-            params: { id },
+            path: `/p/${id}`,
             loadShell: async () => {
               builds++
               return { title: id }
