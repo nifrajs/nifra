@@ -6,7 +6,9 @@ import type { RenderAdapter } from "@nifrajs/web"
  * `@nifrajs/web-preact/client`. Preact uses `h()` render functions, so no JSX/build plugin is needed
  * (contrast `@nifrajs/web-solid`'s Babel plugin).
  */
+import type { ComponentChildren } from "preact"
 import { compose } from "./compose.ts"
+import { idScope } from "./id-scope.ts"
 import { preactRenderToStream, preactRenderToString } from "./preact-render.ts"
 
 const ISLAND_RUNTIME_OPEN = "<script>(function(){"
@@ -81,6 +83,13 @@ export const preactAdapter: RenderAdapter = {
       )
     }
     return renderUnlessSuspended(loaded.renderToString, compose(chain, props))
+  },
+  // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
+  // with the page's, which the client root it hydrates into repeats.
+  async renderFragment(ui, options) {
+    const { renderToString } = await preactRenderToString()
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Preact output; the seam erases it to unknown.
+    return renderToString(idScope(ui() as ComponentChildren, options.idPrefix))
   },
   async renderToStream(chain, props, options) {
     // `renderToReadableStream` yields a Web ReadableStream<Uint8Array>; <Suspense> boundaries

@@ -3,6 +3,7 @@ name: Partial prerendering
 # Experimental partial prerendering's server, adapter and browser checks, on macOS as well as Linux.
 # CI runs the server tests on Linux in every PR; this adds the browser engines and macOS when a change
 # can reach the PPR path: the web packages, the runtimes and middleware it streams through, its fixtures.
+# Each framework with a twin of the fixture app (`web-<name>/test/fixtures/ppr-app`) is a matrix leg.
 on:
   push:
     branches: [main]
@@ -16,10 +17,9 @@ on:
       - "packages/web/test/ppr-*.test.ts"
       - "packages/web/test/fixtures/ppr/**"
       - "packages/web/test-node/ppr.test.ts"
-      - "packages/web-react/src/**"
-      - "packages/web-svelte/src/**"
-      - "packages/web-svelte/test/ppr.test.ts"
-      - "packages/web-svelte/test/fixtures/ppr-app/**"
+      - "packages/web-*/src/**"
+      - "packages/web-*/test/ppr*.test.ts"
+      - "packages/web-*/test/fixtures/ppr-app/**"
   pull_request:
     paths:
       - ".github/workflows/ppr.yml"
@@ -31,10 +31,9 @@ on:
       - "packages/web/test/ppr-*.test.ts"
       - "packages/web/test/fixtures/ppr/**"
       - "packages/web/test-node/ppr.test.ts"
-      - "packages/web-react/src/**"
-      - "packages/web-svelte/src/**"
-      - "packages/web-svelte/test/ppr.test.ts"
-      - "packages/web-svelte/test/fixtures/ppr-app/**"
+      - "packages/web-*/src/**"
+      - "packages/web-*/test/ppr*.test.ts"
+      - "packages/web-*/test/fixtures/ppr-app/**"
   workflow_dispatch:
 
 concurrency:
@@ -43,11 +42,12 @@ concurrency:
 
 jobs:
   ppr:
-    name: ppr (${{ matrix.os }})
+    name: ppr (${{ matrix.framework }}, ${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        framework: [react, svelte, preact, vue, solid]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     permissions:
@@ -63,24 +63,23 @@ jobs:
       - run: bun install --frozen-lockfile
       # The Node test loads the built packages, as an installed Node app does.
       - run: bun run build
-      - name: Server, cache, admission and adapter tests
+      - name: Server, cache, admission and React adapter tests
+        if: matrix.framework == 'react'
         run: bun test test/ppr
         working-directory: packages/web
-      - name: Svelte adapter tests
-        run: bun test test/ppr
-        working-directory: packages/web-svelte
       - name: Both Node lanes, with and without compression
+        if: matrix.framework == 'react'
         run: node --test packages/web/test-node/ppr.test.ts
+      - name: Adapter tests
+        if: matrix.framework != 'react'
+        run: bun test test/ppr
+        working-directory: packages/web-${{ matrix.framework }}
       - name: Install required browser engines
         run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
-      - name: React app in Chromium, Firefox and WebKit
+      - name: App in Chromium, Firefox and WebKit
         run: bun packages/web/test/fixtures/ppr/app-browser.ts
         env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
-      - name: Svelte app in Chromium, Firefox and WebKit
-        run: bun packages/web/test/fixtures/ppr/app-browser.ts
-        env:
-          FRAMEWORK: svelte
+          FRAMEWORK: ${{ matrix.framework }}
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright

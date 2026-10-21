@@ -6757,9 +6757,37 @@
   {
     "name": "Hole",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function Hole<Data>(props: HoleProps<Data>): ComponentChildren;",
+    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Preact never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * After a client navigation the hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "Hole",
+    "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function Hole<Data>(props: HoleProps<Data>): ReactNode;",
     "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host React never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * After a client navigation the hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "Hole",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function Hole<Data>(props: HoleProps<Data>): JSX.Element;",
+    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Solid never fills: the PPR runtime puts the server's\n * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. After a\n * client navigation the hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "Hole",
+    "kind": "const",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare const Hole: new <Data>(props: HoleProps<Data> & {} & import(\"vue\").VNodeProps & import(\"vue\").AllowedComponentProps & import(\"vue\").ComponentCustomProps) => import(\"vue\").CreateComponentPublicInstanceWithMixins<HoleProps<Data> & {}, {}, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, import(\"vue\").PublicProps, {}, false, {}, HoleSlots, {}, {}, string, {}, any, import(\"vue\").ComponentProvideOptions, {\n    P: {};\n    B: {};\n    D: {};\n    C: {};\n    M: {};\n    Defaults: {};\n}, HoleProps<Data> & {}, {}, {}, {}, {}, {}>;",
+    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Vue never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own app from the frame's props.\n * After a client navigation the hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    readonly render: (data: Data) => ComponentChildren;\n    readonly fallback?: ComponentChildren;\n    readonly interactive?: boolean;\n}",
+    "doc": "/** The fields of a route's boundary declaration a hole renders from. */"
   },
   {
     "name": "HoleDefinition",
@@ -6771,9 +6799,29 @@
   {
     "name": "HoleDefinition",
     "kind": "interface",
+    "package": "@nifrajs/web-solid",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    readonly render: (data: Data) => JSX.Element;\n    readonly fallback?: () => JSX.Element;\n    readonly interactive?: boolean;\n}",
+    "doc": "/**\n * The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX\n * evaluated at import is one DOM node, so every place that shows it would take it from the last.\n */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
     "package": "@nifrajs/web-svelte",
     "signature": "export interface HoleDefinition<Data> {\n  readonly name: string\n  readonly render: (data: Data) => SvelteUI\n  readonly fallback?: SvelteUI\n  readonly interactive?: boolean\n}",
     "doc": "/** The fields of a route's boundary declaration a hole renders from. */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    render(data: Data): VNodeChild;\n    readonly fallback?: VNodeChild;\n    readonly interactive?: boolean;\n}",
+    "doc": "/**\n * The fields of a route's boundary declaration a hole renders from: `h()` output, not templates.\n * `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.\n */"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n    /** Shown when the hole's loader failed. Default: nothing. */\n    readonly error?: ComponentChildren;\n}"
   },
   {
     "name": "HoleProps",
@@ -6784,9 +6832,21 @@
   {
     "name": "HoleProps",
     "kind": "interface",
+    "package": "@nifrajs/web-solid",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n    /** Shown when the hole's loader failed. Default: nothing. */\n    readonly error?: JSX.Element;\n}"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
     "package": "@nifrajs/web-svelte",
     "signature": "export interface HoleProps<Data> {\n  of: HoleDefinition<Data>\n  state: HoleState | undefined\n  /** Shown when the hole's loader failed. Default: nothing. */\n  error?: Snippet\n}",
     "doc": "/** Hand-written types for `Hole.svelte`, as for `Await.svelte`. */"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n}"
   },
   {
     "name": "HoleState",

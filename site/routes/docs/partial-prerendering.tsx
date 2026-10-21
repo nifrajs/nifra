@@ -114,6 +114,58 @@ const SVELTE_PAGE = `<!-- routes/tea/[id].svelte -->
   <Hole of={cart} state={states?.cart} />
 </main>`
 
+const VUE_PAGE = `<!-- routes/tea/[id].vue -->
+<script lang="ts">
+import { Hole } from "@nifrajs/web-vue/ppr"
+import { h } from "vue"
+import Cart from "../../frontend/Cart.vue"
+
+// A hole renders h() output; the page around it is an ordinary template.
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true,
+  render: (data: { readonly count: number }) => h(Cart, { count: data.count }),
+  fallback: h("p", "Loading your cart"),
+} as const
+export const boundaries = [cart]
+</script>
+
+<script setup lang="ts">
+const props = defineProps(["data", "boundaries"])
+</script>
+
+<template>
+  <main>
+    <h1>{{ props.data.title }}</h1>
+    <Hole :of="cart" :state="props.boundaries?.cart" />
+  </main>
+</template>`
+
+const SOLID_PAGE = `// routes/tea/[id].tsx
+import type { BoundaryStates } from "@nifrajs/web"
+import { Hole } from "@nifrajs/web-solid/ppr"
+import { Cart } from "../../frontend/cart"
+
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true,
+  render: (data: { readonly count: number }) => <Cart count={data.count} />,
+  // A function: JSX evaluated at import would be one DOM node every page shares.
+  fallback: () => <p>Loading your cart</p>,
+} as const
+export const boundaries = [cart]
+
+export default function Tea(props: { data: { title: string }; boundaries?: BoundaryStates }) {
+  return (
+    <main>
+      <h1>{props.data.title}</h1>
+      <Hole of={cart} state={props.boundaries?.cart} />
+    </main>
+  )
+}`
+
 const INVALIDATE = `// doc-check: skip - continues the server snippet above (\`app\`) with an app-owned \`store\`.
 import { createInvalidator } from "@nifrajs/web/cdn"
 import { pprShells } from "@nifrajs/web/ppr"
@@ -156,8 +208,8 @@ export default function PartialPrerendering() {
         <code>compileShells</code> bundles each route's shell and refuses one whose emitted code
         reaches a module that reads the visitor. A route missing from its record, or from a record
         made for another deployment, renders whole. Run it in your build (Bun), and pass the record
-        to <code>partialPrerendering</code>. A Svelte app passes its server plugin as{" "}
-        <code>plugins: [svelteBunPlugin("ssr")]</code>.
+        to <code>partialPrerendering</code>. A Svelte, Vue or Solid app passes its server plugin, such
+        as <code>plugins: [svelteBunPlugin("ssr")]</code>.
       </p>
       <CodeBlock code={SERVER} lang="ts" />
       <p>
@@ -171,7 +223,22 @@ export default function PartialPrerendering() {
       <CodeBlock code={BACKEND} lang="ts" />
       <p>The page places each hole with the adapter's hole component.</p>
       <CodeBlock code={REACT_PAGE} lang="tsx" />
+      <p>
+        A Preact page is the same, with <code>/** @jsxImportSource preact */</code> at the top and{" "}
+        <code>Hole</code> from <code>@nifrajs/web-preact/ppr</code>. Svelte places a hole with its
+        own component and wraps each render in <code>ui(Component, props)</code>.
+      </p>
       <CodeBlock code={SVELTE_PAGE} lang="svelte" />
+      <p>
+        A Vue page builds its holes with <code>h()</code> and places them in its template; the
+        hole's <code>error</code> slot shows when its loader failed.
+      </p>
+      <CodeBlock code={VUE_PAGE} lang="vue" />
+      <p>
+        A Solid page's <code>fallback</code> is a function returning JSX, so each place that shows
+        it gets its own nodes.
+      </p>
+      <CodeBlock code={SOLID_PAGE} lang="tsx" />
       <p>
         The import check cannot see visitor data an app keeps in module state, such as a variable
         middleware writes. <code>checkShellCanaries</code> requests each path once with unique values
@@ -206,7 +273,9 @@ export default function PartialPrerendering() {
         <li>
           The app uses <code>csp: createCspPolicy(...)</code>, not <code>nonce</code>. Under enforced
           Trusted Types, its <code>trusted-types</code> directive lists <code>nifra-ppr</code>,
-          beside any policy the UI framework creates (Svelte's is <code>svelte-trusted-html</code>).
+          beside any policy the UI framework creates (Svelte's is <code>svelte-trusted-html</code>,
+          Vue's <code>vue</code>). Solid's client renders new DOM from plain strings under no policy,
+          so a Solid app cannot enforce Trusted Types.
         </li>
       </ul>
 

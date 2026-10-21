@@ -12590,8 +12590,8 @@ change in any release.
 `compileShells` bundles each route's shell and refuses one whose emitted code
 reaches a module that reads the visitor. A route missing from its record, or from a record
 made for another deployment, renders whole. Run it in your build (Bun), and pass the record
-to `partialPrerendering`. A Svelte app passes its server plugin as
-`plugins: [svelteBunPlugin("ssr")]`.
+to `partialPrerendering`. A Svelte, Vue or Solid app passes its server plugin, such
+as `plugins: [svelteBunPlugin("ssr")]`.
 
 ```ts
 import { createCspPolicy, createWebApp } from "@nifrajs/web"
@@ -12689,6 +12689,10 @@ export default function Tea(props: { data: { title: string }; boundaries?: Bound
 }
 ```
 
+A Preact page is the same, with `/** @jsxImportSource preact */` at the top and
+`Hole` from `@nifrajs/web-preact/ppr`. Svelte places a hole with its
+own component and wraps each render in `ui(Component, props)`.
+
 ```svelte
 <!-- routes/tea/[id].svelte -->
 <script module>
@@ -12715,6 +12719,68 @@ export default function Tea(props: { data: { title: string }; boundaries?: Bound
   <h1>{data.title}</h1>
   <Hole of={cart} state={states?.cart} />
 </main>
+```
+
+A Vue page builds its holes with `h()` and places them in its template; the
+hole's `error` slot shows when its loader failed.
+
+```vue
+<!-- routes/tea/[id].vue -->
+<script lang="ts">
+import { Hole } from "@nifrajs/web-vue/ppr"
+import { h } from "vue"
+import Cart from "../../frontend/Cart.vue"
+
+// A hole renders h() output; the page around it is an ordinary template.
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true,
+  render: (data: { readonly count: number }) => h(Cart, { count: data.count }),
+  fallback: h("p", "Loading your cart"),
+} as const
+export const boundaries = [cart]
+</script>
+
+<script setup lang="ts">
+const props = defineProps(["data", "boundaries"])
+</script>
+
+<template>
+  <main>
+    <h1>{{ props.data.title }}</h1>
+    <Hole :of="cart" :state="props.boundaries?.cart" />
+  </main>
+</template>
+```
+
+A Solid page's `fallback` is a function returning JSX, so each place that shows
+it gets its own nodes.
+
+```tsx
+// routes/tea/[id].tsx
+import type { BoundaryStates } from "@nifrajs/web"
+import { Hole } from "@nifrajs/web-solid/ppr"
+import { Cart } from "../../frontend/cart"
+
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true,
+  render: (data: { readonly count: number }) => <Cart count={data.count} />,
+  // A function: JSX evaluated at import would be one DOM node every page shares.
+  fallback: () => <p>Loading your cart</p>,
+} as const
+export const boundaries = [cart]
+
+export default function Tea(props: { data: { title: string }; boundaries?: BoundaryStates }) {
+  return (
+    <main>
+      <h1>{props.data.title}</h1>
+      <Hole of={cart} state={props.boundaries?.cart} />
+    </main>
+  )
+}
 ```
 
 The import check cannot see visitor data an app keeps in module state, such as a variable
@@ -12757,7 +12823,9 @@ shell. Any other parameter or value shares the default shell.
 -
 The app uses `csp: createCspPolicy(...)`, not `nonce`. Under enforced
 Trusted Types, its `trusted-types` directive lists `nifra-ppr`,
-beside any policy the UI framework creates (Svelte's is `svelte-trusted-html`).
+beside any policy the UI framework creates (Svelte's is `svelte-trusted-html`,
+Vue's `vue`). Solid's client renders new DOM from plain strings under no policy,
+so a Solid app cannot enforce Trusted Types.
 
 ### What each request gets
 

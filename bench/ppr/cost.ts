@@ -1,6 +1,7 @@
 /**
  * Server cost of partial prerendering against nifra's blocking SSR and `defer()` streaming, and the
- * gates it must pass. Run: `bun bench/ppr/cost.ts`; it exits 1 when a gate fails.
+ * gates it must pass. Run: `bun bench/ppr/cost.ts`, `FRAMEWORKS=svelte` for a subset; it exits 1 when
+ * a gate fails.
  *
  *   S0  tiny page, zero loader delay                           pure render work, PPR's worst case
  *   S1  catalog read (20 ms, ~20 KB), holes at 40/150/400 ms   a realistic product page
@@ -47,7 +48,7 @@ async function spawnUntilListening(script: string, env: Record<string, string>) 
 }
 
 const upstream = await spawnUntilListening("upstream.ts", {})
-const FRAMEWORKS = ["react", "svelte"] as const
+const FRAMEWORKS = (process.env.FRAMEWORKS ?? "react,svelte,preact,vue,solid").split(",")
 const servers = new Map<string, Awaited<ReturnType<typeof spawnUntilListening>>>()
 for (const framework of FRAMEWORKS) {
   servers.set(`${framework} S0`, await spawnUntilListening("server.ts", { FRAMEWORK: framework }))

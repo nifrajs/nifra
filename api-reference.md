@@ -6712,6 +6712,14 @@ _No named exports (side-effect entrypoint)._
   Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
 
+### `@nifrajs/web-preact/ppr`
+
+- **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren`
+  Experimental: one `dynamic` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
+
 ### `@nifrajs/web-preact/query`
 
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
@@ -7063,6 +7071,14 @@ _No named exports (side-effect entrypoint)._
 - **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
   Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
 
+### `@nifrajs/web-solid/ppr`
+
+- **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => JSX.Element`
+  Experimental: one `dynamic` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX evaluated at import is one DOM node, so every place that shows it would take it from the last.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
+
 ### `@nifrajs/web-solid/query`
 
 - **CreateQueryResult** _(interface)_ - `interface CreateQueryResult<T>`
@@ -7325,6 +7341,14 @@ _No named exports (side-effect entrypoint)._
   Compile a `.vue` SFC's `<style>` blocks to a single CSS string (scoped selectors rewritten to `[data-v-<id>]` when `scoped`). Returns `""` for a style-less SFC. The matching scope attribute is baked into the markup by {@link compileVue}.
 - **vueBunPlugin** _(function)_ - `vueBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
   The `.vue` compiler Bun plugin. `"dom"` → client-hydratable output; `"ssr"` → server render. On the `"dom"` build, a SFC's `<style>` CSS is emitted as a virtual `?vue-css` module that `Bun.build`'s CSS bundler folds into the app stylesheet (served as a `<link>`). The `"ssr"` build emits no CSS - th…
+
+### `@nifrajs/web-vue/ppr`
+
+- **Hole** _(const)_ - `Hole: new <Data>(props: HoleProps<Data> & {} & import("vue").VNodeProps & import("vue").AllowedComponentProps & import("vue").ComponentCustomProps) => import("vue").CreateComponentPublicInstanceWithMixins<HoleProps<Data…`
+  Experimental: one `dynamic` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from: `h()` output, not templates. `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
 
 ### `@nifrajs/web-vue/query`
 
