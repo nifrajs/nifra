@@ -522,6 +522,99 @@ test("a busy endpoint fails a live reload but sends a navigation through the pla
   r.stop()
 })
 
+/** Zero-delay timers armed while `ms` of fake time passes: a frame with nothing due arms none. */
+function spinsOver(ms: number): number {
+  let zero = 0
+  const faked = globalThis.setTimeout
+  const count = (fn: () => void, delay?: number) => {
+    if ((delay ?? 0) <= 0) zero++
+    return faked(fn, delay)
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a counter cannot meet every setTimeout overload; the client only ever passes a callback and a delay
+  const spy = spyOn(globalThis, "setTimeout").mockImplementation(count as never)
+  try {
+    jest.advanceTimersByTime(ms)
+  } finally {
+    spy.mockRestore()
+  }
+  return zero
+}
+
+test("a failed renewal waits out its backoff without spinning, then renews again", async () => {
+  jest.useFakeTimers()
+  const r = await connected()
+  r.server.control.busy = 1
+  jest.advanceTimersByTime(10 * 60_000)
+  await until(() => r.server.loads.length === 2 && !r.router.snapshot().pending, "failed renewal")
+  await settle()
+  // The renewal stays overdue; the retry 0.8 s or more away is the only deadline.
+  expect(spinsOver(700)).toBe(0)
+  expect(r.server.loads).toHaveLength(2)
+  jest.advanceTimersByTime(600)
+  await until(() => r.server.loads.length === 3, "renewal retried")
+  expect(r.server.loads[2]).toMatchObject({ mode: "renew" })
+  r.stop()
+})
+
+test("a failed poll waits for its next poll without spinning once its retry is due", async () => {
+  jest.useFakeTimers()
+  const r = rig()
+  r.server.control.grant = false
+  r.socket().welcome()
+  await until(() => r.server.loads.length === 1 && !r.router.snapshot().pending, "first load")
+  r.server.control.busy = 1
+  jest.advanceTimersByTime(40_000)
+  await until(() => r.server.loads.length === 2 && !r.router.snapshot().pending, "failed poll")
+  await settle()
+  // The retry falls due in about a second; the poll that runs it not for 48 s or more.
+  expect(spinsOver(10_000)).toBe(0)
+  expect(r.server.loads).toHaveLength(2)
+  jest.advanceTimersByTime(65_000)
+  await until(() => r.server.loads.length === 3, "next poll")
+  r.stop()
+})
+
+test("a failed load for a grant under a new socket retries with backoff, without spinning", async () => {
+  const r = await connected()
+  jest.useFakeTimers()
+  r.socket().drop(1006)
+  await settle()
+  jest.advanceTimersByTime(1200)
+  await until(() => FakeSocket.all.length === 2, "reconnect")
+  const before = r.server.loads.length
+  r.server.control.busy = 1
+  r.socket().welcome(SID_2)
+  await until(
+    () => r.server.loads.length === before + 1 && !r.router.snapshot().pending,
+    "failed load",
+  )
+  await settle()
+  expect(spinsOver(5_000)).toBe(0)
+  await until(() => r.server.loads.length === before + 2, "load retried")
+  expect(r.server.loads.at(-1)).toMatchObject({ sid: SID_2, grants: [] })
+  await until(() => r.socket().watches().length === 1, "watch on the new socket")
+  r.stop()
+})
+
+test("a renewal due while its watch waits for ready neither spins nor runs until ready", async () => {
+  const r = await connected()
+  jest.useFakeTimers()
+  r.socket().drop(1006)
+  await settle()
+  jest.advanceTimersByTime(1200)
+  await until(() => FakeSocket.all.length === 2, "reconnect")
+  r.socket().welcome(SID_2)
+  await until(() => r.socket().watches().length === 1, "watch on the new socket")
+  const before = r.server.loads.length
+  jest.advanceTimersByTime(9 * 60_000)
+  expect(spinsOver(1000)).toBe(0)
+  expect(r.server.loads).toHaveLength(before)
+  ready(r, [[]])
+  await until(() => r.server.loads.length === before + 1, "renewal after ready")
+  expect(r.server.loads.at(-1)).toMatchObject({ mode: "renew", sid: SID_2 })
+  r.stop()
+})
+
 // --- Navigation -----------------------------------------------------------------------------------
 
 test("a navigation mid-reload wins: the reload is dropped and the new page's grant is watched", async () => {

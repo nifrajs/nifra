@@ -383,31 +383,38 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     if (stopped || current === undefined || hidden() || current.snapshot().pending) return
     const now = Date.now()
     for (const frame of frames) {
-      if (frame.loading || frame.retryAt > now) continue
-      const live = watchable(frame)
+      if (frame.loading || wakeOf(frame) > now) continue
       if (frame.whole || frame.dirty.size > 0) reload(frame, "load")
-      else if (live && frame.pending === undefined && now >= frame.renewAt) reload(frame, "renew")
-      else if (!live && (polling() || frame.loaded?.grant === undefined) && now >= frame.pollAt)
-        reload(frame, "load", true)
+      else if (watchable(frame)) reload(frame, "renew")
+      else reload(frame, "load", true)
       // One load at a time: the router runs it, and its next state runs this again.
       if (current.snapshot().pending) break
     }
     arm()
   }
 
-  /** Wake for the earliest renewal, poll or retry due. */
+  /**
+   * When `run` loads this frame next; infinite when only an event can make it due. One rule for both
+   * `run` and `arm`: a deadline `run` would skip must never be armed, or the timer spins until it can.
+   */
+  const wakeOf = (frame: Frame): number => {
+    let due: number
+    if (frame.whole || frame.dirty.size > 0) due = 0
+    // A renewal waits for the pending watch's `ready`, which runs this again.
+    else if (watchable(frame))
+      due = frame.pending === undefined ? frame.renewAt : Number.POSITIVE_INFINITY
+    else if (polling() || frame.loaded?.grant === undefined) due = frame.pollAt
+    else due = Number.POSITIVE_INFINITY
+    return Math.max(frame.retryAt, due)
+  }
+
+  /** Wake for the earliest frame due. */
   const arm = (): void => {
     if (timer !== undefined) clearTimeout(timer)
     timer = undefined
     if (stopped) return
     let at = Number.POSITIVE_INFINITY
-    for (const frame of frames) {
-      if (frame.loading) continue
-      if (frame.retryAt > 0 && frame.retryAt < Number.POSITIVE_INFINITY)
-        at = Math.min(at, frame.retryAt)
-      if (watchable(frame)) at = Math.min(at, frame.renewAt)
-      else if (polling() || frame.loaded?.grant === undefined) at = Math.min(at, frame.pollAt)
-    }
+    for (const frame of frames) if (!frame.loading) at = Math.min(at, wakeOf(frame))
     if (at === Number.POSITIVE_INFINITY) return
     timer = setTimeout(run, Math.max(0, at - Date.now()))
   }
@@ -418,7 +425,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     if (current === undefined) return
     const state = current.snapshot()
     const page = frame.slot === PAGE
-    const held = frame.whole ? undefined : frame.loaded
+    const whole = frame.whole
+    const held = whole ? undefined : frame.loaded
     intent = {
       path: frame.path,
       mode: held === undefined ? "load" : mode,
@@ -448,6 +456,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       }
       if (!ok && !watchable(frame))
         pollFailures.set(frame.path, (pollFailures.get(frame.path) ?? 0) + 1)
+      // Still no grant to keep an owner by: the retry loads the frame whole again.
+      if (whole) frame.whole = true
       frame.failures++
       // Backs off to five minutes, never further: a frame that gives up shows stale data for good.
       // A change, a visibility change or a new socket tries again at once.
