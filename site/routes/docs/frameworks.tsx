@@ -68,11 +68,12 @@ bun create nifra my-app --framework solid      # or react · preact · vue · sv
 # Composes with --target - pick a framework AND a deploy target:
 bun create nifra my-app --framework svelte --target vercel`
 
-const REACT_COMPILER = `// doc-check: skip - needs @babel/core, babel-plugin-react-compiler and @vitejs/plugin-react installed.
-// nifra.config.ts - the React Compiler for nifra build, nifra dev and nifra dev --vite.
+const REACT_COMPILER = `// doc-check: skip - needs @babel/core, babel-plugin-react-compiler, @rolldown/plugin-babel and @vitejs/plugin-react 6 installed.
+// nifra.config.ts - the React Compiler for nifra build and nifra dev, with or without --vite.
 import type { BunPlugin } from "bun"
 import { transformAsync } from "@babel/core"
-import react from "@vitejs/plugin-react"
+import babel from "@rolldown/plugin-babel"
+import react, { reactCompilerPreset } from "@vitejs/plugin-react"
 
 export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-react/client"
@@ -97,7 +98,7 @@ const reactCompiler: BunPlugin = {
 }
 
 export const clientPlugins = [reactCompiler]
-export const vitePlugins = [react({ babel: { plugins: ["babel-plugin-react-compiler"] } })]`
+export const vitePlugins = [react(), babel({ presets: [reactCompilerPreset()] })]`
 
 const VUE_SFC = `<!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
@@ -280,9 +281,12 @@ export default function Frameworks() {
         The React Compiler is a Babel plugin, and nifra builds with Bun, so it runs as a small Bun
         plugin over your own <code>.tsx</code> and <code>.jsx</code> files. Listed in{" "}
         <code>clientPlugins</code>, it compiles the client bundle for <code>nifra build</code> and for{" "}
-        <code>nifra dev</code>; <code>nifra dev --vite</code> takes it through{" "}
-        <code>@vitejs/plugin-react</code>. The server bundle stays as written: a compiled component
-        renders the same markup, so pages hydrate as before. Needs React 19.
+        <code>nifra dev</code>. With <code>--vite</code>, both commands take it from{" "}
+        <code>vitePlugins</code> instead: <code>@vitejs/plugin-react</code> 6 hands its{" "}
+        <code>reactCompilerPreset()</code> to <code>@rolldown/plugin-babel</code>, which skips{" "}
+        <code>node_modules</code> on its own. That pair needs Vite 8. The server bundle stays as
+        written: a compiled component renders the same markup, so pages hydrate as before. Needs React
+        19.
       </p>
       <CodeBlock code={REACT_COMPILER} />
     </div>
