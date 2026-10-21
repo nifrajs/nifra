@@ -1,4 +1,6 @@
+import { client } from "@nifrajs/client"
 import { useQuery } from "@nifrajs/web-react/query"
+import type { App } from "../server"
 import type { Route } from "./+types/index"
 
 export const meta = {
@@ -7,18 +9,16 @@ export const meta = {
 }
 
 const CHOICES = ["bun", "deno", "node"] as const
+const api = client<App>("")
 
-async function lastVote(): Promise<{ at: number | null }> {
-  const res = await fetch("/api/last-vote")
-  return res.json()
+async function lastVote(): Promise<{ readonly at: number | null }> {
+  const res = await api.api["last-vote"].get()
+  if (!res.ok) throw new Error(res.error.error)
+  return res.data
 }
 
-function cast(choice: string): void {
-  void fetch("/api/vote", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ choice }),
-  })
+function cast(choice: (typeof CHOICES)[number]): void {
+  void api.api.vote.post({ choice })
 }
 
 export default function Poll(props: Route.ComponentProps) {
