@@ -13,6 +13,7 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import type { HttpMemoryCapture } from "../site/shared/data/memory-types.ts"
 
 export interface BenchRow {
   readonly name: string
@@ -103,6 +104,7 @@ export interface SsrSiteTable {
 }
 
 export interface SiteBench {
+  readonly httpMemory?: HttpMemoryCapture
   readonly _note?: string
   // One record per slice, not one for the file: the suites run at different times, and a shared
   // record would attribute every table to whichever suite wrote last.
