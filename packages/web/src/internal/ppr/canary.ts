@@ -1,3 +1,5 @@
+import { MAX_SHELL_AFTER_REQUESTS } from "./options.ts"
+
 /** Where a canary value went into the request whose shell carried it. */
 export type CanaryCarrier = "cookie" | "authorization" | "header" | "query"
 
@@ -22,9 +24,10 @@ const randomHex = (): string =>
   ).join("")
 
 /**
- * The canary check. Each path is requested once through the app's own middleware and gates
- * with a unique value in a cookie, an `Authorization` header, a custom header and the query, and the
- * shell that request built is scanned for every value. It catches visitor data the app keeps in
+ * The canary check. Each path is requested through the app's own middleware and gates with a
+ * unique value in a cookie, an `Authorization` header, a custom header and the query, until a
+ * response carries a shell (`shellAfterRequests` decides which request builds it), and that shell is
+ * scanned for every value the path's requests carried. It catches visitor data the app keeps in
  * module state, which no import check sees. Run it against a fresh app before it serves traffic: a
  * shell already cached was built without the canaries.
  */
@@ -35,29 +38,37 @@ export async function checkShellCanaries(
 ): Promise<readonly ShellCanaryFinding[]> {
   const findings: ShellCanaryFinding[] = []
   for (const path of paths) {
-    const values: Record<CanaryCarrier, string> = {
-      cookie: `nifra-canary-${randomHex()}`,
-      authorization: `nifra-canary-${randomHex()}`,
-      header: `nifra-canary-${randomHex()}`,
-      query: `nifra-canary-${randomHex()}`,
+    const sent: Array<Record<CanaryCarrier, string>> = []
+    // A route that renders whole every time reports nothing.
+    for (let attempt = 0; attempt < MAX_SHELL_AFTER_REQUESTS; attempt++) {
+      const values: Record<CanaryCarrier, string> = {
+        cookie: `nifra-canary-${randomHex()}`,
+        authorization: `nifra-canary-${randomHex()}`,
+        header: `nifra-canary-${randomHex()}`,
+        query: `nifra-canary-${randomHex()}`,
+      }
+      sent.push(values)
+      const url = new URL(path, options.origin ?? "http://canary.invalid")
+      url.searchParams.set("nifra_canary", values.query)
+      const response = await app.fetch(
+        new Request(url.href, {
+          headers: {
+            cookie: `nifra_canary=${values.cookie}`,
+            authorization: `Bearer ${values.authorization}`,
+            "x-nifra-canary": values.header,
+          },
+        }),
+      )
+      const html = await response.text()
+      const end = html.indexOf(REQUEST_SCRIPT)
+      // No shared shell yet: this request rendered whole, so nothing it saw is shared.
+      if (end === -1) continue
+      const shell = html.slice(0, end)
+      for (const via of CARRIERS) {
+        if (sent.some((earlier) => shell.includes(earlier[via]))) findings.push({ path, via })
+      }
+      break
     }
-    const url = new URL(path, options.origin ?? "http://canary.invalid")
-    url.searchParams.set("nifra_canary", values.query)
-    const response = await app.fetch(
-      new Request(url.href, {
-        headers: {
-          cookie: `nifra_canary=${values.cookie}`,
-          authorization: `Bearer ${values.authorization}`,
-          "x-nifra-canary": values.header,
-        },
-      }),
-    )
-    const html = await response.text()
-    const end = html.indexOf(REQUEST_SCRIPT)
-    // No shared shell: the route rendered whole, so nothing is shared to leak.
-    if (end === -1) continue
-    const shell = html.slice(0, end)
-    for (const via of CARRIERS) if (shell.includes(values[via])) findings.push({ path, via })
   }
   return findings
 }

@@ -14,7 +14,7 @@ import { createCspPolicy } from "../../../../src/csp.ts"
 import { discoverRoutes } from "../../../../src/fs.ts"
 import { compileShells } from "../../../../src/internal/ppr/compile-shell.ts"
 import { createWebApp } from "../../../../src/internal/web-app.ts"
-import { partialPrerendering } from "../../../../src/ppr.ts"
+import { type PprOptions, partialPrerendering } from "../../../../src/ppr.ts"
 import type { RenderAdapter } from "../../../../src/render-seam.ts"
 import { probe } from "./lib/probe.ts"
 
@@ -47,7 +47,10 @@ const REACT: PprFixtureSetup = {
 
 export async function startPprApp(
   setup: PprFixtureSetup = REACT,
-  { compress = false }: { readonly compress?: boolean } = {},
+  {
+    compress = false,
+    pprOptions,
+  }: { readonly compress?: boolean; readonly pprOptions?: PprOptions } = {},
 ): Promise<PprApp> {
   const { routesDir } = setup
   const outDir = mkdtempSync(join(tmpdir(), "nifra-ppr-app-"))
@@ -87,7 +90,13 @@ export async function startPprApp(
     styles: assets.css ?? [],
     csp,
     draftSecret: DRAFT_SECRET,
-    experimental: { ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }) },
+    experimental: {
+      ppr: partialPrerendering({
+        shellChecks,
+        origin: "https://shop.example",
+        options: pprOptions ?? {},
+      }),
+    },
   })
   app.get("/assets/*", async (c) => {
     const name = new URL(c.req.url).pathname.slice("/assets/".length)

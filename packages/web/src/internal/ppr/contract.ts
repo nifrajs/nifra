@@ -69,6 +69,13 @@ export class PprShellBusy extends PprShellUnavailable {
   }
 }
 
+/** Thrown for a shell key seen fewer than `shellAfterRequests` times: the page streams whole. */
+export class PprShellCold extends PprShellUnavailable {
+  constructor(routeId: string) {
+    super(`[nifra/web] ppr: route "${routeId}" has no shell for this key yet; rendered whole`)
+  }
+}
+
 /**
  * How a response that is not a streamed document gets its holes. `"deferred"`: each hole runs under
  * admission and its own deadline, and its state carries the result as a deferred value (a soft
@@ -125,13 +132,14 @@ export interface PprIntegration {
   readonly cancelPath: string
   cancel(request: Request): Promise<Response>
   /**
-   * The streamed document, with the headers middleware and gates wrote; `undefined` when this request
-   * renders whole instead (a listed bot, or a shell that is unchecked or at its build limit).
+   * The streamed document, with the headers middleware and gates wrote, or how this request renders
+   * whole instead: `"settled"` for a listed bot or a shell that is unchecked or at its build limit,
+   * `"deferred"`, each hole streamed as it settles, for a key with no shell yet.
    */
   stream(
     request: PprRequest,
     written: () => Readonly<Record<string, string>> | undefined,
-  ): Promise<Response | undefined>
+  ): Promise<Response | "settled" | "deferred">
   /** The shell data, or the shell loader's own output when the shell cannot be served now. */
   shellData(request: PprRequest, signal: AbortSignal): Promise<unknown>
   /** `variations` as the shell's own query string. */

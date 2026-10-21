@@ -9,6 +9,7 @@ import {
   type PprRequest,
   type PprServerConfig,
   PprShellBusy,
+  PprShellCold,
   PprShellUnchecked,
 } from "../src/internal/ppr/server.ts"
 import { notFound, redirect } from "../src/internal/render-document.ts"
@@ -387,6 +388,41 @@ describe("PPR server", () => {
     expect(builds).toBe(3)
     await visit("2")
     expect(builds).toBe(4)
+  })
+
+  describe("shellAfterRequests", () => {
+    const later = () => {
+      const built: string[] = []
+      const server = createPprServer(
+        config({ options: resolvePprOptions({ shellAfterRequests: 2 }) }),
+      )
+      const request = (id: string) =>
+        pprRequest([hole("x", () => 1)], {
+          path: `/p/${id}`,
+          loadShell: async () => {
+            built.push(id)
+            return { title: id }
+          },
+        })
+      return { built, server, request }
+    }
+
+    test("a key's requests before the last stream whole, and the last builds its shell", async () => {
+      const { built, server, request } = later()
+      await expect(server.respond(request("1"))).rejects.toBeInstanceOf(PprShellCold)
+      expect(await (await server.respond(request("1"))).text()).toContain("<h1>1</h1>")
+      expect(await (await server.respond(request("1"))).text()).toContain("<h1>1</h1>")
+      await expect(server.shellData(request("2"))).rejects.toBeInstanceOf(PprShellCold)
+      expect(await server.shellData(request("2"))).toEqual({ title: "2" })
+      expect(built).toEqual(["1", "2"])
+    })
+
+    test("forgets every waiting key at once when too many wait", async () => {
+      const { server, request } = later()
+      await server.respond(request("first")).catch(() => {})
+      for (let i = 0; i < 10_000; i++) await server.respond(request(`n${i}`)).catch(() => {})
+      await expect(server.respond(request("first"))).rejects.toBeInstanceOf(PprShellCold)
+    })
   })
 
   describe("the store's byte budget", () => {

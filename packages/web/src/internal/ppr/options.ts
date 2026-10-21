@@ -25,6 +25,11 @@ export interface PprOptions {
   readonly notFoundTtlSeconds?: number
   /** Shell builds one route may run at once; requests over it get the blocking render. */
   readonly shellBuildConcurrency?: number
+  /**
+   * Requests one shell key must see before its shell is built. The ones before stream the page whole,
+   * each hole as it settles, so a path visited once never pays for a shell nobody reuses.
+   */
+  readonly shellAfterRequests?: number
   /** A failing rebuild keeps serving the stale shell for `revalidate` times this... */
   readonly staleOnErrorFactor?: number
   /** ...but never longer than this. */
@@ -82,6 +87,7 @@ export const PPR_DEFAULTS: ResolvedPprOptions = Object.freeze({
   shellStoreBytes: 64 * MB,
   notFoundTtlSeconds: 60,
   shellBuildConcurrency: 4,
+  shellAfterRequests: 1,
   staleOnErrorFactor: 10,
   maxStaleOnErrorSeconds: 86_400,
   blockingFor: HTML_LIMITED_BOTS,
@@ -112,6 +118,9 @@ function assertOrdered(options: ResolvedPprOptions, smaller: NumericKey, larger:
   }
 }
 
+/** The latest request a shell may wait for; the canary check requests a path this many times. */
+export const MAX_SHELL_AFTER_REQUESTS = 8
+
 /**
  * Merge `overrides` over {@link PPR_DEFAULTS} and check the result. Unknown keys, non-integers and
  * limits that contradict each other throw at startup, never on a request.
@@ -134,12 +143,18 @@ export function resolvePprOptions(overrides: PprOptions = {}): ResolvedPprOption
     "holeTimeoutMs",
     "maxHolesPerRoute",
     "shellBuildConcurrency",
+    "shellAfterRequests",
     "boundaryAbandonedTrip",
     "maxHoleWork",
     "maxUnsentBytesPerResponse",
     "frameBytes",
   ] as const) {
     if (resolved[key] === 0) throw optionError(`${key} must be at least 1`)
+  }
+  if (resolved.shellAfterRequests > MAX_SHELL_AFTER_REQUESTS) {
+    throw optionError(
+      `shellAfterRequests must be at most ${MAX_SHELL_AFTER_REQUESTS}, got ${resolved.shellAfterRequests}`,
+    )
   }
   const blockingFor = resolved.blockingFor
   if (!(blockingFor instanceof RegExp) && typeof blockingFor !== "function") {

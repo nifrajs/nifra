@@ -12539,6 +12539,11 @@ or at its build limit
 
 The whole page, every hole rendered in place
 
+A page whose shell key has had fewer requests than `shellAfterRequests`
+(default 1)
+
+The whole page streamed, each hole as it settles; no shell is built
+
 A hole cannot redirect or set a status: the shell's status and headers are already sent, so a
 hole whose loader returns or throws a redirect or a status renders its error state. A page
 cache such as `withISR` never stores the route's response, however it rendered.

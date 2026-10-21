@@ -15,6 +15,7 @@ import {
   type PprRequest,
   type PprServer,
   PprShellBusy,
+  PprShellCold,
   PprShellUnchecked,
   variationQuery,
 } from "./contract.ts"
@@ -37,6 +38,7 @@ export {
   type PprServer,
   type PprServerStats,
   PprShellBusy,
+  PprShellCold,
   PprShellUnavailable,
   PprShellUnchecked,
   variationQuery,
@@ -320,6 +322,10 @@ const textLength = (html: string): number => {
 
 const SHED: HoleRun<never> = Object.freeze({ ok: false, reason: "denied" })
 
+// Keys still short of `shellAfterRequests`, forgotten together once this many wait, so a crawl of
+// unique paths holds a bounded map.
+const MAX_SIGHTINGS = 10_000
+
 /** What an entry counts against the store's byte budget beside its key, document and data. */
 const ENTRY_BYTES = 256
 
@@ -377,6 +383,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage?.snapshot?.() ??
     ((fn) => fn())
   const settled = new Map<string, ShellEntry>()
+  const sightings = new Map<string, number>()
   const routeCounts = new Map<string, number>()
   let storedBytes = 0
   const builds = new Map<string, Promise<ShellEntry>>()
@@ -631,6 +638,19 @@ export function createPprServer(config: PprServerConfig): PprServer {
       Math.min(revalidate * options.staleOnErrorFactor, options.maxStaleOnErrorSeconds)) *
     1000
 
+  /** Counts a request for a key with no shell; true once the key may build one. */
+  const due = (key: string): boolean => {
+    if (options.shellAfterRequests === 1 || settled.has(key) || builds.has(key)) return true
+    const seen = (sightings.get(key) ?? 0) + 1
+    if (seen >= options.shellAfterRequests) {
+      sightings.delete(key)
+      return true
+    }
+    if (sightings.size >= MAX_SIGHTINGS) sightings.clear()
+    sightings.set(key, seen)
+    return false
+  }
+
   const shellFor = (
     request: PprRequest,
     key = shellKey(deployment, request),
@@ -778,8 +798,11 @@ export function createPprServer(config: PprServerConfig): PprServer {
 
   return {
     async respond(request) {
+      const key = shellKey(deployment, request)
+      // Before any hole starts: a key with no shell yet renders whole and runs its holes there.
+      if (!due(key)) throw new PprShellCold(request.routeId)
       if (request.request.method === "HEAD") {
-        const [, csp] = await Promise.all([shellFor(request), cspHeader(request)])
+        const [, csp] = await Promise.all([shellFor(request, key), cspHeader(request)])
         return new Response(null, { status: 200, headers: documentHeaders(csp) })
       }
       const token = randomToken()
@@ -827,7 +850,6 @@ export function createPprServer(config: PprServerConfig): PprServer {
       }
       // A cached shell is known at once, so holes start only once it is known to be a page; on a
       // miss they start beside the build, which is where starting early pays.
-      const key = shellKey(deployment, request)
       const cached = settled.has(key)
       let runs = cached ? undefined : startHoles(request, response)
       let shell: ShellEntry
@@ -952,7 +974,9 @@ export function createPprServer(config: PprServerConfig): PprServer {
     },
 
     async shellData(request) {
-      return (await shellFor(request)).data
+      const key = shellKey(deployment, request)
+      if (!due(key)) throw new PprShellCold(request.routeId)
+      return (await shellFor(request, key)).data
     },
 
     async holeStates(request, mode, signal) {

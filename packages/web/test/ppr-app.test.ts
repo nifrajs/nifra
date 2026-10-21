@@ -40,6 +40,18 @@ const firstLine = (text: string): { readonly boundaries?: Record<string, unknown
   JSON.parse(text.slice(0, text.indexOf("\n") === -1 ? undefined : text.indexOf("\n")))
 
 describe("PPR app: requests that are not a streamed document", () => {
+  test("a route without a passing shell check renders whole and warns once", async () => {
+    const unchecked = (text: string) => text.includes('route "leaky/[id]" has no passing shell')
+    const before = app.warnings.filter(unchecked).length
+    for (const id of ["1", "2"]) {
+      const html = await (await fetch(`${app.origin}/leaky/${id}`)).text()
+      expect(html).toContain('id="leaky"')
+      expect(html).not.toContain('id="nifra-ppr-req"')
+    }
+    expect(app.warnings.filter(unchecked).length - before).toBeLessThanOrEqual(1)
+    expect(app.warnings.some(unchecked)).toBe(true)
+  })
+
   test("a prefetch gets the shell data and empty hosts, and starts no hole", async () => {
     const before = probe.slowStarted
     const res = await fetch(`${app.origin}/p/7`, {
@@ -271,7 +283,62 @@ describe("PPR app behind compression()", () => {
   })
 })
 
+describe("PPR app with shellAfterRequests: 2", () => {
+  test("a key's first document streams whole with its holes, and its second builds the shell", async () => {
+    const later = await startPprApp(undefined, { pprOptions: { shellAfterRequests: 2 } })
+    try {
+      const headers = { cookie: "name=ada" }
+      const [builds, holes] = [probe.shellBuilds, probe.slowStarted]
+      const first = await fetch(`${later.origin}/p/41?slow=1`, { headers })
+      const html = await first.text()
+      expect(first.status).toBe(200)
+      expect(first.headers.get("cache-control")).toBe("private, no-store")
+      expect(html).not.toContain('id="nifra-ppr-req"')
+      expect(html).toContain("Product 41")
+      expect(html).toContain("ada")
+      const second = await (await fetch(`${later.origin}/p/41?slow=1`, { headers })).text()
+      expect(second).toContain('id="nifra-ppr-req"')
+      expect(shellOf(second)).toContain("Product 41")
+      expect(shellOf(second)).not.toContain("ada")
+      await (await fetch(`${later.origin}/p/41?slow=1`, { headers })).text()
+      // The first request ran the shell loader for its own page, the second built the shell, the
+      // third reused it; each ran its holes once.
+      expect(probe.shellBuilds - builds).toBe(2)
+      expect(probe.slowStarted - holes).toBe(3)
+      // A soft navigation to a key with no shell reads the shell loader's output directly.
+      const data = await fetch(`${later.origin}/p/42?slow=1`, {
+        headers: { ...headers, [DATA_HEADER]: "1" },
+      })
+      expect(firstLine(await data.text())).toMatchObject({ data: { title: "Product 42" } })
+      expect(probe.shellBuilds - builds).toBe(3)
+    } finally {
+      await later.stop()
+    }
+  })
+})
+
 describe("PPR app configuration", () => {
+  test("a per-request nonce is refused at startup, since every shell would be unique", () => {
+    const manifest: Manifest = {
+      routes: [],
+      layouts: {},
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    }
+    expect(() =>
+      createWebApp({
+        adapter: {
+          renderToStream: () => new ReadableStream(),
+          hydrationHead: () => "",
+          renderFragment: () => "",
+        },
+        manifest,
+        clientEntry: "/c.js",
+        nonce: () => "n",
+        experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+      }),
+    ).toThrow("experimental.ppr needs `csp: createCspPolicy(...)`, not `nonce`")
+  })
+
   test("an origin with a path, a query or another scheme is refused at startup", () => {
     const start = (origin: string) =>
       partialPrerendering({ shellChecks: "unchecked-development", origin })
@@ -306,18 +373,24 @@ describe("PPR app configuration", () => {
       return registration
     }
     /** The error a GET of the route logs; core answers a bare 500 after logging it to stderr. */
-    const failureOf = async (boundaries: readonly BoundaryRegistration[]) => {
+    const failureOf = async (
+      boundaries: readonly BoundaryRegistration[],
+      layout?: Record<string, unknown>,
+    ) => {
       const manifest: Manifest = {
         routes: [
           {
             id: "p",
             pattern: "/p",
-            layoutIds: [],
+            layoutIds: layout === undefined ? [] : ["_layout"],
             file: "p.tsx",
             load: async () => ({ default: "page", shellLoader: () => ({}), boundaries }),
           },
         ],
-        layouts: {},
+        layouts:
+          layout === undefined
+            ? {}
+            : { _layout: { file: "_layout.tsx", load: async () => ({ default: "l", ...layout }) } },
         notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
       }
       const app = createWebApp({
@@ -356,6 +429,12 @@ describe("PPR app configuration", () => {
     }
     expect(await failureOf([{ name: "a", mode: "dynamic", render: () => "" }])).toContain(
       'boundary \\"a\\" of route \\"p\\" has no boundaryLoaders entry',
+    )
+    expect(
+      await failureOf([{ name: "a", mode: { intercept: "/x" }, render: () => "", load: () => 1 }]),
+    ).toContain('an intercepting boundary \\"a\\"')
+    expect(await failureOf([hole("a")], { loader: () => ({}) })).toContain(
+      'its layout \\"_layout\\" has a loader that is not a gate',
     )
     // Past the rules, the next failure is the stub rendering no host for the hole.
     expect(await failureOf([hole("a", 30_000), hole("b", 1)])).toContain('hole \\"a\\" has no host')

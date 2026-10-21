@@ -1582,6 +1582,8 @@ export function createPageRequestExecutor<Env = unknown>(
           const shellLoader =
             componentRequest === undefined && !componentOwner ? mod.shellLoader : undefined
           let pprRequest: PprRequest | undefined
+          // How a document that renders whole gets its holes: complete, unless no shell exists yet.
+          let wholeHoles: "settled" | "deferred" = "settled"
           if (ppr !== undefined && shellLoader !== undefined) {
             ppr.assertRoute(route, run.modules, boundaryDefinitions)
             pprRequest = pprRequestFor(
@@ -1598,7 +1600,8 @@ export function createPageRequestExecutor<Env = unknown>(
             // A draft is the editor's alone, so it never reads or fills the shared shell.
             if (!draft && !isDataRequest(c)) {
               const streamed = await ppr.stream(pprRequest, () => controls.documentHeaders())
-              if (streamed !== undefined) return streamed
+              if (streamed instanceof Response) return streamed
+              wholeHoles = streamed
             }
             // Its holes are one visitor's, so no cache may store the page they render into.
             controls.personalize()
@@ -1610,7 +1613,7 @@ export function createPageRequestExecutor<Env = unknown>(
               : ppr.server.holeStates(
                   pprRequest,
                   !isDataRequest(c)
-                    ? "settled"
+                    ? wholeHoles
                     : c.req.headers.get(PREFETCH_HEADER) === null
                       ? "deferred"
                       : "omitted",
@@ -1638,7 +1641,8 @@ export function createPageRequestExecutor<Env = unknown>(
                 )
           const pageResult =
             pprRequest !== undefined && ppr !== undefined
-              ? draft
+              ? // A key with no shell yet must not build one through its data either.
+                draft || wholeHoles === "deferred"
                 ? pprRequest.loadShell(c.req.signal)
                 : ppr.shellData(pprRequest, c.req.signal)
               : mod.loader

@@ -3,6 +3,7 @@ import {
   PPR_CANCEL_PATH,
   type PprEnvironment,
   type PprIntegration,
+  PprShellCold,
   PprShellUnavailable,
   PprShellUnchecked,
   variationQuery,
@@ -49,17 +50,18 @@ export function createPprIntegration(
       return new Response(null, { status: 204 })
     },
     async stream(request, written) {
-      if (wantsBlockingRender(options, request.request)) return undefined
+      if (wantsBlockingRender(options, request.request)) return "settled"
       let response: Response
       try {
         response = await server.respond(request)
       } catch (error) {
         if (!(error instanceof PprShellUnavailable)) throw error
+        if (error instanceof PprShellCold) return "deferred"
         if (error instanceof PprShellUnchecked && !uncheckedWarned.has(request.routeId)) {
           uncheckedWarned.add(request.routeId)
           console.warn(error.message)
         }
-        return undefined
+        return "settled"
       }
       for (const [name, value] of Object.entries(written() ?? {}))
         if (!OWN_HEADERS.has(name)) response.headers.set(name, value)

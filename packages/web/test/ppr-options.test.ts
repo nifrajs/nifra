@@ -25,6 +25,7 @@ describe("PPR options", () => {
       shellStoreBytes: 64 * 1024 * 1024,
       notFoundTtlSeconds: 60,
       shellBuildConcurrency: 4,
+      shellAfterRequests: 1,
       staleOnErrorFactor: 10,
       maxStaleOnErrorSeconds: 86400,
       blockingFor: HTML_LIMITED_BOTS,
@@ -73,6 +74,12 @@ describe("PPR options", () => {
       "maxHoleWork must be a non-negative integer",
     )
     expect(() => resolvePprOptions({ maxHoleWork: 0 })).toThrow("maxHoleWork must be at least 1")
+    expect(() => resolvePprOptions({ shellAfterRequests: 0 })).toThrow(
+      "shellAfterRequests must be at least 1",
+    )
+    expect(() => resolvePprOptions({ shellAfterRequests: 9 })).toThrow(
+      "shellAfterRequests must be at most 8, got 9",
+    )
     expect(resolvePprOptions({ writeGraceMs: 0 }).writeGraceMs).toBe(0)
   })
 

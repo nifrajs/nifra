@@ -12,11 +12,14 @@ import { svelteBunPlugin } from "../../../src/plugin.ts"
 
 plugin(svelteBunPlugin("ssr"))
 
-export const startPprApp = (): Promise<PprApp> =>
-  startFixture({
-    routesDir: `${import.meta.dir}/routes`,
-    adapter: svelteAdapter,
-    clientModule: "@nifrajs/web-svelte/client",
-    clientPlugins: [svelteBunPlugin("dom")],
-    serverPlugins: [svelteBunPlugin("ssr")],
-  })
+export const startPprApp = (options?: Parameters<typeof startFixture>[1]): Promise<PprApp> =>
+  startFixture(
+    {
+      routesDir: `${import.meta.dir}/routes`,
+      adapter: svelteAdapter,
+      clientModule: "@nifrajs/web-svelte/client",
+      clientPlugins: [svelteBunPlugin("dom")],
+      serverPlugins: [svelteBunPlugin("ssr")],
+    },
+    options,
+  )

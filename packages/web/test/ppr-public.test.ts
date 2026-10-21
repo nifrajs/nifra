@@ -74,14 +74,25 @@ test("the documented defaults are the ones a deployment overrides", () => {
   expect(Object.isFrozen(PPR_DEFAULTS)).toBe(true)
 })
 
-test("the canary check finds visitor data kept in module state, and passes a shell that keeps none", async () => {
+test.each([
+  1, 3,
+])("the canary check finds visitor data kept in module state, and passes a shell that keeps none (shell on request %d)", async (shellAfterRequests) => {
   // App code that stores the visitor where a shell loader reads it: no import check sees this.
   const current = { visitor: "" }
+  const page = (data: unknown) =>
+    `<main>${JSON.stringify(data)}<div data-nifra-hole="a" aria-busy="true"></div></main>`
   const app = createWebApp({
     adapter: {
       ...adapter,
-      renderToString: (_chain, props) =>
-        `<main>${JSON.stringify(props.data)}<div data-nifra-hole="a" aria-busy="true"></div></main>`,
+      renderToString: (_chain, props) => page(props.data),
+      // A page with no shell yet streams whole, with its hole as a deferred value.
+      renderToStream: (_chain, props) =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(page(props.data)))
+            controller.close()
+          },
+        }),
     },
     manifest: {
       routes: ["/leaky", "/clean"].map((pattern) => ({
@@ -102,7 +113,12 @@ test("the canary check finds visitor data kept in module state, and passes a she
       notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
     },
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    experimental: {
+      ppr: partialPrerendering({
+        shellChecks: "unchecked-development",
+        options: { shellAfterRequests },
+      }),
+    },
   })
   const withMiddleware = {
     fetch: (request: Request) => {
