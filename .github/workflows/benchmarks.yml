@@ -150,7 +150,8 @@ jobs:
 
   summary:
     needs: measure
-    if: always() && needs.measure.result != 'skipped'
+    # Runs when a measure job failed, but not for a cancelled run, which may have no report at all.
+    if: ${{ !cancelled() && needs.measure.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
