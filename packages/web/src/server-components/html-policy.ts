@@ -79,10 +79,15 @@ export function validateComponentTag(
   if (forbidden.has(tag.toLowerCase())) fail()
   for (const attribute of attributes) {
     const name = attribute.name.toLowerCase()
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: Browsers discard these controls when interpreting URL schemes.
-    const value = attribute.value.replace(/[\u0000-\u0020\u007f]/g, "").toLowerCase()
     if (name.startsWith("on") || ["srcdoc", "is", "srcset", "ping"].includes(name)) fail()
-    if (urls.has(name) && /^(?:javascript|vbscript|data):/.test(value)) fail()
+    if (
+      urls.has(name) &&
+      /^(?:javascript|vbscript|data):/.test(
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: Browsers discard these controls when interpreting URL schemes.
+        attribute.value.replace(/[\u0000-\u0020\u007f]/g, "").toLowerCase(),
+      )
+    )
+      fail()
     if (
       name === "style" &&
       /expression\(|@import|(?:javascript|vbscript|data):|-moz-binding|behavior:/.test(
