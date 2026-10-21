@@ -13,6 +13,7 @@ Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template H
 - **compose** _(function)_ - `compose: (chain: readonly unknown[], props: RenderProps) => Template`
 - **html** _(function)_ - `html: (strings: TemplateStringsArray, ...values: HtmlValue[]) => Template`
 - **raw** _(function)_ - `raw: (trusted: string) => RawHtml`
+- **slot** _(function)_ - `slot: (name: string, content: HtmlValue) => Template`
 - **RawHtml** _(class)_ - `class RawHtml`
 - **Template** _(class)_ - `class Template`
 - **vanillaAdapter** _(const)_ - `vanillaAdapter: RenderAdapter`
@@ -22,4 +23,4 @@ Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template H
 ## Footguns
 
 - Output is **auto-escaping** tagged-template HTML - interpolated values are escaped; opt into raw HTML explicitly, and only for trusted content.
-- Interactivity comes from islands (`@nifrajs/web/islands` + `@nifrajs/islets`), not a framework runtime - ~0 KB client JS by default.
+- Interactivity comes from islands (`@nifrajs/web/islands`), not a framework runtime - ~0 KB client JS by default.

@@ -346,8 +346,8 @@ export default function Rendering() {
         <li>
           <b>Cloudflare zone</b> (<code>cloudflareZone</code>): needs a Cache Rule that makes HTML
           eligible for cache, and, because the zone cache ignores <code>Vary</code>, that bypasses the
-          cache when the request has an <code>x-nifra-data</code> header (soft navigations fetch the
-          page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+          cache when the request has an <code>x-nifra-data</code> or <code>x-nifra-swap</code> header
+          (soft navigations and slot swaps fetch the page URL with them). The Free plan allows 5 purge calls a minute; purges arriving together go
           out as one call.
         </li>
         <li>

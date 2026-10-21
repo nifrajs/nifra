@@ -1,18 +1,22 @@
 import { describe, expect, test } from "bun:test"
-import { bindScope, type IslandScope } from "../src/bind.ts"
-import { type Signal, signal } from "../src/signals.ts"
-import { FakeElement, FakeHost, FakeRoot } from "./_fake-dom.ts"
+import { bindScope, type IslandScope } from "../src/internal/island-bindings.ts"
+import { type Signal, signal } from "../src/internal/island-signals.ts"
+import { FakeElement, FakeHost, FakeRoot } from "./_island-fake-dom.ts"
 
-const scopeOf = (
-  signals: Record<string, Signal<unknown>>,
+const scopeOf = <S extends Record<string, unknown>>(
+  signals: { [K in keyof S]: Signal<S[K]> },
   handlers: IslandScope["handlers"] = {},
-): IslandScope => ({ signals, handlers })
+): IslandScope => ({
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the walker writes a signal only with values read from its own element, the way bindIsland's state() signals are written
+  signals: signals as Record<string, Signal<unknown>>,
+  handlers,
+})
 
 describe("bindScope - the closed attribute set", () => {
   test("text: reflects the signal and updates", () => {
     const count = signal(2)
     const el = new FakeElement({ "data-bind-text": "count" })
-    bindScope(new FakeRoot([el]), scopeOf({ count: count as Signal<unknown> }))
+    bindScope(new FakeRoot([el]), scopeOf({ count: count }))
     expect(el.textContent).toBe("2")
     count.set(5)
     expect(el.textContent).toBe("5")
@@ -21,7 +25,7 @@ describe("bindScope - the closed attribute set", () => {
   test("show: hidden mirrors falsiness", () => {
     const open = signal(false)
     const el = new FakeElement({ "data-bind-show": "open" })
-    bindScope(new FakeRoot([el]), scopeOf({ open: open as Signal<unknown> }))
+    bindScope(new FakeRoot([el]), scopeOf({ open: open }))
     expect(el.hidden).toBe(true)
     open.set(true)
     expect(el.hidden).toBe(false)
@@ -31,7 +35,7 @@ describe("bindScope - the closed attribute set", () => {
     const a = signal(true)
     const b = signal(false)
     const el = new FakeElement({ "data-bind-class": "is-a:a, is-b:b" })
-    bindScope(new FakeRoot([el]), scopeOf({ a: a as Signal<unknown>, b: b as Signal<unknown> }))
+    bindScope(new FakeRoot([el]), scopeOf({ a: a, b: b }))
     expect([...el.classes]).toEqual(["is-a"])
     b.set(true)
     a.set(false)
@@ -85,13 +89,22 @@ describe("bindScope - the closed attribute set", () => {
   test("value: two-way - signal → input, input event → signal, no caret-jumping rewrite", () => {
     const q = signal("ada")
     const el = new FakeElement({ "data-bind-value": "q" })
-    bindScope(new FakeRoot([el]), scopeOf({ q: q as Signal<unknown> }))
+    bindScope(new FakeRoot([el]), scopeOf({ q: q }))
     expect(el.value).toBe("ada")
     el.value = "ada l"
     el.dispatch("input")
     expect(q()).toBe("ada l")
     q.set("typed")
     expect(el.value).toBe("typed")
+  })
+
+  test("value: a change event alone updates the signal, as a <select> sends", () => {
+    const size = signal<unknown>("small")
+    const el = new FakeElement({ "data-bind-value": "size" })
+    bindScope(new FakeRoot([el]), scopeOf({ size }))
+    el.value = "large"
+    el.dispatch("change")
+    expect(size()).toBe("large")
   })
 
   test("on: pair list attaches handlers; events fire them", () => {
@@ -129,7 +142,7 @@ describe("bindScope - the closed attribute set", () => {
   test("disposers stop updates", () => {
     const count = signal(1)
     const el = new FakeElement({ "data-bind-text": "count" })
-    const stops = bindScope(new FakeRoot([el]), scopeOf({ count: count as Signal<unknown> }))
+    const stops = bindScope(new FakeRoot([el]), scopeOf({ count: count }))
     for (const stop of stops) stop()
     count.set(99)
     expect(el.textContent).toBe("1")
@@ -160,7 +173,7 @@ describe("bindScope - the closed attribute set", () => {
   test("malformed pair entries are skipped, valid ones still bind", () => {
     const ok = signal(true)
     const el = new FakeElement({ "data-bind-class": ":broken,noColon,is-ok:ok" })
-    bindScope(new FakeRoot([el]), scopeOf({ ok: ok as Signal<unknown> }))
+    bindScope(new FakeRoot([el]), scopeOf({ ok: ok }))
     expect([...el.classes]).toEqual(["is-ok"])
   })
 })

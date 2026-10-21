@@ -67,6 +67,7 @@ import type {
 } from "../schema/standard.ts"
 import type { AuthenticationStage } from "./auth.ts"
 import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
+import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
   markTransportCap,
@@ -1603,7 +1604,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fn: H,
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("beforeHandle()")
-    this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
+    const hooks = this.beforeHandleHooks
+    let at = hooks.length
+    if (!LAST_BEFORE_HANDLE.has(fn)) {
+      while (at > 0 && LAST_BEFORE_HANDLE.has(hooks[at - 1]!)) at--
+    }
+    hooks.splice(at, 0, fn as unknown as RawBeforeHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "beforeHandle")
       tagHook(fn, "beforeHandle", this)

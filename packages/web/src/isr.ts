@@ -17,6 +17,7 @@ import {
 } from "./internal/invalidation.ts"
 import { INVALIDATION, type InvalidationHandoff } from "./internal/invalidation-contract.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
+import { SWAP_HEADER } from "./render-seam.ts"
 
 /** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */
 export interface CachedResponse {
@@ -735,14 +736,13 @@ const requestCarriesPrivateState = (req: Request): boolean =>
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
 
-// `x-nifra-data` alone is not a variation the URL key misses: a navigation data request never reads
-// or writes the store, so every stored entry is the document.
+// Data and swap requests bypass both cache reads and writes, so these headers cannot vary stored HTML.
 const responseDeclaresVary = (res: Response): boolean => {
   const value = res.headers.get("vary")
   if (value === null) return false
   for (const part of value.split(",")) {
     const name = part.trim().toLowerCase()
-    if (name !== "" && name !== "x-nifra-data") return true
+    if (name !== "" && name !== "x-nifra-data" && name !== SWAP_HEADER) return true
   }
   return false
 }
@@ -750,13 +750,13 @@ const responseDeclaresVary = (res: Response): boolean => {
 /**
  * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
  * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
- * the data header, and, for a request carrying a cookie or Authorization or accepted by an
+ * the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an
  * authentication stage, an explicit `public`.
  * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
  */
 export const isCacheablePage = (req: Request, res: Response): boolean => {
   if (req.method !== "GET") return false
-  if (req.headers.get("x-nifra-data") !== null) return false
+  if (req.headers.get("x-nifra-data") !== null || req.headers.has(SWAP_HEADER)) return false
   if (res.status !== 200) return false
   if (!(res.headers.get("content-type") ?? "").includes("text/html")) return false
   if (hasSetCookie(res.headers)) return false
@@ -1115,15 +1115,16 @@ export function withISR(
   }
 
   const handler = async (req: Request, platform?: ISRPlatform): Promise<Response> => {
-    // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
-    // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
-    // the loader payload. (The write path already refuses to cache data-mode responses.)
+    // A data-mode soft-nav GET or a slot swap bypasses the cache entirely: entries are full HTML
+    // documents keyed by URL, and serving one to either would hand the client a document where it
+    // expects the loader payload or one slot. (The write path already refuses both.)
     const privateRoute: unknown = Reflect.get(app, Symbol.for("nifra.web.private-route"))
     const ownsPrivate = typeof privateRoute === "function" && privateRoute(req) === true
     const key =
       req.method === "GET" &&
       req.headers.get("x-nifra-data") === null &&
       !req.headers.has("x-nifra-component") &&
+      !req.headers.has(SWAP_HEADER) &&
       !ownsPrivate
         ? keyOf(req)
         : null

@@ -233,7 +233,10 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // onRequest + onError hook boundaries and the QUERY method: bare 36,411 -> 36,668 B, mcp 36,694 ->
   // 36,934, sse 37,287 -> 37,535 (+214 / +29 / +14 B on bare, Bun 1.4.3).
-  "nifra-bare": 35.9,
+  // Guards registered after a `beforeHandler` hook still run first, so an idempotency replay waits
+  // for every guard: bare 36,746 -> 36,814 B, effect-ledger 38,789 -> 38,833, valibot 37,756 ->
+  // 37,801 (Bun 1.4.3); only these three caps are crossed.
+  "nifra-bare": 36.0,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -241,11 +244,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 41,108 -> 41,198 B, effect-ledger 38,706 -> 38,789, sse 37,535 -> 37,615, mcp 36,934 -> 37,035,
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   "nifra-idempotency": 40.3,
-  "nifra-effect-ledger": 37.9,
+  "nifra-effect-ledger": 38.0,
   "nifra-mcp": 36.2,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 36.8,
-  "nifra-valibot": 36.9,
+  "nifra-valibot": 37.0,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,

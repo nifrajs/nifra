@@ -6,13 +6,15 @@ afterEach(() => {
   for (const server of servers.splice(0)) server.stop(true)
 })
 
-/** A fake CDN edge: `respond` sees how many page requests came before and whether it is a data one. */
-function edge(respond: (n: number, data: boolean) => Response): string {
+/** A fake CDN edge: `respond` sees how many page requests came before and whether it is a data or
+ * swap one, which a correct edge never answers from cache. */
+function edge(respond: (n: number, data: boolean, req: Request) => Response): string {
   let n = 0
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    fetch: (req) => respond(n++, req.headers.get("x-nifra-data") !== null),
+    fetch: (req) =>
+      respond(n++, req.headers.has("x-nifra-data") || req.headers.has("x-nifra-swap"), req),
   })
   servers.push(server)
   return `http://127.0.0.1:${server.port}/p/1`
@@ -39,7 +41,7 @@ describe("nifra cdn-check", () => {
     const out = await runCdnCheck({ url })
     expect(out.cdn).toBe("cloudflare")
     expect(out.findings).toEqual([])
-    expect(out.requests.map((r) => r.cache)).toEqual(["MISS", "HIT", "BYPASS"])
+    expect(out.requests.map((r) => r.cache)).toEqual(["MISS", "HIT", "BYPASS", "BYPASS"])
     expect(cdnCheckSpec.exitCode?.(out, { url })).toBe(0)
   })
 
@@ -51,6 +53,24 @@ describe("nifra cdn-check", () => {
     expect(finding?.message).toContain(
       "bypasses the cache when the request has an x-nifra-data header",
     )
+    expect(cdnCheckSpec.exitCode?.(out, { url })).toBe(1)
+  })
+
+  test("a rule that bypasses data requests but not slot swaps fails, naming the swap header", async () => {
+    const url = edge((n, _bypassed, req) =>
+      req.headers.has("x-nifra-data")
+        ? Response.json({}, { headers: { "cf-cache-status": "BYPASS" } })
+        : html({ "cf-cache-status": n === 0 ? "MISS" : "HIT" }),
+    )
+    const out = await runCdnCheck({ url })
+    expect(codes(out)).toEqual(["swap-served-from-cache"])
+    expect(out.requests.map((r) => `${r.kind} ${r.cache}`)).toEqual([
+      "first MISS",
+      "second HIT",
+      "data BYPASS",
+      "swap HIT",
+    ])
+    expect(out.findings[0]?.message).toContain("x-nifra-swap header too")
     expect(cdnCheckSpec.exitCode?.(out, { url })).toBe(1)
   })
 

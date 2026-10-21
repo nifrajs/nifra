@@ -707,11 +707,13 @@ export default function Security() {
         A dropped connection or an impatient double-tap shouldn't double-charge a card. With an{" "}
         <code>Idempotency-Key</code> header, a retried unsafe request replays the first response instead of
         re-running the side effect. The key is claimed in <code>onRequest</code>, so a concurrent retry gets
-        a <code>409</code>; the stored response is replayed from <code>beforeHandle</code>, <i>after</i> the
-        route's authentication accepts the retry, so a credential revoked since the first request gets the
-        route's current answer. Declare routes after <code>.use(idempotency())</code>:{" "}
-        <code>beforeHandle</code> is order-scoped, and a route declared earlier replays from{" "}
-        <code>onRequest</code>.
+        a <code>409</code>; the stored response is replayed just before the handler, <i>after</i> the
+        route's authentication, validation and every guard accept the retry - a guard registered before
+        or after the middleware alike - so a credential revoked since the first request gets the
+        route's current answer. Install it before every route that uses a covered method, public or
+        protected; installing it after one throws. A
+        request no covered route handles, such as one a mounted app or an earlier hook answers, is not
+        deduplicated. Older stored records without an admission marker are refused.
       </p>
       <CodeBlock code={IDEMPOTENCY} />
       <ul>
@@ -732,10 +734,25 @@ export default function Security() {
           caller still gets their cookie - replays just don't carry it.
         </li>
         <li>
+          Stores can implement <code>renew(key, reservation, lockTtlMs)</code> to keep active work's lease
+          alive, for up to <code>ttlMs</code>. Without renewal, pending reservations last at least <code>ttlMs</code>. A lost lease or
+          failed completion returns <code>503 idempotency_reservation_lost</code>; external effects still
+          need their own durable deduplication or fencing.
+        </li>
+        <li>
+          A cacheable response over <code>maxBytes</code> reaches its first caller intact, while its key
+          retains a terminal record. Retries receive <code>507 idempotency_response_too_large</code> and
+          never repeat the operation. A response-body capture failure also retains a terminal outcome. A
+          response <code>shouldCache</code> declines, such as a <code>5xx</code>, releases its key at any
+          size, so a retry runs again.
+        </li>
+        <li>
           Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
           Transient <code>5xx</code> aren't cached, and neither are <code>401</code>, <code>403</code>,{" "}
           <code>408</code>, <code>409</code>, <code>425</code>, or <code>429</code>: each says the call
-          never ran, so it stays retryable under the same key.
+          stays retryable under the same key by default. A handler can fail after an effect: use the
+          core route-level idempotency lane or an appropriate <code>shouldCache</code> policy for those
+          operations.
         </li>
         <li>
           The key is not bound to the body: a key reused with a different body replays the first answer. A

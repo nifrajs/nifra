@@ -1,6 +1,6 @@
 /**
- * @nifrajs/island-trigger - the tiny browser-side trigger primitive shared by Nifra's two island
- * runtimes. It knows scheduling and browser capability fallbacks, but it knows nothing about markers,
+ * @nifrajs/island-trigger - the tiny browser-side trigger primitive behind `@nifrajs/web/islands`.
+ * It knows scheduling and browser capability fallbacks, but it knows nothing about markers,
  * registries, signals, or UI frameworks.
  */
 

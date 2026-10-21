@@ -7,6 +7,7 @@
  */
 import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-codec"
 import { isDeferredFree } from "./internal/deferred-free.ts"
+import { isRequestAbort } from "./internal/request-abort.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 
 /**
@@ -174,12 +175,14 @@ const NDJSON_ENCODER = new TextEncoder()
  * settle. The client (`defaultFetchData`) returns the
  * data after line 1 and settles `<Await>`'s markers as the resolution lines arrive. `JSON.stringify`
  * escapes newlines in values, so each line is NDJSON-safe; no HTML escaping (this is a fetch body,
- * parsed with `JSON.parse`, never injected into markup).
+ * parsed with `JSON.parse`, never injected into markup). A rejection caused by the request `signal`
+ * aborting is the client leaving, not a failure, so it is not logged.
  */
 export function ndjsonStream(
   forClient: unknown,
   deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
   codec: TransportCodec = plainJsonCodec,
+  signal?: AbortSignal,
 ): ReadableStream<Uint8Array> {
   // A client that goes away cancels the body; a value settling after that has nowhere to go.
   let cancelled = false
@@ -194,7 +197,8 @@ export function ndjsonStream(
           } catch (err) {
             // Redact: stream a stable opaque code, never the raw error text; log the real reason
             // server-side. The client's <Await> errorFallback receives this code.
-            console.error("[nifra/web] deferred value rejected:", err)
+            if (!isRequestAbort(signal, err))
+              console.error("[nifra/web] deferred value rejected:", err)
             line = codec.encode({ i: d.id, e: DEFERRED_ERROR_CODE })
           }
           if (!cancelled) controller.enqueue(NDJSON_ENCODER.encode(`${line}\n`))

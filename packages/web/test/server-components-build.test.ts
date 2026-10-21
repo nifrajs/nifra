@@ -138,3 +138,35 @@ test("the secret scan knows values that exist only in the app's .env files", asy
     await rm(root, { recursive: true, force: true })
   }
 }, 30000)
+
+test("env-file public values reach both read styles and invalidate the component generation", async () => {
+  const { root, build } = await envFixture({
+    ".env.production": "PUBLIC_LABEL=public-first\n",
+    "entry.frontend.ts":
+      'document.body.textContent = import.meta.env.PUBLIC_LABEL + ":" + process.env.PUBLIC_LABEL',
+  })
+  const shipped = async (outDir: string): Promise<string> => {
+    const assets = resolve(outDir, "assets")
+    return (
+      await Promise.all(
+        (
+          await readdir(assets)
+        )
+          .filter((name) => name.endsWith(".js"))
+          .map((name) => readFile(resolve(assets, name), "utf8")),
+      )
+    ).join("\n")
+  }
+  try {
+    const first = await build()
+    const code = await shipped(first.outDir)
+    expect(code).toContain("public-first")
+    expect(code).not.toContain("PUBLIC_LABEL")
+    await writeFile(resolve(root, ".env.production"), "PUBLIC_LABEL=public-second\n")
+    const second = await build()
+    expect(second.build).not.toBe(first.build)
+    expect(await shipped(second.outDir)).toContain("public-second")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30000)

@@ -118,20 +118,10 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Return a function that removes the listener.",
     docs: "/docs/islands",
   },
-  "NF-C021": {
-    why: "A nano binding's returned disposer is discarded, so the binding outlives its component and leaks on soft navigation.",
-    fix: "Collect the disposer and call it on teardown.",
-    docs: "/docs/nano",
-  },
   "NF-C022": {
-    why: "bindList is keyed by the array index, so adding, removing or reordering items reuses the wrong node and its state.",
-    fix: "Key each item by a stable id.",
-    docs: "/docs/nano",
-  },
-  "NF-C023": {
-    why: "A computed or effect reads a signal its deps array does not list, so it does not update when that signal changes.",
-    fix: "Add the missing signals to the deps array.",
-    docs: "/docs/nano",
+    why: "A bindList key reads the item's position (a second parameter, which bindList never passes, or an indexOf/findIndex call handed the item), so adding, removing or reordering items hands a node and its state to the wrong item.",
+    fix: "Key each item by a stable id on the item.",
+    docs: "/docs/islands",
   },
   "NF-C024": {
     why: "Two route patterns match a common path (the finding shows one), so one shadows the other for some requests.",
@@ -252,6 +242,36 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     why: "A package resolves to copies at more than one version, often one in a linked sibling repository that installs its own. Module state splits as with NF-C009, and the two halves can also disagree on behavior. A singleCopy declaration only collapses copies of one version, so it cannot cover this.",
     fix: "Install one version everywhere: align the ranges in every install root that carries a copy, or for nifra packages run `nifra upgrade <version>` in this app and in the linked repository, then install in each.",
     docs: "/docs/troubleshooting",
+  },
+  "NF-C047": {
+    why: 'A data-bind-* attribute inside an island host names a signal its bindIsland setup never declares with state("..."), or a handler the setup does not return. At runtime the binding is skipped with a console warning, so the markup never updates or never reacts.',
+    fix: 'Fix the name in the markup, or declare it in the setup: state("name", initial) for a signal, a returned handler for data-bind-on.',
+    docs: "/docs/islands",
+  },
+  "NF-C048": {
+    why: "A data-bind-* attribute sits outside every data-island host, or inside a host mounted with defineIsland or a plain enhancer. Only bindIsland walks bindings, so this one never binds.",
+    fix: "Move the element inside a host mounted with bindIsland, or mount that host with bindIsland. A binding inside a data-swap-slot belongs to an island inside that slot, which a swap mounts again.",
+    docs: "/docs/islands",
+  },
+  "NF-C049": {
+    why: "A data-swap attribute sits on an element other than <a href> or <form>, its value is not replace:<slot> or append:<slot>, or it is in JSX, where no page can answer a slot swap. The link or form behaves as if the attribute were not there.",
+    fix: "Put data-swap on a link with an href or on a form, write replace:<slot> or append:<slot>, and render the page with @nifrajs/web-vanilla.",
+    docs: "/docs/islands",
+  },
+  "NF-C050": {
+    why: "A data-swap link or form names a slot that no data-swap-slot element in the project declares, so there is nothing to swap and every click loads the page normally.",
+    fix: 'Fix the slot name, or mark the region to refresh with data-swap-slot="<name>" and render its content with slot("<name>", ...).',
+    docs: "/docs/islands",
+  },
+  "NF-C051": {
+    why: 'A data-swap-slot element must hold slot("<name>", ...) and nothing else: the server answers a swap with what slot() renders and the client replaces the whole element content with it. Content beside it is lost on the first swap; without it, the server has nothing to answer with; a slot() outside its element swaps nothing.',
+    fix: 'Make slot("<name>", content) the only content of the element marked data-swap-slot="<name>", and move anything else outside it.',
+    docs: "/docs/islands",
+  },
+  "NF-C052": {
+    why: "A data-swap link or form goes to a page whose module and layouts render no slot() of the name it swaps, so the server answers with the whole document and every swap loads the page normally.",
+    fix: "Point the link or form at the page that renders the slot, or render the slot in that page.",
+    docs: "/docs/islands",
   },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",

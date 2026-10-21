@@ -14,7 +14,7 @@ import {
 // lay the English page out right-to-left - in a state a hard reload never reproduces, which is the worst
 // kind of bug to be handed.
 //
-// A hand-rolled DOM, matching the repo's idiom for client code (see packages/islets/test/_fake-dom.ts):
+// A hand-rolled DOM, matching the repo's idiom for client code (see packages/web/test/_island-fake-dom.ts):
 // no jsdom/happy-dom dependency, and it fakes exactly the surface `applyHead` touches.
 
 class FakeElement {

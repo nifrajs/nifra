@@ -66,7 +66,7 @@ export interface SSEInit {
    * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:
    * `signal` aborts, the queued frames are released, and later sends are no-ops, so a reader that
    * stalls cannot hold server memory without limit. Raise it for a burst larger than this sent before
-   * the client can read; `Infinity` turns the limit off.
+   * the client can read. A single frame over the cap is also refused; `Infinity` turns the limit off.
    */
   readonly maxBufferedBytes?: number
 }
@@ -158,9 +158,10 @@ export function sse(
         const stream: SSEStream = {
           send(message) {
             if (closed) return
-            // The queue only shrinks as the runtime writes to the socket, so a backlog past the cap
-            // is a client that stopped reading. Erroring the body releases the queue and the socket.
-            if ((controller.desiredSize ?? 0) < 0) {
+            const frame = encoder.encode(formatMessage(message))
+            // Check the incoming frame too: a lone oversized event has no later send to trigger
+            // overflow detection. Erroring the body releases its queue and stops the producer.
+            if (frame.byteLength > (controller.desiredSize ?? 0)) {
               closed = true
               teardown()
               const reason = new Error("sse_client_too_slow")
@@ -168,7 +169,7 @@ export function sse(
               controller.error(reason)
               return
             }
-            controller.enqueue(encoder.encode(formatMessage(message)))
+            controller.enqueue(frame)
           },
           close,
           signal: stopped.signal,

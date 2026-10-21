@@ -44,9 +44,13 @@ export const RULE_CODES = Object.freeze({
   "NF-C045": "Route registered outside the typed chain",
   "NF-C046": "Identity-sensitive version skew",
   "NF-C020": "Island enhancer cleanup check",
-  "NF-C021": "nano binding cleanup check",
-  "NF-C022": "nano bindList key check",
-  "NF-C023": "nano computed deps check",
+  "NF-C022": "bindList key check",
+  "NF-C047": "Island binding name check",
+  "NF-C048": "Island binding outside a bindIsland host",
+  "NF-C049": "Swap link or form misdeclared",
+  "NF-C050": "Swap names a slot nothing declares",
+  "NF-C051": "Slot content is not its slot() alone",
+  "NF-C052": "Swap URL's page renders no such slot",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",
@@ -68,7 +72,7 @@ export const RULE_CODES = Object.freeze({
 } as const)
 
 /** Codes that no longer fire but remain reserved forever. */
-export const RETIRED_CODES: ReadonlySet<string> = new Set()
+export const RETIRED_CODES: ReadonlySet<string> = new Set(["NF-C021", "NF-C023"])
 
 export type BuiltInCode = keyof typeof RULE_CODES
 
