@@ -1,4 +1,5 @@
 import { afterEach, expect, jest, setSystemTime, spyOn, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import {
   createWebApp,
   defer,
@@ -1509,15 +1510,16 @@ test("live.subject must return a string or null", async () => {
 
 test("an app without live imports no live module", async () => {
   const transpiler = new Bun.Transpiler({ loader: "ts" })
-  const root = new URL("../src/", import.meta.url).pathname
+  // File URLs, not `.pathname`: on Windows that is `/D:/...`, which no file open accepts.
+  const root = new URL("../src/", import.meta.url).href
   const seen = new Set<string>()
   const walk = async (file: string): Promise<void> => {
     if (seen.has(file)) return
     seen.add(file)
-    const source = await Bun.file(file).text()
+    const source = await Bun.file(fileURLToPath(file)).text()
     for (const { path } of transpiler.scanImports(source)) {
       if (!path.startsWith(".")) continue
-      await walk(new URL(path, `file://${file}`).pathname)
+      await walk(new URL(path, file).href)
     }
   }
   await walk(`${root}index.ts`)
