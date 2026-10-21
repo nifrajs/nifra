@@ -13,7 +13,9 @@
  * back the hit rate the run got.
  *
  * Gates (S1, each framework): cached PPR CPU at most 0.75x blocking, cached TTFB p50 under 2 ms,
- * 0%-hit PPR CPU at most 1.2x `defer()`.
+ * 0%-hit PPR CPU at most 1.2x `defer()`. A CPU gate takes the median of its ratio over
+ * `GATE_ROUNDS` rounds, each running the four variants back to back in an order reversed every other
+ * round, so a load spike from another process moves one round's ratio and not the verdict.
  */
 import { join } from "node:path"
 
@@ -21,6 +23,8 @@ const here = import.meta.dir
 const PASSES = 2
 const WARMUP_PASSES = 1
 const TTFB_ROUNDS = 25
+const GATE_ROUNDS = 7
+const GATE_REQUESTS = 1_500
 
 async function spawnUntilListening(script: string, env: Record<string, string>) {
   const proc = Bun.spawn(["bun", join(here, script)], {
@@ -73,6 +77,15 @@ const VARIANTS: readonly Variant[] = [
   { name: "PPR, 0% shell hits", path: "/ppr/", hits: 0 },
 ]
 const S0_VARIANTS = VARIANTS.filter((variant) => variant.hits === 1 || variant.hits === 0)
+// Each gate's two sides run next to each other in every round.
+const GATE_VARIANTS = [
+  "blocking SSR",
+  "PPR, 100% shell hits",
+  "defer() streaming",
+  "PPR, 0% shell hits",
+]
+  .map((name) => VARIANTS.find((variant) => variant.name === name))
+  .filter((variant) => variant !== undefined)
 
 // oha's URL regex reads `.` as itself, and an escaped one as something else, so dots stay as they are.
 const regexEscape = (text: string): string => text.replace(/[?*+()[\]{}|^$\\]/g, "\\$&")
@@ -228,39 +241,59 @@ try {
     }
     const idle = await idleCpuPerMs(origin)
     const cost = new Map<string, { us: number[]; reads: number[] }>()
-    for (let pass = 0; pass < WARMUP_PASSES + PASSES; pass++) {
+    const record = async (variant: Variant, n: number) => {
+      const run = await load(origin, variant, 1, n, 128)
+      const entry = cost.get(variant.name) ?? { us: [], reads: [] }
+      entry.us.push(run.cpuPerRequest - (idle * run.elapsedMs) / n)
+      entry.reads.push(run.readsPerRequest)
+      cost.set(variant.name, entry)
+    }
+    for (let pass = 0; pass < WARMUP_PASSES; pass++) {
+      for (const variant of VARIANTS) await load(origin, variant, 1, GATE_REQUESTS, 128)
+    }
+    for (let round = 0; round < GATE_ROUNDS; round++) {
+      const order = round % 2 === 0 ? GATE_VARIANTS : [...GATE_VARIANTS].reverse()
+      for (const variant of order) await record(variant, GATE_REQUESTS)
+    }
+    for (let pass = 0; pass < PASSES; pass++) {
       for (const variant of VARIANTS) {
-        const run = await load(origin, variant, 1, 3_000, 128)
-        if (pass < WARMUP_PASSES) continue
-        const entry = cost.get(variant.name) ?? { us: [], reads: [] }
-        entry.us.push(run.cpuPerRequest - (idle * run.elapsedMs) / 3_000)
-        entry.reads.push(run.readsPerRequest)
-        cost.set(variant.name, entry)
+        if (!GATE_VARIANTS.includes(variant)) await record(variant, 3_000)
       }
     }
     for (const variant of VARIANTS) {
       const t = samples.get(variant.name)
       const c = cost.get(variant.name)
       if (t === undefined || c === undefined) continue
+      const us =
+        c.us.length > PASSES
+          ? `${median(c.us).toFixed(0)} us (${Math.min(...c.us).toFixed(0)}-${Math.max(...c.us).toFixed(0)})`
+          : `${c.us.map((x) => x.toFixed(0)).join(" / ")} us`
       rows.push(
-        `| ${framework} ${variant.name} | ${median(t.ttfb).toFixed(2)} ms | ${median(t.total).toFixed(1)} ms | ${t.bytes} | ${c.us.map((x) => x.toFixed(0)).join(" / ")} us | ${mean(c.reads).toFixed(2)} |`,
+        `| ${framework} ${variant.name} | ${median(t.ttfb).toFixed(2)} ms | ${median(t.total).toFixed(1)} ms | ${t.bytes} | ${us} | ${mean(c.reads).toFixed(2)} |`,
       )
     }
-    const cpu = (name: string): number => mean(cost.get(name)?.us ?? [])
-    const cached = cpu("PPR, 100% shell hits")
-    const blocking = cpu("blocking SSR")
-    const uncached = cpu("PPR, 0% shell hits")
-    const deferred = cpu("defer() streaming")
+    /** The median over rounds of one variant's CPU over another's, beside the rounds' range. */
+    const ratio = (name: string, base: string): { median: number; range: string } => {
+      const top = cost.get(name)?.us ?? []
+      const bottom = cost.get(base)?.us ?? []
+      const rounds = top.map((us, round) => us / (bottom[round] ?? Number.NaN))
+      return {
+        median: median(rounds),
+        range: `${Math.min(...rounds).toFixed(2)}-${Math.max(...rounds).toFixed(2)}`,
+      }
+    }
+    const cached = ratio("PPR, 100% shell hits", "blocking SSR")
+    const uncached = ratio("PPR, 0% shell hits", "defer() streaming")
     const cachedTtfb = median(samples.get("PPR, 100% shell hits")?.ttfb ?? [])
     const gates: Array<readonly [string, boolean]> = [
       [
-        `cached CPU ${(cached / blocking).toFixed(2)}x blocking (gate 0.75x)`,
-        cached <= 0.75 * blocking,
+        `cached CPU ${cached.median.toFixed(2)}x blocking, median of ${GATE_ROUNDS} rounds ${cached.range} (gate 0.75x)`,
+        cached.median <= 0.75,
       ],
       [`cached TTFB p50 ${cachedTtfb.toFixed(2)} ms (gate 2 ms)`, cachedTtfb < 2],
       [
-        `0%-hit CPU ${(uncached / deferred).toFixed(2)}x defer() (gate 1.2x)`,
-        uncached <= 1.2 * deferred,
+        `0%-hit CPU ${uncached.median.toFixed(2)}x defer(), median of ${GATE_ROUNDS} rounds ${uncached.range} (gate 1.2x)`,
+        uncached.median <= 1.2,
       ],
     ]
     console.log(`${framework}: idle CPU ${(idle * 1000).toFixed(0)} us per second, subtracted`)
