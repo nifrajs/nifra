@@ -292,7 +292,14 @@ describe("AcpBackend", () => {
       {},
       "the ACP agent exited with code 2: fatal: no credentials for [REDACTED]",
     ],
-    [["--die-on-init-late-stderr"], {}, "the ACP agent exited with code 2: fatal: no credentials"],
+    [
+      ["--die-on-init-late-stderr"],
+      {},
+      // On Windows the agent's stderr ends when it exits, so a line written after that never arrives.
+      process.platform === "win32"
+        ? "the ACP agent exited with code 2"
+        : "the ACP agent exited with code 2: fatal: no credentials",
+    ],
   ])("a handshake with %p fails", async (flags, options, message) => {
     await expect(backend(flags, options).createSession({ cwd: CWD })).rejects.toThrow(message)
   })
