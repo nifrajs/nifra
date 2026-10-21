@@ -9,7 +9,11 @@ import type { RenderAdapter } from "@nifrajs/web"
 import type { ComponentChildren } from "preact"
 import { compose } from "./compose.ts"
 import { idScope } from "./id-scope.ts"
-import { preactRenderToStream, preactRenderToString } from "./preact-render.ts"
+import {
+  type PreactRenderToString,
+  preactRenderToStream,
+  preactRenderToString,
+} from "./preact-render.ts"
 
 const ISLAND_RUNTIME_OPEN = "<script>(function(){"
 const ISLAND_RUNTIME_OPEN_BYTES = new TextEncoder().encode(ISLAND_RUNTIME_OPEN)
@@ -66,6 +70,12 @@ function renderUnlessSuspended(
   }
 }
 
+/** `render` with the string renderer: synchronous once it is loaded, after its lazy load before. */
+function withStringRenderer<T>(render: (renderer: PreactRenderToString) => T): T | Promise<T> {
+  const loaded = preactRenderToString()
+  return loaded instanceof Promise ? loaded.then(render) : render(loaded)
+}
+
 /** The Preact server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const preactAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). The sync
@@ -76,20 +86,17 @@ export const preactAdapter: RenderAdapter = {
   // its synchronous buffered fast path on every subsequent request. A render that suspends is handed
   // back (`undefined`) to be streamed, where the boundary resolves.
   renderToString(chain, props) {
-    const loaded = preactRenderToString()
-    if (loaded instanceof Promise) {
-      return loaded.then(({ renderToString }) =>
-        renderUnlessSuspended(renderToString, compose(chain, props)),
-      )
-    }
-    return renderUnlessSuspended(loaded.renderToString, compose(chain, props))
+    return withStringRenderer(({ renderToString }) =>
+      renderUnlessSuspended(renderToString, compose(chain, props)),
+    )
   },
   // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
   // with the page's, which the client root it hydrates into repeats.
   async renderFragment(ui, options) {
-    const { renderToString } = await preactRenderToString()
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Preact output; the seam erases it to unknown.
-    return renderToString(idScope(ui() as ComponentChildren, options.idPrefix))
+    return withStringRenderer(({ renderToString }) =>
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Preact output; the seam erases it to unknown.
+      renderToString(idScope(ui() as ComponentChildren, options.idPrefix)),
+    )
   },
   async renderToStream(chain, props, options) {
     // `renderToReadableStream` yields a Web ReadableStream<Uint8Array>; <Suspense> boundaries
