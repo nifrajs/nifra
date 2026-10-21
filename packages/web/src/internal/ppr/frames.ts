@@ -63,6 +63,23 @@ export function encodeHoleFrame(name: string, outcome: HoleOutcome, maxBytes: nu
 export const encodeRequestScript = (cancelUrl: string, token: string, holes: readonly string[]) =>
   `<script type="application/json" id="nifra-ppr-req">${serializeData({ cancel: cancelUrl, token, holes })}</script>`
 
+const TOKEN_KEY = '"token":"'
+
+/**
+ * {@link encodeRequestScript} before and after the token, so a route's script is serialized once and
+ * each response adds only its token. Holds for a base64url token, which serializing leaves as it is.
+ * An escaped JSON string never holds `"token":"` (each of its quotes follows a backslash), so the
+ * key found is the token's.
+ */
+export function requestScriptAround(
+  cancelUrl: string,
+  holes: readonly string[],
+): readonly [string, string] {
+  const script = encodeRequestScript(cancelUrl, "", holes)
+  const at = script.indexOf(TOKEN_KEY) + TOKEN_KEY.length
+  return [script.slice(0, at), script.slice(at)]
+}
+
 /**
  * Put each hole's fallback HTML into its empty host in a rendered shell, once per shell build. Every
  * declared hole must have exactly one host and that host must be empty: the adapter renders

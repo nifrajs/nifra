@@ -51,6 +51,34 @@ const SYSTEM_TIMERS: AdmissionTimers = {
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
+const watchers = new WeakMap<AbortSignal, Set<() => void>>()
+
+/**
+ * Calls `onAbort` when `signal` aborts, until the returned function is called. A signal gets one
+ * native listener that every watcher shares: adding and removing a native listener per hole
+ * invocation cost more under load than the invocation's own bookkeeping.
+ */
+export function watchAbort(signal: AbortSignal, onAbort: () => void): () => void {
+  let watching = watchers.get(signal)
+  if (watching === undefined) {
+    const created = new Set<() => void>()
+    watching = created
+    watchers.set(signal, created)
+    signal.addEventListener(
+      "abort",
+      () => {
+        for (const watcher of created) watcher()
+      },
+      { once: true },
+    )
+  }
+  const set = watching
+  set.add(onAbort)
+  return () => {
+    set.delete(onAbort)
+  }
+}
+
 const bump = (counts: Map<string, number>, key: string, by: number): void => {
   const next = (counts.get(key) ?? 0) + by
   if (next === 0) counts.delete(key)
@@ -133,10 +161,11 @@ export class HoleAdmission {
         onAbandoned()
       }, this.#options.abandonGraceMs)
     }
+    let unwatch: (() => void) | undefined
     if (signal.aborted) onAbort()
-    else signal.addEventListener("abort", onAbort, { once: true })
+    else unwatch = watchAbort(signal, onAbort)
     const settle = (): void => {
-      signal.removeEventListener("abort", onAbort)
+      unwatch?.()
       if (timer !== undefined) this.#timers.clearTimeout(timer)
       this.#pending--
       bump(this.#pendingBy, key, -1)
@@ -181,15 +210,14 @@ const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
   signal.aborted
     ? Promise.reject(signal.reason)
     : new Promise<T>((resolve, reject) => {
-        const onAbort = (): void => reject(signal.reason)
-        signal.addEventListener("abort", onAbort, { once: true })
+        const unwatch = watchAbort(signal, () => reject(signal.reason))
         promise.then(
           (value) => {
-            signal.removeEventListener("abort", onAbort)
+            unwatch()
             resolve(value)
           },
           (error: unknown) => {
-            signal.removeEventListener("abort", onAbort)
+            unwatch()
             reject(error)
           },
         )

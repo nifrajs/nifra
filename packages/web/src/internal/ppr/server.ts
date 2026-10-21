@@ -8,7 +8,7 @@ import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../cs
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
 import { isControlFlow, isStatusSignal } from "../render-document.ts"
-import { HoleAdmission, type HoleRun, type HoleSlot } from "./admission.ts"
+import { HoleAdmission, type HoleRun, type HoleSlot, watchAbort } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
   type HoleRegistration,
@@ -21,8 +21,8 @@ import {
 import {
   assertHoleName,
   encodeHoleFrame,
-  encodeRequestScript,
   injectHoleFallbacks,
+  requestScriptAround,
   validateHoleHtml,
 } from "./frames.ts"
 import { type ResolvedPprOptions, totalDeadlineMs } from "./options.ts"
@@ -57,8 +57,12 @@ const NO_BYTES = new Uint8Array(0)
 
 interface ShellEntry {
   readonly routeId: string
-  /** The document up to (not including) `</body></html>`, encoded once: holes stream after it. */
+  /**
+   * The document up to (not including) `</body></html>` and the request script up to its token,
+   * encoded once: the token, the rest of the script ({@link requestTail}) and the holes follow.
+   */
   readonly prefix: Uint8Array
+  readonly requestTail: Uint8Array
   /** The shell loader's output, for a soft navigation's data request. */
   readonly data: unknown
   readonly bytes: number
@@ -140,6 +144,50 @@ const holeCtx = (
     search: Object.freeze({ ...context.search }),
     signal,
   })
+
+interface HoleDeadline {
+  readonly signal: AbortSignal
+  /** One of the holes settled; the last one clears the timer. */
+  leave(): void
+}
+
+interface HoleDeadlines {
+  join(timeoutMs: number): HoleDeadline
+}
+
+/**
+ * Holes that start together with one timeout share its signal and timer: a controller, listener and
+ * timer per hole cost more under load than the holes. Not `AbortSignal.timeout`: its timer stays
+ * pending after the holes settle.
+ */
+const holeDeadlines = (response: AbortSignal): HoleDeadlines => {
+  const byTimeout = new Map<number, HoleDeadline & { joined: number }>()
+  return {
+    join(timeoutMs) {
+      let deadline = byTimeout.get(timeoutMs)
+      if (deadline === undefined) {
+        const own = new AbortController()
+        if (response.aborted) own.abort(response.reason)
+        else watchAbort(response, () => own.abort(response.reason))
+        const timer = setTimeout(
+          () => own.abort(new DOMException("The operation timed out.", "TimeoutError")),
+          timeoutMs,
+        )
+        const created = {
+          signal: own.signal,
+          joined: 0,
+          leave() {
+            if (--created.joined === 0) clearTimeout(timer)
+          },
+        }
+        deadline = created
+        byTimeout.set(timeoutMs, created)
+      }
+      deadline.joined++
+      return deadline
+    },
+  }
+}
 
 // Error frames are a few hundred bytes whatever the hole, so no frame limit applies to them.
 const errorFrame = (name: string): string =>
@@ -299,17 +347,22 @@ export function createPprServer(config: PprServerConfig): PprServer {
         )
       }
     }
-    let bytes = new TextEncoder().encode(prefix)
-    if (bytes.length < options.minShellBytes) {
-      bytes = new TextEncoder().encode(
-        `${prefix}<!--${" ".repeat(options.minShellBytes - bytes.length)}-->`,
-      )
-    }
+    const encoder = new TextEncoder()
+    const length = encoder.encode(prefix).length
+    if (length < options.minShellBytes)
+      prefix = `${prefix}<!--${" ".repeat(options.minShellBytes - length)}-->`
+    const [beforeToken, afterToken] = requestScriptAround(
+      cancelUrl,
+      request.holes.map((hole) => hole.name),
+    )
+    const bytes = encoder.encode(prefix + beforeToken)
+    const requestTail = encoder.encode(afterToken)
     return {
       routeId: request.routeId,
       prefix: bytes,
+      requestTail,
       data,
-      bytes: bytes.length,
+      bytes: bytes.length + requestTail.length,
       builtAt: now(),
       tags: request.tags(),
       failures: 0,
@@ -336,6 +389,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
           return {
             routeId,
             prefix: NO_BYTES,
+            requestTail: NO_BYTES,
             data: undefined,
             bytes: NOT_FOUND_ENTRY_BYTES + key.length,
             builtAt: now(),
@@ -417,32 +471,24 @@ export function createPprServer(config: PprServerConfig): PprServer {
       kind: error instanceof Error ? "error" : typeof error,
     })
 
-  /** Invoke one hole loader under admission, with its own deadline under `response`. */
+  /** Invoke one hole loader under admission, with its timeout's deadline under the response. */
   const runHole = (
     slot: HoleSlot | undefined,
     request: PprRequest,
     hole: HoleRegistration,
-    response: AbortSignal,
+    deadlines: HoleDeadlines,
   ): Promise<HoleRun<unknown>> => {
     const load = hole.load
     if (load === undefined) return Promise.resolve({ ok: true, value: undefined })
     if (slot === undefined) return Promise.resolve(SHED)
-    // Not `AbortSignal.timeout`: its timer stays pending after the hole settles, and under load the
-    // pending timers cost more than the holes.
-    const own = new AbortController()
-    const signal = own.signal
-    if (response.aborted) own.abort(response.reason)
-    else response.addEventListener("abort", () => own.abort(response.reason), { once: true })
-    const deadline = setTimeout(
-      () => own.abort(new DOMException("The operation timed out.", "TimeoutError")),
-      hole.timeout ?? options.holeTimeoutMs,
-    )
+    const deadline = deadlines.join(hole.timeout ?? options.holeTimeoutMs)
+    const signal = deadline.signal
     return slot
       .run(`${request.routeId}|${hole.name}`, signal, () =>
         load(holeCtx(request.holeContext, signal)),
       )
       .then((run) => {
-        clearTimeout(deadline)
+        deadline.leave()
         // The shell's status and headers are already sent, so a hole has no redirect or status to give.
         const settled: HoleRun<unknown> =
           run.ok && (isControlFlow(run.value) || isStatusSignal(run.value))
@@ -456,9 +502,10 @@ export function createPprServer(config: PprServerConfig): PprServer {
   /** Start every hole of one response. No free slot: none is invoked and each gets its error. */
   const startHoles = (request: PprRequest, response: AbortSignal): HoleStart[] => {
     const slot = admission.slot()
+    const deadlines = holeDeadlines(response)
     const runs = request.holes.map((hole) => ({
       hole,
-      run: runHole(slot, request, hole, response),
+      run: runHole(slot, request, hole, deadlines),
     }))
     slot?.seal()
     return runs
@@ -529,8 +576,9 @@ export function createPprServer(config: PprServerConfig): PprServer {
         return new Response(null, { status: 200, headers: documentHeaders(csp) })
       }
       const controller = new AbortController()
-      const onDisconnect = (): void => controller.abort(request.request.signal.reason)
-      request.request.signal.addEventListener("abort", onDisconnect, { once: true })
+      const unwatchDisconnect = watchAbort(request.request.signal, () =>
+        controller.abort(request.request.signal.reason),
+      )
       const deadlineMs = totalDeadlineMs(
         options,
         request.holes.map((hole) => hole.timeout ?? options.holeTimeoutMs),
@@ -542,13 +590,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
       const token = randomToken()
       live.set(token, controller)
       // Any abort (disconnect, deadline, cancel) retires the token at once, not when frames settle.
-      controller.signal.addEventListener("abort", () => live.delete(token), { once: true })
+      watchAbort(controller.signal, () => live.delete(token))
       let lifetime: ReturnType<typeof setTimeout> | undefined
       const cleanup = (): void => {
         clearTimeout(deadline)
         clearTimeout(lifetime)
         live.delete(token)
-        request.request.signal.removeEventListener("abort", onDisconnect)
+        unwatchDisconnect()
       }
       // A cached shell is known at once, so holes start only once it is known to be a page; on a
       // miss they start beside the build, which is where starting early pays.
@@ -636,16 +684,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
         {
           start(stream) {
             sink = stream
-            const tail = encoder.encode(
-              encodeRequestScript(
-                cancelUrl,
-                token,
-                request.holes.map((hole) => hole.name),
-              ),
+            // A copy: a reader may write into a chunk, and the shell's bytes serve every visitor.
+            const first = new Uint8Array(
+              shell.prefix.length + token.length + shell.requestTail.length,
             )
-            const first = new Uint8Array(shell.prefix.length + tail.length)
             first.set(shell.prefix)
-            first.set(tail, shell.prefix.length)
+            encoder.encodeInto(token, first.subarray(shell.prefix.length))
+            first.set(shell.requestTail, shell.prefix.length + token.length)
             stream.enqueue(first)
           },
           // Pulled only when the reader wants bytes, so unread frames stay counted in `state.queue`.

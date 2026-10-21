@@ -5,6 +5,7 @@ import {
   encodeHoleFrame,
   encodeRequestScript,
   injectHoleFallbacks,
+  requestScriptAround,
   validateHoleHtml,
 } from "../src/internal/ppr/frames.ts"
 import { holeInvoker, PPR_RUNTIME, pprScriptHashes } from "../src/internal/ppr/runtime.ts"
@@ -123,6 +124,15 @@ describe("PPR hole frames", () => {
     expect(script).toBe(
       '<script type="application/json" id="nifra-ppr-req">{"cancel":"/__nifra/ppr/cancel","token":"t0k","holes":["cart","greeting"]}</script>',
     )
+  })
+
+  test("the request script split around its token joins to the whole script", () => {
+    for (const cancel of ["/__nifra/ppr/cancel", '/x?"token":"y', "/</script><!--", ""])
+      for (const holes of [[], ["cart"], ["a", "b-c"]]) {
+        const [before, after] = requestScriptAround(cancel, holes)
+        for (const token of ["", "AZaz09-_", "x".repeat(22)])
+          expect(before + token + after).toBe(encodeRequestScript(cancel, token, holes))
+      }
   })
 })
 
