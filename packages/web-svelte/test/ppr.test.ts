@@ -12,7 +12,12 @@ async function inBun(code: string): Promise<unknown> {
     plugin(svelteBunPlugin("ssr"));
     ${code}
   `
-  const proc = Bun.spawn([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe" })
+  // From the package, so the script's bare `svelte/*` imports resolve whatever the runner's cwd.
+  const proc = Bun.spawn([process.execPath, "--eval", script], {
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
   const [stdout, stderr, exit] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
