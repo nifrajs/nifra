@@ -67,8 +67,15 @@ import {
 import { createSsrGraph, type SsrGraph } from "./dev-ssr-graph.ts"
 import { formatBuildLog } from "./diagnostic.ts"
 import { discoverRoutes } from "./fs.ts"
-import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { DEFAULT_DEV_PORT, generateClientEntry, type LiveClientEntry } from "./index.ts"
 import { DEV_ENTRY_FILE } from "./internal/dev-reserved.ts"
+import {
+  type BunUpgradeServer,
+  bunDevWebSocket,
+  isWebSocketUpgrade,
+  type UpgradableApp,
+  upgradeOnBun,
+} from "./internal/dev-websocket.ts"
 import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
 import { servePublicDir } from "./public-dir.ts"
 
@@ -76,7 +83,7 @@ export type { DevAppHooks } from "./dev-session.ts"
 export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 /** Minimal app surface the dev server needs - `createWebApp(...)` satisfies it. */
-interface FetchApp {
+interface FetchApp extends UpgradableApp {
   fetch(request: Request): Response | Promise<Response>
 }
 
@@ -169,7 +176,8 @@ interface BunServeOptions {
   readonly hostname: "127.0.0.1"
   readonly development: { readonly hmr: boolean }
   readonly routes: Record<string, HtmlBundle>
-  fetch(request: Request): Promise<Response>
+  fetch(request: Request, server: BunUpgradeServer): Promise<Response | undefined>
+  readonly websocket: typeof bunDevWebSocket
 }
 interface BunServerHandle {
   readonly port: number
@@ -214,6 +222,7 @@ export function devHtml(entryHref: string): string {
 interface WriteDevFilesOptions {
   readonly routesDir: string
   readonly clientModule: string
+  readonly live?: LiveClientEntry | undefined
   readonly entryPath: string
   readonly htmlPath: string
 }
@@ -226,7 +235,7 @@ interface WriteDevFilesOptions {
  * the way the runtime does, so a leading slash there would mean the filesystem root.
  */
 export function writeDevFiles(options: WriteDevFilesOptions): void {
-  const { routesDir, clientModule, entryPath, htmlPath } = options
+  const { routesDir, clientModule, entryPath, htmlPath, live } = options
   mkdirSync(dirname(entryPath), { recursive: true })
   const manifest = discoverRoutes(routesDir)
   const entryDir = dirname(entryPath)
@@ -244,7 +253,10 @@ export function writeDevFiles(options: WriteDevFilesOptions): void {
   // already been passed to createRoot()") and only then does the callback get to reload - trading an
   // accurate warning for a real error. Editing a component-only module never reaches this path: Bun
   // applies React Fast Refresh there and state is preserved.
-  writeIfChanged(entryPath, generateClientEntry(manifest, { clientModule, resolve: toSpecifier }))
+  writeIfChanged(
+    entryPath,
+    generateClientEntry(manifest, { clientModule, resolve: toSpecifier, live }),
+  )
   const entryHref = `./${relative(dirname(htmlPath), entryPath).replaceAll("\\", "/")}`
   writeIfChanged(htmlPath, devHtml(entryHref))
 }
@@ -355,7 +367,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       ? async (): Promise<undefined> => undefined
       : servePublicDir({ dir: resolve(publicDir) })
 
-  writeDevFiles({ routesDir, clientModule, entryPath, htmlPath })
+  writeDevFiles({ routesDir, clientModule, entryPath, htmlPath, live: options.live })
   // Importing the generated HTML is what hands it to Bun's bundler. A runtime-computed path is fine:
   // Bun resolves and bundles the HTML, and everything it references, at import time.
   const htmlModule = (await import(htmlPath)) as { default: HtmlBundle }
@@ -486,7 +498,8 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       development: { hmr: true },
       // The probe route is the ONLY path Bun owns; everything else falls through to nifra's SSR.
       routes: { [PROBE_PATH]: htmlModule.default },
-      fetch: async (req: Request): Promise<Response> => {
+      websocket: bunDevWebSocket,
+      fetch: async (req: Request, bun: BunUpgradeServer): Promise<Response | undefined> => {
         const url = new URL(req.url)
         const host = req.headers.get("host") ?? url.host
         if (!isLoopbackHost(host) && !allowedHosts.has(hostName(host)))
@@ -494,6 +507,14 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
             `[nifra/web/dev] ${hostName(host)} is not a loopback host; add it to allowedHosts if this server should answer it.\n`,
             { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
           )
+        if (isWebSocketUpgrade(req)) {
+          const answer = await upgradeOnBun(
+            await appForRequest((await currentEntry()).src),
+            req,
+            bun,
+          )
+          if (answer !== "pass") return answer
+        }
         // The stable client-entry URL. Pages reference THIS; it redirects to whichever hashed chunk Bun
         // is serving at the moment the browser asks. A redirect rather than a proxy so the module's final
         // URL is Bun's own - its HMR client derives its socket and module identity from `import.meta.url`,
@@ -554,7 +575,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       syncWatchedFiles(false)
       session.markChange()
       try {
-        writeDevFiles({ routesDir, clientModule, entryPath, htmlPath })
+        writeDevFiles({ routesDir, clientModule, entryPath, htmlPath, live: options.live })
       } catch (err) {
         // A half-saved file can fail the scan mid-edit; the next change re-runs this.
         console.error("[nifra/web/dev] client entry regeneration failed:", err)

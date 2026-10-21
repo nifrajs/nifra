@@ -4,6 +4,7 @@
  */
 import type { IdentityPlugin, WebSocketHandler } from "@nifrajs/core/server"
 import type { LoaderContext } from "../manifest.ts"
+import type { LiveClientEntry } from "./codegen.ts"
 
 /** What `createWebApp` tells the runtime about its routes. */
 export interface LiveRouteMatch {
@@ -81,6 +82,8 @@ export const LIVE_ATTACH: unique symbol = Symbol.for("nifra.web.live.attach")
 
 export interface LiveRuntimeHandle {
   readonly [LIVE_ATTACH]: (input: LiveAttachInput) => LiveAttachment
+  /** The client entry's `live` option for this runtime: the endpoints it serves, where not the default. */
+  readonly clientEntry: LiveClientEntry
   /** Announce changed keys; resolves once this process applied the change. */
   publish(...keys: string[]): Promise<void>
 }

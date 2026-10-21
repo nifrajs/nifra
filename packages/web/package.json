@@ -47,6 +47,16 @@
       "types": "./dist/live-client.d.ts",
       "default": "./dist/live-client.js"
     },
+    "./live-hub": {
+      "bun": "./src/live-hub.ts",
+      "types": "./dist/live-hub.d.ts",
+      "default": "./dist/live-hub.js"
+    },
+    "./live-redis": {
+      "bun": "./src/live-redis.ts",
+      "types": "./dist/live-redis.d.ts",
+      "default": "./dist/live-redis.js"
+    },
     "./seo": {
       "bun": "./src/seo.ts",
       "types": "./dist/seo.d.ts",

@@ -184,6 +184,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
       clientModule,
       resolve,
       copyChunks: copySplit !== undefined,
+      live: options.live,
     })}`,
   )
 
@@ -724,6 +725,7 @@ export const viteBundler: Bundler = {
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
       ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       ...(input.root ? { root: input.root } : {}),
+      live: input.live,
     }),
   buildServer: (input) =>
     buildServerVite({

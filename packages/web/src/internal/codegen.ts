@@ -55,10 +55,16 @@ export interface GenerateClientEntryOptions {
   readonly copyChunks?: boolean
   /**
    * The server runs `createWebApp({ live })`: route loads go through its live load endpoint and the
-   * entry keeps what is on screen fresh (`@nifrajs/web/live-client`). Give the endpoints when the
-   * runtime moves them. Absent, the entry is exactly the non-live one.
+   * entry keeps what is on screen fresh (`@nifrajs/web/live-client`). Absent, the entry is exactly the
+   * non-live one.
    */
-  readonly live?: { readonly path?: string; readonly loadPath?: string }
+  readonly live?: LiveClientEntry | undefined
+}
+
+/** A client entry for a live server: `{}`, or the endpoints when the runtime moves them. */
+export interface LiveClientEntry {
+  readonly path?: string
+  readonly loadPath?: string
 }
 
 /**

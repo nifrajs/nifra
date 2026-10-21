@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { connect } from "node:net"
 import { join } from "node:path"
+import { server as nifra } from "@nifrajs/core"
+import { websocket } from "@nifrajs/core/ws"
 import {
   DEV_FEED_PATHS,
   DEV_REQUEST_ID_HEADER,
@@ -10,6 +12,7 @@ import {
 } from "../src/dev-feed.ts"
 import type { DevAppHooks } from "../src/dev-session.ts"
 import { createViteDevServer, LAST_ERROR_PATH, type ViteDevServer } from "../src/vite.ts"
+import { handshakeStatus, roomApp, roomRoundTrip } from "./dev-websocket-fixture.ts"
 
 /**
  * What the Vite dev server does with a REQUEST, as opposed to with a file change.
@@ -479,4 +482,30 @@ test("a hidden file in public/ reaches the app, as in production, and is never s
   }
   expect(await (await fetch(`${origin}/robots.txt`)).text()).toBe("User-agent: *\n")
   expect(await (await fetch(`${origin}/.well-known/security.txt`)).text()).toBe("Contact: x\n")
+})
+
+test("an app WebSocket route upgrades through the Vite dev server, beside Vite's HMR socket", async () => {
+  const app = roomApp(nifra().use(websocket()))
+  server = await createViteDevServer({
+    root,
+    routesDir,
+    clientModule: join(root, "client.ts"),
+    port: 0,
+    record: false,
+    createApp: () => app,
+  })
+  const port = server.port
+  expect(await roomRoundTrip(app, port)).toEqual(["hello", "echo:x", "news"])
+  // A client that drops the socket right after the handshake leaves the server listening.
+  expect(await handshakeStatus(port, "/room", `127.0.0.1:${port}`)).toBe(101)
+  expect(await handshakeStatus(port, "/room?deny", `127.0.0.1:${port}`)).toBe(403)
+  expect(await handshakeStatus(port, "/room", `evil.example:${port}`)).toBe(403)
+  // Vite's HMR handshake is Vite's: it opens with Vite's greeting.
+  const hmr = new WebSocket(`ws://127.0.0.1:${port}/`, "vite-hmr")
+  const greeting = await new Promise<string>((resolve, reject) => {
+    hmr.addEventListener("message", (event) => resolve(String(event.data)), { once: true })
+    hmr.addEventListener("error", () => reject(new Error("hmr socket failed")))
+  })
+  hmr.close()
+  expect(JSON.parse(greeting)).toMatchObject({ type: "connected" })
 })

@@ -15,7 +15,9 @@ import {
   live,
   nextSeq,
 } from "../src/live.ts"
+import { redisLiveBus } from "../src/live-redis.ts"
 import type { LoaderContext } from "../src/manifest.ts"
+import { memoryRedis } from "./memory-redis.ts"
 
 const SECRET = "socket-test-secret-0123456789abcdef-1"
 const OLD_SECRET = "socket-test-secret-0123456789abcdef-2"
@@ -563,6 +565,36 @@ test("a gap behind what the process already applied keeps its watermarks current
   await watching(served, second)
 })
 
+test("a Redis stream trimmed past a process's reader: sockets resync and older grants keep nothing", async () => {
+  const redis = memoryRedis()
+  const served = serve({
+    runtime: live({
+      secret: SECRET,
+      appId: APP_ID,
+      subject: (ctx) => userOf(ctx.request),
+      bus: redisLiveBus({ ...redis, maxLength: 2 }),
+    }),
+  })
+  await served.runtime.ready
+  const client = await connect(served.base)
+  const loaded = await watching(served, client)
+  // This process's parked read fails on the first append; the other process appends three more,
+  // and the stream keeps two, before the read is retried.
+  redis.failures.read = 1
+  const other = redisLiveBus({ ...redis, maxLength: 2 })
+  for (const key of ["other:1", "post:42", "other:2", "other:3"]) {
+    await other.append({ type: "change", keys: [key] })
+  }
+  expect(await client.closed).toBe(1013)
+  const runs = served.access.pageRuns
+  const again = await liveLoad(served, client.sid, { retain: [PAGE], grants: [loaded.grant ?? ""] })
+  expect(again.grant).toBeDefined()
+  expect(served.access.pageRuns).toBe(runs + 1)
+  // The history is known again from the gap on: a fresh load installs with nothing stale.
+  const back = await connect(served.base)
+  await watching(served, back)
+})
+
 test("publish, revoke and revokeKey check their arguments", async () => {
   const runtime = live({ secret: SECRET, subject: () => null })
   await runtime.publish()
@@ -589,4 +621,23 @@ test("socket options are checked at construction", () => {
   ]) {
     expect(() => live({ secret: SECRET, subject, ...bad })).toThrow(TypeError)
   }
+})
+
+test("a runtime holds the apps it is attached to weakly: a discarded app can be collected", async () => {
+  const runtime = live({ secret: SECRET, appId: APP_ID, subject: () => "alice" })
+  await runtime.ready
+  // A dev server's rebuilds: each new app is attached to the same runtime, and the old one dropped.
+  const discarded = ((): WeakRef<object> => new WeakRef(serve({ runtime, listen: false }).app))()
+  const kept = serve({ runtime })
+  // Bun scans the stack conservatively: a few rounds, each from a fresh turn, let a stale slot go.
+  for (let i = 0; i < 50 && discarded.deref() !== undefined; i++) {
+    await new Promise((resolve) => setImmediate(resolve))
+    Bun.gc(true)
+  }
+  expect(discarded.deref()).toBeUndefined()
+  // The kept app still hears changes.
+  const client = await connect(kept.base)
+  const loaded = await watching(kept, client)
+  await runtime.publish("post:42")
+  expect(await client.drain()).toEqual([{ t: "changed", tag: tagOf(loaded, PAGE), spread: 0 }])
 })

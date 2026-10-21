@@ -104,12 +104,12 @@ async function rig(options: RigOptions = {}): Promise<Rig> {
       hash,
       ...options,
     },
-    [
-      (topic, frame) => {
+    new Set([
+      (topic: string, frame: string) => {
         published.push({ topic, frame })
         for (const socket of sockets) if (socket.topics.has(topic)) socket.send(frame)
       },
-    ],
+    ]),
   )
   return { ring, history, revocations, hub, sockets, published, hash }
 }
@@ -701,11 +701,29 @@ test("capacity: the socket cap, the RSS cap, an unreachable bus and the topic ca
   const third = connect(topics)
   await watch(topics, third, 1, [await grantFor(topics, third, { "P:a": ["post:2"] })])
   expect(third.closed?.code).toBe(CLOSE_CAPACITY)
+  // A budget on socket-tag subscriptions in all: a watch that would pass it is refused, and a socket
+  // that leaves gives its share back.
+  const budget = await rig({ maxMemberships: 3 })
+  const holding = await watched(budget, { "P:a": ["post:1", "post:2"] })
+  const over = connect(budget)
+  await watch(budget, over, 1, [await grantFor(budget, over, { "P:a": ["post:1", "post:3"] })])
+  expect(over.closed?.code).toBe(CLOSE_CAPACITY)
+  // Replacing its own watch counts only the difference.
+  await watch(budget, holding, 2, [
+    await grantFor(budget, holding, { "P:a": ["post:1", "post:2", "post:3"] }),
+  ])
+  expect(holding.closed).toBeUndefined()
+  budget.hub.close(holding)
+  const after = connect(budget)
+  await watch(budget, after, 1, [await grantFor(budget, after, { "P:a": ["post:1", "post:3"] })])
+  expect(after.closed).toBeUndefined()
 })
 
 test("the sweep closes expired, silent and slow sockets", async () => {
   const r = await rig()
+  // Frozen: every socket below is last seen at `start`, however long the setup takes.
   const start = Date.now()
+  setSystemTime(new Date(start))
   const expiring = await watched(r, { "P:a": ["post:1"] })
   const silent = connect(r)
   const slow = connect(r)

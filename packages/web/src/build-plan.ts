@@ -1,6 +1,7 @@
 import { basename as pathBasename } from "node:path"
 import type { CssLoadingMode } from "./css-contract.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import type { LiveClientEntry } from "./internal/codegen.ts"
 import { isBareNodeBuiltin } from "./internal/node-builtins.ts"
 import type { SecretExemption } from "./internal/secret-scan.ts"
 import type { ClientModuleGraph } from "./module-graph.ts"
@@ -187,6 +188,8 @@ export interface Bundler {
     readonly root?: string
     /** Reviewed false positives of the secret scan. */
     readonly secretExemptions?: readonly SecretExemption[]
+    /** The client entry for a live server (`BuildClientOptions.live`). */
+    readonly live?: LiveClientEntry | undefined
   }): Promise<BuildManifest>
   /** Build the server worker → the shared {@link ServerBuild}. */
   buildServer(input: {

@@ -5257,6 +5257,8 @@ _No named exports (side-effect entrypoint)._
   A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
 - **LinkDescriptor** _(interface)_ - `interface LinkDescriptor`
   One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable - the previous `Record<string, string>` required *every* value to be a present string, which rejected …
+- **LiveClientEntry** _(interface)_ - `interface LiveClientEntry`
+  A client entry for a live server: `{}`, or the endpoints when the runtime moves them.
 - **Loader** _(type)_ - `type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional data loader: params/request in, data out.
 - **LoaderContext** _(interface)_ - `interface LoaderContext`
@@ -5619,7 +5621,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy", "live"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
@@ -6119,6 +6121,36 @@ _No named exports (side-effect entrypoint)._
 - **LiveClient** _(interface)_ - `interface LiveClient`
 - **LiveClientOptions** _(interface)_ - `interface LiveClientOptions`
 - **liveClient** _(function)_ - `liveClient: (options?: LiveClientOptions) => LiveClient`
+
+### `@nifrajs/web/live-hub`
+
+- **ALARM_GAP_MS** _(const)_ - `ALARM_GAP_MS: 30000`
+  Alarms come no closer together than this: expiry is checked again before every frame anyway.
+- **DEFAULT_HUB_MEMBERSHIPS** _(const)_ - `DEFAULT_HUB_MEMBERSHIPS: 150000`
+  About 440 bytes of heap each when no two sockets share a tag, the worst case; far less when they do. 150,000 of them stay near 66 MB, inside the 128 MB a Durable Object's isolate may use.
+- **DEFAULT_HUB_SOCKETS** _(const)_ - `DEFAULT_HUB_SOCKETS: 5000`
+  The most sockets one hub was verified to hold, with every publish reaching them all well under 200 ms.
+- **LiveHubObject** _(class)_ - `class LiveHubObject`
+- **LiveHubOptions** _(interface)_ - `interface LiveHubOptions`
+- **LiveHubState** _(interface)_ - `interface LiveHubState`
+  The part of a Durable Object's state the hub uses (no Cloudflare types dependency).
+- **LiveHubStorage** _(interface)_ - `interface LiveHubStorage`
+- **LiveHubWebSocket** _(interface)_ - `interface LiveHubWebSocket`
+  A hibernatable server socket, as far as the hub uses one.
+- **MAX_ATTACHMENT_BYTES** _(const)_ - `MAX_ATTACHMENT_BYTES: 512`
+  Per-socket limits the platform sets; the hub stays well under both (see the tests).
+- **MAX_SOCKET_RECORD_BYTES** _(const)_ - `MAX_SOCKET_RECORD_BYTES: 30720`
+- **liveHub** _(function)_ - `liveHub: <Env = Record<string, string | undefined>>(options: LiveHubOptions | ((env: Env) => LiveHubOptions)) => new (state: LiveHubState, env: Env) => LiveHubObject`
+  The live hub's Durable Object class. Export it from the Worker's main module under the class name the binding names.
+
+### `@nifrajs/web/live-redis`
+
+- **APPEND_SCRIPT** _(const)_ - `APPEND_SCRIPT: "local t = redis.call('TIME')\nlocal now = tonumber(t[1]) * 1000000 + tonumber(t[2])\nlocal last = tonumber(redis.call('HGET', KEYS[2], 'seq') or '0')\nlocal seq = math.max(last + 1, now)\nlocal id = stri…`
+  KEYS[1] the stream, KEYS[2] the clock hash; ARGV[1] the event JSON, ARGV[2] the trim length. Lua numbers are doubles: a microsecond clock stays exact below 2^53 (the year 2255).
+- **RedisCommand** _(type)_ - `type RedisCommand = (command: string, args: readonly string[]) => Promise<unknown>`
+  Send one Redis command and resolve with its reply, as any client's raw-command call does.
+- **RedisLiveBusOptions** _(interface)_ - `interface RedisLiveBusOptions`
+- **redisLiveBus** _(function)_ - `redisLiveBus: (options: RedisLiveBusOptions) => LiveBus`
 
 ### `@nifrajs/web/nano`
 

@@ -75,6 +75,8 @@ export interface Keyring {
   /** Grant lifetime in seconds. */
   readonly ttl: number
   readonly secretCount: number
+  /** Each secret's public 32-bit id, newest first: a token names its secret by it. */
+  readonly secretIds: readonly number[]
   /**
    * Encrypt under the first secret; `undefined` when the token would exceed {@link MAX_GRANT_CHARS} or
    * the hour's subkey reached {@link MAX_SEALS_PER_SUBKEY}.
@@ -194,6 +196,7 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
     appId,
     ttl,
     secretCount: entries.length,
+    secretIds: entries.map((entry) => entry.idKey),
     async seal(input, nowMs) {
       const iat = Math.floor(nowMs / 1000)
       const hour = Math.floor(iat / HOUR_SECONDS)

@@ -44,6 +44,31 @@ export interface HubOptions {
   readonly hash: (key: string) => number
   /** Distinct tags this process holds subscriptions for. Default {@link MAX_TOPICS}. */
   readonly maxTopics?: number
+  /**
+   * Socket-tag subscriptions this process holds in all; past it a watch is refused with 1013. For a
+   * host whose memory is capped below what its sockets could ask for. Default: no budget.
+   */
+  readonly maxMemberships?: number
+  /**
+   * Where a hub that outlives its memory keeps socket state (a hibernating Durable Object): told of
+   * every installed watch and every socket that leaves. Its sweep runs on the host's alarm instead
+   * of a timer, which would keep the host awake.
+   */
+  readonly store?: HubStore
+}
+
+/** What a socket's membership is, kept so a hub can {@link LiveHub.restore} it after its memory is gone. */
+export interface StoredSocket {
+  readonly sub: string | null
+  readonly exp: number
+  readonly tags: readonly string[]
+}
+
+export interface HubStore {
+  saved(ws: NifraWebSocket<LiveSocket>, socket: StoredSocket): void
+  removed(ws: NifraWebSocket<LiveSocket>): void
+  /** The last time the host answered this socket's heartbeat without waking the hub. */
+  lastBeat(ws: NifraWebSocket<LiveSocket>): number
 }
 
 /** Per-connection state, held in `ws.data`. */
@@ -84,6 +109,8 @@ export class LiveHub {
   private readonly sockets = new Set<NifraWebSocket<LiveSocket>>()
   /** Local subscribers per tag: the intern table, and the input to `spread`. */
   private readonly members = new Map<string, number>()
+  /** Socket-tag subscriptions held, the sum of `members`. */
+  private memberships = 0
   private readonly tagCache = new Map<string, Promise<string>>()
   private readonly coalescing = new Map<string, Pending>()
   private coalesceTimer: ReturnType<typeof setTimeout> | undefined
@@ -95,7 +122,7 @@ export class LiveHub {
     private readonly revocations: Revocations,
     private readonly options: HubOptions,
     /** Where `changed` frames go: each attached app's `publish`. */
-    private readonly publishers: readonly ((topic: string, frame: string) => void)[],
+    private readonly publishers: ReadonlySet<(topic: string, frame: string) => void>,
   ) {}
 
   get size(): number {
@@ -181,7 +208,19 @@ export class LiveHub {
     this.publishTags(tags)
     for (const ws of this.sockets) {
       if (event.sub !== null && ws.data.sub !== event.sub) continue
-      for (const tag of tags) if (ws.data.tags.has(tag)) this.leave(ws, tag)
+      let left = false
+      for (const tag of tags) {
+        if (!ws.data.tags.has(tag)) continue
+        this.leave(ws, tag)
+        left = true
+      }
+      const state = ws.data
+      if (left)
+        this.options.store?.saved(ws, {
+          sub: state.sub ?? null,
+          exp: state.exp,
+          tags: [...state.tags],
+        })
     }
   }
 
@@ -268,16 +307,18 @@ export class LiveHub {
     for (const { tags } of prepared) for (const tag of tags) next.add(tag)
     let added = 0
     for (const tag of next) if (!this.members.has(tag)) added++
-    if (this.members.size + added > (this.options.maxTopics ?? MAX_TOPICS)) {
+    const budget = this.options.maxMemberships ?? Number.POSITIVE_INFINITY
+    if (
+      this.members.size + added > (this.options.maxTopics ?? MAX_TOPICS) ||
+      this.memberships - state.tags.size + next.size > budget
+    ) {
       return this.drop(ws, CLOSE_CAPACITY, "at capacity")
     }
     state.sub = sub
     for (const tag of state.tags) if (!next.has(tag)) this.leave(ws, tag)
     for (const tag of next) {
       if (state.tags.has(tag)) continue
-      state.tags.add(tag)
-      this.members.set(tag, (this.members.get(tag) ?? 0) + 1)
-      ws.subscribe(this.topic(tag))
+      this.join(ws, tag)
     }
     // Per grant, in watch order: two frames can hold an owner of the same id.
     const stale: string[][] = []
@@ -295,7 +336,21 @@ export class LiveHub {
       stale.push(changed)
     }
     state.exp = exp
+    this.options.store?.saved(ws, { sub: state.sub ?? null, exp, tags: [...state.tags] })
     this.send(ws, JSON.stringify({ t: "ready", gen: watch.gen, stale }))
+  }
+
+  /**
+   * A socket whose hub lost its memory but not its connection: its membership comes back as stored.
+   * Every revocation since was applied to what is stored, so nothing here is checked again.
+   */
+  restore(ws: NifraWebSocket<LiveSocket>, stored: StoredSocket | undefined): void {
+    this.sockets.add(ws)
+    if (stored === undefined) return
+    const state = ws.data
+    state.sub = stored.sub
+    state.exp = stored.exp
+    for (const tag of stored.tags) if (!state.tags.has(tag)) this.join(ws, tag)
   }
 
   private flush(): void {
@@ -333,9 +388,17 @@ export class LiveHub {
     return SPREAD_STEPS.find((step) => step >= raw) ?? 5000
   }
 
+  private join(ws: NifraWebSocket<LiveSocket>, tag: string): void {
+    ws.data.tags.add(tag)
+    this.members.set(tag, (this.members.get(tag) ?? 0) + 1)
+    this.memberships++
+    ws.subscribe(this.topic(tag))
+  }
+
   private leave(ws: NifraWebSocket<LiveSocket>, tag: string, open = true): void {
     ws.data.tags.delete(tag)
     if (open) ws.unsubscribe(this.topic(tag))
+    this.memberships--
     const count = (this.members.get(tag) ?? 1) - 1
     if (count === 0) this.members.delete(tag)
     else this.members.set(tag, count)
@@ -350,6 +413,7 @@ export class LiveHub {
   private forget(ws: NifraWebSocket<LiveSocket>, open = true): void {
     if (!this.sockets.delete(ws)) return
     for (const tag of [...ws.data.tags]) this.leave(ws, tag, open)
+    this.options.store?.removed(ws)
     if (this.sockets.size === 0) this.stopSweep()
   }
 
@@ -359,7 +423,7 @@ export class LiveHub {
   }
 
   private topic(tag: string): string {
-    return `nifra:live:${this.options.appId}:${tag}`
+    return topicOf(this.options.appId, tag)
   }
 
   private tagOf(key: string, secret: number): Promise<string> {
@@ -382,6 +446,7 @@ export class LiveHub {
   }
 
   private startSweep(): void {
+    if (this.options.store !== undefined) return
     this.sweepTimer ??= unref(setInterval(() => this.sweep(), SWEEP_MS))
   }
 
@@ -391,17 +456,39 @@ export class LiveHub {
     this.sweepTimer = undefined
   }
 
-  /** Expired grants, silent peers and slow readers. */
-  sweep(): void {
+  /**
+   * Drop the socket when its earliest grant has expired. A host whose sweep can run late (an alarm)
+   * asks before every frame it sends.
+   */
+  expired(ws: NifraWebSocket<LiveSocket>, now: number): boolean {
+    if (ws.data.exp > now) return false
+    this.drop(ws, CLOSE_BAD_GRANT, "expired")
+    return true
+  }
+
+  /**
+   * Expired grants, silent peers and slow readers. Returns the earliest deadline left: a watching
+   * socket's grant expiry, or the silence limit of one yet to watch; infinite with no socket.
+   */
+  sweep(): number {
     const now = Date.now()
+    const store = this.options.store
+    let next = Number.POSITIVE_INFINITY
     for (const ws of [...this.sockets]) {
       const state = ws.data
+      const seen =
+        store === undefined ? state.lastSeen : Math.max(state.lastSeen, store.lastBeat(ws))
       if (state.exp <= now) this.drop(ws, CLOSE_BAD_GRANT, "expired")
-      else if (now - state.lastSeen > IDLE_MS) this.drop(ws, CLOSE_PROTOCOL, "idle")
+      else if (now - seen > IDLE_MS) this.drop(ws, CLOSE_PROTOCOL, "idle")
       else if (bufferedOf(ws) > MAX_OUTBOUND_BYTES) this.drop(ws, CLOSE_CAPACITY, "backpressure")
+      else next = Math.min(next, Number.isFinite(state.exp) ? state.exp : seen + IDLE_MS)
     }
+    return next
   }
 }
+
+/** The pub/sub topic of one tag. */
+export const topicOf = (appId: string, tag: string): string => `nifra:live:${appId}:${tag}`
 
 function parseWatch(text: string): Watch | undefined {
   if (text.length > MAX_FRAME_BYTES || utf8Length(text) > MAX_FRAME_BYTES) return undefined

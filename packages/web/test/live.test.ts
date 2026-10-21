@@ -1411,3 +1411,31 @@ test("an app without live imports no live module", async () => {
   expect(live).toEqual([])
   expect(seen.has(`${root}internal/live-contract.ts`)).toBe(true)
 })
+
+test("clientEntry names only the endpoints a runtime moved", () => {
+  const subject = () => null
+  expect(live({ secret: SECRET, subject }).clientEntry).toEqual({})
+  expect(live({ secret: SECRET, subject, path: "/rt", loadPath: "/rt/load" }).clientEntry).toEqual({
+    path: "/rt",
+    loadPath: "/rt/load",
+  })
+  expect(live({ secret: SECRET, subject, loadPath: "/x" }).clientEntry).toEqual({ loadPath: "/x" })
+})
+
+test("an environment the runtime cannot read counts as production: a secret is required", () => {
+  const env = Object.getOwnPropertyDescriptor(process, "env")
+  if (env === undefined) throw new Error("[test] process.env has no descriptor")
+  // Deno without --allow-env throws on the read.
+  Object.defineProperty(process, "env", {
+    configurable: true,
+    get() {
+      throw new Error('NotCapable: Requires env access to "NODE_ENV"')
+    },
+  })
+  try {
+    expect(() => live({ subject: () => null })).toThrow("`secret` is required in production")
+    expect(live({ secret: SECRET, subject: () => null }).clientEntry).toEqual({})
+  } finally {
+    Object.defineProperty(process, "env", env)
+  }
+})
