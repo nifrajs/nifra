@@ -320,8 +320,40 @@ const textLength = (html: string): number => {
 
 const SHED: HoleRun<never> = Object.freeze({ ok: false, reason: "denied" })
 
-/** What a cached `notFound()` counts against the store's byte budget, beside its key. */
-const NOT_FOUND_ENTRY_BYTES = 256
+/** What an entry counts against the store's byte budget beside its key, document and data. */
+const ENTRY_BYTES = 256
+
+// Roughly how JSC and V8 lay out a loader's output: a header per object and per string, a slot per
+// element or property, a byte per character (a two-byte string holds twice that).
+const OBJECT_BYTES = 32
+const STRING_BYTES = 24
+const SLOT_BYTES = 8
+// Deeper than any document nests, so only a cycle reaches it.
+const MAX_DATA_DEPTH = 256
+
+const isHolder = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null
+
+/**
+ * About how many heap bytes a shell loader's output holds. The count stops once it passes `room`, so
+ * an output too large for the store costs no more than the store's budget to measure.
+ */
+function heldBytes(value: unknown, room: number, depth = 0): number {
+  if (typeof value === "string") return STRING_BYTES + value.length
+  if (!isHolder(value)) return SLOT_BYTES
+  if (depth === MAX_DATA_DEPTH) return Number.POSITIVE_INFINITY
+  let bytes = OBJECT_BYTES
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length && bytes <= room; i++)
+      bytes += SLOT_BYTES + heldBytes(value[i], room - bytes, depth + 1)
+    return bytes
+  }
+  for (const key in value) {
+    bytes += 2 * SLOT_BYTES + heldBytes(value[key], room - bytes, depth + 1)
+    if (bytes > room) break
+  }
+  return bytes
+}
 
 /** A 404 entry answers as the shell loader's own `notFound()` did. */
 const served = (entry: ShellEntry): ShellEntry | Promise<never> =>
@@ -356,6 +388,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
   const live = new Map<string, (reason: unknown) => void>()
   const cspHeaders = new Map<string, Promise<string | undefined>>()
   const thinWarned = new Set<string>()
+  const oversizeWarned = new Set<string>()
   const fallbackHtml = new WeakMap<HoleRegistration, Promise<string>>()
   // A route's request script, with room for the token, serialized once per set of hole names.
   const requestScripts = new Map<
@@ -426,6 +459,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
   }
 
   const finishShell = async (
+    key: string,
     html: string,
     request: PprRequest,
     data: unknown,
@@ -488,12 +522,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
     let first = ENCODER.encode(prefix + script.text)
     const short = options.minShellBytes - (first.length - script.bytes)
     if (short > 0) first = ENCODER.encode(`${prefix}<!--${" ".repeat(short)}-->${script.text}`)
+    const bytes = ENTRY_BYTES + key.length + first.length
     return {
       routeId: request.routeId,
       first,
       tokenAt: first.length - script.bytes + script.tokenAt,
       data,
-      bytes: first.length,
+      bytes: bytes + heldBytes(data, options.shellStoreBytes - bytes),
       builtAt: now(),
       tags: request.tags(),
       failures: 0,
@@ -517,6 +552,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       request.loadShell(signal).then(
         async (data) =>
           finishShell(
+            key,
             await request.renderShellDocument(data, pendingStates(request.holes)),
             request,
             data,
@@ -529,7 +565,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
             first: NO_BYTES,
             tokenAt: 0,
             data: undefined,
-            bytes: NOT_FOUND_ENTRY_BYTES + key.length,
+            bytes: ENTRY_BYTES + key.length,
             builtAt: now(),
             tags: request.tags(),
             notFound: error,
@@ -551,7 +587,16 @@ export function createPprServer(config: PprServerConfig): PprServer {
     building.then((entry) => {
       const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
       done()
-      if (!fenced) store(key, entry)
+      if (fenced) return
+      if (entry.bytes <= options.shellStoreBytes) return store(key, entry)
+      // Kept, it would empty the store and still overrun it; a stale entry it replaces goes too.
+      evict(key)
+      if (!isProduction() && !oversizeWarned.has(routeId)) {
+        oversizeWarned.add(routeId)
+        console.warn(
+          `[nifra/web] ppr: a shell of "${routeId}" holds more than shellStoreBytes with its loader data, so it is built for every request`,
+        )
+      }
     }, done)
     return building
   }

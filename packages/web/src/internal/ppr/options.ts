@@ -16,7 +16,10 @@ export interface PprOptions {
   readonly maxHolesPerRoute?: number
   /** Shell entries one route may keep in the memory store. */
   readonly shellEntriesPerRoute?: number
-  /** Bytes every shell entry in the memory store may hold together. */
+  /**
+   * Bytes every shell entry in the memory store may hold together: its document, an estimate of the
+   * heap its loader data holds, and its key. An entry over the whole budget is served but not kept.
+   */
   readonly shellStoreBytes?: number
   /** How long a `notFound()` shell is cached. */
   readonly notFoundTtlSeconds?: number

@@ -389,6 +389,80 @@ describe("PPR server", () => {
     expect(builds).toBe(4)
   })
 
+  describe("the store's byte budget", () => {
+    const visitor = (server: ReturnType<typeof createPprServer>, built: string[]) => {
+      return async (id: string, data: unknown = { title: id, blob: "x".repeat(40_000) }) =>
+        (
+          await server.respond(
+            pprRequest([hole("x", () => 1)], {
+              path: `/p/${id}`,
+              loadShell: async () => {
+                built.push(id)
+                return data
+              },
+            }),
+          )
+        ).text()
+    }
+    const quietly = async (run: (warnings: unknown[][]) => Promise<void>) => {
+      const warnings: unknown[][] = []
+      const original = console.warn
+      console.warn = (...args: unknown[]) => warnings.push(args)
+      try {
+        await run(warnings)
+      } finally {
+        console.warn = original
+      }
+    }
+
+    test("counts what a shell's loader data holds", async () => {
+      const built: string[] = []
+      const server = createPprServer(
+        config({ options: resolvePprOptions({ shellStoreBytes: 100_000 }) }),
+      )
+      const visit = visitor(server, built)
+      await visit("1")
+      await visit("2")
+      await visit("3") // two documents fit, so 1 goes
+      await visit("2")
+      await visit("1")
+      expect(built).toEqual(["1", "2", "3", "1"])
+    })
+
+    test("serves a shell over the whole budget without emptying the store, warning once in development", async () => {
+      await quietly(async (warnings) => {
+        const built: string[] = []
+        const server = createPprServer(
+          config({ options: resolvePprOptions({ shellStoreBytes: 100_000 }) }),
+        )
+        const visit = visitor(server, built)
+        const big = { title: "big", blob: "x".repeat(200_000) }
+        await visit("small")
+        expect(await visit("big", big)).toContain("<h1>big</h1>")
+        await visit("big", big)
+        await visit("small")
+        expect(built).toEqual(["small", "big", "big"])
+        expect(warnings).toHaveLength(1)
+        expect(String(warnings[0]?.[0])).toContain(
+          'a shell of "product/[id]" holds more than shellStoreBytes',
+        )
+      })
+    })
+
+    test("keeps no shell whose loader data loops back on itself", async () => {
+      await quietly(async () => {
+        const built: string[] = []
+        const server = createPprServer(config())
+        const looped: Record<string, unknown> = { title: "looped" }
+        looped.self = [looped, looped]
+        const visit = visitor(server, built)
+        await visit("looped", looped)
+        await visit("looped", looped)
+        expect(built).toEqual(["looped", "looped"])
+      })
+    })
+  })
+
   test("under a CSP the header lists the PPR hashes and no nonce", async () => {
     const csp = createCspPolicy({
       header: ({ sources, nonce }) =>
