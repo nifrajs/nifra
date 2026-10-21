@@ -309,10 +309,11 @@ export default function Rendering() {
         An action's <code>revalidate(paths, data, &#123; tags &#125;)</code> purges the same way
         before it answers, so a reload, a new tab or a redirect after the post renders the write: data
         caches (<code>withISR(&#123; dataCaches &#125;)</code>), then the page store, then live pages,
-        then <code>cdn</code>. A path purge drops the entry the key function gives that URL with no
-        headers or cookies. Entries a custom <code>key</code> builds from headers or cookies, and those
-        for query parameters <code>query</code> keeps, stay until they expire: tag those pages and name
-        the tag. Each store call is bounded by <code>storeTimeoutMs</code>. A failed purge is retried
+        then <code>cdn</code>. A path purge drops the entry the key function gives that URL with the
+        action request's own headers and cookies, so the client that wrote reads its write. Entries a
+        custom <code>key</code> builds from other header or cookie values, and those for query
+        parameters <code>query</code> keeps, stay until they expire: tag those pages and name the tag.
+        Each store call is bounded by <code>storeTimeoutMs</code>. A failed purge is retried
         behind the response under <code>waitUntil</code>, else for up to 2 s before the action answers,
         and is reported once to <code>onInvalidationError</code>.
       </p>

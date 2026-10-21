@@ -2198,10 +2198,11 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \
 An action's `revalidate(paths, data, { tags })` purges the same way
 before it answers, so a reload, a new tab or a redirect after the post renders the write: data
 caches (`withISR({ dataCaches })`), then the page store, then live pages,
-then `cdn`. A path purge drops the entry the key function gives that URL with no
-headers or cookies. Entries a custom `key` builds from headers or cookies, and those
-for query parameters `query` keeps, stay until they expire: tag those pages and name
-the tag. Each store call is bounded by `storeTimeoutMs`. A failed purge is retried
+then `cdn`. A path purge drops the entry the key function gives that URL with the
+action request's own headers and cookies, so the client that wrote reads its write. Entries a
+custom `key` builds from other header or cookie values, and those for query
+parameters `query` keeps, stay until they expire: tag those pages and name the tag.
+Each store call is bounded by `storeTimeoutMs`. A failed purge is retried
 behind the response under `waitUntil`, else for up to 2 s before the action answers,
 and is reported once to `onInvalidationError`.
 

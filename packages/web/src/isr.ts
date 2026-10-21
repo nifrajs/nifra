@@ -582,7 +582,10 @@ export interface ISROptions {
    * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for
    * this request (it goes straight to the app, uncached). Replaces `query` entirely. Under the default
    * key a request carrying `Authorization` or a cookie outside `anonymousCookies` never reads the
-   * store; a custom key takes that decision over, so include whatever identifies the visitor in it. */
+   * store; a custom key takes that decision over, so include whatever identifies the visitor in it.
+   * An action's `revalidate(paths)` keys each path with the action request's own headers, so it purges
+   * the variant that client reads; a variant keyed on another header value (another language) is not
+   * reached - tag those pages and revalidate the tag. */
   readonly key?: (req: Request) => string | null
   /**
    * Cookie names that never change the page, such as a consent or analytics cookie. Under the default
@@ -655,6 +658,24 @@ function storeErrorDetail(error: unknown, key: string): string {
     : redacted
 }
 
+// Headers only an action or a data request carries; a stored page is always a plain document GET.
+const ACTION_ONLY_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "transfer-encoding",
+  "x-nifra-data",
+  "x-nifra-component",
+  SWAP_HEADER,
+]
+
+/** The document GET for `path` from the client that sent `req`: what a custom key sees on a read. */
+function documentGet(path: string, req: Request): Request {
+  const headers = new Headers(req.headers)
+  for (const name of ACTION_ONLY_HEADERS) headers.delete(name)
+  return new Request(originOf(req) + path, { headers })
+}
+
 /** `createWebApp`'s marker for how its documents meet a CSP (see `DOCUMENT_POLICY` in ./csp.ts). Read
  * through the global symbol registry so a cache wrapper never imports the CSP module. */
 const DOCUMENT_POLICY = Symbol.for("nifra.web.documentPolicy")
@@ -708,7 +729,7 @@ function cacheKeysOf(options: ISROptions): {
 } {
   const custom = options.key
   if (custom !== undefined) {
-    return { request: custom, path: (path, req) => custom(new Request(originOf(req) + path)) }
+    return { request: custom, path: (path, req) => custom(documentGet(path, req)) }
   }
   const urlKey = urlKeyOf(options.query)
   return {

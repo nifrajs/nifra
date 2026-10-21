@@ -6,6 +6,7 @@ import { afterEach, expect, jest, spyOn, test } from "bun:test"
 import {
   type CacheStore,
   createWebApp,
+  type ISROptions,
   type ISRQuery,
   type Manifest,
   MemoryCacheStore,
@@ -202,7 +203,9 @@ interface Recorded {
   readonly reports: InvalidationReport[]
 }
 
-function recordingStore(base: MemoryCacheStore, calls: string[]): CacheStore {
+/** `stallTags`: a tag purge never settles, as a network store that stopped answering. */
+function recordingStore(base: MemoryCacheStore, calls: string[], stallTags = false): CacheStore {
+  const never = new Promise<void>(() => {})
   return {
     get: (key) => base.get(key),
     set: (key, value) => base.set(key, value),
@@ -212,6 +215,7 @@ function recordingStore(base: MemoryCacheStore, calls: string[]): CacheStore {
     },
     invalidateTag: async (tag) => {
       calls.push(`pageTag:${tag}`)
+      if (stallTags) return never
       await base.invalidateTag(tag)
     },
   }
@@ -219,7 +223,12 @@ function recordingStore(base: MemoryCacheStore, calls: string[]): CacheStore {
 
 function wrapped(
   action: Action,
-  options: { failData?: boolean; query?: ISRQuery } = {},
+  options: {
+    failData?: boolean
+    query?: ISRQuery
+    stallTags?: boolean
+    isr?: Pick<ISROptions, "storeTimeoutMs">
+  } = {},
 ): { handler: ReturnType<typeof withISR>; runtime: Live } & Recorded {
   const calls: string[] = []
   const reports: InvalidationReport[] = []
@@ -227,12 +236,13 @@ function wrapped(
   spyOn(runtime, "publish").mockImplementation(async (...keys: string[]) => {
     calls.push(`publish:${keys.join(",")}`)
   })
-  const store = recordingStore(new MemoryCacheStore(), calls)
+  const store = recordingStore(new MemoryCacheStore(), calls, options.stallTags)
   const handler = withISR(appWith(action, runtime), {
     store,
     revalidate: 60,
     now: () => Date.now(),
     query: options.query ?? "bypass",
+    ...options.isr,
     dataCaches: [
       {
         invalidateTag: async (tag: string) => {
@@ -295,6 +305,60 @@ test("key parity: the page an action revalidates is the entry withISR stored", a
   expect(
     (await listed.handler(new Request(`${ORIGIN}/posts/1?page=2`))).headers.get("x-nifra-isr"),
   ).toBe("miss")
+})
+
+test("key parity under a custom key: the purge keys each path with the action's own headers", async () => {
+  const db: Db = { primary: 0, replica: 0 }
+  const calls: string[] = []
+  const handler = withISR(
+    appWith(
+      async () => {
+        db.replica = 1
+        return revalidate(["/posts/1"], { ok: true })
+      },
+      runtimeOf(),
+      db,
+    ),
+    {
+      store: recordingStore(new MemoryCacheStore(), calls),
+      revalidate: 60,
+      now: () => Date.now(),
+      key: (req) => `${new URL(req.url).pathname}:${req.headers.get("accept-language") ?? "-"}`,
+    },
+  )
+  const read = (language: string) =>
+    handler(new Request(`${ORIGIN}/posts/1`, { headers: { "accept-language": language } }))
+  await read("en")
+  await read("fr")
+  expect((await read("en")).headers.get("x-nifra-isr")).toBe("hit")
+  const action = post()
+  action.headers.set("accept-language", "en")
+  await handler(action)
+  expect(calls.filter((call) => call.startsWith("delete"))).toEqual(["delete:/posts/1:en"])
+  const fresh = await read("en")
+  expect(fresh.headers.get("x-nifra-isr")).toBe("miss")
+  expect(await fresh.text()).toContain('"value":1')
+  // A path never reaches another language's variant: tags are how every variant goes.
+  expect((await read("fr")).headers.get("x-nifra-isr")).toBe("hit")
+})
+
+test("a tag purge that outlives storeTimeoutMs fails its stage: nothing is published, the action answers", async () => {
+  jest.useFakeTimers()
+  const { handler, calls, reports } = wrapped(writes(), {
+    stallTags: true,
+    isr: { storeTimeoutMs: 50 },
+  })
+  const res = await settled(handler(post()))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ ok: true })
+  expect(calls.filter((call) => /^(publish|cdn):/.test(call))).toEqual([])
+  expect(reports).toHaveLength(1)
+  expect(reports[0]?.stages.at(-1)).toEqual({
+    stage: "pages",
+    ok: false,
+    retryable: true,
+    error: "pages_failed",
+  })
 })
 
 test("a data cache that keeps failing stops the publish and the CDN; the action answers as usual", async () => {
