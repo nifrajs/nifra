@@ -140,54 +140,73 @@ export class HoleAdmission {
     this.#denied[level]++
   }
 
-  /** @internal Tracks one invocation's promise until it settles; `abandon` fires after the grace. */
-  track<T>(
+  /**
+   * @internal Runs one admitted invocation, counted until its promise settles. Once its signal has
+   * been aborted for `abandonGraceMs` it is abandoned and `onDone` fires; `onDone` fires again when
+   * it settles. The result settles with the loader, or at once when the signal aborts first: a
+   * response never waits on a loader that ignores its signal. One promise and one abort watcher per
+   * invocation; a chain of them cost more than the loaders the bench page runs.
+   */
+  invoke<T>(
     key: string,
-    promise: Promise<T>,
     signal: AbortSignal,
-    onAbandoned: () => void,
-  ): Promise<T> {
+    load: () => T | Promise<T>,
+    onDone: () => void,
+  ): Promise<HoleRun<T>> {
     this.#pending++
     bump(this.#pendingBy, key, 1)
-    let abandoned = false
-    let abortedAt: number | undefined
-    let timer: unknown
-    const onAbort = (): void => {
-      abortedAt = this.#timers.now()
-      timer = this.#timers.setTimeout(() => {
-        abandoned = true
-        this.#abandoned++
-        bump(this.#abandonedBy, key, 1)
-        onAbandoned()
-      }, this.#options.abandonGraceMs)
-    }
-    let unwatch: (() => void) | undefined
-    if (signal.aborted) onAbort()
-    else unwatch = watchAbort(signal, onAbort)
-    const settle = (): void => {
-      unwatch?.()
-      if (timer !== undefined) this.#timers.clearTimeout(timer)
-      this.#pending--
-      bump(this.#pendingBy, key, -1)
-      if (abandoned) {
-        this.#abandoned--
-        bump(this.#abandonedBy, key, -1)
+    return new Promise<HoleRun<T>>((resolve) => {
+      let answered = false
+      const answer = (run: HoleRun<T>): void => {
+        if (answered) return
+        answered = true
+        resolve(run)
       }
-      if (abortedAt !== undefined) {
-        const late = this.#timers.now() - abortedAt
-        if (late > this.#options.abandonGraceMs) this.#onLateSettle?.(key, late)
+      let abandoned = false
+      let abortedAt: number | undefined
+      let timer: unknown
+      const onAbort = (): void => {
+        abortedAt = this.#timers.now()
+        timer = this.#timers.setTimeout(() => {
+          abandoned = true
+          this.#abandoned++
+          bump(this.#abandonedBy, key, 1)
+          onDone()
+        }, this.#options.abandonGraceMs)
+        answer({ ok: false, reason: "aborted", error: signal.reason })
       }
-    }
-    return promise.then(
-      (value) => {
-        settle()
-        return value
-      },
-      (error: unknown) => {
-        settle()
-        throw error
-      },
-    )
+      let unwatch: (() => void) | undefined
+      if (signal.aborted) onAbort()
+      else unwatch = watchAbort(signal, onAbort)
+      const settle = (): void => {
+        unwatch?.()
+        if (timer !== undefined) this.#timers.clearTimeout(timer)
+        this.#pending--
+        bump(this.#pendingBy, key, -1)
+        if (abandoned) {
+          this.#abandoned--
+          bump(this.#abandonedBy, key, -1)
+        }
+        if (abortedAt !== undefined) {
+          const late = this.#timers.now() - abortedAt
+          if (late > this.#options.abandonGraceMs) this.#onLateSettle?.(key, late)
+        }
+        onDone()
+      }
+      // `then` turns a synchronous throw into this invocation's rejection.
+      Promise.resolve()
+        .then(load)
+        .then(
+          (value) => {
+            settle()
+            answer({ ok: true, value })
+          },
+          (error: unknown) => {
+            settle()
+            answer({ ok: false, reason: signal.aborted ? "aborted" : "failed", error })
+          },
+        )
+    })
   }
 
   stats(): PprAdmissionStats {
@@ -203,25 +222,6 @@ export class HoleAdmission {
     }
   }
 }
-
-/** Settles with `promise`, or as soon as `signal` aborts: a response never waits on a loader that
- * ignores its signal. */
-const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
-  signal.aborted
-    ? Promise.reject(signal.reason)
-    : new Promise<T>((resolve, reject) => {
-        const unwatch = watchAbort(signal, () => reject(signal.reason))
-        promise.then(
-          (value) => {
-            unwatch()
-            resolve(value)
-          },
-          (error: unknown) => {
-            unwatch()
-            reject(error)
-          },
-        )
-      })
 
 /** One response's hole-work slot. Released exactly once. */
 export class HoleSlot {
@@ -250,24 +250,12 @@ export class HoleSlot {
     }
     this.#outstanding++
     let done = false
-    const finish = (): void => {
+    return this.#admission.invoke(key, signal, load, () => {
       if (done) return
       done = true
       this.#outstanding--
       this.#maybeRelease()
-    }
-    // `then` turns a synchronous throw into this invocation's rejection.
-    const invoked = Promise.resolve().then(load)
-    const tracked = this.#admission.track(key, invoked, signal, finish)
-    tracked.then(finish, finish)
-    return raceAbort(tracked, signal).then(
-      (value): HoleRun<T> => ({ ok: true, value }),
-      (error: unknown): HoleRun<T> => ({
-        ok: false,
-        reason: signal.aborted ? "aborted" : "failed",
-        error,
-      }),
-    )
+    })
   }
 
   /** No more holes will start for this response; the slot frees once the started ones are done. */
