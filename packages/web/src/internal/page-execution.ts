@@ -1577,7 +1577,7 @@ export function createPageRequestExecutor<Env = unknown>(
         const requestApi = apiFor(c)
         let run: LayoutRun | undefined
         let skipPage = false
-        let liveCtx: LoaderContext | undefined
+        let liveCtx: LoaderContext
         try {
           const ctx: LoaderContext = {
             params: c.params,
@@ -1752,11 +1752,7 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         const isData = isDataRequest(c)
         const liveEnvelope =
-          live === undefined ||
-          liveCtx === undefined ||
-          !isData ||
-          isStatusSignal(data) ||
-          isControlFlow(data)
+          live === undefined || !isData || isStatusSignal(data) || isControlFlow(data)
             ? undefined
             : await live.finish(
                 liveOwners(
