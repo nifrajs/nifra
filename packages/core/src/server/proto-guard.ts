@@ -95,7 +95,11 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
       // + first-code-unit guards avoid a full string comparison for the overwhelming majority of
       // fields while preserving exact equality for the two security-sensitive names.
       if (key.length === 9 && key.charCodeAt(0) === 95 /* _ */ && key === "__proto__") {
-        if (policy === "reject") throw POISONED
+        if (policy === "reject") {
+          // Release queued nodes before throwing; a later request may never arrive to reset them.
+          stack.length = 0
+          throw POISONED
+        }
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["__proto__"]
         continue
@@ -107,7 +111,10 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
         nested &&
         Object.hasOwn(value, "prototype")
       ) {
-        if (policy === "reject") throw POISONED
+        if (policy === "reject") {
+          stack.length = 0
+          throw POISONED
+        }
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["constructor"]
         continue

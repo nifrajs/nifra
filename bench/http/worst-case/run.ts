@@ -1,8 +1,9 @@
 /**
  * WORST-CASE throughput matrix - nifra vs Elysia only, on Bun/Node/Deno - driven by
- * `oha`. The app under test deliberately misses every nifra fast tier at once (hooks +
+ * `oha`. The app under test combines hooks +
  * multi-param route + validated query + JSON body validation + per-request dynamic
- * response headers), so this measures the GENERIC lane against Elysia's AOT-compiled
+ * response headers. BENCH_GENERIC=1 adds a second before hook to measure the GENERIC lane
+ * against Elysia's AOT-compiled
  * handler - the shape most likely to show nifra behind. Harness mechanics mirror
  * ../run.ts (isolated subprocess per server, warmup, median-of-N, ratios are the signal).
  *
@@ -24,6 +25,7 @@ const WARMUP = envInt("BENCH_WARMUP", 1, 0) // 0 skips the warmup run
 const RUNS = envInt("BENCH_RUNS", 3)
 const BASE_PORT = 3520
 const JSON_MODE = process.argv.includes("--json")
+const GENERIC = Bun.env.BENCH_GENERIC === "1"
 
 // ---- workload payloads ------------------------------------------------------------
 
@@ -65,7 +67,7 @@ const JSON_CT = { "content-type": "application/json", "x-req-id": "bench-1" } as
 
 const WORKLOADS: readonly Workload[] = [
   {
-    name: "GET worst (2 hooks + 3 params + query + dyn headers)",
+    name: `GET worst (${GENERIC ? 3 : 2} hooks + 3 params + query + dyn headers)`,
     path: GET_PATH,
     requests: 100_000,
   },
@@ -118,12 +120,51 @@ const SECTIONS: readonly Section[] = [
     targets: [
       {
         framework: "nifra",
-        spawn: (p) => ["bun", "bench/http/worst-case/serve.ts", "nifra", String(p)],
+        spawn: (p) =>
+          Bun.env.BENCH_BUN_CANDIDATE
+            ? [
+                "bun",
+                "bench/profiling/bun-server.ts",
+                "nifra",
+                String(p),
+                `--baseline=${Bun.env.BENCH_BUN_CANDIDATE}`,
+              ]
+            : ["bun", "bench/http/worst-case/serve.ts", "nifra", String(p)],
       },
       {
         framework: "elysia",
         spawn: (p) => ["bun", "bench/http/worst-case/serve.ts", "elysia", String(p)],
       },
+      ...(Bun.env.BENCH_BUN_BASELINE
+        ? [
+            {
+              framework: "nifra-before",
+              spawn: (p: number) => [
+                "bun",
+                "bench/profiling/bun-server.ts",
+                "nifra",
+                String(p),
+                `--baseline=${Bun.env.BENCH_BUN_BASELINE}`,
+              ],
+            },
+          ]
+        : []),
+      // Diagnostic only: label the existing opt-out explicitly so it never becomes a default result.
+      ...(Bun.env.BENCH_BUN_UNGUARDED
+        ? [
+            {
+              framework: "nifra-unguarded",
+              spawn: (p: number) => [
+                "bun",
+                "bench/profiling/bun-server.ts",
+                "nifra",
+                String(p),
+                `--baseline=${Bun.env.BENCH_BUN_UNGUARDED}`,
+                "--policy=ignore",
+              ],
+            },
+          ]
+        : []),
     ],
   },
   {
@@ -178,7 +219,7 @@ function field(obj: unknown, key: string): unknown {
     : undefined
 }
 
-function parseOha(raw: string): Measure {
+function parseOha(raw: string, requests: number): Measure {
   let json: unknown
   try {
     json = JSON.parse(raw)
@@ -189,6 +230,20 @@ function parseOha(raw: string): Measure {
   const lat = field(json, "latencyPercentiles")
   const p50 = finiteNumber(field(lat, "p50"))
   const p99 = finiteNumber(field(lat, "p99"))
+  const statuses = field(json, "statusCodeDistribution")
+  const errors = field(json, "errorDistribution")
+  if (
+    field(field(json, "summary"), "successRate") !== 1 ||
+    field(statuses, "200") !== requests ||
+    typeof statuses !== "object" ||
+    statuses === null ||
+    Object.keys(statuses).length !== 1 ||
+    typeof errors !== "object" ||
+    errors === null ||
+    Object.keys(errors).length !== 0
+  ) {
+    throw new Error("oha: incomplete or non-200 load")
+  }
   if (rps === undefined || p50 === undefined || p99 === undefined) {
     throw new Error(`oha: unexpected JSON shape: ${raw.slice(0, 200)}`)
   }
@@ -223,7 +278,7 @@ async function runOha(url: string, w: Workload, requests: number): Promise<Measu
     proc.exited,
   ])
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
-  return parseOha(out)
+  return parseOha(out, requests)
 }
 
 function median(runs: readonly Measure[]): Measure {
@@ -295,12 +350,24 @@ async function probe(base: string, framework: string): Promise<void> {
   if (invalid.status < 400)
     throw new Error(`${framework}: invalid-body probe expected 4xx, got ${invalid.status}`)
   await invalid.text()
+  if (framework.endsWith("/nifra-unguarded")) {
+    const poison = await fetch(`${base}${POST_PATH}`, {
+      method: "POST",
+      headers: JSON_CT,
+      body: '{"items":[],"__proto__":{"probe":true}}',
+    })
+    if (poison.status !== 200)
+      throw new Error(`${framework}: opt-out probe expected 200, got ${poison.status}`)
+    await poison.text()
+  }
 }
 
 // ---- run --------------------------------------------------------------------------
 
 type Results = Record<string, Record<string, Record<string, Measure>>>
 const results: Results = {}
+const samples: Record<string, Record<string, Record<string, readonly Measure[]>>> = {}
+const failures: string[] = []
 
 const onlyRuntime = process.argv.slice(2).find((a) => !a.startsWith("--"))
 const sections = onlyRuntime ? SECTIONS.filter((s) => s.runtime === onlyRuntime) : SECTIONS
@@ -310,8 +377,8 @@ if (sections.length === 0) {
   )
 }
 
-// PAIRED sampling: both frameworks' servers boot together (unique ports, idle when not
-// measured), and each timed round alternates nifra → elysia before the next round. A
+// PAIRED sampling: all servers boot together (unique ports, idle when not measured),
+// and each timed round rotates and reverses the peer order. A
 // multi-second background load spike on this shared box then degrades BOTH frameworks'
 // same-round samples instead of silently sinking whichever server happened to be under
 // the load client at that minute - the per-round RATIO stays honest even when the box
@@ -320,6 +387,8 @@ let nextPort = BASE_PORT
 for (const section of sections) {
   const sectionResults: Record<string, Record<string, Measure>> = {}
   results[section.runtime] = sectionResults
+  const sectionSamples: Record<string, Record<string, readonly Measure[]>> = {}
+  samples[section.runtime] = sectionSamples
   const running: { target: Target; base: string; proc: ReturnType<typeof Bun.spawn> }[] = []
   try {
     for (const target of section.targets) {
@@ -331,17 +400,21 @@ for (const section of sections) {
       await waitReady(base, 8000)
       await probe(base, `${section.runtime}/${target.framework}`)
       sectionResults[target.framework] = {}
+      sectionSamples[target.framework] = {}
     }
     for (const w of WORKLOADS) {
       const requests = Math.max(500, Math.round((w.requests * SCALE_PCT) / 100))
-      if (WARMUP > 0) {
+      for (let warmup = 0; warmup < WARMUP; warmup++) {
         for (const r of running) await runOha(`${r.base}${w.path}`, w, Math.round(requests / 5))
       }
       const perTarget = new Map<string, Measure[]>(running.map((r) => [r.target.framework, []]))
       for (let round = 0; round < RUNS; round++) {
-        // Alternate the first measured target so a thermal/CPU/cache drift cannot charge every
-        // round's first or second position to one framework.
-        const order = round % 2 === 0 ? running : [...running].reverse()
+        // Rotate and reverse so every peer occupies each position, including three-target Node runs.
+        const rotated = [
+          ...running.slice(round % running.length),
+          ...running.slice(0, round % running.length),
+        ]
+        const order = Math.floor(round / running.length) % 2 ? rotated.reverse() : rotated
         for (const r of order) {
           const m = await runOha(`${r.base}${w.path}`, w, requests)
           if (Bun.env.BENCH_TRACE === "1") {
@@ -352,11 +425,15 @@ for (const section of sections) {
       }
       for (const r of running) {
         const fw = sectionResults[r.target.framework]
-        if (fw) fw[w.name] = median(perTarget.get(r.target.framework) ?? [])
+        const measured = perTarget.get(r.target.framework) ?? []
+        if (fw) fw[w.name] = median(measured)
+        const raw = sectionSamples[r.target.framework]
+        if (raw) raw[w.name] = measured
       }
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+    failures.push(`${section.runtime}: ${msg}`)
     console.error(`  ${section.runtime}: ${msg}`)
   } finally {
     for (const r of running) {
@@ -370,11 +447,21 @@ for (const section of sections) {
 if (JSON_MODE) {
   console.log(
     JSON.stringify({
-      meta: { bun: Bun.version, runs: RUNS, scalePct: SCALE_PCT, connections: CONNECTIONS },
+      meta: {
+        bun: Bun.version,
+        runs: RUNS,
+        scalePct: SCALE_PCT,
+        connections: CONNECTIONS,
+        generic: GENERIC,
+        warmupBatches: WARMUP,
+        unguardedDiagnostic: Bun.env.BENCH_BUN_UNGUARDED !== undefined,
+      },
       results,
+      samples,
+      failures,
     }),
   )
-  process.exit(0)
+  process.exit(failures.length > 0 ? 1 : 0)
 }
 
 // ---- report -----------------------------------------------------------------------
@@ -384,7 +471,7 @@ function pad(s: string, n: number): string {
 }
 
 console.log(
-  `\nWORST-CASE lane - oha, paired A/B, median-of-${RUNS} count-bounded runs @ ${CONNECTIONS} conns  ` +
+  `\nWORST-CASE ${GENERIC ? "generic" : "closed-shape"} lane - oha, paired A/B, median-of-${RUNS} count-bounded runs @ ${CONNECTIONS} conns  ` +
     `(Bun ${Bun.version})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
 )
 
@@ -405,8 +492,14 @@ for (const section of sections) {
     if (nifra > 0 && elysia > 0) {
       console.log(`    → nifra is ${Math.round((nifra / elysia) * 100)}% of Elysia`)
     }
+    const fastify = got.fastify?.[w.name]?.rps ?? 0
+    if (nifra > 0 && fastify > 0) {
+      console.log(`    → nifra is ${Math.round((nifra / fastify) * 100)}% of Fastify`)
+    }
     console.log("")
   }
 }
+
+if (failures.length > 0) process.exitCode = 1
 
 export {}

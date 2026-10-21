@@ -7,55 +7,58 @@
  */
 import { Elysia, t } from "elysia"
 
-export function makeWorstElysiaApp(options?: ConstructorParameters<typeof Elysia>[0]) {
-  return (
-    new Elysia(options)
-      // Readiness probe only - defined BEFORE the hooks so it stays hook-free; never benched.
-      .get("/health", () => ({ ok: true }))
-      .derive(({ headers }) => ({ requestId: headers["x-req-id"] ?? "none" }))
-      .onBeforeHandle(({ headers, set }) => {
-        if (headers["x-block"] === "1") {
-          set.status = 403
-          return { error: "blocked" }
+export function makeWorstElysiaApp(
+  options?: ConstructorParameters<typeof Elysia>[0],
+  generic = process.env.BENCH_GENERIC === "1",
+) {
+  const app = new Elysia(options)
+    // Readiness probe only - defined BEFORE the hooks so it stays hook-free; never benched.
+    .get("/health", () => ({ ok: true }))
+    .derive(({ headers }) => ({ requestId: headers["x-req-id"] ?? "none" }))
+    .onBeforeHandle(({ headers, set }) => {
+      if (headers["x-block"] === "1") {
+        set.status = 403
+        return { error: "blocked" }
+      }
+      return undefined
+    })
+    // Return the current response explicitly so the hook has the same observable transform
+    // semantics as nifra's `afterHandle((result) => result)` benchmark hook.
+    .onAfterHandle(({ responseValue }) => responseValue)
+  if (generic) app.onBeforeHandle(() => undefined)
+  return app
+    .get(
+      "/orgs/:org/projects/:proj/tasks/:id",
+      ({ params, query, requestId, set }) => {
+        set.headers["x-request-id"] = requestId
+        set.headers["x-trace"] = query.trace
+        return { org: params.org, proj: params.proj, id: params.id, verbose: query.verbose }
+      },
+      { query: t.Object({ verbose: t.String(), trace: t.String() }) },
+    )
+    .post(
+      "/orgs/:org/projects/:proj/tasks",
+      ({ params, body, requestId, set }) => {
+        set.headers["x-request-id"] = requestId
+        set.headers["x-count"] = String(body.items.length)
+        return {
+          org: params.org,
+          proj: params.proj,
+          count: body.items.length,
+          first: body.items[0]?.title ?? "",
         }
-        return undefined
-      })
-      // Return the current response explicitly so the hook has the same observable transform
-      // semantics as nifra's `afterHandle((result) => result)` benchmark hook.
-      .onAfterHandle(({ responseValue }) => responseValue)
-      .get(
-        "/orgs/:org/projects/:proj/tasks/:id",
-        ({ params, query, requestId, set }) => {
-          set.headers["x-request-id"] = requestId
-          set.headers["x-trace"] = query.trace
-          return { org: params.org, proj: params.proj, id: params.id, verbose: query.verbose }
-        },
-        { query: t.Object({ verbose: t.String(), trace: t.String() }) },
-      )
-      .post(
-        "/orgs/:org/projects/:proj/tasks",
-        ({ params, body, requestId, set }) => {
-          set.headers["x-request-id"] = requestId
-          set.headers["x-count"] = String(body.items.length)
-          return {
-            org: params.org,
-            proj: params.proj,
-            count: body.items.length,
-            first: body.items[0]?.title ?? "",
-          }
-        },
-        {
-          body: t.Object({
-            items: t.Array(
-              t.Object({
-                title: t.String(),
-                done: t.Boolean(),
-                priority: t.Number(),
-                notes: t.String(),
-              }),
-            ),
-          }),
-        },
-      )
-  )
+      },
+      {
+        body: t.Object({
+          items: t.Array(
+            t.Object({
+              title: t.String(),
+              done: t.Boolean(),
+              priority: t.Number(),
+              notes: t.String(),
+            }),
+          ),
+        }),
+      },
+    )
 }
