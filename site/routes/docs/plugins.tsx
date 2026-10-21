@@ -33,6 +33,51 @@ const app = server()
   // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
+const REDIS_STORE = `import { RedisClient } from "bun"
+import { server } from "@nifrajs/core/server"
+import { rateLimit, type RateLimitResult, type RateLimitStore } from "@nifrajs/middleware"
+
+/** The one call the store makes; Bun's RedisClient has it as send(). */
+interface RedisCommands {
+  send(command: string, args: string[]): Promise<unknown>
+}
+
+// One atomic round trip: count the hit, start the window on the first one, and report when it ends.
+// A key left without an expiry gets one here, so it can never lock a client out for good.
+const HIT = [
+  'local count = redis.call("INCR", KEYS[1])',
+  'local ttl = redis.call("PTTL", KEYS[1])',
+  "if ttl < 0 then",
+  '  redis.call("PEXPIRE", KEYS[1], ARGV[1])',
+  "  ttl = tonumber(ARGV[1])",
+  "end",
+  "return { count, ttl }",
+].join("\\n")
+
+class RedisRateLimitStore implements RateLimitStore {
+  readonly #redis: RedisCommands
+  readonly #prefix: string
+
+  constructor(redis: RedisCommands, prefix = "ratelimit:") {
+    this.#redis = redis
+    this.#prefix = prefix
+  }
+
+  async hit(key: string, windowMs: number): Promise<RateLimitResult> {
+    const reply = await this.#redis.send("EVAL", [HIT, "1", this.#prefix + key, String(windowMs)])
+    const [count, ttl] = reply as [number, number]
+    return { count, resetAt: Date.now() + ttl }
+  }
+}
+
+// Bun's client fits as it is. Others take one line:
+//   ioredis:    { send: (command, args) => redis.call(command, ...args) }
+//   node-redis: { send: (command, args) => client.sendCommand([command, ...args]) }
+const redis = new RedisClient(process.env.REDIS_URL)
+const app = server().use(
+  rateLimit({ store: new RedisRateLimitStore(redis), max: 100, windowMs: 60_000 }),
+)`
+
 const TIERS = `import { server } from "@nifrajs/core/server"
 import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
 
@@ -579,6 +624,23 @@ export default function Plugins() {
         serves them all. <code>skip</code>, on both limiters, leaves a request uncharged.
       </p>
       <CodeBlock code={TIERS} />
+
+      <h2>A shared store in production</h2>
+      <p>
+        <code>MemoryStore</code> counts per instance, so it refuses to start under{" "}
+        <code>NODE_ENV=production</code>: behind a load balancer each instance would allow the full
+        limit. A shared store implements <code>RateLimitStore</code>, one method that records a hit
+        and returns the window's count and reset time. Over Redis it is one atomic script per
+        request, so instances never race, and a key that lost its expiry is given one back instead
+        of locking a client out. Both limiters take it, and tiers share it.
+      </p>
+      <CodeBlock code={REDIS_STORE} />
+      <p>
+        If Redis cannot be reached, <code>hit()</code> rejects and the request fails rather than
+        going unlimited. To fail open instead, catch inside <code>hit()</code> and return{" "}
+        <code>{"{ count: 0, resetAt: Date.now() + windowMs }"}</code>. On Redis Cluster the script
+        touches one key, so it runs on whichever node owns it.
+      </p>
 
       <h2>Security middleware</h2>
       <p>

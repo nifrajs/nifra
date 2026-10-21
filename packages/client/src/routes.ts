@@ -75,6 +75,9 @@ export interface LoaderArgs<Api, Env = unknown, Search = undefined> {
   /** Response headers and cookies for this page request: `ctx.set.headers["cache-control"] = ...`,
    * `ctx.set.cookie("theme", "dark")`. */
   readonly set: LoaderResponseControls
+  /** Declare what this loader's data depends on (`ctx.live("post:42")`), so a live page reloads it
+   * when one of those keys changes. Does nothing unless the app configures `live`. */
+  readonly live: (...keys: string[]) => void
 }
 
 /**

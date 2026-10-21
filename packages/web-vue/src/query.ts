@@ -1,8 +1,10 @@
-import type { QueryClient, QueryHandle, QueryState } from "@nifrajs/web"
+import type { QueryClient, QueryHandle, QueryOptions, QueryState } from "@nifrajs/web"
 import {
   createNoClientRefetch,
+  fetchOnMount,
   getQueryClientSingleton,
   IDLE_QUERY_STATE,
+  noop,
 } from "@nifrajs/web/internal/query-runtime"
 /**
  * `@nifrajs/web-vue/query` - Vue bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
@@ -18,7 +20,7 @@ import { onMounted, onScopeDispose, type ShallowRef, shallowRef } from "vue"
 
 /** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */
 export function useQueryClient(): Pick<QueryClient, "invalidateQueries"> {
-  return getQueryClientSingleton() ?? { invalidateQueries: () => {} }
+  return getQueryClientSingleton() ?? { invalidateQueries: noop }
 }
 
 /** A query's reactive {@link QueryState} (read `.value`) plus `refetch`. */
@@ -31,19 +33,22 @@ export interface UseQueryResult<T> {
 /**
  * Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`,
  * `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key
- * share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle.
+ * share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live`
+ * names the live keys that refetch it.
  */
-export function useQuery<T>(key: unknown, fn: () => Promise<T>): UseQueryResult<T> {
-  const handle: QueryHandle<T> | undefined = getQueryClientSingleton()?.query<T>(key, fn)
+export function useQuery<T>(
+  key: unknown,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): UseQueryResult<T> {
+  const handle: QueryHandle<T> | undefined = getQueryClientSingleton()?.query<T>(key, fn, options)
   const state = shallowRef<QueryState<T>>(handle ? handle.snapshot() : IDLE_QUERY_STATE)
   if (handle) {
     const unsubscribe = handle.subscribe(() => {
       state.value = handle.snapshot()
     })
     onScopeDispose(unsubscribe)
-    onMounted(() => {
-      handle.fetch().catch(() => {})
-    })
+    onMounted(fetchOnMount(handle))
   }
   return {
     state,

@@ -55,6 +55,7 @@ const NOOP_CLIENT: QueryClient = {
   prefetchQuery: async () => {},
   dehydrate: () => ({ queries: [] }),
   hydrate: () => {},
+  clear: () => {},
 }
 
 const QueryClientContext = createContext<QueryClient | undefined>(undefined)
@@ -132,10 +133,8 @@ export function useQuery<T>(
 ): UseQueryResult<T> {
   const client = useQueryClient()
   const enabled = options?.enabled !== false
-  const queryOpts: QueryOptions | undefined =
-    options?.staleTime !== undefined ? { staleTime: options.staleTime } : undefined
   // A disabled query still binds a handle (so it re-renders when re-enabled), but never fetches.
-  const handle: QueryHandle<T> = client.query<T>(key, fn, queryOpts)
+  const handle: QueryHandle<T> = client.query<T>(key, fn, options)
   // Server snapshot = the handle's own snapshot: without a provider the client is the NOOP one (idle),
   // but WITH a hydrated provider client it returns the server-seeded data - so a HydrationBoundary-fed
   // query renders its data during SSR and the first client render matches (no loading flash, no drift).

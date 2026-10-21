@@ -42,6 +42,21 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./live-client": {
+      "bun": "./src/live-client.ts",
+      "types": "./dist/live-client.d.ts",
+      "default": "./dist/live-client.js"
+    },
+    "./live-hub": {
+      "bun": "./src/live-hub.ts",
+      "types": "./dist/live-hub.d.ts",
+      "default": "./dist/live-hub.js"
+    },
+    "./live-redis": {
+      "bun": "./src/live-redis.ts",
+      "types": "./dist/live-redis.d.ts",
+      "default": "./dist/live-redis.js"
+    },
     "./seo": {
       "bun": "./src/seo.ts",
       "types": "./dist/seo.d.ts",
@@ -101,6 +116,11 @@
       "bun": "./src/pwa-manifest.ts",
       "types": "./dist/pwa-manifest.d.ts",
       "default": "./dist/pwa-manifest.js"
+    },
+    "./live": {
+      "bun": "./src/live.ts",
+      "types": "./dist/live.d.ts",
+      "default": "./dist/live.js"
     },
     "./zones": {
       "bun": "./src/zones.ts",

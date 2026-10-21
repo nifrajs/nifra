@@ -93,6 +93,7 @@ export {
   generateClientEntry,
   generateRouteSearchTypes,
   generateServerManifest,
+  type LiveClientEntry,
 } from "./internal/codegen.ts"
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
 export type { PrerenderedPages } from "./internal/prerendered-pages.ts"
@@ -104,6 +105,7 @@ export {
   type RenderedPage,
   type RenderPageInput,
   type RenderPageOptions,
+  type RevalidateOptions,
   type RevalidateResult,
   redirect,
   renderPage,

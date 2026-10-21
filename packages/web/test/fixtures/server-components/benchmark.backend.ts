@@ -27,6 +27,7 @@ export function componentBenchmark<Props>(
       api: undefined,
       env: undefined,
       draft: false,
+      live() {},
       set: { headers: {}, cookie() {}, deleteCookie() {} },
       data: props,
       layoutData: [],

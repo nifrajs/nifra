@@ -114,26 +114,17 @@ export interface UrlParts {
 // Extract pathname + query WITHOUT a full WHATWG `new URL(req.url)` parse.
 // `req.url` from every supported runtime is an absolute, already-normalized URL, so the pathname is
 // the substring after `scheme://host[:port]` up to `?`/`#`. Query-schema routes also need the search
-// string; parsing both in one scanner avoids the old `pathnameOf()` + `searchOf()` double scan.
+// string; splitting both together avoids the old `pathnameOf()` + `searchOf()` repeated parsing.
 export function urlPartsOf(url: string): UrlParts {
   const schemeEnd = url.indexOf("://")
   const start = schemeEnd === -1 ? url.indexOf("/") : url.indexOf("/", schemeEnd + 3)
   if (start === -1) return { pathname: "/", search: "" }
 
-  let pathEnd = url.length
-  let searchStart = -1
-  let searchEnd = url.length
-  for (let i = start; i < url.length; i++) {
-    const c = url.charCodeAt(i)
-    if (c === 63 /* ? */ && searchStart === -1) {
-      pathEnd = i
-      searchStart = i
-    } else if (c === 35 /* # */) {
-      if (searchStart === -1) pathEnd = i
-      searchEnd = i
-      break
-    }
-  }
+  const fragment = url.indexOf("#", start)
+  const searchEnd = fragment === -1 ? url.length : fragment
+  const question = url.indexOf("?", start)
+  const searchStart = question !== -1 && question < searchEnd ? question : -1
+  const pathEnd = searchStart === -1 ? searchEnd : searchStart
 
   return {
     pathname: url.slice(start, pathEnd),

@@ -50,6 +50,11 @@ export default function Query() {
         surgery.
       </p>
       <p>
+        In an app with <a href="/docs/live">live refresh</a>, a query can name the live keys its data
+        depends on: <code>useQuery(key, fn, {"{ live: [`post:${id}`] }"})</code> refetches whenever
+        the server publishes one of them.
+      </p>
+      <p>
         It's the same agnostic core under both adapters: the cache, dedup, and invalidation logic
         live in <code>@nifrajs/web</code>; the bindings are thin <code>useSyncExternalStore</code> /
         signal wrappers.

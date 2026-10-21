@@ -23,8 +23,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * Only a plugin's `config` hook output is rewritten, never mutated, and only under rolldown-vite.
  * Non-rolldown Vite is passed through verbatim.
  *
- * FLATTEN FIRST: a Vite plugin factory may return an ARRAY of plugins - `@vitejs/plugin-react`'s `react()`
- * returns `[vite:react-babel, vite:react-refresh]`, and it's `react:react-babel`'s `config` hook that emits
+ * FLATTEN FIRST: a plugin factory may return an ARRAY of plugins - `@vitejs/plugin-react@4.x`'s `react()`
+ * returns `[vite:react-babel, vite:react-refresh]`, and it's `vite:react-babel`'s `config` hook that emits
  * the offending `optimizeDeps.rollupOptions.jsx`. `nifra.config.ts` writes `vitePlugins = [react()]`, so the
  * plugin list arrives NESTED (`[[babel, refresh]]`). Without flattening, `.map` sees the inner array (which
  * has no `config`), leaves it untouched, and Vite - which flattens plugin arrays itself before running them

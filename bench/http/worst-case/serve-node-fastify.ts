@@ -39,6 +39,10 @@ app.addHook("preHandler", (_request, reply, done) => {
 // Fastify's onSend hook preserves the same no-op result transform for the serialized payload.
 app.addHook("onSend", (_request, _reply, payload, done) => done(null, payload))
 
+if (process.env.BENCH_GENERIC === "1") {
+  app.addHook("preHandler", (_request, _reply, done) => done())
+}
+
 app.get<{
   Params: { org: string; proj: string; id: string }
   Querystring: { verbose: string; trace: string }

@@ -6,7 +6,13 @@ import {
   NO_FETCHERS,
   noFetchers,
 } from "../src/internal/fetcher-runtime.ts"
-import { getQueryClientSingleton, IDLE_QUERY_STATE } from "../src/internal/query-runtime.ts"
+import {
+  fetchOnMount,
+  getQueryClientSingleton,
+  IDLE_QUERY_STATE,
+  noop,
+  noopSubscribe,
+} from "../src/internal/query-runtime.ts"
 import type { ClientRouter } from "../src/router.ts"
 
 const globalRecord = globalThis as Record<string, unknown>
@@ -59,4 +65,22 @@ describe("shared web binding runtime", () => {
     expect(first.get()).toBeUndefined()
     expect(second.get()).toBe(router)
   })
+})
+
+test("a binding's fetch on mount lets a failed fetch go; with no handle it does nothing", async () => {
+  let fetches = 0
+  const failing = {
+    snapshot: () => IDLE_QUERY_STATE,
+    subscribe: noopSubscribe,
+    fetch: async () => {
+      fetches++
+      throw new Error("down")
+    },
+    refetch: async () => 0,
+  }
+  fetchOnMount(failing)()
+  await Promise.resolve()
+  expect(fetches).toBe(1)
+  expect(fetchOnMount(undefined)).toBe(noop)
+  expect(noopSubscribe()).toBe(noop)
 })

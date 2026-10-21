@@ -26,7 +26,17 @@ const mcp = createMcpServer({
 })
 ```
 
-Mount `mcp.fetch` at `POST /mcp`. The package also exposes the JSON-RPC protocol and Streamable HTTP
+Mount `mcp.fetch` at `/mcp` for `GET`, `POST` and `OPTIONS`:
+
+```ts
+import { method } from "@nifrajs/core/methods"
+import { server } from "@nifrajs/core/server"
+
+const app = server().use(method(["GET", "POST", "OPTIONS"], "/mcp", (c) => mcp.fetch(c.req)))
+```
+
+`OPTIONS` carries a cross-origin browser client's CORS preflight to the server's own origin policy;
+without it the preflight gets a 405. The package also exposes the JSON-RPC protocol and Streamable HTTP
 layers directly, plus `defineMcpWidget` and the React adapter for tool results that render UI in MCP
 hosts.
 

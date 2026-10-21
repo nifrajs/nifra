@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { connect } from "node:net"
 import { join } from "node:path"
+import { server as nifra } from "@nifrajs/core"
+import { websocket } from "@nifrajs/core/ws"
 import {
   buildFailureDetail,
   CLIENT_ENTRY_PATH,
@@ -17,6 +19,7 @@ import {
   readDevServerRecord,
 } from "../src/dev-feed.ts"
 import { DEV_ENTRY_FILE } from "../src/internal/dev-reserved.ts"
+import { handshakeStatus, roomApp, roomRoundTrip } from "./dev-websocket-fixture.ts"
 
 // Integration coverage for the Bun-pipeline dev server. The temp app lives INSIDE the workspace so the
 // generated entry's `@nifrajs/web/client` import resolves through node_modules hoisting, exactly as a real
@@ -430,4 +433,24 @@ test("the dev server answers loopback hosts and allowedHosts only", async () => 
     expect(await statusForHost(port, host)).toBe(200)
   for (const host of [`evil.example:${port}`, "attacker.test", `127.0.0.1.evil.example:${port}`])
     expect(await statusForHost(port, host)).toBe(403)
+})
+
+test("an app WebSocket route upgrades through the dev server, behind its guard and the Host check", async () => {
+  const app = roomApp(nifra().use(websocket()))
+  server = await createDevServer({
+    routesDir,
+    outDir: join(projectRoot, "dist"),
+    clientModule,
+    port: 0,
+    guardLeaks: false,
+    record: false,
+    createApp: () => app,
+  })
+  const port = server.port
+  expect(await roomRoundTrip(app, port)).toEqual(["hello", "echo:x", "news"])
+  expect(await handshakeStatus(port, "/room", `127.0.0.1:${port}`)).toBe(101)
+  expect(await handshakeStatus(port, "/room?deny", `127.0.0.1:${port}`)).toBe(403)
+  expect(await handshakeStatus(port, "/room", `evil.example:${port}`)).toBe(403)
+  // Bun's own HMR socket still answers beside the app's.
+  expect(await handshakeStatus(port, "/_bun/hmr", `127.0.0.1:${port}`)).toBe(101)
 })

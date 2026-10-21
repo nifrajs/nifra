@@ -60,6 +60,12 @@ export interface LoaderContext {
   readonly search: Record<string, unknown>
   /** Response headers and cookies for this page request. */
   readonly set: LoaderResponseControls
+  /**
+   * Declare what this loader's data depends on, as keys in the cache-tag charset. In a live load
+   * (`createWebApp({ live })`) the page reloads this data when one of them changes; elsewhere it does
+   * nothing. Keys count only when the loader resolves, and must be declared before it does.
+   */
+  readonly live: (...keys: string[]) => void
 }
 
 /** A route's optional data loader: params/request in, data out. */

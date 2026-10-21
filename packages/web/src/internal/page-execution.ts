@@ -47,12 +47,14 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
+import type { LiveEnvelope, LiveFinish, LiveLoad, LiveRouteMatch } from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
   isControlFlow,
   isResponseResult,
+  isRevalidateResult,
   isStatusSignal,
   type LoadedLayoutModules,
   layoutErrorId,
@@ -123,6 +125,26 @@ function isDataRequest(c: PageRouteContext<unknown>): boolean {
 
 /** The page slot of an `ssr = false` route with no `HydrateFallback`: a component that renders nothing. */
 const EMPTY_LEAF = (): null => null
+
+/** `ctx.live` outside a live load: keys are declared for nobody. */
+const NO_LIVE = (): void => {}
+
+/** Run one owner's loader with its `ctx.live`, closing the collector once the loader settles. */
+const runLiveLoader = (
+  live: LiveLoad,
+  owner: string,
+  loader: (ctx: LoaderContext) => unknown,
+  ctx: LoaderContext,
+): Promise<unknown> => {
+  let value: unknown
+  try {
+    value = loader({ ...ctx, live: live.collector(owner) })
+  } catch (err) {
+    live.seal(owner)
+    return Promise.reject(err)
+  }
+  return Promise.resolve(value).finally(() => live.seal(owner))
+}
 
 /** The request-scoping seam of an in-process `api` (see `inProcessClient`), if it carries one. */
 function platformBinderOf(api: unknown): BackendPlatformBinder | undefined {
@@ -260,6 +282,16 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly csp?: CspPolicy
   /** Set once a cache wrapper attaches; until then a route's freshness and tags stay off the response. */
   readonly cacheChannel?: { readonly enabled: boolean }
+  /**
+   * Run, or hand to the cache wrapper, what an action's `revalidate()` made stale. A promise is awaited
+   * before the action answers; `undefined` means nothing runs it. Never throws, never changes the answer.
+   */
+  readonly invalidate?: (
+    revalidation: RevalidateResult<unknown>,
+    request: Request,
+  ) => Promise<void> | undefined
+  /** The live load a request belongs to; only set when the app configures `live`. */
+  readonly liveLoadOf?: ((request: Request) => LiveLoad | undefined) | undefined
   readonly onLoaderError?: (
     error: unknown,
     ctx: {
@@ -280,6 +312,8 @@ export interface PageRequestExecutor<Env = unknown> {
   post(route: RouteEntry): (ctx: PageRouteContext<Env>) => Promise<PageResponse>
   /** Answer a URL no route matched: the nearest nested `_404` for it, else the root one. */
   fallback(ctx: PageRouteContext<Env>): Promise<PageResponse>
+  /** The route a `pathname + search` renders, with its layout chain. */
+  matchRoute(path: string): LiveRouteMatch | null
 }
 
 /** One URL pattern a nested `_404` answers, as the executor indexes it. */
@@ -388,6 +422,51 @@ export function createPageRequestExecutor<Env = unknown>(
     manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
   )
   const routeById = new Map(manifest.routes.map((route) => [route.id, route]))
+  const liveLoadOf = options.liveLoadOf
+
+  /** A live load holds one admission slot from before its middleware until its body is complete. */
+  const admitLive =
+    (run: (c: PageRouteContext<Env>, controls: PageResponseControls) => Promise<PageResponse>) =>
+    async (c: PageRouteContext<Env>, controls: PageResponseControls): Promise<PageResponse> => {
+      const live = liveLoadOf?.(c.req)
+      if (live === undefined) return run(c, controls)
+      const refused = live.admit()
+      if (refused !== undefined) return refused
+      let outcome: PageResponse
+      try {
+        outcome = await run(c, controls)
+      } catch (err) {
+        live.release()
+        throw err
+      }
+      if (outcome instanceof Response) return live.settle(outcome)
+      live.release()
+      return outcome
+    }
+
+  /** Which owners a successful live load ran and which it kept, by their wire ids. */
+  const liveOwners = (
+    route: RouteEntry,
+    modules: LoadedLayoutModules | undefined,
+    layoutData: readonly unknown[] | undefined,
+    retained: readonly number[],
+    mod: RouteModule,
+    skipPage: boolean,
+    ctx: LoaderContext,
+  ): LiveFinish => {
+    const fresh: string[] = []
+    const kept: string[] = []
+    for (let i = 0; i < (modules?.length ?? 0); i++) {
+      if (modules?.[i]?.loader === undefined) continue
+      const owner = `L:${route.layoutIds[i]}`
+      if (retained.includes(i)) kept.push(owner)
+      // A layout that answered with a status declared keys for data nobody is shown.
+      else if (!isStatusSignal(layoutData?.[i])) fresh.push(owner)
+    }
+    if (skipPage) kept.push(`P:${route.id}`)
+    else if (mod.loader !== undefined) fresh.push(`P:${route.id}`)
+    return { fresh, retained: kept, ctx }
+  }
 
   // A nested `_404` answers an unmatched URL from inside the catch-all, never as a route of its own:
   // a registered `/admin/*` would take URLs from a route the router only reaches by backtracking.
@@ -537,6 +616,7 @@ export function createPageRequestExecutor<Env = unknown>(
     controls: PageResponseControls,
     retain?: RetainContext,
     gated?: GatedLayouts,
+    live?: LiveLoad,
   ): Promise<LayoutRun> => {
     if (route.layoutIds.length === 0) return emptyLayoutRun
     const modules = gated?.modules ?? (await loadLayoutModules(route))
@@ -568,14 +648,25 @@ export function createPageRequestExecutor<Env = unknown>(
         params: scopeParams(ctx.params, route.layoutParams?.[i]),
         set: controls.scope(i),
       }
+      const layoutId = route.layoutIds[i] as string
       if (modules[i]?.gate === true) {
-        results[i] = gated === undefined ? await runGate(route, i, loader, scoped) : gated.gates[i]
+        results[i] =
+          gated !== undefined
+            ? gated.gates[i]
+            : await runGate(
+                route,
+                i,
+                live === undefined
+                  ? loader
+                  : (gateCtx) => runLiveLoader(live, `L:${layoutId}`, loader, gateCtx),
+                scoped,
+              )
         continue
       }
-      const layoutId = route.layoutIds[i] as string
       const index = i
       try {
-        const value = loader(scoped)
+        const value =
+          live === undefined ? loader(scoped) : runLiveLoader(live, `L:${layoutId}`, loader, scoped)
         // Scalars settle synchronously. Objects keep await's intrinsic promise/thenable
         // assimilation: property-presence and prototype probes are unsafe for proxies.
         if (value !== null && (typeof value === "object" || typeof value === "function")) {
@@ -969,6 +1060,7 @@ export function createPageRequestExecutor<Env = unknown>(
           draft,
           search: loaderSearch(page.searchSchema, c.req),
           set: controls.scope(PAGE_SCOPE),
+          live: NO_LIVE,
         }
         if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls)
         const run = await runLayoutChain(route, ctx, controls)
@@ -1109,6 +1201,7 @@ export function createPageRequestExecutor<Env = unknown>(
     responseHeaders: Record<string, string> | undefined,
     personalized: boolean,
     serverComponents?: import("../server-components/types.ts").ComponentState,
+    live?: LiveEnvelope,
   ): Promise<PageResponse> => {
     // Every layout loader settled before the page rendered, so a status or error page can reuse them.
     const settled: LayoutChainSource = async (_page, count) =>
@@ -1132,7 +1225,10 @@ export function createPageRequestExecutor<Env = unknown>(
         ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
       ]
       const payload =
-        layoutData === undefined && boundarySplit === undefined && serverComponents === undefined
+        layoutData === undefined &&
+        boundarySplit === undefined &&
+        serverComponents === undefined &&
+        live === undefined
           ? pageSplit.forClient
           : {
               v: 1 as const,
@@ -1141,6 +1237,7 @@ export function createPageRequestExecutor<Env = unknown>(
               retained: layoutRetained,
               ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
               ...(serverComponents === undefined ? {} : { serverComponents }),
+              ...(live === undefined ? {} : { live }),
             }
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
@@ -1436,7 +1533,11 @@ export function createPageRequestExecutor<Env = unknown>(
         return slot
       }
 
-      return withResponseControls(async (c, controls) => {
+      const page = async (
+        c: PageRouteContext<Env>,
+        controls: PageResponseControls,
+      ): Promise<PageResponse> => {
+        const live = liveLoadOf?.(c.req)
         const componentRuntime = options.serverComponents
         const componentOwner = componentRuntime?.owns(route.id) === true
         let componentRequest:
@@ -1465,6 +1566,8 @@ export function createPageRequestExecutor<Env = unknown>(
         let componentState: import("../server-components/types.ts").ComponentState | undefined
         const requestApi = apiFor(c)
         let run: LayoutRun | undefined
+        let skipPage = false
+        let liveCtx: LoaderContext
         try {
           const ctx: LoaderContext = {
             params: c.params,
@@ -1475,15 +1578,26 @@ export function createPageRequestExecutor<Env = unknown>(
             draft,
             search: loaderSearch(mod.searchSchema, c.req),
             set: controls.scope(PAGE_SCOPE),
+            live: NO_LIVE,
           }
           if (route.middlewareIds !== undefined || localeGuarded(route)) {
             await runMiddleware(route, ctx, controls)
           }
+          // After middleware, before any loader: a grant issued to another viewer keeps nothing.
+          const retains = live === undefined || (await live.bind(ctx))
+          skipPage =
+            live !== undefined &&
+            retains &&
+            !componentOwner &&
+            live.retainPage &&
+            live.routeId === route.id
           run = await runLayoutChain(
             route,
             ctx,
             controls,
-            componentOwner ? undefined : retainContextOf(c),
+            componentOwner || !retains ? undefined : retainContextOf(c),
+            undefined,
+            live,
           )
           layoutModules = run.modules
           layoutRetained = run.retained
@@ -1516,7 +1630,15 @@ export function createPageRequestExecutor<Env = unknown>(
                   { phase: "build" },
                   options.staticBoundaryCache,
                 )
-          const pageResult = mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null
+          const pageResult =
+            mod.loader === undefined || skipPage
+              ? null
+              : live === undefined
+                ? mod.loader({ ...ctx, search: effectiveSearch })
+                : runLiveLoader(live, `P:${route.id}`, mod.loader, {
+                    ...ctx,
+                    search: effectiveSearch,
+                  })
           const [pageData, , staticBoundaries] =
             run.pending === undefined && staticBoundaryPromise === undefined
               ? ([await pageResult, undefined, undefined] as const)
@@ -1571,6 +1693,7 @@ export function createPageRequestExecutor<Env = unknown>(
           // Inside the loader `try`: a header the response cannot carry is a loader error, rendered
           // by the same boundary as one.
           responseHeaders = controls.documentHeaders()
+          liveCtx = ctx
         } catch (err) {
           if (componentRequest !== undefined) return componentRuntime!.failure(err)
           if (isStatusSignal(err)) {
@@ -1617,9 +1740,24 @@ export function createPageRequestExecutor<Env = unknown>(
           )
           if (nested !== undefined) return nested
         }
+        const isData = isDataRequest(c)
+        const liveEnvelope =
+          live === undefined || !isData || isStatusSignal(data) || isControlFlow(data)
+            ? undefined
+            : await live.finish(
+                liveOwners(
+                  route,
+                  layoutModules,
+                  layoutData,
+                  layoutRetained,
+                  mod,
+                  skipPage,
+                  liveCtx,
+                ),
+              )
         return handleDataOrDocument(
           c.req,
-          isDataRequest(c),
+          isData,
           c.env,
           route,
           c.params,
@@ -1633,8 +1771,10 @@ export function createPageRequestExecutor<Env = unknown>(
           responseHeaders,
           controls.personalized,
           componentState,
+          liveEnvelope,
         )
-      })
+      }
+      return withResponseControls(liveLoadOf === undefined ? page : admitLive(page))
     },
 
     post: (route) =>
@@ -1685,6 +1825,7 @@ export function createPageRequestExecutor<Env = unknown>(
           draft,
           search: loaderSearch(mod.searchSchema, c.req),
           set: controls.scope(ACTION_SCOPE),
+          live: NO_LIVE,
         }
         let gated: GatedLayouts
         let result: unknown
@@ -1698,16 +1839,17 @@ export function createPageRequestExecutor<Env = unknown>(
           if (isControlFlow(err)) return err
           throw err
         }
-        const isRevalidate =
-          result !== null && typeof result === "object" && "__nifraRevalidate" in result
-        const actionResult = isRevalidate ? (result as RevalidateResult<unknown>).data : result
-        const revalidateHeader: Record<string, string> = isRevalidate
-          ? {
-              [REVALIDATE_HEADER]: (result as RevalidateResult<unknown>).__nifraRevalidate.join(
-                ",",
-              ),
-            }
-          : {}
+        const revalidation = isRevalidateResult(result) ? result : undefined
+        const actionResult = revalidation === undefined ? result : revalidation.data
+        const revalidateHeader: Record<string, string> =
+          revalidation === undefined
+            ? {}
+            : { [REVALIDATE_HEADER]: revalidation.__nifraRevalidate.join(",") }
+        // The write is done, whatever the action answers with (a redirect included): what it made
+        // stale is invalidated before the answer leaves.
+        const settling =
+          revalidation === undefined ? undefined : options.invalidate?.(revalidation, c.req)
+        if (settling !== undefined) await settling
         if (isControlFlow(actionResult)) return actionResult
         if (isDataRequest) {
           // Headers shape the document only, but a bad one fails here too, so a navigation and a full
@@ -1794,6 +1936,7 @@ export function createPageRequestExecutor<Env = unknown>(
                 draft,
                 search,
                 set: controls.scope(PAGE_SCOPE),
+                live: NO_LIVE,
               })
             : null
           const [pageData] =
@@ -1893,6 +2036,12 @@ export function createPageRequestExecutor<Env = unknown>(
         return renderPageResult(page)
       }),
 
+    matchRoute: (path) => {
+      const matched = matchManifestRoute(path)
+      const route = matched === null ? undefined : routeById.get(matched.routeId)
+      return route === undefined ? null : { routeId: route.id, layoutIds: route.layoutIds }
+    },
+
     fallback: withResponseControls(async (c, controls) => {
       const match = matchNotFoundScope?.(pathOf(c.req)) ?? null
       const target = match === null ? undefined : notFoundTargets[Number(match.routeId)]
@@ -1917,6 +2066,7 @@ export function createPageRequestExecutor<Env = unknown>(
           draft,
           search: loaderSearch(mod.searchSchema, c.req),
           set: controls.scope(PAGE_SCOPE),
+          live: NO_LIVE,
         }
         if (target.route.middlewareIds !== undefined) {
           await runMiddleware(target.route, ctx, controls)

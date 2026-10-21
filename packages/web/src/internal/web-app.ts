@@ -11,7 +11,7 @@ import {
   preRouteMountPaths,
 } from "@nifrajs/core/mount"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
-import { type ServerOptions, server } from "@nifrajs/core/server"
+import { replacedRequestOf, type ServerOptions, server } from "@nifrajs/core/server"
 import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
 import {
@@ -26,9 +26,12 @@ import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
+import { INVALIDATION, type InvalidationOp, invalidationOf } from "./invalidation-contract.ts"
+import { LIVE_ATTACH, type LiveAttachment, type LiveRuntimeHandle } from "./live-contract.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
+import type { RevalidateResult } from "./render-document.ts"
 import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
@@ -221,6 +224,11 @@ export interface CreateWebAppOptions<Env = unknown> {
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
    * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */
   readonly draftSecret?: string
+  /**
+   * Live data refresh, from `live()` in `@nifrajs/web/live`. Loaders declare keys with `ctx.live()`;
+   * the app answers live loads at the runtime's load endpoint. Omit and nothing live is loaded.
+   */
+  readonly live?: LiveRuntimeHandle
   /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own
    * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,
    * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */
@@ -330,6 +338,16 @@ export interface CreateWebAppOptions<Env = unknown> {
  * The `Request` is rebuilt rather than mutated (`url` is read-only), preserving method, headers, body,
  * and duplex streaming - the body is passed through unread, so a large or streamed upload is untouched.
  */
+/** Publish what a write named, for an app with `live` and no cache wrapper to run the pipeline. */
+async function publishOwn(
+  op: InvalidationOp,
+  request: Request,
+  publish: (keys: readonly string[]) => Promise<void>,
+): Promise<void> {
+  const { settleInvalidation } = await import("./invalidation.ts")
+  await settleInvalidation(op, { publish }, request, undefined)
+}
+
 /**
  * Resolve the explicit symbol-keyed backend mount interface. The symbol seam forwards platform
  * context without making web depend on client.
@@ -421,6 +439,13 @@ export function createWebApp<Env = unknown>(
     }
     app.use(hostPolicyGate(options.hostPolicy, options.buildAssets))
   }
+  // Before every app hook: a live load becomes the target page's GET here, so each hook, middleware,
+  // gate and loader sees that path once, as a navigation would.
+  const liveAttachment: LiveAttachment | undefined = options.live?.[LIVE_ATTACH]({
+    matchRoute: (path) => pageExecutor.matchRoute(path),
+    app,
+  })
+  if (liveAttachment !== undefined) app.onRequest(liveAttachment.onRequest)
   // Before the mount hooks and before every page route, so the order-scoped hooks (`derive`,
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
@@ -473,6 +498,44 @@ export function createWebApp<Env = unknown>(
       cacheChannel.enabled = true
     },
   })
+  // One owner per write. A cache wrapper that opened the channel runs the whole pipeline and takes
+  // the operation here, by the request it passed in; without one, the app publishes the write's keys
+  // and tags itself, and a write with nothing to publish needs nothing at all.
+  const handedOver = new WeakMap<Request, InvalidationOp>()
+  const live = options.live
+  const publish =
+    live === undefined ? undefined : (keys: readonly string[]) => live.publish(...keys)
+  Object.defineProperty(app, INVALIDATION, {
+    value: {
+      take: (request: Request): InvalidationOp | undefined => {
+        const op = handedOver.get(request)
+        handedOver.delete(request)
+        return op
+      },
+      publish,
+    },
+  })
+  const invalidate = (
+    revalidation: RevalidateResult<unknown>,
+    request: Request,
+  ): Promise<void> | undefined => {
+    if (cacheChannel.enabled) {
+      const op = invalidationOf(revalidation)
+      // Every request in a hook's replacement chain: the wrapper holds the first one.
+      for (
+        let held: Request | undefined = request;
+        held !== undefined;
+        held = replacedRequestOf(held)
+      )
+        handedOver.set(held, op)
+      return undefined
+    }
+    // Paths alone refresh only the submitting page, which the response header already does.
+    const named = revalidation.__nifraInvalidate
+    if (publish === undefined || named === undefined || named.keys.length + named.tags.length === 0)
+      return undefined
+    return publishOwn(invalidationOf(revalidation), request, publish)
+  }
   // Mount the in-process backend over HTTP at `apiPrefix`, when one is given, BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
@@ -558,6 +621,8 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
+    invalidate,
+    liveLoadOf: liveAttachment?.loadOf,
   })
 
   // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.

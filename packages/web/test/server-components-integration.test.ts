@@ -272,6 +272,7 @@ test("native render records and HTTP controls stay bounded and private", async (
     api: undefined,
     env: undefined,
     draft: false,
+    live() {},
     search: {},
     data: null,
     layoutData: [],

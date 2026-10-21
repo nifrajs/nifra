@@ -49,12 +49,37 @@ export function guardParsedValue(value: unknown, policy: ProtoPoisoning): unknow
  */
 /** Reused walk stack - `sweep` is synchronous and single-threaded, and a thrown rejection can
  * leave residue, so each entry clears it. Saves one array allocation per swept request. */
-const STACK: unknown[] = []
+const STORAGE: unknown[] = []
+// Reuse at most 1,024 logical slots between requests; larger walks use the existing full reset.
+const MAX_REUSED_STACK = 1024
+// JSC keeps native Array.pop on this hot path; a JS cursor lets it inline the stack operations.
+// Select once so V8 keeps its faster native array stack, with one shared security walk below.
+const INDEXED_STACK = typeof Bun !== "undefined"
+const STACK = !INDEXED_STACK
+  ? STORAGE
+  : {
+      length: 0,
+      push(value: unknown): void {
+        STORAGE[this.length++] = value
+      },
+      pop(): unknown {
+        const index = --this.length
+        const value = STORAGE[index]
+        STORAGE[index] = undefined
+        return value
+      },
+    }
 
 function sweep(root: unknown, policy: "reject" | "strip"): unknown {
   if (root === null || typeof root !== "object") return root
   const stack = STACK
-  stack.length = 0
+  // Keep V8's native-array reset: skipping it regresses the deep-chain control. Bun only needs
+  // a reset after an unexpected custom-source throw; ordinary pops already cleared every slot.
+  if (!INDEXED_STACK) stack.length = 0
+  else if (stack.length > 0) {
+    stack.length = 0
+    STORAGE.length = 0
+  }
   stack.push(root)
   while (stack.length > 0) {
     const node = stack.pop() as object
@@ -95,7 +120,11 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
       // + first-code-unit guards avoid a full string comparison for the overwhelming majority of
       // fields while preserving exact equality for the two security-sensitive names.
       if (key.length === 9 && key.charCodeAt(0) === 95 /* _ */ && key === "__proto__") {
-        if (policy === "reject") throw POISONED
+        if (policy === "reject") {
+          stack.length = 0
+          STORAGE.length = 0
+          throw POISONED
+        }
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["__proto__"]
         continue
@@ -107,7 +136,11 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
         nested &&
         Object.hasOwn(value, "prototype")
       ) {
-        if (policy === "reject") throw POISONED
+        if (policy === "reject") {
+          stack.length = 0
+          STORAGE.length = 0
+          throw POISONED
+        }
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["constructor"]
         continue
@@ -115,6 +148,8 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
       if (nested) stack.push(value)
     }
   }
+  // Bun pops clear their references immediately, so ordinary requests can reuse the empty buffer.
+  if (INDEXED_STACK && STORAGE.length > MAX_REUSED_STACK) STORAGE.length = 0
   return root
 }
 
