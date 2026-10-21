@@ -55,6 +55,12 @@ bench/**/*.md
 !bench/techempower/README.md
 !bench/http/worst-case/README.md
 !bench/ssr/README.md
+!bench/memory/README.md
+!bench/profiling/README.md
+!bench/profiling/FINDINGS-2026-10-21.md
+!bench/profiling/OPTIMIZATIONS-2026-10-21.md
+!bench/profiling/ROUND2-2026-10-21.md
+!bench/profiling/PROTO-GUARD-2026-10-21.md
 /plans
 
 # Local editor/agent tooling - machine-specific (absolute paths, local settings); never committed.

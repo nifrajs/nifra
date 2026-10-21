@@ -822,5 +822,75 @@
     "bun": "1.4.3",
     "node": "26.12.0",
     "oha": "1.16.0"
+  },
+  "httpMemory": {
+    "date": "2026-10-21",
+    "node": "26.12.0",
+    "platform": "darwin 24.6.0",
+    "cpu": "Apple M3 Max",
+    "revision": "4432d483c2ba5c7656573363c7c67d1934332e5e",
+    "workspaceArtifactSHA256": "bed0864455976407ae428fcd8f4425bb07a5f649f37373c89811db6aba0a48ba",
+    "protocol": "fresh-native-node-v1",
+    "rounds": 5,
+    "requestsPerPhase": 50000,
+    "connections": 50,
+    "rows": [
+      {
+        "name": "Nifra",
+        "version": "5.5.1",
+        "nifra": true,
+        "readyRssMiB": 44.6231689453125,
+        "getRssMiB": 75.0013427734375,
+        "postRssMiB": 77.54827880859375,
+        "postHeapMiB": 15.44805908203125,
+        "peakRssMiB": 129.65625,
+        "postRssMinMiB": 72.953857421875,
+        "postRssMaxMiB": 79.8292236328125
+      },
+      {
+        "name": "Fastify",
+        "version": "5.12.7",
+        "readyRssMiB": 56.3575439453125,
+        "getRssMiB": 81.47015380859375,
+        "postRssMiB": 85.18890380859375,
+        "postHeapMiB": 16.681167602539062,
+        "peakRssMiB": 137.875,
+        "postRssMinMiB": 79.79852294921875,
+        "postRssMaxMiB": 85.48614501953125
+      },
+      {
+        "name": "Elysia",
+        "version": "1.4.30",
+        "readyRssMiB": 50.1534423828125,
+        "getRssMiB": 76.04925537109375,
+        "postRssMiB": 146.3248291015625,
+        "postHeapMiB": 11.137123107910156,
+        "peakRssMiB": 196.4375,
+        "postRssMinMiB": 137.526611328125,
+        "postRssMaxMiB": 152.0140380859375
+      },
+      {
+        "name": "Hono",
+        "version": "4.13.13",
+        "readyRssMiB": 42.02569580078125,
+        "getRssMiB": 79.32958984375,
+        "postRssMiB": 143.3699951171875,
+        "postHeapMiB": 7.964973449707031,
+        "peakRssMiB": 197.53125,
+        "postRssMinMiB": 141.2919921875,
+        "postRssMaxMiB": 153.6231689453125
+      },
+      {
+        "name": "Express",
+        "version": "5.3.0",
+        "readyRssMiB": 46.99664306640625,
+        "getRssMiB": 79.11114501953125,
+        "postRssMiB": 84.7049560546875,
+        "postHeapMiB": 14.678337097167969,
+        "peakRssMiB": 141.21875,
+        "postRssMinMiB": 77.595458984375,
+        "postRssMaxMiB": 85.67364501953125
+      }
+    ]
   }
 }

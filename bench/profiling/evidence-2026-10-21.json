@@ -1,0 +1,2340 @@
+{
+  "date": "2026-10-21",
+  "environment": {
+    "node": "v26.12.0",
+    "platform": "darwin 24.6.0",
+    "cpu": "Apple M3 Max",
+    "versions": {
+      "fastify": "5.12.7",
+      "elysia": "1.4.30",
+      "@elysiajs/node": "1.4.5"
+    },
+    "date": "2026-10-21T08:55:15.413Z",
+    "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+  },
+  "metricGroups": [
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "target": "nifra",
+      "rounds": 6,
+      "requestsPerRound": 100000,
+      "rps": 58297.579503592824,
+      "p50ms": 0.7879999999999999,
+      "p99ms": 2.2084585,
+      "cpuUsPerRequest": 19.10758,
+      "userUsPerRequest": 12.823595000000001,
+      "systemUsPerRequest": 6.288964999999999,
+      "rssMiB": 70.64553833007812,
+      "heapAfterGCMiB": 9.590751647949219,
+      "gcMsPer100k": 48.94621688872576,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 45579.1110933859,
+          "cpuUsPerRequest": 23.13308
+        },
+        {
+          "round": 1,
+          "rps": 46158.040336136866,
+          "cpuUsPerRequest": 22.59766
+        },
+        {
+          "round": 2,
+          "rps": 45939.5786582634,
+          "cpuUsPerRequest": 22.71643
+        },
+        {
+          "round": 3,
+          "rps": 70437.11867104878,
+          "cpuUsPerRequest": 15.6175
+        },
+        {
+          "round": 4,
+          "rps": 72922.66346189646,
+          "cpuUsPerRequest": 15.03635
+        },
+        {
+          "round": 5,
+          "rps": 71624.45151337989,
+          "cpuUsPerRequest": 15.33335
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "target": "fastify",
+      "rounds": 6,
+      "requestsPerRound": 100000,
+      "rps": 56089.71853527011,
+      "p50ms": 0.7894585000000001,
+      "p99ms": 2.255979,
+      "cpuUsPerRequest": 19.519395000000003,
+      "userUsPerRequest": 12.963125,
+      "systemUsPerRequest": 6.47209,
+      "rssMiB": 90.26116943359375,
+      "heapAfterGCMiB": 17.12588882446289,
+      "gcMsPer100k": 40.944974452257156,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 45365.48648843514,
+          "cpuUsPerRequest": 22.99614
+        },
+        {
+          "round": 1,
+          "rps": 45023.17483506182,
+          "cpuUsPerRequest": 22.6922
+        },
+        {
+          "round": 2,
+          "rps": 44173.529815597816,
+          "cpuUsPerRequest": 22.60469
+        },
+        {
+          "round": 3,
+          "rps": 66813.95058210508,
+          "cpuUsPerRequest": 16.4341
+        },
+        {
+          "round": 4,
+          "rps": 71180.50948841957,
+          "cpuUsPerRequest": 15.20537
+        },
+        {
+          "round": 5,
+          "rps": 71850.43401552846,
+          "cpuUsPerRequest": 14.98275
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "target": "elysia",
+      "rounds": 6,
+      "requestsPerRound": 100000,
+      "rps": 34438.489915892584,
+      "p50ms": 1.213792,
+      "p99ms": 3.802896,
+      "cpuUsPerRequest": 30.156080000000003,
+      "userUsPerRequest": 22.559255,
+      "systemUsPerRequest": 7.289745,
+      "rssMiB": 93.64120483398438,
+      "heapAfterGCMiB": 16.84984588623047,
+      "gcMsPer100k": 66.47662595659494,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 33668.40503745909,
+          "cpuUsPerRequest": 30.65116
+        },
+        {
+          "round": 1,
+          "rps": 32645.83338900808,
+          "cpuUsPerRequest": 31.46373
+        },
+        {
+          "round": 2,
+          "rps": 33353.80051500963,
+          "cpuUsPerRequest": 31.23036
+        },
+        {
+          "round": 3,
+          "rps": 35208.57479432609,
+          "cpuUsPerRequest": 29.661
+        },
+        {
+          "round": 4,
+          "rps": 53042.93269724078,
+          "cpuUsPerRequest": 20.52132
+        },
+        {
+          "round": 5,
+          "rps": 52492.3257860086,
+          "cpuUsPerRequest": 20.71454
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "target": "nifra",
+      "rounds": 6,
+      "requestsPerRound": 100000,
+      "rps": 66994.76035377126,
+      "p50ms": 0.696875,
+      "p99ms": 1.5089165,
+      "cpuUsPerRequest": 16.785485,
+      "userUsPerRequest": 11.60379,
+      "systemUsPerRequest": 5.18519,
+      "rssMiB": 72.86419677734375,
+      "heapAfterGCMiB": 9.7449951171875,
+      "gcMsPer100k": 33.878611013293266,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 66493.83075956682,
+          "cpuUsPerRequest": 16.9637
+        },
+        {
+          "round": 1,
+          "rps": 67495.6899479757,
+          "cpuUsPerRequest": 16.60727
+        },
+        {
+          "round": 2,
+          "rps": 69991.44704517108,
+          "cpuUsPerRequest": 16.10148
+        },
+        {
+          "round": 3,
+          "rps": 67617.90599180982,
+          "cpuUsPerRequest": 16.56558
+        },
+        {
+          "round": 4,
+          "rps": 64491.259995793014,
+          "cpuUsPerRequest": 17.25874
+        },
+        {
+          "round": 5,
+          "rps": 65903.73211187356,
+          "cpuUsPerRequest": 16.99492
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "target": "fastify",
+      "rounds": 6,
+      "requestsPerRound": 100000,
+      "rps": 68674.34765315853,
+      "p50ms": 0.6808335000000001,
+      "p99ms": 1.481771,
+      "cpuUsPerRequest": 16.061965,
+      "userUsPerRequest": 11.140094999999999,
+      "systemUsPerRequest": 5.0253049999999995,
+      "rssMiB": 93.58279418945312,
+      "heapAfterGCMiB": 17.342601776123047,
+      "gcMsPer100k": 32.85478397458792,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 69921.30531889621,
+          "cpuUsPerRequest": 15.85094
+        },
+        {
+          "round": 1,
+          "rps": 51096.5315674372,
+          "cpuUsPerRequest": 16.95896
+        },
+        {
+          "round": 2,
+          "rps": 70535.46228769877,
+          "cpuUsPerRequest": 15.64759
+        },
+        {
+          "round": 3,
+          "rps": 70479.36540379391,
+          "cpuUsPerRequest": 15.76698
+        },
+        {
+          "round": 4,
+          "rps": 67154.86200885316,
+          "cpuUsPerRequest": 16.48063
+        },
+        {
+          "round": 5,
+          "rps": 67427.38998742084,
+          "cpuUsPerRequest": 16.27299
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "target": "elysia",
+      "rounds": 6,
+      "requestsPerRound": 100000,
+      "rps": 43117.61377603776,
+      "p50ms": 1.0186875,
+      "p99ms": 2.4863745,
+      "cpuUsPerRequest": 29.394485,
+      "userUsPerRequest": 23.967255,
+      "systemUsPerRequest": 5.3252500000000005,
+      "rssMiB": 195.95669555664062,
+      "heapAfterGCMiB": 11.818473815917969,
+      "gcMsPer100k": 99.6610440313816,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 45007.58519134292,
+          "cpuUsPerRequest": 26.74301
+        },
+        {
+          "round": 1,
+          "rps": 38365.6176591395,
+          "cpuUsPerRequest": 29.44005
+        },
+        {
+          "round": 2,
+          "rps": 43113.01397583796,
+          "cpuUsPerRequest": 29.34892
+        },
+        {
+          "round": 3,
+          "rps": 43889.924508232594,
+          "cpuUsPerRequest": 28.87901
+        },
+        {
+          "round": 4,
+          "rps": 42664.49362179153,
+          "cpuUsPerRequest": 29.61969
+        },
+        {
+          "round": 5,
+          "rps": 43122.21357623756,
+          "cpuUsPerRequest": 29.45203
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "target": "nifra",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 71998.10876678067,
+      "p50ms": 0.6483335,
+      "p99ms": 1.4384165,
+      "cpuUsPerRequest": 19.726775,
+      "userUsPerRequest": 13.955,
+      "systemUsPerRequest": 5.909549999999999,
+      "rssMiB": 85.803466796875,
+      "heapAfterGCMiB": 9.490379333496094,
+      "gcMsPer100k": 31.881882697343826,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 68697.30165586258,
+          "cpuUsPerRequest": 20.6156
+        },
+        {
+          "round": 1,
+          "rps": 71753.07239211602,
+          "cpuUsPerRequest": 19.8818
+        },
+        {
+          "round": 2,
+          "rps": 72243.1451414453,
+          "cpuUsPerRequest": 19.57175
+        },
+        {
+          "round": 3,
+          "rps": 40215.26903750571,
+          "cpuUsPerRequest": 24.928
+        },
+        {
+          "round": 4,
+          "rps": 72733.51008861244,
+          "cpuUsPerRequest": 19.00345
+        },
+        {
+          "round": 5,
+          "rps": 75316.48221189444,
+          "cpuUsPerRequest": 19.10245
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "target": "fastify",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 77550.12572548978,
+      "p50ms": 0.607,
+      "p99ms": 1.3037705,
+      "cpuUsPerRequest": 17.497425,
+      "userUsPerRequest": 11.740749999999998,
+      "systemUsPerRequest": 5.7566749999999995,
+      "rssMiB": 78.42239379882812,
+      "heapAfterGCMiB": 15.608051300048828,
+      "gcMsPer100k": 31.66488241404295,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 71653.91865231648,
+          "cpuUsPerRequest": 18.72905
+        },
+        {
+          "round": 1,
+          "rps": 75589.086824078,
+          "cpuUsPerRequest": 17.9978
+        },
+        {
+          "round": 2,
+          "rps": 77823.45962975739,
+          "cpuUsPerRequest": 17.57095
+        },
+        {
+          "round": 3,
+          "rps": 77276.79182122218,
+          "cpuUsPerRequest": 17.4239
+        },
+        {
+          "round": 4,
+          "rps": 81573.70656904207,
+          "cpuUsPerRequest": 16.71285
+        },
+        {
+          "round": 5,
+          "rps": 78246.41949274803,
+          "cpuUsPerRequest": 17.28585
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "target": "elysia",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 58709.232373336024,
+      "p50ms": 0.778375,
+      "p99ms": 1.698396,
+      "cpuUsPerRequest": 23.733674999999998,
+      "userUsPerRequest": 17.9454,
+      "systemUsPerRequest": 5.9072,
+      "rssMiB": 227.65960693359375,
+      "heapAfterGCMiB": 16.958789825439453,
+      "gcMsPer100k": 8.158647455275059,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 58348.40470195601,
+          "cpuUsPerRequest": 24.08675
+        },
+        {
+          "round": 1,
+          "rps": 58252.32102950818,
+          "cpuUsPerRequest": 23.95015
+        },
+        {
+          "round": 2,
+          "rps": 59070.06004471603,
+          "cpuUsPerRequest": 23.36815
+        },
+        {
+          "round": 3,
+          "rps": 59890.55001983875,
+          "cpuUsPerRequest": 23.1922
+        },
+        {
+          "round": 4,
+          "rps": 57669.7804897556,
+          "cpuUsPerRequest": 24.1313
+        },
+        {
+          "round": 5,
+          "rps": 59972.847293387924,
+          "cpuUsPerRequest": 23.5172
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "target": "nifra",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 27787.4340292045,
+      "p50ms": 1.721,
+      "p99ms": 3.4404795000000004,
+      "cpuUsPerRequest": 43.27055,
+      "userUsPerRequest": 37.882725,
+      "systemUsPerRequest": 5.02995,
+      "rssMiB": 75.74734497070312,
+      "heapAfterGCMiB": 9.6513671875,
+      "gcMsPer100k": 90.2639752626419,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 27485.694554912123,
+          "cpuUsPerRequest": 43.89045
+        },
+        {
+          "round": 1,
+          "rps": 27629.521716801995,
+          "cpuUsPerRequest": 43.5216
+        },
+        {
+          "round": 2,
+          "rps": 27484.424490752262,
+          "cpuUsPerRequest": 43.53505
+        },
+        {
+          "round": 3,
+          "rps": 29946.653779623324,
+          "cpuUsPerRequest": 40.27415
+        },
+        {
+          "round": 4,
+          "rps": 29500.218334065914,
+          "cpuUsPerRequest": 40.69645
+        },
+        {
+          "round": 5,
+          "rps": 27945.34634160701,
+          "cpuUsPerRequest": 43.0195
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "target": "fastify",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 26429.65058459375,
+      "p50ms": 1.8308334999999998,
+      "p99ms": 3.6899585,
+      "cpuUsPerRequest": 44.698425,
+      "userUsPerRequest": 39.485275,
+      "systemUsPerRequest": 4.8706,
+      "rssMiB": 77.14935302734375,
+      "heapAfterGCMiB": 15.850395202636719,
+      "gcMsPer100k": 102.22594995051622,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 26506.091316471822,
+          "cpuUsPerRequest": 44.59265
+        },
+        {
+          "round": 1,
+          "rps": 25738.805614636804,
+          "cpuUsPerRequest": 46.3872
+        },
+        {
+          "round": 2,
+          "rps": 26544.759857023284,
+          "cpuUsPerRequest": 43.64115
+        },
+        {
+          "round": 3,
+          "rps": 28333.280588570407,
+          "cpuUsPerRequest": 41.6255
+        },
+        {
+          "round": 4,
+          "rps": 26065.148208876322,
+          "cpuUsPerRequest": 44.9715
+        },
+        {
+          "round": 5,
+          "rps": 26353.209852715678,
+          "cpuUsPerRequest": 44.8042
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "target": "elysia",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 21166.79434620776,
+      "p50ms": 2.1513535,
+      "p99ms": 4.3688125,
+      "cpuUsPerRequest": 79.080525,
+      "userUsPerRequest": 70.81905,
+      "systemUsPerRequest": 7.56795,
+      "rssMiB": 171.84780883789062,
+      "heapAfterGCMiB": 11.990360260009766,
+      "gcMsPer100k": 168.78906477242708,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 20074.289082200812,
+          "cpuUsPerRequest": 79.00725
+        },
+        {
+          "round": 1,
+          "rps": 21611.398075238965,
+          "cpuUsPerRequest": 70.03945
+        },
+        {
+          "round": 2,
+          "rps": 21935.668276347318,
+          "cpuUsPerRequest": 79.1538
+        },
+        {
+          "round": 3,
+          "rps": 20871.682331951324,
+          "cpuUsPerRequest": 80.88075
+        },
+        {
+          "round": 4,
+          "rps": 18176.18217734384,
+          "cpuUsPerRequest": 82.7972
+        },
+        {
+          "round": 5,
+          "rps": 21461.906360464196,
+          "cpuUsPerRequest": 75.43745
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "target": "nifra",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 6613.048011777835,
+      "p50ms": 7.347854,
+      "p99ms": 14.446479,
+      "cpuUsPerRequest": 166.203625,
+      "userUsPerRequest": 144.4604,
+      "systemUsPerRequest": 21.738025,
+      "rssMiB": 150.16482543945312,
+      "heapAfterGCMiB": 8.139019012451172,
+      "gcMsPer100k": 252.45434042066336,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 6632.686216872319,
+          "cpuUsPerRequest": 164.9894
+        },
+        {
+          "round": 1,
+          "rps": 6621.38403213552,
+          "cpuUsPerRequest": 166.04545
+        },
+        {
+          "round": 2,
+          "rps": 6604.711991420149,
+          "cpuUsPerRequest": 166.3618
+        },
+        {
+          "round": 3,
+          "rps": 5961.644567347059,
+          "cpuUsPerRequest": 177.83425
+        },
+        {
+          "round": 4,
+          "rps": 6784.052347831977,
+          "cpuUsPerRequest": 162.8313
+        },
+        {
+          "round": 5,
+          "rps": 4728.73270200023,
+          "cpuUsPerRequest": 228.41135
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "target": "fastify",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 5542.417751105306,
+      "p50ms": 8.31625,
+      "p99ms": 17.2103125,
+      "cpuUsPerRequest": 194.602725,
+      "userUsPerRequest": 171.61020000000002,
+      "systemUsPerRequest": 21.35,
+      "rssMiB": 94.34475708007812,
+      "heapAfterGCMiB": 10.639324188232422,
+      "gcMsPer100k": 456.9828577712178,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 5750.091188755507,
+          "cpuUsPerRequest": 190.6428
+        },
+        {
+          "round": 1,
+          "rps": 4869.957770881943,
+          "cpuUsPerRequest": 221.3837
+        },
+        {
+          "round": 2,
+          "rps": 6194.170921255557,
+          "cpuUsPerRequest": 175.3599
+        },
+        {
+          "round": 3,
+          "rps": 5032.577498411606,
+          "cpuUsPerRequest": 207.4378
+        },
+        {
+          "round": 4,
+          "rps": 6340.040126500703,
+          "cpuUsPerRequest": 171.89615
+        },
+        {
+          "round": 5,
+          "rps": 5334.744313455106,
+          "cpuUsPerRequest": 198.56265
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "target": "elysia",
+      "rounds": 6,
+      "requestsPerRound": 20000,
+      "rps": 6304.184747536528,
+      "p50ms": 7.649167,
+      "p99ms": 15.1520625,
+      "cpuUsPerRequest": 183.16145,
+      "userUsPerRequest": 156.094775,
+      "systemUsPerRequest": 27.170375,
+      "rssMiB": 205.25961303710938,
+      "heapAfterGCMiB": 12.014636993408203,
+      "gcMsPer100k": 312.0656920224428,
+      "samples": [
+        {
+          "round": 0,
+          "rps": 6339.485050761247,
+          "cpuUsPerRequest": 182.80555
+        },
+        {
+          "round": 1,
+          "rps": 6389.971239701141,
+          "cpuUsPerRequest": 182.465
+        },
+        {
+          "round": 2,
+          "rps": 6223.68507505759,
+          "cpuUsPerRequest": 187.43375
+        },
+        {
+          "round": 3,
+          "rps": 6268.88444431181,
+          "cpuUsPerRequest": 183.1245
+        },
+        {
+          "round": 4,
+          "rps": 6358.23992859254,
+          "cpuUsPerRequest": 183.1984
+        },
+        {
+          "round": 5,
+          "rps": 5972.009565016566,
+          "cpuUsPerRequest": 195.79085
+        }
+      ]
+    }
+  ],
+  "heapGroups": [
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "target": "nifra",
+      "rounds": 3,
+      "requestsPerRound": 100000,
+      "sampledJSBytesPerRequest": 10395.38712,
+      "topFrames": [
+        {
+          "frame": "writeGeneric node:internal/stream_base_commons:93",
+          "value": 162379536,
+          "share": 0.1573345019824979
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 128280880,
+          "share": 0.12429527061018684
+        },
+        {
+          "frame": "toOutcome bundle:serve-node-nifra.js:690",
+          "value": 111959320,
+          "share": 0.10848081161224107
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 71327968,
+          "share": 0.06911185115532999
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 58827176,
+          "share": 0.05699945120545703
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 52148592,
+          "share": 0.050528366772820896
+        },
+        {
+          "frame": "(anonymous) bundle:serve-node-nifra.js:8736",
+          "value": 35682272,
+          "share": 0.034573645380560944
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 33686568,
+          "share": 0.03263994669734461
+        },
+        {
+          "frame": "runDerive bundle:serve-node-nifra.js:8700",
+          "value": 28529456,
+          "share": 0.027643063049469403
+        },
+        {
+          "frame": "parseCookies bundle:serve-node-nifra.js:4765",
+          "value": 23694072,
+          "share": 0.022957911507133805
+        },
+        {
+          "frame": "_write node:internal/streams/writable:452",
+          "value": 23625264,
+          "share": 0.022891241330096155
+        },
+        {
+          "frame": "Readable node:internal/streams/readable:344",
+          "value": 23304080,
+          "share": 0.022580036322805416
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "target": "fastify",
+      "rounds": 3,
+      "requestsPerRound": 100000,
+      "sampledJSBytesPerRequest": 10542.10272,
+      "topFrames": [
+        {
+          "frame": "doWrite node:internal/streams/writable:626",
+          "value": 169839280,
+          "share": 0.1611056963785684
+        },
+        {
+          "frame": "preSerializationHookEnd node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/reply.js:538",
+          "value": 151383440,
+          "share": 0.1435989043369898
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 128722720,
+          "share": 0.12210345831272644
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 73658048,
+          "share": 0.06987035694526035
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 59092840,
+          "share": 0.05605413034715716
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 51804672,
+          "share": 0.0491407391636571
+        },
+        {
+          "frame": "(anonymous) bench/http-realworld/serve-node.ts:101",
+          "value": 39311504,
+          "share": 0.03729000280505709
+        },
+        {
+          "frame": "routeHandler node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/route.js:461",
+          "value": 35545704,
+          "share": 0.03371785017097614
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 34735768,
+          "share": 0.03294956321579079
+        },
+        {
+          "frame": "Readable node:internal/streams/readable:344",
+          "value": 24095920,
+          "share": 0.022856844255829827
+        },
+        {
+          "frame": "handler node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/handle-request.js:89",
+          "value": 23486976,
+          "share": 0.022279213762015023
+        },
+        {
+          "frame": "_write node:internal/streams/writable:452",
+          "value": 23362576,
+          "share": 0.02216121073804145
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "target": "elysia",
+      "rounds": 3,
+      "requestsPerRound": 100000,
+      "sampledJSBytesPerRequest": 19127.29168,
+      "topFrames": [
+        {
+          "frame": "_toNodeResponse node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:370",
+          "value": 173255776,
+          "share": 0.09083266504390394
+        },
+        {
+          "frame": "writevGeneric node:internal/stream_base_commons:72",
+          "value": 171786048,
+          "share": 0.09006213193838919
+        },
+        {
+          "frame": "mapResponse node_modules/.bun/@elysiajs+node@1.4.5+141687f79c8b4f6f/node_modules/@elysiajs/node/dist/index.mjs:353",
+          "value": 149214232,
+          "share": 0.0782284242866418
+        },
+        {
+          "frame": "parseCookie node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/cookies.mjs:152",
+          "value": 131910032,
+          "share": 0.06915636539925024
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 129231008,
+          "share": 0.06775183566145622
+        },
+        {
+          "frame": "entries :0",
+          "value": 119238728,
+          "share": 0.06251319113704566
+        },
+        {
+          "frame": "handle :6",
+          "value": 107332384,
+          "share": 0.05627106183308817
+        },
+        {
+          "frame": "(anonymous) bench/http-realworld/serve-node.ts:430",
+          "value": 74455968,
+          "share": 0.039034969904054626
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 73723032,
+          "share": 0.03865071414229221
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 61554216,
+          "share": 0.032270978855955215
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 58073584,
+          "share": 0.030446190742702967
+        },
+        {
+          "frame": "flat :0",
+          "value": 54564528,
+          "share": 0.028606500802043782
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "target": "nifra",
+      "rounds": 3,
+      "requestsPerRound": 100000,
+      "sampledJSBytesPerRequest": 10708.48688,
+      "topFrames": [
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 129036960,
+          "share": 0.12049971340115234
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 107381256,
+          "share": 0.10027677785229729
+        },
+        {
+          "frame": "readBoundedJsonSource bundle:serve-node-nifra.js:5160",
+          "value": 85352104,
+          "share": 0.07970510209001629
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 64362432,
+          "share": 0.0601041330313513
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 57758936,
+          "share": 0.05393753258256782
+        },
+        {
+          "frame": "writeGeneric node:internal/stream_base_commons:93",
+          "value": 44967192,
+          "share": 0.041992106358167386
+        },
+        {
+          "frame": "(anonymous) bundle:serve-node-nifra.js:8855",
+          "value": 39214728,
+          "share": 0.03662023256828233
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 33909264,
+          "share": 0.031665784699546645
+        },
+        {
+          "frame": "resolveNodeSource bundle:serve-node-nifra.js:7628",
+          "value": 32882456,
+          "share": 0.030706911600567793
+        },
+        {
+          "frame": "header bundle:serve-node-nifra.js:1867",
+          "value": 30054760,
+          "share": 0.028066299503184337
+        },
+        {
+          "frame": "runNodeSource bundle:serve-node-nifra.js:1457",
+          "value": 25733984,
+          "share": 0.024031391445286994
+        },
+        {
+          "frame": "Readable node:internal/streams/readable:344",
+          "value": 24046640,
+          "share": 0.022455684233886834
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "target": "fastify",
+      "rounds": 3,
+      "requestsPerRound": 100000,
+      "sampledJSBytesPerRequest": 9555.79864,
+      "topFrames": [
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 126116520,
+          "share": 0.13252631978924329
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 109099408,
+          "share": 0.1146443228327671
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 62244768,
+          "share": 0.06540832263033627
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 57323400,
+          "share": 0.06023682892460646
+        },
+        {
+          "frame": "doWrite node:internal/streams/writable:626",
+          "value": 54980256,
+          "share": 0.057774595974821236
+        },
+        {
+          "frame": "(anonymous) bench/http-realworld/serve-node.ts:101",
+          "value": 38357072,
+          "share": 0.04030654818299006
+        },
+        {
+          "frame": "routeHandler node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/route.js:461",
+          "value": 36598752,
+          "share": 0.038458862577552946
+        },
+        {
+          "frame": "preSerializationHookEnd node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/reply.js:538",
+          "value": 33207520,
+          "share": 0.03489527315634536
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 31395280,
+          "share": 0.032990927097836464
+        },
+        {
+          "frame": "rawBody node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/content-type-parser.js:245",
+          "value": 30198856,
+          "share": 0.03173369553429883
+        },
+        {
+          "frame": "ContentTypeParser.run node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/content-type-parser.js:192",
+          "value": 24787264,
+          "share": 0.026047062474958853
+        },
+        {
+          "frame": "onDone node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/content-type-parser.js:230",
+          "value": 24131520,
+          "share": 0.02535799066229008
+        }
+      ]
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "target": "elysia",
+      "rounds": 3,
+      "requestsPerRound": 100000,
+      "sampledJSBytesPerRequest": 24761.61104,
+      "topFrames": [
+        {
+          "frame": "_toNodeResponse node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:370",
+          "value": 176493856,
+          "share": 0.071277210402381
+        },
+        {
+          "frame": "handle :6",
+          "value": 142348688,
+          "share": 0.057487652063530674
+        },
+        {
+          "frame": "parseCookie node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/cookies.mjs:152",
+          "value": 131165136,
+          "share": 0.052971164028105984
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 130804624,
+          "share": 0.052825570916487506
+        },
+        {
+          "frame": "newReadableStreamFromStreamReadable node:internal/webstreams/adapters:534",
+          "value": 124628864,
+          "share": 0.05033148440894014
+        },
+        {
+          "frame": "entries :0",
+          "value": 120531728,
+          "share": 0.04867685216656242
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 107306576,
+          "share": 0.0433358620433285
+        },
+        {
+          "frame": "consumeBody node:internal/deps/undici/undici:7049",
+          "value": 99193632,
+          "share": 0.04005944194816817
+        },
+        {
+          "frame": "withResolvers :0",
+          "value": 85389600,
+          "share": 0.03448467059031875
+        },
+        {
+          "frame": "eos node:internal/streams/end-of-stream:114",
+          "value": 77205832,
+          "share": 0.031179648155881864
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 75064472,
+          "share": 0.030314857897872867
+        },
+        {
+          "frame": "(anonymous) bench/http-realworld/serve-node.ts:430",
+          "value": 73181600,
+          "share": 0.029554458262744766
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "target": "nifra",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 6941.6764,
+      "topFrames": [
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 14302784,
+          "share": 0.1030211088491535
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 11889872,
+          "share": 0.08564121485121375
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 11875272,
+          "share": 0.08553605293384174
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 9994528,
+          "share": 0.07198929641836949
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 6338192,
+          "share": 0.045653179684377106
+        },
+        {
+          "frame": "queryObjectOf bundle:serve-node-nifra-worst.js:3750",
+          "value": 4881744,
+          "share": 0.03516257254515638
+        },
+        {
+          "frame": "writeGeneric node:internal/stream_base_commons:93",
+          "value": 4790736,
+          "share": 0.034507053656376144
+        },
+        {
+          "frame": "writeOrBuffer node:internal/streams/writable:550",
+          "value": 4554080,
+          "share": 0.03280245100448647
+        },
+        {
+          "frame": "Readable node:internal/streams/readable:344",
+          "value": 4439504,
+          "share": 0.031977174850732024
+        },
+        {
+          "frame": "emit node:events:489",
+          "value": 4396008,
+          "share": 0.03166387877141608
+        },
+        {
+          "frame": "handle bundle:serve-node-nifra-worst.js:1503",
+          "value": 4253272,
+          "share": 0.030635769768812618
+        },
+        {
+          "frame": "_storeHeader node:_http_outgoing:493",
+          "value": 3791120,
+          "share": 0.027306948505983367
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "target": "fastify",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 7422.4084,
+      "topFrames": [
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 14072832,
+          "share": 0.09479963403792224
+        },
+        {
+          "frame": "routeHandler node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/route.js:461",
+          "value": 13019024,
+          "share": 0.08770080611570767
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 12004984,
+          "share": 0.08086986967734085
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 11231392,
+          "share": 0.0756586770407298
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 10174416,
+          "share": 0.06853850833645855
+        },
+        {
+          "frame": "find node_modules/.bun/find-my-way@9.7.0/node_modules/find-my-way/index.js:567",
+          "value": 7409288,
+          "share": 0.04991161628885848
+        },
+        {
+          "frame": "doWrite node:internal/streams/writable:626",
+          "value": 6995952,
+          "share": 0.04712723702996456
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 5968328,
+          "share": 0.04020479390490019
+        },
+        {
+          "frame": "validationCompleted node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/handle-request.js:126",
+          "value": 5256000,
+          "share": 0.03540629750311233
+        },
+        {
+          "frame": "onSendHook node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/reply.js:565",
+          "value": 4779152,
+          "share": 0.03219407867667319
+        },
+        {
+          "frame": "_write node:internal/streams/writable:452",
+          "value": 4570304,
+          "share": 0.03078720378684633
+        },
+        {
+          "frame": "Readable node:internal/streams/readable:344",
+          "value": 4489104,
+          "share": 0.0302402115194847
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "target": "elysia",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 13532.8108,
+      "topFrames": [
+        {
+          "frame": "handle :6",
+          "value": 18641240,
+          "share": 0.06887423564659605
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 17374520,
+          "share": 0.06419405494089964
+        },
+        {
+          "frame": "_toNodeResponse node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:370",
+          "value": 15431536,
+          "share": 0.05701526544655453
+        },
+        {
+          "frame": "toSortedArray node:internal/deps/undici/undici:12378",
+          "value": 15249688,
+          "share": 0.05634338728802741
+        },
+        {
+          "frame": "entries :0",
+          "value": 12978496,
+          "share": 0.04795195983971046
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 12192896,
+          "share": 0.04504938471466696
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 11561864,
+          "share": 0.042717895679144496
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 9944840,
+          "share": 0.036743438399360465
+        },
+        {
+          "frame": "writevGeneric node:internal/stream_base_commons:72",
+          "value": 7516136,
+          "share": 0.027770047594251446
+        },
+        {
+          "frame": "parseQueryFromURL node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/parse-query.mjs:3",
+          "value": 7227120,
+          "share": 0.02670221326082531
+        },
+        {
+          "frame": "append node:internal/deps/undici/undici:12292",
+          "value": 6675448,
+          "share": 0.024663937516956936
+        },
+        {
+          "frame": "sendNodeResponse node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:9",
+          "value": 6456776,
+          "share": 0.023856004844167333
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "target": "nifra",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 36023.45,
+      "topFrames": [
+        {
+          "frame": "finish bundle:serve-node-nifra-worst.js:1979",
+          "value": 279259200,
+          "share": 0.387607516770326
+        },
+        {
+          "frame": "toString node:buffer:975",
+          "value": 178461952,
+          "share": 0.24770247158448178
+        },
+        {
+          "frame": "sweep bundle:serve-node-nifra-worst.js:4826",
+          "value": 46407544,
+          "share": 0.06441296433295533
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 16465816,
+          "share": 0.022854301850600094
+        },
+        {
+          "frame": "runAsyncStages bundle:serve-node-nifra-worst.js:5635",
+          "value": 15877016,
+          "share": 0.02203705641741699
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 14871248,
+          "share": 0.02064106575022659
+        },
+        {
+          "frame": "continueProgram bundle:serve-node-nifra-worst.js:5611",
+          "value": 12022304,
+          "share": 0.016686774864706183
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 11840672,
+          "share": 0.016434672414774264
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 11528352,
+          "share": 0.016001177011085835
+        },
+        {
+          "frame": "parsedWithLength bundle:serve-node-nifra-worst.js:1822",
+          "value": 10635816,
+          "share": 0.014762350635488827
+        },
+        {
+          "frame": "(anonymous) bundle:serve-node-nifra-worst.js:1971",
+          "value": 8078280,
+          "share": 0.011212529616125053
+        },
+        {
+          "frame": "emit node:events:489",
+          "value": 7117472,
+          "share": 0.009878942744240211
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "target": "fastify",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 32096.5936,
+      "topFrames": [
+        {
+          "frame": "_parse node_modules/.bun/secure-json-parse@4.1.0/node_modules/secure-json-parse/index.js:17",
+          "value": 218623944,
+          "share": 0.3405718792538782
+        },
+        {
+          "frame": "toString node:buffer:975",
+          "value": 181319808,
+          "share": 0.28245958162987117
+        },
+        {
+          "frame": "onEnd node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/content-type-parser.js:289",
+          "value": 71074160,
+          "share": 0.11071916366850842
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 15906592,
+          "share": 0.0247792525871032
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 14428280,
+          "share": 0.022476341539246707
+        },
+        {
+          "frame": "routeHandler node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/route.js:461",
+          "value": 12952928,
+          "share": 0.020178041572610994
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 11759624,
+          "share": 0.018319115334407325
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 11496400,
+          "share": 0.017909065590063115
+        },
+        {
+          "frame": "doWrite node:internal/streams/writable:626",
+          "value": 7161368,
+          "share": 0.011155962668885834
+        },
+        {
+          "frame": "find node_modules/.bun/find-my-way@9.7.0/node_modules/find-my-way/index.js:567",
+          "value": 6884640,
+          "share": 0.010724876424269522
+        },
+        {
+          "frame": "preSerializationHookEnd node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/reply.js:538",
+          "value": 6871168,
+          "share": 0.01070388977352413
+        },
+        {
+          "frame": "parserOnHeadersComplete node:_http_common:77",
+          "value": 6113760,
+          "share": 0.009524001325798013
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "target": "elysia",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 52843.9868,
+      "topFrames": [
+        {
+          "frame": "(anonymous) node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:263",
+          "value": 255986536,
+          "share": 0.24220971155037832
+        },
+        {
+          "frame": "decode node:internal/encoding:481",
+          "value": 215760968,
+          "share": 0.20414902533432622
+        },
+        {
+          "frame": "handle :6",
+          "value": 82395912,
+          "share": 0.07796148340571457
+        },
+        {
+          "frame": "(anonymous) :1",
+          "value": 71169256,
+          "share": 0.06733902976449915
+        },
+        {
+          "frame": "newReadableStreamFromStreamReadable node:internal/webstreams/adapters:534",
+          "value": 26968840,
+          "share": 0.025517416108354642
+        },
+        {
+          "frame": "toSortedArray node:internal/deps/undici/undici:12378",
+          "value": 20848112,
+          "share": 0.019726096820537393
+        },
+        {
+          "frame": "withResolvers :0",
+          "value": 17359488,
+          "share": 0.01642522550929106
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 17251696,
+          "share": 0.016323234718543227
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 16596336,
+          "share": 0.015703145244143464
+        },
+        {
+          "frame": "eos node:internal/streams/end-of-stream:114",
+          "value": 16570840,
+          "share": 0.01567902140192042
+        },
+        {
+          "frame": "_toNodeResponse node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:370",
+          "value": 15906944,
+          "share": 0.01505085532267221
+        },
+        {
+          "frame": "entries :0",
+          "value": 13209016,
+          "share": 0.012498125898404017
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "target": "nifra",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 177674.7432,
+      "topFrames": [
+        {
+          "frame": "finish bundle:serve-node-nifra-worst.js:1979",
+          "value": 1756493104,
+          "share": 0.4943001668005225
+        },
+        {
+          "frame": "toString node:buffer:975",
+          "value": 1150358920,
+          "share": 0.32372606800537085
+        },
+        {
+          "frame": "sweep bundle:serve-node-nifra-worst.js:4826",
+          "value": 364226360,
+          "share": 0.102498068504314
+        },
+        {
+          "frame": "parsedWithLength bundle:serve-node-nifra-worst.js:1822",
+          "value": 61980920,
+          "share": 0.017442242741904805
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 21476960,
+          "share": 0.006043897858860111
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 17366712,
+          "share": 0.004887220233787286
+        },
+        {
+          "frame": "runAsyncStages bundle:serve-node-nifra-worst.js:5635",
+          "value": 16202344,
+          "share": 0.004559551827172699
+        },
+        {
+          "frame": "runSync bundle:serve-node-nifra-worst.js:5566",
+          "value": 14858232,
+          "share": 0.004181301104590537
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 12122832,
+          "share": 0.003411523715093795
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 11939104,
+          "share": 0.003359820249342001
+        },
+        {
+          "frame": "(anonymous) bundle:serve-node-nifra-worst.js:1971",
+          "value": 7224896,
+          "share": 0.0020331803693300625
+        },
+        {
+          "frame": "emit node:events:489",
+          "value": 7084704,
+          "share": 0.0019937285042323336
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "target": "fastify",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 158127.5828,
+      "topFrames": [
+        {
+          "frame": "_parse node_modules/.bun/secure-json-parse@4.1.0/node_modules/secure-json-parse/index.js:17",
+          "value": 1355013896,
+          "share": 0.4284558936545004
+        },
+        {
+          "frame": "toString node:buffer:975",
+          "value": 1136902840,
+          "share": 0.359489097306305
+        },
+        {
+          "frame": "onEnd node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/content-type-parser.js:289",
+          "value": 486374240,
+          "share": 0.15379171406647216
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 19850080,
+          "share": 0.006276602616858569
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 17760352,
+          "share": 0.0056158298525511895
+        },
+        {
+          "frame": "routeHandler node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/route.js:461",
+          "value": 12655696,
+          "share": 0.004001735742715723
+        },
+        {
+          "frame": "processHeader node:_http_outgoing:637",
+          "value": 11545552,
+          "share": 0.0036507078004862793
+        },
+        {
+          "frame": "parserOnIncoming node:_http_server:1340",
+          "value": 11298200,
+          "share": 0.003572495006861004
+        },
+        {
+          "frame": "find node_modules/.bun/find-my-way@9.7.0/node_modules/find-my-way/index.js:567",
+          "value": 7262784,
+          "share": 0.0022964949793692793
+        },
+        {
+          "frame": "doWrite node:internal/streams/writable:626",
+          "value": 7062504,
+          "share": 0.002233166369504511
+        },
+        {
+          "frame": "emit node:events:489",
+          "value": 6559832,
+          "share": 0.0020742212977153027
+        },
+        {
+          "frame": "rawBody node_modules/.bun/fastify@5.12.7/node_modules/fastify/lib/content-type-parser.js:245",
+          "value": 5823120,
+          "share": 0.001841272691610385
+        }
+      ]
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "target": "elysia",
+      "rounds": 1,
+      "requestsPerRound": 20000,
+      "sampledJSBytesPerRequest": 208730.9384,
+      "topFrames": [
+        {
+          "frame": "(anonymous) node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:263",
+          "value": 1613129816,
+          "share": 0.3864136836554365
+        },
+        {
+          "frame": "decode node:internal/encoding:481",
+          "value": 1358818256,
+          "share": 0.32549517249715004
+        },
+        {
+          "frame": "(anonymous) :1",
+          "value": 435349944,
+          "share": 0.1042849582666371
+        },
+        {
+          "frame": "handle :6",
+          "value": 317916504,
+          "share": 0.07615461953962067
+        },
+        {
+          "frame": "newReadableStreamFromStreamReadable node:internal/webstreams/adapters:534",
+          "value": 25405312,
+          "share": 0.0060856603708921
+        },
+        {
+          "frame": "withResolvers :0",
+          "value": 21969984,
+          "share": 0.005262752174739421
+        },
+        {
+          "frame": "toSortedArray node:internal/deps/undici/undici:12378",
+          "value": 20486752,
+          "share": 0.004907454581730563
+        },
+        {
+          "frame": "(V8 API) :0",
+          "value": 20096696,
+          "share": 0.004814019463058189
+        },
+        {
+          "frame": "_toNodeResponse node_modules/.bun/srvx@0.11.16/node_modules/srvx/dist/adapters/node.mjs:370",
+          "value": 18750904,
+          "share": 0.004491644636806749
+        },
+        {
+          "frame": "eos node:internal/streams/end-of-stream:114",
+          "value": 18703160,
+          "share": 0.004480207903860983
+        },
+        {
+          "frame": "nextTick node:internal/process/task_queues:126",
+          "value": 16923040,
+          "share": 0.004053792918702271
+        },
+        {
+          "frame": "readAllBytes node:internal/deps/undici/undici:5886",
+          "value": 13356536,
+          "share": 0.0031994624520885113
+        }
+      ]
+    }
+  ],
+  "matrices": {
+    "closed": {
+      "meta": {
+        "bun": "1.4.3",
+        "runs": 6,
+        "scalePct": 100,
+        "connections": 50
+      },
+      "results": {
+        "bun": {
+          "nifra": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 103585,
+              "p50ms": 0.47175,
+              "p99ms": 1.009584
+            },
+            "POST worst 10.4KB body": {
+              "rps": 47872,
+              "p50ms": 0.9829579999999999,
+              "p99ms": 2.056708
+            },
+            "POST worst 66.3KB body": {
+              "rps": 11597,
+              "p50ms": 4.170958,
+              "p99ms": 8.435375
+            }
+          },
+          "elysia": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 101954,
+              "p50ms": 0.475,
+              "p99ms": 1.018
+            },
+            "POST worst 10.4KB body": {
+              "rps": 49748,
+              "p50ms": 0.92375,
+              "p99ms": 2.106125
+            },
+            "POST worst 66.3KB body": {
+              "rps": 10358,
+              "p50ms": 4.3609160000000005,
+              "p99ms": 10.695583999999998
+            }
+          }
+        },
+        "node": {
+          "nifra": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 86720,
+              "p50ms": 0.555833,
+              "p99ms": 1.1752500000000001
+            },
+            "POST worst 10.4KB body": {
+              "rps": 28553,
+              "p50ms": 1.632584,
+              "p99ms": 3.441458
+            },
+            "POST worst 66.3KB body": {
+              "rps": 6625,
+              "p50ms": 7.31725,
+              "p99ms": 14.968416
+            }
+          },
+          "elysia": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 65047,
+              "p50ms": 0.7184999999999999,
+              "p99ms": 1.551792
+            },
+            "POST worst 10.4KB body": {
+              "rps": 23208,
+              "p50ms": 2.029083,
+              "p99ms": 4.231333
+            },
+            "POST worst 66.3KB body": {
+              "rps": 6188,
+              "p50ms": 7.871417,
+              "p99ms": 15.939374999999998
+            }
+          },
+          "fastify": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 83632,
+              "p50ms": 0.547583,
+              "p99ms": 1.932083
+            },
+            "POST worst 10.4KB body": {
+              "rps": 27997,
+              "p50ms": 1.671584,
+              "p99ms": 3.5
+            },
+            "POST worst 66.3KB body": {
+              "rps": 5920,
+              "p50ms": 8.064708,
+              "p99ms": 16.371457999999997
+            }
+          }
+        },
+        "deno": {
+          "nifra": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 89521,
+              "p50ms": 0.569125,
+              "p99ms": 0.765459
+            },
+            "POST worst 10.4KB body": {
+              "rps": 31465,
+              "p50ms": 1.588667,
+              "p99ms": 1.9415840000000002
+            },
+            "POST worst 66.3KB body": {
+              "rps": 7436,
+              "p50ms": 6.741041,
+              "p99ms": 7.253375
+            }
+          },
+          "elysia": {
+            "GET worst (2 hooks + 3 params + query + dyn headers)": {
+              "rps": 74846,
+              "p50ms": 0.668417,
+              "p99ms": 0.971917
+            },
+            "POST worst 10.4KB body": {
+              "rps": 25634,
+              "p50ms": 1.76,
+              "p99ms": 6.432041
+            },
+            "POST worst 66.3KB body": {
+              "rps": 6119,
+              "p50ms": 8.266499999999999,
+              "p99ms": 10.346542
+            }
+          }
+        }
+      }
+    },
+    "generic": {
+      "meta": {
+        "bun": "1.4.3",
+        "runs": 6,
+        "scalePct": 30,
+        "connections": 50,
+        "generic": true
+      },
+      "results": {
+        "bun": {
+          "nifra": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 98042,
+              "p50ms": 0.484334,
+              "p99ms": 1.024875
+            },
+            "POST worst 10.4KB body": {
+              "rps": 49145,
+              "p50ms": 0.954,
+              "p99ms": 2.040334
+            },
+            "POST worst 66.3KB body": {
+              "rps": 12336,
+              "p50ms": 3.873958,
+              "p99ms": 7.781874999999999
+            }
+          },
+          "elysia": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 103780,
+              "p50ms": 0.452167,
+              "p99ms": 1.09225
+            },
+            "POST worst 10.4KB body": {
+              "rps": 52330,
+              "p50ms": 0.878333,
+              "p99ms": 2.068459
+            },
+            "POST worst 66.3KB body": {
+              "rps": 13182,
+              "p50ms": 3.712542,
+              "p99ms": 7.3191250000000005
+            }
+          }
+        },
+        "node": {
+          "nifra": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 92463,
+              "p50ms": 0.5315409999999999,
+              "p99ms": 1.1496250000000001
+            },
+            "POST worst 10.4KB body": {
+              "rps": 29316,
+              "p50ms": 1.629458,
+              "p99ms": 3.461541
+            },
+            "POST worst 66.3KB body": {
+              "rps": 6644,
+              "p50ms": 7.3205420000000005,
+              "p99ms": 15.309833
+            }
+          },
+          "elysia": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 69264,
+              "p50ms": 0.6759999999999999,
+              "p99ms": 1.443875
+            },
+            "POST worst 10.4KB body": {
+              "rps": 23551,
+              "p50ms": 1.9862920000000002,
+              "p99ms": 4.455749999999999
+            },
+            "POST worst 66.3KB body": {
+              "rps": 6299,
+              "p50ms": 7.510709,
+              "p99ms": 29.694209
+            }
+          },
+          "fastify": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 95866,
+              "p50ms": 0.486458,
+              "p99ms": 1.069625
+            },
+            "POST worst 10.4KB body": {
+              "rps": 28109,
+              "p50ms": 1.732333,
+              "p99ms": 3.618208
+            },
+            "POST worst 66.3KB body": {
+              "rps": 6148,
+              "p50ms": 7.7511660000000004,
+              "p99ms": 29.51825
+            }
+          }
+        },
+        "deno": {
+          "nifra": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 91026,
+              "p50ms": 0.555375,
+              "p99ms": 0.723916
+            },
+            "POST worst 10.4KB body": {
+              "rps": 32957,
+              "p50ms": 1.497833,
+              "p99ms": 1.784875
+            },
+            "POST worst 66.3KB body": {
+              "rps": 7975,
+              "p50ms": 6.1232500000000005,
+              "p99ms": 8.560792
+            }
+          },
+          "elysia": {
+            "GET worst (3 hooks + 3 params + query + dyn headers)": {
+              "rps": 79105,
+              "p50ms": 0.62675,
+              "p99ms": 0.833042
+            },
+            "POST worst 10.4KB body": {
+              "rps": 28730,
+              "p50ms": 1.724708,
+              "p99ms": 2.624
+            },
+            "POST worst 66.3KB body": {
+              "rps": 7564,
+              "p50ms": 6.5635829999999995,
+              "p99ms": 7.2610410000000005
+            }
+          }
+        }
+      },
+      "failures": []
+    }
+  },
+  "micro": {
+    "meta": {
+      "bun": "1.4.3",
+      "count": 100000,
+      "rounds": 8,
+      "scope": "in-process GET response production; request reused; body not drained"
+    },
+    "results": {
+      "nifra-closed": {
+        "nsPerRequest": [
+          925.96583, 967.36, 1033.36417, 955.07375, 1957.90583, 1063.2775, 1037.63375, 1021.14333
+        ]
+      },
+      "elysia-closed": {
+        "nsPerRequest": [
+          1010.77583, 994.03292, 1087.6375, 997.04084, 949.90542, 1053.40417, 1033.30792, 1042.25709
+        ]
+      },
+      "nifra-generic": {
+        "nsPerRequest": [
+          1033.52916, 1077.685, 1000.80833, 1032.995, 1049.2375, 1042.82291, 1116.15458, 1079.38291
+        ]
+      },
+      "elysia-generic": {
+        "nsPerRequest": [
+          1039.46792, 1023.84875, 1020.57209, 971.31208, 1091.2275, 986.67541, 1065.55167,
+          1021.91459
+        ]
+      }
+    }
+  },
+  "pairedRatios": [
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "peer": "fastify",
+      "median": 1.0248407034095255,
+      "min": 0.9968548206389437,
+      "max": 1.054227718274065,
+      "wins": 5,
+      "rounds": 6
+    },
+    {
+      "suite": "realworld",
+      "workload": "get",
+      "peer": "elysia",
+      "median": 1.3760636574715748,
+      "min": 1.3537650816150957,
+      "max": 2.000567165314508,
+      "wins": 6,
+      "rounds": 6
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "peer": "fastify",
+      "median": 0.9688697032189515,
+      "min": 0.9509809700534421,
+      "max": 1.3209446488338428,
+      "wins": 1,
+      "rounds": 6
+    },
+    {
+      "suite": "realworld",
+      "workload": "post",
+      "peer": "elysia",
+      "median": 1.53446301372872,
+      "min": 1.477391654692834,
+      "max": 1.7592754676242468,
+      "wins": 6,
+      "rounds": 6
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "peer": "fastify",
+      "median": 0.9387734785127885,
+      "min": 0.5204055200757126,
+      "max": 0.962554998684315,
+      "wins": 0,
+      "rounds": 6
+    },
+    {
+      "suite": "generic",
+      "workload": "get",
+      "peer": "elysia",
+      "median": 1.2273855684983623,
+      "min": 0.6714793740278624,
+      "max": 1.2612066401316153,
+      "wins": 5,
+      "rounds": 6
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "peer": "fastify",
+      "median": 1.0586789834082793,
+      "min": 1.0353992516334767,
+      "max": 1.131787860850137,
+      "wins": 6,
+      "rounds": 6
+    },
+    {
+      "suite": "generic",
+      "workload": "post-11kb",
+      "peer": "elysia",
+      "median": 1.3356447462397245,
+      "min": 1.2529558773638108,
+      "max": 1.623015110997138,
+      "wins": 6,
+      "rounds": 6
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "peer": "fastify",
+      "median": 1.1117626917132601,
+      "min": 0.8864028759679421,
+      "max": 1.3596389011267331,
+      "wins": 5,
+      "rounds": 6
+    },
+    {
+      "suite": "generic",
+      "workload": "post-69kb",
+      "peer": "elysia",
+      "median": 1.041232497367962,
+      "min": 0.7918159960259731,
+      "max": 1.0669701716232176,
+      "wins": 4,
+      "rounds": 6
+    }
+  ],
+  "queryGuardExperiment": {
+    "bun": {
+      "runtime": "1.4.3",
+      "results": [
+        {
+          "input": "?limit=10",
+          "baseline": 65.96110999999999,
+          "candidate": 69.22888666666665,
+          "ratio": 1.0495409593117317,
+          "samples": {
+            "baseline": [
+              65.96110999999999, 68.7843066666667, 94.68597333333335, 69.07083333333333, 63.65889,
+              61.550556666666694, 59.570416666666695, 63.654723333333244
+            ],
+            "candidate": [
+              86.89444333333333, 66.51000000000002, 81.54125000000002, 70.74805666666663,
+              67.41264000000001, 68.60513999999995, 69.22888666666665, 66.23861000000015
+            ]
+          }
+        },
+        {
+          "input": "?verbose=1&trace=abc123",
+          "baseline": 111.40000000000005,
+          "candidate": 107.65291666666674,
+          "ratio": 0.9663637043686418,
+          "samples": {
+            "baseline": [
+              111.40000000000005, 110.40388999999986, 129.18916666666652, 103.31139000000007,
+              118.20777666666686, 104.32888666666675, 104.14166666666688, 112.28250000000003
+            ],
+            "candidate": [
+              107.65291666666674, 107.4037500000001, 101.10819333333363, 103.16305666666685,
+              111.85972333333326, 102.7229166666666, 130.76777666666658, 127.60722333333318
+            ]
+          }
+        },
+        {
+          "input": "?a=x%20y&b=1",
+          "baseline": 402.60013666666663,
+          "candidate": 556.0490300000007,
+          "ratio": 1.3811446628007042,
+          "samples": {
+            "baseline": [
+              305.0344433333335, 402.60013666666663, 779.7886100000005, 728.3802799999997,
+              572.5313900000007, 344.8750000000003, 301.7333333333333, 290.1801400000007
+            ],
+            "candidate": [
+              715.9826366666667, 538.2963899999997, 791.80986, 434.4780566666668, 573.5815266666668,
+              556.0490300000007, 298.9572233333335, 291.81680666666733
+            ]
+          }
+        },
+        {
+          "input": "?x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "baseline": 184.2958333333339,
+          "candidate": 59.17374999999993,
+          "ratio": 0.321080237842236,
+          "samples": {
+            "baseline": [
+              182.57138666666683, 182.51125000000076, 188.29555666666693, 198.72638666666566,
+              184.2958333333339, 183.9168033333332, 181.56791666666624, 185.5390299999999
+            ],
+            "candidate": [
+              61.959026666666745, 57.77528000000075, 57.179443333332834, 61.62430666666751,
+              59.135556666666766, 59.17374999999993, 58.35055666666752, 62.86375000000134
+            ]
+          }
+        }
+      ]
+    },
+    "node": {
+      "runtime": "v26.12.0",
+      "results": [
+        {
+          "input": "?limit=10",
+          "baseline": 86.09528000000003,
+          "candidate": 84.34333333333332,
+          "ratio": 0.9796510718512477,
+          "samples": {
+            "baseline": [
+              86.285, 91.28694333333338, 86.09528000000003, 87.27485999999999, 85.19875000000003,
+              84.96583333333338, 85.73805666666658, 85.32430666666679
+            ],
+            "candidate": [
+              86.29513666666668, 86.18444333333333, 84.34333333333332, 84.88180333333332,
+              83.67764000000004, 83.54610999999996, 83.16166666666675, 83.89097333333325
+            ]
+          }
+        },
+        {
+          "input": "?verbose=1&trace=abc123",
+          "baseline": 162.92708333333317,
+          "candidate": 148.8647233333336,
+          "ratio": 0.9136892423758096,
+          "samples": {
+            "baseline": [
+              166.04000000000005, 162.92708333333317, 166.2375000000001, 161.2981933333333,
+              159.3647233333335, 160.64486000000025, 161.3744466666666, 259.89597000000003
+            ],
+            "candidate": [
+              152.0393066666668, 151.17180666666664, 148.8647233333336, 148.5998600000001,
+              146.35763999999995, 146.95041666666648, 147.99569666666684, 150.77416666666673
+            ]
+          }
+        },
+        {
+          "input": "?a=x%20y&b=1",
+          "baseline": 302.90569333333224,
+          "candidate": 304.9526399999998,
+          "ratio": 1.0067577028485066,
+          "samples": {
+            "baseline": [
+              299.780693333333, 432.940416666667, 363.3275000000003, 302.90569333333224,
+              304.76805333333385, 286.7554166666666, 301.21152666666603, 302.23916666666656
+            ],
+            "candidate": [
+              470.245693333333, 509.0408333333327, 305.8181966666666, 304.9526399999998,
+              299.67874999999975, 296.25402666666713, 298.9791666666679, 299.51291666666594
+            ]
+          }
+        },
+        {
+          "input": "?x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "baseline": 395.452083333333,
+          "candidate": 73.39305666666709,
+          "ratio": 0.1855927930585787,
+          "samples": {
+            "baseline": [
+              394.78666666666714, 395.452083333333, 394.8994466666666, 398.0815266666681,
+              393.60430333333323, 394.5669466666671, 396.6091666666671, 469.2323599999994
+            ],
+            "candidate": [
+              72.78513999999936, 70.69124999999985, 71.43680666666569, 73.82985999999921,
+              71.5718066666659, 73.39305666666709, 104.65249999999894, 75.71583333333365
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "bundlesSHA256": {
+    "serve-node-nifra.js": "d6c2e8f17cc4e408196d8879dd9adf60d73d6c75e79a77d44879ba24db813a97",
+    "serve-node-nifra-worst.js": "4106214aadf5ac536b49a46a118ef12cc8da0e8f01cf7aa6e10213a33a84e5d2"
+  }
+}

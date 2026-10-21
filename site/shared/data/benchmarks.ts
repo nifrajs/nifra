@@ -8,6 +8,7 @@
  */
 
 import data from "./benchmarks.json"
+import type { HttpMemoryCapture } from "./memory-types"
 
 /** A bar-chart row: a framework's req/s (higher is better); `you` flags Nifra's rows. */
 export interface BenchRow {
@@ -132,6 +133,8 @@ export function ssrMultiplier(framework: string): string {
 
 export const HTTP_WORKLOADS_CAPTURED: CapturedMeta = data.httpWorkloadsCaptured
 export const HTTP_REALWORLD_CAPTURED: CapturedMeta = data.httpRealworldCaptured
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The optional committed capture is produced by memoryCapture's validated native-Node protocol and covered by benchmark dataset tests.
+export const HTTP_MEMORY = (data as { readonly httpMemory?: HttpMemoryCapture }).httpMemory
 export const SSR_CAPTURED: CapturedMeta = data.ssrCaptured
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"

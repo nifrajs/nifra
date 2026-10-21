@@ -1,0 +1,1016 @@
+{
+  "date": "2026-10-21",
+  "retained": [
+    "native URL delimiter searches",
+    "per-read Node body state with directly bound data callback"
+  ],
+  "rejected": [
+    "query decoder indexOf rewrite",
+    "JSON helper extraction",
+    "native-request Symbol state",
+    "mapped JSON bridge",
+    "generic lifecycle argument cleanup"
+  ],
+  "micro": {
+    "meta": {
+      "bun": "1.4.3",
+      "rounds": 8,
+      "count": 100000
+    },
+    "results": {
+      "realworld-get": {
+        "before": [
+          2951.52166, 2666.30833, 2661.49708, 2561.05875, 2560.46042, 2572.38875, 2678.0225,
+          2634.44125
+        ],
+        "after": [
+          2756.46625, 2821.78917, 2740.44833, 2605.67375, 2685.90791, 2513.14917, 2438.09417,
+          2514.95291
+        ],
+        "beforeMedianNs": 2647.969165,
+        "afterMedianNs": 2645.79083
+      },
+      "realworld-post": {
+        "before": [
+          15405.4229, 15034.10625, 15117.9604, 14667.27295, 14600.89585, 14770.46665, 14737.5625,
+          14843.05
+        ],
+        "after": [
+          15718.5271, 15019.2354, 14920.4229, 14923.725, 14915.3229, 14920.4729, 14935.85415,
+          14747.54375
+        ],
+        "beforeMedianNs": 14806.758324999999,
+        "afterMedianNs": 14922.09895
+      },
+      "closed-get": {
+        "before": [1022.17, 995.01917, 984.32542, 1010.21292, 974.52458, 951.9, 980.66, 1007.70042],
+        "after": [
+          940.40917, 903.29208, 914.21417, 952.77417, 954.49334, 913.57708, 962.22416, 945.82917
+        ],
+        "beforeMedianNs": 989.6722950000001,
+        "afterMedianNs": 943.1191699999999
+      },
+      "closed-encoded": {
+        "before": [
+          1506.67917, 1291.58583, 1354.98958, 1275.82, 1310.64667, 1429.19709, 1404.28792,
+          1409.50625
+        ],
+        "after": [
+          1315.0175, 1363.45, 1390.22375, 1352.84292, 1377.9475, 1316.85416, 1343.38209, 1337.06083
+        ],
+        "beforeMedianNs": 1379.63875,
+        "afterMedianNs": 1348.112505
+      },
+      "closed-long-query": {
+        "before": [
+          1901.09208, 2033.705, 1799.90875, 1902.22875, 1883.44, 1921.20125, 1860.11042, 1955.59459
+        ],
+        "after": [
+          1448.70417, 1452.85333, 1460.02834, 1478.70666, 1474.95291, 1505.81125, 1416.90084,
+          1501.86542
+        ],
+        "beforeMedianNs": 1901.6604149999998,
+        "afterMedianNs": 1467.490625
+      },
+      "generic-get": {
+        "before": [
+          1150.0175, 1077.545, 1105.12375, 1093.7475, 1028.43584, 1130.42458, 1056.52708, 1099.86333
+        ],
+        "after": [
+          1159.46958, 1109.15625, 1084.44, 1090.03208, 1009.61, 1067.66375, 1028.4975, 1070.54125
+        ],
+        "beforeMedianNs": 1096.8054149999998,
+        "afterMedianNs": 1077.490625
+      },
+      "generic-encoded": {
+        "before": [
+          1510.85875, 1415.04916, 1458.7225, 1386.33459, 1409.9325, 1527.79083, 1450.24792, 1455.185
+        ],
+        "after": [
+          1463.27834, 1379.95084, 1375.0725, 1417.01208, 1378.40417, 1417.72291, 1421.23875,
+          1321.91417
+        ],
+        "beforeMedianNs": 1452.71646,
+        "afterMedianNs": 1398.48146
+      },
+      "generic-long-query": {
+        "before": [
+          1972.24875, 2068.965, 2060.63417, 2055.27208, 2039.22542, 2067.485, 2010.94084, 2030.93875
+        ],
+        "after": [
+          1646.75667, 1584.3725, 1615.91875, 1566.78083, 1613.47792, 1638.96541, 1593.86042,
+          1742.17583
+        ],
+        "beforeMedianNs": 2047.2487500000002,
+        "afterMedianNs": 1614.698335
+      }
+    }
+  },
+  "node": [
+    {
+      "path": "bench/profiling/results/retained-generic-ab/generic-metrics.json",
+      "note": "URL and initial body-state candidate, before removing its data forwarding call. Short POST timing is mixed.",
+      "meta": {
+        "suite": "generic",
+        "mode": "metrics",
+        "packaging": "bundled-nifra",
+        "completed": true,
+        "rounds": 6,
+        "requests": 50000,
+        "connections": 50,
+        "workloads": ["get", "post-11kb", "post-69kb"],
+        "node": "v26.12.0",
+        "platform": "darwin 24.6.0",
+        "cpu": "Apple M3 Max",
+        "versions": {
+          "@nifrajs/core": "5.5.1",
+          "fastify": "5.12.7",
+          "elysia": "1.4.30",
+          "@elysiajs/node": "1.4.5",
+          "hono": "4.13.13",
+          "express": "5.3.0"
+        },
+        "nifraBundleSHA256": "29e552ca755f28773f6bdabfa8ff92f59bb967b1547a642df6f250932e13227a",
+        "date": "2026-10-21T09:57:16.558Z",
+        "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+      },
+      "groups": [
+        {
+          "workload": "get",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 80631.1591693318,
+                  "cpuUsPerRequest": 14.92036
+                },
+                {
+                  "round": 1,
+                  "rps": 70426.24667446734,
+                  "cpuUsPerRequest": 15.51926
+                },
+                {
+                  "round": 2,
+                  "rps": 68064.59631307886,
+                  "cpuUsPerRequest": 16.10492
+                },
+                {
+                  "round": 3,
+                  "rps": 70562.16043406815,
+                  "cpuUsPerRequest": 15.10944
+                },
+                {
+                  "round": 4,
+                  "rps": 71035.97083973397,
+                  "cpuUsPerRequest": 15.09722
+                },
+                {
+                  "round": 5,
+                  "rps": 69273.51762008358,
+                  "cpuUsPerRequest": 15.64606
+                }
+              ],
+              "rps": 70494.20355426775,
+              "cpuUsPerRequest": 15.31435
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 70310.38934802776,
+                  "cpuUsPerRequest": 15.46948
+                },
+                {
+                  "round": 1,
+                  "rps": 68530.650844829,
+                  "cpuUsPerRequest": 15.54128
+                },
+                {
+                  "round": 2,
+                  "rps": 66462.94665800211,
+                  "cpuUsPerRequest": 16.13228
+                },
+                {
+                  "round": 3,
+                  "rps": 67376.46651195906,
+                  "cpuUsPerRequest": 15.90122
+                },
+                {
+                  "round": 4,
+                  "rps": 70520.49831454035,
+                  "cpuUsPerRequest": 15.47512
+                },
+                {
+                  "round": 5,
+                  "rps": 69572.84422057994,
+                  "cpuUsPerRequest": 15.60948
+                }
+              ],
+              "rps": 69051.74753270447,
+              "cpuUsPerRequest": 15.57538
+            }
+          ]
+        },
+        {
+          "workload": "post-11kb",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 26508.214696922965,
+                  "cpuUsPerRequest": 40.7706
+                },
+                {
+                  "round": 1,
+                  "rps": 27133.63225211456,
+                  "cpuUsPerRequest": 40.6131
+                },
+                {
+                  "round": 2,
+                  "rps": 27299.9422178159,
+                  "cpuUsPerRequest": 40.37166
+                },
+                {
+                  "round": 3,
+                  "rps": 28255.352093474354,
+                  "cpuUsPerRequest": 38.76652
+                },
+                {
+                  "round": 4,
+                  "rps": 27042.074362737443,
+                  "cpuUsPerRequest": 40.86178
+                },
+                {
+                  "round": 5,
+                  "rps": 27824.78362236486,
+                  "cpuUsPerRequest": 39.59572
+                }
+              ],
+              "rps": 27216.78723496523,
+              "cpuUsPerRequest": 40.49238
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 27200.20101775438,
+                  "cpuUsPerRequest": 39.77676
+                },
+                {
+                  "round": 1,
+                  "rps": 28382.507175560448,
+                  "cpuUsPerRequest": 38.56208
+                },
+                {
+                  "round": 2,
+                  "rps": 27294.483457359467,
+                  "cpuUsPerRequest": 40.52484
+                },
+                {
+                  "round": 3,
+                  "rps": 27401.058270848844,
+                  "cpuUsPerRequest": 40.10328
+                },
+                {
+                  "round": 4,
+                  "rps": 27251.007595377945,
+                  "cpuUsPerRequest": 40.47814
+                },
+                {
+                  "round": 5,
+                  "rps": 27742.853886527777,
+                  "cpuUsPerRequest": 39.32008
+                }
+              ],
+              "rps": 27347.770864104154,
+              "cpuUsPerRequest": 39.940020000000004
+            }
+          ]
+        },
+        {
+          "workload": "post-69kb",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 6689.425131839736,
+                  "cpuUsPerRequest": 158.11166
+                },
+                {
+                  "round": 1,
+                  "rps": 6696.462576902595,
+                  "cpuUsPerRequest": 158.5143
+                },
+                {
+                  "round": 2,
+                  "rps": 6710.35960750033,
+                  "cpuUsPerRequest": 159.4463
+                },
+                {
+                  "round": 3,
+                  "rps": 6780.976066578878,
+                  "cpuUsPerRequest": 156.2042
+                },
+                {
+                  "round": 4,
+                  "rps": 6659.468078242398,
+                  "cpuUsPerRequest": 161.55468
+                },
+                {
+                  "round": 5,
+                  "rps": 6552.1904357699,
+                  "cpuUsPerRequest": 163.33998
+                }
+              ],
+              "rps": 6692.943854371166,
+              "cpuUsPerRequest": 158.9803
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 6654.735982351762,
+                  "cpuUsPerRequest": 160.00236
+                },
+                {
+                  "round": 1,
+                  "rps": 6755.680754833829,
+                  "cpuUsPerRequest": 157.60746
+                },
+                {
+                  "round": 2,
+                  "rps": 6642.3345773485,
+                  "cpuUsPerRequest": 161.91812
+                },
+                {
+                  "round": 3,
+                  "rps": 6695.245021880987,
+                  "cpuUsPerRequest": 159.5613
+                },
+                {
+                  "round": 4,
+                  "rps": 6538.714094482717,
+                  "cpuUsPerRequest": 167.77518
+                },
+                {
+                  "round": 5,
+                  "rps": 6735.92019619733,
+                  "cpuUsPerRequest": 158.27272
+                }
+              ],
+              "rps": 6674.990502116374,
+              "cpuUsPerRequest": 159.78183
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "bench/profiling/results/retained-realworld-ab/realworld-metrics.json",
+      "note": "Initial body-state candidate. This repeat did not establish a real-world throughput win.",
+      "meta": {
+        "suite": "realworld",
+        "mode": "metrics",
+        "packaging": "bundled-nifra",
+        "completed": true,
+        "rounds": 6,
+        "requests": 100000,
+        "connections": 50,
+        "workloads": ["get", "post"],
+        "node": "v26.12.0",
+        "platform": "darwin 24.6.0",
+        "cpu": "Apple M3 Max",
+        "versions": {
+          "@nifrajs/core": "5.5.1",
+          "fastify": "5.12.7",
+          "elysia": "1.4.30",
+          "@elysiajs/node": "1.4.5",
+          "hono": "4.13.13",
+          "express": "5.3.0"
+        },
+        "nifraBundleSHA256": "d19f94150fb4f8155e8cf9938105a29194def55496addbd9fc3ad3c1b3170eae",
+        "date": "2026-10-21T09:59:26.859Z",
+        "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+      },
+      "groups": [
+        {
+          "workload": "get",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 69617.62631526894,
+                  "cpuUsPerRequest": 15.61481
+                },
+                {
+                  "round": 1,
+                  "rps": 62978.4905757236,
+                  "cpuUsPerRequest": 16.55237
+                },
+                {
+                  "round": 2,
+                  "rps": 63568.17041345971,
+                  "cpuUsPerRequest": 16.50411
+                },
+                {
+                  "round": 3,
+                  "rps": 71545.6123848317,
+                  "cpuUsPerRequest": 15.3553
+                },
+                {
+                  "round": 4,
+                  "rps": 70243.85241169535,
+                  "cpuUsPerRequest": 15.61356
+                },
+                {
+                  "round": 5,
+                  "rps": 68738.01418253988,
+                  "cpuUsPerRequest": 15.916
+                }
+              ],
+              "rps": 69177.8202489044,
+              "cpuUsPerRequest": 15.765405000000001
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 66589.03495008736,
+                  "cpuUsPerRequest": 15.87236
+                },
+                {
+                  "round": 1,
+                  "rps": 65124.314883171435,
+                  "cpuUsPerRequest": 15.94836
+                },
+                {
+                  "round": 2,
+                  "rps": 62672.44389527256,
+                  "cpuUsPerRequest": 16.26208
+                },
+                {
+                  "round": 3,
+                  "rps": 69512.93761761262,
+                  "cpuUsPerRequest": 15.75054
+                },
+                {
+                  "round": 4,
+                  "rps": 70123.14356094922,
+                  "cpuUsPerRequest": 15.55496
+                },
+                {
+                  "round": 5,
+                  "rps": 70252.12024007541,
+                  "cpuUsPerRequest": 15.53821
+                }
+              ],
+              "rps": 68050.98628384998,
+              "cpuUsPerRequest": 15.81145
+            }
+          ]
+        },
+        {
+          "workload": "post",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 66095.58608560322,
+                  "cpuUsPerRequest": 16.85922
+                },
+                {
+                  "round": 1,
+                  "rps": 63586.742132472005,
+                  "cpuUsPerRequest": 17.55837
+                },
+                {
+                  "round": 2,
+                  "rps": 62231.377597392464,
+                  "cpuUsPerRequest": 17.89461
+                },
+                {
+                  "round": 3,
+                  "rps": 63692.01091203377,
+                  "cpuUsPerRequest": 17.45912
+                },
+                {
+                  "round": 4,
+                  "rps": 62974.12629303592,
+                  "cpuUsPerRequest": 17.72233
+                },
+                {
+                  "round": 5,
+                  "rps": 64946.31279298207,
+                  "cpuUsPerRequest": 17.27654
+                }
+              ],
+              "rps": 63639.37652225289,
+              "cpuUsPerRequest": 17.508744999999998
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 64070.1936229314,
+                  "cpuUsPerRequest": 17.31021
+                },
+                {
+                  "round": 1,
+                  "rps": 65583.0686227435,
+                  "cpuUsPerRequest": 16.97906
+                },
+                {
+                  "round": 2,
+                  "rps": 63900.11816492922,
+                  "cpuUsPerRequest": 17.44744
+                },
+                {
+                  "round": 3,
+                  "rps": 61823.25433526777,
+                  "cpuUsPerRequest": 17.97334
+                },
+                {
+                  "round": 4,
+                  "rps": 65135.973079677504,
+                  "cpuUsPerRequest": 17.17824
+                },
+                {
+                  "round": 5,
+                  "rps": 65435.333654861184,
+                  "cpuUsPerRequest": 17.0406
+                }
+              ],
+              "rps": 64603.08335130445,
+              "cpuUsPerRequest": 17.244225
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "bench/profiling/results/direct-body-ab/realworld-metrics.json",
+      "note": "Final body state; late rounds were affected by a background CPU spike and elevated host load. Do not use as a speedup claim.",
+      "meta": {
+        "suite": "realworld",
+        "mode": "metrics",
+        "packaging": "bundled-nifra",
+        "completed": true,
+        "rounds": 8,
+        "requests": 200000,
+        "warmupRequests": 200000,
+        "connections": 50,
+        "workloads": ["post"],
+        "node": "v26.12.0",
+        "platform": "darwin 24.6.0",
+        "cpu": "Apple M3 Max",
+        "versions": {
+          "@nifrajs/core": "5.5.1",
+          "fastify": "5.12.7",
+          "elysia": "1.4.30",
+          "@elysiajs/node": "1.4.5",
+          "hono": "4.13.13",
+          "express": "5.3.0"
+        },
+        "nifraBundleSHA256": "7514137a400d0dbaa032c705e7324a9cbbb8b71e9c68406f7fab2bf08a5be9d1",
+        "date": "2026-10-21T10:03:39.319Z",
+        "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+      },
+      "groups": [
+        {
+          "workload": "post",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 68718.94360085975,
+                  "cpuUsPerRequest": 15.759635
+                },
+                {
+                  "round": 1,
+                  "rps": 67407.7332426587,
+                  "cpuUsPerRequest": 15.54141
+                },
+                {
+                  "round": 2,
+                  "rps": 74213.98577085529,
+                  "cpuUsPerRequest": 14.529125
+                },
+                {
+                  "round": 3,
+                  "rps": 76583.98659473899,
+                  "cpuUsPerRequest": 14.07665
+                },
+                {
+                  "round": 4,
+                  "rps": 75809.06395289705,
+                  "cpuUsPerRequest": 14.218385
+                },
+                {
+                  "round": 5,
+                  "rps": 61352.148429012195,
+                  "cpuUsPerRequest": 17.48963
+                },
+                {
+                  "round": 6,
+                  "rps": 45940.67962988039,
+                  "cpuUsPerRequest": 21.40174
+                },
+                {
+                  "round": 7,
+                  "rps": 37601.60776954501,
+                  "cpuUsPerRequest": 26.279415
+                }
+              ],
+              "rps": 68063.33842175922,
+              "cpuUsPerRequest": 15.650522500000001
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 65791.82364262716,
+                  "cpuUsPerRequest": 15.778985
+                },
+                {
+                  "round": 1,
+                  "rps": 70298.38264859017,
+                  "cpuUsPerRequest": 14.996965
+                },
+                {
+                  "round": 2,
+                  "rps": 68624.7343121784,
+                  "cpuUsPerRequest": 15.60221
+                },
+                {
+                  "round": 3,
+                  "rps": 73537.91234183263,
+                  "cpuUsPerRequest": 14.665395
+                },
+                {
+                  "round": 4,
+                  "rps": 72527.85627873617,
+                  "cpuUsPerRequest": 14.824845
+                },
+                {
+                  "round": 5,
+                  "rps": 72411.90025887247,
+                  "cpuUsPerRequest": 14.877935
+                },
+                {
+                  "round": 6,
+                  "rps": 68429.93209056307,
+                  "cpuUsPerRequest": 15.76979
+                },
+                {
+                  "round": 7,
+                  "rps": 45236.154215571245,
+                  "cpuUsPerRequest": 22.646115
+                }
+              ],
+              "rps": 69461.5584803843,
+              "cpuUsPerRequest": 15.2995875
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "bench/profiling/results/direct-body-heap/realworld-heap.json",
+      "note": "Final body-state allocation capture. Profiled throughput is not a production throughput result.",
+      "meta": {
+        "suite": "realworld",
+        "mode": "heap",
+        "packaging": "bundled-nifra",
+        "completed": true,
+        "rounds": 4,
+        "requests": 100000,
+        "warmupRequests": 100000,
+        "connections": 50,
+        "workloads": ["post"],
+        "node": "v26.12.0",
+        "platform": "darwin 24.6.0",
+        "cpu": "Apple M3 Max",
+        "versions": {
+          "@nifrajs/core": "5.5.1",
+          "fastify": "5.12.7",
+          "elysia": "1.4.30",
+          "@elysiajs/node": "1.4.5",
+          "hono": "4.13.13",
+          "express": "5.3.0"
+        },
+        "nifraBundleSHA256": "7514137a400d0dbaa032c705e7324a9cbbb8b71e9c68406f7fab2bf08a5be9d1",
+        "date": "2026-10-21T10:09:00.124Z",
+        "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+      },
+      "groups": [
+        {
+          "workload": "post",
+          "targets": [
+            {
+              "target": "nifra",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 57499.82426616209,
+                  "cpuUsPerRequest": 19.32797,
+                  "allocatedBytesPerRequest": 10636.40896
+                },
+                {
+                  "round": 1,
+                  "rps": 57507.68590222083,
+                  "cpuUsPerRequest": 18.69592,
+                  "allocatedBytesPerRequest": 10416.82152
+                },
+                {
+                  "round": 2,
+                  "rps": 58938.47677632465,
+                  "cpuUsPerRequest": 18.35213,
+                  "allocatedBytesPerRequest": 10306.23768
+                },
+                {
+                  "round": 3,
+                  "rps": 61548.28877381967,
+                  "cpuUsPerRequest": 17.5414,
+                  "allocatedBytesPerRequest": 10483.34792
+                }
+              ],
+              "rps": 58223.08133927274,
+              "cpuUsPerRequest": 18.524025,
+              "sampledJsBytesPerRequest": 10450.084719999999
+            },
+            {
+              "target": "nifra-before",
+              "samples": [
+                {
+                  "round": 0,
+                  "rps": 56232.48271354578,
+                  "cpuUsPerRequest": 19.19875,
+                  "allocatedBytesPerRequest": 10833.43392
+                },
+                {
+                  "round": 1,
+                  "rps": 56701.569081258094,
+                  "cpuUsPerRequest": 18.64323,
+                  "allocatedBytesPerRequest": 10726.57128
+                },
+                {
+                  "round": 2,
+                  "rps": 56043.78120460293,
+                  "cpuUsPerRequest": 19.25971,
+                  "allocatedBytesPerRequest": 10730.00536
+                },
+                {
+                  "round": 3,
+                  "rps": 58781.0816909348,
+                  "cpuUsPerRequest": 18.44637,
+                  "allocatedBytesPerRequest": 10709.92968
+                }
+              ],
+              "rps": 56467.02589740194,
+              "cpuUsPerRequest": 18.92099,
+              "sampledJsBytesPerRequest": 10728.28832
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "genericMatrix": {
+    "meta": {
+      "bun": "1.4.3",
+      "runs": 6,
+      "scalePct": 30,
+      "connections": 50,
+      "generic": true
+    },
+    "results": {
+      "bun": {
+        "nifra": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 103548,
+            "p50ms": 0.47025,
+            "p99ms": 1.0068329999999999
+          },
+          "POST worst 10.4KB body": {
+            "rps": 46612,
+            "p50ms": 0.98825,
+            "p99ms": 2.1292910000000003
+          },
+          "POST worst 66.3KB body": {
+            "rps": 11814,
+            "p50ms": 4.19325,
+            "p99ms": 8.406125000000001
+          }
+        },
+        "elysia": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 108163,
+            "p50ms": 0.425917,
+            "p99ms": 0.9892499999999999
+          },
+          "POST worst 10.4KB body": {
+            "rps": 50341,
+            "p50ms": 0.8975839999999999,
+            "p99ms": 2.089084
+          },
+          "POST worst 66.3KB body": {
+            "rps": 12903,
+            "p50ms": 3.8226660000000003,
+            "p99ms": 7.563458000000001
+          }
+        }
+      },
+      "node": {
+        "nifra": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 98265,
+            "p50ms": 0.465542,
+            "p99ms": 1.022083
+          },
+          "POST worst 10.4KB body": {
+            "rps": 28564,
+            "p50ms": 1.67925,
+            "p99ms": 3.4046250000000002
+          },
+          "POST worst 66.3KB body": {
+            "rps": 6992,
+            "p50ms": 6.914,
+            "p99ms": 14.044917
+          }
+        },
+        "elysia": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 73367,
+            "p50ms": 0.6334160000000001,
+            "p99ms": 1.3301669999999999
+          },
+          "POST worst 10.4KB body": {
+            "rps": 22922,
+            "p50ms": 2.094958,
+            "p99ms": 4.235458
+          },
+          "POST worst 66.3KB body": {
+            "rps": 6801,
+            "p50ms": 7.023167,
+            "p99ms": 16.202749999999998
+          }
+        },
+        "fastify": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 97888,
+            "p50ms": 0.46541699999999997,
+            "p99ms": 1.020791
+          },
+          "POST worst 10.4KB body": {
+            "rps": 27348,
+            "p50ms": 1.76525,
+            "p99ms": 3.589625
+          },
+          "POST worst 66.3KB body": {
+            "rps": 6522,
+            "p50ms": 7.356917,
+            "p99ms": 15.240667
+          }
+        }
+      },
+      "deno": {
+        "nifra": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 101611,
+            "p50ms": 0.473125,
+            "p99ms": 0.657959
+          },
+          "POST worst 10.4KB body": {
+            "rps": 31762,
+            "p50ms": 1.555333,
+            "p99ms": 1.908125
+          },
+          "POST worst 66.3KB body": {
+            "rps": 8151,
+            "p50ms": 6.059584,
+            "p99ms": 7.428667
+          }
+        },
+        "elysia": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 82237,
+            "p50ms": 0.598625,
+            "p99ms": 0.839666
+          },
+          "POST worst 10.4KB body": {
+            "rps": 28019,
+            "p50ms": 1.752,
+            "p99ms": 2.365458
+          },
+          "POST worst 66.3KB body": {
+            "rps": 7729,
+            "p50ms": 6.417209,
+            "p99ms": 7.364459
+          }
+        }
+      }
+    },
+    "failures": []
+  },
+  "memory": {
+    "date": "2026-10-21",
+    "node": "26.12.0",
+    "platform": "darwin 24.6.0",
+    "cpu": "Apple M3 Max",
+    "revision": "4432d483c2ba5c7656573363c7c67d1934332e5e",
+    "workspaceArtifactSHA256": "bed0864455976407ae428fcd8f4425bb07a5f649f37373c89811db6aba0a48ba",
+    "protocol": "fresh-native-node-v1",
+    "rounds": 5,
+    "requestsPerPhase": 50000,
+    "connections": 50,
+    "rows": [
+      {
+        "name": "Nifra",
+        "version": "5.5.1",
+        "nifra": true,
+        "readyRssMiB": 44.6231689453125,
+        "getRssMiB": 75.0013427734375,
+        "postRssMiB": 77.54827880859375,
+        "postHeapMiB": 15.44805908203125,
+        "peakRssMiB": 129.65625,
+        "postRssRangeMiB": [72.953857421875, 79.8292236328125]
+      },
+      {
+        "name": "Fastify",
+        "version": "5.12.7",
+        "readyRssMiB": 56.3575439453125,
+        "getRssMiB": 81.47015380859375,
+        "postRssMiB": 85.18890380859375,
+        "postHeapMiB": 16.681167602539062,
+        "peakRssMiB": 137.875,
+        "postRssRangeMiB": [79.79852294921875, 85.48614501953125]
+      },
+      {
+        "name": "Elysia",
+        "version": "1.4.30",
+        "readyRssMiB": 50.1534423828125,
+        "getRssMiB": 76.04925537109375,
+        "postRssMiB": 146.3248291015625,
+        "postHeapMiB": 11.137123107910156,
+        "peakRssMiB": 196.4375,
+        "postRssRangeMiB": [137.526611328125, 152.0140380859375]
+      },
+      {
+        "name": "Hono",
+        "version": "4.13.13",
+        "readyRssMiB": 42.02569580078125,
+        "getRssMiB": 79.32958984375,
+        "postRssMiB": 143.3699951171875,
+        "postHeapMiB": 7.964973449707031,
+        "peakRssMiB": 197.53125,
+        "postRssRangeMiB": [141.2919921875, 153.6231689453125]
+      },
+      {
+        "name": "Express",
+        "version": "5.3.0",
+        "readyRssMiB": 46.99664306640625,
+        "getRssMiB": 79.11114501953125,
+        "postRssMiB": 84.7049560546875,
+        "postHeapMiB": 14.678337097167969,
+        "peakRssMiB": 141.21875,
+        "postRssRangeMiB": [77.595458984375, 85.67364501953125]
+      }
+    ]
+  },
+  "verification": {
+    "bunTests": {
+      "passed": 2844,
+      "failed": 0
+    },
+    "nodeTests": {
+      "passed": 74,
+      "failed": 0
+    },
+    "profilerTests": {
+      "passed": 4,
+      "failed": 0
+    },
+    "nifraCheck": true,
+    "siteAssure": true,
+    "siteCapabilities": true,
+    "sitePages": 80
+  }
+}
