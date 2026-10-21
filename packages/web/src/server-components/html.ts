@@ -25,10 +25,16 @@ function tokenize(
   assets?: ReadonlySet<string>,
   hints?: Array<{ start: number; end: number }>,
 ): void {
-  if (new TextEncoder().encode(html).length > COMPONENT_LIMITS.outputBytes)
+  // UTF-8 takes at most three bytes per UTF-16 unit, so only a long string is encoded to measure it.
+  if (
+    html.length * 3 > COMPONENT_LIMITS.outputBytes &&
+    new TextEncoder().encode(html).length > COMPONENT_LIMITS.outputBytes
+  )
     throw new ServerComponentError("component_limit", 413)
   const tokenizer = new Tokenizer(
-    { sourceCodeLocationInfo: true },
+    // Offsets are read only for hints and for `title`/`textarea`, whose names a tokenizer lowercases
+    // from ASCII alone; tracking them costs every other string about a tenth of its check.
+    { sourceCodeLocationInfo: hints !== undefined || /<(?:title|textarea)/i.test(html) },
     {
       onStartTag(token) {
         validateComponentTag(token.tagName, token.attrs, assets)

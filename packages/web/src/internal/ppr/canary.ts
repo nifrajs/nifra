@@ -44,7 +44,7 @@ export async function checkShellCanaries(
     const url = new URL(path, options.origin ?? "http://canary.invalid")
     url.searchParams.set("nifra_canary", values.query)
     const response = await app.fetch(
-      new Request(url, {
+      new Request(url.href, {
         headers: {
           cookie: `nifra_canary=${values.cookie}`,
           authorization: `Bearer ${values.authorization}`,

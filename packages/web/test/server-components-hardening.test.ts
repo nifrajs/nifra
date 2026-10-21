@@ -163,6 +163,7 @@ test("SSR token policy sees markup that a browser reads inside title, textarea a
     `<textarea></textareax>${img}</textarea>`,
     "<title>never closed",
     "<title>a < b</title>",
+    "<TiTlE>a < b</tItLe>",
   ])
     expect(() => validateComponentHTML(html)).toThrow()
   for (const html of [

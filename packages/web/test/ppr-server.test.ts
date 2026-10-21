@@ -105,11 +105,11 @@ const ERROR_FRAME = {
   html: '<p data-nifra-hole-error="">This section is unavailable.</p>',
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
-const readerOf = (res: Response): ReadableStreamDefaultReader<Uint8Array> => {
+const readerOf = (res: Response) => {
   if (res.body === null) throw new Error("no body")
   return res.body.getReader()
 }
-const readRest = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> => {
+const readRest = async (reader: ReturnType<typeof readerOf>): Promise<string> => {
   const decoder = new TextDecoder()
   let out = ""
   for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read())

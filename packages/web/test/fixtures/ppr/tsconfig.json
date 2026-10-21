@@ -1,0 +1,6 @@
+{
+  // The fixture app's React routes and the scripts that drive browsers, outside the DOM-free root program.
+  "extends": "../../../../../examples/tsconfig.react.json",
+  "compilerOptions": { "types": ["bun", "react"] },
+  "include": ["app/routes/**/*.tsx", "app-browser.ts", "runtime-browser.ts", "transport-cost.ts"]
+}

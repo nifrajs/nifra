@@ -32,6 +32,7 @@ bun run bench:http:realworld:update  # repeated, medianed, writes BENCHMARKS-REA
 
 # Other axes
 bun run bench:ssr               # SSR throughput per UI runtime
+bun run bench:ppr               # partial prerendering's server cost and TTFB, with its gates
 bun run bench:size              # server bundle size
 bun run bench:coldboot          # cold-start time
 ```

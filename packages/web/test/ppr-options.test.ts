@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   HTML_LIMITED_BOTS,
   PPR_DEFAULTS,
+  type PprOptions,
   resolvePprOptions,
   totalDeadlineMs,
   wantsBlockingRender,
@@ -52,7 +53,9 @@ describe("PPR options", () => {
   })
 
   test("an undefined override keeps the default", () => {
-    expect(resolvePprOptions({ maxHoleWork: undefined }).maxHoleWork).toBe(1024)
+    const override: Record<string, unknown> = { maxHoleWork: undefined }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an explicit `undefined` is what this test feeds in, which exactOptionalPropertyTypes refuses to spell.
+    expect(resolvePprOptions(override as PprOptions).maxHoleWork).toBe(1024)
   })
 
   test("rejects unknown keys, non-integers, negatives and zero where a limit needs one", () => {

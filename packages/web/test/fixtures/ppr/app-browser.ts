@@ -16,10 +16,10 @@ import type { PprApp } from "./app/server.ts"
 declare global {
   interface Window {
     __violations: string[]
-    __fills: Record<string, number>
+    __holeFills: Record<string, number>
     __rewrites: Record<string, number>
     __subscribed: string[]
-    __tampered?: number
+    __invokerRan?: number
   }
 }
 
@@ -45,7 +45,7 @@ assert.deepEqual(
 const instrument = (context: BrowserContext) =>
   context.addInitScript(() => {
     window.__violations = []
-    window.__fills = {}
+    window.__holeFills = {}
     window.__rewrites = {}
     window.__subscribed = []
     document.addEventListener("securitypolicyviolation", (event) =>
@@ -61,8 +61,8 @@ const instrument = (context: BrowserContext) =>
         if (!(record.target instanceof Element)) continue
         const name = record.target.getAttribute("data-nifra-hole")
         if (name === null) continue
-        if (record.type === "attributes") bump(window.__fills, name)
-        else if (window.__fills[name] !== undefined && record.target.isConnected)
+        if (record.type === "attributes") bump(window.__holeFills, name)
+        else if (window.__holeFills[name] !== undefined && record.target.isConnected)
           bump(window.__rewrites, name)
       }
     }).observe(document, {
@@ -280,7 +280,7 @@ const once = Object.fromEntries(ALL_HOLES.map((hole) => [hole, 1]))
 /** Every hole filled once and its children left alone after, with no CSP violation or error. */
 async function assertFilledOnce(page: Page, errors: string[], label: string): Promise<void> {
   const seen = await page.evaluate(() => ({
-    fills: window.__fills,
+    fills: window.__holeFills,
     rewrites: window.__rewrites,
     violations: window.__violations,
   }))
@@ -358,7 +358,7 @@ async function checkScriptPolicy(name: string, browser: Browser): Promise<Record
     replaced = html.includes(invoker)
     const body = html.replace(
       invoker,
-      '<script>__nifraPpr("greeting");window.__tampered=1</script>',
+      '<script>__nifraPpr("greeting");window.__invokerRan=1</script>',
     )
     await route.fulfill({ response, body })
   })
@@ -367,7 +367,7 @@ async function checkScriptPolicy(name: string, browser: Browser): Promise<Record
   for (const hole of ["cart", "slow"]) await filled(tampered.page, hole)
   await tampered.page.waitForFunction(() => window.__violations.length > 0)
   const blocked = await tampered.page.evaluate(() => ({
-    ran: window.__tampered !== undefined,
+    ran: window.__invokerRan !== undefined,
     greeting: document
       .querySelector("[data-nifra-hole=greeting]")
       ?.hasAttribute("data-nifra-filled"),

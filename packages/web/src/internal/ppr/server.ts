@@ -53,10 +53,12 @@ const DOCUMENT_END = "</body></html>"
 const MODULE_SCRIPT = /<script type="module" src="([^"]*)"><\/script>/g
 
 /** A built shell, shared by every visitor whose request maps to its key. */
+const NO_BYTES = new Uint8Array(0)
+
 interface ShellEntry {
   readonly routeId: string
-  /** The document up to (not including) `</body></html>`: holes stream after it. */
-  readonly prefix: string
+  /** The document up to (not including) `</body></html>`, encoded once: holes stream after it. */
+  readonly prefix: Uint8Array
   /** The shell loader's output, for a soft navigation's data request. */
   readonly data: unknown
   readonly bytes: number
@@ -297,13 +299,17 @@ export function createPprServer(config: PprServerConfig): PprServer {
         )
       }
     }
-    const size = new TextEncoder().encode(prefix).length
-    if (size < options.minShellBytes) prefix += `<!--${" ".repeat(options.minShellBytes - size)}-->`
+    let bytes = new TextEncoder().encode(prefix)
+    if (bytes.length < options.minShellBytes) {
+      bytes = new TextEncoder().encode(
+        `${prefix}<!--${" ".repeat(options.minShellBytes - bytes.length)}-->`,
+      )
+    }
     return {
       routeId: request.routeId,
-      prefix,
+      prefix: bytes,
       data,
-      bytes: Math.max(size, options.minShellBytes),
+      bytes: bytes.length,
       builtAt: now(),
       tags: request.tags(),
       failures: 0,
@@ -329,7 +335,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
           if (!isStatusSignal(error) || error.status !== 404) throw error
           return {
             routeId,
-            prefix: "",
+            prefix: NO_BYTES,
             data: undefined,
             bytes: NOT_FOUND_ENTRY_BYTES + key.length,
             builtAt: now(),
@@ -421,15 +427,22 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const load = hole.load
     if (load === undefined) return Promise.resolve({ ok: true, value: undefined })
     if (slot === undefined) return Promise.resolve(SHED)
-    const signal = AbortSignal.any([
-      response,
-      AbortSignal.timeout(hole.timeout ?? options.holeTimeoutMs),
-    ])
+    // Not `AbortSignal.timeout`: its timer stays pending after the hole settles, and under load the
+    // pending timers cost more than the holes.
+    const own = new AbortController()
+    const signal = own.signal
+    if (response.aborted) own.abort(response.reason)
+    else response.addEventListener("abort", () => own.abort(response.reason), { once: true })
+    const deadline = setTimeout(
+      () => own.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      hole.timeout ?? options.holeTimeoutMs,
+    )
     return slot
       .run(`${request.routeId}|${hole.name}`, signal, () =>
         load(holeCtx(request.holeContext, signal)),
       )
       .then((run) => {
+        clearTimeout(deadline)
         // The shell's status and headers are already sent, so a hole has no redirect or status to give.
         const settled: HoleRun<unknown> =
           run.ok && (isControlFlow(run.value) || isStatusSignal(run.value))
@@ -623,16 +636,17 @@ export function createPprServer(config: PprServerConfig): PprServer {
         {
           start(stream) {
             sink = stream
-            stream.enqueue(
-              encoder.encode(
-                shell.prefix +
-                  encodeRequestScript(
-                    cancelUrl,
-                    token,
-                    request.holes.map((hole) => hole.name),
-                  ),
+            const tail = encoder.encode(
+              encodeRequestScript(
+                cancelUrl,
+                token,
+                request.holes.map((hole) => hole.name),
               ),
             )
+            const first = new Uint8Array(shell.prefix.length + tail.length)
+            first.set(shell.prefix)
+            first.set(tail, shell.prefix.length)
+            stream.enqueue(first)
           },
           // Pulled only when the reader wants bytes, so unread frames stay counted in `state.queue`.
           async pull(stream) {

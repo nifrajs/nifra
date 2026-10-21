@@ -1,0 +1,5 @@
+{
+  // React routes need JSX; the Svelte routes' `.svelte` files are compiled by the bench server.
+  "extends": "../../examples/tsconfig.react.json",
+  "include": ["*.ts", "shared/**/*.ts", "react/**/*.ts", "react/**/*.tsx", "svelte/**/*.ts"]
+}
