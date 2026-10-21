@@ -1,0 +1,134 @@
+{
+  "date": "2026-10-22",
+  "base": "fc3fb7a4c6e7bf780ed2532787d79ad110a0e959",
+  "versions": {
+    "bun": "1.4.3",
+    "node": "26.12.0",
+    "elysia": "1.4.30",
+    "fastify": "5.12.7"
+  },
+  "artifactSha256": {
+    "packages/core/src/internal/route-program.ts": "1782ef7093e7d6619f70d89134e6c75da17ba368339299f341d0170bc60b8828",
+    "packages/core/src/server/server.ts": "f40325c03f72b1b660945575749f4d3e95c4d79d0d2119664acec75bafb51ec4",
+    "packages/core/src/server/query.ts": "5f00f5b95090cf2d7c5624d444f0f3f1db1076353954b5eedcddea9941f71848",
+    "bench/profiling/results/fastlane-before/fixture-entry.js": "cf14095a43efddd940223591897b90f464fc456d2e4015bdd0de988d7c4267ec",
+    "bench/profiling/results/fastlane-final/fixture-entry.js": "0f6052d81527e082f6072deb7e9dc5462039aa8a90330c2327b1ac4a493deb29"
+  },
+  "promiseAudit": {
+    "main": {
+      "node": "v26.12.0",
+      "scope": "PROMISE init events/request including await driver; POST uses delivered-byte bounded reader",
+      "warmup": 200,
+      "samples": 100,
+      "result": {
+        "driver-control": 2,
+        "driver-json": 3,
+        "auth-before-validation-sync": 7,
+        "auth-before-validation-async-query": 10,
+        "validate-before-auth-sync": 3,
+        "validate-before-auth-async-query": 10,
+        "authenticated-auth-before-validation-async-query": 10,
+        "authenticated-validate-before-auth-async-query": 8,
+        "auth-before-validation-async-derive": 9,
+        "auth-before-validation-body-async-handler": 15,
+        "validate-before-auth-async-derive": 9,
+        "validate-before-auth-body-async-handler": 17,
+        "realworld-get": 3,
+        "closed-get": 3,
+        "closed-post": 9,
+        "generic-get": 3,
+        "generic-post": 15
+      }
+    },
+    "final": {
+      "node": "v26.12.0",
+      "scope": "PROMISE init events/request including await driver; POST uses delivered-byte bounded reader",
+      "warmup": 200,
+      "samples": 100,
+      "result": {
+        "driver-control": 2,
+        "driver-json": 3,
+        "auth-before-validation-sync": 3,
+        "auth-before-validation-async-query": 6,
+        "validate-before-auth-sync": 3,
+        "validate-before-auth-async-query": 6,
+        "authenticated-auth-before-validation-async-query": 6,
+        "authenticated-validate-before-auth-async-query": 6,
+        "auth-before-validation-async-derive": 5,
+        "auth-before-validation-body-async-handler": 15,
+        "validate-before-auth-async-derive": 5,
+        "validate-before-auth-body-async-handler": 15,
+        "realworld-get": 3,
+        "closed-get": 3,
+        "closed-post": 9,
+        "generic-get": 3,
+        "generic-post": 11
+      }
+    }
+  },
+  "http": {
+    "scope": "candidate/main requests per second; generic worst-case app (BENCH_GENERIC=1); oha -c 50, count-bounded; 12 interleaved rounds per workload, half with each boot order",
+    "requests": {
+      "GET": 200000,
+      "POST-10k": 40000,
+      "POST-66k": 10000
+    },
+    "sourceSha256": {
+      "packages/core/src/internal/route-program.ts": "1bc4096ea2380462986e1686bf1e6689ffd63f7f030ab5e4ede824e933176e1e",
+      "packages/core/src/server/server.ts": "f40325c03f72b1b660945575749f4d3e95c4d79d0d2119664acec75bafb51ec4",
+      "packages/core/src/server/query.ts": "5f00f5b95090cf2d7c5624d444f0f3f1db1076353954b5eedcddea9941f71848"
+    },
+    "bun": {
+      "GET": {
+        "geomean": 1.0106,
+        "min": 0.9981,
+        "max": 1.0291,
+        "rounds": 12,
+        "mainFirstGeomean": 1.012,
+        "candidateFirstGeomean": 1.0092
+      },
+      "POST-10k": {
+        "geomean": 1.02,
+        "min": 1.0039,
+        "max": 1.0279,
+        "rounds": 12,
+        "mainFirstGeomean": 1.02,
+        "candidateFirstGeomean": 1.0199
+      },
+      "POST-66k": {
+        "geomean": 1.0052,
+        "min": 0.9637,
+        "max": 1.033,
+        "rounds": 12,
+        "mainFirstGeomean": 0.9966,
+        "candidateFirstGeomean": 1.0138
+      }
+    },
+    "node": {
+      "GET": {
+        "geomean": 1.0057,
+        "min": 0.9765,
+        "max": 1.0416,
+        "rounds": 12,
+        "mainFirstGeomean": 0.9998,
+        "candidateFirstGeomean": 1.0117
+      },
+      "POST-10k": {
+        "geomean": 1.0013,
+        "min": 0.9832,
+        "max": 1.0244,
+        "rounds": 12,
+        "mainFirstGeomean": 0.9997,
+        "candidateFirstGeomean": 1.0029
+      },
+      "POST-66k": {
+        "geomean": 0.9995,
+        "min": 0.9907,
+        "max": 1.0111,
+        "rounds": 12,
+        "mainFirstGeomean": 0.9988,
+        "candidateFirstGeomean": 1.0002
+      }
+    }
+  }
+}
