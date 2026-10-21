@@ -7,6 +7,7 @@ import {
   notFound,
   type RenderAdapter,
 } from "../src/index.ts"
+import { queryDigester } from "../src/internal/query-digest.ts"
 import { createKeyring, type GrantInput, type LiveSecrets } from "../src/live/keyring.ts"
 import { type Live, type LiveOptions, live, memoryBus } from "../src/live.ts"
 import type { LoaderContext } from "../src/manifest.ts"
@@ -184,6 +185,7 @@ interface LiveJson {
     tags?: Record<string, string[]>
     page?: string
     ttl?: number
+    query?: { salt?: string; keys?: Record<string, string>; dev?: boolean }
   }
   error?: string
 }
@@ -274,6 +276,63 @@ test("the tag map holds only the frame's own keys, as tags of the grant's secret
   const wire = JSON.stringify(json.live)
   for (const key of keys) expect(wire.includes(key)).toBe(false)
   expect(wire.includes("alice")).toBe(false)
+})
+
+test("queryKeys: each granted tag carries its key's digest under a salt fresh per load", async () => {
+  process.env.NODE_ENV = "production"
+  const fx = fixture({ live: { queryKeys: true } })
+  const first = await load(fx.app)
+  const second = await load(fx.app)
+  const query = first.json.live?.query
+  const salt = query?.salt ?? ""
+  expect(salt).toMatch(/^[A-Za-z0-9_-]{22}$/)
+  expect(second.json.live?.query?.salt).not.toBe(salt)
+  expect(query?.dev).toBeUndefined()
+  const keyring = await testKeyring()
+  const digest = await queryDigester(salt)
+  const keys = ["site:nav", "posts:list", "gate:key", "post:42", "comments:42"]
+  const expected: Record<string, string> = {}
+  for (const key of keys) expected[await keyring.tag(key)] = await digest(key)
+  expect(query?.keys).toEqual(expected)
+  expect(Object.keys(query?.keys ?? {}).sort()).toEqual(
+    Object.keys(first.json.live?.tags ?? {}).sort(),
+  )
+  for (const value of Object.values(query?.keys ?? {})) expect(value).toMatch(/^[A-Za-z0-9_-]{22}$/)
+  const wire = JSON.stringify(first.json.live)
+  for (const key of keys) expect(wire.includes(key)).toBe(false)
+})
+
+test("query keys: development marks the envelope, production with queryKeys off sends nothing", async () => {
+  process.env.NODE_ENV = "development"
+  const keyed = await load(fixture({ live: { queryKeys: true } }).app)
+  expect(keyed.json.live?.query?.dev).toBe(true)
+  expect(keyed.json.live?.query?.salt).toBeDefined()
+  const off = await load(fixture().app)
+  expect(off.json.live?.query).toEqual({ dev: true })
+  process.env.NODE_ENV = "production"
+  const quiet = await load(fixture().app)
+  expect(quiet.json.live?.grant).toBeDefined()
+  expect(quiet.json.live?.query).toBeUndefined()
+})
+
+test("a load with no grant carries no query keys", async () => {
+  process.env.NODE_ENV = "production"
+  const error = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const fx = fixture({
+      live: { queryKeys: true },
+      page: (ctx) => {
+        for (let i = 0; i < 65; i++) ctx.live(`page:${i}`)
+        return null
+      },
+    })
+    const { json } = await load(fx.app)
+    expect(json.live?.subject).toBeDefined()
+    expect(json.live?.grant).toBeUndefined()
+    expect(json.live?.query).toBeUndefined()
+  } finally {
+    error.mockRestore()
+  }
 })
 
 test("a key two owners declare maps its one tag to both owners", async () => {

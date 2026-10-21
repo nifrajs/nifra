@@ -4,7 +4,10 @@
  */
 import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test"
 import type { BoundaryStates } from "../src/boundary.ts"
+import { liveQueries } from "../src/internal/live-queries.ts"
+import { queryDigester, querySalt } from "../src/internal/query-digest.ts"
 import { liveClient } from "../src/live-client.ts"
+import { createQueryClient, type QueryHandle } from "../src/query.ts"
 import { type ClientRouter, createClientRouter, type RouterState } from "../src/router.ts"
 
 const SID = "a".repeat(32)
@@ -120,13 +123,30 @@ const routeOf = (path: string): string => {
 /**
  * The live load endpoint as the client sees it: each answer issues `grant-<n>`, watches `tag:<path>`
  * for the page owner and `tag:root` for the root layout, and keeps what a valid grant lets it keep.
+ * Their keys are `key:<path>` and `key:root`; `query` adds what query hooks match them by.
  */
 function scripted() {
   const loads: LoadBody[] = []
   const plain: string[] = []
   const issued = new Map<string, LoadBody>()
   const held: (() => void)[] = []
-  const control = { hold: false, busy: 0, failing: 0, subject: "viewer-1", grant: true }
+  const control: {
+    hold: boolean
+    busy: number
+    failing: number
+    subject: string
+    grant: boolean
+    query: undefined | "keys" | "off" | "bad"
+    dev: boolean
+  } = {
+    hold: false,
+    busy: 0,
+    failing: 0,
+    subject: "viewer-1",
+    grant: true,
+    query: undefined,
+    dev: false,
+  }
   let n = 0
   const fetch = async (input: string, init: RequestInit): Promise<Response> => {
     if (input !== "/_nifra/live/load") {
@@ -162,6 +182,20 @@ function scripted() {
     }
     if (control.grant) live.grant = grant
     if (keepPage) live.page = "retained"
+    if (control.query === "keys") {
+      const salt = querySalt()
+      const digest = await queryDigester(salt)
+      const query: Record<string, unknown> = {
+        salt,
+        keys: {
+          [`tag:${body.path}`]: await digest(`key:${body.path}`),
+          "tag:root": await digest("key:root"),
+        },
+      }
+      if (control.dev) query.dev = true
+      live.query = query
+    } else if (control.query === "off") live.query = { dev: true }
+    else if (control.query === "bad") live.query = { salt: 7 }
     return Response.json({
       v: 1,
       data: keepPage ? null : { path: body.path, n: id },
@@ -605,4 +639,239 @@ test("detaching closes the socket and stops reloading", async () => {
   changed(r, "tag:/posts/1")
   await settle()
   expect(r.server.loads).toHaveLength(1)
+})
+
+// --- Query hooks ----------------------------------------------------------------------------------
+
+/** A query the page's code mounted with live keys; the test counts its fetches. */
+function mounted(live: readonly string[], client = createQueryClient({ now: () => Date.now() })) {
+  let fetches = 0
+  const handle: QueryHandle<number> = client.query(["q", ...live], async () => ++fetches, { live })
+  const off = handle.subscribe(() => {})
+  void handle.fetch()
+  return { client, fetches: () => fetches, off }
+}
+
+async function connectedWithQueries(): Promise<Rig> {
+  const r = rig()
+  r.server.control.query = "keys"
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "first watch")
+  ready(r, [[]])
+  await settle()
+  return r
+}
+
+test("a query on a granted key refetches once its watch begins, then on each change to that key alone", async () => {
+  const r = rig()
+  r.server.control.query = "keys"
+  const query = mounted(["key:/posts/1"])
+  const other = mounted(["key:/posts/2"])
+  await settle()
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "watch")
+  await settle()
+  expect(query.fetches()).toBe(1)
+  // It read before the load took its watermark: a change between the two would be lost.
+  ready(r, [[]])
+  await until(() => query.fetches() === 2, "the watch's first refetch")
+  changed(r, "tag:/posts/1")
+  await until(() => query.fetches() === 3, "refetch on change")
+  changed(r, "tag:root")
+  await settle()
+  expect(query.fetches()).toBe(3)
+  expect(other.fetches()).toBe(1)
+  // Key text and digests stay on the page.
+  for (const body of r.server.loads) expect(JSON.stringify(body)).not.toContain("key:")
+  for (const frame of r.socket().sent) expect(frame).not.toContain("key:")
+  query.off()
+  other.off()
+  r.stop()
+})
+
+test("a query that read after its load arrived is not fetched again when the watch begins", async () => {
+  const r = rig()
+  r.server.control.query = "keys"
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "watch")
+  const query = mounted(["key:/posts/1"])
+  await settle()
+  ready(r, [[]])
+  await settle()
+  expect(query.fetches()).toBe(1)
+  changed(r, "tag:/posts/1")
+  await until(() => query.fetches() === 2, "refetch on change")
+  query.off()
+  r.stop()
+})
+
+test("a change that lands before the page has matched a new query still refetches it", async () => {
+  const r = await connectedWithQueries()
+  const query = mounted(["key:/posts/1"])
+  changed(r, "tag:/posts/1")
+  await until(() => query.fetches() === 2, "refetch once matched")
+  await settle()
+  expect(query.fetches()).toBe(2)
+  query.off()
+  r.stop()
+})
+
+test("data fetched before its query mounted is fetched again: changes until then never reached it", async () => {
+  const r = await connectedWithQueries()
+  const client = createQueryClient({ now: () => Date.now(), staleTime: 60_000 })
+  let fetches = 0
+  const fetcher = async () => ++fetches
+  await client.prefetchQuery(["warm"], fetcher, { live: ["key:/posts/1"] })
+  // A change now finds no registered query.
+  changed(r, "tag:/posts/1")
+  await settle()
+  const handle = client.query(["warm"], fetcher, { live: ["key:/posts/1"] })
+  const off = handle.subscribe(() => {})
+  void handle.fetch()
+  expect(fetches).toBe(1)
+  await until(() => fetches === 2, "refetch on mount")
+  off()
+  r.stop()
+})
+
+test("a change in ready.stale refetches every query on a tag its owner holds", async () => {
+  const r = rig()
+  r.server.control.query = "keys"
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "watch")
+  const root = mounted(["key:root"])
+  const page = mounted(["key:/posts/1"])
+  await settle()
+  ready(r, [[ROOT]])
+  await until(() => root.fetches() === 2, "stale refetch")
+  await settle()
+  expect(root.fetches()).toBe(2)
+  expect(page.fetches()).toBe(1)
+  root.off()
+  page.off()
+  r.stop()
+})
+
+test("an unmounted query is not refetched", async () => {
+  const r = await connectedWithQueries()
+  const query = mounted(["key:/posts/1"])
+  await settle()
+  query.off()
+  expect([...liveQueries()]).toEqual([])
+  changed(r, "tag:/posts/1")
+  await settle()
+  expect(query.fetches()).toBe(1)
+  r.stop()
+})
+
+test("after a dropped socket, every query refetches once the next watch begins", async () => {
+  jest.useFakeTimers()
+  const r = await connectedWithQueries()
+  const query = mounted(["key:/posts/1"])
+  await settle()
+  r.socket().drop(1006)
+  jest.advanceTimersByTime(60_000)
+  await until(() => FakeSocket.all.length === 2, "reconnect")
+  r.socket().welcome(SID_2)
+  await until(() => r.socket().watches().length === 1, "watch on the new socket")
+  await settle()
+  expect(query.fetches()).toBe(1)
+  ready(r, [[]])
+  await until(() => query.fetches() === 2, "refetch under the new watch")
+  query.off()
+  r.stop()
+})
+
+test("a polled page refetches its live queries with it", async () => {
+  jest.useFakeTimers()
+  const r = rig()
+  r.server.control.grant = false
+  r.server.control.query = "keys"
+  const query = mounted(["key:/posts/1"])
+  r.socket().welcome()
+  await until(() => r.server.loads.length === 1 && !r.router.snapshot().pending, "first load")
+  await settle()
+  expect(query.fetches()).toBe(1)
+  jest.advanceTimersByTime(37_000)
+  await until(() => query.fetches() === 2, "refetch with the poll")
+  query.off()
+  r.stop()
+})
+
+test("another viewer: every query client the page made drops what it held", async () => {
+  Reflect.set(globalThis, "window", globalThis)
+  try {
+    const r = await connectedWithQueries()
+    const client = createQueryClient({ now: () => Date.now() })
+    client.setQueryData(["account"], "viewer-1's")
+    const query = mounted(["key:/posts/1"], client)
+    await settle()
+    r.server.control.subject = "viewer-2"
+    changed(r, "tag:/posts/1")
+    await until(() => client.getQueryData(["account"]) === undefined, "cleared")
+    // The mounted query loads again, for the new viewer.
+    await until(() => query.fetches() >= 3, "refetched")
+    query.off()
+    r.stop()
+  } finally {
+    Reflect.deleteProperty(globalThis, "window")
+  }
+})
+
+test("in development, a query key no grant holds is named once", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    const r = rig()
+    r.server.control.query = "keys"
+    r.server.control.dev = true
+    const query = mounted(["key:/posts/1", "key:nowhere"])
+    r.socket().welcome()
+    await until(() => r.socket().watches().length === 1, "watch")
+    await until(() => warn.mock.calls.length === 1, "warning")
+    expect(String(warn.mock.calls[0]?.[0])).toContain('"key:nowhere"')
+    ready(r, [[]])
+    changed(r, "tag:/posts/1")
+    await until(() => r.socket().watches().length === 2, "rewatch")
+    await settle()
+    expect(warn).toHaveBeenCalledTimes(1)
+    query.off()
+    r.stop()
+  } finally {
+    warn.mockRestore()
+  }
+})
+
+test("in development with queryKeys off, a query with live keys gets one warning; production none", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    const off = rig()
+    off.server.control.query = "off"
+    const query = mounted(["key:/posts/1"])
+    off.socket().welcome()
+    await until(() => warn.mock.calls.length === 1, "warning")
+    expect(String(warn.mock.calls[0]?.[0])).toContain("queryKeys off")
+    query.off()
+    off.stop()
+    const production = rig()
+    production.server.control.query = "keys"
+    const quiet = mounted(["key:nowhere"])
+    production.socket().welcome()
+    await until(() => production.socket().watches().length === 1, "watch")
+    await settle()
+    expect(warn).toHaveBeenCalledTimes(1)
+    quiet.off()
+    production.stop()
+  } finally {
+    warn.mockRestore()
+  }
+})
+
+test("a load whose query member is malformed is no live load: nothing is watched", async () => {
+  const r = rig()
+  r.server.control.query = "bad"
+  r.socket().welcome()
+  await until(() => r.server.loads.length === 1 && !r.router.snapshot().pending, "load")
+  await settle()
+  expect(r.socket().watches()).toEqual([])
+  r.stop()
 })

@@ -1,8 +1,10 @@
-import type { QueryClient, QueryState } from "@nifrajs/web"
+import type { QueryClient, QueryOptions, QueryState } from "@nifrajs/web"
 import {
   createNoClientRefetch,
+  fetchOnMount,
   getQueryClientSingleton,
   IDLE_QUERY_STATE,
+  noop,
 } from "@nifrajs/web/internal/query-runtime"
 /**
  * `@nifrajs/web-solid/query` - Solid bindings for the keyed query-cache. `createQuery(key, fn)` bridges a
@@ -18,7 +20,7 @@ import { type Accessor, createSignal, onCleanup, onMount } from "solid-js"
 
 /** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */
 export function useQueryClient(): Pick<QueryClient, "invalidateQueries"> {
-  return getQueryClientSingleton() ?? { invalidateQueries: () => {} }
+  return getQueryClientSingleton() ?? { invalidateQueries: noop }
 }
 
 /** A query's reactive state accessor plus `refetch`. */
@@ -32,18 +34,21 @@ export interface CreateQueryResult<T> {
 /**
  * Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`.
  * Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup).
- * Fetches on mount; SSR-idle. Call inside a component (owns the subscription).
+ * Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names
+ * the live keys that refetch it.
  */
-export function createQuery<T>(key: unknown, fn: () => Promise<T>): CreateQueryResult<T> {
-  const handle = getQueryClientSingleton()?.query<T>(key, fn)
+export function createQuery<T>(
+  key: unknown,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): CreateQueryResult<T> {
+  const handle = getQueryClientSingleton()?.query<T>(key, fn, options)
   const [state, setState] = createSignal<QueryState<T>>(
     handle ? handle.snapshot() : IDLE_QUERY_STATE,
   )
   if (handle !== undefined) {
     onCleanup(handle.subscribe(() => setState(() => handle.snapshot())))
-    onMount(() => {
-      handle.fetch().catch(() => {})
-    })
+    onMount(fetchOnMount(handle))
     return { state, refetch: handle.refetch }
   }
   return {

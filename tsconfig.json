@@ -166,6 +166,7 @@
     "examples/i18n-react",
     "examples/image-react",
     "examples/isr-react",
+    "examples/live-react",
     "examples/routing-solid",
     "examples/routing-react",
     "examples/routing-preact",

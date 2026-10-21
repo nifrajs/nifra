@@ -1,8 +1,11 @@
-import type { QueryClient, QueryHandle, QueryState } from "@nifrajs/web"
+import type { QueryClient, QueryHandle, QueryOptions, QueryState } from "@nifrajs/web"
 import {
   createNoClientRefetch,
+  fetchOnMount,
   getQueryClientSingleton,
   IDLE_QUERY_STATE,
+  noop,
+  noopSubscribe,
 } from "@nifrajs/web/internal/query-runtime"
 /**
  * `@nifrajs/web-preact/query` - Preact bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
@@ -19,12 +22,11 @@ import { useEffect } from "preact/hooks"
 
 /** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */
 export function useQueryClient(): Pick<QueryClient, "invalidateQueries"> {
-  return getQueryClientSingleton() ?? { invalidateQueries: () => {} }
+  return getQueryClientSingleton() ?? { invalidateQueries: noop }
 }
 
 // Stable idle snapshot for the server / pre-fetch render (stable ref → no loop, no hydration mismatch).
 const idleSnapshot = (): QueryState<never> => IDLE_QUERY_STATE
-const noopSubscribe = (): (() => void) => () => {}
 const noopAsync = createNoClientRefetch<never>("[nifra/web-preact]", "useQuery.refetch")
 
 /** A query's reactive {@link QueryState} plus `isPending` + `refetch`. */
@@ -38,18 +40,21 @@ export interface UseQueryResult<T> extends QueryState<T> {
 /**
  * Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching,
  * updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry +
- * one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle.
+ * one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`
+ * names the live keys that refetch it.
  */
-export function useQuery<T>(key: unknown, fn: () => Promise<T>): UseQueryResult<T> {
-  const handle: QueryHandle<T> | undefined = getQueryClientSingleton()?.query<T>(key, fn)
+export function useQuery<T>(
+  key: unknown,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): UseQueryResult<T> {
+  const handle: QueryHandle<T> | undefined = getQueryClientSingleton()?.query<T>(key, fn, options)
   const state = useSyncExternalStore<QueryState<T>>(
     handle?.subscribe ?? noopSubscribe,
     handle ? handle.snapshot : idleSnapshot,
   )
   // Fetch on mount + whenever the key changes (the handle is stable per key, so it changes with the key).
-  useEffect(() => {
-    if (handle !== undefined) handle.fetch().catch(() => {})
-  }, [handle])
+  useEffect(fetchOnMount(handle), [handle])
   return {
     ...state,
     isPending: state.status === "pending",

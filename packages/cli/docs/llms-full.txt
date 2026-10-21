@@ -2996,6 +2996,10 @@ After a mutation, `useQueryClient().invalidateQueries(key)` marks matching entri
 stale (by exact key or array **prefix**) and refetches the mounted ones - no manual cache
 surgery.
 
+In an app with [live refresh](/docs/live), a query can name the live keys its data
+depends on: `useQuery(key, fn, { live: [`post:${id}`] })` refetches whenever
+the server publishes one of them.
+
 It's the same agnostic core under both adapters: the cache, dedup, and invalidation logic
 live in `@nifrajs/web`; the bindings are thin `useSyncExternalStore` /
 signal wrappers.
@@ -11380,6 +11384,190 @@ the framework itself: contribute typed context to every handler (`c.stripe`, a
 session, a tenant), mount routes of its own, or hook the request lifecycle. That is
 `definePlugin` - a few lines, typed end-to-end. For everything else, an import
 at the top of the file is the whole integration.
+
+## Nifra - Live refresh
+
+> Pages that stay fresh on their own: loaders declare live keys, a publish reloads only what read them, through the same authorized path a navigation takes.
+
+Pages stay fresh on their own. A loader declares the keys its data depends on; when one
+changes, every open page that read it reloads just the loaders that read it, through the
+same authorized path a navigation takes. A change notice never carries data.
+
+### Set up
+
+Create one live runtime. `subject` names the viewer: a grant is only honored for
+the viewer it was issued to, and a different viewer on the same tab clears every cache the
+page holds.
+
+```ts
+import { live } from "@nifrajs/web/live"
+
+// Your session lookup: a stable user id, or null for an anonymous viewer.
+declare function sessionUserId(request: Request): Promise<string | null>
+
+export const liveRuntime = live({
+  secret: process.env.LIVE_SECRET, // openssl rand -base64 32; required in production
+  subject: (ctx) => sessionUserId(ctx.request),
+})
+```
+
+Hand it to `createWebApp`, and give the client build its endpoints. With the CLI,
+export it as `live` from `backend/framework.ts` instead:
+`nifra dev` serves its socket, and `nifra build` does both.
+
+```ts
+// doc-check: skip - adapter, manifest and the build are the app's own, as on the custom-server page.
+const app = createWebApp({ adapter, manifest, clientEntry: build.entry, live: liveRuntime })
+
+// The client build sends route loads through the live endpoints.
+await buildClient({ routesDir, outDir, clientModule, live: liveRuntime.clientEntry })
+```
+
+### Declare keys
+
+`live(...keys)` in any loader, page or layout, names what its data reads. A key
+is your own name for a piece of data, such as `post:42`: a letter, then up to
+127 of `A-Z a-z 0-9 . _ : / -`. A frame holds at most 64. A live load returns
+an encrypted grant for its keys beside the data.
+
+```ts
+// doc-check: skip - a route's backend half; db is the app's own.
+export async function loader({ params, live }: Route.LoaderArgs) {
+  live(`post:${params.id}`, `comments:${params.id}`)
+  return { post: await db.post(params.id), comments: await db.comments(params.id) }
+}
+```
+
+### Publish changes
+
+Call `publish(...keys)` once the write is readable by loaders. With read
+replicas, pass `live({ visible })`, a function that resolves once loaders can
+read the write; every publish waits for it. An action can name the keys it changed in
+`revalidate()`, which publishes them after the caches it clears.
+
+```ts
+// doc-check: skip - db and the action's input are the app's own.
+// After the write is readable by loaders:
+await db.updatePost(id, input)
+await liveRuntime.publish(`post:${id}`)
+
+// Or from an action, beside the paths and cache tags the write made stale:
+return revalidate([`/posts/${id}`], result, { keys: [`post:${id}`] })
+```
+
+Each tab holds one WebSocket. A change reaches it as an opaque tag: no data, key text,
+subject or sequence number is on the wire. The tab reloads only the loaders whose keys
+changed, keeps the rest as shown, and spreads reloads over up to five seconds when many tabs
+watch one key. Live loads are capped per process (`maxConcurrentLoads`, default
+64) and answered 503 past it, so a hot key cannot overload your database. In a load test of
+10,000 tabs on one key across two Bun processes, no process ran more than 64 loaders at
+once, and with `reloadRate: 5000` every tab had the new data within 2.1 seconds.
+
+### Revoke access
+
+```ts
+// doc-check: skip - userId and projectId are the app's own.
+await liveRuntime.revoke(userId) // every grant issued to them, and their sockets
+await liveRuntime.revokeKey(`project:${projectId}`, userId) // one key, for one viewer
+await liveRuntime.revokeAll() // every grant issued before now
+```
+
+A revoked key sends one last change to every affected socket, and no grant issued before the
+revocation keeps or re-signs it, so the next load runs that loader, which decides again.
+
+### Many processes
+
+The default bus serves one process. Behind a load balancer, give every process the same
+Redis Streams log. A reader that falls behind the stream's trim resyncs its sockets rather
+than miss a change.
+
+```ts
+import { live } from "@nifrajs/web/live"
+import { redisLiveBus } from "@nifrajs/web/live-redis"
+
+const url = process.env.REDIS_URL ?? "redis://127.0.0.1:6379"
+const send = new Bun.RedisClient(url)
+const read = new Bun.RedisClient(url) // its own connection: XREAD blocks it
+
+export const liveRuntime = live({
+  secret: process.env.LIVE_SECRET,
+  subject: () => null,
+  bus: redisLiveBus({
+    send: (command, args) => send.send(command, [...args]),
+    read: (command, args) => read.send(command, [...args]),
+  }),
+  instances: 4, // processes serving the app, for spreading reloads
+})
+```
+
+### Cloudflare Workers
+
+On Workers, one hibernating Durable Object per app owns the log and holds every socket.
+Request isolates run live loads themselves and forward only the socket handshake to it. The
+hub answers heartbeats without waking, keeps revocations and socket membership in storage,
+and refuses calls from an app whose `secret`, `appId` or
+`grantTtl` differ from its own. It holds 5,000 sockets and 150,000 socket-tag
+subscriptions by default (`maxSockets`, `maxMemberships`).
+
+```ts
+// doc-check: skip - Env, adapter, manifest and the client entry are the worker's own.
+import { live } from "@nifrajs/web/live"
+import { liveHub } from "@nifrajs/web/live-hub"
+
+// The hub: a SQLite-backed Durable Object class, bound as LIVE_HUB.
+export class LiveHub extends liveHub((env: Env) => ({ secret: env.LIVE_SECRET })) {}
+
+// Each isolate: the same secret, and the hub's namespace.
+const runtime = live({ secret: env.LIVE_SECRET, subject, hub: env.LIVE_HUB })
+const app = createWebApp({ adapter, manifest, clientEntry, live: runtime })
+```
+
+```ts
+[durable_objects]
+bindings = [{ name = "LIVE_HUB", class_name = "LiveHub" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveHub"]
+```
+
+### Query hooks
+
+A `useQuery` can name the live keys its data depends on. With
+`queryKeys: true`, each live load also carries a salted digest of every key it
+grants; the page matches its queries' keys against them, and a change to one refetches the
+query. In development, a query key no loader on the page grants logs a warning: nothing
+would refresh it.
+
+```ts
+// doc-check: skip - id and fetchComments are the component's own.
+// Server: live({ secret, subject, queryKeys: true })
+
+// Client: refetch this query when comments:<id> changes.
+const comments = useQuery(["comments", id], () => fetchComments(id), {
+  live: [`comments:${id}`],
+})
+```
+
+The digests let page code confirm a guess at a key its loaders read. Leave
+`queryKeys` off if your key names hold anything the viewer should not see.
+
+### Security
+
+-
+Grants are sealed with AES-256-GCM and bound to one socket, path, frame and viewer. They
+expire (`grantTtl`, default 10 minutes); tabs renew them.
+
+-
+The load endpoint and the socket check `Origin`; allow other origins with
+`trustedOrigins`.
+
+-
+Every reload runs your hooks, middleware, gates and loaders exactly as a navigation does.
+
+-
+Sockets, watches and outbound buffers are bounded per socket and per process (
+`maxSockets`, `maxRssBytes`).
 
 ## Nifra 2.0 migration guide - upgrade from 1.x
 

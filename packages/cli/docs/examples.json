@@ -426,6 +426,18 @@
     "code": "import { createIslandBus } from \"@nifrajs/web/islands\"\n\n// One typed channel, created once and closed over by every enhancer that needs it.\ntype CartEvents = { \"cart:add\": { sku: string }; \"cart:count\": number }\nconst bus = createIslandBus<CartEvents>()\n\nconst off = bus.on(\"cart:count\", (n) => console.log(\"cart now has\", n, \"items\"))\nbus.emit(\"cart:add\", { sku: \"ABC-1\" })\noff() // unsubscribe - also usable directly as an island's cleanup"
   },
   {
+    "name": "REDIS",
+    "topic": "Nifra - Live refresh",
+    "slug": "live",
+    "code": "import { live } from \"@nifrajs/web/live\"\nimport { redisLiveBus } from \"@nifrajs/web/live-redis\"\n\nconst url = process.env.REDIS_URL ?? \"redis://127.0.0.1:6379\"\nconst send = new Bun.RedisClient(url)\nconst read = new Bun.RedisClient(url) // its own connection: XREAD blocks it\n\nexport const liveRuntime = live({\n  secret: process.env.LIVE_SECRET,\n  subject: () => null,\n  bus: redisLiveBus({\n    send: (command, args) => send.send(command, [...args]),\n    read: (command, args) => read.send(command, [...args]),\n  }),\n  instances: 4, // processes serving the app, for spreading reloads\n})"
+  },
+  {
+    "name": "RUNTIME",
+    "topic": "Nifra - Live refresh",
+    "slug": "live",
+    "code": "import { live } from \"@nifrajs/web/live\"\n\n// Your session lookup: a stable user id, or null for an anonymous viewer.\ndeclare function sessionUserId(request: Request): Promise<string | null>\n\nexport const liveRuntime = live({\n  secret: process.env.LIVE_SECRET, // openssl rand -base64 32; required in production\n  subject: (ctx) => sessionUserId(ctx.request),\n})"
+  },
+  {
     "name": "HONO",
     "topic": "Nifra - Migrate route by route",
     "slug": "migrate-route-by-route",

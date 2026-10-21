@@ -6,7 +6,19 @@
  * reloads it, keeping every owner whose keys did not change.
  *
  * A frame whose load returned no grant, and every frame while the socket is down, is polled instead.
+ *
+ * Query hooks that name live keys refetch on the same changes: each load carries a salted digest of
+ * every key it grants, and the client matches the keys the page's queries name against them.
  */
+import {
+  advanceLiveTick,
+  clearQueryClients,
+  type LiveQuery,
+  liveQueries,
+  registeredAt,
+  watchLiveQueries,
+} from "./internal/live-queries.ts"
+import { queryDigester } from "./internal/query-digest.ts"
 import { appUrl } from "./internal/route-path.ts"
 import {
   type ClientRouter,
@@ -66,6 +78,18 @@ interface Loaded {
   /** Client clock, in ms. */
   readonly expiresAt: number
   readonly ttlMs: number
+  /** The live tick its response arrived at. */
+  readonly tick: number
+  readonly query: QueryKeys | undefined
+}
+
+/** What a load tells query hooks about the keys it grants. */
+interface QueryKeys {
+  /** Absent when the app has `queryKeys` off. */
+  readonly salt: string | undefined
+  /** Digest of a granted key under `salt` to its wire tag. */
+  readonly tags: ReadonlyMap<string, string>
+  readonly dev: boolean
 }
 
 /** A live load the client itself asked the router for, read back by `fetchData` in the same call. */
@@ -134,6 +158,25 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     | undefined
   // Set by an account switch: the next socket's `welcome` reloads everything under its id.
   let clearOnWelcome = false
+  // Query hooks: wire tag to the queries whose keys it carries, from the last match.
+  let matched = new Map<string, Set<LiveQuery>>()
+  // Tag to the live tick of the load from which an installed watch has held it without a break; a
+  // query that asked for its data before that tick may have missed a change.
+  const heldSince = new Map<string, number>()
+  let matching = 0
+  let matchScheduled = false
+  let matchedLoads: readonly (Loaded | undefined)[] = []
+  let changedWhileMatching: Set<string> | undefined
+  // Salt to its digester and the digests it made: a salt lives as long as its load is on screen.
+  const digesters = new Map<
+    string,
+    {
+      readonly sign: Promise<(key: string) => Promise<string>>
+      readonly made: Map<string, Promise<string>>
+    }
+  >()
+  const warned = new Set<string>()
+  let unwatchQueries: (() => void) | undefined
 
   const ownersOf = (routeId: string): string[] => [
     ...(layoutIdsOf[routeId] ?? []).map((id) => `L:${id}`),
@@ -192,7 +235,11 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     if (!isRouteDataEnvelope(payload)) return payload
     const live = envelopeOf(payload.live)
     if (live === undefined) return { ...payload, live: undefined }
-    if (subject !== undefined && live.subject !== subject) switched = true
+    if (subject !== undefined && live.subject !== subject) {
+      switched = true
+      // Nothing a query loaded for the last viewer may show to this one.
+      clearQueryClients()
+    }
     subject = live.subject
     const loaded: Loaded = {
       routeId: match.routeId,
@@ -201,6 +248,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       tags: new Map(Object.entries(live.tags ?? {})),
       expiresAt: live.ttl === undefined ? Number.POSITIVE_INFINITY : Date.now() + live.ttl * 1000,
       ttlMs: live.ttl === undefined ? Number.POSITIVE_INFINITY : live.ttl * 1000,
+      tick: advanceLiveTick(),
+      query: live.query,
     }
     issued.set(loaded, loaded)
     if (own === undefined || grant === undefined) return { ...payload, live: loaded }
@@ -307,6 +356,11 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       restart()
       return
     }
+    const loads = frames.map((frame) => frame.loaded)
+    if (loads.length !== matchedLoads.length || loads.some((l, i) => l !== matchedLoads[i])) {
+      matchedLoads = loads
+      scheduleMatch()
+    }
     sendWatch()
     run()
   }
@@ -321,7 +375,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       if (frame.whole || frame.dirty.size > 0) reload(frame, "load")
       else if (live && frame.pending === undefined && now >= frame.renewAt) reload(frame, "renew")
       else if (!live && (polling() || frame.loaded?.grant === undefined) && now >= frame.pollAt)
-        reload(frame, "load")
+        reload(frame, "load", true)
       // One load at a time: the router runs it, and its next state runs this again.
       if (current.snapshot().pending) break
     }
@@ -345,7 +399,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     timer = setTimeout(run, Math.max(0, at - Date.now()))
   }
 
-  const reload = (frame: Frame, mode: "load" | "renew"): void => {
+  /** `polled`: no change notice can reach this frame, so its queries refetch with it. */
+  const reload = (frame: Frame, mode: "load" | "renew", polled = false): void => {
     const current = router
     if (current === undefined) return
     const state = current.snapshot()
@@ -375,6 +430,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       // Applied, the load is a new frame; still on screen, nothing was applied.
       if (ok && !frames.includes(frame)) {
         pollFailures.delete(frame.path)
+        if (polled) for (const query of liveQueries()) query.refresh()
         return
       }
       if (!ok && !watchable(frame))
@@ -426,7 +482,23 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       frame.dirty = new Set(
         Array.isArray(changed) ? changed.filter((owner) => typeof owner === "string") : [],
       )
+      // A query may have read before one of those changes: refetch every query on a tag they own.
+      for (const [tag, owners] of frame.loaded?.tags ?? []) {
+        if (!owners.some((owner) => frame.dirty.has(owner))) continue
+        changedWhileMatching?.add(tag)
+        refreshTag(tag)
+      }
     })
+    const held = new Set<string>()
+    for (const frame of frames) {
+      if (!frame.installed || frame.loaded === undefined) continue
+      for (const tag of frame.loaded.tags.keys()) {
+        held.add(tag)
+        if (!heldSince.has(tag)) heldSince.set(tag, frame.loaded.tick)
+      }
+    }
+    for (const tag of heldSince.keys()) if (!held.has(tag)) heldSince.delete(tag)
+    cover()
     run()
   }
 
@@ -448,6 +520,124 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       }
       if (delay === 0) mark()
       else setTimeout(mark, delay)
+    }
+    changedWhileMatching?.add(tag)
+    if (!matched.has(tag)) return
+    if (delay === 0) refreshTag(tag)
+    else setTimeout(() => refreshTag(tag), delay)
+  }
+
+  // --- Query hooks ---------------------------------------------------------------------------------
+
+  const refreshTag = (tag: string): void => {
+    for (const query of matched.get(tag) ?? []) query.refresh()
+  }
+
+  /** Refetch each query that asked for its data before its tag's watch, or its own registration, began. */
+  const cover = (): void => {
+    for (const [tag, queries] of matched) {
+      const held = heldSince.get(tag)
+      if (held === undefined) continue
+      for (const query of queries) {
+        const since = Math.max(held, registeredAt(query) ?? Number.POSITIVE_INFINITY)
+        if (query.tick() < since) query.refresh()
+      }
+    }
+  }
+
+  const scheduleMatch = (): void => {
+    if (stopped) return
+    // From here until the match lands, a change may concern a query it has not matched yet.
+    changedWhileMatching ??= new Set()
+    if (matchScheduled) return
+    matchScheduled = true
+    queueMicrotask(() => {
+      matchScheduled = false
+      matchQueries().catch(() => {})
+    })
+  }
+
+  const digestOf = (salt: string, key: string): Promise<string> => {
+    let digester = digesters.get(salt)
+    if (digester === undefined) {
+      digester = { sign: queryDigester(salt), made: new Map() }
+      digesters.set(salt, digester)
+    }
+    let made = digester.made.get(key)
+    if (made === undefined) {
+      const { sign } = digester
+      made = sign.then((digest) => digest(key))
+      digester.made.set(key, made)
+    }
+    return made
+  }
+
+  const matchQueries = async (): Promise<void> => {
+    const runId = ++matching
+    const sources = frames.flatMap((frame) =>
+      frame.loaded?.query === undefined ? [] : [frame.loaded.query],
+    )
+    const registered = [...liveQueries()]
+    const next = new Map<string, Set<LiveQuery>>()
+    const found = new Set<string>()
+    for (const source of sources) {
+      const { salt } = source
+      if (salt === undefined) continue
+      await Promise.all(
+        registered.flatMap((query) =>
+          query.keys().map(async (key) => {
+            const tag = source.tags.get(await digestOf(salt, key))
+            if (tag === undefined) return
+            found.add(key)
+            let queries = next.get(tag)
+            if (queries === undefined) {
+              queries = new Set()
+              next.set(tag, queries)
+            }
+            queries.add(query)
+          }),
+        ),
+      )
+    }
+    if (runId !== matching || stopped) return
+    const salts = new Set(sources.map((source) => source.salt))
+    for (const salt of digesters.keys()) if (!salts.has(salt)) digesters.delete(salt)
+    const changed = changedWhileMatching ?? new Set<string>()
+    changedWhileMatching = undefined
+    const previous = matched
+    matched = next
+    // A change that arrived while this ran found the old match: refetch what only this one has.
+    for (const tag of changed) {
+      for (const query of next.get(tag) ?? []) if (!previous.get(tag)?.has(query)) query.refresh()
+    }
+    cover()
+    if (registered.length > 0 && sources.length === frames.length)
+      warnUnmatched(sources, registered, found)
+  }
+
+  /** Development only: a query key nothing on the page grants never refetches. */
+  const warnUnmatched = (
+    sources: readonly QueryKeys[],
+    registered: readonly LiveQuery[],
+    found: ReadonlySet<string>,
+  ): void => {
+    if (!sources.some((source) => source.dev)) return
+    if (sources.every((source) => source.salt === undefined)) {
+      if (warned.has("")) return
+      warned.add("")
+      console.warn(
+        "[nifra/web] a query names live keys, but the app's live() has queryKeys off: no change refetches it",
+      )
+      return
+    }
+    for (const query of registered) {
+      for (const key of query.keys()) {
+        if (found.has(key) || warned.has(key)) continue
+        warned.add(key)
+        console.warn(
+          `[nifra/web] query live key "${key}" is not granted by any loader on this page: a change to it never refetches the query`,
+        )
+      }
     }
   }
 
@@ -499,6 +689,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     ws = undefined
     sid = undefined
     sent = undefined
+    // No watch survives the socket: changes until the next `ready` are not known.
+    heldSince.clear()
     if (heartbeat !== undefined) clearInterval(heartbeat)
     heartbeat = undefined
     for (const frame of frames) {
@@ -554,6 +746,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       router = target
       stopped = false
       const unsubscribe = target.subscribe(reconcile)
+      unwatchQueries = watchLiveQueries(scheduleMatch)
       globalThis.document?.addEventListener("visibilitychange", onVisible)
       globalThis.addEventListener?.("focus", onFocus)
       connect()
@@ -561,6 +754,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       return () => {
         stopped = true
         unsubscribe()
+        unwatchQueries?.()
+        unwatchQueries = undefined
         globalThis.document?.removeEventListener("visibilitychange", onVisible)
         globalThis.removeEventListener?.("focus", onFocus)
         if (timer !== undefined) clearTimeout(timer)
@@ -581,13 +776,37 @@ interface ServerEnvelope {
   readonly tags?: Readonly<Record<string, readonly string[]>>
   readonly page?: "retained"
   readonly ttl?: number
+  readonly query?: QueryKeys
+}
+
+const MAX_SALT_CHARS = 64
+const MAX_DIGEST_CHARS = 64
+
+/** The envelope's `query` member, or `undefined` for anything else in its place. */
+function queryKeysOf(value: unknown): QueryKeys | undefined {
+  if (!isRecord(value)) return undefined
+  const { salt, keys, dev } = value
+  if (dev !== undefined && dev !== true) return undefined
+  if (salt !== undefined && (typeof salt !== "string" || salt.length > MAX_SALT_CHARS))
+    return undefined
+  const tags = new Map<string, string>()
+  if (keys !== undefined) {
+    if (!isRecord(keys)) return undefined
+    for (const [tag, digest] of Object.entries(keys)) {
+      if (typeof digest !== "string" || digest.length > MAX_DIGEST_CHARS) return undefined
+      tags.set(digest, tag)
+    }
+  }
+  return { salt, tags, dev: dev === true }
 }
 
 /** The server's live envelope, or `undefined` for anything else in its place. */
 function envelopeOf(value: unknown): ServerEnvelope | undefined {
   if (!isRecord(value)) return undefined
-  const { subject, grant, tags, page, ttl } = value
+  const { subject, grant, tags, page, ttl, query } = value
   if (typeof subject !== "string") return undefined
+  const queryKeys = query === undefined ? undefined : queryKeysOf(query)
+  if (query !== undefined && queryKeys === undefined) return undefined
   if (grant !== undefined && typeof grant !== "string") return undefined
   if (ttl !== undefined && (typeof ttl !== "number" || !(ttl > 0))) return undefined
   if (page !== undefined && page !== "retained") return undefined
@@ -610,10 +829,12 @@ function envelopeOf(value: unknown): ServerEnvelope | undefined {
     grant?: string
     page?: "retained"
     ttl?: number
+    query?: QueryKeys
   } = { subject, tags: owned }
   if (typeof grant === "string") envelope.grant = grant
   if (page === "retained") envelope.page = page
   if (typeof ttl === "number") envelope.ttl = ttl
+  if (queryKeys !== undefined) envelope.query = queryKeys
   return envelope
 }
 

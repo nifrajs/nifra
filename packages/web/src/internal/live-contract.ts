@@ -75,6 +75,17 @@ export interface LiveEnvelope {
   readonly page?: "retained"
   /** Seconds the grant stays valid from now; the client renews a minute before. */
   readonly ttl?: number
+  /** For query hooks: with `queryKeys`, and in development so the page can warn. */
+  readonly query?: LiveQueryKeys
+}
+
+export interface LiveQueryKeys {
+  /** Fresh per load; absent when `queryKeys` is off. */
+  readonly salt?: string
+  /** Wire tag to its key's digest under `salt`. */
+  readonly keys?: Readonly<Record<string, string>>
+  /** The app runs in development: the page warns about query keys no grant holds. */
+  readonly dev?: true
 }
 
 /** `createWebApp` reads the runtime through this symbol, so it is not public API on the object. */

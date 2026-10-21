@@ -11,6 +11,7 @@
  * + navigation use the path cache; component-level interactive data (search, infinite scroll, polling)
  * uses this arbitrary-keyed query cache. The two coexist.
  */
+import { type LiveQuery, querySeam } from "./internal/query-seam.ts"
 
 /** A query's lifecycle status. `pending` = no data yet; `success`/`error` once it has settled once. */
 export type QueryStatus = "pending" | "success" | "error"
@@ -43,6 +44,11 @@ export interface QueryOptions {
   /** Data stays fresh this long (ms) after a fetch; older ⇒ refetch on the next `fetch()`. Overrides
    * the client default for this key. */
   readonly staleTime?: number
+  /**
+   * Live keys the data depends on, as the page's loaders declare them with `ctx.live()`. While the
+   * query is mounted, a change to one refetches it. Needs `live({ queryKeys: true })`.
+   */
+  readonly live?: readonly string[]
 }
 
 export interface QueryClientOptions {
@@ -147,6 +153,9 @@ export interface QueryClient {
   dehydrate: () => DehydratedState
   /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */
   hydrate: (state: DehydratedState) => void
+  /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. A
+   * live app calls it on every query client in the page when the viewer changes. */
+  clear: () => void
 }
 
 /**
@@ -180,10 +189,33 @@ function keyMatchesPrefix(key: unknown, prefix: unknown): boolean {
   )
 }
 
-interface Entry {
+/** What both kinds of entry carry for a page with live refresh. */
+interface LiveFields {
+  live: readonly string[]
+  subscribers: number
+  readonly lq: LiveQuery
+}
+
+/** The live tick now; 0 on a page without live refresh. */
+const liveTick = (): number => querySeam()?.tick() ?? 0
+
+/** New keys while mounted are tracked again: a change to a new key before now never reached it. */
+function relive(entry: LiveFields, live: readonly string[] | undefined): void {
+  if (live === undefined) return
+  if (live.length === entry.live.length && live.every((key, i) => key === entry.live[i])) return
+  entry.live = [...live]
+  if (entry.subscribers === 0) return
+  querySeam()?.track(entry.lq, false)
+  querySeam()?.track(entry.lq, true)
+}
+
+interface Entry extends LiveFields {
   readonly key: unknown
   fn: () => Promise<unknown>
   staleTime: number
+  /** The {@link liveTick} at the start of the latest fetch, and of the fetch that produced `state`. */
+  startTick: number
+  dataTick: number
   state: QueryState
   promise: Promise<unknown> | undefined
   /** The {@link generation} the in-flight {@link promise} started at - so a fetch begun *before* an
@@ -192,7 +224,6 @@ interface Entry {
   /** Bumped by `invalidateQueries`/`refetch` to supersede any in-flight fetch begun before it. */
   generation: number
   invalidated: boolean
-  subscribers: number
   /** Scheduled eviction time (set when subscribers hit 0; cleared on resubscribe). */
   gcAt: number | undefined
   readonly listeners: Set<() => void>
@@ -238,7 +269,17 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       if (e.subscribers === 0) entries.delete(h) // oldest-inserted unsubscribed first (Map order)
     }
   }
+  // A page with live refresh clears the clients it uses when the viewer changes.
+  let adopted = false
+  const adopt = (): void => {
+    const seam = adopted ? undefined : querySeam()
+    if (seam === undefined) return
+    adopted = true
+    seam.adopt(client)
+  }
+
   const sweep = (): void => {
+    adopt()
     const t = now()
     sweepEntries(cache, t)
     sweepEntries(infinite, t)
@@ -248,10 +289,22 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   // between renders). All the fetch/dedup/generation machinery lives here so query(), prefetchQuery(),
   // setQueryData(), and invalidateQueries() share exactly one implementation.
   const makeEntry = (key: unknown, fn: () => Promise<unknown>, staleTime: number): Entry => {
+    const lq: LiveQuery = {
+      keys: () => entry.live,
+      tick: () =>
+        entry.promise !== undefined && entry.promiseGen === entry.generation
+          ? entry.startTick
+          : entry.dataTick,
+      refresh: () => invalidateEntry(entry),
+    }
     const entry: Entry = {
       key,
       fn,
       staleTime,
+      live: [],
+      lq,
+      startTick: 0,
+      dataTick: 0,
       state: PENDING,
       promise: undefined,
       promiseGen: 0,
@@ -287,6 +340,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       if (!force && entry.state.status === "success" && !isStale())
         return Promise.resolve(entry.state.data) // fresh cache hit - no fn call
       const gen = entry.generation
+      const started = liveTick()
+      entry.startTick = started
       entry.setState({ ...entry.state, isFetching: true }) // show the background/initial fetch
       const promise = (async () => {
         try {
@@ -296,6 +351,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           // that superseded this one publishes the post-mutation data.
           if (gen !== entry.generation) return data
           entry.invalidated = false
+          entry.dataTick = started
           entry.setState(successState(data, now()))
           return data
         } catch (error) {
@@ -320,10 +376,14 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         entry.subscribers++
         entry.gcAt = undefined // in use again - cancel any pending eviction
         entry.listeners.add(listener)
+        if (entry.subscribers === 1) querySeam()?.track(lq, true)
         return () => {
           entry.listeners.delete(listener)
           entry.subscribers--
-          if (entry.subscribers === 0) entry.gcAt = now() + gcTime
+          if (entry.subscribers === 0) {
+            entry.gcAt = now() + gcTime
+            querySeam()?.track(lq, false)
+          }
         }
       },
       fetch: () => entry.run(false),
@@ -332,35 +392,50 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     return entry
   }
 
-  // Get an entry by key, or create + insert a fresh one. `fn`/`staleTime` re-bind on an existing entry.
-  const upsert = (key: unknown, fn: () => Promise<unknown>, staleTime: number): Entry => {
+  const invalidateEntry = (entry: Entry): void => {
+    entry.invalidated = true // next fetch refetches even within staleTime
+    // Supersede any in-flight fetch begun before this point - its result is pre-mutation and must
+    // not resolve as "fresh" or clear `invalidated`. The refetch below (or the next `fetch()`)
+    // starts a new generation that publishes the post-mutation data.
+    entry.generation++
+    if (entry.subscribers > 0) void entry.handle.refetch().catch(() => {}) // refresh mounted now (best-effort)
+  }
+
+  // Get an entry by key, or create + insert a fresh one. `fn`/`staleTime`/`live` re-bind on an
+  // existing entry; `live` stays as it is when the call names none (a write, a hydration).
+  const upsert = (
+    key: unknown,
+    fn: () => Promise<unknown>,
+    staleTime: number,
+    live?: readonly string[],
+  ): Entry => {
     const h = hashQueryKey(key)
     const existing = cache.get(h)
     if (existing !== undefined) {
       existing.fn = fn
       existing.staleTime = staleTime
+      relive(existing, live)
       return existing
     }
     const entry = makeEntry(key, fn, staleTime)
+    relive(entry, live)
     cache.set(h, entry)
     return entry
   }
 
   const query = <T>(key: unknown, fn: () => Promise<T>, opts?: QueryOptions): QueryHandle<T> => {
     sweep()
-    return upsert(key, fn as () => Promise<unknown>, opts?.staleTime ?? defaultStaleTime)
-      .handle as QueryHandle<T>
+    return upsert(
+      key,
+      fn as () => Promise<unknown>,
+      opts?.staleTime ?? defaultStaleTime,
+      opts?.live ?? [],
+    ).handle as QueryHandle<T>
   }
 
   const invalidateQueries = (keyOrPrefix: unknown): void => {
     for (const entry of cache.values()) {
-      if (!keyMatchesPrefix(entry.key, keyOrPrefix)) continue
-      entry.invalidated = true // next fetch refetches even within staleTime
-      // Supersede any in-flight fetch begun before this point - its result is pre-mutation and must
-      // not resolve as "fresh" or clear `invalidated`. The refetch below (or the next `fetch()`)
-      // starts a new generation that publishes the post-mutation data.
-      entry.generation++
-      if (entry.subscribers > 0) void entry.handle.refetch().catch(() => {}) // refresh mounted now (best-effort)
+      if (keyMatchesPrefix(entry.key, keyOrPrefix)) invalidateEntry(entry)
     }
     for (const entry of infinite.values()) {
       if (keyMatchesPrefix(entry.key, keyOrPrefix)) entry.invalidate()
@@ -375,6 +450,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   }
 
   const setQueryData = <T>(key: unknown, updater: T | ((prev: T | undefined) => T)): void => {
+    adopt()
     // Create a placeholder entry if none exists - its `fn` throws until a real `query(key, fn)` re-binds
     // it, so a `setQueryData` for a key nobody queries yet never triggers a fetch on its own.
     const entry = upsert(
@@ -391,6 +467,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     // and clear the invalidated flag (the caller just supplied fresh data).
     entry.generation++
     entry.invalidated = false
+    entry.dataTick = liveTick()
     entry.setState(successState(data, now()))
   }
 
@@ -400,7 +477,12 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     opts?: QueryOptions,
   ): Promise<void> => {
     sweep()
-    await upsert(key, fn as () => Promise<unknown>, opts?.staleTime ?? defaultStaleTime).run(false)
+    await upsert(
+      key,
+      fn as () => Promise<unknown>,
+      opts?.staleTime ?? defaultStaleTime,
+      opts?.live,
+    ).run(false)
   }
 
   const dehydrate = (): DehydratedState => {
@@ -423,6 +505,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   }
 
   const hydrate = (state: DehydratedState): void => {
+    adopt()
     for (const q of state.queries) {
       const entry = upsert(
         q.key,
@@ -433,8 +516,11 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       // Don't clobber a client entry that's already fresher than the server snapshot (the client may
       // have refetched between SSR and hydration). Seed only when we have no successful data or the
       // incoming snapshot is newer.
-      if (entry.state.status !== "success" || q.updatedAt > entry.state.updatedAt)
+      if (entry.state.status !== "success" || q.updatedAt > entry.state.updatedAt) {
+        // Read before any live load took a watermark: the first grant of its keys refetches it.
+        entry.dataTick = 0
         entry.setState(successState(q.data, q.updatedAt))
+      }
     }
     // An infinite entry needs its page options before it can exist, so a snapshot for a key not yet
     // queried waits here until `infiniteQuery` creates it.
@@ -473,15 +559,16 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   }
 
   // Infinite entries live in their own map (their data shape + fetch model differ from plain queries).
-  interface InfiniteEntry<T, P> {
+  interface InfiniteEntry<T, P> extends LiveFields {
     readonly key: unknown
     handle: InfiniteQueryHandle<T, P>
     rebind: (fn: (p: P) => Promise<T>, opts: InfiniteQueryOptions<T, P>) => void
     /** Mark stale, drop an in-flight fetch's result, and refetch when mounted. */
     invalidate: () => void
+    /** Back to pending, dropping an in-flight fetch's result; refetch the first page when mounted. */
+    reset: () => void
     /** Take a dehydrated snapshot unless the entry already holds fresher data. */
     seed: (data: InfiniteData<unknown, unknown>, updatedAt: number) => void
-    subscribers: number
     gcAt: number | undefined
   }
   const infinite = new Map<string, InfiniteEntry<unknown, unknown>>()
@@ -495,9 +582,12 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     let fn = fetchPage
     let opts = initialOpts
     let state: QueryState<InfiniteData<T, P>> = PENDING as QueryState<InfiniteData<T, P>>
+    const pending = state
     let generation = 0
     let invalidated = false
     let promise: Promise<InfiniteData<T, P>> | undefined
+    let startTick = 0
+    let dataTick = 0
     const listeners = new Set<() => void>()
     const emit = (): void => {
       for (const l of listeners) l()
@@ -532,12 +622,15 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     const runPaged = (build: () => Promise<InfiniteData<T, P>>): Promise<InfiniteData<T, P>> => {
       if (promise !== undefined) return promise
       const gen = ++generation
+      const started = liveTick()
+      startTick = started
       setState({ ...state, isFetching: true })
       const p = (async () => {
         try {
           const data = await build()
           if (gen !== generation) return data
           invalidated = false
+          dataTick = started
           setState(successState(data, now()))
           return data
         } catch (error) {
@@ -566,10 +659,14 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         entry.subscribers++
         entry.gcAt = undefined
         listeners.add(listener)
+        if (entry.subscribers === 1) querySeam()?.track(lq, true)
         return () => {
           listeners.delete(listener)
           entry.subscribers--
-          if (entry.subscribers === 0) entry.gcAt = now() + gcTime
+          if (entry.subscribers === 0) {
+            entry.gcAt = now() + gcTime
+            querySeam()?.track(lq, false)
+          }
         }
       },
       fetch: () => fetchFirst(false),
@@ -614,12 +711,18 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         return p !== undefined && p !== null
       },
     }
+    const lq: LiveQuery = {
+      keys: () => entry.live,
+      tick: () => (promise !== undefined ? startTick : dataTick),
+      refresh: () => entry.invalidate(),
+    }
     const entry: InfiniteEntry<T, P> = {
       key,
       handle,
       rebind: (nextFn, nextOpts) => {
         fn = nextFn
         opts = nextOpts
+        relive(entry, nextOpts.live ?? [])
       },
       invalidate: () => {
         invalidated = true
@@ -629,18 +732,50 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         promise = undefined
         if (entry.subscribers > 0) void handle.refetch().catch(() => {})
       },
+      reset: () => {
+        invalidated = true
+        generation++
+        promise = undefined
+        dataTick = 0
+        setState(pending)
+        if (entry.subscribers > 0) void handle.refetch().catch(() => {})
+      },
       seed: (data, updatedAt) => {
         if (state.status === "success" && state.updatedAt >= updatedAt) return
+        dataTick = 0
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the snapshot was dehydrated from an entry under this key, whose pages and params are T and P
         setState(successState(data as InfiniteData<T, P>, updatedAt))
       },
       subscribers: 0,
       gcAt: undefined,
+      live: [],
+      lq,
     }
+    relive(entry, initialOpts.live)
     return entry
   }
 
-  return {
+  const clear = (): void => {
+    seeded.clear()
+    for (const [h, entry] of cache) {
+      // An in-flight fetch carried the last viewer's credentials: its result may not publish.
+      entry.generation++
+      entry.invalidated = true
+      entry.dataTick = 0
+      if (entry.subscribers === 0) {
+        cache.delete(h)
+        continue
+      }
+      entry.setState(PENDING)
+      void entry.handle.refetch().catch(() => {})
+    }
+    for (const [h, entry] of infinite) {
+      if (entry.subscribers === 0) infinite.delete(h)
+      entry.reset()
+    }
+  }
+
+  const client: QueryClient = {
     query,
     infiniteQuery,
     invalidateQueries,
@@ -649,7 +784,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     prefetchQuery,
     dehydrate,
     hydrate,
+    clear,
   }
+  return client
 }
 
 // --- Standalone mutations -----------------------------------------------------------------------

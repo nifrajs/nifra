@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { createQueryClient, type DehydratedState } from "@nifrajs/web"
+import { createQueryClient, type DehydratedState, type QueryClient } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import {
@@ -165,4 +165,24 @@ test("useInfiniteQuery renders idle on the server with paging controls", () => {
   expect(result).toMatchObject({ status: "pending", isPending: true, hasNextPage: false })
   expect(typeof result?.fetchNextPage).toBe("function")
   expect(typeof result?.fetchPreviousPage).toBe("function")
+})
+
+test("useQuery hands staleTime, live keys and enabled to the client as given", () => {
+  const client = createQueryClient({ now: () => 0 })
+  const seen: unknown[] = []
+  const recording: QueryClient = {
+    ...client,
+    query: (key, fn, options) => {
+      seen.push(options)
+      return client.query(key, fn, options)
+    },
+  }
+  const Probe = () => {
+    useQuery(["post", 1], async () => 1, { staleTime: 5, live: ["post:1"], enabled: false })
+    return null
+  }
+  renderToStaticMarkup(
+    createElement(QueryClientProvider, { client: recording }, createElement(Probe)),
+  )
+  expect(seen).toEqual([{ staleTime: 5, live: ["post:1"], enabled: false }])
 })

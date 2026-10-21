@@ -25,6 +25,7 @@ import {
   type LiveLoad,
   type LiveRuntimeHandle,
 } from "./internal/live-contract.ts"
+import { queryDigester, querySalt } from "./internal/query-digest.ts"
 import { type LiveBus, type LiveBusEvent, memoryBus } from "./live/bus.ts"
 import { applyEvent, type LiveCore } from "./live/core.ts"
 import { History, keyHasher } from "./live/history.ts"
@@ -134,6 +135,12 @@ export interface LiveOptions {
    * reads need it; without it a publish goes out as soon as it is called.
    */
   readonly visible?: () => void | Promise<void>
+  /**
+   * Let query hooks refetch on the keys a page's loaders grant (`useQuery(key, fn, { live })`). Each
+   * live load then carries a salted digest of every key it grants: page code can confirm a guess at
+   * one of them, so leave it off when key names hold anything the viewer should not see.
+   */
+  readonly queryKeys?: boolean
 }
 
 /** A live runtime: pass it to `createWebApp({ live })`. */
@@ -244,6 +251,7 @@ export function live(options: LiveOptions): Live {
   const authorize = options.authorize
   const visible = options.visible
   const subjectOf = options.subject
+  const queryKeys = options.queryKeys === true
   const production = isProduction()
   if (hubNamespace !== undefined) {
     if (options.bus !== undefined) {
@@ -755,14 +763,26 @@ export function live(options: LiveOptions): Live {
         return bare
       }
       const keys = [...new Set(Object.values(owners).flatMap((owner) => owner.k))]
+      const salt = queryKeys ? querySalt() : undefined
+      const digest = salt === undefined ? undefined : await queryDigester(salt)
       const tags: Record<string, string[]> = {}
+      const digests: Record<string, string> = {}
       for (const key of keys) {
         const owning: string[] = []
         for (const [name, owner] of Object.entries(owners))
           if (owner.k.includes(key)) owning.push(name)
-        tags[await ring.tag(key)] = owning
+        const tag = await ring.tag(key)
+        tags[tag] = owning
+        if (digest !== undefined) digests[tag] = await digest(key)
       }
-      return { ...bare, grant, tags, ttl }
+      const envelope: LiveEnvelope = { ...bare, grant, tags, ttl }
+      if (salt !== undefined) {
+        return {
+          ...envelope,
+          query: production ? { salt, keys: digests } : { salt, keys: digests, dev: true },
+        }
+      }
+      return production ? envelope : { ...envelope, query: { dev: true } }
     }
   }
 
