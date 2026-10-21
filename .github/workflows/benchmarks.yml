@@ -43,6 +43,7 @@ on:
         type: boolean
         default: false
   # Only for a PR a maintainer labels `bench`; every push to it re-runs until the label comes off.
+  # A PR run skips SSR, which takes about 80 minutes per job: SSR runs nightly and on dispatch.
   pull_request:
     types: [labeled, synchronize, reopened]
 
@@ -76,7 +77,7 @@ jobs:
           # The SSR rival apps and harness run on Bun and Node only.
           - suite: ssr
             runtime: deno
-          - suite: ${{ inputs.skip_ssr && 'ssr' || 'none' }}
+          - suite: ${{ (inputs.skip_ssr || github.event_name == 'pull_request') && 'ssr' || 'none' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
@@ -167,5 +168,5 @@ jobs:
 
       - name: Combined report
         env:
-          SUITES: ${{ inputs.skip_ssr && 'http,realworld' || 'http,realworld,ssr' }}
+          SUITES: ${{ (inputs.skip_ssr || github.event_name == 'pull_request') && 'http,realworld' || 'http,realworld,ssr' }}
         run: bun run bench/ci/summary.ts bench-ci --suites "$SUITES" >> "$GITHUB_STEP_SUMMARY"

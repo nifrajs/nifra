@@ -109,9 +109,9 @@ versions, and sampling settings in downloadable artifacts retained for 90 days. 
 and interval widths within each report; a shared runner can still leave noisy rows after the larger
 budget is spent. Those rows remain marked unsettled, and benchmark measurements do not gate merges.
 
-`.github/workflows/benchmarks.yml` runs both HTTP matrices and the SSR tables nightly, on demand, and
-on a PR labelled `bench`: one job per suite x runtime (SSR on Bun and Node only, see
-`bench/ssr/README.md`), each through `bench/ci/run.ts`. A job splits the runner's
+`.github/workflows/benchmarks.yml` runs both HTTP matrices and the SSR tables nightly and on demand,
+and the HTTP matrices alone on a PR labelled `bench`: one job per suite x runtime (SSR on Bun and Node
+only, see `bench/ssr/README.md`), each through `bench/ci/run.ts`. A job splits the runner's
 physical cores in two (`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset
 lists the matrices also take by hand on Linux), runs the matrix 3 times in fresh processes, and keeps
 going up to 5 runs while any row's 95% interval is wider than 10 points. The stopping rule reads only

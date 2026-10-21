@@ -114,8 +114,8 @@ Cached rows are not SSR rows: compare within Table B only.
 
 ## In CI
 
-The Benchmarks workflow (`bench/README.md`) runs one SSR job per runtime, Bun and Node, through
-`bench/ci/run.ts --suite ssr`. A job runs `run.ts --runtime <runtime> --json`: every table, with
+The Benchmarks workflow (`bench/README.md`) runs one SSR job per runtime, Bun and Node, nightly and on
+demand (a PR labelled `bench` skips them), through `bench/ci/run.ts --suite ssr`. A job runs `run.ts --runtime <runtime> --json`: every table, with
 nifra's app rows on that runtime and every rival app, renderer and static-host row, in 4 interleaved
 rounds. `--json` sends the tables to stderr and prints one result line holding every round; it never
 touches the website's numbers. The rival apps run on Node in both jobs.
