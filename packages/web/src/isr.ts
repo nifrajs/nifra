@@ -698,6 +698,32 @@ const requestKeyOf =
   (req: Request): string | null =>
     urlKey(new URL(req.url))
 
+/**
+ * The key of a request, and of a path on the request's origin. Under the default URL key a path needs
+ * no `Request`; a custom `key` is handed one.
+ */
+function cacheKeysOf(options: ISROptions): {
+  readonly request: (req: Request) => string | null
+  readonly path: (path: string, req: Request) => string | null
+} {
+  const custom = options.key
+  if (custom !== undefined) {
+    return { request: custom, path: (path, req) => custom(new Request(originOf(req) + path)) }
+  }
+  const urlKey = urlKeyOf(options.query)
+  return {
+    request: requestKeyOf(urlKey),
+    path: (path, req) => urlKey(new URL(originOf(req) + path)),
+  }
+}
+
+/** `req.url` up to its path, without a parse: the path joined to it is parsed as one URL anyway. */
+const originOf = (req: Request): string => {
+  const url = req.url
+  const end = url.indexOf("/", url.indexOf("//") + 2)
+  return end === -1 ? url : url.slice(0, end)
+}
+
 function assertRevalidate(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`[nifra/web] ${name} must be a finite non-negative number`)
@@ -886,28 +912,32 @@ export function withISR(
     }
   }
   // Runs one store call; a throw, a rejection or a timeout is reported and answered with STORE_FAILED.
+  const withinTimeout = async <T>(op: string, pending: Promise<T>): Promise<T> => {
+    if (storeTimeoutMs === undefined) return pending
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`ISR store ${op} exceeded storeTimeoutMs (${storeTimeoutMs} ms)`)
+        error.name = "TimeoutError"
+        reject(error)
+      }, storeTimeoutMs)
+    })
+    try {
+      return await Promise.race([pending, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
   const attempt = async <T>(
     op: ISRStoreOp,
     key: string,
     call: () => Promise<T>,
   ): Promise<T | typeof STORE_FAILED> => {
-    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const pending = call()
-      if (storeTimeoutMs === undefined) return await pending
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          const error = new Error(`ISR store ${op} exceeded storeTimeoutMs (${storeTimeoutMs} ms)`)
-          error.name = "TimeoutError"
-          reject(error)
-        }, storeTimeoutMs)
-      })
-      return await Promise.race([pending, timeout])
+      return await withinTimeout(op, call())
     } catch (error) {
       reportStoreError(op, key, error)
       return STORE_FAILED
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
     }
   }
   // A store without purge order, or one whose fence failed, stores the render unfenced.
@@ -917,7 +947,8 @@ export function withISR(
     const taken = await attempt("fence", key, async () => fence.call(store))
     return taken === STORE_FAILED ? undefined : taken
   }
-  const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
+  const keys = cacheKeysOf(options)
+  const keyOf = keys.request
   const draftSecret = options.draftSecret
   const anonymousCookies = new Set(options.anonymousCookies ?? [])
   // A request whose cookies are all anonymous is judged for storage as if it carried none.
@@ -940,10 +971,18 @@ export function withISR(
   // by its request, and every stage runs in order before the action's answer leaves.
   const handoff: unknown = Reflect.get(app, INVALIDATION)
   const taken = isHandoff(handoff) ? handoff : undefined
+  // The pipeline's purges are bounded like every other store call; their failures reach its own report.
+  const invalidateTag = store.invalidateTag
   const targets: InvalidationTargets = {
     dataCaches: options.dataCaches,
-    store,
-    keyOf: (path, req) => keyOf(new Request(new URL(new URL(req.url).origin + path).href)),
+    store: {
+      delete: (key) => withinTimeout("delete", store.delete(key)),
+      invalidateTag:
+        invalidateTag === undefined
+          ? undefined
+          : (tag) => withinTimeout("invalidateTag", invalidateTag.call(store, tag)),
+    },
+    keyOf: keys.path,
     publish: taken?.publish,
     cdn: options.cdn,
   }

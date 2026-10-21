@@ -47,7 +47,6 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
-import type { InvalidationOp } from "./invalidation-contract.ts"
 import type { LiveEnvelope, LiveFinish, LiveLoad, LiveRouteMatch } from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
 import {
@@ -284,10 +283,13 @@ export interface PageExecutionOptions<Env = unknown> {
   /** Set once a cache wrapper attaches; until then a route's freshness and tags stay off the response. */
   readonly cacheChannel?: { readonly enabled: boolean }
   /**
-   * Run, or hand to the cache wrapper, what an action's `revalidate()` made stale. Awaited before the
-   * action answers; it never throws and never changes the answer.
+   * Run, or hand to the cache wrapper, what an action's `revalidate()` made stale. A promise is awaited
+   * before the action answers; `undefined` means nothing runs it. Never throws, never changes the answer.
    */
-  readonly invalidate?: (op: InvalidationOp, request: Request) => Promise<void>
+  readonly invalidate?: (
+    revalidation: RevalidateResult<unknown>,
+    request: Request,
+  ) => Promise<void> | undefined
   /** The live load a request belongs to; only set when the app configures `live`. */
   readonly liveLoadOf?: ((request: Request) => LiveLoad | undefined) | undefined
   readonly onLoaderError?: (
@@ -312,18 +314,6 @@ export interface PageRequestExecutor<Env = unknown> {
   fallback(ctx: PageRouteContext<Env>): Promise<PageResponse>
   /** The route a `pathname + search` renders, with its layout chain. */
   matchRoute(path: string): LiveRouteMatch | null
-}
-
-/** The operation an action's `revalidate()` names: its paths, cache tags and live keys. */
-function invalidationOf(revalidation: RevalidateResult<unknown>): InvalidationOp {
-  return {
-    id: crypto.randomUUID(),
-    paths: revalidation.__nifraRevalidate.filter(
-      (path) => typeof path === "string" && path.startsWith("/"),
-    ),
-    tags: revalidation.__nifraInvalidate?.tags ?? [],
-    keys: revalidation.__nifraInvalidate?.keys ?? [],
-  }
 }
 
 /** One URL pattern a nested `_404` answers, as the executor indexes it. */
@@ -1857,9 +1847,9 @@ export function createPageRequestExecutor<Env = unknown>(
             : { [REVALIDATE_HEADER]: revalidation.__nifraRevalidate.join(",") }
         // The write is done, whatever the action answers with (a redirect included): what it made
         // stale is invalidated before the answer leaves.
-        if (revalidation !== undefined && options.invalidate !== undefined) {
-          await options.invalidate(invalidationOf(revalidation), c.req)
-        }
+        const settling =
+          revalidation === undefined ? undefined : options.invalidate?.(revalidation, c.req)
+        if (settling !== undefined) await settling
         if (isControlFlow(actionResult)) return actionResult
         if (isDataRequest) {
           // Headers shape the document only, but a bad one fails here too, so a navigation and a full

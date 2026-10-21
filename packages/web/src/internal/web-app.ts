@@ -26,11 +26,12 @@ import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
-import { INVALIDATION, type InvalidationOp } from "./invalidation-contract.ts"
+import { INVALIDATION, type InvalidationOp, invalidationOf } from "./invalidation-contract.ts"
 import { LIVE_ATTACH, type LiveAttachment, type LiveRuntimeHandle } from "./live-contract.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
+import type { RevalidateResult } from "./render-document.ts"
 import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
@@ -337,6 +338,16 @@ export interface CreateWebAppOptions<Env = unknown> {
  * The `Request` is rebuilt rather than mutated (`url` is read-only), preserving method, headers, body,
  * and duplex streaming - the body is passed through unread, so a large or streamed upload is untouched.
  */
+/** Publish what a write named, for an app with `live` and no cache wrapper to run the pipeline. */
+async function publishOwn(
+  op: InvalidationOp,
+  request: Request,
+  publish: (keys: readonly string[]) => Promise<void>,
+): Promise<void> {
+  const { settleInvalidation } = await import("./invalidation.ts")
+  await settleInvalidation(op, { publish }, request, undefined)
+}
+
 /**
  * Resolve the explicit symbol-keyed backend mount interface. The symbol seam forwards platform
  * context without making web depend on client.
@@ -504,8 +515,12 @@ export function createWebApp<Env = unknown>(
       publish,
     },
   })
-  const invalidate = async (op: InvalidationOp, request: Request): Promise<void> => {
+  const invalidate = (
+    revalidation: RevalidateResult<unknown>,
+    request: Request,
+  ): Promise<void> | undefined => {
     if (cacheChannel.enabled) {
+      const op = invalidationOf(revalidation)
       // Every request in a hook's replacement chain: the wrapper holds the first one.
       for (
         let held: Request | undefined = request;
@@ -513,11 +528,13 @@ export function createWebApp<Env = unknown>(
         held = replacedRequestOf(held)
       )
         handedOver.set(held, op)
-      return
+      return undefined
     }
-    if (publish === undefined || op.keys.length + op.tags.length === 0) return
-    const { settleInvalidation } = await import("./invalidation.ts")
-    await settleInvalidation(op, { publish }, request, undefined)
+    // Paths alone refresh only the submitting page, which the response header already does.
+    const named = revalidation.__nifraInvalidate
+    if (publish === undefined || named === undefined || named.keys.length + named.tags.length === 0)
+      return undefined
+    return publishOwn(invalidationOf(revalidation), request, publish)
   }
   // Mount the in-process backend over HTTP at `apiPrefix`, when one is given, BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,

@@ -30,9 +30,15 @@ export interface InvalidationReport {
   readonly stages: readonly StageReport[]
 }
 
+/** What the pipeline calls on a page store: any {@link CacheStore} fits. */
+export interface PagePurge {
+  delete(key: string): Promise<void>
+  readonly invalidateTag?: ((tag: string) => Promise<void>) | undefined
+}
+
 export interface InvalidationTargets {
   readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[] | undefined
-  readonly store?: CacheStore | undefined
+  readonly store?: PagePurge | undefined
   /** The page store key of a path, as the cache wrapper computes it; `null` when never stored. */
   readonly keyOf?: ((path: string, req: Request) => string | null) | undefined
   readonly publish?: ((keys: readonly string[]) => Promise<void>) | undefined
@@ -54,8 +60,10 @@ export async function runInvalidation(
 ): Promise<InvalidationReport> {
   const stages: StageReport[] = []
   for (const stage of ORDER.slice(ORDER.indexOf(from))) {
-    const report = await runStage(stage, op, targets, req, platform)
-    if (report === undefined) continue
+    // Decided before any await: a stage with nothing to do costs no turn of the event loop.
+    const running = startStage(stage, op, targets, req, platform)
+    if (running === undefined) continue
+    const report = await running
     stages.push(report)
     // A cache stage that failed leaves data a reload would read: nothing after it may run.
     if (!report.ok && (stage === "data" || stage === "pages")) break
@@ -63,25 +71,32 @@ export async function runInvalidation(
   return { id: op.id, ok: stages.every((report) => report.ok), stages }
 }
 
-async function runStage(
+/** Start a stage's work for this operation; `undefined` when it has none. Never rejects. */
+function startStage(
   stage: InvalidationStage,
   op: InvalidationOp,
   targets: InvalidationTargets,
   req: Request,
   platform: ISRPlatform | undefined,
-): Promise<StageReport | undefined> {
-  try {
-    switch (stage) {
-      case "data": {
-        if (op.tags.length === 0 || targets.dataCaches === undefined) return undefined
-        for (const cache of targets.dataCaches) {
+): Promise<StageReport> | undefined {
+  const done: StageReport = { stage, ok: true, retryable: false }
+  let work: Promise<StageReport>
+  switch (stage) {
+    case "data": {
+      const caches = targets.dataCaches
+      if (op.tags.length === 0 || caches === undefined) return undefined
+      work = (async () => {
+        for (const cache of caches) {
           for (const tag of op.tags) await cache.invalidateTag(tag)
         }
-        return { stage, ok: true, retryable: false }
-      }
-      case "pages": {
-        const store = targets.store
-        if (store === undefined || op.paths.length + op.tags.length === 0) return undefined
+        return done
+      })()
+      break
+    }
+    case "pages": {
+      const store = targets.store
+      if (store === undefined || op.paths.length + op.tags.length === 0) return undefined
+      work = (async (): Promise<StageReport> => {
         if (op.tags.length > 0 && store.invalidateTag === undefined) {
           return { stage, ok: false, retryable: false, error: "tag_invalidation_not_supported" }
         }
@@ -90,17 +105,24 @@ async function runStage(
           if (key !== null) await store.delete(key)
         }
         for (const tag of op.tags) await store.invalidateTag?.(tag)
-        return { stage, ok: true, retryable: false }
-      }
-      case "publish": {
-        const keys = [...new Set([...op.keys, ...op.tags])]
-        if (targets.publish === undefined || keys.length === 0) return undefined
-        await targets.publish(keys)
-        return { stage, ok: true, retryable: false }
-      }
-      case "cdn": {
-        if (targets.cdn === undefined || op.paths.length + op.tags.length === 0) return undefined
-        const outcome = await targets.cdn.purge({ tags: op.tags, paths: op.paths }, platform)
+        return done
+      })()
+      break
+    }
+    case "publish": {
+      const publish = targets.publish
+      if (publish === undefined || op.keys.length + op.tags.length === 0) return undefined
+      work = (async () => {
+        await publish([...new Set([...op.keys, ...op.tags])])
+        return done
+      })()
+      break
+    }
+    case "cdn": {
+      const cdn = targets.cdn
+      if (cdn === undefined || op.paths.length + op.tags.length === 0) return undefined
+      work = (async (): Promise<StageReport> => {
+        const outcome = await cdn.purge({ tags: op.tags, paths: op.paths }, platform)
         return outcome.cdn === "failed"
           ? {
               stage,
@@ -110,12 +132,12 @@ async function runStage(
             }
           : outcome.cdn === "queued"
             ? { stage, ok: true, retryable: false, queued: true }
-            : { stage, ok: true, retryable: false }
-      }
+            : done
+      })()
+      break
     }
-  } catch {
-    return { stage, ok: false, retryable: true, error: `${stage}_failed` }
   }
+  return work.catch(() => ({ stage, ok: false, retryable: true, error: `${stage}_failed` }))
 }
 
 export interface SettleOptions {

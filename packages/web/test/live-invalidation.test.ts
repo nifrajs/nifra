@@ -173,9 +173,25 @@ test("a redirecting action still invalidates what it wrote", async () => {
 })
 
 test("an app with no live runtime and no cache wrapper runs nothing", async () => {
+  const uuid = spyOn(crypto, "randomUUID")
   const app = appWith(writes(), undefined)
   const res = await app.fetch(post())
   expect(await res.json()).toEqual({ ok: true })
+  // No operation is even built: nothing would run it.
+  expect(uuid).not.toHaveBeenCalled()
+  uuid.mockRestore()
+})
+
+test("a live app whose action names only paths publishes nothing and builds no operation", async () => {
+  const runtime = runtimeOf()
+  const publish = spyOn(runtime, "publish")
+  const uuid = spyOn(crypto, "randomUUID")
+  const app = appWith(async () => revalidate(["/posts/1"], { ok: true }), runtime)
+  const res = await app.fetch(post())
+  expect(await res.json()).toEqual({ ok: true })
+  expect(publish).not.toHaveBeenCalled()
+  expect(uuid).not.toHaveBeenCalled()
+  uuid.mockRestore()
 })
 
 // --- With withISR: the wrapper owns every stage -------------------------------------------------------
@@ -304,6 +320,59 @@ test("with waitUntil the retries run behind the answer", async () => {
   expect(calls).toEqual(["data:feed"])
   await settled(Promise.all(background))
   expect(calls.length).toBe(4)
+})
+
+test("a page purge that hangs is cut off at storeTimeoutMs, retried, and the action still answers", async () => {
+  jest.useFakeTimers()
+  const reports: InvalidationReport[] = []
+  let deletes = 0
+  const base = new MemoryCacheStore()
+  const handler = withISR(
+    appWith(async () => revalidate(["/posts/1"], { ok: true }), undefined),
+    {
+      store: {
+        get: (key) => base.get(key),
+        set: (key, value) => base.set(key, value),
+        delete: () => {
+          deletes++
+          return new Promise<never>(() => {})
+        },
+      },
+      revalidate: 60,
+      now: () => Date.now(),
+      storeTimeoutMs: 50,
+      onInvalidationError: (report) => reports.push(report),
+    },
+  )
+  const res = await settled(handler(post()))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ ok: true })
+  // The first try and the retries at 200 and 600 ms; the next would pass the inline deadline.
+  expect(deletes).toBe(3)
+  expect(reports.map((report) => report.stages)).toEqual([
+    [{ stage: "pages", ok: false, retryable: true, error: "pages_failed" }],
+  ])
+})
+
+test("a custom ISR key is handed each revalidated path as a request on the action's origin", async () => {
+  const calls: string[] = []
+  const seen: string[] = []
+  const handler = withISR(
+    appWith(async () => revalidate(["/posts/1"], { ok: true }), undefined),
+    {
+      store: recordingStore(new MemoryCacheStore(), calls),
+      revalidate: 60,
+      now: () => Date.now(),
+      key: (req) => {
+        seen.push(req.url)
+        return `custom:${new URL(req.url).pathname}`
+      },
+    },
+  )
+  const res = await handler(post())
+  expect(res.status).toBe(200)
+  expect(seen).toEqual([`${ORIGIN}/posts/1`])
+  expect(calls).toEqual(["delete:custom:/posts/1"])
 })
 
 // --- Visibility -------------------------------------------------------------------------------------

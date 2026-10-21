@@ -6,7 +6,6 @@ import {
   runInvalidation,
   settleInvalidation,
 } from "../src/internal/invalidation.ts"
-import { MemoryCacheStore } from "../src/isr.ts"
 
 const op: InvalidationOp = {
   id: "op-1",
@@ -27,7 +26,6 @@ function recording(fail: Partial<Record<string, number>> = {}) {
       throw new Error(`${stage} down`)
     }
   }
-  const store = new MemoryCacheStore()
   const targets: InvalidationTargets = {
     dataCaches: [
       {
@@ -38,8 +36,6 @@ function recording(fail: Partial<Record<string, number>> = {}) {
       },
     ],
     store: {
-      get: (key) => store.get(key),
-      set: (key, value) => store.set(key, value),
       delete: async (key) => {
         calls.push(`delete:${key}`)
         maybeFail("pages")
@@ -132,7 +128,7 @@ test("a store without tag invalidation fails the page stage for good", async () 
     op,
     {
       ...targets,
-      store: { get: async () => undefined, set: async () => {}, delete: async () => {} },
+      store: { delete: async () => {} },
     },
     req,
     undefined,
