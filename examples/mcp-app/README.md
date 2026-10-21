@@ -30,7 +30,8 @@ real widget renders without an MCP host):
   (the "Refresh" button re-invokes the tool through the host).
 - [`backend.ts`](backend.ts) - `defineMcpTool({ widget })` links the tool to the widget; `createMcpServer`
   registers it and advertises the UI capability. The nifra app mounts it with
-  `.get("/mcp", c => mcp.fetch(c.req)).post("/mcp", c => mcp.fetch(c.req))`.
+  `.use(method(["GET", "POST", "OPTIONS"], "/mcp", c => mcp.fetch(c.req)))`. `OPTIONS` lets a host
+  running in a browser on another origin pass its CORS preflight.
 - [`OrdersTableWidget.tsx`](OrdersTableWidget.tsx) - the same widget as a React component;
   [`@nifrajs/mcp/react`](../../packages/mcp/src/react.ts)'s `reactWidget` bundles it for the browser.
 - [`host-demo.ts`](host-demo.ts) - the tiny host harness behind `GET /` and `GET /react`.
