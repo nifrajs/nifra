@@ -375,8 +375,8 @@ export default function Islands() {
       </p>
       <CodeBlock code={SWAP_ENTRY} />
       <p>
-        The link or form makes its usual request with an <code>x-nifra-swap</code> header. The
-        server runs the page as usual - middleware, loader, action - and answers with that
+        The link or GET form makes its usual request with an <code>x-nifra-swap</code> header. The
+        server runs the page as usual - middleware and loaders - and answers with that
         slot&apos;s HTML alone, so the fragment is a slice of the real page, never a second
         template. <code>replace</code> swaps the slot&apos;s content and, for a GET, pushes the
         URL, so a filtered list survives a reload and back and forward work. <code>append</code>{" "}
@@ -385,13 +385,12 @@ export default function Islands() {
       </p>
       <p>
         Any other answer - a redirect, another origin, a page without that slot, an error - loads
-        the URL normally, as does a page whose Trusted Types policy refuses the HTML. A POST that
-        gets a whole page back without a redirect has already run, so that page is shown in place
-        at the action&apos;s URL, and going back loads the page before it. If Trusted Types
-        refuses that page too, the URL loads with a plain GET: the form is not sent again, but the
-        action&apos;s result is not shown. A form POST is never sent twice. Without the script, the
-        links and
-        forms work as plain HTML. A loading slot carries{" "}
+        the URL normally, as does a page whose Trusted Types policy refuses the HTML. A swapped
+        slot joins the current page, so that page&apos;s Content-Security-Policy governs it. POST
+        forms submit natively, so the browser applies the response&apos;s security policy, starts
+        its scripts and shows the action result. A form POST is sent once. Without the script,
+        links and forms work as plain HTML.
+        A loading slot carries{" "}
         <code>aria-busy=&quot;true&quot;</code>, a newer swap of the same slot cancels the older
         one, and a failed request leaves the page as it is and sets <code>data-swap-error</code> on
         the link or form. Islands inside a slot
@@ -400,7 +399,8 @@ export default function Islands() {
         <code>@nifrajs/web-vanilla</code> pages answer a swap.
       </p>
       <p>
-        A swap response is <code>private, no-store</code> with <code>vary: x-nifra-swap</code>, and
+        A swap fetch bypasses the browser cache. Documents and fragments vary on{" "}
+        <code>x-nifra-swap</code>; fragments are <code>private, no-store</code>, and
         ISR never serves or stores one. A CDN that ignores <code>Vary</code>, such as a Cloudflare
         zone, needs its cache rule to bypass requests carrying <code>x-nifra-swap</code>;{" "}
         <code>nifra cdn-check</code> tests that. <code>nifra check</code> reads both sides:{" "}

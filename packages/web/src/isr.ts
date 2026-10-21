@@ -715,14 +715,13 @@ const requestCarriesPrivateState = (req: Request): boolean =>
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
 
-// `x-nifra-data` alone is not a variation the URL key misses: a navigation data request never reads
-// or writes the store, so every stored entry is the document.
+// Data and swap requests bypass both cache reads and writes, so these headers cannot vary stored HTML.
 const responseDeclaresVary = (res: Response): boolean => {
   const value = res.headers.get("vary")
   if (value === null) return false
   for (const part of value.split(",")) {
     const name = part.trim().toLowerCase()
-    if (name !== "" && name !== "x-nifra-data") return true
+    if (name !== "" && name !== "x-nifra-data" && name !== SWAP_HEADER) return true
   }
   return false
 }
@@ -730,7 +729,7 @@ const responseDeclaresVary = (res: Response): boolean => {
 /**
  * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
  * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
- * the data header, and, for a request carrying a cookie or Authorization or accepted by an
+ * the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an
  * authentication stage, an explicit `public`.
  * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
  */

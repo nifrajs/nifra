@@ -1755,6 +1755,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -3028,6 +3030,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -4244,7 +4248,7 @@ _No named exports (side-effect entrypoint)._
   A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged responses. Built on the portable `onResponseBody` tier: the hook receives the final framework-ser…
 - **healthcheck** _(function)_ - `healthcheck: (options?: HealthcheckOptions) => IdentityPlugin`
   Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
-- **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware`
+- **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => IdentityPlugin`
   Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ - `ipRestriction: (options: IpRestrictionOptions) => Middleware`
   IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. By default the caller is the server-resolved `platform.clientIp` (socket peer, or the app's `clientIp` trust declaration); `clientIp`, `trustedProxies`, or a trusted single-IP `header` override it. Unconfigured …
@@ -5460,7 +5464,7 @@ _No named exports (side-effect entrypoint)._
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
-  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an authenticatio…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **isHostPolicy** _(function)_ - `isHostPolicy: (value: unknown) => value is HostPolicy`
@@ -6095,7 +6099,7 @@ _No named exports (side-effect entrypoint)._
 - **SwapOptions** _(interface)_ - `interface SwapOptions`
   Where `enableSwap` looks for links, forms, slots and islands.
 - **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
-  Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and form under `root` refresh its slot in place. Call it instead of `mountIslands`.
+  Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under `root` refresh its slot in place. Call it instead of `mountIslands`.
 
 ### `@nifrajs/web/plugins/css-modules`
 
@@ -7574,6 +7578,8 @@ _No named exports (side-effect entrypoint)._
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`

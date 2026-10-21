@@ -59,9 +59,10 @@ const ALL =
 
 // Measured on Bun 1.4.3 + 2%. Raise a cap only in the commit that explains the new bytes.
 const fixtures = {
-  imperative: { budget: 1140, source: `${IMPERATIVE}mountIslands({ counter })` },
+  // Per-host disposal adds ~30 B gz; the updated imperative/JS caps retain the 2% margin.
+  imperative: { budget: 1168, source: `${IMPERATIVE}mountIslands({ counter })` },
   markup: { budget: 2672, source: `${MARKUP}mountIslands({ compare })` },
-  js: { budget: 2410, source: `${JS}mountIslands({ todos })` },
+  js: { budget: 2462, source: `${JS}mountIslands({ todos })` },
   everything: { budget: 3498, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
   // `@nifrajs/web/islands/swap` in place of `mountIslands`: what a page pays for slot swaps.
   swap: {

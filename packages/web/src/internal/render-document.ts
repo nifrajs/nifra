@@ -522,6 +522,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       if (name !== "content-type") headers[name] = value
     }
   }
+  if (adapter.renderSlot !== undefined)
+    headers.vary = headers.vary === undefined ? SWAP_HEADER : `${headers.vary}, ${SWAP_HEADER}`
   // ISR: advertise the route's freshness so a `withISR` wrapper can set this page's cache TTL. A
   // dedicated header (not the action-revalidation `x-nifra-revalidate`) so the TTL channel never aliases
   // the client's path-list channel.
@@ -699,7 +701,8 @@ async function renderStreamedPage(
 }
 
 // A swap response shares its URL with the document, so like a data response it is never stored: a
-// cache keyed on the URL alone would serve one slot in place of the page.
+// cache keyed on the URL alone would serve one slot in place of the page. A slot joins a page that
+// already runs under its own policy, so the CSP header belongs to the document alone.
 const DOCUMENT_ONLY_HEADERS = new Set([
   ISR_REVALIDATE_HEADER,
   ISR_REVALIDATE_TAGS_HEADER,
@@ -714,7 +717,6 @@ function swapHeaders(
   for (const [name, value] of Object.entries(document))
     if (!DOCUMENT_ONLY_HEADERS.has(name)) headers[name] = value
   headers["cache-control"] = "private, no-store"
-  headers.vary = headers.vary === undefined ? SWAP_HEADER : `${headers.vary}, ${SWAP_HEADER}`
   headers[SWAP_HEADER] = slot
   return headers
 }

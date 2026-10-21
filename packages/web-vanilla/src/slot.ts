@@ -1,8 +1,5 @@
 import { type HtmlValue, html, Template } from "./html.ts"
-
-// The slot a swap render is answering for. A vanilla render runs synchronously from start to end,
-// so this is set only while one render runs and never seen by another request.
-let wanted: { readonly name: string; found?: string } | undefined
+import { templateSlots } from "./template-slots.ts"
 
 /**
  * A region of the page that a `data-swap` link or form refreshes on its own. Place it as the only
@@ -16,20 +13,17 @@ let wanted: { readonly name: string; found?: string } | undefined
  */
 export function slot(name: string, content: HtmlValue): Template {
   const out = content instanceof Template ? content : html`${content}`
-  if (wanted !== undefined && wanted.name === name && wanted.found === undefined)
-    wanted.found = out.html
-  return out
+  const template = new Template(out.html)
+  templateSlots.set(template, [
+    { name, start: 0, end: out.html.length },
+    ...(templateSlots.get(out) ?? []),
+  ])
+  return template
 }
 
-/** Run `render` and return the HTML of the first `slot(name, ...)` it produced, if any. */
-export function captureSlot(name: string, render: () => unknown): string | undefined {
-  const outer = wanted
-  const target: { readonly name: string; found?: string } = { name }
-  wanted = target
-  try {
-    render()
-  } finally {
-    wanted = outer
-  }
-  return target.found
+/** Return the first named slot that survives in the final composed output. */
+export function captureSlot(name: string, render: () => Template): string | undefined {
+  const out = render()
+  const range = templateSlots.get(out)?.find((entry) => entry.name === name)
+  return range === undefined ? undefined : out.html.slice(range.start, range.end)
 }

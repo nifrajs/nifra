@@ -9,12 +9,13 @@
  * The request is the one the link or form makes anyway, plus an `x-nifra-swap: <slot>` header. The
  * server runs the page as usual and answers with that slot's HTML alone (`slot()` in
  * `@nifrajs/web-vanilla`), so the fragment is a slice of the real page. Any other answer - a redirect,
- * another origin, a page without that slot - loads the URL normally, except a POST's own page, which
- * is shown in place because the action has already run: a swap only ever speeds up what the link or
- * form already does, and without this script the page works the same way.
+ * another origin, a page without that slot - loads the URL normally. Only GET requests are enhanced:
+ * a POST form submits natively, so the browser applies its response's security policy and scripts,
+ * and the form is never sent twice.
  */
 
-import { type IslandEnhancer, mountIslands } from "./islands.ts"
+import { mountIsland } from "./internal/island-mount.ts"
+import type { IslandEnhancer } from "./islands.ts"
 import { SWAP_HEADER } from "./render-seam.ts"
 
 /** Where `enableSwap` looks for links, forms, slots and islands. */
@@ -41,7 +42,7 @@ const swappedIn = (state: unknown): string[] => {
 }
 
 /**
- * Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and form under
+ * Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under
  * `root` refresh its slot in place. Call it instead of `mountIslands`.
  *
  * - `data-swap="replace:<slot>"` replaces the content of the `data-swap-slot="<slot>"` element;
@@ -63,38 +64,30 @@ export function enableSwap(
   enhancers: Readonly<Record<string, IslandEnhancer<never>>>,
   options: SwapOptions = {},
 ): () => void {
-  let root: ParentNode & Node = options.root ?? document
+  const root: ParentNode & Node = options.root ?? document
   const stops = new Map<Node, () => void>()
   const pending = new Map<Element, AbortController>()
   let swapped = swappedIn(history.state)
   let shown = here()
-  // Set once a POST's whole answer replaced the page: no history entry matches what is shown then.
-  let replaced = false
 
-  const own = (node: Node, stop: () => void): void => {
-    const before = stops.get(node)
-    stops.set(
-      node,
-      before === undefined
-        ? stop
-        : () => {
-            before()
-            stop()
-          },
-    )
-  }
-  // Innermost slots first, so each island belongs to the slot whose swap removes it.
+  const islands = "[data-island]:not([data-island-ignore],[data-island-ignore] *)"
   const attach = (scope: ParentNode & Node): void => {
-    for (const slot of [...scope.querySelectorAll(SLOTS)].reverse())
-      own(slot, mountIslands(enhancers, { root: slot }))
-    own(scope, mountIslands(enhancers, { root: scope }))
+    const mount = (el: HTMLElement): void => {
+      const stop = mountIsland(el, enhancers)
+      if (stop !== undefined) stops.set(el, stop)
+    }
+    if (scope instanceof HTMLElement && scope.matches(islands)) mount(scope)
+    for (const el of scope.querySelectorAll<HTMLElement>(islands)) if (scope.contains(el)) mount(el)
   }
   const release = (scope: Node): void => {
+    const cleanups: Array<() => void> = []
     for (const [node, stop] of stops)
       if (scope.contains(node)) {
         stops.delete(node)
-        stop()
+        cleanups.push(stop)
       }
+    // Cleanup may itself detach descendants, so collect every owner before stopping any of them.
+    for (const stop of cleanups) stop()
   }
   // The server answers with the first slot of a name in the page, so the client takes the first too.
   const slotNamed = (name: string): Element | undefined => {
@@ -110,8 +103,10 @@ export function enableSwap(
     const focused = slot.contains(document.activeElement)
     if (append) {
       for (const child of [...slot.children])
-        if (child === source || (source !== undefined && child.contains(source)))
+        if (child === source || (source !== undefined && child.contains(source))) {
+          release(child)
           slot.removeChild(child)
+        }
       slot.append(template.content)
     } else {
       release(slot)
@@ -124,47 +119,23 @@ export function enableSwap(
     }
   }
 
-  // The page a native submit would show. Its scripts never run: this one is already running here.
-  const showDocument = (html: string, url: URL): void => {
-    const next = new DOMParser().parseFromString(html, "text/html")
-    release(document)
-    const id = root instanceof Element ? root.id : ""
-    document.replaceChild(document.adoptNode(next.documentElement), document.documentElement)
-    replaced = true
-    history.pushState(null, "", url)
-    scrollTo(0, 0)
-    // An element root carries on as the new page's element with its id; without one, nothing mounts.
-    const found = root === document ? root : id === "" ? null : document.getElementById(id)
-    if (found === null) return
-    listen("removeEventListener")
-    root = found
-    listen("addEventListener")
-    attach(root)
-  }
-
   const swap = async (
     slot: Element,
     name: string,
     append: boolean,
     url: URL,
-    method: string,
-    body: FormData | URLSearchParams | null = null,
     source?: Element,
   ): Promise<void> => {
     pending.get(slot)?.abort()
     const abort = new AbortController()
     pending.set(slot, abort)
     slot.setAttribute("aria-busy", "true")
-    const get = method === "GET"
     try {
       const response = await fetch(url, {
-        method,
-        body,
+        cache: "no-store",
         headers: { [SWAP_HEADER]: name },
         signal: abort.signal,
-        // A GET that redirects loads normally; a POST has run by then, so its redirect is followed
-        // and the page it lands on is never sent the form a second time.
-        redirect: get ? "manual" : "follow",
+        redirect: "manual",
       })
       const load = (): void => {
         if (source === undefined) location.reload()
@@ -177,18 +148,10 @@ export function enableSwap(
         load()
         return
       }
+      // A slot answer joins this document, so this document's CSP governs it, whatever headers the
+      // fetch carried; anything that is not one loads as its own document under its own policy.
       if (response.headers.get(SWAP_HEADER) !== name) {
-        // A POST that did not redirect has run and this is its page: loading the URL again would
-        // drop the action's result.
-        if (get || response.redirected) load()
-        else {
-          const page = await response.text()
-          try {
-            showDocument(page, url)
-          } catch {
-            load()
-          }
-        }
+        load()
         return
       }
       const html = await response.text()
@@ -200,7 +163,7 @@ export function enableSwap(
         load()
         return
       }
-      if (get && !append && source !== undefined) {
+      if (!append && source !== undefined) {
         if (!swapped.includes(name)) swapped = [...swapped, name]
         history.pushState({ [HISTORY_KEY]: swapped }, "", url)
         shown = url.pathname + url.search
@@ -218,13 +181,7 @@ export function enableSwap(
     }
   }
 
-  const start = (
-    event: Event,
-    source: Element,
-    url: URL,
-    method: string,
-    body: FormData | URLSearchParams | null = null,
-  ): void => {
+  const start = (event: Event, source: Element, url: URL): void => {
     const mode = MODE.exec(attr(source, "data-swap") ?? "")
     const name = mode?.[2]
     if (
@@ -237,7 +194,7 @@ export function enableSwap(
     if (slot === undefined) return
     event.preventDefault()
     Element.prototype.removeAttribute.call(source, "data-swap-error")
-    void swap(slot, name, mode?.[1] === "append", url, method, body, source)
+    void swap(slot, name, mode?.[1] === "append", url, source)
   }
 
   const onClick = (event: Event): void => {
@@ -251,7 +208,7 @@ export function enableSwap(
     const url = new URL(link.href)
     // An in-page anchor keeps its native jump.
     if (url.hash !== "" && url.pathname + url.search === here()) return
-    start(event, link, url, "GET")
+    start(event, link, url)
   }
 
   const onSubmit = (event: Event): void => {
@@ -274,29 +231,23 @@ export function enableSwap(
     const target = pick("target")
     const enctype = pick("enctype")?.toLowerCase()
     if (
-      (method !== "GET" && method !== "POST") ||
+      method !== "GET" ||
       (target !== null && target !== "" && target !== "_self") ||
       enctype === "text/plain"
     )
       return
-    const url = new URL(pick("action") ?? "", document.baseURI)
+    const action = pick("action")
+    const url = new URL(action === null || action === "" ? location.href : action, document.baseURI)
     const data = new FormData(form, submitter)
     const fields = new URLSearchParams()
     for (const [key, value] of data)
       fields.append(key, typeof value === "string" ? value : value.name)
-    if (method === "GET") url.search = fields.toString()
-    start(
-      event,
-      form,
-      url,
-      method,
-      method === "GET" ? null : enctype === "multipart/form-data" ? data : fields,
-    )
+    url.search = fields.toString()
+    start(event, form, url)
   }
 
   const onPopState = (event: PopStateEvent): void => {
-    if (replaced) location.reload()
-    if (replaced || here() === shown) return
+    if (here() === shown) return
     shown = here()
     const reached = swappedIn(event.state)
     // Every slot a swap changed between the entry left and the one reached is in the later one's list.
@@ -311,7 +262,7 @@ export function enableSwap(
       }
       targets.push([name, slot])
     }
-    for (const [name, slot] of targets) void swap(slot, name, false, new URL(location.href), "GET")
+    for (const [name, slot] of targets) void swap(slot, name, false, new URL(location.href))
   }
 
   const listen = (method: "addEventListener" | "removeEventListener"): void => {

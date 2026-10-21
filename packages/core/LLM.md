@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **assertTransportTextBounded** _(function)_ - `assertTransportTextBounded: (text: string, options: TransportDecodeOptions) => void` · from `@nifrajs/core/transport-codec`
 - **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void` · from `@nifrajs/core/assurance`
 
-_…and 762 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 763 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
