@@ -5,7 +5,7 @@ import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts
 import { type CachedResponse, type CacheStore, withISR } from "../src/isr.ts"
 import { checkShellCanaries, partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, PREFETCH_HEADER } from "../src/router.ts"
-import { nextSlowAbort, probe } from "./fixtures/ppr/app/lib/probe.ts"
+import { nextSlowAbort, probe, releaseHeld } from "./fixtures/ppr/app/lib/probe.ts"
 import { DRAFT_SECRET, type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
 
 let app: PprApp
@@ -46,6 +46,7 @@ describe("PPR app: requests that are not a streamed document", () => {
     for (const id of ["1", "2"]) {
       const html = await (await fetch(`${app.origin}/leaky/${id}`)).text()
       expect(html).toContain('id="leaky"')
+      expect(html).toContain('<p id="note">note</p>')
       expect(html).not.toContain('id="nifra-ppr-req"')
     }
     expect(app.warnings.filter(unchecked).length - before).toBeLessThanOrEqual(1)
@@ -280,6 +281,29 @@ describe("PPR app behind compression()", () => {
     } finally {
       await zipped.stop()
     }
+  })
+})
+
+describe("PPR fixture app: what the browser checks lean on", () => {
+  test("a held cart hole streams its frame once released", async () => {
+    const res = await fetch(`${app.origin}/p/61?hold=1`)
+    // Every hole loader starts before the response does, so the hold is already waiting.
+    expect(releaseHeld()).toBe(1)
+    expect(await res.text()).toContain('"props":{"count":2}')
+  })
+
+  test("client assets are served by plain name only, and an unrelated route answers late", async () => {
+    const page = await (await fetch(`${app.origin}/p/62`)).text()
+    const entry = /<link rel="modulepreload" href="(\/assets\/[A-Za-z0-9._-]+\.js)">/.exec(
+      page,
+    )?.[1]
+    if (entry === undefined) throw new Error("the shell names no client entry")
+    const script = await fetch(`${app.origin}${entry}`)
+    expect(script.status).toBe(200)
+    expect(script.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+    expect((await fetch(`${app.origin}/assets/missing.js`)).status).toBe(404)
+    expect((await fetch(`${app.origin}/assets/a%20b.js`)).status).toBe(400)
+    expect(await (await fetch(`${app.origin}/__unrelated`)).text()).toBe("unrelated ok")
   })
 })
 

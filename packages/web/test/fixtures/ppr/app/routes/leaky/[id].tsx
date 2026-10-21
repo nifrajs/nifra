@@ -1,3 +1,6 @@
+import type { BoundaryStates } from "@nifrajs/web"
+import { Hole } from "@nifrajs/web-react/ppr"
+
 const note = {
   name: "note",
   mode: "dynamic" as const,
@@ -6,6 +9,14 @@ const note = {
 }
 export const boundaries = [note]
 
-export default function Leaky(props: { readonly data: { readonly who: string } }) {
-  return <h1 id="leaky">{props.data.who}</h1>
+export default function Leaky(props: {
+  readonly data: { readonly who: string }
+  readonly boundaries?: BoundaryStates
+}) {
+  return (
+    <main>
+      <h1 id="leaky">{props.data.who}</h1>
+      <Hole of={note} state={props.boundaries?.note} />
+    </main>
+  )
 }
