@@ -364,8 +364,9 @@ describe("PPR server", () => {
 
   test("the per-route entry cap evicts that route's least recent shell", async () => {
     let builds = 0
+    // At 1 a full route still builds on a key's first request, so every visit here reaches the cap.
     const server = createPprServer(
-      config({ options: resolvePprOptions({ shellEntriesPerRoute: 2 }) }),
+      config({ options: resolvePprOptions({ shellEntriesPerRoute: 2, shellAfterRequests: 1 }) }),
     )
     const visit = async (id: string) =>
       (
@@ -465,7 +466,7 @@ describe("PPR server", () => {
     test("counts what a shell's loader data holds", async () => {
       const built: string[] = []
       const server = createPprServer(
-        config({ options: resolvePprOptions({ shellStoreBytes: 100_000 }) }),
+        config({ options: resolvePprOptions({ shellStoreBytes: 100_000, shellAfterRequests: 1 }) }),
       )
       const visit = visitor(server, built)
       await visit("1")

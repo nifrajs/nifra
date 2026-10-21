@@ -25,7 +25,7 @@ describe("PPR options", () => {
       shellStoreBytes: 64 * 1024 * 1024,
       notFoundTtlSeconds: 60,
       shellBuildConcurrency: 4,
-      shellAfterRequests: 1,
+      shellAfterRequests: 2,
       staleOnErrorFactor: 10,
       maxStaleOnErrorSeconds: 86400,
       blockingFor: HTML_LIMITED_BOTS,

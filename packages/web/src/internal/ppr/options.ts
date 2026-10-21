@@ -88,7 +88,7 @@ export const PPR_DEFAULTS: ResolvedPprOptions = Object.freeze({
   shellStoreBytes: 64 * MB,
   notFoundTtlSeconds: 60,
   shellBuildConcurrency: 4,
-  shellAfterRequests: 1,
+  shellAfterRequests: 2,
   staleOnErrorFactor: 10,
   maxStaleOnErrorSeconds: 86_400,
   blockingFor: HTML_LIMITED_BOTS,

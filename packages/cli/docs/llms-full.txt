@@ -12540,7 +12540,7 @@ or at its build limit
 The whole page, every hole rendered in place
 
 Once the shell store is full, a page whose shell key has had fewer requests than
-`shellAfterRequests` (default 1)
+`shellAfterRequests` (default 2)
 
 The whole page streamed, each hole as it settles; no shell is built
 
