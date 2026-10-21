@@ -101,15 +101,17 @@ The `Benchmark accuracy` workflow (`.github/workflows/benchmark-accuracy.yml`) i
 run of the same six HTTP suite/runtime combinations with a larger sampling budget: at least 7
 whole-matrix runs, up to 15, targeting a 95% interval no wider than 5 percentage points. With
 four interleaved rounds per run, that collects 28-60 samples per row. Each job has a six-hour
-limit. Start it from GitHub Actions with **Run workflow** on the branch to measure.
+limit. It skips SSR: an SSR run takes an estimated 20 minutes, so 15 could hit that limit. Start it
+from GitHub Actions with **Run workflow** on the branch to measure.
 
 Both workflows save raw rounds, CPU topology and steal time, the commit SHA, run ID, exact runtime
 versions, and sampling settings in downloadable artifacts retained for 90 days. Compare the ratios
 and interval widths within each report; a shared runner can still leave noisy rows after the larger
 budget is spent. Those rows remain marked unsettled, and benchmark measurements do not gate merges.
 
-`.github/workflows/benchmarks.yml` runs both HTTP matrices nightly, on demand, and on a PR labelled
-`bench`: one job per suite x runtime, each through `bench/ci/run.ts`. A job splits the runner's
+`.github/workflows/benchmarks.yml` runs both HTTP matrices and the SSR tables nightly and on demand,
+and the HTTP matrices alone on a PR labelled `bench`: one job per suite x runtime (SSR on Bun and Node
+only, see `bench/ssr/README.md`), each through `bench/ci/run.ts`. A job splits the runner's
 physical cores in two (`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset
 lists the matrices also take by hand on Linux), runs the matrix 3 times in fresh processes, and keeps
 going up to 5 runs while any row's 95% interval is wider than 10 points. The stopping rule reads only
@@ -120,5 +122,6 @@ the runner's noise floor that a later regression gate will take its tolerance fr
 
 ```sh
 bun run bench/ci/run.ts --suite http --runtime bun --pin   # one job, Linux only with --pin
+bun run bench/ci/run.ts --suite ssr --runtime node         # an SSR job, unpinned
 bun run bench/ci/summary.ts bench-ci                       # combine downloaded reports
 ```

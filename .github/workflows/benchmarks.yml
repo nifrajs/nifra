@@ -2,8 +2,9 @@ name: Benchmarks
 
 # Throughput on GitHub-hosted runners, as a report. Absolute req/s on a shared VM moves severalfold
 # between runs, so every number here is a ratio measured inside one job: each row against its
-# runtime's raw server, and nifra against each rival, sampled seconds apart in interleaved rounds,
-# with the server and oha pinned to separate physical cores. Each job keeps sampling until every
+# workload's ceiling (the runtime's raw server; for SSR the raw renderer or static file server where a
+# table has one), and nifra against each rival, sampled seconds apart in interleaved rounds, with the
+# server and oha pinned to separate physical cores. Each job keeps sampling until every
 # row's 95% interval is narrow or its run budget is spent, and lists what stayed noisy.
 #
 # Nothing here gates a merge. The nightly reports exist to measure this runner's noise floor first;
@@ -36,7 +37,13 @@ on:
       max_ci_width:
         type: number
         default: 10
+      # An SSR run takes an estimated 20 minutes, so the accuracy workflow's 15-run budget could hit
+      # the job's six-hour limit.
+      skip_ssr:
+        type: boolean
+        default: false
   # Only for a PR a maintainer labels `bench`; every push to it re-runs until the label comes off.
+  # A PR run skips SSR, which takes about 80 minutes per job: SSR runs nightly and on dispatch.
   pull_request:
     types: [labeled, synchronize, reopened]
 
@@ -64,8 +71,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [http, realworld]
+        suite: [http, realworld, ssr]
         runtime: [bun, node, deno]
+        exclude:
+          # The SSR rival apps and harness run on Bun and Node only.
+          - suite: ssr
+            runtime: deno
+          - suite: ${{ (inputs.skip_ssr || github.event_name == 'pull_request') && 'ssr' || 'none' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
@@ -119,7 +131,7 @@ jobs:
         run: bun run build
 
       - name: Harness unit tests
-        run: bun test bench/ci bench/rounds.test.ts
+        run: bun test bench/ci bench/rounds.test.ts bench/ssr/matrix.test.ts bench/ssr/section.test.ts
 
       - name: Measure
         run: >-
@@ -138,7 +150,8 @@ jobs:
 
   summary:
     needs: measure
-    if: always() && needs.measure.result != 'skipped'
+    # Runs when a measure job failed, but not for a cancelled run, which may have no report at all.
+    if: ${{ !cancelled() && needs.measure.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -155,4 +168,6 @@ jobs:
           merge-multiple: true
 
       - name: Combined report
-        run: bun run bench/ci/summary.ts bench-ci >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUITES: ${{ (inputs.skip_ssr || github.event_name == 'pull_request') && 'http,realworld' || 'http,realworld,ssr' }}
+        run: bun run bench/ci/summary.ts bench-ci --suites "$SUITES" >> "$GITHUB_STEP_SUMMARY"

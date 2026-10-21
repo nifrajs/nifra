@@ -16,9 +16,9 @@ import {
   type CiReport,
   parseCiReport,
   parseRunOutput,
-  RUNTIMES,
   type RunOutput,
   type Runtime,
+  SUITE_RUNTIMES,
   SUITES,
   type Suite,
   summarize,
@@ -27,10 +27,18 @@ import {
 
 const ROOT = join(import.meta.dir, "..", "..")
 
-/** The matrix each suite runs, as `[script, ...flags after the runtime]`. */
-const SUITE_RUN: Readonly<Record<Suite, readonly [string, ...string[]]>> = {
-  http: ["bench/http/run.ts", "--full"],
-  realworld: ["bench/http-realworld/run.ts"],
+/** The command each suite's matrix runs for one runtime, printing one JSON result line last. */
+const SUITE_RUN: Readonly<Record<Suite, (runtime: Runtime) => readonly [string, ...string[]]>> = {
+  http: (runtime) => ["bench/http/run.ts", runtime, "--json", "--full"],
+  realworld: (runtime) => ["bench/http-realworld/run.ts", runtime, "--json"],
+  ssr: (runtime) => ["bench/ssr/run.ts", "--runtime", runtime, "--json"],
+}
+
+/** Env a suite needs unless the caller set it. SSR defaults to 5 rounds; the offset needs pairs. */
+const SUITE_ENV: Readonly<Record<Suite, Readonly<Record<string, string>>>> = {
+  http: {},
+  realworld: {},
+  ssr: { BENCH_ROUNDS: "4" },
 }
 
 interface Options {
@@ -55,9 +63,11 @@ function parseOptions(argv: readonly string[]): Options {
     return Number(raw)
   }
   const suite = SUITES.find((s) => s === value("--suite"))
-  const runtime = RUNTIMES.find((r) => r === value("--runtime"))
   if (suite === undefined) throw new Error(`--suite takes one of ${SUITES.join(", ")}`)
-  if (runtime === undefined) throw new Error(`--runtime takes one of ${RUNTIMES.join(", ")}`)
+  const runtime = SUITE_RUNTIMES[suite].find((r) => r === value("--runtime"))
+  if (runtime === undefined) {
+    throw new Error(`--runtime for ${suite} takes one of ${SUITE_RUNTIMES[suite].join(", ")}`)
+  }
   const minRuns = int("--min-runs", 3)
   const maxRuns = int("--max-runs", 5)
   if (maxRuns < minRuns) throw new Error("--max-runs must be at least --min-runs")
@@ -81,9 +91,10 @@ async function runOnce(
   index: number,
   split: CoreSplit | null,
 ): Promise<{ run: RunOutput; steal: number | null }> {
-  const [script, ...flags] = SUITE_RUN[options.suite]
+  const argv = SUITE_RUN[options.suite](options.runtime)
   // An even offset keeps each run's rounds in forward/reversed pairs (bench/rounds.ts).
   const env: Record<string, string | undefined> = {
+    ...SUITE_ENV[options.suite],
     ...Bun.env,
     BENCH_ROUND_OFFSET: String(2 * index),
   }
@@ -93,17 +104,15 @@ async function runOnce(
     env.BENCH_LOAD_CPUS = loadCpus
   }
   const before = readCpuTimes()
-  const proc = Bun.spawn(
-    pinned(["bun", "run", script, options.runtime, "--json", ...flags], loadCpus),
-    {
-      cwd: ROOT,
-      stdout: "pipe",
-      stderr: "inherit",
-      env,
-    },
-  )
+  const proc = Bun.spawn(pinned(["bun", "run", ...argv], loadCpus), {
+    cwd: ROOT,
+    stdout: "pipe",
+    stderr: "inherit",
+    env,
+  })
   const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
   const after = readCpuTimes()
+  const script = argv[0]
   if (code !== 0) throw new Error(`${script} ${options.runtime} exited ${code}`)
   const line = out.trim().split("\n").at(-1) ?? ""
   let json: unknown
