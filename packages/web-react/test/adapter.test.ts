@@ -117,7 +117,7 @@ test("a render error rejects every render path with the error itself", async () 
   try {
     await expect(reactAdapter.renderToString?.([Broken], { data: null })).rejects.toBe(boom)
     await expect(reactAdapter.renderToStream([Broken], { data: null })).rejects.toBe(boom)
-    await expect(reactAdapter.renderFragment?.(createElement(Broken), {})).rejects.toBe(boom)
+    await expect(reactAdapter.renderFragment?.(() => createElement(Broken), {})).rejects.toBe(boom)
   } finally {
     console.error = original
   }

@@ -131,7 +131,8 @@ export const svelteAdapter: RenderAdapter = {
   // A partially prerendered hole's HTML, from a `ui(Component, props)` value. Svelte puts its own `-`
   // before the id counter and refuses a prefix with `--`, so the seam's trailing `-` is dropped. The
   // client reads each id back from its comment marker, so the hole's root needs no prefix of its own.
-  async renderFragment(ui, options) {
+  async renderFragment(produce, options) {
+    const ui = produce()
     if (!isSvelteUI(ui)) {
       throw new TypeError(
         "[nifra/web-svelte] a hole's render and fallback must return ui(Component, props)",

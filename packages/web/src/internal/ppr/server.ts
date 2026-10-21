@@ -424,7 +424,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       html =
         fallback === undefined
           ? Promise.resolve("")
-          : Promise.resolve().then(() => renderFragment.call(adapter, fallback, {}))
+          : Promise.resolve().then(() => renderFragment.call(adapter, () => fallback, {}))
       fallbackHtml.set(hole, html)
       html.catch(() => fallbackHtml.delete(hole))
     }
@@ -747,9 +747,12 @@ export function createPprServer(config: PprServerConfig): PprServer {
   ): Promise<string> => {
     if (!run.ok) return errorFrame(hole.name)
     try {
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
-      const ui = hole.render(run.value as never)
-      const html = await renderFragment.call(adapter, ui, { idPrefix: `nifra-${hole.name}-` })
+      const html = await renderFragment.call(
+        adapter,
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
+        () => hole.render(run.value as never),
+        { idPrefix: `nifra-${hole.name}-` },
+      )
       if (options.holeHtmlValidation === "always" || !isProduction()) validateHoleHtml(html)
       return encodeHoleFrame(
         hole.name,

@@ -18,7 +18,7 @@ import type { RenderAdapter } from "../src/render-seam.ts"
 const adapter: RenderAdapter = {
   renderToStream: () => new ReadableStream(),
   hydrationHead: () => "",
-  renderFragment: (ui, options) => `<p data-prefix="${options.idPrefix ?? ""}">${String(ui)}</p>`,
+  renderFragment: (ui, options) => `<p data-prefix="${options.idPrefix ?? ""}">${String(ui())}</p>`,
 }
 
 // Enough text that WebKit paints the shell early, so only the sparse-shell test warns.
@@ -127,6 +127,32 @@ const tokenOf = (html: string): string => {
 }
 
 describe("PPR server", () => {
+  test("a hole's render and fallback run inside the adapter's renderFragment", async () => {
+    let rendering = false
+    const ran: boolean[] = []
+    const server = createPprServer(
+      config({
+        adapter: {
+          ...adapter,
+          renderFragment: (ui) => {
+            rendering = true
+            const html = String(ui())
+            rendering = false
+            return html
+          },
+        },
+      }),
+    )
+    const tracked = hole("cart", () => 1, {
+      render: (data: never) => {
+        ran.push(rendering)
+        return `cart:${data}`
+      },
+    })
+    await (await server.respond(pprRequest([tracked]))).text()
+    expect(ran).toEqual([true])
+  })
+
   test("the shell carries the runtime, async entry and fallbacks; holes stream as frames", async () => {
     const server = createPprServer(config())
     const res = await server.respond(
@@ -186,8 +212,8 @@ describe("PPR server", () => {
         adapter: {
           ...adapter,
           renderFragment: (ui, options) => {
-            if (options.idPrefix === undefined) fallbacks.push(ui)
-            return `<p data-prefix="${options.idPrefix ?? ""}">${String(ui)}</p>`
+            if (options.idPrefix === undefined) fallbacks.push(ui())
+            return `<p data-prefix="${options.idPrefix ?? ""}">${String(ui())}</p>`
           },
         },
       }),
@@ -739,7 +765,7 @@ describe("PPR server: admission and unsent bytes (7.3, 7.7)", () => {
       const server = createPprServer(
         config({
           shellChecks: "unchecked-development",
-          adapter: { ...adapter, renderFragment: (ui) => String(ui) },
+          adapter: { ...adapter, renderFragment: (ui) => String(ui()) },
         }),
       )
       const { fallback: _, ...bare } = hole("cart", () => 1)

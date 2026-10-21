@@ -34,7 +34,7 @@ const hosts = (states: BoundaryStates | undefined): string =>
 const adapter: RenderAdapter = {
   renderToStream: (_chain, props) => html(`<main><p>${PROSE}</p>${hosts(props.boundaries)}</main>`),
   hydrationHead: () => "",
-  renderFragment: (ui) => `<p>${String(ui)}</p>`,
+  renderFragment: (ui) => `<p>${String(ui())}</p>`,
 }
 
 /** A page whose one hole waits for its signal; `signals` yields each invocation's signal. */

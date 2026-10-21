@@ -50,7 +50,7 @@ export const reactAdapter: RenderAdapter = {
     const { renderToString } = await reactDomServer()
     try {
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns React output; the seam erases it to unknown.
-      return renderToString(ui as ReactNode, { identifierPrefix: options.idPrefix ?? "" })
+      return renderToString(ui() as ReactNode, { identifierPrefix: options.idPrefix ?? "" })
     } catch (error) {
       throw explainRenderError(error)
     }

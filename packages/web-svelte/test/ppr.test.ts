@@ -35,10 +35,10 @@ test(
       const { svelteAdapter } = await import(${asImport("../src/index.ts")});
       const { ui } = await import(${asImport("../src/ppr.ts")});
       const Field = (await import(${asImport("./fixtures/ppr-id.svelte")})).default;
-      const html = await svelteAdapter.renderFragment(ui(Field, { label: "qty" }), { idPrefix: "nifra-cart-" });
+      const html = await svelteAdapter.renderFragment(() => ui(Field, { label: "qty" }), { idPrefix: "nifra-cart-" });
       let refused = "";
       try {
-        await svelteAdapter.renderFragment("<p>not ui</p>", {});
+        await svelteAdapter.renderFragment(() => "<p>not ui</p>", {});
       } catch (error) {
         refused = error.message;
       }
