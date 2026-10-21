@@ -237,7 +237,6 @@ const SKIPS: Readonly<Record<string, string>> = Object.freeze({
   "@nifrajs/i18n": "i18n integration package; covered by package tests",
   "@nifrajs/image": "image helpers; covered by package tests",
   "@nifrajs/island-trigger": "browser build integration; covered by adapter typecheck and build",
-  "@nifrajs/islets": "browser build integration; covered by adapter typecheck and build",
   "@nifrajs/jobs": "job-store abstractions; covered by certification profiles",
   "@nifrajs/mcp-db": "MCP database tooling; covered by package tests",
   "@nifrajs/mcp": "MCP server tooling; covered by package tests and corpus gates",

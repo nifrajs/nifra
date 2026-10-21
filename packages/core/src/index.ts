@@ -58,6 +58,7 @@ export {
   markAuthenticatedRequest,
   rejected,
 } from "./server/auth.ts"
+export { beforeHandler } from "./server/before-handler.ts"
 export type {
   Context,
   Params,

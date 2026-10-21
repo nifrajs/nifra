@@ -64,7 +64,6 @@ const LIBRARY_PACKAGE_DIRS = [
   "web-vue",
   "web-preact",
   "web-vanilla",
-  "islets",
   "island-trigger",
   "graphql",
   "a2a",

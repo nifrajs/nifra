@@ -34,6 +34,9 @@ export default {
     // worker (then /mcp never invokes Pages Functions).
     if (url.pathname === "/mcp")
       return Promise.resolve(Response.redirect("https://mcp.nifra.dev/", 308))
+    // The nano lane merged into islands; old links land on the page that replaced it.
+    if (url.pathname === "/docs/nano")
+      return Promise.resolve(Response.redirect(new URL("/docs/islands", url), 301))
     return handler.fetch(...args)
   },
 }

@@ -2,6 +2,9 @@
  * Implements exactly the surfaces `BindableElement`/`BindableRoot` declare - if the walker grows
  * a DOM dependency these fakes don't model, the type system flags it here first. */
 
+const dataAttr = (key: string): string =>
+  `data-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
+
 export class FakeElement {
   parent: FakeElement | undefined
   private readonly attrs = new Map<string, string>()
@@ -19,6 +22,23 @@ export class FakeElement {
       return want
     },
   }
+
+  /** `dataset` over the `data-*` attributes, as the island mount reads and marks hosts. */
+  readonly dataset: Record<string, string | undefined> = new Proxy(
+    {},
+    {
+      get: (_, key) =>
+        typeof key === "string" ? (this.getAttribute(dataAttr(key)) ?? undefined) : undefined,
+      set: (_, key, value) => {
+        this.setAttribute(dataAttr(String(key)), String(value))
+        return true
+      },
+      deleteProperty: (_, key) => {
+        this.removeAttribute(dataAttr(String(key)))
+        return true
+      },
+    },
+  )
 
   constructor(attrs: Record<string, string> = {}) {
     for (const [k, v] of Object.entries(attrs)) this.attrs.set(k, v)
@@ -51,6 +71,7 @@ export class FakeElement {
     )
   }
   dispatch(type: string, event: Partial<Event> = {}): void {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: listeners under test read only the fields a test passes
     for (const l of this.listeners.get(type) ?? []) l(event as Event)
   }
 }

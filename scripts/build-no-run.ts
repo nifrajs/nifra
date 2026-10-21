@@ -26,7 +26,7 @@ const GROUPS = [
     "create-nifra",
     "nifra",
   ],
-  ["web-solid", "web-react", "web-vue", "web-preact", "web-svelte", "web-vanilla", "islets"],
+  ["web-solid", "web-react", "web-vue", "web-preact", "web-svelte", "web-vanilla"],
 ]
 
 interface PackageJson {

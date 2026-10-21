@@ -966,6 +966,10 @@ function subscribeSse(
         const init: RequestInit = { method, headers, signal: controller.signal }
         if (encoded !== undefined) init.body = encoded
         const response = await doFetch(url, init)
+        if (response.status === 204) {
+          close()
+          return
+        }
         if (!response.ok || response.body === null) {
           void response.body?.cancel().catch(() => {})
           throw new Error(`sse_http_${response.status}`)

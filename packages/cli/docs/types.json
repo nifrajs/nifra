@@ -1928,31 +1928,18 @@
     "doc": "/** A `Response` a route declared as binary. `Jsonify` maps this to `Blob`. */"
   },
   {
+    "name": "BindIslandContext",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BindIslandContext<P> {\n    /** The island's host element. */\n    readonly root: HTMLElement;\n    /** The parsed `data-island-props`, or `undefined` when absent or malformed. */\n    readonly props: P | undefined;\n    /**\n     * The signal the markup binds as `key`, seeded from `props[key]` when present, else `fallback`.\n     * Each key returns the same signal across calls.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n    /**\n     * Run `fn` when the island unmounts - for timers, requests and listeners the setup starts. Called\n     * after the island unmounted (say, once an awaited request settles), it runs `fn` at once.\n     */\n    onDispose(fn: () => void): void;\n}",
+    "doc": "/** What a `bindIsland` setup receives. */"
+  },
+  {
     "name": "BindListOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BindListOptions<T> {\n    key(item: T): string | number;\n    create(item: T): HTMLElement;\n    update?(el: HTMLElement, item: T): void;\n}",
-    "doc": "/** How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the\n * array index) - it is what lets add/remove/reorder touch only the changed rows. */"
-  },
-  {
-    "name": "BindResourceHandlers",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface BindResourceHandlers<T> {\n    ready(el: HTMLElement, value: T): void;\n    pending?(el: HTMLElement): void;\n    error?(el: HTMLElement, error: unknown): void;\n}",
-    "doc": "/** How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a\n * success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden\n * \"still loading\" state can slip through as a rendered `undefined`. */"
-  },
-  {
-    "name": "BindableElement",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface BindableElement {\n    getAttribute(name: string): string | null;\n    setAttribute(name: string, value: string): void;\n    removeAttribute(name: string): void;\n    textContent: string | null;\n    hidden: boolean;\n    value?: string;\n    readonly classList: {\n        toggle(name: string, force?: boolean): unknown;\n    };\n    addEventListener(type: string, listener: (event: Event) => void): void;\n    removeEventListener(type: string, listener: (event: Event) => void): void;\n}",
-    "doc": "/** The element surface the walker needs - structural, so tests can drive it without a real DOM. */"
-  },
-  {
-    "name": "BindableRoot",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface BindableRoot {\n    querySelectorAll(selector: string): Iterable<BindableElement>;\n}"
+    "signature": "export interface BindListOptions<T, E extends ListNode = HTMLElement> {\n    /** Stable and unique per item - never the array index, or a removal reuses the wrong node. */\n    key(item: T): string | number;\n    create(item: T): E;\n    /** Brings a node in line with its item: runs after `create` and on every later change. */\n    update?(el: E, item: T): void;\n}",
+    "doc": "/** How `bindList` turns items into keyed DOM. */"
   },
   {
     "name": "Blocker",
@@ -3676,7 +3663,7 @@
   {
     "name": "Computed",
     "kind": "type",
-    "package": "@nifrajs/islets",
+    "package": "@nifrajs/web",
     "signature": "export type Computed<T> = {\n    (): T;\n    dispose(): void;\n};",
     "doc": "/** A derived value: call it to read (tracking), `.dispose()` to stop recomputing it. */"
   },
@@ -7029,7 +7016,7 @@
     "name": "IdempotencyOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface IdempotencyOptions {\n    /** Where claims + cached responses live. `MemoryIdempotencyStore` for dev; a shared store in production. */\n    readonly store: IdempotencyStore;\n    /** Header carrying the key. Default `\"idempotency-key\"`. */\n    readonly header?: string;\n    /** Methods the guard applies to. Default `[\"POST\", \"PUT\", \"PATCH\", \"DELETE\"]` (unsafe methods). */\n    readonly methods?: readonly string[];\n    /** How long a completed response is replayable, in ms. Default 24h. */\n    readonly ttlMs?: number;\n    /** How long the in-flight lock survives a crashed handler, in ms. Default 60s. */\n    readonly lockTtlMs?: number;\n    /** Max response bytes to cache. A larger response is returned but **not** stored. Default 1 MiB. */\n    readonly maxBytes?: number;\n    /**\n     * Whether a response should be cached for replay. Default: any status below 500 except 401, 403,\n     * 408, 409, 425, and 429, and the request rejections 400, 404, 405, 413, 414, 415, 422 and 431.\n     * Like a transient 5xx, those say the operation did not run: replaying one would refuse every\n     * retry under that key until it expired, and storing a rejection lets a caller fill the store\n     * with keys sent to a route that does not exist. A handler that answers 400 or 422 after a side\n     * effect should supply its own predicate.\n     */\n    readonly shouldCache?: (response: Response) => boolean;\n    /**\n     * Derive the store key from the request. Default: the `header` value scoped by method + path **and\n     * by a digest of the caller's credentials** (see `principalHeaders`), so neither a different\n     * endpoint nor a different caller can collide on one key. Return `null`/`\"\"` to skip dedupe for\n     * this request.\n     *\n     * Supplying your own replaces that scoping entirely - a custom key MUST fold in the principal\n     * itself (e.g. `` `${userId}:${req.headers.get(\"idempotency-key\")}` ``), or one user can replay\n     * another's stored response by guessing their key.\n     */\n    readonly key?: (req: Request, header: string) => string | null | Promise<string | null>;\n    /**\n     * Headers whose values identify the caller. Their digest scopes the default key, so the same\n     * `Idempotency-Key` from two callers addresses two entries and neither can read the other's cached\n     * response. Defaults to Authorization, Cookie, and x-api-key. Only a digest is stored - a raw\n     * credential must never become a store key, which would put it in front of every Redis `KEYS` dump\n     * and slow-log line. Ignored when `key` is supplied.\n     *\n     * The digest covers the header value verbatim, so anything that varies between two requests from the\n     * same caller - a rotated bearer token, an analytics cookie appended mid-session - lands on a fresh\n     * key and the retry executes again. Narrow the list (or supply `key`) when the app has a stable\n     * principal id to scope by; that is strictly better than digesting a whole `Cookie` header.\n     *\n     * A request that carries none of these headers is keyed as anonymous. If an authentication stage\n     * then accepts it (a credential in another header), its response is not stored: under the\n     * anonymous key any caller presenting the same `Idempotency-Key` would be replayed it. Add that\n     * header here to dedupe such requests.\n     */\n    readonly principalHeaders?: readonly string[];\n}"
+    "signature": "export interface IdempotencyOptions {\n    /** Where claims + cached responses live. `MemoryIdempotencyStore` for dev; a shared store in production. */\n    readonly store: IdempotencyStore;\n    /** Header carrying the key. Default `\"idempotency-key\"`. */\n    readonly header?: string;\n    /** Methods the guard applies to. Default `[\"POST\", \"PUT\", \"PATCH\", \"DELETE\"]` (unsafe methods). */\n    readonly methods?: readonly string[];\n    /** How long a completed response is replayable, in ms. Default 24h. */\n    readonly ttlMs?: number;\n    /** Pending lease, renewed while work runs (for up to `ttlMs`) when the store supports `renew`.\n     * Default 60s. Stores without renewal reserve for at least `ttlMs` instead. */\n    readonly lockTtlMs?: number;\n    /** Max response bytes to capture. Larger cacheable responses retain a fixed terminal replay error so a\n     * retry cannot repeat their effects. That small control record is independent of this cap. Default 1 MiB. */\n    readonly maxBytes?: number;\n    /**\n     * Whether a response should be cached for replay. Default: any status below 500 except 401, 403,\n     * 408, 409, 425, and 429, and the request rejections 400, 404, 405, 413, 414, 415, 422 and 431.\n     * Like a transient 5xx, those say the operation did not run: replaying one would refuse every\n     * retry under that key until it expired, and storing a rejection lets a caller fill the store\n     * with keys sent to a route that does not exist. A handler that answers 400 or 422 after a side\n     * effect should supply its own predicate.\n     */\n    readonly shouldCache?: (response: Response) => boolean;\n    /**\n     * Derive the store key from the request. Default: the `header` value scoped by method + path **and\n     * by a digest of the caller's credentials** (see `principalHeaders`), so neither a different\n     * endpoint nor a different caller can collide on one key. Return `null`/`\"\"` to skip dedupe for\n     * this request.\n     *\n     * Supplying your own replaces that scoping entirely - a custom key MUST fold in the principal\n     * itself (e.g. `` `${userId}:${req.headers.get(\"idempotency-key\")}` ``), or one user can replay\n     * another's stored response by guessing their key.\n     */\n    readonly key?: (req: Request, header: string) => string | null | Promise<string | null>;\n    /**\n     * Headers whose values identify the caller. Their digest scopes the default key, so the same\n     * `Idempotency-Key` from two callers addresses two entries and neither can read the other's cached\n     * response. Defaults to Authorization, Cookie, and x-api-key. Only a digest is stored - a raw\n     * credential must never become a store key, which would put it in front of every Redis `KEYS` dump\n     * and slow-log line. Ignored when `key` is supplied.\n     *\n     * The digest covers the header value verbatim, so anything that varies between two requests from the\n     * same caller - a rotated bearer token, an analytics cookie appended mid-session - lands on a fresh\n     * key and the retry executes again. Narrow the list (or supply `key`) when the app has a stable\n     * principal id to scope by; that is strictly better than digesting a whole `Cookie` header.\n     *\n     * A request that carries none of these headers is keyed as anonymous. If an authentication stage\n     * then accepts it (a credential in another header), its response is not stored: under the\n     * anonymous key any caller presenting the same `Idempotency-Key` would be replayed it. Add that\n     * header here to dedupe such requests.\n     */\n    readonly principalHeaders?: readonly string[];\n}"
   },
   {
     "name": "IdempotencyPluginOptions",
@@ -7054,7 +7041,7 @@
     "name": "IdempotencyRecord",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface IdempotencyRecord {\n    readonly status: number;\n    /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */\n    readonly headers: ReadonlyArray<readonly [string, string]>;\n    /** Response body, base64-encoded. */\n    readonly body: string;\n    /**\n     * The response came from a route this middleware's `beforeHandle` covers, so a retry is replayed\n     * from there - after the route's authentication, validation and earlier guards accept it again. A\n     * record without it (a route declared before `.use(idempotency())`) is replayed in `onRequest`.\n     */\n    readonly recheck?: boolean;\n}",
+    "signature": "export interface IdempotencyRecord {\n    readonly status: number;\n    /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */\n    readonly headers: ReadonlyArray<readonly [string, string]>;\n    /** Response body, base64-encoded. */\n    readonly body: string;\n    /**\n     * Set on every record this middleware writes: the response came from a covered route, so a retry is\n     * replayed just before that route's handler, after its authentication, validation and guards accept\n     * it again. A record without it is refused: its original route admission cannot be established.\n     */\n    readonly recheck?: boolean;\n}",
     "doc": "/** A captured response, replayed verbatim on a retry. Body is base64 (binary-safe + JSON-serializable). */"
   },
   {
@@ -7087,7 +7074,7 @@
     "name": "IdempotencyStore",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface IdempotencyStore {\n    /**\n     * Atomically claim `key`: `\"replay\"` if a completed response is stored, `\"in_flight\"` if another\n     * request holds the lock, else `\"new\"` (the caller now owns the lock and must `complete`/`release`).\n     * The in-flight lock expires after `lockTtlMs` so a crashed handler can't wedge the key forever.\n     */\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    /** Store the completed response only when `reservation` still owns the lock (kept for `ttlMs`). */\n    complete(key: string, reservation: string, record: IdempotencyRecord, ttlMs: number): Promise<boolean>;\n    /** Release only the lock owned by `reservation` (handler errored / response not cacheable). */\n    release(key: string, reservation: string): Promise<boolean>;\n}",
+    "signature": "export interface IdempotencyStore {\n    /**\n     * Atomically claim `key`: `\"replay\"` if a completed response is stored, `\"in_flight\"` if another\n     * request holds the lock, else `\"new\"` (the caller now owns the lock and must `complete`/`release`).\n     * The in-flight lock expires after `lockTtlMs` so a crashed handler can't wedge the key forever.\n     */\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    /** Store the completed response only when `reservation` still owns the lock (kept for `ttlMs`). */\n    complete(key: string, reservation: string, record: IdempotencyRecord, ttlMs: number): Promise<boolean>;\n    /** Release only the lock owned by `reservation` (handler errored / response not cacheable). */\n    release(key: string, reservation: string): Promise<boolean>;\n    /** Extend a still-owned pending lease atomically; false means ownership was lost.\n     * Without this, pending reservations use at least the replay retention TTL. */\n    renew?(key: string, reservation: string, lockTtlMs: number): Promise<boolean>;\n}",
     "doc": "/**\n * Store backing the idempotency guarantee. Production deploys MUST use a shared store so the key holds\n * across instances; `begin` MUST be **atomic** (e.g. Redis `SET key NX PX lockTtlMs`) or two concurrent\n * retries can both see `\"new\"`. {@link MemoryIdempotencyStore} is for dev / single-instance only.\n */"
   },
   {
@@ -7520,7 +7507,7 @@
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function Island({ id, props, strategy, children }: IslandProps): ReactNode;",
-    "doc": "/** Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the\n * interactivity (see `mountIslands`). Props are JSON-encoded into `data-props`; React escapes the\n * attribute value and the client reads the decoded `dataset.props`. */"
+    "doc": "/** Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the\n * interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes\n * the attribute value and the client reads the decoded `dataset.islandProps`. */"
   },
   {
     "name": "IslandBusUnsubscribe",
@@ -7537,24 +7524,11 @@
     "doc": "/** Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`. */"
   },
   {
-    "name": "IslandContext",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface IslandContext {\n    /** The island's host element. */\n    readonly root: BindableElement & BindableRoot;\n    /**\n     * A named signal, seeded from `data-island-state`'s value for `key` when present, else\n     * `fallback`. Each key returns the SAME signal across calls - bindings and setup share state.\n     */\n    state<T>(key: string, fallback: T): Signal<T>;\n}"
-  },
-  {
     "name": "IslandEnhancer",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void;",
     "doc": "/**\n * Enhances one island element with its (typed) props. Return a cleanup function to tear down on\n * `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing.\n * The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.\n */"
-  },
-  {
-    "name": "IslandHost",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface IslandHost extends BindableElement, BindableRoot {\n    setAttribute(name: string, value: string): void;\n}",
-    "doc": "/** The host-element surface `mountIslands` needs beyond bindings. */"
   },
   {
     "name": "IslandInstance",
@@ -7566,32 +7540,12 @@
     "name": "IslandProps",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface IslandProps {\n    /** Stable id matching the key in the client's `mountIslands({ <id>: enhancer })`. */\n    readonly id: string;\n    /** Serializable props handed to the enhancer (JSON-encoded inline in `data-props`; no closures). */\n    readonly props?: unknown;\n    /** When the enhancer runs (default `load`). `visible` (IntersectionObserver) wins TTI on long pages. */\n    readonly strategy?: IslandStrategy;\n    /** The island's server-rendered content - real HTML, present with JS off. */\n    readonly children?: ReactNode;\n}"
-  },
-  {
-    "name": "IslandScope",
-    "kind": "type",
-    "package": "@nifrajs/islets",
-    "signature": "export type IslandScope = {\n    readonly signals: Readonly<Record<string, Signal<unknown>>>;\n    readonly handlers: Readonly<Record<string, (event: Event) => void>>;\n};"
-  },
-  {
-    "name": "IslandSetup",
-    "kind": "type",
-    "package": "@nifrajs/islets",
-    "signature": "export type IslandSetup = (ctx: IslandContext) => Record<string, (event: Event) => void> | undefined;",
-    "doc": "/** An island's setup function: read/seed state, return the event handlers the markup names. */"
+    "signature": "export interface IslandProps {\n    /** Stable id matching the key in the client's `mountIslands({ <id>: enhancer })`. */\n    readonly id: string;\n    /** Serializable props handed to the enhancer (JSON-encoded inline in `data-island-props`; no closures). */\n    readonly props?: unknown;\n    /** When the enhancer runs (default `load`). `visible` (IntersectionObserver) wins TTI on long pages. */\n    readonly strategy?: IslandStrategy;\n    /** The island's server-rendered content - real HTML, present with JS off. */\n    readonly children?: ReactNode;\n}"
   },
   {
     "name": "IslandStrategy",
     "kind": "type",
     "package": "@nifrajs/island-trigger",
-    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
-    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
-  },
-  {
-    "name": "IslandStrategy",
-    "kind": "type",
-    "package": "@nifrajs/islets",
     "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
     "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
   },
@@ -8118,6 +8072,20 @@
     "package": "@nifrajs/web-react",
     "signature": "export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, \"href\"> {\n    /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */\n    readonly to: string;\n    /** Replace the current history entry instead of pushing. */\n    readonly replace?: boolean;\n    /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the\n     * nearest ancestor's `data-nifra-prefetch` decides, else `intent` (hover or focus). */\n    readonly prefetch?: PrefetchMode;\n}",
     "doc": "/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and\n * `prefetch`. */"
+  },
+  {
+    "name": "ListContainer",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ListContainer<E extends ListNode> {\n    replaceChildren(...nodes: E[]): void;\n    insertBefore(node: E, before: E | null): unknown;\n}",
+    "doc": "/** The container surface `bindList` uses; an `Element` has it. */"
+  },
+  {
+    "name": "ListNode",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ListNode {\n    remove(): void;\n}",
+    "doc": "/** The node surface `bindList` uses; an `Element` has it. */"
   },
   {
     "name": "ListOptions",
@@ -8873,7 +8841,7 @@
     "name": "MemoryIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/middleware",
-    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly maxKeyBytes;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    private validateKey;\n    private maintain;\n    private reserve;\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    complete(key: string, reservation: string, record: IdempotencyRecord, ttlMs: number): Promise<boolean>;\n    release(key: string, reservation: string): Promise<boolean>;\n}",
+    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly maxKeyBytes;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    private validateKey;\n    private maintain;\n    private reserve;\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    complete(key: string, reservation: string, record: IdempotencyRecord, ttlMs: number): Promise<boolean>;\n    release(key: string, reservation: string): Promise<boolean>;\n    renew(key: string, reservation: string, lockTtlMs: number): Promise<boolean>;\n}",
     "doc": "/** In-process store. Refuses to run in production unless explicitly allowed (per-instance ⇒ no cross-instance dedupe). */"
   },
   {
@@ -8960,14 +8928,14 @@
     "name": "MemoryStore",
     "kind": "class",
     "package": "@nifrajs/middleware",
-    "signature": "export declare class MemoryStore implements RateLimitStore {\n    private readonly windows;\n    private readonly maxKeys;\n    private readonly sweepIntervalMs;\n    private lastSweep;\n    private evictionScans;\n    /** Cumulative entries inspected by the eviction scan since construction - an eviction-pressure\n     * gauge. The bounded scan keeps this ~O(1) per over-cap insert (≤ {@link MAX_EVICTION_SCAN}); a\n     * regressed full O(n) sweep would make it ~maxKeys per insert (what the regression test asserts). */\n    get evictionScanCount(): number;\n    constructor(options?: MemoryStoreOptions);\n    hit(key: string, windowMs: number): Promise<RateLimitResult>;\n    private sweepExpired;\n    private enforceMaxKeys;\n}",
-    "doc": "/**\n * In-process fixed-window store. Refuses to run in production unless explicitly allowed.\n *\n * Bounded against unbounded growth: expired windows are swept lazily (amortized, at most once per\n * `sweepIntervalMs`) and the key set is hard-capped at `maxKeys` (expired keys are evicted first,\n * then oldest active keys).\n * Without this, expired entries for keys never seen again - and the unbounded key space of a bot scan\n * - would accumulate in the map forever and OOM a single-instance deploy.\n */"
+    "signature": "export declare class MemoryStore implements RateLimitStore {\n    private readonly windows;\n    private scan;\n    private readonly maxKeys;\n    private readonly sweepIntervalMs;\n    private lastSweep;\n    private evictionScans;\n    /** Cumulative entries inspected by the eviction scan since construction - an eviction-pressure\n     * gauge. The bounded scan keeps this ~O(1) per over-cap insert (≤ {@link MAX_EVICTION_SCAN}); a\n     * regressed full O(n) sweep would make it ~maxKeys per insert (what the regression test asserts). */\n    get evictionScanCount(): number;\n    constructor(options?: MemoryStoreOptions);\n    hit(key: string, windowMs: number): Promise<RateLimitResult>;\n    private sweepExpired;\n    private reclaimExpired;\n}",
+    "doc": "/**\n * In-process fixed-window store. Refuses to run in production unless explicitly allowed.\n *\n * Bounded against unbounded growth: expired windows are swept lazily (amortized, at most once per\n * `sweepIntervalMs`) and the key set is hard-capped at `maxKeys` (expired keys are evicted first,\n * then new keys are refused without resetting live quotas).\n * Without this, expired entries for keys never seen again - and the unbounded key space of a bot scan\n * - would accumulate in the map forever and OOM a single-instance deploy.\n */"
   },
   {
     "name": "MemoryStoreOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface MemoryStoreOptions {\n    /** Allow the in-memory store in production. Off by default - a per-instance limiter is unsafe across instances. */\n    readonly allowInProduction?: boolean;\n    /** Hard cap on tracked client keys; expired keys are evicted first, then oldest active keys. Default `100_000`.\n     * Bounds memory against an unbounded key space (bot scans, per-IP buckets). */\n    readonly maxKeys?: number;\n    /** Minimum interval (ms) between amortized sweeps of expired windows. Default `30_000`. */\n    readonly sweepIntervalMs?: number;\n}"
+    "signature": "export interface MemoryStoreOptions {\n    /** Allow the in-memory store in production. Off by default - a per-instance limiter is unsafe across instances. */\n    readonly allowInProduction?: boolean;\n    /** Hard cap on tracked client keys; expired keys are reclaimed, and new keys fail closed at capacity. Default `100_000`.\n     * Bounds memory against an unbounded key space (bot scans, per-IP buckets). */\n    readonly maxKeys?: number;\n    /** Minimum interval (ms) between amortized sweeps of expired windows. Default `30_000`. */\n    readonly sweepIntervalMs?: number;\n}"
   },
   {
     "name": "MemoryToolIdempotencyStore",
@@ -9315,12 +9283,6 @@
     "kind": "interface",
     "package": "@nifrajs/graphql",
     "signature": "export interface MountGraphqlOptions<Context = unknown, Env = unknown> extends Omit<GraphqlHttpOptions<Context, Env>, \"nifra\"> {\n    /** Endpoint path. Default `/graphql`. */\n    readonly path?: string;\n    /** Enable `GET /graphql` (queries only). Default `true`. */\n    readonly enableGet?: boolean;\n    /**\n     * Enable `graphql-transport-ws` subscriptions on the same path. Pass `true` to reuse `schema`,\n     * `context`, `authorize` (run on the upgrade request) and the query limits, or pass the WS options.\n     * With `authorize` set, WS options must bring their own `authorize` or `onConnect`; the mount throws\n     * otherwise, since every socket would be admitted. Requires `.use(websocket())` and `graphql-ws`.\n     */\n    readonly subscriptions?: boolean | GraphqlWsOptions<Record<string, unknown>>;\n}"
-  },
-  {
-    "name": "MountIslandOptions",
-    "kind": "interface",
-    "package": "@nifrajs/islets",
-    "signature": "export interface MountIslandOptions {\n    readonly root?: BindableRoot;\n}"
   },
   {
     "name": "MountOptions",
@@ -11623,7 +11585,7 @@
     "name": "RateLimitResult",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface RateLimitResult {\n    /** Hits recorded in the current window, including this one. */\n    readonly count: number;\n    /** Epoch-ms when the current window resets. */\n    readonly resetAt: number;\n}"
+    "signature": "export interface RateLimitResult {\n    /** Hits recorded in the current window, including this one. */\n    readonly count: number;\n    /** Epoch-ms when the current window resets. */\n    readonly resetAt: number;\n    /** The key was refused: the store is full and its bounded scan found no expired window this time.\n     * An active quota is never discarded to make room. */\n    readonly limited?: boolean;\n}"
   },
   {
     "name": "RateLimitStore",
@@ -11684,13 +11646,6 @@
     "package": "@nifrajs/core",
     "signature": "export type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>;",
     "doc": "/** Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end). */"
-  },
-  {
-    "name": "Readable",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface Readable<T> {\n    get(): T;\n    subscribe(listener: (value: T) => void): () => void;\n}",
-    "doc": "/** A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so\n * `bind`/`bindList` accept either. */"
   },
   {
     "name": "ReasoningDeltaView",
@@ -11977,7 +11932,7 @@
     "name": "RenderAdapter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the\n     * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data); a\n     * document that sends a policy keeps the nonce only when the returned HTML carries it. Return\n     * `undefined` when the render suspended on something only `renderToStream` waits for (React's\n     * `use` or `lazy` inside `<Suspense>`): the page is then streamed instead.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): string | undefined | Promise<string | undefined>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n    /**\n     * Set when a render can produce markup that belongs outside the app root. Every render is then\n     * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.\n     */\n    readonly documentParts?: boolean;\n}",
+    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the\n     * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data); a\n     * document that sends a policy keeps the nonce only when the returned HTML carries it. Return\n     * `undefined` when the render suspended on something only `renderToStream` waits for (React's\n     * `use` or `lazy` inside `<Suspense>`): the page is then streamed instead.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): string | undefined | Promise<string | undefined>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n    /**\n     * Set when a render can produce markup that belongs outside the app root. Every render is then\n     * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.\n     */\n    readonly documentParts?: boolean;\n    /**\n     * Render the chain and return only the HTML of the slot named `name`, or `undefined` when the\n     * render has no such slot. Called for an {@link SWAP_HEADER} request; an adapter without it, or a\n     * render without the slot, answers with the whole document, which the client loads normally.\n     */\n    renderSlot?(chain: readonly unknown[], props: RenderProps, name: string): string | undefined | Promise<string | undefined>;\n}",
     "doc": "/**\n * The seam every render adapter implements. New adapters should prove these invariants with\n * `assertRenderAdapterConformance`; framework-specific behavior remains locally tested.\n */"
   },
   {
@@ -12019,7 +11974,7 @@
     "name": "RenderPageOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderPageOptions {\n    readonly serverComponents?: import(\"../server-components/types.js\").ComponentState;\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /**\n     * Activation policy for these framework-owned stylesheet links (default `\"blocking\"`). In\n     * `\"deferred\"` mode, hydrating pages fetch with `media=\"print\"` and the generated client promotes\n     * them to `media=\"all\"` after load/error/timeout. Non-hydrated pages remain blocking so JS-off pages\n     * and terminal documents are styled.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** SSG: the URL of a JSON array of the prerendered paths, handed over in place of\n     * {@link prerenderedPaths} so a large set is fetched once instead of riding in every page. */\n    readonly prerenderedListUrl?: string;\n    /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`), handed over to the\n     * client; the chunks this page reads its copy from are preloaded. Omit ⇒ none. */\n    readonly copyChunks?: Readonly<Record<string, string>>;\n    /** The page's locale from the app's locale routing: `<html lang dir>` default to it unless `head`\n     * sets `lang`, the response carries `Content-Language`, and the adapter reads it as\n     * `RenderProps.locale`. Omit ⇒ none of these. */\n    readonly locale?: PageLocale;\n    /** The served locales, handed to the client so it names each page's locale on navigation. */\n    readonly locales?: PageLocales;\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */\n    readonly boundaries?: BoundaryStates;\n    /** The chain's ids and `handle` exports, forwarded as `RenderProps.matchChain` for `useMatches`. */\n    readonly matchChain?: MatchChain;\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. Nonce-bearing\n     * documents are marked `private, no-store` so a request-specific nonce is never replayed. */\n    readonly nonce?: string;\n    /**\n     * A hash-based Content-Security-Policy from `createCspPolicy`. The document then carries `nonce`\n     * only when it needs one (it defers a value, or a head tag names the nonce); otherwise it renders\n     * nonce-free and cacheable. The policy's header is set on the response either way.\n     */\n    readonly csp?: CspPolicy;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `locale`, `title`, `styles`,\n     * `cssLoading`, `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`.\n     * Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
+    "signature": "export interface RenderPageOptions {\n    readonly serverComponents?: import(\"../server-components/types.js\").ComponentState;\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /**\n     * Activation policy for these framework-owned stylesheet links (default `\"blocking\"`). In\n     * `\"deferred\"` mode, hydrating pages fetch with `media=\"print\"` and the generated client promotes\n     * them to `media=\"all\"` after load/error/timeout. Non-hydrated pages remain blocking so JS-off pages\n     * and terminal documents are styled.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** SSG: the URL of a JSON array of the prerendered paths, handed over in place of\n     * {@link prerenderedPaths} so a large set is fetched once instead of riding in every page. */\n    readonly prerenderedListUrl?: string;\n    /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`), handed over to the\n     * client; the chunks this page reads its copy from are preloaded. Omit ⇒ none. */\n    readonly copyChunks?: Readonly<Record<string, string>>;\n    /** The page's locale from the app's locale routing: `<html lang dir>` default to it unless `head`\n     * sets `lang`, the response carries `Content-Language`, and the adapter reads it as\n     * `RenderProps.locale`. Omit ⇒ none of these. */\n    readonly locale?: PageLocale;\n    /** The served locales, handed to the client so it names each page's locale on navigation. */\n    readonly locales?: PageLocales;\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */\n    readonly boundaries?: BoundaryStates;\n    /** The chain's ids and `handle` exports, forwarded as `RenderProps.matchChain` for `useMatches`. */\n    readonly matchChain?: MatchChain;\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /**\n     * The slot an `x-nifra-swap` request names. When the adapter renders slots and nothing is\n     * deferred, the response is that slot's HTML alone; otherwise the whole document.\n     */\n    readonly swapSlot?: string;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. Nonce-bearing\n     * documents are marked `private, no-store` so a request-specific nonce is never replayed. */\n    readonly nonce?: string;\n    /** The request's abort signal. A deferred value that rejects because it aborted is the client\n     * leaving, not a failure, so the server log skips it. Omit ⇒ every rejection is logged. */\n    readonly signal?: AbortSignal;\n    /**\n     * A hash-based Content-Security-Policy from `createCspPolicy`. The document then carries `nonce`\n     * only when it needs one (it defers a value, or a head tag names the nonce); otherwise it renders\n     * nonce-free and cacheable. The policy's header is set on the response either way.\n     */\n    readonly csp?: CspPolicy;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `locale`, `title`, `styles`,\n     * `cssLoading`, `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`.\n     * Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
   },
   {
     "name": "RenderProps",
@@ -12249,17 +12204,17 @@
   },
   {
     "name": "Resource",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export interface Resource<T> extends Readable<ResourceState<T>> {\n    refetch(): void;\n}",
-    "doc": "/** An async cell: a `Readable` of `ResourceState<T>` plus `refetch()`. This is nano's answer to\n * \"suspense\" - an explicit pending/error/ready value, never a thrown promise or a magic boundary. */"
+    "signature": "export type Resource<T> = {\n    (): ResourceState<T>;\n    /** Fetch the current key again; once disposed, nothing. */\n    refetch(): void;\n    /** Stop refetching and abort the request in flight; its result is dropped. */\n    dispose(): void;\n};",
+    "doc": "/** Call it to read the current state (tracking, like a signal). */"
   },
   {
     "name": "ResourceState",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type ResourceState<T> = {\n    readonly status: \"pending\";\n    readonly value: undefined;\n    readonly error: undefined;\n} | {\n    readonly status: \"ready\";\n    readonly value: T;\n    readonly error: undefined;\n} | {\n    readonly status: \"error\";\n    readonly value: undefined;\n    readonly error: unknown;\n};",
-    "doc": "/** The three states of an async cell. A discriminated union on `status` so a consumer must handle\n * every branch - there is no \"value that might secretly be loading\", the failure mode of ad-hoc\n * `isLoading` booleans. `value`/`error` are narrowed by `status`. */"
+    "doc": "/** An async value's state. `status` narrows `value` and `error`, so no branch can be skipped. */"
   },
   {
     "name": "ResponseBodyHook",
@@ -13698,13 +13653,13 @@
     "name": "SSEInit",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SSEInit {\n    readonly status?: number;\n    readonly headers?: ConstructorParameters<typeof Headers>[0];\n    /** Send a `: ` comment ping every N ms so idle proxies don't drop the connection. */\n    readonly keepAlive?: number;\n    /**\n     * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:\n     * `signal` aborts, the queued frames are released, and later sends are no-ops, so a reader that\n     * stalls cannot hold server memory without limit. Raise it for a burst larger than this sent before\n     * the client can read; `Infinity` turns the limit off.\n     */\n    readonly maxBufferedBytes?: number;\n}"
+    "signature": "export interface SSEInit {\n    readonly status?: number;\n    readonly headers?: ConstructorParameters<typeof Headers>[0];\n    /** Send a `: ` comment ping every N ms so idle proxies don't drop the connection. */\n    readonly keepAlive?: number;\n    /**\n     * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:\n     * `signal` aborts, the queued frames are released, and later sends are no-ops, so a reader that\n     * stalls cannot hold server memory without limit. Raise it for a burst larger than this sent before\n     * the client can read. A single frame over the cap is also refused; `Infinity` turns the limit off.\n     */\n    readonly maxBufferedBytes?: number;\n}"
   },
   {
     "name": "SSEInit",
     "kind": "interface",
     "package": "nifra",
-    "signature": "export interface SSEInit {\n    readonly status?: number;\n    readonly headers?: ConstructorParameters<typeof Headers>[0];\n    /** Send a `: ` comment ping every N ms so idle proxies don't drop the connection. */\n    readonly keepAlive?: number;\n    /**\n     * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:\n     * `signal` aborts, the queued frames are released, and later sends are no-ops, so a reader that\n     * stalls cannot hold server memory without limit. Raise it for a burst larger than this sent before\n     * the client can read; `Infinity` turns the limit off.\n     */\n    readonly maxBufferedBytes?: number;\n}"
+    "signature": "export interface SSEInit {\n    readonly status?: number;\n    readonly headers?: ConstructorParameters<typeof Headers>[0];\n    /** Send a `: ` comment ping every N ms so idle proxies don't drop the connection. */\n    readonly keepAlive?: number;\n    /**\n     * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:\n     * `signal` aborts, the queued frames are released, and later sends are no-ops, so a reader that\n     * stalls cannot hold server memory without limit. Raise it for a burst larger than this sent before\n     * the client can read. A single frame over the cap is also refused; `Infinity` turns the limit off.\n     */\n    readonly maxBufferedBytes?: number;\n}"
   },
   {
     "name": "SSEMessage",
@@ -14665,16 +14620,9 @@
   {
     "name": "Signal",
     "kind": "type",
-    "package": "@nifrajs/islets",
+    "package": "@nifrajs/web",
     "signature": "export type Signal<T> = {\n    (): T;\n    set(next: T | ((prev: T) => T)): void;\n};",
     "doc": "/** A readable/writable reactive value: call it to read (tracking), `.set` to write. */"
-  },
-  {
-    "name": "Signal",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface Signal<T> extends Readable<T> {\n    set(value: T): void;\n}",
-    "doc": "/** A writable cell. `set` notifies subscribers only when the value actually changes (`Object.is`), so\n * a redundant write costs nothing. */"
   },
   {
     "name": "SignatureEncoding",
@@ -15376,6 +15324,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface SvgToJsxOptions {\n    /** The JSX prop name for `class`. `\"className\"` for React/Preact; `\"class\"` for Solid. */\n    readonly classProp?: string;\n}"
+  },
+  {
+    "name": "SwapOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface SwapOptions {\n    /** Default `document`. */\n    readonly root?: Document | Element;\n}",
+    "doc": "/** Where `enableSwap` looks for links, forms, slots and islands. */"
   },
   {
     "name": "TableCatalogs",
@@ -16938,7 +16893,7 @@
   {
     "name": "batch",
     "kind": "function",
-    "package": "@nifrajs/islets",
+    "package": "@nifrajs/web",
     "signature": "export declare function batch<T>(fn: () => T): T;",
     "doc": "/**\n * Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so\n * `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the\n * flush runs in the same flush.\n */"
   },
@@ -16950,18 +16905,25 @@
     "doc": "/**\n * `Authorization: Bearer <token>` authentication. Parses the header, runs `verify`, and rejects with\n * `401` (+ `WWW-Authenticate: Bearer`) when the token is missing/invalid (unless `optional`). The\n * verified principal is read via the returned instance - see {@link AuthPlugin}.\n */"
   },
   {
+    "name": "beforeHandler",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function beforeHandler<H extends (context: Context) => unknown>(hook: H): H;",
+    "doc": "/**\n * Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same\n * scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers\n * from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.\n */"
+  },
+  {
+    "name": "beforeHandler",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function beforeHandler<H extends (context: Context) => unknown>(hook: H): H;",
+    "doc": "/**\n * Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same\n * scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers\n * from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.\n */"
+  },
+  {
     "name": "betterAuth",
     "kind": "function",
     "package": "@nifrajs/better-auth",
     "signature": "export declare function betterAuth(auth: BetterAuthLike, options?: BetterAuthOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
     "doc": "/**\n * Mount a better-auth instance into a nifra app: registers its handler at `${basePath}/*`\n * (default `/api/auth/*`) for `GET` + `POST`, so every better-auth endpoint - sign-in/up/out, OAuth\n * callbacks, session, 2FA, magic links, … - is served by your nifra server.\n *\n * ```ts\n * import { betterAuth, requireSession } from \"@nifrajs/better-auth\"\n * import { auth } from \"./auth\"           // your configured better-auth instance\n *\n * const app = server().use(betterAuth(auth))            // wires /api/auth/*\n *   .get(\"/me\", async (c) => (await requireSession(auth, c.req)).user)\n * ```\n *\n * Idempotent (named `\"better-auth\"` - applying twice mounts once). Read the session with\n * {@link getSession} / {@link requireSession}, which infer your better-auth types.\n */"
-  },
-  {
-    "name": "bind",
-    "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function bind<T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void): () => void;",
-    "doc": "/**\n * Bind one element to a source: `apply(el, value)` runs once immediately and again on every change.\n * Returns the unsubscribe - hand it back as the island's cleanup (or collect several).\n *\n *   bind(count, remaining, (el, n) => { el.textContent = String(n) })\n */"
   },
   {
     "name": "bindComponentRouter",
@@ -16971,25 +16933,18 @@
     "doc": "/** Optional router integration; imported only by opted-in application entries. */"
   },
   {
+    "name": "bindIsland",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function bindIsland<P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void): IslandEnhancer<P>;",
+    "doc": "/**\n * The binding tier: `setup` creates the island's state and returns the event handlers its markup\n * names; the island's `data-bind-*` attributes then bind them.\n *\n *   data-bind-text=\"count\"   data-bind-show=\"open\"   data-bind-class=\"active:open\"\n *   data-bind-attr=\"aria-expanded:open\"   data-bind-value=\"query\"   data-bind-on=\"click:add\"\n *\n * Attribute values are signal and handler names, never code; an unknown name warns once and the\n * server-rendered content stays as it is. A binding belongs to its nearest island.\n *\n * A setup or binding that throws stops everything the island started before the error reaches\n * `mountIslands`. On unmount every cleanup runs; one that throws is logged and the rest still run.\n */"
+  },
+  {
     "name": "bindList",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function bindList<T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>): () => void;",
-    "doc": "/**\n * Bind a list signal to a container with keyed reconciliation: new items are `create`d, surviving\n * items are `update`d in place (keeping focus, scroll, and selection), removed items are detached,\n * and the children are ordered to match the array. Returns the unsubscribe.\n *\n * This is the one imperative task too error-prone to hand-write each time - it is why nano exists on\n * top of islands rather than leaving you to rebuild the container on every change.\n */"
-  },
-  {
-    "name": "bindResource",
-    "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function bindResource<T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>): () => void;",
-    "doc": "/**\n * Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and\n * on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).\n *\n *   bindResource(el, user, {\n *     pending: (n) => { n.textContent = \"Loading…\" },\n *     ready: (n, u) => { n.textContent = u.name },\n *     error: (n) => { n.textContent = \"Failed to load\" },\n *   })\n */"
-  },
-  {
-    "name": "bindScope",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function bindScope(root: BindableRoot, scope: IslandScope): Array<() => void>;",
-    "doc": "/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for\n * both reactive effects and event listeners. */"
+    "signature": "export declare function bindList<T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<T, E>): () => void;",
+    "doc": "/**\n * Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item\n * keeps its node, so focus, selection and input state survive a reorder. A render with no earlier\n * nodes replaces the container's children; later renders move only the nodes outside the longest\n * run already in order. `key`, `create` and `update` run untracked: a signal they read does not\n * re-render the list. Returns the disposer; inside an island the binding also stops on unmount.\n */"
   },
   {
     "name": "bodyLimit",
@@ -17491,7 +17446,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function cloudflareZone(options: CloudflareZoneOptions): CdnProvider;",
-    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.\n */"
+    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` or `x-nifra-swap` (soft navigations and slot swaps fetch the page URL with those\n * headers). `nifra cdn-check` tests all three.\n */"
   },
   {
     "name": "collectAssuranceReport",
@@ -17728,16 +17683,9 @@
   {
     "name": "computed",
     "kind": "function",
-    "package": "@nifrajs/islets",
+    "package": "@nifrajs/web",
     "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
     "doc": "/**\n * Derived value, cached into a signal and computed on first read. While an effect (or another\n * computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next\n * input change stops it instead of recomputing, so a dropped computed costs nothing; reading it\n * again starts it afresh. `dispose()` stops it at once.\n */"
-  },
-  {
-    "name": "computed",
-    "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function computed<T>(compute: () => T, deps: readonly Readable<unknown>[]): Readable<T>;",
-    "doc": "/**\n * A derived cell. `computed(() => a.get() + b.get(), [a, b])` recomputes whenever a declared\n * dependency changes and notifies its own subscribers when the derived value changes.\n *\n * The `deps` array is mandatory and explicit ON PURPOSE - it is the contract a linter checks against\n * the signals the body reads (`NF-C023`). Auto-tracking would remove the array but reintroduce the\n * exact \"why didn't this update\" bug that makes framework reactivity hard to get right.\n */"
   },
   {
     "name": "concatSourceMaps",
@@ -18783,7 +18731,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function defineIsland<P = unknown>(enhancer: IslandEnhancer<P>): IslandEnhancer<P>;",
-    "doc": "/**\n * Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is\n * to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is\n * assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:\n *\n *   const counter = defineIsland<{ start: number }>((el, props) => {\n *     let n = props.start                       // props typed, no cast\n *     const out = el.querySelector(\"output\")!\n *     const onClick = () => { out.textContent = String(++n) }\n *     el.querySelector(\"button\")?.addEventListener(\"click\", onClick)\n *     return () => el.querySelector(\"button\")?.removeEventListener(\"click\", onClick)\n *   })\n *   mountIslands({ counter })\n *\n * The props type is a contract, not a validator - `data-props` is JSON authored by your own SSR, so\n * it is trusted framing, not user input. Keep the enhancer body imperative: read the DOM, wire\n * listeners, return cleanup. No hidden reactivity to get wrong.\n */"
+    "doc": "/**\n * Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is\n * to pin the props shape so `el` and `props` are typed inside the body and the enhancer is\n * assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:\n *\n *   const counter = defineIsland<{ start: number }>((el, props) => {\n *     let n = props.start                       // props typed, no cast\n *     const out = el.querySelector(\"output\")!\n *     const onClick = () => { out.textContent = String(++n) }\n *     el.querySelector(\"button\")?.addEventListener(\"click\", onClick)\n *     return () => el.querySelector(\"button\")?.removeEventListener(\"click\", onClick)\n *   })\n *   mountIslands({ counter })\n *\n * The props type is a contract, not a validator - `data-island-props` is JSON authored by your own\n * SSR, so it is trusted framing, not user input. Keep the enhancer body imperative: read the DOM,\n * wire listeners, return cleanup.\n */"
   },
   {
     "name": "defineLocales",
@@ -19111,9 +19059,9 @@
   {
     "name": "effect",
     "kind": "function",
-    "package": "@nifrajs/islets",
+    "package": "@nifrajs/web",
     "signature": "export declare function effect(fn: () => void): () => void;",
-    "doc": "/**\n * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies\n * re-track on every run, so conditional reads subscribe to exactly the live branch.\n */"
+    "doc": "/**\n * Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies\n * re-track on every run, so conditional reads subscribe to exactly the live branch. Every run,\n * the first included, finishes before the effects its writes trigger run, itself among them.\n */"
   },
   {
     "name": "effectLedger",
@@ -19162,6 +19110,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function enableDraft(c: {\n    readonly set: DraftCookieControls;\n}, secret: string, options?: EnableDraftOptions): Promise<void>;",
     "doc": "/**\n * Turn draft mode **on** for this client by setting a signed, HttpOnly `__nifra_draft` cookie. Call it\n * from a route you've already authorized. `secret` signs the cookie - pass the SAME secret to\n * `createWebApp({ draftSecret })` and `withISR({ draftSecret })` so the framework can verify it.\n */"
+  },
+  {
+    "name": "enableSwap",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function enableSwap(enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions): () => void;",
+    "doc": "/**\n * Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under\n * `root` refresh its slot in place. Call it instead of `mountIslands`.\n *\n * - `data-swap=\"replace:<slot>\"` replaces the content of the `data-swap-slot=\"<slot>\"` element;\n *   `append:<slot>` adds to it, and a link or form inside that slot is spent: the slot's child holding\n *   it is removed when the next content arrives, so a \"more\" link at the end of a list gives way to\n *   the next page and its own \"more\" link.\n * - A replacing GET pushes its URL, so a filtered list survives reload and can be shared; back and\n *   forward fetch the slots again for the URL they land on.\n * - The islands inside a slot mount with it and unmount when it is replaced.\n * - While a slot loads it carries `aria-busy=\"true\"`; a newer swap of the same slot cancels the\n *   older one. When the request fails, the page stays as it is and the link or form gets\n *   `data-swap-error`.\n *\n * Nothing inside a `data-island-ignore` element swaps. Returns a disposer that removes the listeners,\n * cancels pending swaps and unmounts every island.\n */"
   },
   {
     "name": "encode",
@@ -19922,7 +19877,7 @@
     "name": "idempotency",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function idempotency(options: IdempotencyOptions): Middleware;",
+    "signature": "export declare function idempotency(options: IdempotencyOptions): IdentityPlugin;",
     "doc": "/**\n * Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.\n *\n * The store key is scoped by method + path **and** by a digest of the caller's credential headers, so\n * a key one caller chose addresses only that caller's entry - presenting someone else's key replays\n * nothing. See `principalHeaders`; a custom `key` replaces that scoping and must do it itself.\n *\n * **`Set-Cookie` is intentionally not cached or replayed** - a cookie set on the first request is\n * session-specific, so replaying it to a different caller (key collision or abuse) would leak/fixate a\n * session. Cache the body + status + the rest of the headers; let auth cookies re-issue per request.\n *\n * The key is not bound to the request body: a key reused with a different body replays the first\n * answer. A route that needs that check declares `schema.idempotency`, which fingerprints the request\n * and refuses a mismatched reuse with 409.\n *\n * Caching buffers the response body, so apply this to JSON/API routes, not streaming SSR responses.\n */"
   },
   {
@@ -20128,7 +20083,7 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const isCacheablePage: (req: Request, res: Response) => boolean;",
-    "doc": "/**\n * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a\n * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond\n * the data header, and, for a request carrying a cookie or Authorization or accepted by an\n * authentication stage, an explicit `public`.\n * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.\n */"
+    "doc": "/**\n * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a\n * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond\n * the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an\n * authentication stage, an explicit `public`.\n * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.\n */"
   },
   {
     "name": "isClientIsland",
@@ -20344,18 +20299,11 @@
     "doc": "/**\n * Whether a gate's command can be found and run from `cwd`, without running the gate. `test` runs\n * on the Bun this agent runs on, so it is always available unless `command` replaces it.\n */"
   },
   {
-    "name": "island",
+    "name": "islandProps",
     "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function island(name: string, setup: IslandSetup): void;",
-    "doc": "/** Register an island's behavior by name (the markup's `data-island` value). */"
-  },
-  {
-    "name": "islandState",
-    "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function islandState(state: Record<string, unknown>): string;",
-    "doc": "/**\n * Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON - emit it\n * through an escaping renderer (`@nifrajs/web-vanilla`'s `html` escapes quotes in attributes), e.g.\n * `html\\`<div data-island=\"compare\" data-island-state=\"${islandState({ count })}\">…\\``.\n */"
+    "package": "@nifrajs/web",
+    "signature": "export declare function islandProps(props: Record<string, unknown>): string;",
+    "doc": "/**\n * The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted\n * attribute (`data-island-props=\"${...}\"`): unquoted, a space in the JSON ends the value and the rest\n * parses as attributes.\n */"
   },
   {
     "name": "jobStoreCertificationProfile",
@@ -20753,16 +20701,9 @@
   {
     "name": "mountIslands",
     "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function mountIslands(rootOrOptions?: BindableRoot | MountIslandOptions): () => void;",
-    "doc": "/**\n * Mount every registered island under `root` (default: the document). Idempotent - a host is\n * marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only\n * mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of\n * its script, and progressive enhancement means the static content is already correct.\n */"
-  },
-  {
-    "name": "mountIslands",
-    "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function mountIslands(enhancers: Readonly<Record<string, IslandEnhancer>>, options?: {\n    readonly root?: ParentNode;\n}): () => void;",
-    "doc": "/**\n * Find every `<nifra-island data-id>` under `root` (default `document`) and enhance each with the\n * matching enhancer, honoring its `data-strategy`. An island whose `id` has no enhancer is left as\n * inert SSR HTML (forward-compatible). An enhancer that throws is isolated - it never blocks the\n * others (each island is independent). Returns a disposer that cancels pending triggers and runs every\n * enhancer's cleanup (call it on soft-nav teardown; harmless if your app never navigates).\n */"
+    "signature": "export declare function mountIslands(enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: {\n    readonly root?: ParentNode;\n}): () => void;",
+    "doc": "/**\n * Find every `[data-island]` element under `root` (default `document`) and enhance each with the\n * matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that\n * is already mounted, is left alone, so calling again after a soft navigation mounts only new hosts.\n * An enhancer that throws is isolated - it never blocks the others. Every effect, list binding and\n * resource an enhancer creates is owned by its island. Returns a disposer that cancels pending\n * triggers and tears down every island it mounted (call it on soft-nav teardown).\n */"
   },
   {
     "name": "mountRouter",
@@ -22429,8 +22370,8 @@
     "name": "resource",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function resource<T>(fetcher: (signal: AbortSignal) => Promise<T>, deps?: readonly Readable<unknown>[]): Resource<T>;",
-    "doc": "/**\n * An async derived cell. `resource(fetcher, [deps])` runs `fetcher` immediately and again whenever a\n * declared dependency changes, exposing the result as an explicit `{ status, value, error }`.\n *\n * Two footguns are handled here so they cannot be got wrong by hand:\n *   - Races: each run holds a generation; a stale run's resolution is dropped, and its `AbortSignal` is\n *     aborted, so an earlier-started-later-finishing fetch never overwrites a newer one.\n *   - Deps: like `computed`, dependencies are DECLARED (`NF-C023` checks the fetcher's `.get()` reads\n *     against the array). A `resource` that reads a signal its deps omit won't refetch when it changes.\n */"
+    "signature": "export declare function resource<K, T>(source: () => K, fetcher: (key: K, abort: AbortSignal) => Promise<T>): Resource<T>;",
+    "doc": "/**\n * An async value keyed by `source`. `source` runs tracked, so a write to any signal it reads starts a\n * new fetch; `fetcher` runs untracked with that key, so nothing it reads (before or after an `await`)\n * is a dependency. A newer fetch aborts the older one and only the newest result lands. Inside an\n * island, unmounting disposes it: the request in flight is aborted and its late result dropped.\n */"
   },
   {
     "name": "respondGraphql",
@@ -23254,16 +23195,9 @@
   {
     "name": "signal",
     "kind": "function",
-    "package": "@nifrajs/islets",
-    "signature": "export declare function signal<T>(initial: T): Signal<T>;",
-    "doc": "/** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */"
-  },
-  {
-    "name": "signal",
-    "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function signal<T>(initial: T): Signal<T>;",
-    "doc": "/** A current-value cell. `signal(0)` -> `.get()` reads, `.set(1)` writes and notifies. */"
+    "doc": "/** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */"
   },
   {
     "name": "signalHydrated",
@@ -23306,6 +23240,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function sitemap(entries: readonly SitemapEntry[], options?: SitemapOptions): string;",
     "doc": "/** Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data). */"
+  },
+  {
+    "name": "slot",
+    "kind": "function",
+    "package": "@nifrajs/web-vanilla",
+    "signature": "export declare function slot(name: string, content: HtmlValue): Template;",
+    "doc": "/**\n * A region of the page that a `data-swap` link or form refreshes on its own. Place it as the only\n * content of the element marked `data-swap-slot=\"<name>\"`:\n *\n *   html`<ul data-swap-slot=\"results\">${slot(\"results\", rows)}</ul>`\n *\n * It renders `content` unchanged. When the server answers a swap request for `name`, the page runs\n * as usual and the response is this slot's HTML alone, so the fragment is always a slice of the\n * real page and cannot drift from it.\n */"
   },
   {
     "name": "snapshotCapabilities",
@@ -24092,6 +24033,13 @@
     "package": "nifra",
     "signature": "export declare function unsignValue(signed: string, secret: CookieSecret): Promise<string | null>;",
     "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n *\n * With a {@link CookieSecret} rotation list, tries each secret in order and accepts the first\n * match. Every listed secret must meet the 32-byte floor - a weak entry throws even when an\n * earlier secret would have matched, so a rotation list can't quietly carry a weak key. (Which\n * rotation generation matched is not attacker-meaningful, so the early exit between secrets leaks\n * nothing useful; each individual comparison stays constant-time.)\n */"
+  },
+  {
+    "name": "untrack",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function untrack<T>(fn: () => T): T;",
+    "doc": "/** Run `fn` without subscribing the running effect or computed to the signals it reads. */"
   },
   {
     "name": "url",

@@ -1,8 +1,8 @@
 import type { IslandStrategy } from "@nifrajs/web/islands"
 /**
  * `@nifrajs/web-react/island` - the `<Island>` marker for no-framework islands. Server-renders its
- * children inside a `<nifra-island>` element that the framework-agnostic `mountIslands` runtime
- * (`@nifrajs/web/islands`) picks up on the client. Imports only `react` (+ a type) - no `react-dom`,
+ * children inside a `<nifra-island data-island>` element that the framework-agnostic `mountIslands`
+ * runtime (`@nifrajs/web/islands`) picks up on the client. Imports only `react` (+ a type) - no `react-dom`,
  * no JSX (the package builds with plain `tsc`).
  *
  * Use on a route with `export const hydrate = false`: the page ships zero framework JS, and only the
@@ -14,7 +14,7 @@ import { createElement, type ReactNode } from "react"
 export interface IslandProps {
   /** Stable id matching the key in the client's `mountIslands({ <id>: enhancer })`. */
   readonly id: string
-  /** Serializable props handed to the enhancer (JSON-encoded inline in `data-props`; no closures). */
+  /** Serializable props handed to the enhancer (JSON-encoded inline in `data-island-props`; no closures). */
   readonly props?: unknown
   /** When the enhancer runs (default `load`). `visible` (IntersectionObserver) wins TTI on long pages. */
   readonly strategy?: IslandStrategy
@@ -23,19 +23,19 @@ export interface IslandProps {
 }
 
 /** Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the
- * interactivity (see `mountIslands`). Props are JSON-encoded into `data-props`; React escapes the
- * attribute value and the client reads the decoded `dataset.props`. */
+ * interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes
+ * the attribute value and the client reads the decoded `dataset.islandProps`. */
 export function Island({ id, props, strategy = "load", children }: IslandProps): ReactNode {
   return createElement(
     "nifra-island",
     {
-      "data-id": id,
+      "data-island": id,
       // The runtime reads a media strategy as two attributes; React drops an object-valued one.
       ...(typeof strategy === "string"
-        ? { "data-strategy": strategy }
-        : { "data-strategy": "media", "data-media": strategy.media }),
-      // Omit `data-props` entirely when there are no props (keeps markup minimal + parse a no-op).
-      ...(props === undefined ? {} : { "data-props": JSON.stringify(props) }),
+        ? { "data-island-strategy": strategy }
+        : { "data-island-strategy": "media", "data-island-media": strategy.media }),
+      // Omit `data-island-props` entirely when there are no props (keeps markup minimal + parse a no-op).
+      ...(props === undefined ? {} : { "data-island-props": JSON.stringify(props) }),
     },
     children,
   )

@@ -14,7 +14,7 @@ Composable middleware for nifra - auth, CSRF, JWT/JWKS, IP restriction, CORS, bo
 
 ## Key exports
 
-- **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware` · from `@nifrajs/middleware`
+- **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => IdentityPlugin` · from `@nifrajs/middleware`
 - **apiKey** _(function)_ - `apiKey: { (options: ApiKeyStaticOptions): AuthPlugin<string>; <P>(options: ApiKeyVerifyOptions<P>): AuthPlugin<P>; }` · from `@nifrajs/middleware`
 - **appendTrailingSlash** _(function)_ - `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").IdentityPlugin<never>` · from `@nifrajs/middleware`
 - **basicAuth** _(function)_ - `basicAuth: { (options: BasicAuthStaticOptions): BasicAuthPlugin<string>; <P>(options: BasicAuthStaticOptions<P>): BasicAuthPlugin<P>; <P>(o…` · from `@nifrajs/middleware`

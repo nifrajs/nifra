@@ -25,11 +25,11 @@ const ids = (app: ReturnType<typeof server>, path: string): readonly string[] =>
 describe("official route assurance evidence", () => {
   test("global hardening is method-accurate and authentication stays order-scoped", () => {
     const app = server()
+      .use(idempotency({ store: new MemoryIdempotencyStore() }))
       .post("/before", () => ({ ok: true }))
       .use(securityHeaders())
       .use(rateLimit({ store: new MemoryStore(), max: 10, windowMs: 1_000, key: () => "test" }))
       .use(csrf({ secret: "0123456789abcdef0123456789abcdef" }))
-      .use(idempotency({ store: new MemoryIdempotencyStore() }))
       .use(bodyLimit({ maxBytes: 1_024 }))
       .use(ipRestriction({ allow: ["127.0.0.1"], clientIp: () => "127.0.0.1" }))
       .get("/public", () => ({ ok: true }))
@@ -38,10 +38,10 @@ describe("official route assurance evidence", () => {
       .post("/mutation", () => ({ ok: true }))
 
     expect(ids(app, "/before")).toEqual([
+      NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
       NIFRA_ASSURANCE.SECURITY_HEADERS,
       NIFRA_ASSURANCE.RATE_LIMITED,
       NIFRA_ASSURANCE.CSRF,
-      NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
       NIFRA_ASSURANCE.BODY_BOUNDED,
       NIFRA_ASSURANCE.IP_RESTRICTED,
     ])
@@ -111,9 +111,9 @@ describe("official route assurance evidence", () => {
       .use(idempotency({ store: new MemoryIdempotencyStore(), methods: ["TRACE", "POST"] }))
       .post("/mutation", () => ({}))
     expect(ids(customMethods, "/mutation")).toEqual([
+      NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
       NIFRA_ASSURANCE.CSRF,
       NIFRA_ASSURANCE.BODY_BOUNDED,
-      NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
     ])
   })
 

@@ -326,25 +326,6 @@
       "Prompt": "{ input: <Schema extends StandardSchemaV1>(schema: Schema) => Prompt<InferOutput<Schema>, Output>; instruction: string; output: <Schema extends StandardSchemaV1>(schema: Schema) => Prompt<Input, InferOutput<Schema>>; request: (input: Input, extraMessages?: readonly PromptMessage[]) => Promise<PromptRequest>; run: (input: Input, options: RunOptions) => Promise<Output> }"
     }
   },
-  "@nifrajs/islets": {
-    ".": {
-      "BindableElement": "{ addEventListener: (type: string, listener: (event: Event) => void) => void; classList: { toggle(name: string, force?: boolean): unknown; }; getAttribute: (name: string) => string; hidden: boolean; removeAttribute: (name: string) => void; setAttribute: (name: string, value: string) => void; textContent: string; value?: string }",
-      "BindableRoot": "{ querySelectorAll: (selector: string) => Iterable<BindableElement> }",
-      "bindScope": "(root: BindableRoot, scope: IslandScope) => (() => void)[]",
-      "IslandScope": "{ handlers: Readonly<Record<string, (event: Event) => void>>; signals: Readonly<Record<string, Signal<unknown>>> }",
-      "IslandContext": "{ root: BindableElement & BindableRoot; state: <T>(key: string, fallback: T) => Signal<T> }",
-      "IslandHost": "{ addEventListener: (type: string, listener: (event: Event) => void) => void; classList: { toggle(name: string, force?: boolean): unknown; }; getAttribute: (name: string) => string; hidden: boolean; querySelectorAll: (selector: string) => Iterable<BindableElement>; removeAttribute: (name: string) => void; setAttribute: (name: string, value: string) => void; textContent: string; value?: string }",
-      "IslandSetup": "{ (ctx: IslandContext): Record<string, (event: Event) => void> }",
-      "island": "(name: string, setup: IslandSetup) => void",
-      "islandState": "(state: Record<string, unknown>) => string",
-      "mountIslands": "(root?: BindableRoot) => void",
-      "batch": "<T>(fn: () => T) => T",
-      "computed": "<T>(fn: () => T) => () => T",
-      "effect": "(fn: () => void) => () => void",
-      "Signal": "{ (): T; set: (next: T | ((prev: T) => T)) => void }",
-      "signal": "<T>(initial: T) => Signal<T>"
-    }
-  },
   "@nifrajs/web-vanilla": {
     ".": {
       "compose": "(chain: readonly unknown[], props: RenderProps) => Template",

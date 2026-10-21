@@ -1023,22 +1023,6 @@
     "functions": 100,
     "lines": 100
   },
-  "packages/islets/src/bind.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/islets/src/island.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/islets/src/signals.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/islets/test/_fake-dom.ts": {
-    "functions": 100,
-    "lines": 100
-  },
   "packages/jobs/src/backoff.ts": {
     "functions": 100,
     "lines": 100

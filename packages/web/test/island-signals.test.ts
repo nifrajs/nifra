@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { batch, computed, effect, signal } from "../src/signals.ts"
+import { batch, computed, effect, signal, untrack, watch } from "../src/internal/island-signals.ts"
 
 describe("signals core", () => {
   test("read/write + effect re-runs, functional updates", () => {
@@ -135,6 +135,72 @@ describe("signals core", () => {
     expect(runs).toBe(3)
   })
 
+  test("a source read several times per run, over many runs, triggers one run per write", () => {
+    const s = signal(0)
+    let runs = 0
+    effect(() => {
+      runs++
+      s() + s()
+    })
+    for (let i = 1; i <= 5; i++) s.set(i)
+    expect(runs).toBe(6)
+  })
+
+  test("an effect that writes a signal before reading it does not requeue itself", () => {
+    const trigger = signal(0)
+    const doubled = signal(0)
+    const seen: number[] = []
+    effect(() => {
+      doubled.set(trigger() * 2)
+      seen.push(doubled())
+    })
+    trigger.set(1)
+    expect(seen).toEqual([0, 2])
+  })
+
+  test("an effect that reads then writes the same signal runs again until it settles", () => {
+    const s = signal(0)
+    effect(() => {
+      const v = s()
+      if (v < 3) s.set(v + 1)
+    })
+    expect(s()).toBe(3)
+  })
+
+  test("a write in a first run waits for that run to finish, so no stale value lands after it", () => {
+    const s = signal(0)
+    const other = signal(-1)
+    effect(() => {
+      const v = s()
+      if (v < 3) s.set(v + 1)
+      other.set(v)
+    })
+    expect([s(), other()]).toEqual([3, 3])
+    const t = signal(0)
+    const seen = signal(-1)
+    watch(t, (v) => {
+      if (v < 3) t.set(v + 1)
+      seen.set(v)
+    })
+    expect([t(), seen()]).toEqual([3, 3])
+  })
+
+  test("untrack reads without subscribing", () => {
+    const tracked = signal(1)
+    const quiet = signal(10)
+    let runs = 0
+    effect(() => {
+      runs++
+      tracked()
+      untrack(() => quiet())
+    })
+    quiet.set(11)
+    expect(runs).toBe(1)
+    tracked.set(2)
+    expect(runs).toBe(2)
+    expect(untrack(() => tracked() + quiet())).toBe(13)
+  })
+
   test("dispose stops an effect", () => {
     const s = signal(0)
     let runs = 0
@@ -243,6 +309,21 @@ describe("batch", () => {
     expect(runs).toEqual(["source 1", "mirror 2"])
   })
 
+  test("an effect that throws during a flush leaves the rest queued for the next flush", () => {
+    const s = signal(0)
+    const seen: number[] = []
+    effect(() => {
+      if (s() === 1) throw new Error("boom")
+    })
+    effect(() => {
+      seen.push(s())
+    })
+    expect(() => s.set(1)).toThrow("boom")
+    expect(seen).toEqual([0])
+    batch(() => {})
+    expect(seen).toEqual([0, 1])
+  })
+
   test("an effect disposed while pending does not run on flush", () => {
     const s = signal(0)
     let runs = 0
@@ -270,5 +351,69 @@ describe("batch", () => {
     expect(seen).toEqual(["1:0", "1:1"])
     stopObserver()
     stopCopy()
+  })
+})
+
+describe("watch (the binding walker's one-signal subscription)", () => {
+  test("applies now, then once per write or batch, in step with computeds", () => {
+    const n = signal(1)
+    const twice = computed(() => n() * 2)
+    const seen: string[] = []
+    effect(() => void twice())
+    watch(n, (v) => seen.push(`${v}:${twice()}`))
+    n.set(2)
+    batch(() => {
+      n.set(3)
+      n.set(4)
+    })
+    expect(seen).toEqual(["1:2", "2:4", "4:8"])
+  })
+
+  test("does not subscribe an effect it is created or run inside", () => {
+    const s = signal(0)
+    let outer = 0
+    const seen: number[] = []
+    effect(() => {
+      outer++
+      watch(s, (v) => seen.push(v))
+    })
+    s.set(1)
+    expect(outer).toBe(1)
+    expect(seen).toEqual([0, 1])
+  })
+
+  test("a stopped watch does not run, even when already queued", () => {
+    const s = signal(0)
+    const seen: number[] = []
+    const stop = watch(s, (v) => seen.push(v))
+    batch(() => {
+      s.set(1)
+      stop()
+    })
+    s.set(2)
+    expect(seen).toEqual([0])
+  })
+
+  test("a signal-shaped source not made by signal() is tracked as an effect", () => {
+    const inner = signal("a")
+    const relay = Object.assign(() => inner(), { set: (next: string) => inner.set(next) })
+    const seen: string[] = []
+    watch(relay, (v) => seen.push(v))
+    inner.set("b")
+    expect(seen).toEqual(["a", "b"])
+  })
+
+  test("reads inside the callback are not dependencies, whatever the source", () => {
+    const items = signal(["a"])
+    const selected = signal("a")
+    const runs: string[] = []
+    const show = (v: readonly string[]) => runs.push(`${v.join()}:${selected()}`)
+    watch(items, show)
+    watch(
+      computed(() => items()),
+      show,
+    )
+    selected.set("b")
+    expect(runs).toEqual(["a:a", "a:a"])
   })
 })

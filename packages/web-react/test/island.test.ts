@@ -13,25 +13,25 @@ describe("<Island> marker", () => {
       ),
     )
     expect(html).toContain("<nifra-island")
-    expect(html).toContain('data-id="counter"')
-    expect(html).toContain('data-strategy="visible"')
-    expect(html).toContain("data-props=")
+    expect(html).toContain('data-island="counter"')
+    expect(html).toContain('data-island-strategy="visible"')
+    expect(html).toContain("data-island-props=")
     expect(html).toContain("start") // the props payload is present (React-escaped)
     expect(html).toContain('<button type="button">count</button>') // real HTML (works JS-off)
   })
 
-  test("defaults strategy to load and omits data-props when there are none", () => {
+  test("defaults strategy to load and omits data-island-props when there are none", () => {
     const html = renderToString(createElement(Island, { id: "x" }, "hi"))
-    expect(html).toContain('data-strategy="load"')
-    expect(html).not.toContain("data-props")
+    expect(html).toContain('data-island-strategy="load"')
+    expect(html).not.toContain("data-island-props")
   })
 
   test("a media strategy renders the media marker the islands runtime reads", () => {
     const html = renderToString(
       createElement(Island, { id: "x", strategy: { media: "(min-width: 800px)" } }, "hi"),
     )
-    expect(html).toContain('data-strategy="media"')
-    expect(html).toContain('data-media="(min-width: 800px)"')
+    expect(html).toContain('data-island-strategy="media"')
+    expect(html).toContain('data-island-media="(min-width: 800px)"')
   })
 
   test("props can't break out of the attribute (React escapes the value)", () => {

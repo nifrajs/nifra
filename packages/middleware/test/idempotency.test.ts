@@ -285,7 +285,7 @@ describe("idempotency middleware", () => {
     expect(await replayed.text()).toBe("ok")
   })
 
-  test("an over-maxBytes response is returned but not cached", async () => {
+  test("an over-maxBytes response retains a terminal replay", async () => {
     let calls = 0
     const app = server()
       .use(idempotency({ store: new MemoryIdempotencyStore(), maxBytes: 8 }))
@@ -301,11 +301,11 @@ describe("idempotency middleware", () => {
       })
 
     expect((await app.fetch(big())).status).toBe(200)
-    expect((await app.fetch(big())).status).toBe(200)
-    expect(calls).toBe(2) // too large to cache ⇒ each call re-runs
+    expect((await app.fetch(big())).status).toBe(507)
+    expect(calls).toBe(1)
   })
 
-  test("an over-maxBytes streamed response is returned intact without replay caching", async () => {
+  test("an over-maxBytes streamed response is returned intact with a terminal replay", async () => {
     const enc = new TextEncoder()
     let calls = 0
     const app = server()
@@ -332,11 +332,11 @@ describe("idempotency middleware", () => {
       })
 
     expect(await (await app.fetch(stream())).text()).toBe("1234567890")
-    expect(await (await app.fetch(stream())).text()).toBe("1234567890")
-    expect(calls).toBe(2)
+    expect((await app.fetch(stream())).status).toBe(507)
+    expect(calls).toBe(1)
   })
 
-  test("cancelling an over-maxBytes body cancels the upstream and frees its lock", async () => {
+  test("cancelling an over-maxBytes body cancels the upstream and keeps its terminal record", async () => {
     const enc = new TextEncoder()
     let cancelled: unknown
     const app = server()
@@ -494,15 +494,12 @@ describe("idempotency replays only what current authentication admits", () => {
     expect(runs).toBe(1)
   })
 
-  test("a route declared before the middleware still replays from onRequest", async () => {
-    let runs = 0
-    const app = server({ unusedScopedHooks: "off" })
-      .post("/protected", () => ({ run: ++runs }))
-      .use(idempotency({ store: new MemoryIdempotencyStore() }))
-
-    expect(await send(app, "k1")).toBe('200 null {"run":1}')
-    expect(await send(app, "k1")).toBe('200 true {"run":1}')
-    expect(runs).toBe(1)
+  test("a route declared before the middleware is rejected at configuration time", () => {
+    expect(() =>
+      server()
+        .post("/protected", () => ({ private: true }))
+        .use(idempotency({ store: new MemoryIdempotencyStore() })),
+    ).toThrow(/before.*route/)
   })
 })
 

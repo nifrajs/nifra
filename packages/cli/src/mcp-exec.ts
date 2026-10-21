@@ -621,7 +621,7 @@ export function projectTools(
             type: "string",
             enum: ["default", "stateful"],
             description:
-              'Stub flavour. "default" is the plain page stub. "stateful" (vanilla only) emits the golden nano pattern - explicit reactivity (signal + computed(fn,[deps]) + keyed bindList + collected cleanups) whose three mistakes NF-C021/C022/C023 catch statically. Use it for a small app with local state (a list a human edits) instead of reaching for a framework.',
+              'Stub flavour. "default" is the plain page stub. "stateful" (vanilla only) emits a reactive island - bindIsland state, data-bind-* markup and a keyed bindList - whose binding names, binding hosts and list keys NF-C047/C048/C022 check statically. Use it for a small app with local state (a list a human edits) instead of reaching for a framework.',
           },
         },
         required: ["path"],

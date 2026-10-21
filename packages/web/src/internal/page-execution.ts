@@ -35,6 +35,7 @@ import type {
 } from "../manifest.ts"
 import type { NonceResolver } from "../nonce.ts"
 import type { MatchChain, PageLocale, PageLocales, RenderAdapter } from "../render-seam.ts"
+import { SWAP_HEADER } from "../render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
@@ -101,6 +102,21 @@ export interface PageRouteContext<Env = unknown> {
 }
 
 /** Whether `c` is a client navigation's data request. On Node, `req.headers` builds every header. */
+// The slot name is echoed in a response header, so only a plain identifier is honored.
+const SLOT_NAME = /^[A-Za-z][\w-]{0,63}$/
+
+/** The slot an `x-nifra-swap` request names, when it is a valid slot name. */
+function swapSlotOf(req: Request): string | undefined {
+  const name = req.headers.get(SWAP_HEADER)
+  return name !== null && SLOT_NAME.test(name) ? name : undefined
+}
+
+/** The `swapSlot` render option for `req`, empty when it is not a swap request. */
+function swapOption(req: Request): { readonly swapSlot?: string } {
+  const swapSlot = swapSlotOf(req)
+  return swapSlot === undefined ? {} : { swapSlot }
+}
+
 function isDataRequest(c: PageRouteContext<unknown>): boolean {
   return (c.header !== undefined ? c.header(DATA_HEADER) : c.req.headers.get(DATA_HEADER)) !== null
 }
@@ -859,6 +875,7 @@ export function createPageRequestExecutor<Env = unknown>(
         routeId: errorId,
         status: 500,
         hydrate: false,
+        signal: req.signal,
         ...(layoutData === undefined ? {} : { layoutData }),
         ...(personalized || layoutData !== undefined ? { headers: PRIVATE_PAGE_HEADERS } : {}),
         ...(nonce === undefined ? {} : { nonce }),
@@ -1007,6 +1024,7 @@ export function createPageRequestExecutor<Env = unknown>(
       search: searchChainOf(modules, loaded, req),
       path: pathOf(req),
       status,
+      signal: req.signal,
       // The browser renders this page inside the root layout, so a page that had to render alone
       // stays server-only, as a nested `_404` does.
       ...(wraps && chain === undefined ? { hydrate: false } : {}),
@@ -1127,7 +1145,7 @@ export function createPageRequestExecutor<Env = unknown>(
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
       }
-      return new Response(ndjsonStream(payload, allDeferred), {
+      return new Response(ndjsonStream(payload, allDeferred, undefined, req.signal), {
         headers: {
           "content-type": "application/x-ndjson; charset=utf-8",
           ...DATA_RESPONSE_HEADERS,
@@ -1164,6 +1182,7 @@ export function createPageRequestExecutor<Env = unknown>(
         search: searchChainOf(layoutModules, mod, req),
         matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
         hydrate: mod.hydrate !== false,
+        signal: req.signal,
         ...preloadOf(route.id),
         ...stylesOf(route.id),
         ...appDocumentOptions,
@@ -1171,6 +1190,8 @@ export function createPageRequestExecutor<Env = unknown>(
       }
       if (serverComponents !== undefined) page.serverComponents = serverComponents
       if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
+      const swapSlot = swapSlotOf(req)
+      if (swapSlot !== undefined) page.swapSlot = swapSlot
       if (layoutData !== undefined) page.layoutData = layoutData
       if (boundaryStates !== undefined) page.boundaries = boundaryStates
       if (responseHeaders !== undefined) page.headers = responseHeaders
@@ -1293,6 +1314,7 @@ export function createPageRequestExecutor<Env = unknown>(
       matchChain: matchChainOf(page.layoutIds, layoutModules, id, mod),
       status: 404,
       hydrate: false,
+      signal: req.signal,
       ...localeOption(req),
       ...(layoutData !== undefined ? { layoutData } : {}),
       ...stylesOf(id),
@@ -1532,7 +1554,11 @@ export function createPageRequestExecutor<Env = unknown>(
             )
           }
           if (boundaryBatch !== undefined) {
-            const streamed = { ...boundaryBatch.initial, ...(staticBoundaries ?? {}) }
+            // Each resolver returns a state for every boundary and marks the other's modes
+            // `unresolved`, so a slot takes its state from the resolver of its own mode.
+            const streamed = { ...boundaryBatch.initial }
+            for (const [name, state] of Object.entries(staticBoundaries ?? {}))
+              if (state.mode === "static") streamed[name] = state
             for (const entry of boundaryBatch.pending) {
               const initial = streamed[entry.name]
               if (initial !== undefined)
@@ -1693,7 +1719,7 @@ export function createPageRequestExecutor<Env = unknown>(
               headers: { ...DATA_RESPONSE_HEADERS, ...revalidateHeader },
             })
           }
-          return new Response(ndjsonStream(forClient, deferred), {
+          return new Response(ndjsonStream(forClient, deferred, undefined, c.req.signal), {
             headers: {
               "content-type": "application/x-ndjson; charset=utf-8",
               ...DATA_RESPONSE_HEADERS,
@@ -1837,7 +1863,7 @@ export function createPageRequestExecutor<Env = unknown>(
           },
           serverLeafOf(route, mod),
         )
-        return renderPageResult({
+        const page: DocumentInput = {
           adapter,
           chain,
           data,
@@ -1850,6 +1876,7 @@ export function createPageRequestExecutor<Env = unknown>(
           search,
           matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
           hydrate: mod.hydrate !== false,
+          signal: c.req.signal,
           ...layoutProps,
           ...preloadOf(route.id),
           ...stylesOf(route.id),
@@ -1860,7 +1887,10 @@ export function createPageRequestExecutor<Env = unknown>(
           ...(nonce === undefined ? {} : { nonce }),
           ...cspOption,
           ...titleOption,
-        })
+          ...swapOption(c.req),
+        }
+        if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
+        return renderPageResult(page)
       }),
 
     fallback: withResponseControls(async (c, controls) => {

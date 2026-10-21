@@ -34,6 +34,45 @@ function collect<T>(count: number): {
 }
 
 describe("api.route.subscribe()", () => {
+  test("HTTP 204 stops reconnecting and closes exactly once", async () => {
+    const app = server()
+      .use(streaming())
+      .sse("/done", { sse: post }, () => {})
+    let connects = 0
+    let closes = 0
+    let errors = 0
+    let finished!: () => void
+    const closed = new Promise<void>((resolve) => {
+      finished = resolve
+    })
+    const api = client<typeof app>("http://x", {
+      fetch: async () => {
+        connects++
+        return new Response(null, { status: 204 })
+      },
+    })
+    const subscription = api.done.subscribe(() => {}, {
+      reconnect: { baseDelayMs: 1, maxDelayMs: 1 },
+      onClose: () => {
+        closes++
+        finished()
+      },
+      onError: () => {
+        errors++
+      },
+    })
+    try {
+      await Promise.race([closed, Bun.sleep(100)])
+      expect(connects).toBe(1)
+      expect(closes).toBe(1)
+      expect(errors).toBe(0)
+      await Bun.sleep(10)
+      expect(connects).toBe(1)
+    } finally {
+      subscription.close()
+    }
+    expect(closes).toBe(1)
+  })
   test("receives typed events from an app.sse route (finite stream, reconnect: false)", async () => {
     const app = server()
       .use(streaming())
