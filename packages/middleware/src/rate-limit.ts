@@ -13,7 +13,8 @@ export interface RateLimitResult {
   readonly count: number
   /** Epoch-ms when the current window resets. */
   readonly resetAt: number
-  /** No new key can be admitted without discarding an active quota. */
+  /** The key was refused: the store is full and its bounded scan found no expired window this time.
+   * An active quota is never discarded to make room. */
   readonly limited?: boolean
 }
 
@@ -36,8 +37,8 @@ export interface MemoryStoreOptions {
   readonly sweepIntervalMs?: number
 }
 
-/** Max entries scanned (oldest-first) looking for expired capacity before refusing a new key.
- * Bounds reclamation to O(1) per insertion instead of a full O(n) sweep
+/** Max entries one capacity check scans for an expired window before refusing a new key; the next
+ * check resumes where it stopped. Bounds reclamation to O(1) per insertion instead of a full O(n) sweep
  * under a distinct-key flood - the abuse the key cap defends against. */
 const MAX_EVICTION_SCAN = 64
 
@@ -52,6 +53,7 @@ const MAX_EVICTION_SCAN = 64
  */
 export class MemoryStore implements RateLimitStore {
   private readonly windows = new Map<string, { count: number; resetAt: number }>()
+  private scan: Iterator<[string, { count: number; resetAt: number }]> | undefined
   private readonly maxKeys: number
   private readonly sweepIntervalMs: number
   private lastSweep = 0
@@ -108,15 +110,21 @@ export class MemoryStore implements RateLimitStore {
 
   private reclaimExpired(now: number): boolean {
     // Evicting a live quota lets a key flood reset blocked callers. Reclaim only expired entries;
-    // a bounded scan keeps overflow requests from turning into full-map CPU work.
-    let scanned = 0
-    for (const [key, window] of this.windows) {
+    // a bounded scan keeps overflow requests from turning into full-map CPU work. A refreshed window
+    // keeps its map position, so restarting at the front would re-read the same live entries forever.
+    for (let scanned = 0; scanned < MAX_EVICTION_SCAN; scanned++) {
+      let next = this.scan?.next()
+      if (next === undefined || next.done === true) {
+        this.scan = this.windows.entries()
+        next = this.scan.next()
+        if (next.done === true) return false
+      }
       this.evictionScans++
+      const [key, window] = next.value
       if (now >= window.resetAt) {
         this.windows.delete(key)
         return true
       }
-      if (++scanned >= MAX_EVICTION_SCAN) break
     }
     return false
   }

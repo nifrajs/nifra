@@ -710,8 +710,8 @@ export default function Security() {
         a <code>409</code>; the stored response is replayed just before the handler, <i>after</i> the
         route's authentication, validation and every guard accept the retry - a guard registered before
         or after the middleware alike - so a credential revoked since the first request gets the
-        route's current answer. Declare protected routes after <code>.use(idempotency())</code>;
-        installing it after one throws instead of allowing a replay to bypass that route's admission. A
+        route's current answer. Install it before every route that uses a covered method, public or
+        protected; installing it after one throws. A
         request no covered route handles, such as one a mounted app or an earlier hook answers, is not
         deduplicated. Older stored records without an admission marker are refused.
       </p>
@@ -735,14 +735,16 @@ export default function Security() {
         </li>
         <li>
           Stores can implement <code>renew(key, reservation, lockTtlMs)</code> to keep active work's lease
-          alive. Without renewal, pending reservations last at least <code>ttlMs</code>. A lost lease or
+          alive, for up to <code>ttlMs</code>. Without renewal, pending reservations last at least <code>ttlMs</code>. A lost lease or
           failed completion returns <code>503 idempotency_reservation_lost</code>; external effects still
           need their own durable deduplication or fencing.
         </li>
         <li>
-          A response over <code>maxBytes</code> reaches its first caller intact, while its key retains a
-          terminal record. Retries receive <code>507 idempotency_response_too_large</code> and never
-          repeat the operation. A response-body capture failure also retains a terminal outcome.
+          A cacheable response over <code>maxBytes</code> reaches its first caller intact, while its key
+          retains a terminal record. Retries receive <code>507 idempotency_response_too_large</code> and
+          never repeat the operation. A response-body capture failure also retains a terminal outcome. A
+          response <code>shouldCache</code> declines, such as a <code>5xx</code>, releases its key at any
+          size, so a retry runs again.
         </li>
         <li>
           Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.

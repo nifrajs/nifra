@@ -1,4 +1,4 @@
-import { expect, setSystemTime, test } from "bun:test"
+import { expect, jest, setSystemTime, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import {
   type IdempotencyStore,
@@ -125,6 +125,53 @@ test("idempotency renews an active handler's lease", async () => {
     barrier.resolve()
     await first
     setSystemTime()
+  }
+})
+
+test("lease renewal ends with the replay retention, so a hung handler cannot hold the key forever", async () => {
+  const memory = new MemoryIdempotencyStore()
+  const entered = Promise.withResolvers<void>()
+  const barrier = Promise.withResolvers<void>()
+  let effects = 0
+  const options = { ttlMs: 100, lockTtlMs: 60 }
+  const app = server()
+    .use(idempotency({ store: viewOf(memory), ...options }))
+    .post("/hung", async () => {
+      effects++
+      entered.resolve()
+      await barrier.promise
+      return { ok: true }
+    })
+  const elsewhere = server()
+    .use(idempotency({ store: viewOf(memory), ...options }))
+    .post("/hung", () => ({ effect: ++effects }))
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+  }
+  jest.useFakeTimers()
+  const first = app.fetch(post("/hung"))
+  try {
+    await entered.promise
+    expect(jest.getTimerCount()).toBe(1) // the lease heartbeat
+    for (let elapsed = 0; elapsed < 300; elapsed += 20) {
+      jest.advanceTimersByTime(20)
+      await settle()
+    }
+    expect(jest.getTimerCount()).toBe(0)
+    // This process still fences its own retry; another instance may run the operation again.
+    expect((await app.fetch(post("/hung"))).status).toBe(409)
+    const taken = await elsewhere.fetch(post("/hung"))
+    expect([taken.status, await taken.json()]).toEqual([200, { effect: 2 }])
+    barrier.resolve()
+    const late = await first
+    expect([late.status, await late.json()]).toEqual([
+      503,
+      { ok: false, error: "idempotency_reservation_lost" },
+    ])
+  } finally {
+    barrier.resolve()
+    await first
+    jest.useRealTimers()
   }
 })
 

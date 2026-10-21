@@ -219,11 +219,11 @@ export interface IdempotencyOptions {
   readonly methods?: readonly string[]
   /** How long a completed response is replayable, in ms. Default 24h. */
   readonly ttlMs?: number
-  /** Pending lease, renewed while work runs when the store supports `renew`. Default 60s.
-   * Stores without renewal reserve for at least `ttlMs` instead. */
+  /** Pending lease, renewed while work runs (for up to `ttlMs`) when the store supports `renew`.
+   * Default 60s. Stores without renewal reserve for at least `ttlMs` instead. */
   readonly lockTtlMs?: number
-  /** Max response bytes to capture. Larger responses retain a fixed terminal replay error so a retry
-   * cannot repeat their effects. That small control record is independent of this cap. Default 1 MiB. */
+  /** Max response bytes to capture. Larger cacheable responses retain a fixed terminal replay error so a
+   * retry cannot repeat their effects. That small control record is independent of this cap. Default 1 MiB. */
   readonly maxBytes?: number
   /**
    * Whether a response should be cached for replay. Default: any status below 500 except 401, 403,
@@ -595,8 +595,15 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
       claimed.set(req, held)
       if (store.renew !== undefined) {
         const renew = store.renew.bind(store)
+        // Renewal ends with the replay retention: a handler that never settles keeps this process's
+        // fence, but no longer holds the key for every instance, or writes to the store, forever.
+        const renewUntil = Date.now() + ttlMs
         held.heartbeat = setInterval(
           () => {
+            if (Date.now() >= renewUntil) {
+              stop(held)
+              return
+            }
             if (held.renewing !== undefined || held.lost) return
             held.renewing = Promise.resolve()
               .then(() => renew(key, held.reservation, lockTtlMs))

@@ -4266,8 +4266,8 @@ re-running the side effect. The key is claimed in `onRequest`, so a concurrent r
 a `409`; the stored response is replayed just before the handler, _after_ the
 route's authentication, validation and every guard accept the retry - a guard registered before
 or after the middleware alike - so a credential revoked since the first request gets the
-route's current answer. Declare protected routes after `.use(idempotency())`;
-installing it after one throws instead of allowing a replay to bypass that route's admission. A
+route's current answer. Install it before every route that uses a covered method, public or
+protected; installing it after one throws. A
 request no covered route handles, such as one a mounted app or an earlier hook answers, is not
 deduplicated. Older stored records without an admission marker are refused.
 
@@ -4308,14 +4308,16 @@ caller still gets their cookie - replays just don't carry it.
 
 -
 Stores can implement `renew(key, reservation, lockTtlMs)` to keep active work's lease
-alive. Without renewal, pending reservations last at least `ttlMs`. A lost lease or
+alive, for up to `ttlMs`. Without renewal, pending reservations last at least `ttlMs`. A lost lease or
 failed completion returns `503 idempotency_reservation_lost`; external effects still
 need their own durable deduplication or fencing.
 
 -
-A response over `maxBytes` reaches its first caller intact, while its key retains a
-terminal record. Retries receive `507 idempotency_response_too_large` and never
-repeat the operation. A response-body capture failure also retains a terminal outcome.
+A cacheable response over `maxBytes` reaches its first caller intact, while its key
+retains a terminal record. Retries receive `507 idempotency_response_too_large` and
+never repeat the operation. A response-body capture failure also retains a terminal outcome. A
+response `shouldCache` declines, such as a `5xx`, releases its key at any
+size, so a retry runs again.
 
 -
 Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
