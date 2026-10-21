@@ -137,3 +137,18 @@ test.each([
     { path: "/leaky", via: "header" },
   ])
 })
+
+test("the cancel beacon is refused past 64 bytes, whatever its Content-Length claims", async () => {
+  const app = appOf(true)
+  const post = (body: string, length = String(body.length)) =>
+    app.fetch(
+      new Request("http://x/__nifra/ppr/cancel", {
+        method: "POST",
+        headers: { "content-length": length },
+        body,
+      }),
+    )
+  expect((await post("t".repeat(22))).status).toBe(204)
+  expect((await post("t".repeat(65))).status).toBe(400)
+  expect((await post("t".repeat(1_000), "22")).status).toBe(400)
+})

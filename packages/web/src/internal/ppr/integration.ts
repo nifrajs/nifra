@@ -1,3 +1,4 @@
+import { readBoundedBytes, TransportCodecError } from "@nifrajs/core/transport-codec"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
   PPR_CANCEL_PATH,
@@ -20,6 +21,8 @@ const OWN_HEADERS: ReadonlySet<string> = new Set([
   "content-security-policy",
   "content-length",
 ])
+
+const MAX_CANCEL_BYTES = 64
 
 /** One app's partial prerendering, made when `createWebApp` reaches its `experimental.ppr`. */
 export function createPprIntegration(
@@ -45,8 +48,18 @@ export function createPprIntegration(
     // so the answer is the same whether it named a live response or not.
     async cancel(request) {
       const length = Number(request.headers.get("content-length") ?? "NaN")
-      if (!(length > 0 && length <= 64)) return new Response(null, { status: 400 })
-      server.cancel(await request.text())
+      if (!(length > 0 && length <= MAX_CANCEL_BYTES)) return new Response(null, { status: 400 })
+      let token: Uint8Array
+      try {
+        // The header is a claim; the cap holds on the bytes that arrive.
+        token = await readBoundedBytes(new Response(request.body, { headers: request.headers }), {
+          maxBytes: MAX_CANCEL_BYTES,
+        })
+      } catch (error) {
+        if (error instanceof TransportCodecError) return new Response(null, { status: 400 })
+        throw error
+      }
+      server.cancel(new TextDecoder().decode(token))
       return new Response(null, { status: 204 })
     },
     async stream(request, written) {
