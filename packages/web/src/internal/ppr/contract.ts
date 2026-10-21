@@ -51,7 +51,12 @@ export interface PprRequest {
 }
 
 /** The shell cannot be served now; the caller renders the page whole for this request. */
-export class PprShellUnavailable extends Error {}
+export class PprShellUnavailable extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "PprShellUnavailable"
+  }
+}
 
 /** Thrown when a route's shell has no passing import-check record. */
 export class PprShellUnchecked extends PprShellUnavailable {
