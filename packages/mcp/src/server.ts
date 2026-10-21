@@ -6,11 +6,17 @@
  * is advertised automatically. Mount it in a nifra backend by handing the raw request to {@link McpServer.fetch}:
  *
  * ```ts
+ * import { method } from "@nifrajs/core/methods"
+ *
  * const mcp = createMcpServer({ name: "orders", version: "1.0.0", tools, widgets })
- * export const backend = server()
- *   .get("/mcp", (c) => mcp.fetch(c.req))
- *   .post("/mcp", (c) => mcp.fetch(c.req))
+ * export const backend = server().use(
+ *   method(["GET", "POST", "OPTIONS"], "/mcp", (c) => mcp.fetch(c.req)),
+ * )
  * ```
+ *
+ * Route `OPTIONS` too: a cross-origin browser client sends a CORS preflight before its first POST, and
+ * the server's own `allowAnyOrigin` / `allowedOrigins` policy answers it. Without that route the
+ * preflight gets a 405 and the browser never sends the POST.
  *
  * {@link McpServer.handle} dispatches a single JSON-RPC message directly (for headless verification / tests).
  *
@@ -84,7 +90,8 @@ export interface McpServer {
   readonly tools: McpTool[]
   readonly features: McpServerFeatures
   readonly serverInfo: { name: string; version: string }
-  /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */
+  /** Web `fetch` handler - mount for `POST`, `GET` and `OPTIONS` at `/mcp` (GET is a health page,
+   * OPTIONS the CORS preflight). */
   fetch(
     request: Request,
     overrides?: Pick<McpHttpOptions, "authorizeMessage" | "state" | "resolveState">,
