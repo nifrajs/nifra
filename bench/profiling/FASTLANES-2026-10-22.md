@@ -23,6 +23,8 @@ Raw profiles and rounds remain ignored under `bench/profiling/results/`.
   the existing URLSearchParams fallback, including repeated keys and malformed escapes.
 - Custom body-validator throws reject outside the JSON parser's catch, reaching the lifecycle
   error boundary instead of being misclassified as malformed JSON.
+- A render failure after an asynchronous response-contract check reaches the lifecycle error
+  boundary in both validation orders.
 
 ## Promise audit
 

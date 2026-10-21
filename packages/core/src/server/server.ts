@@ -6364,7 +6364,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
-          (outcome) => this.finishContractOutcome(ctx, finalize, wrapResponse, outcome),
+          (outcome) => {
+            // The render runs outside the try below: a throw (a BigInt, a cycle) must still reach onError.
+            try {
+              return this.finishContractOutcome(ctx, finalize, wrapResponse, outcome)
+            } catch (err) {
+              return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+            }
+          },
           (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
         )
       }

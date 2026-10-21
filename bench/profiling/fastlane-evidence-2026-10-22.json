@@ -9,10 +9,10 @@
   },
   "artifactSha256": {
     "packages/core/src/internal/route-program.ts": "1782ef7093e7d6619f70d89134e6c75da17ba368339299f341d0170bc60b8828",
-    "packages/core/src/server/server.ts": "f40325c03f72b1b660945575749f4d3e95c4d79d0d2119664acec75bafb51ec4",
+    "packages/core/src/server/server.ts": "4ac91b47a87f103edda9805f43a1dfad4e54cf6443781ed84725abf1e97eaa2d",
     "packages/core/src/server/query.ts": "5f00f5b95090cf2d7c5624d444f0f3f1db1076353954b5eedcddea9941f71848",
     "bench/profiling/results/fastlane-before/fixture-entry.js": "cf14095a43efddd940223591897b90f464fc456d2e4015bdd0de988d7c4267ec",
-    "bench/profiling/results/fastlane-final/fixture-entry.js": "0f6052d81527e082f6072deb7e9dc5462039aa8a90330c2327b1ac4a493deb29"
+    "bench/profiling/results/fastlane-final/fixture-entry.js": "44574dab7cfdb15a067094820b2090e0e3cf86ec820f883d85ed47d24998c3c5"
   },
   "promiseAudit": {
     "main": {
