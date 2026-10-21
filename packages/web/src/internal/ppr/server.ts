@@ -273,6 +273,22 @@ export function createPprServer(config: PprServerConfig): PprServer {
   const live = new Map<string, AbortController>()
   const cspHeaders = new Map<string, Promise<string | undefined>>()
   const thinWarned = new Set<string>()
+  const fallbackHtml = new WeakMap<HoleRegistration, Promise<string>>()
+
+  // A fallback comes from its registration alone and every shell holds it, so it renders once.
+  const fallbackOf = (hole: HoleRegistration): Promise<string> => {
+    let html = fallbackHtml.get(hole)
+    if (html === undefined) {
+      const fallback = hole.fallback
+      html =
+        fallback === undefined
+          ? Promise.resolve("")
+          : Promise.resolve().then(() => renderFragment.call(adapter, fallback, {}))
+      fallbackHtml.set(hole, html)
+      html.catch(() => fallbackHtml.delete(hole))
+    }
+    return html
+  }
   const admission = new HoleAdmission(
     options,
     isProduction()
@@ -331,12 +347,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
         `<link rel="modulepreload" href="$1"><script>${PPR_BOOT}</script>`,
       )
     const fallbacks = new Map<string, string>()
-    for (const hole of request.holes) {
-      fallbacks.set(
-        hole.name,
-        hole.fallback === undefined ? "" : await renderFragment.call(adapter, hole.fallback, {}),
-      )
-    }
+    for (const hole of request.holes) fallbacks.set(hole.name, await fallbackOf(hole))
     prefix = injectHoleFallbacks(prefix, fallbacks)
     if (!isProduction() && !thinWarned.has(request.routeId)) {
       const text = textLength(prefix.slice(Math.max(prefix.indexOf("<body"), 0)))
@@ -348,14 +359,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
       }
     }
     const encoder = new TextEncoder()
-    const length = encoder.encode(prefix).length
-    if (length < options.minShellBytes)
-      prefix = `${prefix}<!--${" ".repeat(options.minShellBytes - length)}-->`
     const [beforeToken, afterToken] = requestScriptAround(
       cancelUrl,
       request.holes.map((hole) => hole.name),
     )
-    const bytes = encoder.encode(prefix + beforeToken)
+    let bytes = encoder.encode(prefix + beforeToken)
+    const short = options.minShellBytes - (bytes.length - encoder.encode(beforeToken).length)
+    if (short > 0) bytes = encoder.encode(`${prefix}<!--${" ".repeat(short)}-->${beforeToken}`)
     const requestTail = encoder.encode(afterToken)
     return {
       routeId: request.routeId,

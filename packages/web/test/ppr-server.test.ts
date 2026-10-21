@@ -177,6 +177,30 @@ describe("PPR server", () => {
     expect(shellOf(a).includes(tokenOf(a))).toBe(false)
   })
 
+  test("a short shell is padded to the minimum before the request script; a fallback renders once", async () => {
+    const fallbacks: unknown[] = []
+    const server = createPprServer(
+      config({
+        options: resolvePprOptions({ minShellBytes: 4096 }),
+        adapter: {
+          ...adapter,
+          renderFragment: (ui, options) => {
+            if (options.idPrefix === undefined) fallbacks.push(ui)
+            return `<p data-prefix="${options.idPrefix ?? ""}">${String(ui)}</p>`
+          },
+        },
+      }),
+    )
+    const holes = [hole("cart", () => 1), hole("greeting", () => 2)]
+    for (const path of ["/p/1", "/p/2"]) {
+      const html = await (await server.respond(pprRequest(holes, { path }))).text()
+      expect(new TextEncoder().encode(shellOf(html)).length).toBeGreaterThanOrEqual(4096)
+      expect(shellOf(html)).toMatch(/<!-- +-->$/)
+      expect(tokenOf(html)).toMatch(/^[A-Za-z0-9_-]{22}$/)
+    }
+    expect(fallbacks).toEqual(["loading cart", "loading greeting"])
+  })
+
   test("a failing hole sends only the error slot; its siblings are intact", async () => {
     const server = createPprServer(config())
     const errors: unknown[][] = []
