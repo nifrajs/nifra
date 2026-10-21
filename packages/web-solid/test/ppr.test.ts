@@ -3,7 +3,7 @@ import { createComponent, createUniqueId } from "solid-js"
 import { renderToString } from "solid-js/web"
 import { solidAdapter } from "../src/index.ts"
 import { Hole, type HoleDefinition, type HoleProps } from "../src/ppr.ts"
-import { element } from "./ssr-element.ts"
+import { element, visible } from "./ssr-output.ts"
 
 const asImport = (path: string): string => JSON.stringify(new URL(path, import.meta.url).href)
 // Each spawn compiles the fixture's routes with Solid's Babel transform from cold.
@@ -66,17 +66,15 @@ test("Hole renders an empty host for a shell, and the boundary's own states othe
     fallback: () => element("p", {}, "waiting"),
   }
   const body = (state: HoleProps<{ readonly n: number }>["state"]) =>
-    renderToString(() =>
-      createComponent(Hole<{ readonly n: number }>, {
-        of,
-        state,
-        error: element("p", {}, "failed"),
-      }),
+    visible(
+      renderToString(() =>
+        createComponent(Hole<{ readonly n: number }>, {
+          of,
+          state,
+          error: element("p", {}, "failed"),
+        }),
+      ),
     )
-      .replace(/ data-hk="[^"]*"/g, "")
-      .replace(/ >/g, ">")
-      // Solid's own record of the pending resource, for the client to pick up.
-      .replace(/<script>[^<]*<\/script>/g, "")
   expect({
     shell: body({ status: "pending", ppr: true }),
     unrendered: body(undefined),

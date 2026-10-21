@@ -122,14 +122,12 @@ test("Hole renders an empty host for a shell, and the boundary's own states othe
     render: (data) => h("p", null, `ready ${data.n}`),
     fallback: h("p", null, "waiting"),
   }
-  const body = async (state: HoleProps<{ readonly n: number }>["state"]) =>
-    (
-      await renderToString(
-        createSSRApp({
-          render: () => h(Hole, { of, state }, { error: () => h("p", null, "failed") }),
-        }),
-      )
-    ).replace(/<!--[^>]*-->/g, "")
+  const body = (state: HoleProps<{ readonly n: number }>["state"]) =>
+    renderToString(
+      createSSRApp({
+        render: () => h(Hole, { of, state }, { error: () => h("p", null, "failed") }),
+      }),
+    )
   expect({
     shell: await body({ status: "pending", ppr: true }),
     unrendered: await body(undefined),
@@ -141,9 +139,10 @@ test("Hole renders an empty host for a shell, and the boundary's own states othe
     shell: '<div data-nifra-hole="cart" aria-busy="true"></div>',
     unrendered: "<p>waiting</p>",
     ready: "<p>ready 1</p>",
-    failed: "<p>failed</p>",
+    // A slot's output is a fragment, which Vue brackets with its hydration markers.
+    failed: "<!--[--><p>failed</p><!--]-->",
     streamedEmpty: "<p>waiting</p>",
-    streamedValue: "<p>ready 2</p>",
+    streamedValue: "<!--[--><p>ready 2</p><!--]-->",
   })
 })
 

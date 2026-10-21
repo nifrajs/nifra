@@ -2,16 +2,9 @@ import { expect, test } from "bun:test"
 import { createComponent, ErrorBoundary, type JSX } from "solid-js"
 import { renderToStringAsync } from "solid-js/web"
 import { Await } from "../src/await.ts"
-import { element } from "./ssr-element.ts"
+import { element, visible } from "./ssr-output.ts"
 
 const deferred = <T>(promise: Promise<T>) => ({ __nifra_deferred: true as const, id: 1, promise })
-// Solid's hydration keys and its serialized resource state are not what these tests check.
-const visible = (html: string): string =>
-  html
-    .replace(/ data-hk="[^"]*"/g, "")
-    .replace(/ >/g, ">")
-    .replace(/<script>[\s\S]*?<\/script>/g, "")
-
 test("Await renders a value, a settled deferred, its error fallback, or rethrows to a boundary", async () => {
   const failing = Promise.reject(new Error("down"))
   failing.catch(() => {})
