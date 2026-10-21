@@ -107,7 +107,7 @@ test("hydrationHead is empty (React reconciles the DOM; no bootstrap script)", (
   expect(reactAdapter.hydrationHead()).toBe("")
 })
 
-test("a render error rejects both render paths with the error itself", async () => {
+test("a render error rejects every render path with the error itself", async () => {
   const boom = new Error("boom in render")
   const Broken = (): ReactNode => {
     throw boom
@@ -117,6 +117,7 @@ test("a render error rejects both render paths with the error itself", async () 
   try {
     await expect(reactAdapter.renderToString?.([Broken], { data: null })).rejects.toBe(boom)
     await expect(reactAdapter.renderToStream([Broken], { data: null })).rejects.toBe(boom)
+    await expect(reactAdapter.renderFragment?.(createElement(Broken), {})).rejects.toBe(boom)
   } finally {
     console.error = original
   }
