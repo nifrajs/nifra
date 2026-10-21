@@ -256,7 +256,8 @@ export default function PartialPrerendering() {
         A hole's HTML arrives as inert data that the inline runtime inserts, so a browser with
         scripts off sees the shell and each hole's fallback, never the hole. Nothing in a single
         streamed response can fill a hole without script. Listed bots get the whole page instead. If
-        a route's per-visitor part must work without JavaScript, do not partially prerender it.
+        a route's per-visitor part must work without JavaScript, do not partially prerender it. In
+        development, a hole whose fallback renders empty warns once per route.
       </p>
 
       <h2>Behind a proxy</h2>

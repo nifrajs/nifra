@@ -683,6 +683,37 @@ describe("PPR server: admission and unsent bytes (7.3, 7.7)", () => {
     }
   })
 
+  test("a hole with an empty fallback warns once per route and hole in development", async () => {
+    const warnings: unknown[][] = []
+    const original = console.warn
+    console.warn = (...args: unknown[]) => warnings.push(args)
+    try {
+      const server = createPprServer(
+        config({
+          shellChecks: "unchecked-development",
+          adapter: { ...adapter, renderFragment: (ui) => String(ui) },
+        }),
+      )
+      const { fallback: _, ...bare } = hole("cart", () => 1)
+      const blank = hole("note", () => 1, { fallback: " \n" })
+      const visit = async (path: string, routeId = "product/[id]") =>
+        (
+          await server.respond(pprRequest([bare, blank, hole("recs", () => 1)], { path, routeId }))
+        ).text()
+      await visit("/p/1")
+      await visit("/p/2")
+      await visit("/q/1", "other")
+      expect(warnings.map((args) => String(args[0]))).toEqual([
+        expect.stringContaining('hole "cart" of "product/[id]" has an empty fallback'),
+        expect.stringContaining('hole "note" of "product/[id]" has an empty fallback'),
+        expect.stringContaining('hole "cart" of "other" has an empty fallback'),
+        expect.stringContaining('hole "note" of "other" has an empty fallback'),
+      ])
+    } finally {
+      console.warn = original
+    }
+  })
+
   test("a shell too sparse for WebKit to paint early warns once per route in development", async () => {
     const warnings: unknown[][] = []
     const original = console.warn

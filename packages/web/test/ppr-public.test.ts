@@ -30,7 +30,9 @@ const appOf = (ppr: boolean, onShell = () => {}) => {
             return {}
           }),
           revalidateTags: ["catalog"],
-          boundaries: [{ name: "a", mode: "dynamic", render: () => "", load: () => 1 }],
+          boundaries: [
+            { name: "a", mode: "dynamic", render: () => "", fallback: "loading", load: () => 1 },
+          ],
         }),
       },
     ],
@@ -91,7 +93,9 @@ test("the canary check finds visitor data kept in module state, and passes a she
           default: "page",
           shellLoader: () =>
             pattern === "/leaky" ? { who: current.visitor } : { who: "everyone" },
-          boundaries: [{ name: "a", mode: "dynamic", render: () => "", load: () => 1 }],
+          boundaries: [
+            { name: "a", mode: "dynamic", render: () => "", fallback: "loading", load: () => 1 },
+          ],
         }),
       })),
       layouts: {},

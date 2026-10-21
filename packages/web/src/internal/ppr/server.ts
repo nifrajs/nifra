@@ -389,6 +389,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
   const cspHeaders = new Map<string, Promise<string | undefined>>()
   const thinWarned = new Set<string>()
   const oversizeWarned = new Set<string>()
+  const emptyWarned = new Map<string, Set<string>>()
   const fallbackHtml = new WeakMap<HoleRegistration, Promise<string>>()
   // A route's request script, with room for the token, serialized once per set of hole names.
   const requestScripts = new Map<
@@ -497,7 +498,17 @@ export function createPprServer(config: PprServerConfig): PprServer {
       })
     }
     const fallbacks = new Map<string, string>()
-    for (const hole of request.holes) fallbacks.set(hole.name, await fallbackOf(hole))
+    for (const hole of request.holes) {
+      const fallback = await fallbackOf(hole)
+      fallbacks.set(hole.name, fallback)
+      if (fallback.trim() !== "" || isProduction()) continue
+      const warned = emptyWarned.get(request.routeId) ?? new Set<string>()
+      if (warned.has(hole.name)) continue
+      emptyWarned.set(request.routeId, warned.add(hole.name))
+      console.warn(
+        `[nifra/web] ppr: hole "${hole.name}" of "${request.routeId}" has an empty fallback, so a browser without JavaScript shows nothing in its place and the page moves when it fills`,
+      )
+    }
     for (const insert of holeFallbackInserts(html, fallbacks))
       edits.push({ from: insert.at, to: insert.at, html: insert.html })
     edits.sort((a, b) => a.from - b.from)
