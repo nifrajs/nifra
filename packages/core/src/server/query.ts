@@ -86,10 +86,9 @@ export function queryObjectOf(search: string): Record<string, QueryValue> {
   const start = search.charCodeAt(0) === 63 /* ? */ ? 1 : 0
   if (start >= search.length) return EMPTY_QUERY
 
-  for (let i = start; i < search.length; i++) {
-    const c = search.charCodeAt(i)
-    if (c === 37 /* % */ || c === 43 /* + */) return queryObjectFallback(search)
-  }
+  // Native single-character searches avoid a JS pass over every unencoded value byte.
+  if (search.indexOf("+", start) !== -1 || search.indexOf("%", start) !== -1)
+    return queryObjectFallback(search)
 
   const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
   let pos = start

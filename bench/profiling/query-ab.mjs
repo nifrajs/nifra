@@ -15,7 +15,13 @@ const count = Number(option("count", "100000"))
 const rounds = 8
 if (!Number.isSafeInteger(count) || count < 1) throw new Error("invalid count")
 const cases = {
+  empty: "?",
+  short: "?limit=10",
   plain: "?verbose=1&trace=abc123",
+  "plain-16": `?${Array.from({ length: 16 }, (_, i) => `key${i}=value${i}`).join("&")}`,
+  "long-value": `?verbose=1&trace=${"a".repeat(1024)}`,
+  "bare-segments": `?${Array.from({ length: 256 }, () => "a").join("&")}`,
+  "plain-special-keys": "?__proto__=data&constructor=safe&tag=a&tag=b&=empty-key",
   encoded: "?verbose=1&trace=a%20b",
   plus: "?a+b=c+d&empty=&bare",
   repeated: "?tag=a%20b&tag=c%20d&tag=%F0%9F%8C%8D",

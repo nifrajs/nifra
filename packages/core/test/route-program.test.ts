@@ -5,7 +5,9 @@ import { compileRouteProgram } from "../src/internal/route-program.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 
-function schema<T>(validate: (value: unknown) => StandardResult<T>): StandardSchemaV1<unknown, T> {
+function schema<T>(
+  validate: (value: unknown) => StandardResult<T> | Promise<StandardResult<T>>,
+): StandardSchemaV1<unknown, T> {
   return {
     "~standard": {
       version: 1,
@@ -28,6 +30,176 @@ const stringRecord = (name: string): StandardSchemaV1<unknown, Record<string, st
   })
 
 describe("general route program", () => {
+  test("a synchronous auth-before-validation program stays synchronous", async () => {
+    const order: string[] = []
+    const app = server()
+      .derive(() => {
+        order.push("derive")
+        return { principal: "reader" }
+      })
+      .beforeHandle(() => {
+        order.push("before")
+        return undefined
+      })
+      .afterHandle((value) => {
+        order.push("after")
+        return value
+      })
+      .get(
+        "/policy",
+        {
+          validationOrder: "auth-before-validation",
+          query: schema(() => {
+            order.push("validate")
+            return { value: { q: "checked" } }
+          }),
+        },
+        (c) => {
+          order.push("handler")
+          return { principal: c.principal, q: c.query.q }
+        },
+      )
+    const outcome = app.fetch(new Request("http://x/policy?q=input"))
+    const synchronous = outcome instanceof Response
+    const response = await outcome
+    expect(await response.json()).toEqual({ principal: "reader", q: "checked" })
+    expect(order).toEqual(["derive", "before", "validate", "handler", "after"])
+    expect(synchronous).toBe(true)
+  })
+
+  for (const validationOrder of ["validate-before-auth", "auth-before-validation"] as const) {
+    for (const boundary of ["none", "validation", "derive", "before", "handler", "after", "all"]) {
+      test(`${validationOrder} resumes each stage exactly once after ${boundary} async boundaries on Web, Node, and Bun`, async () => {
+        for (const transport of ["web", "node", "bun"]) {
+          const order: string[] = []
+          const pending = <T>(kind: string, value: T): T | Promise<T> =>
+            boundary === "all" || boundary === kind ? Promise.resolve(value) : value
+          const field = (kind: string, key: string) =>
+            schema<Record<string, string>>((input) => {
+              order.push(kind)
+              const value =
+                input !== null && typeof input === "object" ? Reflect.get(input, key) : undefined
+              const result: StandardResult<Record<string, string>> =
+                typeof value === "string"
+                  ? { value: { [key]: value } }
+                  : { issues: [{ message: `${key} required` }] }
+              return pending("validation", result)
+            })
+          const app = server()
+            .use(nodeDirect())
+            .decorate("staticTag", "ready")
+            .derive(() => {
+              order.push("derive0")
+              return pending("derive", { first: "a" })
+            })
+            .derive((c) => {
+              order.push(`derive1:${c.first}`)
+              return pending("derive", { second: "b" })
+            })
+            .beforeHandle((c) => {
+              order.push("before0")
+              c.set.headers["x-matrix"] = c.second
+              return pending("before", undefined)
+            })
+            .beforeHandle(() => {
+              order.push("before1")
+              return pending("before", undefined)
+            })
+            .afterHandle((value) => {
+              order.push("after0")
+              return pending("after", { stage: 1, value })
+            })
+            .afterHandle((value) => {
+              order.push("after1")
+              return pending("after", { stage: 2, value })
+            })
+            .post(
+              "/matrix/:id",
+              {
+                validationOrder,
+                headers: field("headers", "x-token"),
+                cookies: field("cookies", "sid"),
+                params: field("params", "id"),
+                body: field("body", "message"),
+                query: field("query", "trace"),
+              },
+              (c) => {
+                order.push("handler")
+                return pending("handler", {
+                  id: c.params.id,
+                  message: c.body.message,
+                  trace: c.query.trace,
+                  sid: c.cookies.sid,
+                  token: c.headers["x-token"],
+                  first: c.first,
+                  second: c.second,
+                  staticTag: c.staticTag,
+                })
+              },
+            )
+          const expected = {
+            stage: 2,
+            value: {
+              stage: 1,
+              value: {
+                id: "42",
+                message: "hello",
+                trace: "a b",
+                sid: "session",
+                token: "token",
+                first: "a",
+                second: "b",
+                staticTag: "ready",
+              },
+            },
+          }
+          const init = {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-token": "token",
+              cookie: "sid=session",
+            },
+            body: '{"message":"hello"}',
+          }
+          const path = "/matrix/42?trace=a%20b"
+          if (transport === "node") {
+            const result = await app.resolveNode(new Request(`http://x${path}`, init))
+            expect(result.kind).toBe("json")
+            if (result.kind !== "json") throw new Error("expected node JSON result")
+            expect(result.status).toBe(200)
+            expect(result.headers?.["x-matrix"]).toBe("b")
+            expect(result.body).toBe(JSON.stringify(expected))
+          } else {
+            const running =
+              transport === "bun" ? app.listen(0, { hostname: "127.0.0.1" }) : undefined
+            try {
+              const response =
+                running === undefined
+                  ? await app.fetch(new Request(`http://x${path}`, init))
+                  : await fetch(`http://127.0.0.1:${running.port}${path}`, init)
+              expect(response.status).toBe(200)
+              expect(response.headers.get("x-matrix")).toBe("b")
+              expect(await response.json()).toEqual(expected)
+            } finally {
+              running?.stop(true)
+            }
+          }
+          const validationSteps = ["headers", "cookies", "params", "body", "query"]
+          const policySteps = ["derive0", "derive1:a", "before0", "before1"]
+          expect(order).toEqual([
+            ...(validationOrder === "auth-before-validation"
+              ? [...policySteps, ...validationSteps]
+              : [...validationSteps, ...policySteps]),
+            "handler",
+            "after0",
+            "after1",
+          ])
+        }
+      })
+    }
+  }
+
   test("auth-before-validation rejects before invoking a body validator", async () => {
     let validations = 0
     const order: string[] = []
