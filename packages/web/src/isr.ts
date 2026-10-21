@@ -9,7 +9,15 @@
 import { isAuthenticatedRequest, writableResponse } from "@nifrajs/core/server"
 import { readBoundedBytes, TransportCodecError } from "@nifrajs/core/transport-codec"
 import { isDraftEnabled } from "./draft.ts"
+import {
+  type InvalidationReport,
+  type InvalidationTargets,
+  runInvalidation,
+  settleInvalidation,
+} from "./internal/invalidation.ts"
+import { INVALIDATION, type InvalidationHandoff } from "./internal/invalidation-contract.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
+import { SWAP_HEADER } from "./render-seam.ts"
 
 /** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */
 export interface CachedResponse {
@@ -574,7 +582,10 @@ export interface ISROptions {
    * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for
    * this request (it goes straight to the app, uncached). Replaces `query` entirely. Under the default
    * key a request carrying `Authorization` or a cookie outside `anonymousCookies` never reads the
-   * store; a custom key takes that decision over, so include whatever identifies the visitor in it. */
+   * store; a custom key takes that decision over, so include whatever identifies the visitor in it.
+   * An action's `revalidate(paths)` keys each path with the action request's own headers, so it purges
+   * the variant that client reads; a variant keyed on another header value (another language) is not
+   * reached - tag those pages and revalidate the tag. */
   readonly key?: (req: Request) => string | null
   /**
    * Cookie names that never change the page, such as a consent or analytics cookie. Under the default
@@ -608,6 +619,20 @@ export interface ISROptions {
    * the request; set it when the store is a network service.
    */
   readonly storeTimeoutMs?: number
+  /**
+   * Caches below the pages whose entries carry the same tags, such as a `@nifrajs/cache` holding loader
+   * data. An action's `revalidate(paths, data, { tags })` invalidates them first, then this store, then
+   * publishes to live pages, then purges `cdn`; a cache that fails stops the rest, so no client reloads
+   * stale data.
+   */
+  readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
+  /** A CDN an action's invalidation purges last (a `@nifrajs/web/cdn` provider). */
+  readonly cdn?: CdnPurgeTarget
+  /**
+   * An action's invalidation that still failed after its retries; the action's own answer never
+   * changes. Default: one `console.error` line naming the operation id and stage.
+   */
+  readonly onInvalidationError?: (report: InvalidationReport) => void
 }
 
 /** The store operation an {@link ISROptions.onStoreError} report is about. */
@@ -631,6 +656,24 @@ function storeErrorDetail(error: unknown, key: string): string {
   return redacted.length > STORE_REPORT_DETAIL_CHARS
     ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
     : redacted
+}
+
+// Headers only an action or a data request carries; a stored page is always a plain document GET.
+const ACTION_ONLY_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "transfer-encoding",
+  "x-nifra-data",
+  "x-nifra-component",
+  SWAP_HEADER,
+]
+
+/** The document GET for `path` from the client that sent `req`: what a custom key sees on a read. */
+function documentGet(path: string, req: Request): Request {
+  const headers = new Headers(req.headers)
+  for (const name of ACTION_ONLY_HEADERS) headers.delete(name)
+  return new Request(originOf(req) + path, { headers })
 }
 
 /** `createWebApp`'s marker for how its documents meet a CSP (see `DOCUMENT_POLICY` in ./csp.ts). Read
@@ -676,6 +719,32 @@ const requestKeyOf =
   (req: Request): string | null =>
     urlKey(new URL(req.url))
 
+/**
+ * The key of a request, and of a path on the request's origin. Under the default URL key a path needs
+ * no `Request`; a custom `key` is handed one.
+ */
+function cacheKeysOf(options: ISROptions): {
+  readonly request: (req: Request) => string | null
+  readonly path: (path: string, req: Request) => string | null
+} {
+  const custom = options.key
+  if (custom !== undefined) {
+    return { request: custom, path: (path, req) => custom(documentGet(path, req)) }
+  }
+  const urlKey = urlKeyOf(options.query)
+  return {
+    request: requestKeyOf(urlKey),
+    path: (path, req) => urlKey(new URL(originOf(req) + path)),
+  }
+}
+
+/** `req.url` up to its path, without a parse: the path joined to it is parsed as one URL anyway. */
+const originOf = (req: Request): string => {
+  const url = req.url
+  const end = url.indexOf("/", url.indexOf("//") + 2)
+  return end === -1 ? url : url.slice(0, end)
+}
+
 function assertRevalidate(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`[nifra/web] ${name} must be a finite non-negative number`)
@@ -714,14 +783,13 @@ const requestCarriesPrivateState = (req: Request): boolean =>
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
 
-// `x-nifra-data` alone is not a variation the URL key misses: a navigation data request never reads
-// or writes the store, so every stored entry is the document.
+// Data and swap requests bypass both cache reads and writes, so these headers cannot vary stored HTML.
 const responseDeclaresVary = (res: Response): boolean => {
   const value = res.headers.get("vary")
   if (value === null) return false
   for (const part of value.split(",")) {
     const name = part.trim().toLowerCase()
-    if (name !== "" && name !== "x-nifra-data") return true
+    if (name !== "" && name !== "x-nifra-data" && name !== SWAP_HEADER) return true
   }
   return false
 }
@@ -729,13 +797,13 @@ const responseDeclaresVary = (res: Response): boolean => {
 /**
  * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
  * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
- * the data header, and, for a request carrying a cookie or Authorization or accepted by an
+ * the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an
  * authentication stage, an explicit `public`.
  * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
  */
 export const isCacheablePage = (req: Request, res: Response): boolean => {
   if (req.method !== "GET") return false
-  if (req.headers.get("x-nifra-data") !== null) return false
+  if (req.headers.get("x-nifra-data") !== null || req.headers.has(SWAP_HEADER)) return false
   if (res.status !== 200) return false
   if (!(res.headers.get("content-type") ?? "").includes("text/html")) return false
   if (hasSetCookie(res.headers)) return false
@@ -865,28 +933,32 @@ export function withISR(
     }
   }
   // Runs one store call; a throw, a rejection or a timeout is reported and answered with STORE_FAILED.
+  const withinTimeout = async <T>(op: string, pending: Promise<T>): Promise<T> => {
+    if (storeTimeoutMs === undefined) return pending
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`ISR store ${op} exceeded storeTimeoutMs (${storeTimeoutMs} ms)`)
+        error.name = "TimeoutError"
+        reject(error)
+      }, storeTimeoutMs)
+    })
+    try {
+      return await Promise.race([pending, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
   const attempt = async <T>(
     op: ISRStoreOp,
     key: string,
     call: () => Promise<T>,
   ): Promise<T | typeof STORE_FAILED> => {
-    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const pending = call()
-      if (storeTimeoutMs === undefined) return await pending
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          const error = new Error(`ISR store ${op} exceeded storeTimeoutMs (${storeTimeoutMs} ms)`)
-          error.name = "TimeoutError"
-          reject(error)
-        }, storeTimeoutMs)
-      })
-      return await Promise.race([pending, timeout])
+      return await withinTimeout(op, call())
     } catch (error) {
       reportStoreError(op, key, error)
       return STORE_FAILED
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
     }
   }
   // A store without purge order, or one whose fence failed, stores the render unfenced.
@@ -896,7 +968,8 @@ export function withISR(
     const taken = await attempt("fence", key, async () => fence.call(store))
     return taken === STORE_FAILED ? undefined : taken
   }
-  const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
+  const keys = cacheKeysOf(options)
+  const keyOf = keys.request
   const draftSecret = options.draftSecret
   const anonymousCookies = new Set(options.anonymousCookies ?? [])
   // A request whose cookies are all anonymous is judged for storage as if it carried none.
@@ -915,6 +988,38 @@ export function withISR(
   }
   const regenerating = new Set<string>()
   openCacheChannel(app)
+  // This wrapper owns the app's invalidation pipeline from here on: an action's operation comes back
+  // by its request, and every stage runs in order before the action's answer leaves.
+  const handoff: unknown = Reflect.get(app, INVALIDATION)
+  const taken = isHandoff(handoff) ? handoff : undefined
+  // The pipeline's purges are bounded like every other store call; their failures reach its own report.
+  const invalidateTag = store.invalidateTag
+  const targets: InvalidationTargets = {
+    dataCaches: options.dataCaches,
+    store: {
+      delete: (key) => withinTimeout("delete", store.delete(key)),
+      invalidateTag:
+        invalidateTag === undefined
+          ? undefined
+          : (tag) => withinTimeout("invalidateTag", invalidateTag.call(store, tag)),
+    },
+    keyOf: keys.path,
+    publish: taken?.publish,
+    cdn: options.cdn,
+  }
+  const passThrough = async (
+    req: Request,
+    platform: ISRPlatform | undefined,
+  ): Promise<Response> => {
+    const res = withoutCacheChannel(await app.fetch(req, platform))
+    const op = taken?.take(req)
+    if (op !== undefined) {
+      await settleInvalidation(op, targets, req, platform, {
+        onError: options.onInvalidationError,
+      })
+    }
+    return res
+  }
   // An outer cache layer (`withCdn`) opens this wrapper's own channel: cached responses then carry how
   // much freshness they have left and their tags, so the CDN never holds a page longer than ISR would.
   let channelOpen = false
@@ -1070,24 +1175,25 @@ export function withISR(
   }
 
   const handler = async (req: Request, platform?: ISRPlatform): Promise<Response> => {
-    // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
-    // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
-    // the loader payload. (The write path already refuses to cache data-mode responses.)
+    // A data-mode soft-nav GET or a slot swap bypasses the cache entirely: entries are full HTML
+    // documents keyed by URL, and serving one to either would hand the client a document where it
+    // expects the loader payload or one slot. (The write path already refuses both.)
     const privateRoute: unknown = Reflect.get(app, Symbol.for("nifra.web.private-route"))
     const ownsPrivate = typeof privateRoute === "function" && privateRoute(req) === true
     const key =
       req.method === "GET" &&
       req.headers.get("x-nifra-data") === null &&
       !req.headers.has("x-nifra-component") &&
+      !req.headers.has(SWAP_HEADER) &&
       !ownsPrivate
         ? keyOf(req)
         : null
-    if (key === null) return withoutCacheChannel(await app.fetch(req, platform))
+    if (key === null) return passThrough(req, platform)
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so
     // unpublished content can't leak into the public cache (and the editor isn't served a stale page).
     if (draftSecret !== undefined && (await isDraftEnabled(req, draftSecret))) {
-      return withoutCacheChannel(await app.fetch(req, platform))
+      return passThrough(req, platform)
     }
 
     // A cookie or Authorization request may be personalized: under the default key it never reads
@@ -1122,6 +1228,9 @@ export function withISR(
 
 const jsonError = (status: number, error: string): Response =>
   Response.json({ ok: false, error }, { status })
+
+const isHandoff = (value: unknown): value is InvalidationHandoff =>
+  typeof value === "object" && value !== null && typeof Reflect.get(value, "take") === "function"
 
 /** What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused. */
 export interface CdnPurgeOutcome {
@@ -1172,6 +1281,11 @@ export interface RevalidateEndpointOptions {
    * page store is touched, so a retry purges everything again. Path purges do not reach them.
    */
   readonly dataCaches?: readonly { invalidateTag(tag: string): unknown }[]
+  /**
+   * The app's live runtime: a purge also tells live pages watching a purged tag to reload, after the
+   * caches and before the CDN. A publish that fails answers `502` with `origin: "done"`.
+   */
+  readonly live?: { publish(...keys: string[]): Promise<void> }
 }
 
 const stringList = (value: unknown): string[] | null | undefined => {
@@ -1263,47 +1377,51 @@ export function revalidateEndpoint(
       return jsonError(501, "tag_invalidation_not_supported")
     }
 
-    if (tags.length > 0 && options.dataCaches !== undefined) {
-      try {
-        for (const cache of options.dataCaches) {
-          for (const candidate of tags) await cache.invalidateTag(candidate)
-        }
-      } catch {
-        return Response.json(
-          { ok: false, error: "data_cache_invalidation_failed" },
-          { status: 500 },
-        )
-      }
-    }
-    for (const key of keys) await options.store.delete(key)
-    for (const candidate of tags) await invalidateTag?.call(options.store, candidate)
+    // The same pipeline an action's `revalidate()` runs: data caches, this store, live, then the CDN.
+    const live = options.live
+    const report = await runInvalidation(
+      { id: crypto.randomUUID(), paths, tags, keys: [] },
+      {
+        dataCaches: options.dataCaches,
+        store: options.store,
+        keyOf: (candidate) => keys[paths.indexOf(candidate)] ?? null,
+        publish: live === undefined ? undefined : (names) => live.publish(...names),
+        cdn: options.cdn,
+      },
+      req,
+      platform,
+    )
+    const stageOf = (stage: string) => report.stages.find((each) => each.stage === stage)
+    if (stageOf("data")?.ok === false) return jsonError(500, "data_cache_invalidation_failed")
+    if (stageOf("pages")?.ok === false) return jsonError(500, "page_store_invalidation_failed")
     const done =
       path !== null
         ? { revalidated: path }
         : tag !== null
           ? { revalidatedTag: tag }
           : { revalidated: paths, revalidatedTags: tags }
-    if (options.cdn === undefined) return Response.json(done)
-
-    let outcome: CdnPurgeOutcome
-    try {
-      outcome = await options.cdn.purge({ tags, paths }, platform)
-    } catch {
-      outcome = { cdn: "failed", retryable: true, error: "cdn_purge_threw" }
-    }
-    if (outcome.cdn === "failed") {
+    const published = stageOf("publish")
+    const cdn = stageOf("cdn")
+    if (cdn?.ok === false) {
       const failure: Record<string, unknown> = {
         ok: false,
         error: "cdn_purge_failed",
         origin: "done",
-        retryable: outcome.retryable,
+        retryable: cdn.retryable,
       }
-      if (outcome.error !== undefined) failure.reason = outcome.error
+      if (cdn.error !== undefined && cdn.error !== "cdn_failed") failure.reason = cdn.error
       return Response.json(failure, { status: 502 })
     }
+    if (published?.ok === false) {
+      return Response.json(
+        { ok: false, error: "live_publish_failed", origin: "done", retryable: true },
+        { status: 502 },
+      )
+    }
+    if (cdn === undefined) return Response.json(done)
     return Response.json(
-      { ...done, cdn: outcome.cdn },
-      { status: outcome.cdn === "queued" ? 202 : 200 },
+      { ...done, cdn: cdn.queued === true ? "queued" : "accepted" },
+      { status: cdn.queued === true ? 202 : 200 },
     )
   }
 }

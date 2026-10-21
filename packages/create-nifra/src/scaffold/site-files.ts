@@ -66,7 +66,7 @@ export function renderPackageJson(framework: FrameworkSpec, site: SiteTarget): s
       "@types/bun": "^1.4.2",
       ...framework.devDependencies,
       typescript: "^6.0.3",
-      vite: "^8.2.1",
+      vite: "^8.3.4",
     },
   })
 }

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setSystemTime, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { MemoryStore, type RateLimitOptions, rateLimit } from "../src/index.ts"
 
@@ -68,6 +68,24 @@ describe("rateLimit", () => {
     expect(windows.has("active")).toBe(true)
     expect(windows.has("new")).toBe(true)
     expect(sizeOf(overflow)).toBe(2)
+  })
+
+  test("a full MemoryStore reaches expired windows past its first scan", async () => {
+    const start = Date.now()
+    setSystemTime(new Date(start))
+    try {
+      const store = new MemoryStore({ maxKeys: 100, sweepIntervalMs: Number.MAX_SAFE_INTEGER })
+      for (let i = 0; i < 64; i++) await store.hit(`long${i}`, 600_000)
+      for (let i = 0; i < 36; i++) await store.hit(`short${i}`, 1_000)
+      setSystemTime(new Date(start + 5_000))
+      const refused: boolean[] = []
+      for (let i = 0; i < 37; i++)
+        refused.push((await store.hit(`new${i}`, 1_000)).limited === true)
+      // The first check reads the 64 live windows; each later one resumes past them and reclaims one.
+      expect(refused).toEqual([true, ...Array<boolean>(36).fill(false)])
+    } finally {
+      setSystemTime()
+    }
   })
 
   test(

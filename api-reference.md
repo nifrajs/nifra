@@ -1755,6 +1755,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -3028,6 +3030,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -3762,41 +3766,6 @@ _No named exports (side-effect entrypoint)._
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
   Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
 
-## @nifrajs/islets
-
-- **BindableElement** _(interface)_ - `interface BindableElement`
-  The element surface the walker needs - structural, so tests can drive it without a real DOM.
-- **BindableRoot** _(interface)_ - `interface BindableRoot`
-- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
-  A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
-- **IslandContext** _(interface)_ - `interface IslandContext`
-- **IslandHost** _(interface)_ - `interface IslandHost`
-  The host-element surface `mountIslands` needs beyond bindings.
-- **IslandScope** _(type)_ - `type IslandScope = { readonly signals: Readonly<Record<string, Signal<unknown>>> readonly handlers: Readonly<Record<string, (event: Event) => void>> }`
-- **IslandSetup** _(type)_ - `type IslandSetup = (ctx: IslandContext) => Record<string, (event: Event) => void> | undefined`
-  An island's setup function: read/seed state, return the event handlers the markup names.
-- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
-  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
-- **MountIslandOptions** _(interface)_ - `interface MountIslandOptions`
-- **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
-  A readable/writable reactive value: call it to read (tracking), `.set` to write.
-- **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
-  Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
-- **bindScope** _(function)_ - `bindScope: (root: BindableRoot, scope: IslandScope) => Array<() => void>`
-  Walk `root` and attach every `data-bind-*` binding against `scope`. Returns disposers for both reactive effects and event listeners.
-- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
-  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
-- **effect** _(function)_ - `effect: (fn: () => void) => () => void`
-  Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch.
-- **island** _(function)_ - `island: (name: string, setup: IslandSetup) => void`
-  Register an island's behavior by name (the markup's `data-island` value).
-- **islandState** _(function)_ - `islandState: (state: Record<string, unknown>) => string`
-  Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON - emit it through an escaping renderer (`@nifrajs/web-vanilla`'s `html` escapes quotes in attributes), e.g. `html\`<div data-island="compare" data-island-state="${islandState({ count })}">…\``.
-- **mountIslands** _(function)_ - `mountIslands: (rootOrOptions?: BindableRoot | MountIslandOptions) => () => void`
-  Mount every registered island under `root` (default: the document). Idempotent - a host is marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of its script, and progress…
-- **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
-  Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
-
 ## @nifrajs/jobs
 
 - **Backoff** _(type)_ - `type Backoff = (attempt: number) => number`
@@ -4279,7 +4248,7 @@ _No named exports (side-effect entrypoint)._
   A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged responses. Built on the portable `onResponseBody` tier: the hook receives the final framework-ser…
 - **healthcheck** _(function)_ - `healthcheck: (options?: HealthcheckOptions) => IdentityPlugin`
   Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
-- **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware`
+- **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => IdentityPlugin`
   Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ - `ipRestriction: (options: IpRestrictionOptions) => Middleware`
   IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. By default the caller is the server-resolved `platform.clientIp` (socket peer, or the app's `clientIp` trust declaration); `clientIp`, `trustedProxies`, or a trusted single-IP `header` override it. Unconfigured …
@@ -5261,6 +5230,8 @@ _No named exports (side-effect entrypoint)._
   A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
 - **LinkDescriptor** _(interface)_ - `interface LinkDescriptor`
   One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable - the previous `Record<string, string>` required *every* value to be a present string, which rejected …
+- **LiveClientEntry** _(interface)_ - `interface LiveClientEntry`
+  A client entry for a live server: `{}`, or the endpoints when the runtime moves them.
 - **Loader** _(type)_ - `type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional data loader: params/request in, data out.
 - **LoaderContext** _(interface)_ - `interface LoaderContext`
@@ -5382,6 +5353,8 @@ _No named exports (side-effect entrypoint)._
   Per-document options for {@link RenderAdapter.renderToStream}.
 - **RenderedPage** _(interface)_ - `interface RenderedPage`
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
+- **RevalidateOptions** _(interface)_ - `interface RevalidateOptions`
+  Cache tags and live keys an action's write made stale, beside its paths.
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`
   The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and …
 - **RevalidateTags** _(type)_ - `type RevalidateTags = | readonly string[] | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]`
@@ -5503,7 +5476,7 @@ _No named exports (side-effect entrypoint)._
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
-  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an authenticatio…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **isHostPolicy** _(function)_ - `isHostPolicy: (value: unknown) => value is HostPolicy`
@@ -5547,7 +5520,7 @@ _No named exports (side-effect entrypoint)._
   Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
 - **resolveStaticBoundaries** _(function)_ - `resolveStaticBoundaries: (boundaries: readonly BoundaryRegistration[], context: StaticCtx, cache?: StaticBoundaryCache) => Promise<BoundaryStates>`
   Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic and intercepting boundaries remain unresolved. Values are cached by boundary object identity in the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per request. A r…
-- **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
+- **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T, options?: RevalidateOptions) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
@@ -5625,7 +5598,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy", "live"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
@@ -5775,7 +5748,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflareWorkersCache** _(function)_ - `cloudflareWorkersCache: (options: CloudflareWorkersCacheOptions) => CdnProvider`
   Workers Cache in front of the Worker serving the app. Purges are scoped to the calling entrypoint.
 - **cloudflareZone** _(function)_ - `cloudflareZone: (options: CloudflareZoneOptions) => CdnProvider`
-  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.
+  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` or `x-nifra-swap` (soft navigations and slot swaps fetch the page URL with those header…
 - **createInvalidator** _(function)_ - `createInvalidator: (options: InvalidatorOptions) => { invalidate(target: { readonly tags?: readonly string[]; readonly paths?: readonly string[]; }, platform?: ISRPlatform): Promise<InvalidateResult>; }`
   Purge pages after a mutation, from app code: `await invalidate({ tags: ["product:42"] })`. The origin store goes first, so a CDN refetch cannot repopulate from a stale origin entry. At most 32 tags and 100 paths a call.
 - **defineCdnProvider** _(function)_ - `defineCdnProvider: (definition: CdnProviderDefinition, options?: PurgeQueueOptions) => CdnProvider`
@@ -6080,6 +6053,12 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/islands`
 
+- **BindIslandContext** _(interface)_ - `interface BindIslandContext<P>`
+  What a `bindIsland` setup receives.
+- **BindListOptions** _(interface)_ - `interface BindListOptions<T, E extends ListNode = HTMLElement>`
+  How `bindList` turns items into keyed DOM.
+- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
+  A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
 - **IslandBusUnsubscribe** _(type)_ - `type IslandBusUnsubscribe = () => void`
   Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it straight back as its `IslandCleanup`.
 - **IslandCleanup** _(type)_ - `type IslandCleanup = () => void`
@@ -6088,43 +6067,108 @@ _No named exports (side-effect entrypoint)._
   Enhances one island element with its (typed) props. Return a cleanup function to tear down on `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing. The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.
 - **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
   When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **ListContainer** _(interface)_ - `interface ListContainer<E extends ListNode>`
+  The container surface `bindList` uses; an `Element` has it.
+- **ListNode** _(interface)_ - `interface ListNode`
+  The node surface `bindList` uses; an `Element` has it.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
+- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T> /** Fetch the current key again; once disposed, nothing. */ refetch(): void /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
+  Call it to read the current state (tracking, like a signal).
+- **ResourceState** _(type)_ - `type ResourceState<T>`
+  An async value's state. `status` narrows `value` and `error`, so no branch can be skipped.
+- **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
+  A readable/writable reactive value: call it to read (tracking), `.set` to write.
+- **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
+  Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
+- **bindIsland** _(function)_ - `bindIsland: <P = Record<string, unknown>>(setup: (ctx: BindIslandContext<P>) => Record<string, (event: Event) => void> | void) => IslandEnhancer<P>`
+  The binding tier: `setup` creates the island's state and returns the event handlers its markup names; the island's `data-bind-*` attributes then bind them.
+- **bindList** _(function)_ - `bindList: <T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<T, E>) => () => void`
+  Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item keeps its node, so focus, selection and input state survive a reorder. A render with no earlier nodes replaces the container's children; later renders move only the nodes outside the longest run alread…
+- **computed** _(function)_ - `computed: <T>(fn: () => T) => Computed<T>`
+  Derived value, cached into a signal and computed on first read. While an effect (or another computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next input change stops it instead of recomputing, so a dropped computed costs nothing; reading it again starts it…
 - **createIslandBus** _(function)_ - `createIslandBus: <Events extends Record<string, unknown> = Record<string, unknown>>() => { emit<K extends keyof Events>(type: K, detail: Events[K]): void; on<K extends keyof Events>(type: K, handler: (detail: Events[K])…`
   A typed publish/subscribe channel for coordinating islands that must talk to each other without a shared reactive store - a cart badge reacting to an "add to cart" island, a filter island driving a results island. Create ONE bus in your mount entry and close over it in each enhancer; there is no im…
 - **defineIsland** _(function)_ - `defineIsland: <P = unknown>(enhancer: IslandEnhancer<P>) => IslandEnhancer<P>`
-  Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
-- **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer>>, options?: { readonly root?: ParentNode; }) => () => void`
-  Find every `<nifra-island data-id>` under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-strategy`. An island whose `id` has no enhancer is left as inert SSR HTML (forward-compatible). An enhancer that throws is isolated - it never blocks the others (eac…
+  Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is to pin the props shape so `el` and `props` are typed inside the body and the enhancer is assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
+- **effect** _(function)_ - `effect: (fn: () => void) => () => void`
+  Run `fn` now and again whenever any signal it read changes. Returns a disposer. Dependencies re-track on every run, so conditional reads subscribe to exactly the live branch. Every run, the first included, finishes before the effects its writes trigger run, itself among them.
+- **islandProps** _(function)_ - `islandProps: (props: Record<string, unknown>) => string`
+  The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted attribute (`data-island-props="${...}"`): unquoted, a space in the JSON ends the value and the rest parses as attributes.
+- **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: { readonly root?: ParentNode; }) => () => void`
+  Find every `[data-island]` element under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that is already mounted, is left alone, so calling again after a soft navigation mounts only new hosts. An en…
+- **resource** _(function)_ - `resource: <K, T>(source: () => K, fetcher: (key: K, abort: AbortSignal) => Promise<T>) => Resource<T>`
+  An async value keyed by `source`. `source` runs tracked, so a write to any signal it reads starts a new fetch; `fetcher` runs untracked with that key, so nothing it reads (before or after an `await`) is a dependency. A newer fetch aborts the older one and only the newest result lands. Inside an isl…
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
   Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
-
-### `@nifrajs/web/nano`
-
-- **BindListOptions** _(interface)_ - `interface BindListOptions<T>`
-  How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the array index) - it is what lets add/remove/reorder touch only the changed rows.
-- **BindResourceHandlers** _(interface)_ - `interface BindResourceHandlers<T>`
-  How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden "still loading" state can slip through as a rendered `undefined`.
-- **Readable** _(interface)_ - `interface Readable<T>`
-  A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so `bind`/`bindList` accept either.
-- **Resource** _(interface)_ - `interface Resource<T>`
-  An async cell: a `Readable` of `ResourceState<T>` plus `refetch()`. This is nano's answer to "suspense" - an explicit pending/error/ready value, never a thrown promise or a magic boundary.
-- **ResourceState** _(type)_ - `type ResourceState<T>`
-  The three states of an async cell. A discriminated union on `status` so a consumer must handle every branch - there is no "value that might secretly be loading", the failure mode of ad-hoc `isLoading` booleans. `value`/`error` are narrowed by `status`.
-- **Signal** _(interface)_ - `interface Signal<T>`
-  A writable cell. `set` notifies subscribers only when the value actually changes (`Object.is`), so a redundant write costs nothing.
-- **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void`
-  Bind one element to a source: `apply(el, value)` runs once immediately and again on every change. Returns the unsubscribe - hand it back as the island's cleanup (or collect several).
-- **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void`
-  Bind a list signal to a container with keyed reconciliation: new items are `create`d, surviving items are `update`d in place (keeping focus, scroll, and selection), removed items are detached, and the children are ordered to match the array. Returns the unsubscribe.
-- **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void`
-  Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).
-- **computed** _(function)_ - `computed: <T>(compute: () => T, deps: readonly Readable<unknown>[]) => Readable<T>`
-  A derived cell. `computed(() => a.get() + b.get(), [a, b])` recomputes whenever a declared dependency changes and notifies its own subscribers when the derived value changes.
-- **resource** _(function)_ - `resource: <T>(fetcher: (signal: AbortSignal) => Promise<T>, deps?: readonly Readable<unknown>[]) => Resource<T>`
-  An async derived cell. `resource(fetcher, [deps])` runs `fetcher` immediately and again whenever a declared dependency changes, exposing the result as an explicit `{ status, value, error }`.
 - **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
-  A current-value cell. `signal(0)` -> `.get()` reads, `.set(1)` writes and notifies.
+  Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
+- **untrack** _(function)_ - `untrack: <T>(fn: () => T) => T`
+  Run `fn` without subscribing the running effect or computed to the signals it reads.
+
+### `@nifrajs/web/islands/swap`
+
+- **SwapOptions** _(interface)_ - `interface SwapOptions`
+  Where `enableSwap` looks for links, forms, slots and islands.
+- **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
+  Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under `root` refresh its slot in place. Call it instead of `mountIslands`.
+
+### `@nifrajs/web/live`
+
+- **Live** _(interface)_ - `interface Live`
+  A live runtime: pass it to `createWebApp({ live })`.
+- **LiveBus** _(interface)_ - `interface LiveBus`
+- **LiveBusEvent** _(type)_ - `type LiveBusEvent = LiveBusInput & { readonly seq: number }`
+- **LiveBusInput** _(type)_ - `type LiveBusInput = LiveChange | LiveRevocation`
+- **LiveBusListener** _(interface)_ - `interface LiveBusListener`
+- **LiveBusSubscription** _(interface)_ - `interface LiveBusSubscription`
+- **LiveChange** _(interface)_ - `interface LiveChange`
+  Something a loader declared with `ctx.live` changed.
+- **LiveOptions** _(interface)_ - `interface LiveOptions`
+- **LiveRevocation** _(interface)_ - `interface LiveRevocation`
+  Grants issued before this event stop working: every grant (`sub` and `key` null), one subject's (`key` null), or, with `key`, any grant holding that key (for everyone, or for `sub`).
+- **live** _(function)_ - `live: (options: LiveOptions) => Live`
+  Create the live runtime for one app.
+- **memoryBus** _(function)_ - `memoryBus: () => LiveBus`
+  The single-process bus: an in-memory clock, events delivered to every subscriber before `append` resolves. Processes do not share it; run several behind a shared bus instead.
+- **nextSeq** _(const)_ - `nextSeq: (last: number, nowMs: number) => number`
+  The seq a clock reading allows, never at or below `last`.
+
+### `@nifrajs/web/live-client`
+
+- **LiveClient** _(interface)_ - `interface LiveClient`
+- **LiveClientOptions** _(interface)_ - `interface LiveClientOptions`
+- **liveClient** _(function)_ - `liveClient: (options?: LiveClientOptions) => LiveClient`
+
+### `@nifrajs/web/live-hub`
+
+- **ALARM_GAP_MS** _(const)_ - `ALARM_GAP_MS: 30000`
+  Alarms come no closer together than this: expiry is checked again before every frame anyway.
+- **DEFAULT_HUB_MEMBERSHIPS** _(const)_ - `DEFAULT_HUB_MEMBERSHIPS: 150000`
+  About 440 bytes of heap each when no two sockets share a tag, the worst case; far less when they do. 150,000 of them stay near 66 MB, inside the 128 MB a Durable Object's isolate may use.
+- **DEFAULT_HUB_SOCKETS** _(const)_ - `DEFAULT_HUB_SOCKETS: 5000`
+  The most sockets one hub was verified to hold, with every publish reaching them all well under 200 ms.
+- **LiveHubObject** _(class)_ - `class LiveHubObject`
+- **LiveHubOptions** _(interface)_ - `interface LiveHubOptions`
+- **LiveHubState** _(interface)_ - `interface LiveHubState`
+  The part of a Durable Object's state the hub uses (no Cloudflare types dependency).
+- **LiveHubStorage** _(interface)_ - `interface LiveHubStorage`
+- **LiveHubWebSocket** _(interface)_ - `interface LiveHubWebSocket`
+  A hibernatable server socket, as far as the hub uses one.
+- **MAX_ATTACHMENT_BYTES** _(const)_ - `MAX_ATTACHMENT_BYTES: 512`
+  Per-socket limits the platform sets; the hub stays well under both (see the tests).
+- **MAX_SOCKET_RECORD_BYTES** _(const)_ - `MAX_SOCKET_RECORD_BYTES: 30720`
+- **liveHub** _(function)_ - `liveHub: <Env = Record<string, string | undefined>>(options: LiveHubOptions | ((env: Env) => LiveHubOptions)) => new (state: LiveHubState, env: Env) => LiveHubObject`
+  The live hub's Durable Object class. Export it from the Worker's main module under the class name the binding names.
+
+### `@nifrajs/web/live-redis`
+
+- **APPEND_SCRIPT** _(const)_ - `APPEND_SCRIPT: "local t = redis.call('TIME')\nlocal now = tonumber(t[1]) * 1000000 + tonumber(t[2])\nlocal last = tonumber(redis.call('HGET', KEYS[2], 'seq') or '0')\nlocal seq = math.max(last + 1, now)\nlocal id = stri…`
+  KEYS[1] the stream, KEYS[2] the clock hash; ARGV[1] the event JSON, ARGV[2] the trim length. Lua numbers are doubles: a microsecond clock stays exact below 2^53 (the year 2255).
+- **RedisCommand** _(type)_ - `type RedisCommand = (command: string, args: readonly string[]) => Promise<unknown>`
+  Send one Redis command and resolve with its reply, as any client's raw-command call does.
+- **RedisLiveBusOptions** _(interface)_ - `interface RedisLiveBusOptions`
+- **redisLiveBus** _(function)_ - `redisLiveBus: (options: RedisLiveBusOptions) => LiveBus`
 
 ### `@nifrajs/web/plugins/css-modules`
 
@@ -6672,8 +6716,8 @@ _No named exports (side-effect entrypoint)._
 
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
   A query's reactive {@link QueryState} plus `isPending` + `refetch`.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>`
-  Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle.
+- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
+  Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -6797,7 +6841,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-react/island`
 
 - **Island** _(function)_ - `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode`
-  Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-props`; React escapes the attribute value and the client reads the decoded `dataset.props`.
+  Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes the attribute value and the client reads the decoded `dataset.islandProps`.
 - **IslandProps** _(interface)_ - `interface IslandProps`
 
 ### `@nifrajs/web-react/ppr`
@@ -7023,8 +7067,8 @@ _No named exports (side-effect entrypoint)._
 
 - **CreateQueryResult** _(interface)_ - `interface CreateQueryResult<T>`
   A query's reactive state accessor plus `refetch`.
-- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>) => CreateQueryResult<T>`
-  Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription).
+- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>`
+  Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names the…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -7147,8 +7191,8 @@ _No named exports (side-effect entrypoint)._
 
 - **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { /** Force a refetch (ignores `staleTime`). */ readonly refetch: () => Promise<T> }`
   A query store: a `Readable<QueryState<T>>` (read via `$`) plus `refetch`.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>`
-  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle.
+- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryStore<T>`
+  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -7204,6 +7248,8 @@ _No named exports (side-effect entrypoint)._
   The tag: `` html`<p>${user.name}</p>` `` → an escaped {@link Template}.
 - **raw** _(function)_ - `raw: (trusted: string) => RawHtml`
   Mark a string as trusted, pre-escaped markup - it is emitted verbatim. The deliberate escape hatch (CMS-sanitized HTML, pre-rendered markdown): every call site is greppable, exactly like React's dangerouslySetInnerHTML, without the JSX.
+- **slot** _(function)_ - `slot: (name: string, content: HtmlValue) => Template`
+  A region of the page that a `data-swap` link or form refreshes on its own. Place it as the only content of the element marked `data-swap-slot="<name>"`:
 - **vanillaAdapter** _(const)_ - `vanillaAdapter: RenderAdapter`
   The zero-framework server render adapter - pass to
 
@@ -7284,8 +7330,8 @@ _No named exports (side-effect entrypoint)._
 
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
   A query's reactive {@link QueryState} (read `.value`) plus `refetch`.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>`
-  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle.
+- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
+  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live` names…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -7650,6 +7696,8 @@ _No named exports (side-effect entrypoint)._
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`

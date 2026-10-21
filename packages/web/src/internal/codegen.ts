@@ -53,6 +53,18 @@ export interface GenerateClientEntryOptions {
   /** The build moved copy tables into per-locale chunks: the handover carries the chunk URLs, and a
    * navigation loads the copy of the URL it goes to beside the route's code. */
   readonly copyChunks?: boolean
+  /**
+   * The server runs `createWebApp({ live })`: route loads go through its live load endpoint and the
+   * entry keeps what is on screen fresh (`@nifrajs/web/live-client`). Absent, the entry is exactly the
+   * non-live one.
+   */
+  readonly live?: LiveClientEntry | undefined
+}
+
+/** A client entry for a live server: `{}`, or the endpoints when the runtime moves them. */
+export interface LiveClientEntry {
+  readonly path?: string
+  readonly loadPath?: string
 }
 
 /**
@@ -165,6 +177,8 @@ export function generateClientEntry(
     )
   }
 
+  const live = options.live
+  const liveFetch = live === undefined ? "" : ", fetchData: __live.fetchData"
   return `${[
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
@@ -173,6 +187,7 @@ export function generateClientEntry(
     ...(options.serverComponents
       ? ['import { bindComponentRouter } from "@nifrajs/web/server-components/client"']
       : []),
+    ...(live === undefined ? [] : ['import { liveClient } from "@nifrajs/web/live-client"']),
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     ...(loadings.length > 0
@@ -235,6 +250,15 @@ export function generateClientEntry(
     "const holds = {}",
     // routeId → the ids and `handle` exports `useMatches` reports (layouts, then the page).
     `const layoutIdsOf = ${jsValueLiteral(layoutIdsOf)}`,
+    ...(live === undefined
+      ? []
+      : [
+          `const __live = liveClient({ ${[
+            "layoutIdsOf",
+            ...(live.path === undefined ? [] : [`path: ${jsStringLiteral(live.path)}`]),
+            ...(live.loadPath === undefined ? [] : [`loadPath: ${jsStringLiteral(live.loadPath)}`]),
+          ].join(", ")} })`,
+        ]),
     "const matchChains = {}",
     `const ${options.copyChunks === true ? "loadRoute" : "loadModule"} = async (id) => {`,
     "  if (chains[id]) return",
@@ -335,8 +359,8 @@ export function generateClientEntry(
     // With `_loading` pages the store is wrapped: a slow navigation then names a loading chain (the
     // shared layouts + the `_loading` component) for the mounted view to render in the meantime.
     loadings.length > 0
-      ? `const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })`
-      : `const router = createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks })`,
+      ? `const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks${liveFetch} }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })`
+      : `const router = createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks${liveFetch} })`,
     ...(options.serverComponents ? ["bindComponentRouter(router)"] : []),
     "installHistory(router)",
     "installForms(router)",
@@ -397,6 +421,8 @@ export function generateClientEntry(
     // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
     // duplicate the first request.
     "  router.hydrate().catch((error) => console.error('[nifra/web] clientLoader failed:', error))",
+    // Once mounted: the first live load and the socket must not race the hydration.
+    ...(live === undefined ? [] : ["  __live.attach(router)"]),
     // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
     // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.
     "  requestAnimationFrame(signalHydrated)",

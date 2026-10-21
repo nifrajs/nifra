@@ -282,6 +282,7 @@ const NOT_LAYERS: Readonly<Record<string, string>> = {
   "packages/middleware/src/index.ts": "re-exports",
   "packages/web/src/index.ts": "re-exports",
   "packages/web/src/draft.ts": "draft mode tells withISR to bypass; it stores nothing",
+  "packages/web/src/internal/invalidation.ts": "drops what withISR stored; stores nothing",
   "packages/web/src/internal/render-document.ts": "renders the page withISR stores",
   "packages/web/src/internal/web-app.ts": "opens the ISR header channel; withISR stores",
   "packages/web/src/manifest.ts": "route metadata",

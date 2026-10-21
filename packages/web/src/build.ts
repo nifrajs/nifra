@@ -54,7 +54,7 @@ import {
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
-import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { generateClientEntry, generateServerManifest, type LiveClientEntry } from "./index.ts"
 import { missingClientEntry } from "./internal/codegen.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
@@ -208,6 +208,11 @@ export interface BuildClientOptions {
    * every table whole; the server entry passes the manifest's `copyChunks` to `createWebApp`.
    */
   readonly copySplit?: boolean
+  /**
+   * The server runs `createWebApp({ live })`: the client entry sends route loads through its live load
+   * endpoint and keeps what is on screen fresh: the runtime's `clientEntry`.
+   */
+  readonly live?: LiveClientEntry | undefined
 }
 
 /**
@@ -479,6 +484,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       clientModule,
       resolve,
       copyChunks: copySplit !== undefined,
+      live: options.live,
     })}`,
   )
 
@@ -1331,6 +1337,7 @@ export const SERVER_ENTRY_OPTIONS = [
   "nonce",
   "i18n",
   "hostPolicy",
+  "live",
 ] as const
 export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
 /** Each importable option mapped to the specifier of the module that exports it. */
@@ -1894,6 +1901,8 @@ export interface BuildTargetOptions {
   /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by
    * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
+  /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */
+  readonly live?: LiveClientEntry | undefined
 }
 
 /** Minimal app surface `buildTarget`'s static path needs - a fetch handler (a built `createWebApp`). */
@@ -1949,6 +1958,7 @@ export const bunBundler: Bundler = {
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
       ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
+      live: input.live,
     })
   },
   buildServer: (input) =>
@@ -2053,6 +2063,13 @@ export async function buildTargetWith(
   bundler: Bundler,
 ): Promise<BuildTargetResult> {
   const { routesDir, outDir, workDir } = options
+  // One without the other ships a client that posts to an endpoint the server lacks, or a live server
+  // no client ever watches.
+  if ((options.optionImports?.live === undefined) !== (options.live === undefined)) {
+    throw new Error(
+      "[nifra/web] buildTarget: `optionImports.live` and `live` go together - the server's runtime and the client entry that reaches it",
+    )
+  }
   const requestedCssCodeSplit =
     options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
   const requestedCssLoading =
@@ -2101,6 +2118,7 @@ export async function buildTargetWith(
     ...(requestedCssCodeSplit !== undefined ? { cssCodeSplit: requestedCssCodeSplit } : {}),
     ...(requestedCssLoading !== undefined ? { cssLoading: requestedCssLoading } : {}),
     root: resolvePath(dirname(routesDir)),
+    live: options.live,
   })
   // Bun's client builder has no CSS-loading field, but the server-side document policy is bundler
   // independent. Carry the requested policy into the result so static prerender callbacks and the

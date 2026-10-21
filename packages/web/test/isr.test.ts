@@ -182,6 +182,22 @@ describe("withISR", () => {
     expect(calls()).toBe(2)
   })
 
+  test("a slot swap bypasses the cache: never served the cached document, never stored", async () => {
+    const store = new MemoryCacheStore()
+    const swap = { headers: { "x-nifra-swap": "results" } }
+    const { app, calls } = trackApp((req) => html(req.headers.has("x-nifra-swap") ? "slot" : "v1"))
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0 })
+    const cold = await handler(new Request("http://x/p", swap))
+    expect(await cold.text()).toBe("slot")
+    expect(await store.get(pageKey("/p"))).toBeUndefined()
+    await handler(new Request("http://x/p"))
+    const res = await handler(new Request("http://x/p", swap))
+    expect(res.headers.get("x-nifra-isr")).toBeNull()
+    expect(await res.text()).toBe("slot")
+    expect((await store.get(pageKey("/p")))?.body).toBe("v1")
+    expect(calls()).toBe(3)
+  })
+
   test("default query policy: a query string bypasses, so distinct queries store nothing", async () => {
     const store = new MemoryCacheStore()
     const keys: string[] = []

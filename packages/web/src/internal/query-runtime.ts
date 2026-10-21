@@ -1,4 +1,4 @@
-import type { QueryClient, QueryState } from "../query.ts"
+import type { QueryClient, QueryHandle, QueryState } from "../query.ts"
 import { createQueryClient } from "../query.ts"
 
 /** Stable idle state shared by every framework query binding. */
@@ -22,6 +22,19 @@ export function getQueryClientSingleton(): QueryClient | undefined {
   if (singleton === undefined) singleton = createQueryClient({ now: () => Date.now() })
   return singleton
 }
+
+export const noop = (): void => {}
+
+/** Stable no-op subscription for a binding with no client (server, pre-hydration). */
+export const noopSubscribe = (): (() => void) => noop
+
+/** A binding's fetch on mount. A failed fetch shows as the query's `error`, so its promise is let go. */
+export const fetchOnMount = (handle: QueryHandle<unknown> | undefined): (() => void) =>
+  handle === undefined
+    ? noop
+    : () => {
+        handle.fetch().catch(noop)
+      }
 
 /** Create the refetch fallback used when a binding has no client-side query cache. */
 export function createNoClientRefetch<T>(tag: string, operation: string): () => Promise<T> {

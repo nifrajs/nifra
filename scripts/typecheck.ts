@@ -4,7 +4,7 @@
  *
  * The root tsconfig checks the DOM-free corpus - core, node, and ~35 packages - in one pass, resolving
  * every `@nifrajs/*` import to source through `paths`. The DOM/JSX packages (react/preact/svelte/vue/
- * solid adapters, islets, island-trigger) are excluded from that program because they need a different
+ * solid adapters, island-trigger) are excluded from that program because they need a different
  * `lib`/`jsx`, so each carries its own `tsconfig.json` and has to be checked on its own.
  *
  * That list used to live inline in a ten-command `package.json` script. A new DOM package that added its
@@ -72,7 +72,6 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "packages/web-preact/tsconfig.json",
   "packages/web-svelte/tsconfig.json",
   "packages/web-vanilla/tsconfig.json",
-  "packages/islets/tsconfig.json",
   "packages/island-trigger/tsconfig.json",
   "apps/workbench/tsconfig.json",
   "scripts/tsconfig.json",

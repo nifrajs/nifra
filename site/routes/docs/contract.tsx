@@ -465,8 +465,9 @@ export default function Contract() {
           URL as the document with an <code>x-nifra-data</code> request header, so its response is
           always <code>cache-control: private, no-store</code> with <code>vary: x-nifra-data</code>,
           and a document that carries loader headers gets <code>x-nifra-data</code> added to its{" "}
-          <code>vary</code>. A CDN that ignores <code>Vary</code> needs <code>x-nifra-data</code> in
-          its cache key when it caches documents.
+          <code>vary</code>. A slot swap's response (<code>x-nifra-swap</code>) is{" "}
+          <code>private, no-store</code> with <code>vary: x-nifra-swap</code> too. A CDN that ignores{" "}
+          <code>Vary</code> must bypass its cache for both headers when it caches documents.
         </li>
         <li>
           <strong>Write before you return.</strong> The controls close when the loader or action

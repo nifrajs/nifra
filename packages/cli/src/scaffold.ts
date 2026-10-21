@@ -18,9 +18,9 @@ import { paramConstraint } from "@nifrajs/core/pattern"
 export type Framework = "react" | "preact" | "solid" | "vue" | "svelte" | "vanilla"
 
 /** A scaffold flavour on top of the framework. `default` is the plain page stub; `stateful` only
- * applies to vanilla and emits the golden **nano** pattern (explicit reactivity: `signal` +
- * `computed(fn, [deps])` + keyed `bindList` + collected cleanups) instead of the static island stub -
- * the AI-safe small-app lane whose three mistakes NF-C021/C022/C023 catch statically. */
+ * applies to vanilla and emits a reactive island (`bindIsland` state + `data-bind-*` markup + keyed
+ * `bindList`) instead of the static island stub - the small-app lane whose binding names, binding
+ * hosts and list keys NF-C047/C048/C022 check statically. */
 export type ScaffoldVariant = "default" | "stateful"
 
 const EXT: Record<Framework, string> = {
@@ -178,7 +178,7 @@ export default function Page({ data }: Route.ComponentProps) {
 }
 
 // --- Add interactivity the AI-safe way (islands), NOT hydration ---------------------------------
-// 1. Render a marker in the page above:  html\`<nifra-island data-id="counter" data-props=\${JSON.stringify({ start: 0 })}></nifra-island>\`
+// 1. Render a marker in the page above:  html\`<nifra-island data-island="counter" data-island-props="\${JSON.stringify({ start: 0 })}"></nifra-island>\`
 // 2. Wire the route to its enhancer bundle, in ${basename(backendFileOf(file))}:
 //    export const islandScripts = [/* built URL of ./counter.client.ts */]
 // 3. Write ./counter.client.ts as an imperative enhancer that ALWAYS returns its cleanup:
@@ -198,72 +198,80 @@ export default function Page({ data }: Route.ComponentProps) {
 }
 
 /**
- * The nano golden stub (`nifra scaffold --variant stateful`, vanilla only): a zero-runtime `html`
- * page that renders a `<nifra-island>` marker, plus the companion `<name>.client.ts` shown as the
- * copy-paste block. The client is the AI-safe small-app lane - explicit reactivity, no VDOM, no
- * auto-tracking - and every reactive edge is a visible call, which is what makes the three nano
- * mistakes STATICALLY catchable:
- *   - a `bind`/`bindList` whose disposer is discarded  -> NF-C021 (the block collects every disposer)
- *   - a `bindList` keyed by array index                -> NF-C022 (the block keys by `item.id`)
- *   - a `computed` reading a signal its `[deps]` omits  -> NF-C023 (the block declares `[todos]`)
+ * The reactive island stub (`nifra scaffold --variant stateful`, vanilla only): a zero-runtime `html`
+ * page whose island markup carries its own `data-bind-*` attributes, plus the companion
+ * `<name>.client.ts` shown as the copy-paste block. Bindings are names, never code, and the client
+ * names its state and handlers literally, so `nifra check` can match the two:
+ *   - a `data-bind-*` name with no `state("...")` key or returned handler -> NF-C047
+ *   - a `data-bind-*` attribute outside a host mounted with `bindIsland`    -> NF-C048
+ *   - a `bindList` keyed by the item's position                           -> NF-C022
  * The page body is a valid, typecheckable static document; interactivity is added by writing the
  * companion client shown, never by turning on hydration.
  */
-function nanoStub(file: string): string {
-  return `// ${file} - @nifrajs/web-vanilla page + a nano island (explicit reactivity, zero VDOM). The
-// document is static and the nano client below owns all interactivity; \`hydrate = false\` and the
-// island's \`islandScripts\` URL live in ${basename(backendFileOf(file))}.
+function statefulStub(file: string): string {
+  return `// ${file} - @nifrajs/web-vanilla page + a reactive island (signals bound to server-rendered
+// markup, zero VDOM). The document is static and works with JS off; the client below binds it.
+// \`hydrate = false\` and the island's \`islandScripts\` URL live in ${basename(backendFileOf(file))}.
 import { html } from "@nifrajs/web-vanilla"
 import type { Route } from "${typesOf(file)}"
 
 export default function Page({ data }: Route.ComponentProps) {
-  // The island marker: data-props is the initial state the client reads on mount.
+  // data-island names the enhancer; data-island-props seeds its state; data-bind-* names its state
+  // and handlers.
   return html\`<main>
     <h1>\${data.title}</h1>
-    <nifra-island data-id="todos" data-props=\${JSON.stringify({ items: [] })}></nifra-island>
+    <section data-island="todos" data-island-props="\${JSON.stringify({ items: [] })}">
+      <form data-bind-on="submit:add">
+        <input name="text" data-bind-value="draft" />
+        <button>Add</button>
+      </form>
+      <p><span data-bind-text="left">0</span> left</p>
+      <ul></ul>
+    </section>
   </main>\`
 }
 
-// --- ./todos.client.ts - the golden nano pattern (write this as a companion file) -----------------
+// --- ./todos.client.ts - the reactive island (write this as a companion file) -------------------
 //
-//   import { defineIsland, mountIslands } from "@nifrajs/web/islands"
-//   import { signal, computed, bind, bindList } from "@nifrajs/web/nano"
+//   import { bindIsland, bindList, effect, mountIslands } from "@nifrajs/web/islands"
 //
 //   interface Todo { id: string; text: string; done: boolean }
 //
-//   const todos = defineIsland<{ items: Todo[] }>((el, props) => {
-//     // 1. State is a signal. Reads are \`.get()\`, writes are \`.set(...)\` - every edge is visible.
-//     const items = signal<Todo[]>(props.items)
+//   const todos = bindIsland(({ root, state }) => {
+//     // 1. State is named. Every data-bind-* name in the markup is a state(...) key here (NF-C047),
+//     //    seeded from data-island-props when the props carry it.
+//     const items = state<Todo[]>("items", [])
+//     const draft = state("draft", "")
+//     const left = state("left", 0)
 //
-//     // 2. Derived state declares its deps EXPLICITLY. Omitting \`todos\`/\`items\` here is NF-C023.
-//     const remaining = computed(() => items.get().filter((t) => !t.done).length, [items])
+//     // 2. Derived values come from an effect: it re-runs when a signal it read changes.
+//     effect(() => left.set(items().filter((t) => !t.done).length))
 //
-//     // 3. Collect EVERY disposer. A bare \`bind(...)\`/\`bindList(...)\` that drops it is NF-C021.
-//     const cleanups: Array<() => void> = []
-//     const count = el.querySelector("[data-count]")!
-//     cleanups.push(bind(count, remaining, (node, n) => { node.textContent = String(n) + " left" }))
-//
-//     // 4. Keyed list. Key by a STABLE id on the item, never the array index (NF-C022) - or
-//     //    add/remove/reorder reuses the wrong DOM node.
-//     const list = el.querySelector("[data-list]")!
-//     cleanups.push(bindList(items, list, {
+//     // 3. A keyed list. Key by a STABLE id on the item, never its position (NF-C022), or an
+//     //    insert, removal or reorder hands a node to the wrong item.
+//     const list = root.querySelector("ul")
+//     if (list) bindList(items, list, {
 //       key: (t) => t.id,
-//       create: (t) => { const li = document.createElement("li"); li.dataset.id = t.id; return li },
+//       create: () => document.createElement("li"),
 //       update: (li, t) => { li.textContent = t.text; li.classList.toggle("done", t.done) },
-//     }))
+//     })
 //
-//     // Mutations replace the value (Object.is-deduped); subscribers run synchronously.
-//     const add = (text: string) => items.set([...items.get(), { id: crypto.randomUUID(), text, done: false }])
-//     void add
-//
-//     // 5. Return the teardown - islands call it on soft-nav. This is what NF-C021 protects.
-//     return () => { for (const off of cleanups) off() }
+//     // 4. Handlers are returned by name for data-bind-on. Everything the setup created stops when
+//     //    the island unmounts; onDispose(fn) covers timers and requests it starts itself.
+//     return {
+//       add: (event) => {
+//         event.preventDefault()
+//         const text = draft().trim()
+//         if (text) items.set((list) => [...list, { id: crypto.randomUUID(), text, done: false }])
+//         draft.set("")
+//       },
+//     }
 //   })
 //
 //   mountIslands({ todos })
 //
-// Cross-island coordination: one createIslandBus() closed over in each enhancer. nifra_docs("nano")
-// has the full cookbook; \`nifra check\` runs NF-C021/C022/C023 over the client you write.
+// Cross-island coordination: one createIslandBus() closed over in each enhancer. nifra_docs("islands")
+// has the full cookbook; \`nifra check\` runs NF-C047/C048/C022 over the page and client you write.
 `
 }
 
@@ -297,14 +305,14 @@ export function scaffoldRoute(
     file: backendFileOf(file),
     content: backendStub(file, params, framework === "vanilla"),
   }
-  // `stateful` is vanilla-only: it swaps the static island stub for the nano golden pattern. Asking
+  // `stateful` is vanilla-only: it swaps the static island stub for the reactive island. Asking
   // for it on a JSX/SFC framework is a no-op on the flavour (those lanes have their own reactivity).
   if (framework === "vanilla" && variant === "stateful") {
     return {
       file,
-      content: nanoStub(file),
+      content: statefulStub(file),
       backend,
-      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route with a nano island. ${ROUTE_CONTRACT}\nThe stub embeds the golden nano client (signal + computed(fn,[deps]) + keyed bindList + collected cleanups); write it as the companion .client.ts. \`nifra check\` runs NF-C021/C022/C023 over it; nifra_docs("nano") is the full cookbook.`,
+      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route with a reactive island. ${ROUTE_CONTRACT}\nThe stub embeds the island client (bindIsland state + data-bind-* markup + keyed bindList); write it as the companion .client.ts. \`nifra check\` runs NF-C047/C048/C022 over the page and client; nifra_docs("islands") is the full cookbook.`,
     }
   }
   if (framework === "react" || framework === "preact" || framework === "solid") {
@@ -320,7 +328,7 @@ export function scaffoldRoute(
       file,
       content: vanillaStub(file),
       backend,
-      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook. For explicit local state (a list a human edits), scaffold with variant "stateful" to get the nano pattern instead.`,
+      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook. For local state (a list a human edits), scaffold with variant "stateful" to get a reactive island instead.`,
     }
   }
   return {

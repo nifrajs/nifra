@@ -171,13 +171,13 @@ describe("sse maxBufferedBytes", () => {
 
   test("a client that stops reading is dropped on the first send past the cap", async () => {
     const { res, stream, sends } = flood({ maxBufferedBytes: 4096 }, 1000)
-    expect(sends).toBe(6)
+    expect(sends).toBe(5)
     expect(String(stream.signal.reason)).toContain("sse_client_too_slow")
     await expect(bodyReader(res).read()).rejects.toThrow("sse_client_too_slow")
   })
 
   test("the default cap is 1 MiB; Infinity turns it off", () => {
-    expect(flood(undefined, 2000).sends).toBe(Math.ceil((1024 * 1024) / 1008) + 1)
+    expect(flood(undefined, 2000).sends).toBe(Math.floor((1024 * 1024) / 1008) + 1)
     const unlimited = flood({ maxBufferedBytes: Number.POSITIVE_INFINITY }, 2000)
     expect(unlimited.sends).toBe(2000)
     expect(unlimited.stream.signal.aborted).toBe(false)
@@ -211,9 +211,19 @@ describe("sse maxBufferedBytes", () => {
     expect(bytes).toBe(200 * 3 * 1008)
   })
 
-  test("one frame larger than the cap still goes out to a reader that is caught up", async () => {
-    const out = await readAll(sse(ctx(), (s) => s.send(frame), { maxBufferedBytes: 16 }))
-    expect(out).toBe(`data: ${frame.data}\n\n`)
+  test("a single oversized frame is rejected without waiting for another send", async () => {
+    let signal!: AbortSignal
+    const response = sse(
+      ctx(),
+      (stream) => {
+        signal = stream.signal
+        stream.send(frame)
+        stream.close()
+      },
+      { maxBufferedBytes: 16 },
+    )
+    expect(signal.aborted).toBe(true)
+    await expect(readAll(response)).rejects.toThrow("sse_client_too_slow")
   })
 
   test("a negative, NaN, or non-numeric cap throws", () => {

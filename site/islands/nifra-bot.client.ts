@@ -50,18 +50,9 @@ const TOPICS: readonly TopicAnswer[] = [
       "Feature: islands let static SSR pages add focused client behavior only where needed. How to use: render normal HTML first, attach an island script to the route, and keep the browser code scoped to that widget instead of hydrating the whole page.",
   },
   {
-    triggers: [
-      "nano",
-      "signal",
-      "signals",
-      "computed",
-      "reactive",
-      "small app",
-      "state",
-      "bindlist",
-    ],
+    triggers: ["signal", "signals", "computed", "reactive", "small app", "state", "bindlist"],
     answer:
-      "Feature: nano is the small-app lane - explicit reactivity (signal, computed with a deps array, and a keyed bindList) with no virtual DOM or auto-tracking. How to use: put nano state inside an island for a page with local state a human edits; because every reactive edge is a visible call, its three mistakes are static checks (NF-C021/C022/C023). Reach for a framework adapter once you need client routing or nested views.",
+      "Feature: reactive islands bind signals to server-rendered markup by name, with no virtual DOM. How to use: mount the island with bindIsland, declare state with state(key, fallback), and bind it with data-bind-* attributes; bindList renders a keyed list and resource keeps async state. nifra check matches every binding name against the setup (NF-C047). Reach for a framework adapter once you need client routing or nested views.",
   },
   {
     triggers: [

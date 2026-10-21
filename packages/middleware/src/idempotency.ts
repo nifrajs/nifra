@@ -1,5 +1,8 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
+  beforeHandler,
+  defineIdentityPlugin,
+  type IdentityPlugin,
   isAuthenticatedRequest,
   METHODS,
   type Middleware,
@@ -10,9 +13,12 @@ import {
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
  * tap) with the same `Idempotency-Key` gets the **first** response replayed instead of the side effect
  * running twice (double-charge, double-publish). The key is claimed in `onRequest`, so an in-flight
- * collision short-circuits before any mutation; a replay waits for `beforeHandle`, so a credential
- * revoked since the first request gets the route's current auth answer, not the stored response.
- * That needs the route declared after `.use(idempotency())` - `beforeHandle` is order-scoped.
+ * collision short-circuits before any mutation; a replay waits until just before the handler, after
+ * the route's authentication, validation and every guard - registered before or after this
+ * middleware - accept the retry again, so a credential revoked since the first request gets the
+ * route's current answer, not the stored response. It covers routes declared after it; installing it
+ * after one throws. A request no covered route handles (a mounted app, an earlier hook's answer) is
+ * not deduplicated: its key is released.
  *
  * Pair it with a DB uniqueness constraint - this stops the *retry*, the constraint is the source of
  * truth for genuinely-concurrent distinct requests. Production MUST use a shared {@link IdempotencyStore}
@@ -27,9 +33,9 @@ export interface IdempotencyRecord {
   /** Response body, base64-encoded. */
   readonly body: string
   /**
-   * The response came from a route this middleware's `beforeHandle` covers, so a retry is replayed
-   * from there - after the route's authentication, validation and earlier guards accept it again. A
-   * record without it (a route declared before `.use(idempotency())`) is replayed in `onRequest`.
+   * Set on every record this middleware writes: the response came from a covered route, so a retry is
+   * replayed just before that route's handler, after its authentication, validation and guards accept
+   * it again. A record without it is refused: its original route admission cannot be established.
    */
   readonly recheck?: boolean
 }
@@ -60,6 +66,9 @@ export interface IdempotencyStore {
   ): Promise<boolean>
   /** Release only the lock owned by `reservation` (handler errored / response not cacheable). */
   release(key: string, reservation: string): Promise<boolean>
+  /** Extend a still-owned pending lease atomically; false means ownership was lost.
+   * Without this, pending reservations use at least the replay retention TTL. */
+  renew?(key: string, reservation: string, lockTtlMs: number): Promise<boolean>
 }
 
 export interface MemoryIdempotencyStoreOptions {
@@ -188,6 +197,17 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
     this.entries.delete(key)
     return Promise.resolve(true)
   }
+
+  renew(key: string, reservation: string, lockTtlMs: number): Promise<boolean> {
+    assertPositiveTtl(lockTtlMs, "lockTtlMs")
+    const entry = this.entries.get(key)
+    const now = Date.now()
+    if (entry?.kind !== "lock" || entry.reservation !== reservation || entry.expiresAt <= now) {
+      return Promise.resolve(false)
+    }
+    this.entries.set(key, { ...entry, expiresAt: now + lockTtlMs })
+    return Promise.resolve(true)
+  }
 }
 
 export interface IdempotencyOptions {
@@ -199,9 +219,11 @@ export interface IdempotencyOptions {
   readonly methods?: readonly string[]
   /** How long a completed response is replayable, in ms. Default 24h. */
   readonly ttlMs?: number
-  /** How long the in-flight lock survives a crashed handler, in ms. Default 60s. */
+  /** Pending lease, renewed while work runs (for up to `ttlMs`) when the store supports `renew`.
+   * Default 60s. Stores without renewal reserve for at least `ttlMs` instead. */
   readonly lockTtlMs?: number
-  /** Max response bytes to cache. A larger response is returned but **not** stored. Default 1 MiB. */
+  /** Max response bytes to capture. Larger cacheable responses retain a fixed terminal replay error so a
+   * retry cannot repeat their effects. That small control record is independent of this cap. Default 1 MiB. */
   readonly maxBytes?: number
   /**
    * Whether a response should be cached for replay. Default: any status below 500 except 401, 403,
@@ -248,6 +270,28 @@ const NOT_THE_OPERATIONS_ANSWER = new Set([
   400, 401, 403, 404, 405, 408, 409, 413, 414, 415, 422, 425, 429, 431,
 ])
 const DAY_MS = 24 * 60 * 60 * 1000
+// A stalled renewal must not admit another execution through the same store in this process.
+const ACTIVE = new WeakMap<IdempotencyStore, Set<string>>()
+
+function terminalRecord(error: string, status: number): IdempotencyRecord {
+  return {
+    status,
+    headers: [["content-type", "application/json"]],
+    body: toBase64(KEY_ENCODER.encode(JSON.stringify({ ok: false, error }))),
+    recheck: true,
+  }
+}
+
+const reservationLost = (): Response =>
+  Response.json(
+    { ok: false, error: "idempotency_reservation_lost" },
+    { status: 503, headers: { "retry-after": "1" } },
+  )
+
+function discardResponse(response: Response): void {
+  // No caller will consume this response after losing ownership; cancellation must not stall on a tee.
+  void response.body?.cancel().catch(() => {})
+}
 
 function assertPositiveTtl(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -453,7 +497,7 @@ function defaultIdempotencyKey(
  *
  * Caching buffers the response body, so apply this to JSON/API routes, not streaming SSR responses.
  */
-export function idempotency(options: IdempotencyOptions): Middleware {
+export function idempotency(options: IdempotencyOptions): IdentityPlugin {
   const { store } = options
   const header = (options.header ?? "idempotency-key").toLowerCase()
   const methods = new Set((options.methods ?? DEFAULT_METHODS).map((m) => m.toUpperCase()))
@@ -477,23 +521,50 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       ? (req: Request): Promise<string | null> | null =>
           defaultIdempotencyKey(req, header, principalHeaders)
       : (req: Request): string | null | Promise<string | null> => custom(req, header)
-  const claimed = new WeakMap<
-    Request,
-    { readonly key: string; readonly reservation: string; readonly anonymous: boolean }
-  >()
-  // Replays held for `beforeHandle`, and fresh claims whose route `beforeHandle` reached.
+  let active = ACTIVE.get(store)
+  if (active === undefined) {
+    active = new Set()
+    ACTIVE.set(store, active)
+  }
+  const activeKeys = active
+  interface Claim {
+    readonly key: string
+    readonly reservation: string
+    readonly anonymous: boolean
+    lost: boolean
+    heartbeat?: ReturnType<typeof setInterval>
+    renewing?: Promise<void>
+  }
+  const claimed = new WeakMap<Request, Claim>()
+  const stop = (claim: Claim): void => {
+    if (claim.heartbeat !== undefined) clearInterval(claim.heartbeat)
+  }
+  const complete = async (claim: Claim, record: IdempotencyRecord): Promise<boolean> => {
+    stop(claim)
+    await claim.renewing
+    return !claim.lost && (await store.complete(claim.key, claim.reservation, record, ttlMs))
+  }
+  // Replays held for `beforeHandle`, and fresh claims every guard on a covered route admitted.
   const deferred = new WeakMap<Request, IdempotencyRecord>()
   const rechecked = new WeakSet<Request>()
 
   const middleware: Middleware = {
-    name: "idempotency",
     async onRequest(req) {
       if (!methods.has(req.method.toUpperCase())) return undefined
       const key = await keyOf(req)
       if (key === null || key === "") return undefined // opt-in per request - no key ⇒ no dedupe
+      const inFlight = (): Response =>
+        Response.json(
+          { ok: false, error: "idempotency_in_progress" },
+          { status: 409, headers: { "retry-after": String(Math.ceil(lockTtlMs / 1000)) } },
+        )
+      if (activeKeys.has(key)) return inFlight()
       let claim: IdempotencyClaim
       try {
-        claim = await store.begin(key, lockTtlMs)
+        claim = await store.begin(
+          key,
+          store.renew === undefined ? Math.max(ttlMs, lockTtlMs) : lockTtlMs,
+        )
       } catch (err) {
         // A full store can't tell a first request from a retry, and guessing either way is wrong:
         // serving the request risks a duplicate side effect, replaying nothing risks losing one. Say
@@ -505,27 +576,60 @@ export function idempotency(options: IdempotencyOptions): Middleware {
         })
       }
       if (claim.state === "replay") {
-        if (claim.record.recheck !== true) return replay(claim.record)
+        if (claim.record.recheck !== true)
+          return Response.json(
+            { ok: false, error: "idempotency_requires_route_guard" },
+            { status: 503 },
+          )
         deferred.set(req, claim.record)
         return undefined
       }
       if (claim.state === "in_flight") {
-        return new Response(JSON.stringify({ ok: false, error: "idempotency_in_progress" }), {
-          status: 409,
-          headers: {
-            "content-type": "application/json",
-            "retry-after": String(Math.ceil(lockTtlMs / 1000)),
-          },
-        })
+        return inFlight()
       }
       if (claim.state !== "new") return undefined
       const anonymous =
         custom === undefined && principalHeaders.every((name) => req.headers.get(name) === null)
-      claimed.set(req, { key, reservation: claim.reservation, anonymous })
+      const held: Claim = { key, reservation: claim.reservation, anonymous, lost: false }
+      activeKeys.add(key)
+      claimed.set(req, held)
+      if (store.renew !== undefined) {
+        const renew = store.renew.bind(store)
+        // Renewal ends with the replay retention: a handler that never settles keeps this process's
+        // fence, but no longer holds the key for every instance, or writes to the store, forever.
+        const renewUntil = Date.now() + ttlMs
+        held.heartbeat = setInterval(
+          () => {
+            if (Date.now() >= renewUntil) {
+              stop(held)
+              return
+            }
+            if (held.renewing !== undefined || held.lost) return
+            held.renewing = Promise.resolve()
+              .then(() => renew(key, held.reservation, lockTtlMs))
+              .then(
+                (owned) => {
+                  if (!owned) held.lost = true
+                },
+                () => {
+                  held.lost = true
+                }, // A store outage cannot prove continued ownership.
+              )
+              .finally(() => {
+                delete held.renewing
+              })
+          },
+          Math.max(1, Math.floor(lockTtlMs / 3)),
+        )
+        // A pending lease should not keep a server that is otherwise stopped alive.
+        held.heartbeat.unref?.()
+      }
       return undefined
     },
-    beforeHandle(context) {
-      // Authentication and validation have accepted this retry; only now is the stored answer its own.
+    // Runs after every guard on the route, whichever side of this middleware it was registered on.
+    beforeHandle: beforeHandler((context) => {
+      // Authentication, validation and every guard have accepted this retry; only now is the stored
+      // answer its own.
       const held = recordedRequest(deferred, context.req)
       if (held !== undefined) {
         deferred.delete(held[0])
@@ -534,46 +638,97 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       const fresh = recordedRequest(claimed, context.req)
       if (fresh !== undefined) rechecked.add(fresh[0])
       return undefined
-    },
+    }),
     async onResponse(res, req) {
       const found = recordedRequest(claimed, req)
       if (found === undefined) return res // not a claimed request
       const [claimedReq, claim] = found
       claimed.delete(claimedReq)
-      if (
-        !shouldCache(res) ||
-        (claim.anonymous && (isAuthenticatedRequest(req) || isAuthenticatedRequest(claimedReq)))
-      ) {
-        await store.release(claim.key, claim.reservation)
-        return res
-      }
-      // Buffer the body (consumes `res`), so a fresh Response is returned in its place.
-      let captured: Awaited<ReturnType<typeof captureBody>>
       try {
-        captured = await captureBody(res, maxBytes)
-      } catch (err) {
-        await store.release(claim.key, claim.reservation)
-        throw err
-      }
-      if (!("bytes" in captured)) {
-        await store.release(claim.key, claim.reservation) // too large to store - return it, but don't cache
+        await claim.renewing
+        if (claim.lost) {
+          discardResponse(res)
+          return reservationLost()
+        }
+        // Without `rechecked` no covered route ran: a guard refused it, or a mounted app or an earlier
+        // hook answered. Nothing deduplicated began, and its answer could never be replayed.
+        if (
+          !rechecked.has(claimedReq) ||
+          !shouldCache(res) ||
+          (claim.anonymous && (isAuthenticatedRequest(req) || isAuthenticatedRequest(claimedReq)))
+        ) {
+          stop(claim)
+          await claim.renewing
+          await store.release(claim.key, claim.reservation)
+          return res
+        }
+        // Buffer the body (consumes `res`), so a fresh Response is returned in its place.
+        let captured: Awaited<ReturnType<typeof captureBody>>
+        try {
+          captured = await captureBody(res, maxBytes)
+        } catch (err) {
+          await complete(claim, terminalRecord("idempotency_response_unavailable", 500))
+          throw err
+        }
+        if (!("bytes" in captured)) {
+          const completed = await complete(
+            claim,
+            terminalRecord("idempotency_response_too_large", 507),
+          )
+          if (!completed) {
+            discardResponse(captured.response)
+            return reservationLost()
+          }
+          return captured.response
+        }
+        const bytes = captured.bytes
+        const headers = [...captured.response.headers].filter(([name]) => name !== "set-cookie")
+        const completed = await complete(claim, {
+          status: res.status,
+          headers,
+          body: toBase64(bytes),
+          recheck: true,
+        })
+        if (!completed) {
+          discardResponse(captured.response)
+          return reservationLost()
+        }
         return captured.response
+      } finally {
+        stop(claim)
+        activeKeys.delete(claim.key)
       }
-      const bytes = captured.bytes
-      const headers = [...captured.response.headers].filter(([name]) => name !== "set-cookie")
-      await store.complete(
-        claim.key,
-        claim.reservation,
-        { status: res.status, headers, body: toBase64(bytes), recheck: rechecked.has(claimedReq) },
-        ttlMs,
-      )
-      return captured.response
+    },
+    async onResponseFinalized(_outcome, req) {
+      const found = recordedRequest(claimed, req)
+      if (found === undefined) return
+      const [original, claim] = found
+      claimed.delete(original)
+      stop(claim)
+      try {
+        await claim.renewing
+        if (!rechecked.has(original)) {
+          await store.release(claim.key, claim.reservation)
+          return
+        }
+        // An earlier response transform failed, so there is no safe response to replay or reason to
+        // repeat work. Preserve a terminal outcome rather than releasing the operation's reservation.
+        await complete(claim, terminalRecord("idempotency_response_unavailable", 500))
+      } finally {
+        activeKeys.delete(claim.key)
+      }
     },
   }
-  return withRouteAssurance(middleware, {
+  const plugin = defineIdentityPlugin("idempotency", (app) => {
+    if (app.routes().some((route) => methods.has(route.method))) {
+      throw new Error("idempotency must be installed before the routes it protects")
+    }
+    return app.use(middleware)
+  })
+  return withRouteAssurance(plugin, {
     id: NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
     source: "idempotency",
-    scope: "global",
+    scope: "subsequent",
     methods: METHODS.filter((method) => methods.has(method)),
   })
 }

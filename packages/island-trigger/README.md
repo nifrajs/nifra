@@ -1,7 +1,7 @@
 # @nifrajs/island-trigger
 
-Framework-neutral, browser-side trigger scheduling shared by Nifra’s two island runtimes:
-`@nifrajs/web/islands` and `@nifrajs/islets`.
+Framework-neutral, browser-side trigger scheduling for Nifra’s island runtime,
+`@nifrajs/web/islands`.
 
 It has no DOM or UI-framework dependency. The public contract is the small `scheduleTrigger`
 primitive with these strategies:

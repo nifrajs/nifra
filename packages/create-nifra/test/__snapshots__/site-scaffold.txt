@@ -188,7 +188,7 @@ export const target = "bun"
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4"
   }
 }
 
@@ -421,7 +421,7 @@ export const target = "bun"
     "@nifrajs/cli": "^5.5.1",
     "@types/bun": "^1.4.2",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4"
   }
 }
 
@@ -662,7 +662,7 @@ export const target = "bun"
     "@types/bun": "^1.4.2",
     "vite-plugin-solid": "^2.10.0",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4"
   }
 }
 
@@ -897,7 +897,7 @@ export const target = "bun"
     "@types/bun": "^1.4.2",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4"
   }
 }
 
@@ -1138,7 +1138,7 @@ export const target = "bun"
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/compiler-sfc": "^3.5.0",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.3.4"
   }
 }
 

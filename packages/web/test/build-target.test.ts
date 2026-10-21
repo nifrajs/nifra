@@ -503,3 +503,67 @@ test("the node entry reads prerendered pages; the edge and deno entries refuse t
     ).toThrow(`served by the bun and node targets, not ${target}`)
   }
 })
+
+test("--target bun with a live runtime: the server answers its load endpoint and the client entry reaches it", async () => {
+  writeFileSync(
+    join(projectRoot, "backend/live.ts"),
+    'import { live as createLive } from "@nifrajs/web/live"\n' +
+      'export const live = createLive({ secret: "build-target-live-secret-0123456789", subject: () => null, loadPath: "/rt/load" })\n',
+  )
+  const outDir = join(projectRoot, "dist-bun-live")
+  const result = await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-live"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    optionImports: { live: join(projectRoot, "backend/live.ts") },
+    live: { loadPath: "/rt/load" },
+  })
+  const entry = readFileSync(join(outDir, result.client.entry), "utf8")
+  expect(entry).toContain("/rt/load")
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    // The runtime's own refusal, not a 404: the endpoint is served.
+    const res = await fetch(`${base}/rt/load`, { method: "POST", body: "{}" })
+    expect(res.status).toBe(403)
+    expect(await res.json()).toMatchObject({ error: "forbidden_origin" })
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
+
+test("a build with a live runtime and no live client entry, or the reverse, is refused", async () => {
+  const base = {
+    routesDir,
+    workDir: join(projectRoot, ".work-half-live"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  }
+  await expect(
+    buildTarget("bun", {
+      ...base,
+      outDir: join(projectRoot, "dist-half-1"),
+      optionImports: { live: join(projectRoot, "backend/live.ts") },
+    }),
+  ).rejects.toThrow("go together")
+  await expect(
+    buildTarget("bun", { ...base, outDir: join(projectRoot, "dist-half-2"), live: {} }),
+  ).rejects.toThrow("go together")
+})
+
+test("a generated entry hands the app's live runtime to createWebApp", () => {
+  const code = generateServerEntry({
+    target: "bun",
+    adapterImport: "../framework.ts",
+    optionImports: { live: "../backend/live.ts" },
+  })
+  expect(code).toContain('import { live } from "../backend/live.ts"')
+  expect(code).toContain("  live,\n")
+})

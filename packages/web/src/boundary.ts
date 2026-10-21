@@ -3,6 +3,7 @@
  * lifecycle, concurrency, and isolation while each adapter decides how its `render` result is mounted.
  * The contract deliberately contains no React/Svelte/Vue/Preact types.
  */
+import { isRequestAbort } from "./internal/request-abort.ts"
 
 /** Request-scoped inputs available to dynamic and intercepting boundaries. */
 export interface BoundaryRequestCtx {
@@ -134,6 +135,8 @@ export interface BoundaryState {
   /** Set on a hole of a partially prerendered shell: the adapter renders an opaque host the PPR
    * runtime fills, not the boundary's content. */
   readonly ppr?: true
+  /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */
+  readonly live?: unknown
 }
 
 export type BoundaryStates = Readonly<Record<string, BoundaryState>>
@@ -291,8 +294,8 @@ const scopedContext = (context: BoundaryRequestCtx): BoundaryRequestCtx =>
  * A boundary that wants to show the user something specific catches its own failure inside `load` and
  * returns that as data; the framework never guesses which parts of an exception are publishable.
  */
-const boundaryError = (error: unknown): BoundaryError => {
-  if (error !== undefined) {
+const boundaryError = (error: unknown, signal?: AbortSignal): BoundaryError => {
+  if (error !== undefined && !isRequestAbort(signal, error)) {
     console.error("[nifra/web] boundary load failed", {
       kind: error instanceof Error ? "error" : typeof error,
     })
@@ -370,7 +373,7 @@ export function startDynamicBoundaries(
         const data = await load.promise
         return { ...base, status: "ready" as const, ...(data !== undefined ? { data } : {}) }
       } catch (error) {
-        return { ...base, status: "error" as const, error: boundaryError(error) }
+        return { ...base, status: "error" as const, error: boundaryError(error, context.signal) }
       }
     }),
   ).then((states) => Object.fromEntries(states.map((state) => [state.name, state])))

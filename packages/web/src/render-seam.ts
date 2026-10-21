@@ -178,7 +178,23 @@ export interface RenderAdapter {
    * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.
    */
   readonly documentParts?: boolean
+  /**
+   * Render the chain and return only the HTML of the slot named `name`, or `undefined` when the
+   * render has no such slot. Called for an {@link SWAP_HEADER} request; an adapter without it, or a
+   * render without the slot, answers with the whole document, which the client loads normally.
+   */
+  renderSlot?(
+    chain: readonly unknown[],
+    props: RenderProps,
+    name: string,
+  ): string | undefined | Promise<string | undefined>
 }
+
+/**
+ * Request header of a `data-swap` link or form: the name of the slot it refreshes. A response that
+ * carries only that slot echoes it; any other response is a whole document.
+ */
+export const SWAP_HEADER = "x-nifra-swap"
 
 /** Loads a module through the dev server's module graph rather than the runtime's resolver. */
 export type SsrModuleLoader = (id: string) => Promise<unknown>

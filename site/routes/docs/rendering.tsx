@@ -306,6 +306,18 @@ export default function Rendering() {
       </p>
       <CodeBlock code={PURGE} />
       <p>
+        An action's <code>revalidate(paths, data, &#123; tags &#125;)</code> purges the same way
+        before it answers, so a reload, a new tab or a redirect after the post renders the write: data
+        caches (<code>withISR(&#123; dataCaches &#125;)</code>), then the page store, then live pages,
+        then <code>cdn</code>. A path purge drops the entry the key function gives that URL with the
+        action request's own headers and cookies, so the client that wrote reads its write. Entries a
+        custom <code>key</code> builds from other header or cookie values, and those for query
+        parameters <code>query</code> keeps, stay until they expire: tag those pages and name the tag.
+        Each store call is bounded by <code>storeTimeoutMs</code>. A failed purge is retried
+        behind the response under <code>waitUntil</code>, else for up to 2 s before the action answers,
+        and is reported once to <code>onInvalidationError</code>.
+      </p>
+      <p>
         A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give{" "}
         <code>createWebApp</code> a <code>csp</code> from <code>createCspPolicy</code> instead of a{" "}
         <code>nonce</code>: constant scripts are allowed by hash, so only a page that needs a nonce
@@ -346,8 +358,8 @@ export default function Rendering() {
         <li>
           <b>Cloudflare zone</b> (<code>cloudflareZone</code>): needs a Cache Rule that makes HTML
           eligible for cache, and, because the zone cache ignores <code>Vary</code>, that bypasses the
-          cache when the request has an <code>x-nifra-data</code> header (soft navigations fetch the
-          page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+          cache when the request has an <code>x-nifra-data</code> or <code>x-nifra-swap</code> header
+          (soft navigations and slot swaps fetch the page URL with them). The Free plan allows 5 purge calls a minute; purges arriving together go
           out as one call.
         </li>
         <li>

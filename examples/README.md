@@ -18,6 +18,7 @@ excluded from the monorepo typecheck and browser-verified instead.
 | [`routing-react/`](routing-react/) | The same file-based routing, on React |
 | [`workers/`](workers/) | nifra **backend** on Cloudflare Workers - `toFetchHandler` + `c.env` + `c.waitUntil` |
 | [`workers-ssr-react/`](workers-ssr-react/) | Full **frontend SSR on Workers** (React) - disk-less edge via `buildServer` + Workers Assets |
+| [`live-react/`](live-react/) | Live refresh - a loader declares `ctx.live("votes")`, a publish reloads it in every open tab, and a `useQuery` refetches on the same key |
 | [`workers-ssr-solid/`](workers-ssr-solid/) | The same frontend SSR on Workers, on Solid |
 | [`portable-ssr-react/`](portable-ssr-react/) | **One app, five runtimes** - the same SSR app on Cloudflare, Node, Deno, Deno Deploy, Vercel Edge |
 | [`portable-ssr-solid/`](portable-ssr-solid/) | The same five-runtime portability, on Solid (Vercel Edge is account-gated - see its README) |

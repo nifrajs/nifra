@@ -10,6 +10,8 @@ Vanilla is the render adapter an agent gets right on the first try. It ships no 
 
 Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
 
+To refresh one region from a link or GET form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. POST forms submit natively, and a swapped slot runs under the current page's Content-Security-Policy. See [Refresh part of the page](https://nifra.dev/docs/islands).
+
 Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
 
 ## Install

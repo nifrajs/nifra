@@ -139,6 +139,10 @@ export async function serverComponentsConfig(
       if (env.command === "serve") build = `d_${randomBytes(16).toString("hex")}`
       const config: UserConfig = {
         define: {
+          ...publicEnvDefines(
+            options.publicEnvPrefix ?? "PUBLIC_",
+            loadEnv(env.mode, root, options.publicEnvPrefix ?? "PUBLIC_"),
+          ),
           "process.env.NODE_ENV": JSON.stringify(
             env.command === "build" ? "production" : "development",
           ),
@@ -255,7 +259,6 @@ export async function serverComponentsConfig(
     // Without it Vite inlines every `VITE_*` value from the app's .env files into client code.
     envPrefix: vitePublicEnvPrefix(options.publicEnvPrefix),
     define: {
-      ...publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", process.env),
       "process.env.NIFRA_SSR_BUNDLED": '"1"',
       "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
       __NIFRA_COMPONENT_BUILD__: JSON.stringify(build),
@@ -355,7 +358,10 @@ export async function buildServerComponents(
           JSON.stringify({
             adapter: options.adapter,
             target: options.target ?? "bun",
-            env: publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", process.env),
+            env: publicEnvDefines(
+              options.publicEnvPrefix ?? "PUBLIC_",
+              loadEnv("production", root, options.publicEnvPrefix ?? "PUBLIC_"),
+            ),
           }),
         )
       for (const [file, hash] of [...modules].sort(([a], [b]) => codeUnitOrder(a, b)))

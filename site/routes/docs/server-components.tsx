@@ -96,12 +96,12 @@ const ProductOutlet = createServerComponentOutlet(Product)
 h(ProductOutlet, { state, instanceKey: "product", input: { id }, controller, clientAdapter })`
 
 const TUPLE = [
-  ["React / React DOM / Flight", "19.2.7 / 19.2.7 / 19.2.7"],
+  ["React / React DOM / Flight", "19.3.1 / 19.3.1 / 19.3.1"],
   ["Vue / plugin-vue", "3.5.40 / 6.0.9"],
   ["Svelte / plugin-svelte", "5.56.8 / 7.3.1"],
   ["Solid / vite-plugin-solid", "1.9.14 / 2.11.14"],
   ["Preact / render-to-string / preset-vite", "10.29.8 / 6.7.0 / 2.10.5"],
-  ["Vite / plugin-rsc", "8.2.1 / 0.5.35"],
+  ["Vite / plugin-rsc", "8.3.4 / 0.5.35"],
   ["TypeScript", "6.0.3"],
 ] as const
 

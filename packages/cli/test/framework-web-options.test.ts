@@ -53,6 +53,7 @@ describe("loadApp validates the forwarded fields", () => {
     ["export const mounts = { path: '/a' }", "`mounts` must be an array"],
     ["export const csp = 'default-src self'", "`csp` must be the policy"],
     ["export const nonce = 'abc'", "`nonce` must be a nonce resolver function"],
+    ["export const live = { publish() {} }", "`live` must be the runtime live() from"],
     // A misspelled trust declaration must not quietly build an edge app with no caller address.
     ["export const clientIp = 'cf-connecting-ip'", '`clientIp` must be "platform"'],
     ["export const dev = 'quiet'", "`dev` must be an object"],
@@ -157,6 +158,20 @@ describe("loadApp validates the forwarded fields", () => {
     const app = await loadApp(dir)
     expect(app.framework.apiPrefix).toBe("/rpc")
     expect(app.framework.apiStrip).toBe(true)
+  })
+
+  test("a live runtime loads, and its client entry is what dev and the build hand the client", async () => {
+    const dir = project({
+      "backend/framework.ts": [
+        ...adapterSource,
+        'import { live as createLive } from "@nifrajs/web/live"',
+        'export const live = createLive({ secret: "cli-live-secret-0123456789abcdef-01", subject: () => null, path: "/rt" })',
+      ].join("\n"),
+      "routes/index.tsx": "export default () => null\n",
+    })
+    const app = await loadApp(dir)
+    expect(app.framework.live?.clientEntry).toEqual({ path: "/rt" })
+    expect(frameworkWebAppOptions(app.framework, undefined).live).toBe(app.framework.live)
   })
 })
 

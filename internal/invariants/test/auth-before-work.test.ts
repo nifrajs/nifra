@@ -321,8 +321,10 @@ const NOT_INTEGRATIONS: Readonly<Record<string, string>> = {
   "packages/agent-app/src/transport.ts": "a browser client; its authorize supplies credentials",
   "packages/webmcp/src/index.ts":
     "runs in the browser page; authorize gates a tool the page registers",
-  "packages/islets/src/island.ts": "mounts browser islands",
   "packages/web/src/islands.ts": "mounts browser islands",
+  "packages/web/src/internal/island-mount.ts": "mounts one browser island; no HTTP integration",
+  "packages/web/src/live.ts":
+    "the live load runs the target page through the app's own hooks, gates and loaders (live tests)",
   "packages/web/src/internal/web-app.ts": "the web app's own server; covered by the web auth tests",
   "packages/web-preact/src/client.ts": "browser hydration",
   "packages/web-react/src/client.ts": "browser hydration",

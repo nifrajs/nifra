@@ -233,7 +233,10 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // onRequest + onError hook boundaries and the QUERY method: bare 36,411 -> 36,668 B, mcp 36,694 ->
   // 36,934, sse 37,287 -> 37,535 (+214 / +29 / +14 B on bare, Bun 1.4.3).
-  "nifra-bare": 35.9,
+  // Guards registered after a `beforeHandler` hook still run first, so an idempotency replay waits
+  // for every guard: bare 36,746 -> 36,814 B, effect-ledger 38,789 -> 38,833, valibot 37,756 ->
+  // 37,801 (Bun 1.4.3); only these three caps are crossed.
+  "nifra-bare": 36.0,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -241,20 +244,22 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 41,108 -> 41,198 B, effect-ledger 38,706 -> 38,789, sse 37,535 -> 37,615, mcp 36,934 -> 37,035,
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   "nifra-idempotency": 40.3,
-  "nifra-effect-ledger": 37.9,
+  "nifra-effect-ledger": 38.0,
   "nifra-mcp": 36.2,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 36.8,
-  "nifra-valibot": 36.9,
+  "nifra-valibot": 37.0,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
   // 17,437 -> 17,540 B; numbered fragment entries, closeBoundary on /client and status-page
-  // re-matching: 17,540 -> 17,718 B; partial prerendering's prefetch marker and its leave hook on
-  // navigation: 17,741 -> 17,844 B (Bun 1.4.3).
-  "nifra-web-client": 17.5,
+  // re-matching: 17,540 -> 17,718 B (Bun 1.4.3). Queries refetching on live keys and
+  // QueryClient.clear(): 17,769 -> 18,212 B; every browser client held weakly from creation, so a
+  // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
+  // Partial prerendering's prefetch marker and its leave hook on navigation: 18,265 -> 18,368 B.
+  "nifra-web-client": 18.0,
   "nifra-i18n": 4.3,
 }
 
