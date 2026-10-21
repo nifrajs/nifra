@@ -1,4 +1,6 @@
 import { describe, expect, jest, test } from "bun:test"
+import { method } from "@nifrajs/core/methods"
+import { server } from "@nifrajs/core/server"
 import {
   createMcpServer,
   defineMcpTool,
@@ -610,6 +612,35 @@ describe("createMcpServer.fetch - end to end over HTTP", () => {
       ((await elevated.json()) as { result: { structuredContent: { orders: unknown[] } } }).result
         .structuredContent.orders,
     ).toHaveLength(2)
+  })
+})
+
+describe("createMcpServer - the documented nifra mount", () => {
+  const mount = (options: { allowAnyOrigin?: boolean } = {}) => {
+    const mcp = createMcpServer({ ...INFO, tools: [ordersTool], ...options })
+    return server().use(method(["GET", "POST", "OPTIONS"], "/mcp", (c) => mcp.fetch(c.req)))
+  }
+  const preflight = (): Request =>
+    new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://host.example",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type, mcp-protocol-version",
+      },
+    })
+
+  test("a cross-origin preflight reaches the server's own origin policy", async () => {
+    const res = await mount({ allowAnyOrigin: true }).fetch(preflight())
+    expect(res.status).toBe(204)
+    expect(res.headers.get("access-control-allow-origin")).toBe("*")
+    expect(res.headers.get("access-control-allow-headers")).toContain("mcp-protocol-version")
+  })
+
+  test("the same-origin default refuses that preflight", async () => {
+    const res = await mount().fetch(preflight())
+    expect(res.status).toBe(403)
+    expect(res.headers.get("access-control-allow-origin")).toBeNull()
   })
 })
 
