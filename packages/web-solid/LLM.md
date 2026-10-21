@@ -20,7 +20,7 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: { readonly state: ComponentState; readonly component: Handle<Input, Props, View>; readonly ins…` · from `@nifrajs/web-solid/server-components/outlet`
 - **createFetcher** _(function)_ - `createFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-solid/fetcher`
-- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
+- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`

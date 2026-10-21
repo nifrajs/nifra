@@ -21,6 +21,7 @@ type FrameworkWebAppOptions = Pick<
   | "serverComponents"
   | "i18n"
   | "hostPolicy"
+  | "live"
 >
 
 /** `use`, the backend as `api`, and every forwarded framework field the config sets. */

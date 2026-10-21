@@ -584,6 +584,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.define ? { define: fw.define } : {}),
       indicator: showsIndicator(flags, fw),
       allowedHosts: fw.dev?.allowedHosts ?? [],
+      live: fw.live?.clientEntry,
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -641,6 +642,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     port: flags.port,
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
     indicator: showsIndicator(flags, fw),
+    live: fw.live?.clientEntry,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -915,6 +917,7 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
+    live: fw.live?.clientEntry,
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
     // transforms the prerender pass (Bun's runtime) does not apply: those pages keep rendering on demand.

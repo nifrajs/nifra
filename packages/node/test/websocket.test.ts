@@ -4,6 +4,7 @@ import { websocket } from "@nifrajs/core/ws"
 import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { type NodeServer, serve } from "../src/index.ts"
+import { publishFeedApp, publishRoundTrip } from "./ws-publish-fixture.ts"
 
 // @nifrajs/node serves WebSockets via the optional `ws` package (a devDependency here). These run on the
 // node:http server `serve()` builds, exercised under Bun's node:http compat + a real WebSocket client.
@@ -125,6 +126,13 @@ describe("@nifrajs/node WebSockets", () => {
     running = await serve(contract.app, { port: 0, hostname: "127.0.0.1" })
     expect(await firstContractFrame(running.port)).toBe(JSON.stringify({ ok: true }))
     expect(contract.errors).toHaveLength(1)
+  })
+
+  test("a publish frames each text once and every subscriber reads it byte for byte, in order", async () => {
+    const feed = publishFeedApp(server().use(websocket()))
+    running = await serve(feed.app, { hostname: "127.0.0.1", port: 0 })
+    const { got, expected } = await publishRoundTrip(feed, running.port)
+    expect(got).toEqual(expected)
   })
 
   test("echo: open → welcome, message → echo", async () => {

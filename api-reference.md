@@ -5226,6 +5226,8 @@ _No named exports (side-effect entrypoint)._
   A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
 - **LinkDescriptor** _(interface)_ - `interface LinkDescriptor`
   One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable - the previous `Record<string, string>` required *every* value to be a present string, which rejected …
+- **LiveClientEntry** _(interface)_ - `interface LiveClientEntry`
+  A client entry for a live server: `{}`, or the endpoints when the runtime moves them.
 - **Loader** _(type)_ - `type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional data loader: params/request in, data out.
 - **LoaderContext** _(interface)_ - `interface LoaderContext`
@@ -5345,6 +5347,8 @@ _No named exports (side-effect entrypoint)._
   Per-document options for {@link RenderAdapter.renderToStream}.
 - **RenderedPage** _(interface)_ - `interface RenderedPage`
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
+- **RevalidateOptions** _(interface)_ - `interface RevalidateOptions`
+  Cache tags and live keys an action's write made stale, beside its paths.
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`
   The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and …
 - **RevalidateTags** _(type)_ - `type RevalidateTags = | readonly string[] | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]`
@@ -5508,7 +5512,7 @@ _No named exports (side-effect entrypoint)._
   Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
 - **resolveStaticBoundaries** _(function)_ - `resolveStaticBoundaries: (boundaries: readonly BoundaryRegistration[], context: StaticCtx, cache?: StaticBoundaryCache) => Promise<BoundaryStates>`
   Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic and intercepting boundaries remain unresolved. Values are cached by boundary object identity in the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per request. A r…
-- **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
+- **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T, options?: RevalidateOptions) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
@@ -5586,7 +5590,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy", "live"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
@@ -6101,6 +6105,63 @@ _No named exports (side-effect entrypoint)._
 - **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
   Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under `root` refresh its slot in place. Call it instead of `mountIslands`.
 
+### `@nifrajs/web/live`
+
+- **Live** _(interface)_ - `interface Live`
+  A live runtime: pass it to `createWebApp({ live })`.
+- **LiveBus** _(interface)_ - `interface LiveBus`
+- **LiveBusEvent** _(type)_ - `type LiveBusEvent = LiveBusInput & { readonly seq: number }`
+- **LiveBusInput** _(type)_ - `type LiveBusInput = LiveChange | LiveRevocation`
+- **LiveBusListener** _(interface)_ - `interface LiveBusListener`
+- **LiveBusSubscription** _(interface)_ - `interface LiveBusSubscription`
+- **LiveChange** _(interface)_ - `interface LiveChange`
+  Something a loader declared with `ctx.live` changed.
+- **LiveOptions** _(interface)_ - `interface LiveOptions`
+- **LiveRevocation** _(interface)_ - `interface LiveRevocation`
+  Grants issued before this event stop working: every grant (`sub` and `key` null), one subject's (`key` null), or, with `key`, any grant holding that key (for everyone, or for `sub`).
+- **live** _(function)_ - `live: (options: LiveOptions) => Live`
+  Create the live runtime for one app.
+- **memoryBus** _(function)_ - `memoryBus: () => LiveBus`
+  The single-process bus: an in-memory clock, events delivered to every subscriber before `append` resolves. Processes do not share it; run several behind a shared bus instead.
+- **nextSeq** _(const)_ - `nextSeq: (last: number, nowMs: number) => number`
+  The seq a clock reading allows, never at or below `last`.
+
+### `@nifrajs/web/live-client`
+
+- **LiveClient** _(interface)_ - `interface LiveClient`
+- **LiveClientOptions** _(interface)_ - `interface LiveClientOptions`
+- **liveClient** _(function)_ - `liveClient: (options?: LiveClientOptions) => LiveClient`
+
+### `@nifrajs/web/live-hub`
+
+- **ALARM_GAP_MS** _(const)_ - `ALARM_GAP_MS: 30000`
+  Alarms come no closer together than this: expiry is checked again before every frame anyway.
+- **DEFAULT_HUB_MEMBERSHIPS** _(const)_ - `DEFAULT_HUB_MEMBERSHIPS: 150000`
+  About 440 bytes of heap each when no two sockets share a tag, the worst case; far less when they do. 150,000 of them stay near 66 MB, inside the 128 MB a Durable Object's isolate may use.
+- **DEFAULT_HUB_SOCKETS** _(const)_ - `DEFAULT_HUB_SOCKETS: 5000`
+  The most sockets one hub was verified to hold, with every publish reaching them all well under 200 ms.
+- **LiveHubObject** _(class)_ - `class LiveHubObject`
+- **LiveHubOptions** _(interface)_ - `interface LiveHubOptions`
+- **LiveHubState** _(interface)_ - `interface LiveHubState`
+  The part of a Durable Object's state the hub uses (no Cloudflare types dependency).
+- **LiveHubStorage** _(interface)_ - `interface LiveHubStorage`
+- **LiveHubWebSocket** _(interface)_ - `interface LiveHubWebSocket`
+  A hibernatable server socket, as far as the hub uses one.
+- **MAX_ATTACHMENT_BYTES** _(const)_ - `MAX_ATTACHMENT_BYTES: 512`
+  Per-socket limits the platform sets; the hub stays well under both (see the tests).
+- **MAX_SOCKET_RECORD_BYTES** _(const)_ - `MAX_SOCKET_RECORD_BYTES: 30720`
+- **liveHub** _(function)_ - `liveHub: <Env = Record<string, string | undefined>>(options: LiveHubOptions | ((env: Env) => LiveHubOptions)) => new (state: LiveHubState, env: Env) => LiveHubObject`
+  The live hub's Durable Object class. Export it from the Worker's main module under the class name the binding names.
+
+### `@nifrajs/web/live-redis`
+
+- **APPEND_SCRIPT** _(const)_ - `APPEND_SCRIPT: "local t = redis.call('TIME')\nlocal now = tonumber(t[1]) * 1000000 + tonumber(t[2])\nlocal last = tonumber(redis.call('HGET', KEYS[2], 'seq') or '0')\nlocal seq = math.max(last + 1, now)\nlocal id = stri…`
+  KEYS[1] the stream, KEYS[2] the clock hash; ARGV[1] the event JSON, ARGV[2] the trim length. Lua numbers are doubles: a microsecond clock stays exact below 2^53 (the year 2255).
+- **RedisCommand** _(type)_ - `type RedisCommand = (command: string, args: readonly string[]) => Promise<unknown>`
+  Send one Redis command and resolve with its reply, as any client's raw-command call does.
+- **RedisLiveBusOptions** _(interface)_ - `interface RedisLiveBusOptions`
+- **redisLiveBus** _(function)_ - `redisLiveBus: (options: RedisLiveBusOptions) => LiveBus`
+
 ### `@nifrajs/web/plugins/css-modules`
 
 - **CssModuleResult** _(interface)_ - `interface CssModuleResult`
@@ -6614,8 +6675,8 @@ _No named exports (side-effect entrypoint)._
 
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
   A query's reactive {@link QueryState} plus `isPending` + `refetch`.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>`
-  Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle.
+- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
+  Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -6957,8 +7018,8 @@ _No named exports (side-effect entrypoint)._
 
 - **CreateQueryResult** _(interface)_ - `interface CreateQueryResult<T>`
   A query's reactive state accessor plus `refetch`.
-- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>) => CreateQueryResult<T>`
-  Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription).
+- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>`
+  Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names the…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -7073,8 +7134,8 @@ _No named exports (side-effect entrypoint)._
 
 - **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { /** Force a refetch (ignores `staleTime`). */ readonly refetch: () => Promise<T> }`
   A query store: a `Readable<QueryState<T>>` (read via `$`) plus `refetch`.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>`
-  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle.
+- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryStore<T>`
+  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
@@ -7212,8 +7273,8 @@ _No named exports (side-effect entrypoint)._
 
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
   A query's reactive {@link QueryState} (read `.value`) plus `refetch`.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>`
-  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle.
+- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
+  Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live` names…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 

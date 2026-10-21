@@ -119,6 +119,9 @@ export interface NifraFramework {
   /** Which pages and files each host serves, from `createHostPolicy()`: checked before the app's
    * static files, mounts and pages. See `createWebApp`'s `hostPolicy`. */
   readonly hostPolicy?: CreateWebAppOptions["hostPolicy"]
+  /** Live data refresh, the runtime `live()` from `@nifrajs/web/live` returns: the app serves its
+   * endpoints and the client entry keeps what is on screen fresh, in `nifra dev` and in the build. */
+  readonly live?: CreateWebAppOptions["live"]
 }
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
@@ -132,6 +135,7 @@ export const FRAMEWORK_WEB_OPTIONS = [
   "serverComponents",
   "i18n",
   "hostPolicy",
+  "live",
 ] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
@@ -186,6 +190,15 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
       typeof fw.hostPolicy.check !== "function")
   ) {
     wrong("hostPolicy", "the policy createHostPolicy() from @nifrajs/web returns")
+  }
+  if (
+    fw.live !== undefined &&
+    (typeof fw.live !== "object" ||
+      fw.live === null ||
+      typeof fw.live.publish !== "function" ||
+      typeof fw.live.clientEntry !== "object")
+  ) {
+    wrong("live", "the runtime live() from @nifrajs/web/live returns")
   }
   if (fw.publicEnvPrefix !== undefined && typeof fw.publicEnvPrefix !== "string") {
     wrong("publicEnvPrefix", 'a string such as "PUBLIC_", or "" to expose no environment variable')

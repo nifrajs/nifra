@@ -432,6 +432,18 @@
     "code": "import { batch, computed, effect, signal, untrack } from \"@nifrajs/web/islands\"\n\n// A signal is read by calling it and written with .set. Reads inside an effect or computed subscribe.\nconst price = signal(20)\nconst quantity = signal(1)\nconst total = computed(() => price() * quantity())\n\nconst stop = effect(() => console.log(\"total\", total(), \"at\", untrack(price)))\nbatch(() => {\n  price.set(25)\n  quantity.set((n) => n + 1)\n}) // the effect runs once, after both writes: logs \"total 50 at 25\"\nstop()"
   },
   {
+    "name": "REDIS",
+    "topic": "Nifra - Live refresh",
+    "slug": "live",
+    "code": "import { live } from \"@nifrajs/web/live\"\nimport { redisLiveBus } from \"@nifrajs/web/live-redis\"\n\nconst url = process.env.REDIS_URL ?? \"redis://127.0.0.1:6379\"\nconst send = new Bun.RedisClient(url)\nconst read = new Bun.RedisClient(url) // its own connection: XREAD blocks it\n\nexport const liveRuntime = live({\n  secret: process.env.LIVE_SECRET,\n  subject: () => null,\n  bus: redisLiveBus({\n    send: (command, args) => send.send(command, [...args]),\n    read: (command, args) => read.send(command, [...args]),\n  }),\n  instances: 4, // processes serving the app, for spreading reloads\n})"
+  },
+  {
+    "name": "RUNTIME",
+    "topic": "Nifra - Live refresh",
+    "slug": "live",
+    "code": "import { live } from \"@nifrajs/web/live\"\n\n// Your session lookup: a stable user id, or null for an anonymous viewer.\ndeclare function sessionUserId(request: Request): Promise<string | null>\n\nexport const liveRuntime = live({\n  secret: process.env.LIVE_SECRET, // openssl rand -base64 32; required in production\n  subject: (ctx) => sessionUserId(ctx.request),\n})"
+  },
+  {
     "name": "HONO",
     "topic": "Nifra - Migrate route by route",
     "slug": "migrate-route-by-route",

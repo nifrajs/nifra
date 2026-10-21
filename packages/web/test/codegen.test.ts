@@ -520,3 +520,29 @@ test("a loader's notFound() hydrates the _404 the server rendered, not the match
     params: { slug: "intro" },
   })
 })
+
+test("a live entry builds the router on the live client's fetchData and attaches it once mounted", () => {
+  const m = buildManifest(["_layout.tsx", "index.tsx", "posts/[id].tsx"], importer)
+  const base = {
+    clientModule: "@nifrajs/web-react/client",
+    resolve: (file: string) => `/routes/${file}`,
+  }
+  const plain = generateClientEntry(m, base)
+  // The non-live entry carries no trace of the live client.
+  for (const token of ["live-client", "liveClient", "__live", "fetchData"]) {
+    expect(plain).not.toContain(token)
+  }
+  const live = generateClientEntry(m, { ...base, live: { path: "/rt", loadPath: "/rt/load" } })
+  expect(live).toContain('import { liveClient } from "@nifrajs/web/live-client"')
+  expect(live).toContain(
+    'const __live = liveClient({ layoutIdsOf, path: "/rt", loadPath: "/rt/load" })',
+  )
+  expect(live).toContain("routeHooks, fetchData: __live.fetchData })")
+  const mounted = live.indexOf("mountRouter({ router: view")
+  expect(mounted).toBeGreaterThan(-1)
+  expect(live.indexOf("__live.attach(router)")).toBeGreaterThan(mounted)
+  expect(generateClientEntry(m, { ...base, live: {} })).toContain(
+    "const __live = liveClient({ layoutIdsOf })",
+  )
+  expect(ts.transpileModule(live, { reportDiagnostics: true }).diagnostics ?? []).toEqual([])
+})

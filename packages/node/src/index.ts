@@ -43,6 +43,7 @@ import {
 } from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
+import { writeTextFrame } from "./ws-frame.ts"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
@@ -3021,7 +3022,9 @@ function attachNodeWebSocket(
   outcome: Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>,
 ): void {
   const { handler, data, pubsub, maxPayloadBytes } = outcome
-  const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => ws.send(payload)
+  const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => {
+    if (typeof payload !== "string" || !writeTextFrame(ws, payload)) ws.send(payload)
+  }
   const nifra: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
     close: (code, reason) => ws.close(code, reason),

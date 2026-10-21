@@ -1,0 +1,15 @@
+name = "nifra-workerd-live-hub"
+main = "worker.ts"
+compatibility_date = "2026-08-18"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[durable_objects]
+bindings = [
+  { name = "LIVE_HUB", class_name = "LiveHub" },
+  { name = "PROBE", class_name = "Probe" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveHub", "Probe"]

@@ -23,10 +23,21 @@ import { isHiddenPath } from "@nifrajs/core/static-file"
 import { CLIENT_BATCH_MAX_BYTES } from "./dev-client.ts"
 import { DEV_REQUEST_ID_HEADER, DEV_SERVER_FILES } from "./dev-feed.ts"
 import { listenOrExplain } from "./dev-port.ts"
-import { createDevSession, type DevAppHooks, isDevAgentPath } from "./dev-session.ts"
+import {
+  createDevSession,
+  type DevAppHooks,
+  isDevAgentPath,
+  isLoopbackHost,
+} from "./dev-session.ts"
 import { discoverRoutes } from "./fs.ts"
-import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
+import {
+  DEFAULT_DEV_PORT,
+  generateClientEntry,
+  type LiveClientEntry,
+  setSsrModuleLoader,
+} from "./index.ts"
 import { admitViteTags } from "./internal/dev-csp.ts"
+import { type UpgradableApp, upgradeOnNode } from "./internal/dev-websocket.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import {
   assertIdentityParity,
@@ -49,7 +60,7 @@ import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteZoneGuard } from "./plugins/vite-zone-guard.ts"
 
 /** Minimal app surface - `createWebApp(...)` satisfies it. */
-interface FetchApp {
+interface FetchApp extends UpgradableApp {
   fetch(request: Request): Response | Promise<Response>
 }
 
@@ -79,7 +90,10 @@ interface ViteLike {
   /** The module graph, used to invalidate a changed file AND its transitive importers before reload. */
   readonly moduleGraph?: ViteModuleGraph
   /** The resolved config: `publicDir` is absolute, or `""` when the public directory is off. */
-  readonly config?: { readonly publicDir?: string }
+  readonly config?: {
+    readonly publicDir?: string
+    readonly server?: { readonly allowedHosts?: true | readonly string[] }
+  }
   readonly watcher: {
     on(event: "change" | "add" | "unlink", cb: (path: string) => void): void
     on(event: "ready", cb: () => void): void
@@ -163,6 +177,8 @@ export interface ViteDevServerOptions {
    * fix (default `true`). Off, the errors still reach the feed.
    */
   readonly indicator?: boolean
+  /** The app runs `createWebApp({ live })`: the same option as the build's (`BuildClientOptions.live`). */
+  readonly live?: LiveClientEntry | undefined
 }
 
 export interface ViteDevServer {
@@ -395,7 +411,11 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     const manifest = discoverRoutes(routesDir)
     writeFileSync(
       resolvePath(root, DEV_ENTRY),
-      generateClientEntry(manifest, { clientModule: options.clientModule, resolve: toUrl }),
+      generateClientEntry(manifest, {
+        clientModule: options.clientModule,
+        resolve: toUrl,
+        live: options.live,
+      }),
     )
   }
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
@@ -456,6 +476,38 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     }
     handleWithVite(req, res)
   })
+
+  // The app's own WebSocket routes. Vite's HMR socket rides this server with a listener of its own,
+  // so its handshakes, and any no app route takes, are left to the other listeners.
+  server.on("upgrade", (req, socket, head) => {
+    const protocol = req.headers["sec-websocket-protocol"] ?? ""
+    if (protocol.includes("vite-hmr") || protocol.includes("vite-ping")) return
+    if (!allowsHost(req.headers.host)) {
+      socket.on("error", () => {})
+      socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+      return
+    }
+    void upgradeOnNode(app, toWebRequest(req, undefined), req, socket, head)
+  })
+
+  /** Vite's own rule for a handshake's Host: a loopback name, or one `server.allowedHosts` lists. */
+  function allowsHost(host: string | undefined): boolean {
+    if (isLoopbackHost(host)) return true
+    const allowed = vite.config?.server?.allowedHosts
+    if (allowed === true) return true
+    if (allowed === undefined || host === undefined) return false
+    let name: string
+    try {
+      name = new URL(`http://${host}`).hostname
+    } catch {
+      return false
+    }
+    return allowed.some(
+      (entry) =>
+        entry === name ||
+        (entry.startsWith(".") && (name === entry.slice(1) || name.endsWith(entry))),
+    )
+  }
 
   // Vite's public middleware serves every file under the public directory, dotfiles included. A
   // build ships no hidden file and the Bun pipeline's `servePublicDir` refuses one, so a request for
