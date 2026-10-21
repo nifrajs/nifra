@@ -523,6 +523,7 @@ export function createWebApp<Env = unknown>(
     : servedPrerenderedList(options.prerenderedPaths)
   const ppr = options.experimental?.ppr?.[PPR_SETUP]({
     adapter,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: partial prerendering lists its scripts by hash only under an app's own policy.
     ...(options.csp === undefined ? {} : { csp: options.csp }),
     // The content-hashed entry changes with every client build; the store is per process.
     deployment: clientEntry,
@@ -575,6 +576,7 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: the executor takes a route's shell path only when partial prerendering is set up.
     ...(ppr === undefined ? {} : { ppr }),
   })
   if (ppr !== undefined) {

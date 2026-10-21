@@ -37,6 +37,7 @@ export function createPprIntegration(
   const uncheckedWarned = new Set<string>()
   return {
     server,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: an app with no configured origin has none, which shell meta reads as absent.
     ...(origin === undefined ? {} : { origin }),
     cancelPath: PPR_CANCEL_PATH,
     // A beacon carries one 22-character token; anything longer is not one. The token is unguessable,

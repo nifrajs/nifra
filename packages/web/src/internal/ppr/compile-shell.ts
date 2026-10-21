@@ -214,6 +214,7 @@ async function compileShell(
       `[nifra/web] ppr: the shell of "${route.id}" failed to build`,
     )
   }
+  // biome-ignore lint/plugin/noChainedTypeAssertions: Bun returns the metafile when `metafile: true`; @types/bun does not name it yet, and fromBunMetafile fails closed on a missing one.
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Bun returns the metafile when `metafile: true`; @types/bun does not name it yet, and fromBunMetafile fails closed on a missing one.
   const meta = (result as unknown as { readonly metafile?: BunMetafileLike }).metafile
   const graph = fromBunMetafile(meta)

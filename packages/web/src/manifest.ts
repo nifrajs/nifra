@@ -665,6 +665,7 @@ function assertShellVariations(backend: string, value: unknown): void {
   }
   if (typeof value !== "object" || value === null || Array.isArray(value))
     fail("that is not an object")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked just above to be a non-null object that is not an array.
   const record = value as Readonly<Record<string, unknown>>
   for (const key of Object.keys(record))
     if (key !== "search") fail(`with "${key}"; only "search" is read`)
@@ -672,6 +673,7 @@ function assertShellVariations(backend: string, value: unknown): void {
   if (search === undefined) return
   if (typeof search !== "object" || search === null || Array.isArray(search))
     fail("whose search is not an object of value lists")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked just above to be a non-null object that is not an array.
   const entries = Object.entries(search as Readonly<Record<string, unknown>>)
   if (entries.length > MAX_VARIATION_KEYS) fail(`with more than ${MAX_VARIATION_KEYS} parameters`)
   for (const [name, values] of entries) {
@@ -679,6 +681,7 @@ function assertShellVariations(backend: string, value: unknown): void {
       fail(`with a parameter name "${name}" outside ${VARIATION_NAME.source}`)
     if (!Array.isArray(values) || values.length === 0 || values.length > MAX_VARIATION_VALUES)
       fail(`whose "${name}" is not a list of 1 to ${MAX_VARIATION_VALUES} values`)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked just above to be an array.
     const list = values as readonly unknown[]
     if (
       new Set(list).size !== list.length ||

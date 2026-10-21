@@ -294,13 +294,17 @@ describe("PPR app configuration", () => {
       hydrationHead: () => "",
       renderFragment: () => "",
     }
-    const hole = (name: string, timeout?: number) => ({
-      name,
-      mode: "dynamic" as const,
-      render: () => "",
-      load: () => 1,
-      ...(timeout === undefined ? {} : { timeout }),
-    })
+    const hole = (name: string, timeout?: number) => {
+      const registration: {
+        name: string
+        mode: "dynamic"
+        render: () => string
+        load: () => number
+        timeout?: number
+      } = { name, mode: "dynamic", render: () => "", load: () => 1 }
+      if (timeout !== undefined) registration.timeout = timeout
+      return registration
+    }
     /** The error a GET of the route logs; core answers a bare 500 after logging it to stderr. */
     const failureOf = async (boundaries: readonly BoundaryRegistration[]) => {
       const manifest: Manifest = {

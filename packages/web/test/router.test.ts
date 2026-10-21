@@ -858,7 +858,7 @@ describe("createClientRouter", () => {
   test("a prefetch says so, and a payload with partially prerendered holes is not kept", async () => {
     const calls: Array<string | null> = []
     const realFetch = globalThis.fetch
-    // cast: minimal fetch stub for the test - only the (url, init) shape is exercised.
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router calls it with (url, init) only.
     globalThis.fetch = (async (_url: string, init?: RequestInit) => {
       calls.push(new Headers(init?.headers).get("x-nifra-prefetch"))
       const cart = { name: "cart", mode: "dynamic", status: "pending", ppr: true }

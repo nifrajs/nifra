@@ -174,7 +174,11 @@ function seeded(seed: number): () => number {
 
 function corpus(): string[] {
   const random = seeded(20261021)
-  const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)] as T
+  const pick = <T>(items: readonly T[]): T => {
+    const item = items[Math.floor(random() * items.length)]
+    if (item === undefined) throw new Error("pick from an empty list")
+    return item
+  }
   const strings = [...PIECES]
   for (let index = 0; index < 20000; index++) {
     let html = ""
@@ -239,7 +243,7 @@ test("the validator refuses the same strings with and without the scan", () => {
       run()
       return "ok"
     } catch (error) {
-      return error instanceof Error ? `${error.name}:${(error as { code?: unknown }).code}` : "?"
+      return error instanceof Error ? `${error.name}:${String(Reflect.get(error, "code"))}` : "?"
     }
   }
   const random = seeded(7)

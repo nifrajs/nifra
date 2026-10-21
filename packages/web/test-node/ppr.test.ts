@@ -39,6 +39,8 @@ const adapter: RenderAdapter = {
 
 /** A page whose one hole waits for its signal; `signals` yields each invocation's signal. */
 function appWith(signals: Array<(signal: AbortSignal) => void>) {
+  // biome-ignore lint/plugin/noChainedTypeAssertions: a route module with only the fields the partially prerendered path reads.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a route module with only the fields the partially prerendered path reads.
   const page = {
     default: "page",
     shellLoader: async () => ({ title: "Tea" }),
@@ -114,7 +116,7 @@ for (const [lane, handler] of lanes) {
       const res = await get(handle.port, "/p")
       assert.equal(res.statusCode, 200)
       assert.equal(res.headers["cache-control"], "private, no-store")
-      const [first] = (await once(res, "data")) as [Buffer]
+      const [first] = await once(res, "data")
       const shell = String(first)
       assert.match(shell, /data-nifra-hole="slow"/)
       assert.doesNotMatch(shell, /nifra-ppr:slow/)
@@ -141,7 +143,7 @@ for (const [lane, handler] of lanes) {
       res.pipe(gunzip)
       let text = ""
       while (!text.includes('data-nifra-hole="slow"')) {
-        const [chunk] = (await once(gunzip, "data")) as [Buffer]
+        const [chunk] = await once(gunzip, "data")
         text += String(chunk)
       }
       assert.doesNotMatch(text, /nifra-ppr:slow/)
@@ -167,7 +169,7 @@ for (const [lane, handler] of lanes) {
         !text.includes('id="nifra-ppr-req"') ||
         !text.includes("</script>", text.indexOf("nifra-ppr-req"))
       ) {
-        const [chunk] = (await once(res, "data")) as [Buffer]
+        const [chunk] = await once(res, "data")
         text += String(chunk)
       }
       const token = /"token":"([A-Za-z0-9_-]+)"/.exec(text)?.[1] ?? ""

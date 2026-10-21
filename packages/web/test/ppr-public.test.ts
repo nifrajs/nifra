@@ -37,13 +37,12 @@ const appOf = (ppr: boolean, onShell = () => {}) => {
     layouts: {},
     notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
   }
+  if (!ppr) return createWebApp({ adapter, manifest, clientEntry: "/c.js" })
   return createWebApp({
     adapter,
     manifest,
     clientEntry: "/c.js",
-    ...(ppr
-      ? { experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) } }
-      : {}),
+    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
   })
 }
 
