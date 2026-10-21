@@ -7,7 +7,8 @@
  *
  * CPU per request is the server process's own CPU time over a load run divided by its requests; S1
  * subtracts the process's idle CPU over the run. Each load run is done twice with variants
- * interleaved, so run-to-run noise shows. The PPR rows at 90, 50 and 0% shell hits draw a fresh
+ * interleaved, so run-to-run noise shows, after one unrecorded pass: a fresh process's first pass ran
+ * up to 1.8x the CPU of its second. The PPR rows at 90, 50 and 0% shell hits draw a fresh
  * product id for the rest, so each of those requests builds its shell; the upstream column reads
  * back the hit rate the run got.
  *
@@ -18,6 +19,7 @@ import { join } from "node:path"
 
 const here = import.meta.dir
 const PASSES = 2
+const WARMUP_PASSES = 1
 const TTFB_ROUNDS = 25
 
 async function spawnUntilListening(script: string, env: Record<string, string>) {
@@ -186,11 +188,12 @@ try {
   console.log("| variant | req/s | CPU per request |")
   console.log("|---|---|---|")
   const s0 = new Map<string, { rps: number[]; us: number[] }>()
-  for (let pass = 0; pass < PASSES; pass++) {
+  for (let pass = 0; pass < WARMUP_PASSES + PASSES; pass++) {
     for (const framework of FRAMEWORKS) {
       const origin = originOf(`${framework} S0`)
       for (const variant of S0_VARIANTS) {
         const run = await load(origin, variant, 0, 20_000, 32)
+        if (pass < WARMUP_PASSES) continue
         const key = `${framework} ${variant.name}`
         const entry = s0.get(key) ?? { rps: [], us: [] }
         entry.rps.push(run.rps)
@@ -225,9 +228,10 @@ try {
     }
     const idle = await idleCpuPerMs(origin)
     const cost = new Map<string, { us: number[]; reads: number[] }>()
-    for (let pass = 0; pass < PASSES; pass++) {
+    for (let pass = 0; pass < WARMUP_PASSES + PASSES; pass++) {
       for (const variant of VARIANTS) {
         const run = await load(origin, variant, 1, 3_000, 128)
+        if (pass < WARMUP_PASSES) continue
         const entry = cost.get(variant.name) ?? { us: [], reads: [] }
         entry.us.push(run.cpuPerRequest - (idle * run.elapsedMs) / 3_000)
         entry.reads.push(run.readsPerRequest)
