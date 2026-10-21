@@ -164,6 +164,8 @@ export {
 // File-based routing manifest - pure + fs-free. `discoverRoutes` (fs) lives in `@nifrajs/web/fs`.
 export {
   type Action,
+  type BoundaryLoaderEntry,
+  type BoundaryLoadersOf,
   buildManifest,
   type ClientAction,
   type ClientActionArgs,

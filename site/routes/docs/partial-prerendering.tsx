@@ -42,6 +42,7 @@ export const app = createWebApp({
 const BACKEND = `import { t } from "@nifrajs/schema"
 import type { BoundaryRequestCtx } from "@nifrajs/web"
 import { defineShellLoader } from "@nifrajs/web/ppr"
+import type { Route } from "./+types/[id]"
 
 const titles: Readonly<Record<string, string>> = { "1": "Sencha", "2": "Hojicha" }
 const cartCount = (request: Request): number => (request.headers.has("cookie") ? 2 : 0)
@@ -61,20 +62,21 @@ export const boundaryLoaders = {
     load: (ctx: BoundaryRequestCtx) => ({ count: cartCount(ctx.request) }),
     output: t.object({ count: t.number() }),
   },
-}`
+} satisfies Route.BoundaryLoaders`
 
 const REACT_PAGE = `// routes/tea/[id].tsx
 import type { BoundaryStates } from "@nifrajs/web"
 import { Hole } from "@nifrajs/web-react/ppr"
 import { Cart } from "../../frontend/cart"
 
+// \`as const\` keeps the name literal, so Route.BoundaryLoaders can check the backend half's keys.
 const cart = {
   name: "cart",
-  mode: "dynamic" as const,
+  mode: "dynamic",
   interactive: true, // ships its props and hydrates as its own root
   render: (data: { readonly count: number }) => <Cart count={data.count} />,
   fallback: <p>Loading your cart</p>,
-}
+} as const
 export const boundaries = [cart]
 
 export default function Tea(props: { data: { title: string }; boundaries?: BoundaryStates }) {
@@ -161,7 +163,10 @@ export default function PartialPrerendering() {
       <p>
         The route's backend half exports the shell loader and one loader per hole. The shell loader
         gets params, locale, the declared variations, <code>origin</code> from config and the
-        in-process <code>api</code>, never the request.
+        in-process <code>api</code>, never the request. With{" "}
+        <code>satisfies Route.BoundaryLoaders</code>, a misspelt or missing hole is a type error
+        when the page is a <code>.tsx</code> file whose boundary names are literal types; the
+        manifest refuses an unknown key at startup either way.
       </p>
       <CodeBlock code={BACKEND} lang="ts" />
       <p>The page places each hole with the adapter's hole component.</p>

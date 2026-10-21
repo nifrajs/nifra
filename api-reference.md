@@ -5124,6 +5124,10 @@ _No named exports (side-effect entrypoint)._
 - **BoundaryDescriptor** _(interface)_ - `interface BoundaryDescriptor`
   Neutral manifest descriptor: no framework component crosses the web core boundary.
 - **BoundaryError** _(interface)_ - `interface BoundaryError`
+- **BoundaryLoaderEntry** _(interface)_ - `interface BoundaryLoaderEntry`
+  A boundary's server loader, declared in the route's backend half under `boundaryLoaders`.
+- **BoundaryLoadersOf** _(type)_ - `type BoundaryLoadersOf<Frontend, Backend>`
+  The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry names a boundary the page declares, and a route with a `shellLoader` needs one for each hole. Unchecked when TypeScript cannot read the page (`.svelte`, `.vue`) or its boundary names are not literal type…
 - **BoundaryMode** _(type)_ - `type BoundaryMode = "static" | "dynamic" | { readonly intercept: string }`
 - **BoundaryRegistration** _(type)_ - `type BoundaryRegistration`
 - **BoundaryRequestCtx** _(interface)_ - `interface BoundaryRequestCtx`

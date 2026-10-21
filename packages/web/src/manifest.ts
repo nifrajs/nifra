@@ -12,7 +12,13 @@ import {
   paramConstraint,
 } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
-import type { BoundaryDescriptor, BoundaryRegistration, ShellCtx } from "./boundary.ts"
+import type {
+  BoundaryDescriptor,
+  BoundaryRegistration,
+  BoundaryRequestCtx,
+  ShellCtx,
+  StaticCtx,
+} from "./boundary.ts"
 import { guardChannel, outputGuard } from "./internal/output-guard.ts"
 import type { RevalidateTags } from "./isr.ts"
 
@@ -468,6 +474,44 @@ export interface BoundaryLoaderEntry {
   /** The boundary data's output schema. Required whenever `load` returns data. */
   readonly output?: StandardSchemaV1
 }
+
+type DeclaredBoundaryOf<Frontend> = Frontend extends {
+  readonly boundaries: readonly (infer Declared)[]
+}
+  ? Declared
+  : never
+type BoundaryNameOf<Declared> = Declared extends { readonly name: infer Name extends string }
+  ? Name
+  : never
+// A hole needs an entry unless the page gives it a `load` of its own.
+type HoleNameOf<Declared> = Declared extends { readonly load: (...args: never[]) => unknown }
+  ? never
+  : Declared extends { readonly mode: "dynamic" }
+    ? BoundaryNameOf<Declared>
+    : never
+type LoaderEntryOf<Declared> = Omit<BoundaryLoaderEntry, "load"> & {
+  readonly load: (
+    ctx: Declared extends { readonly mode: "static" } ? StaticCtx : BoundaryRequestCtx,
+  ) => unknown
+}
+
+/**
+ * The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry
+ * names a boundary the page declares, and a route with a `shellLoader` needs one for each hole.
+ * Unchecked when TypeScript cannot read the page (`.svelte`, `.vue`) or its boundary names are not
+ * literal types, which `as const` on each boundary gives.
+ */
+export type BoundaryLoadersOf<Frontend, Backend> = unknown extends Frontend
+  ? Readonly<Record<string, BoundaryLoaderEntry>>
+  : string extends BoundaryNameOf<DeclaredBoundaryOf<Frontend>>
+    ? Readonly<Record<string, BoundaryLoaderEntry>>
+    : {
+        readonly [Declared in DeclaredBoundaryOf<Frontend> as BoundaryNameOf<Declared>]?: LoaderEntryOf<Declared>
+      } & (Backend extends { readonly shellLoader: unknown }
+        ? {
+            readonly [Declared in DeclaredBoundaryOf<Frontend> as HoleNameOf<Declared>]: LoaderEntryOf<Declared>
+          }
+        : unknown)
 
 /** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
  *

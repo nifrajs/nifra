@@ -228,6 +228,63 @@ describe("generated route types", () => {
     expect(typeErrors(["routes/feed/[id].backend.ts", "routes/plain.backend.ts"])).toEqual([])
   }, 60_000)
 
+  test("Route.BoundaryLoaders refuses a key the page does not declare, and a missing hole", () => {
+    const page = (asConst: string) =>
+      [
+        `const cart = { name: "cart", mode: "dynamic", render: () => null }${asConst}`,
+        `const own = { name: "own", mode: "dynamic", load: () => 1, render: () => null }${asConst}`,
+        `const info = { name: "info", mode: "static", render: () => null }${asConst}`,
+        "export const boundaries = [cart, own, info]",
+        "export default () => null",
+        "",
+      ].join("\n")
+    const backend = (name: string, extra: string, loaders: string) =>
+      [
+        `import type { Route } from "./+types/${name}"`,
+        extra,
+        `export const boundaryLoaders = ${loaders} satisfies Route.BoundaryLoaders`,
+        "",
+      ].join("\n")
+    const cart = "cart: { load: (ctx) => ({ path: new URL(ctx.request.url).pathname }) }"
+    const shell = "export const shellLoader = async () => ({})"
+    write("routes/held.tsx", page(" as const"))
+    write(
+      "routes/held.backend.ts",
+      backend("held", shell, `{ ${cart}, info: { load: (ctx) => ctx.phase } }`),
+    )
+    write("routes/misspelt.tsx", page(" as const"))
+    write(
+      "routes/misspelt.backend.ts",
+      backend("misspelt", shell, `{ ${cart}, crat: { load: () => 1 } }`),
+    )
+    write("routes/missing.tsx", page(" as const"))
+    write("routes/missing.backend.ts", backend("missing", shell, "{}"))
+    write("routes/whole.tsx", page(" as const"))
+    write("routes/whole.backend.ts", backend("whole", "", "{}"))
+    write("routes/loose.tsx", page(""))
+    write("routes/loose.backend.ts", backend("loose", shell, "{ crat: { load: () => 1 } }"))
+    write("routes/shim.svelte", "<p>shim</p>\n")
+    write("routes/shim.backend.ts", backend("shim", shell, "{ crat: { load: () => 1 } }"))
+    writeRouteTypes({ appRoot: root })
+    expect(generated("routes/+types/held.d.ts")).toContain(
+      "export type BoundaryLoaders = BoundaryLoadersOf<Frontend, Backend>",
+    )
+    expect(generated("routes/+types/shim.d.ts")).toContain(
+      "export type BoundaryLoaders = BoundaryLoadersOf<unknown, Backend>",
+    )
+    const errors = typeErrors(
+      ["held", "misspelt", "missing", "whole", "loose", "shim"].map(
+        (name) => `routes/${name}.backend.ts`,
+      ),
+    )
+    expect(errors).toHaveLength(2)
+    const [missing, misspelt] = errors.sort()
+    expect(missing).toStartWith("routes/missing.backend.ts:3 ")
+    expect(missing).toContain("Property 'cart' is missing")
+    expect(misspelt).toStartWith("routes/misspelt.backend.ts:3 ")
+    expect(misspelt).toContain("'crat' does not exist")
+  }, 60_000)
+
   test("a route with no backend half sends no data", () => {
     write(
       "routes/about.tsx",
