@@ -1548,6 +1548,7 @@ export function createPageRequestExecutor<Env = unknown>(
           variations,
           signal,
           api,
+          // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: an app with no configured origin has none, which the shell loader reads as absent.
           ...(shellOrigin === undefined ? {} : { origin: shellOrigin }),
         }),
       renderShellDocument: async (shellData, states) => {
