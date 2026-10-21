@@ -142,6 +142,30 @@ describe("PPR options", () => {
     expect(wantsBlockingRender(options, withAgent(undefined))).toBe(false)
   })
 
+  test("a remembered answer is the pattern's own, and a long agent is tested each time", () => {
+    const options = resolvePprOptions()
+    const longer = /[\w-]+-Google|Google-[\w-]+/i
+    for (const agent of [
+      "x-Google",
+      "-Google",
+      "Google-",
+      "Google-x",
+      "a-google",
+      "GOOGLE-b",
+      "--Google",
+    ]) {
+      const expected = longer.test(agent)
+      expect(HTML_LIMITED_BOTS.test(agent)).toBe(expected)
+      expect(wantsBlockingRender(options, withAgent(agent))).toBe(expected)
+      expect(wantsBlockingRender(options, withAgent(agent))).toBe(expected)
+    }
+    const long = `Mozilla/5.0 ${"x".repeat(300)} Twitterbot/1.0`
+    expect(wantsBlockingRender(options, withAgent(long))).toBe(true)
+    expect(wantsBlockingRender(options, withAgent(long.replace("Twitterbot", "Browser")))).toBe(
+      false,
+    )
+  })
+
   test("total deadline is the largest hole timeout plus slack, capped", () => {
     const options = resolvePprOptions()
     expect(totalDeadlineMs(options, [3000, 5000])).toBe(6000)

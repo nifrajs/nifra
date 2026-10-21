@@ -79,10 +79,24 @@ export function watchAbort(signal: AbortSignal, onAbort: () => void): () => void
   }
 }
 
-const bump = (counts: Map<string, number>, key: string, by: number): void => {
-  const next = (counts.get(key) ?? 0) + by
-  if (next === 0) counts.delete(key)
-  else counts.set(key, next)
+/** A boundary's count, kept once made: an invocation changes its own count with no map lookup. */
+interface Count {
+  n: number
+}
+
+const countOf = (counts: Map<string, Count>, key: string): Count => {
+  let count = counts.get(key)
+  if (count === undefined) {
+    count = { n: 0 }
+    counts.set(key, count)
+  }
+  return count
+}
+
+const nonZero = (counts: Map<string, Count>): Record<string, number> => {
+  const out: Record<string, number> = {}
+  for (const [key, count] of counts) if (count.n !== 0) out[key] = count.n
+  return out
 }
 
 /**
@@ -98,8 +112,8 @@ export class HoleAdmission {
   readonly #options: AdmissionOptions
   readonly #onLateSettle: ((key: string, msAfterAbort: number) => void) | undefined
   readonly #timers: AdmissionTimers
-  readonly #pendingBy = new Map<string, number>()
-  readonly #abandonedBy = new Map<string, number>()
+  readonly #pendingBy = new Map<string, Count>()
+  readonly #abandonedBy = new Map<string, Count>()
   readonly #denied: Record<DenialLevel, number> = { stop: 0, process: 0, boundary: 0 }
   #pending = 0
   #abandoned = 0
@@ -129,7 +143,7 @@ export class HoleAdmission {
   /** The level that denies boundary `key` now, or `undefined` when it is admitted. */
   denial(key: string): DenialLevel | undefined {
     if (this.#abandoned >= this.#options.admissionStop) return "stop"
-    const mine = this.#abandonedBy.get(key) ?? 0
+    const mine = this.#abandonedBy.get(key)?.n ?? 0
     if (this.#abandoned >= this.#options.processAbandonedTrip && mine > 0) return "process"
     if (mine >= this.#options.boundaryAbandonedTrip) return "boundary"
     return undefined
@@ -152,9 +166,11 @@ export class HoleAdmission {
     signal: AbortSignal,
     load: () => T | Promise<T>,
     onDone: () => void,
+    watch: (onAbort: () => void) => () => void,
   ): Promise<HoleRun<T>> {
     this.#pending++
-    bump(this.#pendingBy, key, 1)
+    const pending = countOf(this.#pendingBy, key)
+    pending.n++
     return new Promise<HoleRun<T>>((resolve) => {
       let answered = false
       const answer = (run: HoleRun<T>): void => {
@@ -162,30 +178,30 @@ export class HoleAdmission {
         answered = true
         resolve(run)
       }
-      let abandoned = false
+      let abandoned: Count | undefined
       let abortedAt: number | undefined
       let timer: unknown
       const onAbort = (): void => {
         abortedAt = this.#timers.now()
         timer = this.#timers.setTimeout(() => {
-          abandoned = true
+          abandoned = countOf(this.#abandonedBy, key)
+          abandoned.n++
           this.#abandoned++
-          bump(this.#abandonedBy, key, 1)
           onDone()
         }, this.#options.abandonGraceMs)
         answer({ ok: false, reason: "aborted", error: signal.reason })
       }
       let unwatch: (() => void) | undefined
       if (signal.aborted) onAbort()
-      else unwatch = watchAbort(signal, onAbort)
+      else unwatch = watch(onAbort)
       const settle = (): void => {
         unwatch?.()
         if (timer !== undefined) this.#timers.clearTimeout(timer)
         this.#pending--
-        bump(this.#pendingBy, key, -1)
-        if (abandoned) {
+        pending.n--
+        if (abandoned !== undefined) {
           this.#abandoned--
-          bump(this.#abandonedBy, key, -1)
+          abandoned.n--
         }
         if (abortedAt !== undefined) {
           const late = this.#timers.now() - abortedAt
@@ -214,8 +230,8 @@ export class HoleAdmission {
       slotsInUse: this.#slotsInUse,
       pending: this.#pending,
       abandoned: this.#abandoned,
-      pendingBy: Object.fromEntries(this.#pendingBy),
-      abandonedBy: Object.fromEntries(this.#abandonedBy),
+      pendingBy: nonZero(this.#pendingBy),
+      abandonedBy: nonZero(this.#abandonedBy),
       denied: { ...this.#denied },
       shed: this.#shed,
       admissionStopped: this.#abandoned >= this.#options.admissionStop,
@@ -239,8 +255,14 @@ export class HoleSlot {
   /**
    * Invoke one hole loader under admission. Denied, it is never invoked. Otherwise the result
    * settles with the loader, or at once when `signal` aborts while the loader is still pending.
+   * `watch` reports that abort; the caller that aborts the signal itself passes its own.
    */
-  run<T>(key: string, signal: AbortSignal, load: () => T | Promise<T>): Promise<HoleRun<T>> {
+  run<T>(
+    key: string,
+    signal: AbortSignal,
+    load: () => T | Promise<T>,
+    watch: (onAbort: () => void) => () => void = (onAbort) => watchAbort(signal, onAbort),
+  ): Promise<HoleRun<T>> {
     if (this.#sealed) throw new Error("[nifra/web] ppr: a sealed hole slot cannot start a hole")
     if (signal.aborted) return Promise.resolve({ ok: false, reason: "aborted" })
     const level = this.#admission.denial(key)
@@ -250,12 +272,18 @@ export class HoleSlot {
     }
     this.#outstanding++
     let done = false
-    return this.#admission.invoke(key, signal, load, () => {
-      if (done) return
-      done = true
-      this.#outstanding--
-      this.#maybeRelease()
-    })
+    return this.#admission.invoke(
+      key,
+      signal,
+      load,
+      () => {
+        if (done) return
+        done = true
+        this.#outstanding--
+        this.#maybeRelease()
+      },
+      watch,
+    )
   }
 
   /** No more holes will start for this response; the slot frees once the started ones are done. */

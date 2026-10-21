@@ -1470,13 +1470,18 @@ export function createPageRequestExecutor<Env = unknown>(
           ...(locale === undefined ? {} : localeFor(locale)),
         }
         if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
-        const rendered = (await renderPageResult(page)).toResponse()
+        const result = await renderPageResult(page)
+        // A buffered page hands over its string: a Response round trip to read it back cost more.
+        const rendered = result.toNodeBody?.() ?? result.toResponse()
         if (rendered.status !== 200) {
           throw new Error(
             `[nifra/web] ppr: the shell of "${route.id}" rendered status ${rendered.status}`,
           )
         }
-        return rendered.text()
+        if (rendered instanceof Response) return rendered.text()
+        return typeof rendered.body === "string"
+          ? rendered.body
+          : new TextDecoder().decode(rendered.body)
       },
     }
   }

@@ -163,10 +163,30 @@ export const variationQuery = (variations: Readonly<Record<string, string>>): st
   return query
 }
 
+// A browser's agent took the default rule about 0.5 us to test, and agents repeat. The bounds keep a
+// client that sends a new agent per request from growing the map.
+const MAX_REMEMBERED_AGENT = 256
+const MAX_REMEMBERED_AGENTS = 1024
+const agentAnswers = new WeakMap<RegExp, Map<string, boolean>>()
+
 /** Whether `request` gets the blocking render under `options`. */
 export function wantsBlockingRender(options: ResolvedPprOptions, request: Request): boolean {
   const rule = options.blockingFor
   if (typeof rule === "function") return rule(request)
   const agent = request.headers.get("user-agent")
-  return agent !== null && rule.test(agent)
+  if (agent === null) return false
+  if (agent.length > MAX_REMEMBERED_AGENT) return rule.test(agent)
+  let answers = agentAnswers.get(rule)
+  if (answers === undefined) {
+    answers = new Map()
+    agentAnswers.set(rule, answers)
+  }
+  let answer = answers.get(agent)
+  if (answer === undefined) {
+    if (answers.size >= MAX_REMEMBERED_AGENTS) answers.clear()
+    // No `g` or `y` flag (options refuse them), so a test reads no state and an answer holds.
+    answer = rule.test(agent)
+    answers.set(agent, answer)
+  }
+  return answer
 }

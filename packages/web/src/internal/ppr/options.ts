@@ -63,10 +63,10 @@ export type ResolvedPprOptions = {
 /**
  * Crawlers that read the document without running streamed scripts, so they get the blocking render.
  * The same set Next.js treats as HTML-limited bots. Googlebot itself is absent on purpose: it renders
- * JavaScript.
+ * JavaScript. `[\w-]-Google` matches what `[\w-]+-Google` does without backtracking at every position.
  */
 export const HTML_LIMITED_BOTS: RegExp =
-  /[\w-]+-Google|Google-[\w-]+|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight/i
+  /[\w-]-Google|Google-[\w-]|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight/i
 
 const MB = 1024 * 1024
 

@@ -80,28 +80,48 @@ export function requestScriptAround(
   return [script.slice(0, at), script.slice(at)]
 }
 
+const HOST = 'data-nifra-hole="'
+
+/**
+ * Where {@link injectHoleFallbacks} puts each fallback, in document order. One pass over the shell
+ * finds every host: a search per hole, and another for its duplicate, read a large shell many times.
+ */
+export function holeFallbackInserts(
+  shell: string,
+  fallbacks: ReadonlyMap<string, string>,
+): Array<{ readonly at: number; readonly html: string }> {
+  // A declared hole's host, as the index after its name's closing quote; -1 once it has two.
+  const hosts = new Map<string, number>()
+  for (let at = shell.indexOf(HOST); at !== -1; at = shell.indexOf(HOST, at + HOST.length)) {
+    const end = shell.indexOf('"', at + HOST.length)
+    if (end === -1) break
+    const name = shell.slice(at + HOST.length, end)
+    if (fallbacks.has(name)) hosts.set(name, hosts.has(name) ? -1 : end + 1)
+  }
+  const inserts: Array<{ at: number; html: string }> = []
+  for (const [name, html] of fallbacks) {
+    const after = hosts.get(name)
+    if (after === undefined)
+      throw new TypeError(`[nifra/web] ppr: hole "${name}" has no host in the shell`)
+    if (after === -1) {
+      throw new TypeError(`[nifra/web] ppr: hole "${name}" has more than one host in the shell`)
+    }
+    const close = shell.indexOf(">", after)
+    if (close === -1 || !shell.startsWith("</", close + 1)) {
+      throw new TypeError(`[nifra/web] ppr: hole "${name}"'s host must render empty`)
+    }
+    inserts.push({ at: close + 1, html })
+  }
+  return inserts.sort((a, b) => a.at - b.at)
+}
+
 /**
  * Put each hole's fallback HTML into its empty host in a rendered shell, once per shell build. Every
  * declared hole must have exactly one host and that host must be empty: the adapter renders
  * it opaque, so anything inside would be framework output the fill would destroy.
  */
 export function injectHoleFallbacks(shell: string, fallbacks: ReadonlyMap<string, string>): string {
-  const inserts: Array<{ at: number; html: string }> = []
-  for (const [name, html] of fallbacks) {
-    const marker = `data-nifra-hole="${name}"`
-    const first = shell.indexOf(marker)
-    if (first === -1)
-      throw new TypeError(`[nifra/web] ppr: hole "${name}" has no host in the shell`)
-    if (shell.indexOf(marker, first + marker.length) !== -1) {
-      throw new TypeError(`[nifra/web] ppr: hole "${name}" has more than one host in the shell`)
-    }
-    const close = shell.indexOf(">", first + marker.length)
-    if (close === -1 || !shell.startsWith("</", close + 1)) {
-      throw new TypeError(`[nifra/web] ppr: hole "${name}"'s host must render empty`)
-    }
-    inserts.push({ at: close + 1, html })
-  }
-  inserts.sort((a, b) => a.at - b.at)
+  const inserts = holeFallbackInserts(shell, fallbacks)
   let out = ""
   let from = 0
   for (const insert of inserts) {

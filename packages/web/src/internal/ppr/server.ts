@@ -21,7 +21,7 @@ import {
 import {
   assertHoleName,
   encodeHoleFrame,
-  injectHoleFallbacks,
+  holeFallbackInserts,
   requestScriptAround,
   validateHoleHtml,
 } from "./frames.ts"
@@ -50,7 +50,12 @@ const HOLE_ERROR_STATE: BoundaryError = { name: "Error", message: "Boundary fail
 
 const DOCUMENT_END = "</body></html>"
 
-const MODULE_SCRIPT = /<script type="module" src="([^"]*)"><\/script>/g
+const MODULE_SCRIPT_OPEN = '<script type="module" src="'
+const MODULE_SCRIPT_CLOSE = '"></script>'
+const RUNTIME_SCRIPT = `<script>${PPR_RUNTIME}</script>`
+const BOOT_SCRIPT = `<script>${PPR_BOOT}</script>`
+
+const ENCODER = new TextEncoder()
 
 /** A built shell, shared by every visitor whose request maps to its key. */
 const NO_BYTES = new Uint8Array(0)
@@ -104,7 +109,8 @@ interface StreamState {
   overflowed: boolean
   ending: boolean
   dead: boolean
-  wake: (() => void) | undefined
+  /** The reader is waiting on a read the queue could not fill: the next frame goes straight to it. */
+  wanted: boolean
   kill(reason: unknown): void
 }
 
@@ -139,6 +145,8 @@ const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678
 /** A token is 16 random bytes in unpadded base64url: always this many ASCII characters. */
 const TOKEN_LENGTH = 22
 const tokenBytes = new Uint8Array(16)
+/** Where a shell's bytes hold each response's token. */
+const TOKEN_ROOM = "A".repeat(TOKEN_LENGTH)
 
 const randomToken = (): string => {
   crypto.getRandomValues(tokenBytes)
@@ -207,6 +215,8 @@ const signalSource = (signal: AbortSignal): AbortSource => ({
 
 interface HoleDeadline {
   readonly signal: AbortSignal
+  /** Calls `onAbort` once the signal aborts, until the returned function is called. */
+  watch(onAbort: () => void): () => void
   /** One of the holes settled; the last one clears the timer. */
   leave(): void
 }
@@ -218,7 +228,8 @@ interface HoleDeadlines {
 /**
  * Holes that start together with one timeout share its signal and timer: a controller, listener and
  * timer per hole cost more under load than the holes. Not `AbortSignal.timeout`: its timer stays
- * pending after the holes settle.
+ * pending after the holes settle. Only this code aborts the signal, so its watchers are called here
+ * and the signal gets no native listener.
  */
 const holeDeadlines = (response: AbortSource): HoleDeadlines => {
   const byTimeout = new Map<number, HoleDeadline & { joined: number }>()
@@ -227,15 +238,27 @@ const holeDeadlines = (response: AbortSource): HoleDeadlines => {
       let deadline = byTimeout.get(timeoutMs)
       if (deadline === undefined) {
         const own = new AbortController()
+        const watchers = new Set<() => void>()
+        const stop = (reason: unknown): void => {
+          if (own.signal.aborted) return
+          own.abort(reason)
+          for (const watcher of watchers) watcher()
+        }
         if (response.aborted) own.abort(response.reason)
-        else response.watch(() => own.abort(response.reason))
+        else response.watch(() => stop(response.reason))
         const timer = setTimeout(
-          () => own.abort(new DOMException("The operation timed out.", "TimeoutError")),
+          () => stop(new DOMException("The operation timed out.", "TimeoutError")),
           timeoutMs,
         )
         const created = {
           signal: own.signal,
           joined: 0,
+          watch(onAbort: () => void): () => void {
+            watchers.add(onAbort)
+            return () => {
+              watchers.delete(onAbort)
+            }
+          },
           leave() {
             if (--created.joined === 0) clearTimeout(timer)
           },
@@ -334,6 +357,23 @@ export function createPprServer(config: PprServerConfig): PprServer {
   const cspHeaders = new Map<string, Promise<string | undefined>>()
   const thinWarned = new Set<string>()
   const fallbackHtml = new WeakMap<HoleRegistration, Promise<string>>()
+  // A route's request script, with room for the token, serialized once per set of hole names.
+  const requestScripts = new Map<
+    string,
+    { readonly text: string; readonly bytes: number; readonly tokenAt: number }
+  >()
+  const requestScriptOf = (holes: readonly HoleRegistration[]) => {
+    const names = holes.map((hole) => hole.name)
+    const key = names.join(",")
+    let script = requestScripts.get(key)
+    if (script === undefined) {
+      const [before, after] = requestScriptAround(cancelUrl, names)
+      const text = before + TOKEN_ROOM + after
+      script = { text, bytes: ENCODER.encode(text).length, tokenAt: ENCODER.encode(before).length }
+      requestScripts.set(key, script)
+    }
+    return script
+  }
 
   // A fallback comes from its registration alone and every shell holds it, so it renders once.
   const fallbackOf = (hole: HoleRegistration): Promise<string> => {
@@ -400,15 +440,40 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const headEnd = html.indexOf("</head>")
     if (headEnd === -1)
       throw new Error(`[nifra/web] ppr: route "${request.routeId}" shell has no head`)
+    const bodyEnd = html.length - DOCUMENT_END.length
+    // Every change to the rendered document, made in one pass that copies it once.
+    const edits: Array<{ readonly from: number; readonly to: number; readonly html: string }> = [
+      { from: headEnd, to: headEnd, html: RUNTIME_SCRIPT },
+    ]
     // The client entry must not wait for the end of the document, which is the slowest hole.
-    let prefix =
-      `${html.slice(0, headEnd)}<script>${PPR_RUNTIME}</script>${html.slice(headEnd, -DOCUMENT_END.length)}`.replace(
-        MODULE_SCRIPT,
-        `<link rel="modulepreload" href="$1"><script>${PPR_BOOT}</script>`,
-      )
+    for (
+      let at = html.indexOf(MODULE_SCRIPT_OPEN);
+      at !== -1 && at < bodyEnd;
+      at = html.indexOf(MODULE_SCRIPT_OPEN, at + 1)
+    ) {
+      const srcEnd = html.indexOf('"', at + MODULE_SCRIPT_OPEN.length)
+      const end = srcEnd + MODULE_SCRIPT_CLOSE.length
+      if (srcEnd === -1 || !html.startsWith(MODULE_SCRIPT_CLOSE, srcEnd)) continue
+      if (at < headEnd && end > headEnd) continue
+      const src = html.slice(at + MODULE_SCRIPT_OPEN.length, srcEnd)
+      edits.push({
+        from: at,
+        to: end,
+        html: `<link rel="modulepreload" href="${src}">${BOOT_SCRIPT}`,
+      })
+    }
     const fallbacks = new Map<string, string>()
     for (const hole of request.holes) fallbacks.set(hole.name, await fallbackOf(hole))
-    prefix = injectHoleFallbacks(prefix, fallbacks)
+    for (const insert of holeFallbackInserts(html, fallbacks))
+      edits.push({ from: insert.at, to: insert.at, html: insert.html })
+    edits.sort((a, b) => a.from - b.from)
+    let prefix = ""
+    let from = 0
+    for (const edit of edits) {
+      prefix += html.slice(from, edit.from) + edit.html
+      from = edit.to
+    }
+    prefix += html.slice(from, bodyEnd)
     if (!isProduction() && !thinWarned.has(request.routeId)) {
       const text = textLength(prefix.slice(Math.max(prefix.indexOf("<body"), 0)))
       if (text < WEBKIT_PAINT_CHARS) {
@@ -418,22 +483,15 @@ export function createPprServer(config: PprServerConfig): PprServer {
         )
       }
     }
-    const encoder = new TextEncoder()
-    const [beforeToken, afterToken] = requestScriptAround(
-      cancelUrl,
-      request.holes.map((hole) => hole.name),
-    )
-    let bytes = encoder.encode(prefix + beforeToken)
-    const short = options.minShellBytes - (bytes.length - encoder.encode(beforeToken).length)
-    if (short > 0) bytes = encoder.encode(`${prefix}<!--${" ".repeat(short)}-->${beforeToken}`)
-    const requestTail = encoder.encode(afterToken)
-    const first = new Uint8Array(bytes.length + TOKEN_LENGTH + requestTail.length)
-    first.set(bytes)
-    first.set(requestTail, bytes.length + TOKEN_LENGTH)
+    const script = requestScriptOf(request.holes)
+    // One encode: the request script's bytes are known, so the prefix's are the rest.
+    let first = ENCODER.encode(prefix + script.text)
+    const short = options.minShellBytes - (first.length - script.bytes)
+    if (short > 0) first = ENCODER.encode(`${prefix}<!--${" ".repeat(short)}-->${script.text}`)
     return {
       routeId: request.routeId,
       first,
-      tokenAt: bytes.length,
+      tokenAt: first.length - script.bytes + script.tokenAt,
       data,
       bytes: first.length,
       builtAt: now(),
@@ -517,8 +575,10 @@ export function createPprServer(config: PprServerConfig): PprServer {
       Math.min(revalidate * options.staleOnErrorFactor, options.maxStaleOnErrorSeconds)) *
     1000
 
-  const shellFor = (request: PprRequest): Promise<ShellEntry> => {
-    const key = shellKey(deployment, request)
+  const shellFor = (
+    request: PprRequest,
+    key = shellKey(deployment, request),
+  ): Promise<ShellEntry> => {
     const entry = settled.get(key)
     if (entry !== undefined) {
       settled.delete(key)
@@ -565,8 +625,11 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const deadline = deadlines.join(hole.timeout ?? options.holeTimeoutMs)
     const signal = deadline.signal
     return slot
-      .run(`${request.routeId}|${hole.name}`, signal, () =>
-        load(holeCtx(request.holeContext, signal)),
+      .run(
+        `${request.routeId}|${hole.name}`,
+        signal,
+        () => load(holeCtx(request.holeContext, signal)),
+        deadline.watch,
       )
       .then((run) => {
         deadline.leave()
@@ -689,25 +752,32 @@ export function createPprServer(config: PprServerConfig): PprServer {
         options,
         request.holes.map((hole) => hole.timeout ?? options.holeTimeoutMs),
       )
-      const deadline = setTimeout(
-        () => abort(new DOMException("PPR total deadline", "TimeoutError")),
-        deadlineMs,
-      )
-      let lifetime: ReturnType<typeof setTimeout> | undefined
+      // One timer: the total deadline, then the write grace, which runs from the deadline or from the
+      // stream's start, whichever is later.
+      let killStream: ((reason: unknown) => void) | undefined
+      let graceSpent = false
+      const graceOver = (): void => {
+        graceSpent = true
+        killStream?.(new DOMException("PPR write grace", "TimeoutError"))
+      }
+      let timer = setTimeout(() => {
+        abort(new DOMException("PPR total deadline", "TimeoutError"))
+        timer = setTimeout(graceOver, options.writeGraceMs)
+      }, deadlineMs)
       const cleanup = (): void => {
-        clearTimeout(deadline)
-        clearTimeout(lifetime)
+        clearTimeout(timer)
         live.delete(token)
         unwatchDisconnect()
       }
       // A cached shell is known at once, so holes start only once it is known to be a page; on a
       // miss they start beside the build, which is where starting early pays.
-      const cached = settled.has(shellKey(deployment, request))
+      const key = shellKey(deployment, request)
+      const cached = settled.has(key)
       let runs = cached ? undefined : startHoles(request, response)
       let shell: ShellEntry
       let csp: string | undefined
       try {
-        ;[shell, csp] = await Promise.all([shellFor(request), cspHeader(request)])
+        ;[shell, csp] = await Promise.all([shellFor(request, key), cspHeader(request)])
       } catch (error) {
         abort(error)
         cleanup()
@@ -715,7 +785,6 @@ export function createPprServer(config: PprServerConfig): PprServer {
       }
       runs ??= startHoles(request, response)
 
-      const encoder = new TextEncoder()
       let sink: ReadableStreamDefaultController<Uint8Array> | undefined
       const state: StreamState = {
         queue: [],
@@ -723,7 +792,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
         overflowed: false,
         ending: false,
         dead: false,
-        wake: undefined,
+        wanted: false,
         kill(reason) {
           if (state.dead) return
           state.dead = true
@@ -738,21 +807,36 @@ export function createPprServer(config: PprServerConfig): PprServer {
           } catch {
             // Already closed or cancelled by the reader: nothing left to error.
           }
-          state.wake?.()
         },
       }
+      // Everything queued goes out as one chunk: one write per read, not one per frame.
+      const send = (stream: ReadableStreamDefaultController<Uint8Array>): void => {
+        const chunk = state.queue.length > 1 ? concat(state.queue) : state.queue[0]
+        state.queue.length = 0
+        if (chunk !== undefined) {
+          state.queued -= chunk.length
+          unsentBytes -= chunk.length
+          stream.enqueue(chunk)
+        }
+        if (state.ending) {
+          state.dead = true
+          streams.delete(state)
+          stream.close()
+          cleanup()
+        }
+      }
       const wake = (): void => {
-        const resume = state.wake
-        state.wake = undefined
-        resume?.()
+        if (!state.wanted || sink === undefined) return
+        state.wanted = false
+        send(sink)
       }
       const push = (name: string, frame: string): void => {
         if (state.dead) return
-        let bytes = encoder.encode(frame)
+        let bytes = ENCODER.encode(frame)
         // Past the per-response cap every later hole sends its error frame, a few hundred bytes each.
         if (state.overflowed || state.queued + bytes.length > options.maxUnsentBytesPerResponse) {
           state.overflowed = true
-          bytes = encoder.encode(errorFrame(name))
+          bytes = ENCODER.encode(errorFrame(name))
         }
         makeRoom(bytes.length)
         if (state.dead) return
@@ -762,13 +846,11 @@ export function createPprServer(config: PprServerConfig): PprServer {
         wake()
       }
       streams.add(state)
-      lifetime = setTimeout(
-        () => state.kill(new DOMException("PPR write grace", "TimeoutError")),
-        deadlineMs + options.writeGraceMs,
-      )
+      killStream = state.kill
+      if (graceSpent) timer = setTimeout(graceOver, options.writeGraceMs)
       const pushEnd = (): void => {
         if (state.dead) return
-        const end = encoder.encode(DOCUMENT_END)
+        const end = ENCODER.encode(DOCUMENT_END)
         state.queue.push(end)
         state.queued += end.length
         unsentBytes += end.length
@@ -797,28 +879,12 @@ export function createPprServer(config: PprServerConfig): PprServer {
               first[shell.tokenAt + at] = token.charCodeAt(at)
             stream.enqueue(first)
           },
-          // Pulled only when the reader wants bytes, so unread frames stay counted in `state.queue`.
-          async pull(stream) {
-            while (state.queue.length === 0 && !state.ending && !state.dead) {
-              await new Promise<void>((resolve) => {
-                state.wake = resolve
-              })
-            }
+          // Called only for a read the stream's queue cannot fill, so unread frames stay counted in
+          // `state.queue`. Synchronous: an async pull and a promise per frame cost more than the frame.
+          pull(stream) {
             if (state.dead) return
-            // Everything queued goes out as one chunk: one write per wake, not one per frame.
-            const chunk = state.queue.length > 1 ? concat(state.queue) : state.queue[0]
-            state.queue.length = 0
-            if (chunk !== undefined) {
-              state.queued -= chunk.length
-              unsentBytes -= chunk.length
-              stream.enqueue(chunk)
-            }
-            if (state.queue.length === 0 && state.ending) {
-              state.dead = true
-              streams.delete(state)
-              stream.close()
-              cleanup()
-            }
+            if (state.queue.length === 0 && !state.ending) state.wanted = true
+            else send(stream)
           },
           cancel(reason) {
             state.kill(reason)
