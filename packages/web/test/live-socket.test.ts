@@ -440,7 +440,9 @@ test("rotation across processes: a grant under the demoted secret hears changes 
   expect(await client.next()).toEqual({ t: "ready", gen: 1, stale: [[]] })
   jest.useFakeTimers()
   await oldProcess.runtime.publish("post:42")
-  expect(await client.drain()).toEqual([{ t: "changed", tag: tagOf(loaded, PAGE), spread: 0 }])
+  // The publish settles once the OLD process applies it; the socket's process reads it on its own.
+  expect(await client.next()).toEqual({ t: "changed", tag: tagOf(loaded, PAGE), spread: 0 })
+  expect(await client.drain()).toEqual([])
   jest.advanceTimersByTime(100)
   await newProcess.runtime.publish("post:42")
   expect(await client.drain()).toEqual([{ t: "changed", tag: tagOf(loaded, PAGE), spread: 0 }])

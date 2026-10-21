@@ -22,7 +22,8 @@ import {
 } from "node:http"
 import { createServer as createHttpsServer } from "node:https"
 import { isAbsolute, relative, resolve, sep } from "node:path"
-import type { Duplex, Readable } from "node:stream"
+import { type Duplex, Readable } from "node:stream"
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
 import type { TlsOptions } from "node:tls"
 import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
@@ -2296,6 +2297,29 @@ class LazyNodeRequestSource implements NodeRequestSource {
           // consumed it.
           void real.arrayBuffer().catch(() => {})
           return real
+        }
+        const handed = this.bodyValue
+        if (handed != null) {
+          const locked = handed.locked
+          // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
+          const disturbed = Readable.isDisturbed(handed as unknown as NodeWebReadableStream)
+          // undici refuses a body stream that was already read or locked, which `body` has handed
+          // out before any member forced this request. Seed it with a stand-in in the same state so
+          // `bodyUsed`, `signal`, and the rest answer as they would on a native request.
+          if (locked || disturbed) {
+            const real = makeWebRequest(
+              this.nodeReq,
+              this.method,
+              this.url,
+              headers,
+              new ReadableStream<Uint8Array>(),
+              this.nodeRes,
+            )
+            const standIn = real.body
+            if (disturbed) void standIn?.cancel()
+            if (locked) standIn?.getReader()
+            return real
+          }
         }
         return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, this.nodeRes)
       },
