@@ -12,6 +12,8 @@ import { svelteBunPlugin } from "../../../src/plugin.ts"
 
 plugin(svelteBunPlugin("ssr"))
 
+export const trustedTypesPolicy: string | null = "svelte-trusted-html"
+
 export const startPprApp = (options?: Parameters<typeof startFixture>[1]): Promise<PprApp> =>
   startFixture(
     {

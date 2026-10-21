@@ -1,8 +1,8 @@
 /**
  * The partial prerendering fixture: a real `createWebApp` with `experimental.ppr`, its client built by
  * `buildClient` and its shells checked by `compileShells` at start. `startPprApp()` serves it on
- * 127.0.0.1 and returns its origin; `app-browser.ts` drives it. The Svelte twin in
- * `web-svelte/test/fixtures/ppr-app` passes its own `PprFixtureSetup`.
+ * 127.0.0.1 and returns its origin; `app-browser.ts` drives it. Each other framework's twin, in
+ * `web-<name>/test/fixtures/ppr-app/server.ts`, passes its own `PprFixtureSetup` and exports a `PprTwin`.
  */
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -27,6 +27,19 @@ export interface PprApp {
   readonly warnings: readonly string[]
   stop(): Promise<void>
 }
+
+/** A twin module's exports, as `app-browser.ts` loads them. */
+export interface PprTwin {
+  startPprApp(): Promise<PprApp>
+  /**
+   * The Trusted Types policy the framework's client creates for its own templates, "" for none, or
+   * `null` when the client writes raw HTML outside any policy, so no app on it can enforce them.
+   */
+  readonly trustedTypesPolicy: string | null
+}
+
+/** React's client creates no policy. */
+export const trustedTypesPolicy: string | null = ""
 
 /** What differs between the framework twins of this app; the routes, ids and texts do not. */
 export interface PprFixtureSetup {

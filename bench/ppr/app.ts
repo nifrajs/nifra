@@ -1,22 +1,24 @@
 /**
  * The bench app: the product page as blocking SSR (`/blocking/:id`), `defer()` streaming
- * (`/defer/:id`) and a partially prerendered route (`/ppr/:id`), for `FRAMEWORK` react or svelte.
- * `PPR_UPSTREAM` points the product read at the catalog process (S1); without it the page is tiny
- * (S0). `PPR_OPTIONS` (JSON) overrides partial prerendering's options.
+ * (`/defer/:id`) and a partially prerendered route (`/ppr/:id`), for `FRAMEWORK` (default react),
+ * whose `<name>/` holds its routes and `setup.ts`. `PPR_UPSTREAM` points the product read at the
+ * catalog process (S1); without it the page is tiny (S0). `PPR_OPTIONS` (JSON) overrides partial
+ * prerendering's options.
  */
 import { createCspPolicy, createWebApp, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { compileShells, partialPrerendering } from "@nifrajs/web/ppr"
-import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
-import { plugin } from "bun"
+import { type BunPlugin, plugin } from "bun"
 
-const framework = process.env.FRAMEWORK === "svelte" ? "svelte" : "react"
-const serverPlugins = framework === "svelte" ? [svelteBunPlugin("ssr")] : []
+/** `<framework>/setup.ts`: the adapter and the Bun plugins its components compile through. */
+interface BenchSetup {
+  readonly adapter: RenderAdapter
+  readonly serverPlugins: readonly BunPlugin[]
+}
+
+const framework = process.env.FRAMEWORK ?? "react"
+const { adapter, serverPlugins }: BenchSetup = await import(`./${framework}/setup.ts`)
 for (const serverPlugin of serverPlugins) plugin(serverPlugin)
-const adapter: RenderAdapter =
-  framework === "svelte"
-    ? (await import("@nifrajs/web-svelte")).svelteAdapter
-    : (await import("@nifrajs/web-react")).reactAdapter
 
 const routesDir = `${import.meta.dir}/${framework}/routes`
 const manifest = discoverRoutes(routesDir)

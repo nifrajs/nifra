@@ -4,14 +4,15 @@
  * soft navigation's NDJSON abort, stops its pending hole loader on the server (latency measured); an
  * unrelated fetch survives; an unchecked shell renders blocking. Each hole is filled once whether it
  * arrives before or after hydration; a tampered invoker is blocked; fills work under enforced Trusted
- * Types; the router keeps the holes through a param change and back. Chromium also checks the heap and
- * listener count stay flat over 1000 soft navigations. Run: `bun packages/web/test/fixtures/ppr/app-browser.ts`, with
- * `FRAMEWORK=svelte` for the Svelte twin of the app.
+ * Types where the framework's client can run under them; the router keeps the holes through a param
+ * change and back. Chromium also checks the heap and listener count stay flat over 1000 soft
+ * navigations. Run: `bun packages/web/test/fixtures/ppr/app-browser.ts`, with `FRAMEWORK=<name>` for
+ * the twin of the app in `web-<name>/test/fixtures/ppr-app`.
  */
 import assert from "node:assert/strict"
 import { type Browser, type BrowserContext, chromium, firefox, type Page, webkit } from "playwright"
 import { probe, releaseHeld } from "./app/lib/probe.ts"
-import type { PprApp } from "./app/server.ts"
+import type { PprTwin } from "./app/server.ts"
 
 declare global {
   interface Window {
@@ -25,10 +26,13 @@ declare global {
 
 const NAVS = Number(process.env.NAVS ?? "1000")
 const ENGINES = (process.env.ENGINES ?? "chromium,firefox,webkit").split(",")
-const app: PprApp =
-  process.env.FRAMEWORK === "svelte"
-    ? await (await import("../../../../web-svelte/test/fixtures/ppr-app/server.ts")).startPprApp()
-    : await (await import("./app/server.ts")).startPprApp()
+const FRAMEWORK = process.env.FRAMEWORK ?? "react"
+const twin: PprTwin = await import(
+  FRAMEWORK === "react"
+    ? "./app/server.ts"
+    : `../../../../web-${FRAMEWORK}/test/fixtures/ppr-app/server.ts`
+)
+const app = await twin.startPprApp()
 const { origin } = app
 
 assert.deepEqual(
@@ -273,8 +277,6 @@ async function visit(
 
 const ALL_HOLES = ["greeting", "cart", "slow"]
 
-/** The policy the UI framework creates for its own templates; React creates none. */
-const TRUSTED_TYPES_POLICY = process.env.FRAMEWORK === "svelte" ? "svelte-trusted-html" : ""
 const once = Object.fromEntries(ALL_HOLES.map((hole) => [hole, 1]))
 
 /** Every hole filled once and its children left alone after, with no CSP violation or error. */
@@ -385,12 +387,16 @@ async function checkScriptPolicy(name: string, browser: Browser): Promise<Record
   report.tamperedInvoker = `blocked (${blocked.violations.join(", ")})`
   await tampered.context.close()
 
+  if (twin.trustedTypesPolicy === null) {
+    report.trustedTypes = `not supported by the ${FRAMEWORK} client renderer`
+    return report
+  }
   const typed = await visit(browser)
   await typed.page.route(`${origin}/p/9`, async (route) => {
     const response = await route.fetch()
     const headers = response.headers()
     headers["content-security-policy"] =
-      `${headers["content-security-policy"]}; require-trusted-types-for 'script'; trusted-types nifra-ppr ${TRUSTED_TYPES_POLICY}`
+      `${headers["content-security-policy"]}; require-trusted-types-for 'script'; trusted-types nifra-ppr ${twin.trustedTypesPolicy}`
     await route.fulfill({ response, headers })
   })
   await typed.page.goto(`${origin}/p/9`, { waitUntil: "commit" })
