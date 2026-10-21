@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { ciRunOutput, forRuntime, type SsrRuntime } from "../ssr/matrix.ts"
+import { ALL_TABLE_SECTIONS } from "../ssr/targets.ts"
 import { formatInterval, renderHeadline, renderSection } from "./render.ts"
 import {
   type CiReport,
@@ -178,5 +180,115 @@ describe("render", () => {
     const r = report(runs)
     expect(parseCiReport(JSON.parse(JSON.stringify(r)))).toEqual(r)
     expect(() => parseCiReport({ ...r, runtime: "workerd" })).toThrow("runtime")
+  })
+})
+
+describe("ssr reports", () => {
+  /** Each row samples `rps(row, round)`; every table runs on `runtime` as its CI job would. */
+  function ssrRun(runtime: SsrRuntime, rps: (row: string, round: number) => number): RunOutput {
+    const tables = ALL_TABLE_SECTIONS.map((s) => forRuntime(s, runtime)).map((section) => ({
+      section,
+      rounds: Object.fromEntries(
+        section.targets.map((t) => [
+          t.name,
+          [0, 1, 2, 3].map((round) => ({ rps: rps(t.name, round), p50ms: 1, p99ms: 2 })),
+        ]),
+      ),
+    }))
+    const meta = { bun: "1.4.3", node: "v26.12.0", oha: "1.16.0", rounds: 4 }
+    // Through JSON and back, as bench/ci/run.ts reads the line.
+    return parseRunOutput(JSON.parse(JSON.stringify(ciRunOutput(runtime, tables, meta))))
+  }
+
+  /** nifra at 1000 req/s, every other row at a share of it that wobbles by 1% a round. */
+  const SHARE: Readonly<Record<string, number>> = {
+    "next (dynamic)": 0.1,
+    remix: 0.2,
+    "next (ISR)": 0.25,
+    "preact-ssr": 1.25,
+  }
+  const shares = (row: string, round: number): number =>
+    (row.startsWith("nifra+") && !row.includes("static host") ? 1000 : 1000 * (SHARE[row] ?? 0.5)) *
+    (1 + (round % 2) * 0.01)
+
+  const REACT_A = "React - Table A (uncached SSR)"
+  const ISR_NODE = "React - Table B (cacheable): nifra+react (ISR, node)"
+  const PREACT_A = "Preact - Table A (uncached SSR)"
+
+  function ssrReport(runtime: SsrRuntime, runs: readonly RunOutput[]): CiReport {
+    return { ...report(runs), suite: "ssr", runtime }
+  }
+
+  test("a run line keeps its roles, and a malformed role names its field", () => {
+    const line = ssrRun("node", shares)
+    expect(line.roles?.node?.[REACT_A]).toEqual({
+      nifra: "nifra+react (node)",
+      rival: "next (dynamic)",
+    })
+    expect(line.roles?.node?.[PREACT_A]).toEqual({ nifra: "nifra+preact (node)" })
+    expect(line.ceilings.node?.[REACT_A]).toBeUndefined()
+    expect(() => parseRunOutput({ ...line, roles: { node: { [REACT_A]: { nifra: 1 } } } })).toThrow(
+      `run.roles.node.${REACT_A}.nifra`,
+    )
+  })
+
+  test("a table without a ceiling compares nifra with each rival, nifra's row first", () => {
+    const runs = [1, 2, 3].map(() => ssrRun("node", shares))
+    const w = summarize(runs, "node", 10).find((s) => s.workload === REACT_A)
+    expect(w?.ceiling).toBeUndefined()
+    expect(w?.nifra).toBe("nifra+react (node)")
+    expect(w?.rival).toBe("next (dynamic)")
+    expect(w?.rows.map((r) => r.row)).toEqual(["nifra+react (node)", "next (dynamic)", "remix"])
+    expect(w?.rows.every((r) => r.ofCeiling === undefined && r.verdict === "ok")).toBe(true)
+    expect(w?.rows[1]?.nifraOver?.median).toBeCloseTo(10, 6)
+    expect(w?.rows[2]?.nifraOver?.n).toBe(12)
+  })
+
+  test("nifra's ISR row is compared with the rival's ISR row, under the static host ceiling", () => {
+    const runs = [1, 2, 3].map(() => ssrRun("node", shares))
+    const w = summarize(runs, "node", 10).find((s) => s.workload === ISR_NODE)
+    expect([w?.nifra, w?.rival, w?.ceiling]).toEqual([
+      "nifra+react (ISR, node)",
+      "next (ISR)",
+      "nifra+react (SSG files, static host)",
+    ])
+    expect(w?.rows.find((r) => r.row === "next (ISR)")?.nifraOver?.median).toBeCloseTo(4, 6)
+    expect(w?.rows.find((r) => r.row === w?.nifra)?.ofCeiling?.median).toBeCloseTo(2, 6)
+  })
+
+  test("the raw renderer is Preact's ceiling, and its headline names no rival", () => {
+    const runs = [1, 2, 3].map(() => ssrRun("bun", shares))
+    const r = ssrReport("bun", runs)
+    const w = summarize(runs, "bun", 10).find((s) => s.workload === PREACT_A)
+    expect([w?.ceiling, w?.rival]).toEqual(["preact-ssr", undefined])
+    expect(w?.rows.find((row) => row.row === "nifra+preact")?.ofCeiling?.median).toBeCloseTo(0.8, 6)
+    const headline = renderHeadline([r])
+    expect(headline).toContain(`| ssr | bun | ${PREACT_A} | 80 (80-80) | - | 0 |`)
+    expect(headline).toContain(
+      `| ssr | bun | ${REACT_A} | - | 1000% (1000-1000) vs next (dynamic) | 0 |`,
+    )
+    expect(unsettledRows(summarize(runs, "bun", 10))).toBe(0)
+  })
+
+  test("a section says which runtime nifra ran on and marks a table without a ceiling", () => {
+    const md = renderSection(
+      ssrReport(
+        "node",
+        [1, 2, 3].map(() => ssrRun("node", shares)),
+      ),
+    )
+    expect(md).toContain("### ssr - node")
+    expect(md).toContain("nifra runs on node; the rival apps run on node in both ssr jobs")
+    expect(md).toContain(`**${REACT_A}** (ceiling: none)`)
+    expect(md).toContain("| **nifra+react (node)** | - | - | ok |")
+    expect(md).toContain("| next (dynamic) | - | 1000% (1000-1000) | ok |")
+  })
+
+  test("an ssr report survives the summary job's round trip; ssr has no deno job", () => {
+    const r = ssrReport("node", [ssrRun("node", shares)])
+    expect(parseCiReport(JSON.parse(JSON.stringify(r)))).toEqual(r)
+    expect(() => parseCiReport({ ...r, runtime: "deno" })).toThrow(
+      "runtime: expected one of bun, node",
+    )
   })
 })

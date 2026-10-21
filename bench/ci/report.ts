@@ -7,16 +7,30 @@ import { type Matrix, type Measure, pooledRatios, type RoundCell } from "../roun
 import type { CoreSplit } from "./host.ts"
 import { type MedianInterval, medianInterval } from "./stats.ts"
 
-export type Suite = "http" | "realworld"
+export type Suite = "http" | "realworld" | "ssr"
 export type Runtime = "bun" | "node" | "deno"
-export const SUITES: readonly Suite[] = ["http", "realworld"]
+export const SUITES: readonly Suite[] = ["http", "realworld", "ssr"]
 export const RUNTIMES: readonly Runtime[] = ["bun", "node", "deno"]
 
-/** The rival each runtime's headline compares nifra against: the published comparisons. */
+/** The runtimes each suite measures nifra on. SSR's rival apps and harness run on Bun and Node. */
+export const SUITE_RUNTIMES: Readonly<Record<Suite, readonly Runtime[]>> = {
+  http: RUNTIMES,
+  realworld: RUNTIMES,
+  ssr: ["bun", "node"],
+}
+
+/** The rival each runtime's http headline compares nifra against: the published comparisons. */
 export const RIVALS: Readonly<Record<Runtime, string>> = {
   bun: "elysia",
   node: "fastify",
   deno: "elysia",
+}
+
+/** Who a workload compares, where the run names it rather than leaving it to {@link rivalRow}. */
+export interface WorkloadRoles {
+  readonly nifra: string
+  /** Absent where the workload has no rival app, only a ceiling. */
+  readonly rival?: string
 }
 
 /** One `run.ts --json` line. */
@@ -25,6 +39,8 @@ export interface RunOutput {
   readonly results: Matrix<RoundCell>
   /** ceilings[runtime][workload] = the raw row that workload's ratios divide by. */
   readonly ceilings: Readonly<Record<string, Readonly<Record<string, string>>>>
+  /** roles[runtime][workload]: SSR names them, since a table can lack a ceiling or hold two nifra rows. */
+  readonly roles?: Readonly<Record<string, Readonly<Record<string, WorkloadRoles>>>>
 }
 
 export interface ReportSettings {
@@ -116,7 +132,21 @@ export function parseRunOutput(v: unknown, where = "run"): RunOutput {
     }
     ceilings[runtime] = table
   }
-  return { meta, results: parseMatrix(run.results, `${where}.results`), ceilings }
+  const parsed = { meta, results: parseMatrix(run.results, `${where}.results`), ceilings }
+  if (run.roles === undefined) return parsed
+  const roles: Record<string, Record<string, WorkloadRoles>> = {}
+  for (const [runtime, byWorkload] of Object.entries(record(run.roles, `${where}.roles`))) {
+    const table: Record<string, WorkloadRoles> = {}
+    for (const [workload, value] of Object.entries(record(byWorkload, `${where}.${runtime}`))) {
+      const at = `${where}.roles.${runtime}.${workload}`
+      const named = record(value, at)
+      const nifra = text(named.nifra, `${at}.nifra`)
+      table[workload] =
+        named.rival === undefined ? { nifra } : { nifra, rival: text(named.rival, `${at}.rival`) }
+    }
+    roles[runtime] = table
+  }
+  return { ...parsed, roles }
 }
 
 function parseSplit(v: unknown): CoreSplit | null {
@@ -139,9 +169,10 @@ export function parseCiReport(v: unknown): CiReport {
   const host = record(report.host, "host")
   if (!Array.isArray(host.steal)) throw new Error("host.steal: expected an array")
   if (!Array.isArray(report.runs)) throw new Error("runs: expected an array")
+  const suite = oneOf(report.suite, SUITES, "suite")
   return {
-    suite: oneOf(report.suite, SUITES, "suite"),
-    runtime: oneOf(report.runtime, RUNTIMES, "runtime"),
+    suite,
+    runtime: oneOf(report.runtime, SUITE_RUNTIMES[suite], "runtime"),
     settings: {
       minRuns: finite(settings.minRuns, "settings.minRuns"),
       maxRuns: finite(settings.maxRuns, "settings.maxRuns"),
@@ -161,6 +192,7 @@ export type Verdict = "ok" | "noisy" | "too few rounds"
 
 export interface RowSummary {
   readonly row: string
+  /** `undefined` throughout a workload without a ceiling row. */
   readonly ofCeiling: MedianInterval | undefined
   /** nifra's req/s over this row's, round by round; `undefined` on nifra's own row. */
   readonly nifraOver: MedianInterval | undefined
@@ -169,8 +201,10 @@ export interface RowSummary {
 
 export interface WorkloadSummary {
   readonly workload: string
-  readonly ceiling: string
+  readonly ceiling: string | undefined
   readonly nifra: string | undefined
+  /** The row the headline compares nifra with. */
+  readonly rival: string | undefined
   readonly rows: readonly RowSummary[]
 }
 
@@ -186,13 +220,19 @@ export function summarize(
   runtime: Runtime,
   maxCiWidthPts: number,
 ): WorkloadSummary[] {
-  const workloads = unique(runs.flatMap((run) => Object.keys(run.ceilings[runtime] ?? {})))
+  const workloads = unique(
+    runs.flatMap((run) => [
+      ...Object.keys(run.roles?.[runtime] ?? {}),
+      ...Object.keys(run.ceilings[runtime] ?? {}),
+    ]),
+  )
   const matrices = runs.map((run) => run.results)
   return workloads.flatMap((workload) => {
     const ceiling = runs
       .map((run) => run.ceilings[runtime]?.[workload])
       .find((c) => c !== undefined)
-    if (ceiling === undefined) return []
+    const roles = runs.map((run) => run.roles?.[runtime]?.[workload]).find((r) => r !== undefined)
+    if (ceiling === undefined && roles === undefined) return []
     const rowNames = unique(
       runs.flatMap((run) =>
         Object.entries(run.results[runtime] ?? {})
@@ -200,26 +240,38 @@ export function summarize(
           .map(([row]) => row),
       ),
     )
-    const nifra = rowNames.find((row) => row.startsWith("nifra"))
+    const nifra = roles?.nifra ?? rowNames.find((row) => row.startsWith("nifra"))
+    // http rows follow a naming rule; an SSR table names its own rival.
+    const rival =
+      roles === undefined && nifra !== undefined ? rivalRow(runtime, nifra) : roles?.rival
     const rows = rowNames.map((row): RowSummary => {
-      const ofCeiling = medianInterval(pooledRatios(matrices, runtime, row, ceiling, workload))
+      const ofCeiling =
+        ceiling === undefined
+          ? undefined
+          : medianInterval(pooledRatios(matrices, runtime, row, ceiling, workload))
       // nifra over the ceiling is nifra's own % of ceiling; repeating it would count its noise twice.
       const comparesNifra = nifra !== undefined && row !== nifra && row !== ceiling
       const nifraOver = comparesNifra
         ? medianInterval(pooledRatios(matrices, runtime, nifra, row, workload))
         : undefined
-      const needed = comparesNifra ? [ofCeiling, nifraOver] : [ofCeiling]
+      const needed = [
+        ...(ceiling === undefined ? [] : [ofCeiling]),
+        ...(comparesNifra ? [nifraOver] : []),
+      ]
       let verdict: Verdict = "ok"
       if (needed.some((i) => i === undefined)) verdict = "too few rounds"
       else if (needed.some((i) => i !== undefined && widthPts(i) > maxCiWidthPts)) verdict = "noisy"
       return { row, ofCeiling, nifraOver, verdict }
     })
-    rows.sort(
-      (a, b) =>
-        (b.ofCeiling?.median ?? -1) - (a.ofCeiling?.median ?? -1) ||
-        (a.row < b.row ? -1 : a.row > b.row ? 1 : 0),
-    )
-    return [{ workload, ceiling, nifra, rows }]
+    // Without a ceiling the rows keep the run's order: nifra's row, then its rivals.
+    if (ceiling !== undefined) {
+      rows.sort(
+        (a, b) =>
+          (b.ofCeiling?.median ?? -1) - (a.ofCeiling?.median ?? -1) ||
+          (a.row < b.row ? -1 : a.row > b.row ? 1 : 0),
+      )
+    }
+    return [{ workload, ceiling, nifra, rival, rows }]
   })
 }
 
@@ -228,7 +280,7 @@ export function unsettledRows(workloads: readonly WorkloadSummary[]): number {
   return workloads.reduce((n, w) => n + w.rows.filter((r) => r.verdict !== "ok").length, 0)
 }
 
-/** The rival row for nifra's row, keeping a suffix such as `-body`. */
+/** The http rival row for nifra's row, keeping a suffix such as `-body`. */
 export function rivalRow(runtime: Runtime, nifraRow: string): string {
   return `${RIVALS[runtime]}${nifraRow.slice("nifra".length)}`
 }

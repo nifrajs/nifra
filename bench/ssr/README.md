@@ -8,12 +8,16 @@ bun run build                                # node bundles and client builds re
 bun run bench:ssr                            # every table
 bun run bench/ssr/run.ts react vue:A         # React (both tables) + Vue Table A
 BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
+bun run bench/ssr/run.ts --runtime node vue  # nifra's Vue rows on Node only, with every rival
 ```
 
 Knobs: `BENCH_ROUNDS` (default 5), `BENCH_DURATION_S` (5), `BENCH_WARMUP_S` (3), `BENCH_CONNS` (50).
 `BENCH_SSR_JSON` writes every round's req/s per row.
 `BENCH_SSR_RESULTS_JSON` preserves the complete measured rows, including latency and client bytes.
 `BENCH_SSR_RAW_DIR` preserves the oha JSON for each warmup and measurement sample.
+`BENCH_SERVER_CPUS` and `BENCH_LOAD_CPUS` pin the servers and `oha` to disjoint CPUs on Linux
+(`bench/pinning.ts`), and `BENCH_ROUND_OFFSET` starts the round rotation further along.
+A table filter that matches no table fails the run instead of measuring nothing.
 Every accepted sample must have a 100% success rate and only HTTP 200 responses.
 Duration-bounded samples finish outstanding requests instead of cancelling them at the deadline.
 A row that fails to build or to measure a round fails the run once every selected table has run:
@@ -107,3 +111,17 @@ multipliers. The other frameworks' tables compare with their meta-frameworks onl
   Next.js ISR is the comparator. Both are cache-warmed before measuring.
 
 Cached rows are not SSR rows: compare within Table B only.
+
+## In CI
+
+The Benchmarks workflow (`bench/README.md`) runs one SSR job per runtime, Bun and Node, through
+`bench/ci/run.ts --suite ssr`. A job runs `run.ts --runtime <runtime> --json`: every table, with
+nifra's app rows on that runtime and every rival app, renderer and static-host row, in 4 interleaved
+rounds. `--json` sends the tables to stderr and prints one result line holding every round; it never
+touches the website's numbers. The rival apps run on Node in both jobs.
+
+The job's report divides each row by the table's ceiling where the table has one: the raw renderer in
+Preact's Table A, the static file server in every Table B. Every rival app's row also shows nifra over
+it, against nifra's row that serves the same way, so React's Table B splits into an SSG comparison
+(against `next (static)`) and an ISR one (against `next (ISR)`). A row that fails to build or to measure
+fails the job, as it fails a local run.

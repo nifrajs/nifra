@@ -85,3 +85,28 @@ describe("a failed row fails the run", () => {
     )
   })
 })
+
+describe("a CI run", () => {
+  test("starts its rounds at the offset, logs through its sink, and keeps every round", async () => {
+    const order: string[] = []
+    const logged: string[] = []
+    const result = await runSection(section, {
+      rounds: 2,
+      roundOffset: 2,
+      log: (line) => logged.push(line),
+      build: async () => {},
+      measure: async (t) => {
+        order.push(t.name)
+        return { rps: 1000 + order.length, p50ms: 1, p99ms: 2, payload: { raw: 1, gzip: 1 } }
+      },
+    })
+    // Offset 2 is round 0 of the second pair: rotated one row, then that order reversed.
+    expect(order).toEqual(["broken", "flaky", "base", "base", "flaky", "broken"])
+    expect(result.rounds.base).toEqual([
+      { rps: 1003, p50ms: 1, p99ms: 2 },
+      { rps: 1004, p50ms: 1, p99ms: 2 },
+    ])
+    expect(logged.some((line) => line.startsWith("  round 2/2"))).toBe(true)
+    expect(console.log).not.toHaveBeenCalled()
+  })
+})
