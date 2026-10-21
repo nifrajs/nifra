@@ -4,15 +4,18 @@
  */
 import { afterEach, beforeEach, expect, setSystemTime, spyOn, test } from "bun:test"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
+import { FIRST_WATCH_MS } from "../src/live/hub.ts"
 import {
   HUB_APPEND_PATH,
   HUB_CONFIG_HEADER,
   HUB_ORIGIN,
   hubConfigOf,
   type LiveHubNamespace,
+  MAX_APPEND_KEYS,
+  parseAuthorityReply,
 } from "../src/live/hub-protocol.ts"
 import { createKeyring } from "../src/live/keyring.ts"
-import { REVOCATION_SKEW_MS } from "../src/live/revocations.ts"
+import { REVOCATION_SKEW_MS, Revocations, RevocationView } from "../src/live/revocations.ts"
 import { live } from "../src/live.ts"
 import {
   ALARM_GAP_MS,
@@ -208,6 +211,43 @@ test("a handshake, a load, a watch and a publish all go through the one hub", as
   expect(socket.largestAttachment).toBeLessThanOrEqual(MAX_ATTACHMENT_BYTES)
 })
 
+test("a publish of more keys than one call carries goes out in parts, and every key arrives", async () => {
+  const d = deployment()
+  const { socket, sid } = await connect(d)
+  const granted = await load(d, sid)
+  await watch(d, socket, 1, [granted.grant])
+  socket.take()
+  const appends = spyOn(d.box.hub, "fetch")
+  const others = Array.from({ length: 2 * MAX_APPEND_KEYS }, (_, n) => `other:${n}`)
+  // The watched key is in the last part.
+  await d.runtime.publish(...others, "post:1")
+  expect(appends).toHaveBeenCalledTimes(3)
+  expect(socket.take()).toEqual([{ t: "changed", tag: tagOf(granted, PAGE), spread: 0 }])
+})
+
+test("a revoked subject named __proto__ stays revoked through the hub's authority reply", () => {
+  const stored = new Revocations(1, 600_000)
+  stored.apply({ type: "revoke", sub: "__proto__", key: null, seq: 50 }, Date.now())
+  const wire = JSON.stringify({ seq: 60, ...stored.snapshot(["__proto__"], []) })
+  const reply = parseAuthorityReply(JSON.parse(wire))
+  if (reply === undefined) throw new Error("[test] the reply was refused")
+  const claims = {
+    v: 1 as const,
+    sid: "a".repeat(32),
+    sub: "__proto__",
+    path: "/posts/1",
+    frame: "page",
+    owners: {},
+    s: 10,
+    r: 0,
+    iat: 0,
+    exp: 0,
+    aud: APP_ID,
+  }
+  expect(stored.grantRevoked(claims)).toBe(true)
+  expect(new RevocationView(reply).grantRevoked(claims)).toBe(true)
+})
+
 test("a socket from a foreign Origin is refused before the hub accepts it", async () => {
   const d = deployment()
   const res = await handshake(d, "http://evil.test")
@@ -313,8 +353,8 @@ test("one alarm at the earliest deadline, never closer than the gap; it sweeps a
   setSystemTime(new Date(start))
   const d = deployment({ ttl: 60 })
   const { socket, sid } = await connect(d)
-  // Yet to watch: the silence limit.
-  expect(d.state.storage.alarm).toBe(start + 150_000)
+  // Yet to watch: the end of its first minute.
+  expect(d.state.storage.alarm).toBe(start + FIRST_WATCH_MS)
   await watch(d, socket, 1, [(await load(d, sid)).grant])
   // The grant expires in 60 s: the alarm moves up to it.
   const alarm = d.state.storage.alarm ?? 0
@@ -342,12 +382,29 @@ test("a quiet socket stays while the runtime answers its heartbeats", async () =
   setSystemTime(new Date(start))
   const d = deployment()
   const beating = await connect(d)
+  await watch(d, beating.socket, 1, [(await load(d, beating.sid)).grant])
   const silent = await connect(d)
   d.state.beats.set(beating.socket, new Date(start + 140_000))
   setSystemTime(new Date(start + 160_000))
   await d.box.hub.alarm()
   expect(beating.socket.closed).toBeUndefined()
   expect(silent.socket.closed).toEqual({ code: 1008, reason: "idle" })
+})
+
+test("a socket that holds no tag closes after a minute, heartbeats or not, across hibernation", async () => {
+  const start = Date.now()
+  setSystemTime(new Date(start))
+  const d = deployment()
+  const idle = await connect(d)
+  const listening = await connect(d)
+  await watch(d, listening.socket, 1, [(await load(d, listening.sid)).grant])
+  d.hibernate()
+  d.state.beats.set(idle.socket, new Date(start + FIRST_WATCH_MS - 1000))
+  d.state.beats.set(listening.socket, new Date(start + FIRST_WATCH_MS - 1000))
+  setSystemTime(new Date(start + FIRST_WATCH_MS))
+  await d.box.hub.alarm()
+  expect(idle.socket.closed).toEqual({ code: 1000, reason: "unwatched" })
+  expect(listening.socket.closed).toBeUndefined()
 })
 
 test("a socket that leaves takes its record with it; a record with no socket goes on wake", async () => {

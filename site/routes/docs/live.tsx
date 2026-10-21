@@ -146,8 +146,8 @@ export default function Live() {
       <h2>Many processes</h2>
       <p>
         The default bus serves one process. Behind a load balancer, give every process the same
-        Redis Streams log. A reader that falls behind the stream's trim resyncs its sockets rather
-        than miss a change.
+        Redis Streams log. A reader that falls behind the stream's trim, or whose connection stops
+        answering (<code>readTimeoutMs</code>), resyncs its sockets rather than miss a change.
       </p>
       <CodeBlock code={REDIS} />
 
@@ -177,11 +177,19 @@ export default function Live() {
         <code>queryKeys</code> off if your key names hold anything the viewer should not see.
       </p>
 
+      <h2>Rotate the secret</h2>
+      <p>
+        Put the new secret first and keep the old one listed: <code>secret: [next, current]</code>.
+        Grants sealed under either keep working, and a viewer stays the same viewer whichever
+        process serves the load. Remove the old secret once every process runs the new list and
+        another <code>grantTtl</code> plus a minute has passed.
+      </p>
+
       <h2>Security</h2>
       <ul>
         <li>
           Grants are sealed with AES-256-GCM and bound to one socket, path, frame and viewer. They
-          expire (<code>grantTtl</code>, default 10 minutes); tabs renew them.
+          expire (<code>grantTtl</code>, default 10 minutes, at most an hour); tabs renew them.
         </li>
         <li>
           The load endpoint and the socket check <code>Origin</code>; allow other origins with{" "}
@@ -192,7 +200,9 @@ export default function Live() {
         </li>
         <li>
           Sockets, watches and outbound buffers are bounded per socket and per process (
-          <code>maxSockets</code>, <code>maxRssBytes</code>).
+          <code>maxSockets</code>, <code>maxRssBytes</code>). A socket that holds no key for a
+          minute is closed, so holding one costs a live load. Limit connections per client at your
+          proxy as well: the socket cap is shared by every visitor.
         </li>
       </ul>
     </div>

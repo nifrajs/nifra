@@ -8,6 +8,7 @@ import {
   MAX_GRANT_CHARS,
   toBase64Url,
 } from "../src/live/keyring.ts"
+import { grantTtlOf } from "../src/live/settings.ts"
 
 const TEXT = new TextEncoder()
 const SECRET_A = "a".repeat(32)
@@ -338,18 +339,27 @@ test("tags are 128-bit HMACs under the app-salted tag key, and differ per app an
 
 test("the subject tag is stable per viewer, opaque, and differs between viewers", async () => {
   const keyring = await ring()
-  const alice = await keyring.subjectTag("alice")
-  expect(await keyring.subjectTag("alice")).toBe(alice)
+  const [alice] = await keyring.subjectTags("alice")
+  expect(await keyring.subjectTags("alice")).toEqual([alice ?? ""])
   expect(alice).toMatch(/^[A-Za-z0-9_-]{22}$/)
-  expect(alice.includes("alice")).toBe(false)
-  const others = await Promise.all([
-    keyring.subjectTag("bob"),
-    keyring.subjectTag(null),
-    keyring.subjectTag(""),
-    keyring.subjectTag("a"),
-  ])
+  expect(alice?.includes("alice")).toBe(false)
+  const others = await Promise.all(
+    ["bob", null, "", "a"].map(async (subject) => (await keyring.subjectTags(subject))[0]),
+  )
   expect(new Set([alice, ...others]).size).toBe(5)
-  expect(await (await ring([SECRET_A], "other-app")).subjectTag("alice")).not.toBe(alice)
+  expect(await (await ring([SECRET_A], "other-app")).subjectTags("alice")).not.toEqual([alice])
+})
+
+test("rotation: a viewer keeps one subject tag in common between a process on [old] and one on [new, old]", async () => {
+  const before = await (await ring([SECRET_A])).subjectTags("alice")
+  const during = await (await ring([SECRET_B, SECRET_A])).subjectTags("alice")
+  const after = await (await ring([SECRET_B])).subjectTags("alice")
+  expect(during).toHaveLength(2)
+  // Newest first: the old secret's tag is the same viewer's tag on the process not yet rotated.
+  expect(during[1]).toBe(before[0] ?? "")
+  expect(during[0]).toBe(after[0] ?? "")
+  const bob = await (await ring([SECRET_B, SECRET_A])).subjectTags("bob")
+  expect(bob.some((tag) => during.includes(tag))).toBe(false)
 })
 
 test("boot: at most 3 secrets, each at least 32 bytes", () => {
@@ -410,4 +420,35 @@ test("derived subkeys are cached per kid, least recently used out, at most 1,024
   // Token 1024 is still cached.
   await keyring.open(tokens[1024], NOW)
   expect(derive).toHaveBeenCalledTimes(1026)
+})
+
+test("a forged token never takes a cache slot: real subkeys stay cached past any number of forgeries", async () => {
+  const keyring = await ring()
+  const real = must(await keyring.seal(input(), NOW))
+  // The secret id is public in every token; the forger lacks only the secret itself.
+  const forged = Array.from({ length: 1100 }, (_, n) => {
+    const bytes = Uint8Array.from(atob(real.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
+      c.charCodeAt(0),
+    )
+    bytes[10] = n >> 8
+    bytes[11] = n & 0xff
+    return toBase64Url(bytes)
+  })
+  const derive = spyOn(crypto.subtle, "deriveKey")
+  spies.push(derive)
+  for (const token of forged) expect(await keyring.open(token, NOW)).toBeUndefined()
+  expect(derive).toHaveBeenCalledTimes(1100)
+  expect(await keyring.open(real, NOW)).toBeDefined()
+  expect(derive).toHaveBeenCalledTimes(1100)
+})
+
+test("grantTtl tops out at an hour, and an hour-long grant opens until its last second", async () => {
+  expect(() => grantTtlOf(3601)).toThrow("from 60 to 3600")
+  expect(grantTtlOf(3600)).toBe(3600)
+  const keyring = await createKeyring({ secrets: [SECRET_A], appId: APP, ttl: 3600 })
+  // Sealed in the last second of an hour: it lives through the whole of the next one.
+  const hourEnd = (nowHour + 1) * HOUR_MS - 1000
+  const token = must(await keyring.seal(input(), hourEnd))
+  expect(await keyring.open(token, hourEnd + 3_598_000)).toBeDefined()
+  expect(await keyring.open(token, hourEnd + 3_600_000)).toBeUndefined()
 })

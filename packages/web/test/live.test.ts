@@ -1,4 +1,4 @@
-import { afterEach, expect, setSystemTime, spyOn, test } from "bun:test"
+import { afterEach, expect, jest, setSystemTime, spyOn, test } from "bun:test"
 import {
   createWebApp,
   defer,
@@ -9,7 +9,7 @@ import {
 } from "../src/index.ts"
 import { queryDigester } from "../src/internal/query-digest.ts"
 import { createKeyring, type GrantInput, type LiveSecrets } from "../src/live/keyring.ts"
-import { type Live, type LiveOptions, live, memoryBus } from "../src/live.ts"
+import { type Live, type LiveBus, type LiveOptions, live, memoryBus, nextSeq } from "../src/live.ts"
 import type { LoaderContext } from "../src/manifest.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
 
@@ -180,7 +180,7 @@ interface LiveJson {
   layoutData?: unknown[]
   retained?: number[]
   live?: {
-    subject: string
+    subjects: string[]
     grant?: string
     tags?: Record<string, string[]>
     page?: string
@@ -233,11 +233,19 @@ const reload = async (
 }
 
 const ENV = process.env.NODE_ENV
+const spies: { mockRestore(): void }[] = []
 afterEach(() => {
   if (ENV === undefined) delete process.env.NODE_ENV
   else process.env.NODE_ENV = ENV
   setSystemTime()
+  jest.useRealTimers()
+  for (const spy of spies.splice(0)) spy.mockRestore()
 })
+
+/** Let every promise already started run out; no clock involved. */
+async function turns(): Promise<void> {
+  for (let turn = 0; turn < 50; turn++) await new Promise((resolve) => setImmediate(resolve))
+}
 
 // --- Keys and grants ---------------------------------------------------------------------------
 
@@ -327,7 +335,7 @@ test("a load with no grant carries no query keys", async () => {
       },
     })
     const { json } = await load(fx.app)
-    expect(json.live?.subject).toBeDefined()
+    expect(json.live?.subjects).toHaveLength(1)
     expect(json.live?.grant).toBeUndefined()
     expect(json.live?.query).toBeUndefined()
   } finally {
@@ -436,7 +444,7 @@ test("over 64 keys in production issues no grant and logs the route and count, n
     expect(res.status).toBe(200)
     expect(json.data).toEqual({ id: "42" })
     expect(json.live?.grant).toBeUndefined()
-    expect(json.live?.subject).toBeDefined()
+    expect(json.live?.subjects).toHaveLength(1)
     const logged = error.mock.calls.map((call) => String(call[0])).join("\n")
     expect(logged).toContain('route "posts/[id]"')
     expect(logged).toContain("73 keys")
@@ -782,13 +790,60 @@ test("a grant issued to another viewer keeps nothing, and the subject tag change
   )
   expect(fx.calls).toEqual({ root: 1, posts: 1, gate: 1, page: 1 })
   expect(json.live?.page).toBeUndefined()
-  expect(json.live?.subject).not.toBe(first.json.live?.subject ?? "")
+  expect(json.live?.subjects).not.toEqual(first.json.live?.subjects)
   expect((await opened(json.live?.grant))?.sub).toBe("bob")
   const anonymous = await load(fx.app, {}, { cookie: "" })
-  expect(anonymous.json.live?.subject).not.toBe(json.live?.subject ?? "")
+  expect(anonymous.json.live?.subjects).not.toEqual(json.live?.subjects)
   expect((await opened(anonymous.json.live?.grant))?.sub).toBeNull()
   const again = await load(fx.app)
-  expect(again.json.live?.subject).toBe(first.json.live?.subject ?? "")
+  expect(again.json.live?.subjects).toEqual(first.json.live?.subjects)
+})
+
+test("mid-rotation, the same viewer shares a subject tag between a process on [old] and one on [new, old]", async () => {
+  const before = fixture({ live: { secret: OLD_SECRET } })
+  const during = fixture({ live: { secret: [SECRET, OLD_SECRET] } })
+  const a = (await load(before.app)).json.live?.subjects ?? []
+  const b = (await load(during.app)).json.live?.subjects ?? []
+  expect(a).toHaveLength(1)
+  expect(b).toHaveLength(2)
+  expect(b[1]).toBe(a[0] ?? "")
+  const bob = (await load(during.app, {}, { cookie: "user=bob" })).json.live?.subjects ?? []
+  expect(bob.some((tag) => b.includes(tag))).toBe(false)
+})
+
+test("a key's tag is derived once per process: a second load signs only its viewer tag", async () => {
+  const fx = fixture()
+  await load(fx.app)
+  const sign = spyOn(crypto.subtle, "sign")
+  spies.push(sign)
+  const { json } = await load(fx.app)
+  expect(Object.keys(json.live?.tags ?? {}).length).toBeGreaterThan(1)
+  expect(sign).toHaveBeenCalledTimes(1)
+})
+
+test("a publish this process never reads back resolves after 2 s, and says so once", async () => {
+  let last = nextSeq(0, Date.now())
+  // The bus takes appends, but this process's reader has stalled: nothing comes back.
+  const stalled: LiveBus = {
+    append: async () => ++last,
+    subscribe: async () => ({ head: 0, close: () => {} }),
+  }
+  const runtime = live({ secret: SECRET, subject: () => null, bus: stalled })
+  await runtime.ready
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  spies.push(errors)
+  jest.useFakeTimers()
+  let resolved = 0
+  for (const key of ["post:1", "post:2"]) void runtime.publish(key).then(() => resolved++)
+  await turns()
+  jest.advanceTimersByTime(1999)
+  await turns()
+  expect(resolved).toBe(0)
+  jest.advanceTimersByTime(1)
+  await turns()
+  expect(resolved).toBe(2)
+  expect(errors).toHaveBeenCalledTimes(1)
+  expect(String(errors.mock.calls[0]?.[0])).toContain("did not read a publish back")
 })
 
 test("an expired grant, a forged one or another app's keeps nothing", async () => {
@@ -988,7 +1043,7 @@ test("live.authorize refusing issues no grant", async () => {
   const first = await load(fx.app)
   const renewed = await load(fx.app, { mode: "renew", grants: [first.json.live?.grant] })
   expect(renewed.json.live?.grant).toBeUndefined()
-  expect(renewed.json.live?.subject).toBe(first.json.live?.subject ?? "")
+  expect(renewed.json.live?.subjects).toEqual(first.json.live?.subjects)
   // A retained load is checked the same way.
   const kept = await load(fx.app, { retain: [ROOT], grants: [first.json.live?.grant] })
   expect(kept.json.live?.grant).toBeUndefined()
@@ -1408,6 +1463,7 @@ test("live() checks its options at boot", () => {
   expect(() => Reflect.apply(live, undefined, [{ secret: SECRET }])).toThrow(/subject/)
   expect(() => live({ secret: SECRET, subject, grantTtl: 30 })).toThrow(/grantTtl/)
   expect(() => live({ secret: SECRET, subject, grantTtl: 1.5 })).toThrow(/grantTtl/)
+  expect(() => live({ secret: SECRET, subject, grantTtl: 3601 })).toThrow(/from 60 to 3600/)
   expect(() => live({ secret: SECRET, subject, maxConcurrentLoads: 0 })).toThrow(
     /maxConcurrentLoads/,
   )

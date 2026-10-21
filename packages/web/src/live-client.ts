@@ -58,7 +58,6 @@ const RENEW_JITTER_MS = 30_000
 const POLL_MS = 30_000
 const MAX_POLL_MS = 300_000
 const FOCUS_RELOAD_MS = 5_000
-const RETRIES = 3
 const RETRY_MS = 1_000
 const MAX_RECONNECT_MS = 30_000
 /** Failed connects in a row before frames poll instead of waiting for the socket. */
@@ -135,7 +134,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
   const localSid = randomSid()
   let router: ClientRouter | undefined
   let sid: string | undefined
-  let subject: string | undefined
+  // The last load's viewer tags: one per secret the server lists.
+  let subjects: readonly string[] | undefined
   let switched = false
   let intent: Intent | undefined
   // The handles this client put in router state: anything else there is not a live load.
@@ -152,6 +152,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let reconnect: ReturnType<typeof setTimeout> | undefined
   let connectFailures = 0
+  // The spread the last `welcome` asked for: the reloads a new socket id needs go out over it.
+  let welcomeSpread = 0
   let gen = 0
   let sent:
     | { readonly gen: number; readonly frames: readonly Frame[]; readonly grants: string }
@@ -235,12 +237,13 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     if (!isRouteDataEnvelope(payload)) return payload
     const live = envelopeOf(payload.live)
     if (live === undefined) return { ...payload, live: undefined }
-    if (subject !== undefined && live.subject !== subject) {
+    const last = subjects
+    if (last !== undefined && !live.subjects.some((tag) => last.includes(tag))) {
       switched = true
       // Nothing a query loaded for the last viewer may show to this one.
       clearQueryClients()
     }
-    subject = live.subject
+    subjects = live.subjects
     const loaded: Loaded = {
       routeId: match.routeId,
       sid: bound,
@@ -270,6 +273,10 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
 
   const watchable = (frame: Frame): boolean =>
     frame.loaded?.grant !== undefined && frame.loaded.sid === sid
+  /** A socket serves a frame holding a tag, or one still to get a grant; a page with neither needs none. */
+  const wantsSocket = (): boolean =>
+    frames.length === 0 ||
+    frames.some((frame) => frame.loaded?.grant === undefined || frame.loaded.tags.size > 0)
   const hidden = (): boolean => globalThis.document?.visibilityState === "hidden"
   const polling = (): boolean => sid === undefined && connectFailures >= CONNECTS_BEFORE_POLLING
 
@@ -343,13 +350,19 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       )
     }
     frames = next
+    // Nothing to watch let the last socket go; a frame that now holds a tag opens the next.
+    if (ws === undefined && reconnect === undefined && wantsSocket()) connect()
     for (const frame of frames) {
       // No grant to watch by yet: load one once the socket can take it.
       if (!watchable(frame) && sid !== undefined && !tried.has(`${sid}\n${frame.path}`)) {
         tried.add(`${sid}\n${frame.path}`)
         frame.whole = true
+        // A new socket is a new chance: no backoff carries over, only the spread it was given.
+        frame.failures = 0
+        frame.retryAt = welcomeSpread > 0 ? now + Math.random() * welcomeSpread : 0
       }
     }
+    welcomeSpread = 0
     if (switched && !state.pending) {
       // Another viewer: nothing kept, cached or watched for the last one survives.
       switched = false
@@ -436,11 +449,10 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       if (!ok && !watchable(frame))
         pollFailures.set(frame.path, (pollFailures.get(frame.path) ?? 0) + 1)
       frame.failures++
-      // Three tries, then wait for a change, a visibility change or the renewal.
+      // Backs off to five minutes, never further: a frame that gives up shows stale data for good.
+      // A change, a visibility change or a new socket tries again at once.
       frame.retryAt =
-        frame.failures > RETRIES
-          ? Number.POSITIVE_INFINITY
-          : Date.now() + jittered(RETRY_MS * 2 ** (frame.failures - 1), MAX_RECONNECT_MS)
+        Date.now() + jittered(RETRY_MS * 2 ** Math.min(frame.failures - 1, 9), MAX_POLL_MS)
       if (!watchable(frame))
         frame.pollAt =
           Date.now() + jittered(POLL_MS * 2 ** Math.min(frame.failures, 4), MAX_POLL_MS)
@@ -668,6 +680,9 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
         welcomed = true
         connectFailures = 0
         sid = value.sid
+        const spread = value.spread
+        welcomeSpread =
+          typeof spread === "number" && spread > 0 ? Math.min(spread, MAX_SPREAD_MS) : 0
         heartbeat = setInterval(() => {
           if (socket.readyState === 1) socket.send(HEARTBEAT)
         }, HEARTBEAT_MS)
@@ -701,10 +716,12 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     if (!welcomed) connectFailures++
     // A full server asks every client to wait; a protocol refusal is not retried at once.
     const base = code === 1013 || code === 1008 ? 5_000 : RETRY_MS
-    reconnect = setTimeout(
-      connect,
-      jittered(base * 2 ** Math.min(connectFailures, 5), MAX_RECONNECT_MS),
-    )
+    if (wantsSocket()) {
+      reconnect = setTimeout(
+        connect,
+        jittered(base * 2 ** Math.min(connectFailures, 5), MAX_RECONNECT_MS),
+      )
+    }
     run()
   }
 
@@ -771,7 +788,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
 }
 
 interface ServerEnvelope {
-  readonly subject: string
+  readonly subjects: readonly string[]
   readonly grant?: string
   readonly tags?: Readonly<Record<string, readonly string[]>>
   readonly page?: "retained"
@@ -781,6 +798,9 @@ interface ServerEnvelope {
 
 const MAX_SALT_CHARS = 64
 const MAX_DIGEST_CHARS = 64
+/** One per listed secret, at most three. */
+const MAX_SUBJECTS = 3
+const MAX_SUBJECT_CHARS = 64
 
 /** The envelope's `query` member, or `undefined` for anything else in its place. */
 function queryKeysOf(value: unknown): QueryKeys | undefined {
@@ -803,8 +823,15 @@ function queryKeysOf(value: unknown): QueryKeys | undefined {
 /** The server's live envelope, or `undefined` for anything else in its place. */
 function envelopeOf(value: unknown): ServerEnvelope | undefined {
   if (!isRecord(value)) return undefined
-  const { subject, grant, tags, page, ttl, query } = value
-  if (typeof subject !== "string") return undefined
+  const { subjects, grant, tags, page, ttl, query } = value
+  if (
+    !Array.isArray(subjects) ||
+    subjects.length === 0 ||
+    subjects.length > MAX_SUBJECTS ||
+    !subjects.every((tag) => typeof tag === "string" && tag.length <= MAX_SUBJECT_CHARS)
+  ) {
+    return undefined
+  }
   const queryKeys = query === undefined ? undefined : queryKeysOf(query)
   if (query !== undefined && queryKeys === undefined) return undefined
   if (grant !== undefined && typeof grant !== "string") return undefined
@@ -824,13 +851,13 @@ function envelopeOf(value: unknown): ServerEnvelope | undefined {
     }
   }
   const envelope: {
-    subject: string
+    subjects: readonly string[]
     tags: Record<string, readonly string[]>
     grant?: string
     page?: "retained"
     ttl?: number
     query?: QueryKeys
-  } = { subject, tags: owned }
+  } = { subjects, tags: owned }
   if (typeof grant === "string") envelope.grant = grant
   if (page === "retained") envelope.page = page
   if (typeof ttl === "number") envelope.ttl = ttl

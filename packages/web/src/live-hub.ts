@@ -25,8 +25,8 @@ import { applyEvent, type LiveCore } from "./live/core.ts"
 import { History, keyHasher } from "./live/history.ts"
 import {
   CLOSE_CAPACITY,
+  FIRST_WATCH_MS,
   type HubStore,
-  IDLE_MS,
   LiveHub,
   type LiveSocket,
   type StoredSocket,
@@ -64,7 +64,7 @@ export interface LiveHubOptions {
   readonly secret: string | readonly string[]
   /** The app's `live()` `appId`. Default `"nifra"`. */
   readonly appId?: string | undefined
-  /** The app's `live()` `grantTtl`. Default 600. */
+  /** The app's `live()` `grantTtl`, at most 3600. Default 600. */
   readonly grantTtl?: number | undefined
   /** Origins besides the app's own that may open the socket. */
   readonly trustedOrigins?: readonly string[] | undefined
@@ -231,7 +231,14 @@ export class LiveHubObject implements HubStore {
     saveAttachment(socket)
     if (installing === undefined) return
     await installing
-    await this.schedule(socket.data.exp)
+    // The watch moved its expiry and whether it holds a tag.
+    saveAttachment(socket)
+    await this.schedule(
+      Math.min(
+        socket.data.exp,
+        (socket.data.unwatchedSince ?? Number.POSITIVE_INFINITY) + FIRST_WATCH_MS,
+      ),
+    )
   }
 
   async webSocketClose(raw: LiveHubWebSocket): Promise<void> {
@@ -328,6 +335,7 @@ export class LiveHubObject implements HubStore {
 
     const records = await storage.list({ prefix: SOCKET })
     const kept = new Set<string>()
+    let resynced = 0
     // Each record is its own copy of every tag string: one copy per tag serves every socket.
     const interned = new Map<string, string>()
     for (const raw of state.getWebSockets()) {
@@ -337,6 +345,7 @@ export class LiveHubObject implements HubStore {
       // A socket that watched but lost its membership would miss every change: it reconnects.
       if (lost || data === undefined || (data.received >= 0 && stored === undefined)) {
         closeQuietly(raw, CLOSE_CAPACITY, "resync")
+        resynced++
         continue
       }
       const socket = new HubSocket(raw, data, this.topics)
@@ -349,6 +358,7 @@ export class LiveHubObject implements HubStore {
       await storage.delete(orphans.slice(at, at + DELETE_BATCH))
     }
     if (lost) await storage.put({ [APPLIED_KEY]: this.seq })
+    hub.burst(resynced)
 
     const Pair: unknown = Reflect.get(globalThis, "WebSocketRequestResponsePair")
     if (typeof Pair === "function") {
@@ -369,7 +379,7 @@ export class LiveHubObject implements HubStore {
     this.sockets.set(server, socket)
     saveAttachment(socket)
     core.hub.open(socket)
-    await this.schedule(Date.now() + IDLE_MS)
+    await this.schedule(Date.now() + FIRST_WATCH_MS)
     const init = { status: 101, webSocket: client }
     return new Response(null, init)
   }
@@ -516,21 +526,33 @@ function settingsOf(options: LiveHubOptions): Settings {
   }
 }
 
-/** Sid, gen and rate counters: what a socket needs back after a wake that its record does not hold. */
+/**
+ * Sid, gen, rate counters and since when it held no tag (-1 while it holds one): what a socket needs
+ * back after a wake that its record does not hold.
+ */
 function saveAttachment(socket: HubSocket): void {
   const s = socket.data
   try {
-    socket.raw.serializeAttachment([s.sid, s.received, s.window, s.frames, s.watches, s.lastSeen])
+    socket.raw.serializeAttachment([
+      s.sid,
+      s.received,
+      s.window,
+      s.frames,
+      s.watches,
+      s.lastSeen,
+      s.unwatchedSince ?? -1,
+    ])
   } catch {
     // Closed meanwhile: nothing comes back for it.
   }
 }
 
 function socketStateOf(value: unknown): LiveSocket | undefined {
-  if (!Array.isArray(value) || value.length !== 6) return undefined
-  const [sid, received, window, frames, watches, lastSeen] = value
+  if (!Array.isArray(value) || value.length !== 7) return undefined
+  const [sid, received, window, frames, watches, lastSeen, unwatchedSince] = value
   if (typeof sid !== "string" || !SID_PATTERN.test(sid)) return undefined
   if (!integer(received) || received < -1) return undefined
+  if (!integer(unwatchedSince) || unwatchedSince < -1) return undefined
   if (!seqLike(window) || !seqLike(frames) || !seqLike(watches) || !seqLike(lastSeen)) {
     return undefined
   }
@@ -540,6 +562,7 @@ function socketStateOf(value: unknown): LiveSocket | undefined {
     received,
     tags: new Set(),
     exp: Number.POSITIVE_INFINITY,
+    unwatchedSince: unwatchedSince === -1 ? undefined : unwatchedSince,
     window,
     frames,
     watches,

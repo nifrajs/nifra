@@ -176,23 +176,61 @@ test("RESP2 arrays, RESP3 maps and Map replies read alike; a foreign id moves th
   }
 })
 
-test("a reply of no known shape backs off as a failed read instead of spinning", async () => {
+test("a reply of no known shape backs off as a failed read; only a read that answers ends the outage", async () => {
   const redis = memoryRedis()
   let reads = 0
+  let answering = false
   const bus = redisLiveBus({
     send: redis.send,
-    read: async () => {
+    read: async (command, args) => {
       reads++
-      return "OK"
+      return answering ? redis.read(command, args) : "OK"
     },
     blockMs: 20,
   })
   const { seen, listener } = recorder()
+  const readsAt: number[] = []
+  const sub = await bus.subscribe({
+    event: listener.event,
+    down: () => {
+      readsAt.push(reads)
+      listener.down()
+    },
+    gap: (head) => {
+      readsAt.push(reads)
+      listener.gap(head)
+    },
+  })
+  await until(() => seen.length === 1, "down")
+  // The clock is reachable, but this reader is not: no gap claims it caught up.
+  expect(seen).toEqual(["down"])
+  answering = true
+  // The stand-in's read waits for an append, as a blocking XREAD would until its block time.
+  const head = await bus.append({ type: "change", keys: ["a"] })
+  await until(() => seen.length === 2, "a gap at the clock once a read answers")
+  expect(seen).toEqual(["down", { gap: head }])
+  // Two failed reads, then the one that answered: none in between.
+  expect(readsAt).toEqual([2, 3])
+  sub.close()
+})
+
+test("a read that never answers counts as failed: two report down, and the next answer ends it", async () => {
+  const redis = memoryRedis()
+  let stalls = 2
+  const bus = redisLiveBus({
+    send: redis.send,
+    read: (command, args) => (stalls-- > 0 ? new Promise(() => {}) : redis.read(command, args)),
+    blockMs: 20,
+    readTimeoutMs: 30,
+  })
+  const { seen, listener } = recorder()
   const sub = await bus.subscribe(listener)
+  const missed = await bus.append({ type: "change", keys: ["a"] })
   await until(() => seen.length === 2, "down, then a gap at the clock")
-  expect(seen).toEqual(["down", { gap: 0 }])
-  // Two failed reads, then the one after the gap: none in between.
-  expect(reads).toBe(3)
+  expect(seen).toEqual(["down", { gap: missed }])
+  const next = await bus.append({ type: "change", keys: ["b"] })
+  await until(() => seen.length === 3, "delivery resumed")
+  expect(seen[2]).toEqual({ type: "change", keys: ["b"], seq: next })
   sub.close()
 })
 

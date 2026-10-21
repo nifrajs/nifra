@@ -51,9 +51,9 @@ class FakeSocket {
     this.readyState = 3
     this.closedWith = code
   }
-  welcome(sid = SID): void {
+  welcome(sid = SID, spread?: number): void {
     this.readyState = 1
-    this.deliver({ t: "welcome", sid })
+    this.deliver(spread === undefined ? { t: "welcome", sid } : { t: "welcome", sid, spread })
   }
   deliver(frame: unknown): void {
     this.onmessage?.({ data: JSON.stringify(frame) })
@@ -135,6 +135,10 @@ function scripted() {
     busy: number
     failing: number
     subject: string
+    /** The viewer tags one load carries, as a process mid-rotation lists them. */
+    subjects: readonly string[] | undefined
+    /** Whether a load's grant holds any key: a page with none has nothing to watch. */
+    tags: boolean
     grant: boolean
     query: undefined | "keys" | "off" | "bad"
     dev: boolean
@@ -143,6 +147,8 @@ function scripted() {
     busy: 0,
     failing: 0,
     subject: "viewer-1",
+    subjects: undefined,
+    tags: true,
     grant: true,
     query: undefined,
     dev: false,
@@ -176,8 +182,8 @@ function scripted() {
     const grant = `grant-${id}`
     issued.set(grant, body)
     const live: Record<string, unknown> = {
-      subject: control.subject,
-      tags: { [`tag:${body.path}`]: [`P:${routeId}`], "tag:root": [ROOT] },
+      subjects: control.subjects ?? [control.subject],
+      tags: control.tags ? { [`tag:${body.path}`]: [`P:${routeId}`], "tag:root": [ROOT] } : {},
       ttl: 600,
     }
     if (control.grant) live.grant = grant
@@ -427,25 +433,80 @@ test("an action plus an external change in one window reloads until fresh", asyn
 
 // --- Failures -------------------------------------------------------------------------------------
 
-test("a failed load stays dirty: three retries with backoff, then it waits for the next change", async () => {
+test("a failed load stays dirty and keeps retrying, backing off to five minutes, never giving up", async () => {
   const r = await connected()
   jest.useFakeTimers()
   r.server.control.failing = 100
   changed(r, "tag:/posts/1")
   await until(() => r.server.loads.length === 2, "first try")
-  for (const attempt of [3, 4, 5]) {
+  // 1, 2, 4 and 8 s, each within 20% of its step: one retry per wait, never two.
+  for (const [attempt, wait] of [
+    [3, 1200],
+    [4, 2400],
+    [5, 4800],
+    [6, 9600],
+  ] as const) {
     await settle()
-    jest.advanceTimersByTime(5_000)
+    jest.advanceTimersByTime(wait)
     await until(() => r.server.loads.length === attempt, `retry ${attempt}`)
   }
-  await settle()
-  jest.advanceTimersByTime(120_000)
-  await settle()
-  expect(r.server.loads).toHaveLength(5)
+  // Past any count of failures, the next try is at most five minutes off.
+  for (let round = 0; round < 8; round++) {
+    const before = r.server.loads.length
+    await settle()
+    jest.advanceTimersByTime(300_000)
+    await until(() => r.server.loads.length > before, `a retry within five minutes, round ${round}`)
+  }
+  // The server recovers with no change to announce it: the next retry shows fresh data.
   r.server.control.failing = 0
-  changed(r, "tag:/posts/1")
-  await until(() => r.server.loads.length === 6 && !r.router.snapshot().pending, "next change")
+  await settle()
+  jest.advanceTimersByTime(300_000)
+  await until(() => !r.router.snapshot().pending && r.router.snapshot().data !== null, "recovered")
+  await settle()
   expect(r.router.snapshot().data).toEqual({ path: "/posts/1", n: 2 })
+  r.stop()
+})
+
+test("a change tries a failing frame again at once, whatever its backoff", async () => {
+  const r = await connected()
+  jest.useFakeTimers()
+  r.server.control.failing = 2
+  changed(r, "tag:/posts/1")
+  await until(() => r.server.loads.length === 2, "first try")
+  await settle()
+  jest.advanceTimersByTime(1200)
+  await until(() => r.server.loads.length === 3, "second try")
+  await settle()
+  changed(r, "tag:/posts/1")
+  await until(() => r.server.loads.length === 4 && !r.router.snapshot().pending, "the change")
+  expect(r.router.snapshot().data).toEqual({ path: "/posts/1", n: 2 })
+  r.stop()
+})
+
+test("a frame deep in its backoff reloads at once under a new socket", async () => {
+  const r = await connected()
+  jest.useFakeTimers()
+  r.server.control.failing = 100
+  changed(r, "tag:/posts/1")
+  await until(() => r.server.loads.length === 2, "first try")
+  for (const [attempt, wait] of [
+    [3, 1200],
+    [4, 2400],
+    [5, 4800],
+  ] as const) {
+    await settle()
+    jest.advanceTimersByTime(wait)
+    await until(() => r.server.loads.length === attempt, `retry ${attempt}`)
+  }
+  r.server.control.failing = 0
+  r.socket().drop(1006)
+  await settle()
+  jest.advanceTimersByTime(1200)
+  await until(() => FakeSocket.all.length === 2, "reconnect")
+  const before = r.server.loads.length
+  r.socket().welcome(SID_2)
+  await until(() => r.server.loads.length === before + 1, "a load under the new socket")
+  expect(r.server.loads.at(-1)?.sid).toBe(SID_2)
   r.stop()
 })
 
@@ -591,6 +652,73 @@ test("with the socket failing to connect, the page polls instead", async () => {
 })
 
 // --- Account switch -------------------------------------------------------------------------------
+
+test("mid-rotation, loads from processes that list the secrets differently are one viewer", async () => {
+  const r = await connected()
+  const reload = async (subjects: readonly string[], loads: number): Promise<void> => {
+    r.server.control.subjects = subjects
+    changed(r, "tag:/posts/1")
+    await until(() => r.server.loads.length === loads && !r.router.snapshot().pending, "reload")
+    await until(() => r.socket().watches().length === loads, "rewatch")
+    ready(r, [[]])
+    await settle()
+  }
+  // [old] and [new, old] side by side, then [new, old] and [new]: one tag in common each time.
+  await reload(["viewer-1-new", "viewer-1"], 2)
+  await reload(["viewer-1"], 3)
+  await reload(["viewer-1-new", "viewer-1"], 4)
+  await reload(["viewer-1-new"], 5)
+  expect(FakeSocket.all).toHaveLength(1)
+  // A tag in common with none: another viewer.
+  r.server.control.subjects = ["viewer-2-new", "viewer-2"]
+  changed(r, "tag:/posts/1")
+  await until(() => FakeSocket.all.length === 2, "new socket")
+  r.stop()
+})
+
+test("a page with nothing to watch lets its socket go; a page with a key opens one again", async () => {
+  const r = rig()
+  r.server.control.tags = false
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "first watch")
+  ready(r, [[]])
+  await settle()
+  jest.useFakeTimers()
+  // The server lets a socket holding no tag go after a minute.
+  r.socket().drop(1000)
+  for (let turn = 0; turn < 4; turn++) {
+    jest.advanceTimersByTime(60_000)
+    await settle()
+  }
+  expect(FakeSocket.all).toHaveLength(1)
+  r.server.control.tags = true
+  await r.router.navigate("/about")
+  await until(() => FakeSocket.all.length === 2, "a socket for the key")
+  r.socket().welcome(SID_2)
+  await until(() => r.socket().watches().length === 1, "watch on the new socket")
+  expect(r.server.loads.at(-1)?.sid).toBe(SID_2)
+  r.stop()
+})
+
+test("a welcome that asks for a spread holds the reloads a new socket id needs over it", async () => {
+  const r = await connected()
+  jest.useFakeTimers()
+  const random = spyOn(Math, "random").mockReturnValue(0.5)
+  r.socket().drop(1013)
+  await settle()
+  jest.advanceTimersByTime(6000)
+  await until(() => FakeSocket.all.length === 2, "reconnect")
+  const before = r.server.loads.length
+  r.socket().welcome(SID_2, 4000)
+  await settle()
+  jest.advanceTimersByTime(1999)
+  await settle()
+  expect(r.server.loads).toHaveLength(before)
+  jest.advanceTimersByTime(1)
+  await until(() => r.server.loads.length === before + 1, "the held reload")
+  random.mockRestore()
+  r.stop()
+})
 
 test("another viewer: a new socket, every cache cleared, one load under it", async () => {
   const r = await connected()

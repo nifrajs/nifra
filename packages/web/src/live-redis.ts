@@ -34,6 +34,12 @@ export interface RedisLiveBusOptions {
   readonly maxLength?: number
   /** How long one `XREAD` blocks, in ms. Default 5,000. */
   readonly blockMs?: number
+  /**
+   * How long one `XREAD` may take before it counts as a failed read, in ms: a connection that stopped
+   * answering would otherwise leave this process's sockets missing every change. Default `blockMs`
+   * plus 5,000.
+   */
+  readonly readTimeoutMs?: number
 }
 
 /**
@@ -51,12 +57,14 @@ redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[2], id .. '-0', 'n', n, 'e', ARG
 return id`
 
 const RETRY_MS = [100, 500, 1_000, 2_000, 5_000]
+const READ_GRACE_MS = 5_000
 
 export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
   const key = options.key ?? "nifra:live"
   const clock = `${key}:clock`
   const maxLength = String(options.maxLength ?? 100_000)
   const blockMs = String(options.blockMs ?? 5_000)
+  const readTimeoutMs = options.readTimeoutMs ?? (options.blockMs ?? 5_000) + READ_GRACE_MS
 
   /** The clock's seq and running count, as the last append left them. */
   const position = async (): Promise<{ seq: number; n: number }> => {
@@ -104,18 +112,15 @@ export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
     let cursor = `${head}-0`
     let expected = count + 1
     let failures = 0
+    // Told `down`: only a read that answers again ends the outage, never the clock alone.
+    let down = false
     while (!isClosed()) {
       let entries: Entry[] | undefined
       try {
-        const reply = await options.read("XREAD", [
-          "BLOCK",
-          blockMs,
-          "COUNT",
-          "1000",
-          "STREAMS",
-          key,
-          cursor,
-        ])
+        const reply = await within(
+          options.read("XREAD", ["BLOCK", blockMs, "COUNT", "1000", "STREAMS", key, cursor]),
+          readTimeoutMs,
+        )
         entries = reply === null || reply === undefined ? [] : entriesOf(reply)
       } catch {
         entries = undefined
@@ -124,9 +129,15 @@ export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
         // A reply of no known shape counts as a failed read, so it backs off instead of spinning.
         failures++
         // One failed read may be a hiccup; a second in a row is an outage.
-        if (failures === 2) listener.down()
+        if (failures === 2) {
+          down = true
+          listener.down()
+        }
         await wait(RETRY_MS[Math.min(failures - 1, RETRY_MS.length - 1)] ?? 5_000)
-        if (failures < 2 || isClosed()) continue
+        continue
+      }
+      failures = 0
+      if (down) {
         try {
           const now = await position()
           if (isClosed()) return
@@ -135,13 +146,12 @@ export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
           last = now.seq
           cursor = `${now.seq}-0`
           expected = now.n + 1
-          failures = 0
+          down = false
         } catch {
-          // Still down; the next read tries again.
+          // The clock is out of reach: still down, and the next read tries again.
         }
         continue
       }
-      failures = 0
       for (const entry of entries) {
         if (isClosed()) return
         cursor = entry.id
@@ -238,3 +248,12 @@ function countOf(value: unknown): number {
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** `pending`, or a rejection once `ms` pass without it settling. */
+function within<T>(pending: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("[nifra/web] live-redis: the read timed out")), ms)
+  })
+  return Promise.race([pending, expiry]).finally(() => clearTimeout(timer))
+}

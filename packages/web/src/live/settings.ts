@@ -13,11 +13,15 @@ export function positive(value: number | undefined, fallback: number, name: stri
   return resolved
 }
 
+/**
+ * At most an hour: a grant's subkey names the hour it was sealed in, and only that hour and the next
+ * open it, so a longer lifetime would end early.
+ */
 export function grantTtlOf(value: number | undefined): number {
   const ttl = value ?? DEFAULT_TTL_SECONDS
-  if (!Number.isSafeInteger(ttl) || ttl < 60 || ttl > 86_400) {
+  if (!Number.isSafeInteger(ttl) || ttl < 60 || ttl > 3600) {
     throw new TypeError(
-      "[nifra/web] live: `grantTtl` must be a whole number of seconds from 60 to 86400",
+      "[nifra/web] live: `grantTtl` must be a whole number of seconds from 60 to 3600",
     )
   }
   return ttl

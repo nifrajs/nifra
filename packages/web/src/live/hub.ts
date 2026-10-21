@@ -18,6 +18,8 @@ export const CLOSE_REVOKED = 4403
 export const CLOSE_SCOPE = 4409
 export const CLOSE_CAPACITY = 1013
 export const CLOSE_PROTOCOL = 1008
+/** Nothing to watch: a tab with no tag to hear about reconnects only once it has one. */
+export const CLOSE_UNWATCHED = 1000
 
 export const MAX_FRAME_BYTES = 32_768
 export const MAX_WATCH_GRANTS = 3
@@ -27,8 +29,15 @@ export const MAX_FRAMES_PER_MINUTE = 60
 export const MAX_OUTBOUND_BYTES = 65_536
 export const MAX_TOPICS = 200_000
 export const IDLE_MS = 150_000
+/**
+ * How long a socket may hold no tag: from its open, or from the watch or revocation that left it
+ * none. A tab watches right after its first live load, so only a socket nobody listens on runs out.
+ */
+export const FIRST_WATCH_MS = 60_000
 export const SWEEP_MS = 10_000
 export const COALESCE_MS = 25
+/** How long after closing many sockets at once their reconnects are told to spread their reloads. */
+export const RECONNECT_WINDOW_MS = 30_000
 const TAG_CACHE_SIZE = 16_384
 const SPREAD_STEPS = [250, 500, 1000, 2000, 5000]
 const HEARTBEAT = "p"
@@ -44,6 +53,8 @@ export interface HubOptions {
   readonly hash: (key: string) => number
   /** Distinct tags this process holds subscriptions for. Default {@link MAX_TOPICS}. */
   readonly maxTopics?: number
+  /** Where key tags come from; the runtime shares one cache between its loads and this hub. */
+  readonly tags?: TagOf
   /**
    * Socket-tag subscriptions this process holds in all; past it a watch is refused with 1013. For a
    * host whose memory is capped below what its sockets could ask for. Default: no budget.
@@ -81,6 +92,8 @@ export interface LiveSocket {
   tags: Set<string>
   /** Earliest installed grant expiry, ms. */
   exp: number
+  /** Since when it has held no tag; `undefined` while it holds one. See {@link FIRST_WATCH_MS}. */
+  unwatchedSince: number | undefined
   window: number
   frames: number
   watches: number
@@ -111,8 +124,11 @@ export class LiveHub {
   private readonly members = new Map<string, number>()
   /** Socket-tag subscriptions held, the sum of `members`. */
   private memberships = 0
-  private readonly tagCache = new Map<string, Promise<string>>()
+  private readonly tagOf: TagOf
   private readonly coalescing = new Map<string, Pending>()
+  /** The last time many sockets were closed at once, and how many. */
+  private burstAt = Number.NEGATIVE_INFINITY
+  private burstSize = 0
   private coalesceTimer: ReturnType<typeof setTimeout> | undefined
   private sweepTimer: ReturnType<typeof setInterval> | undefined
 
@@ -123,18 +139,20 @@ export class LiveHub {
     private readonly options: HubOptions,
     /** Where `changed` frames go: each attached app's `publish`. */
     private readonly publishers: ReadonlySet<(topic: string, frame: string) => void>,
-  ) {}
+  ) {
+    this.tagOf = options.tags ?? tagCache(ring)
+  }
 
   get size(): number {
     return this.sockets.size
   }
 
   /** The tag of `key` under each listed secret, newest first. */
-  async tagsOf(key: string): Promise<string[]> {
-    const tags: string[] = []
+  tagsOf(key: string): Promise<string[]> {
+    const tags: Promise<string>[] = []
     for (let secret = 0; secret < this.ring.secretCount; secret++)
-      tags.push(await this.tagOf(key, secret))
-    return tags
+      tags.push(this.tagOf(key, secret))
+    return Promise.all(tags)
   }
 
   /** The handshake: a missing, `null` or untrusted Origin is refused. */
@@ -153,6 +171,7 @@ export class LiveHub {
       received: -1,
       tags: new Set<string>(),
       exp: Number.POSITIVE_INFINITY,
+      unwatchedSince: now,
       window: now,
       frames: 0,
       watches: 0,
@@ -167,7 +186,15 @@ export class LiveHub {
     }
     this.sockets.add(ws)
     this.startSweep()
-    this.send(ws, JSON.stringify({ t: "welcome", sid: ws.data.sid }))
+    const spread = Date.now() - this.burstAt < RECONNECT_WINDOW_MS ? this.spread(this.burstSize) : 0
+    this.send(
+      ws,
+      JSON.stringify(
+        spread > 0
+          ? { t: "welcome", sid: ws.data.sid, spread }
+          : { t: "welcome", sid: ws.data.sid },
+      ),
+    )
   }
 
   /** The runtime has dropped the closed socket's topics; only the counts are left to settle. */
@@ -215,6 +242,7 @@ export class LiveHub {
         left = true
       }
       const state = ws.data
+      if (left && state.tags.size === 0) state.unwatchedSince ??= Date.now()
       if (left)
         this.options.store?.saved(ws, {
           sub: state.sub ?? null,
@@ -226,7 +254,20 @@ export class LiveHub {
 
   /** Close every socket: history or revocations before now are unknown, or the bus is gone. */
   closeAll(code: number, reason: string): void {
-    for (const ws of [...this.sockets]) this.drop(ws, code, reason)
+    const sockets = [...this.sockets]
+    this.burst(sockets.length)
+    for (const ws of sockets) this.drop(ws, code, reason)
+  }
+
+  /**
+   * `count` sockets just closed together and will reconnect together. Each must reload under its new
+   * socket id, so for a while `welcome` tells them to spread those reloads as a change would.
+   */
+  burst(count: number): void {
+    const now = Date.now()
+    const recent = now - this.burstAt < RECONNECT_WINDOW_MS
+    this.burstSize = recent ? Math.max(this.burstSize, count) : count
+    this.burstAt = now
   }
 
   /** Resolves once a watch is installed or refused. */
@@ -280,7 +321,7 @@ export class LiveHub {
       const tags: string[] = []
       for (const [id, owner] of Object.entries(grant.claims.owners)) {
         owners.push({ id, w: owner.w, hashes: owner.k.map(this.options.hash) })
-        for (const key of owner.k) tags.push(await this.tagOf(key, grant.secret))
+        tags.push(...(await Promise.all(owner.k.map((key) => this.tagOf(key, grant.secret)))))
       }
       prepared.push({ grant, owners, tags })
     }
@@ -320,6 +361,8 @@ export class LiveHub {
       if (state.tags.has(tag)) continue
       this.join(ws, tag)
     }
+    // An empty watch does not restart the clock: only holding a tag stops it.
+    state.unwatchedSince = next.size === 0 ? (state.unwatchedSince ?? now) : undefined
     // Per grant, in watch order: two frames can hold an owner of the same id.
     const stale: string[][] = []
     let exp = Number.POSITIVE_INFINITY
@@ -351,6 +394,7 @@ export class LiveHub {
     state.sub = stored.sub
     state.exp = stored.exp
     for (const tag of stored.tags) if (!state.tags.has(tag)) this.join(ws, tag)
+    if (state.tags.size > 0) state.unwatchedSince = undefined
   }
 
   private flush(): void {
@@ -426,19 +470,6 @@ export class LiveHub {
     return topicOf(this.options.appId, tag)
   }
 
-  private tagOf(key: string, secret: number): Promise<string> {
-    const name = `${secret}:${key}`
-    const cached = this.tagCache.get(name)
-    if (cached !== undefined) return cached
-    if (this.tagCache.size >= TAG_CACHE_SIZE) {
-      const oldest = this.tagCache.keys().next().value
-      if (oldest !== undefined) this.tagCache.delete(oldest)
-    }
-    const tag = this.ring.tag(key, secret)
-    this.tagCache.set(name, tag)
-    return tag
-  }
-
   /** Read on every open, never cached: a burst of opens must not all pass on one stale reading. */
   private overRss(): boolean {
     const cap = this.options.maxRssBytes
@@ -467,8 +498,9 @@ export class LiveHub {
   }
 
   /**
-   * Expired grants, silent peers and slow readers. Returns the earliest deadline left: a watching
-   * socket's grant expiry, or the silence limit of one yet to watch; infinite with no socket.
+   * Expired grants, silent peers, sockets with nothing to watch and slow readers. Returns the earliest
+   * deadline left: a grant expiry, the silence limit, or the end of {@link FIRST_WATCH_MS}; infinite
+   * with no socket.
    */
   sweep(): number {
     const now = Date.now()
@@ -478,10 +510,16 @@ export class LiveHub {
       const state = ws.data
       const seen =
         store === undefined ? state.lastSeen : Math.max(state.lastSeen, store.lastBeat(ws))
+      const unwatched = state.unwatchedSince
       if (state.exp <= now) this.drop(ws, CLOSE_BAD_GRANT, "expired")
       else if (now - seen > IDLE_MS) this.drop(ws, CLOSE_PROTOCOL, "idle")
-      else if (bufferedOf(ws) > MAX_OUTBOUND_BYTES) this.drop(ws, CLOSE_CAPACITY, "backpressure")
-      else next = Math.min(next, Number.isFinite(state.exp) ? state.exp : seen + IDLE_MS)
+      else if (unwatched !== undefined && now - unwatched >= FIRST_WATCH_MS) {
+        this.drop(ws, CLOSE_UNWATCHED, "unwatched")
+      } else if (bufferedOf(ws) > MAX_OUTBOUND_BYTES) this.drop(ws, CLOSE_CAPACITY, "backpressure")
+      else {
+        const due = Number.isFinite(state.exp) ? state.exp : seen + IDLE_MS
+        next = Math.min(next, due, unwatched === undefined ? due : unwatched + FIRST_WATCH_MS)
+      }
     }
     return next
   }
@@ -489,6 +527,26 @@ export class LiveHub {
 
 /** The pub/sub topic of one tag. */
 export const topicOf = (appId: string, tag: string): string => `nifra:live:${appId}:${tag}`
+
+/** The wire tag of a key under one listed secret. */
+export type TagOf = (key: string, secret: number) => Promise<string>
+
+/** {@link Keyring.tag}, kept: a key's tag changes only with the secrets. Oldest entry out first. */
+export function tagCache(ring: Keyring, size = TAG_CACHE_SIZE): TagOf {
+  const cache = new Map<string, Promise<string>>()
+  return (key, secret) => {
+    const name = `${secret}:${key}`
+    const cached = cache.get(name)
+    if (cached !== undefined) return cached
+    if (cache.size >= size) {
+      const oldest = cache.keys().next().value
+      if (oldest !== undefined) cache.delete(oldest)
+    }
+    const tag = ring.tag(key, secret)
+    cache.set(name, tag)
+    return tag
+  }
+}
 
 function parseWatch(text: string): Watch | undefined {
   if (text.length > MAX_FRAME_BYTES || utf8Length(text) > MAX_FRAME_BYTES) return undefined
@@ -548,7 +606,7 @@ function rss(): number {
   return typeof usage?.rss === "function" ? usage.rss() : 0
 }
 
-function unref<T>(timer: T): T {
+export function unref<T>(timer: T): T {
   if (typeof timer === "object" && timer !== null && "unref" in timer) {
     const release = timer.unref
     if (typeof release === "function") release.call(timer)

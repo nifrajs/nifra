@@ -1,4 +1,4 @@
-import { afterEach, expect, jest, setSystemTime, test } from "bun:test"
+import { afterEach, expect, jest, setSystemTime, spyOn, test } from "bun:test"
 import type { NifraWebSocket } from "@nifrajs/core/server"
 import { nextSeq } from "../src/live/bus.ts"
 import { History, keyHasher } from "../src/live/history.ts"
@@ -8,7 +8,9 @@ import {
   CLOSE_PROTOCOL,
   CLOSE_REVOKED,
   CLOSE_SCOPE,
+  CLOSE_UNWATCHED,
   COALESCE_MS,
+  FIRST_WATCH_MS,
   type HubOptions,
   IDLE_MS,
   LiveHub,
@@ -17,6 +19,8 @@ import {
   MAX_FRAMES_PER_MINUTE,
   MAX_OUTBOUND_BYTES,
   MAX_WATCHES_PER_MINUTE,
+  RECONNECT_WINDOW_MS,
+  tagCache,
 } from "../src/live/hub.ts"
 import {
   createKeyring,
@@ -727,7 +731,7 @@ test("the sweep closes expired, silent and slow sockets", async () => {
   const expiring = await watched(r, { "P:a": ["post:1"] })
   const silent = connect(r)
   const slow = connect(r)
-  const fine = connect(r)
+  const fine = await watched(r, { "P:b": ["post:2"] })
   slow.buffered = MAX_OUTBOUND_BYTES + 1
   r.hub.sweep()
   expect(slow.closed?.code).toBe(CLOSE_CAPACITY)
@@ -739,10 +743,47 @@ test("the sweep closes expired, silent and slow sockets", async () => {
   expect(fine.closed).toBeUndefined()
   expect(expiring.closed).toBeUndefined()
   setSystemTime(new Date(start + 601_000))
-  r.hub.message(fine, "p")
   r.hub.sweep()
   expect(expiring.closed?.code).toBe(CLOSE_BAD_GRANT)
-  expect(fine.closed).toBeUndefined()
+})
+
+test("a socket that holds no tag for a minute closes 1000; a tag stops the clock, an empty watch starts it", async () => {
+  const r = await rig()
+  const start = Date.now()
+  setSystemTime(new Date(start))
+  const never = connect(r)
+  const listening = await watched(r, { "P:a": ["post:1"] })
+  const emptied = await watched(r, { "P:b": ["post:2"] })
+  // The earliest deadline is the unwatched socket's minute, for a host that sweeps on an alarm.
+  expect(r.hub.sweep()).toBe(start + FIRST_WATCH_MS)
+  setSystemTime(new Date(start + 30_000))
+  await watch(r, emptied, 2, [])
+  setSystemTime(new Date(start + FIRST_WATCH_MS - 1))
+  r.hub.sweep()
+  expect(never.closed).toBeUndefined()
+  setSystemTime(new Date(start + FIRST_WATCH_MS))
+  r.hub.sweep()
+  expect(never.closed).toEqual({ code: CLOSE_UNWATCHED, reason: "unwatched" })
+  expect(emptied.closed).toBeUndefined()
+  // Another empty watch does not restart the clock it already runs.
+  await watch(r, emptied, 3, [])
+  setSystemTime(new Date(start + 30_000 + FIRST_WATCH_MS))
+  for (const ws of [listening, emptied]) r.hub.message(ws, "p")
+  r.hub.sweep()
+  expect(emptied.closed).toEqual({ code: CLOSE_UNWATCHED, reason: "unwatched" })
+  expect(listening.closed).toBeUndefined()
+})
+
+test("a revokeKey that leaves a socket no tag starts its minute", async () => {
+  const r = await rig()
+  const start = Date.now()
+  setSystemTime(new Date(start))
+  const ws = await watched(r, { "P:a": ["post:1"] })
+  await revoke(r, null, "post:1")
+  setSystemTime(new Date(start + FIRST_WATCH_MS))
+  r.hub.message(ws, "p")
+  r.hub.sweep()
+  expect(ws.closed).toEqual({ code: CLOSE_UNWATCHED, reason: "unwatched" })
 })
 
 test("a send past the outbound budget closes 1013", async () => {
@@ -762,6 +803,42 @@ test("a closed socket leaves its topics, and its tags stop publishing", async ()
   const before = r.published.length
   await change(r, "post:1")
   expect(r.published.length).toBe(before)
+})
+
+test("after many sockets close at once, welcome tells the reconnects to spread their reloads", async () => {
+  const r = await rig({ reloadRate: 10 })
+  const start = Date.now()
+  setSystemTime(new Date(start))
+  expect(frames(connect(r))[0]).toEqual({ t: "welcome", sid: expect.any(String) })
+  for (let n = 0; n < 49; n++) connect(r)
+  r.hub.closeAll(CLOSE_CAPACITY, "resync")
+  // 50 sockets reloading at 10 a second: five seconds, the cap.
+  expect(frames(connect(r))[0]).toEqual({ t: "welcome", sid: expect.any(String), spread: 5000 })
+  setSystemTime(new Date(start + RECONNECT_WINDOW_MS))
+  expect(frames(connect(r))[0]).toEqual({ t: "welcome", sid: expect.any(String) })
+})
+
+test("a few sockets closing together ask for no spread", async () => {
+  const r = await rig()
+  connect(r)
+  connect(r)
+  r.hub.closeAll(CLOSE_CAPACITY, "resync")
+  expect(frames(connect(r))[0]).toEqual({ t: "welcome", sid: expect.any(String) })
+})
+
+test("the tag cache derives a key's tag once per secret and lets the oldest go past its size", async () => {
+  const ring = await createKeyring({ secrets: [SECRET, OLD_SECRET], appId: APP_ID, ttl: 600 })
+  const sign = spyOn(ring, "tag")
+  const tagOf = tagCache(ring, 2)
+  const first = tagOf("post:1", 0)
+  expect(tagOf("post:1", 0)).toBe(first)
+  expect(await tagOf("post:1", 1)).not.toBe(await first)
+  expect(sign).toHaveBeenCalledTimes(2)
+  tagOf("post:2", 0)
+  // "post:1" under the first secret was the oldest: derived again.
+  expect(tagOf("post:1", 0)).not.toBe(first)
+  expect(sign).toHaveBeenCalledTimes(4)
+  expect(await tagOf("post:1", 0)).toBe(await first)
 })
 
 test("closeAll closes every socket and leaves every topic", async () => {

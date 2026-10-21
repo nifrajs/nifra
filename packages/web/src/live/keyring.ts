@@ -86,8 +86,11 @@ export interface Keyring {
   open(token: unknown, nowMs: number): Promise<OpenedGrant | undefined>
   /** The 128-bit wire tag of a key under one secret (default: the first). */
   tag(key: string, secret?: number): Promise<string>
-  /** A stable opaque tag for the subject, under the first secret. */
-  subjectTag(subject: string | null): Promise<string>
+  /**
+   * The subject's stable opaque tag under each listed secret, newest first. Across a rotation the
+   * same viewer keeps one tag in common, whichever process served the load.
+   */
+  subjectTags(subject: string | null): Promise<string[]>
 }
 
 /** A rotation list: newest first, never empty. */
@@ -109,6 +112,7 @@ interface SecretEntry {
   readonly id: Uint8Array<ArrayBuffer>
   readonly idKey: number
   readonly tagKey: CryptoKey
+  readonly subjectKey: CryptoKey
 }
 
 /** Synchronous boot checks: count and strength. Duplicate ids need derivation, see {@link createKeyring}. */
@@ -142,7 +146,8 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
     ])
     const id = new Uint8Array(await hkdf(base, NO_SALT, INFO_SECRET_ID, 32)).slice(0, 4)
     const tagKey = await hmacKey(new Uint8Array(await hkdf(base, appSalt, INFO_TAG, 32)))
-    return { index, base, id, idKey: readU32(id, 0), tagKey }
+    const subjectKey = await hmacKey(new Uint8Array(await hkdf(base, appSalt, INFO_SUBJECT, 32)))
+    return { index, base, id, idKey: readU32(id, 0), tagKey, subjectKey }
   }
   const [head, ...rest] = options.secrets
   const first = await derive(head, 0)
@@ -156,34 +161,34 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
     }
     byId.set(entry.idKey, entry)
   }
-  const subjectKey = await hmacKey(
-    new Uint8Array(await hkdf(first.base, appSalt, INFO_SUBJECT, 32)),
-  )
 
-  // Least recently used first: a hit is moved to the end.
+  // Least recently used first: a hit is moved to the end. Only a kid that sealed or opened a grant
+  // is kept, so forged kids cannot push out the subkeys real grants use.
   const subkeys = new Map<string, Promise<CryptoKey>>()
-  const subkey = (entry: SecretEntry, kid: Uint8Array<ArrayBuffer>): Promise<CryptoKey> => {
-    const name = latin1(kid)
+  const cachedSubkey = (name: string): Promise<CryptoKey> | undefined => {
     const cached = subkeys.get(name)
     if (cached !== undefined) {
       subkeys.delete(name)
       subkeys.set(name, cached)
-      return cached
     }
+    return cached
+  }
+  const remember = (name: string, key: Promise<CryptoKey>): void => {
+    if (subkeys.has(name)) return
     if (subkeys.size >= SUBKEY_CACHE_SIZE) {
       const oldest = subkeys.keys().next().value
       if (oldest !== undefined) subkeys.delete(oldest)
     }
-    const derived = crypto.subtle.deriveKey(
+    subkeys.set(name, key)
+  }
+  const deriveSubkey = (entry: SecretEntry, kid: Uint8Array<ArrayBuffer>): Promise<CryptoKey> =>
+    crypto.subtle.deriveKey(
       { name: "HKDF", hash: "SHA-256", salt: kid, info: INFO_GRANT },
       entry.base,
       { name: "AES-GCM", length: 256 },
       false,
       ["encrypt", "decrypt"],
     )
-    subkeys.set(name, derived)
-    return derived
-  }
 
   const ttl = options.ttl
   const appId = options.appId
@@ -212,10 +217,16 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
       kid.set(processId, 4)
       writeU32(kid, 12, hour)
       const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
+      const name = latin1(kid)
+      let key = cachedSubkey(name)
+      if (key === undefined) {
+        key = deriveSubkey(first, kid)
+        remember(name, key)
+      }
       const sealed = new Uint8Array(
         await crypto.subtle.encrypt(
           { name: "AES-GCM", iv: nonce, additionalData: kid, tagLength: GCM_TAG_BYTES * 8 },
-          await subkey(first, kid),
+          await key,
           TEXT.encode(JSON.stringify(claims)),
         ),
       )
@@ -237,6 +248,9 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
       const nowHour = Math.floor(nowMs / HOUR_MS)
       if (hour !== nowHour && hour !== nowHour - 1) return undefined
       const kid = bytes.slice(0, KID_BYTES)
+      const name = latin1(kid)
+      const cached = cachedSubkey(name)
+      const key = cached ?? deriveSubkey(entry, kid)
       let plain: ArrayBuffer
       try {
         plain = await crypto.subtle.decrypt(
@@ -246,12 +260,13 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
             additionalData: kid,
             tagLength: GCM_TAG_BYTES * 8,
           },
-          await subkey(entry, kid),
+          await key,
           bytes.slice(KID_BYTES + NONCE_BYTES),
         )
       } catch {
         return undefined
       }
+      if (cached === undefined) remember(name, key)
       let claims: unknown
       try {
         claims = JSON.parse(UTF8.decode(plain))
@@ -267,11 +282,19 @@ export async function createKeyring(options: KeyringOptions): Promise<Keyring> {
       const mac = await crypto.subtle.sign("HMAC", tagKey, TEXT.encode(key))
       return toBase64Url(new Uint8Array(mac).slice(0, TAG_BYTES))
     },
-    async subjectTag(subject) {
+    subjectTags(subject) {
       // A prefix per kind: no subject string can collide with the anonymous viewer's input.
-      const input = subject === null ? "a" : `s${subject}`
-      const mac = await crypto.subtle.sign("HMAC", subjectKey, TEXT.encode(input))
-      return toBase64Url(new Uint8Array(mac).slice(0, TAG_BYTES))
+      const input = TEXT.encode(subject === null ? "a" : `s${subject}`)
+      return Promise.all(
+        entries.map(async (entry) =>
+          toBase64Url(
+            new Uint8Array(await crypto.subtle.sign("HMAC", entry.subjectKey, input)).slice(
+              0,
+              TAG_BYTES,
+            ),
+          ),
+        ),
+      )
     },
   }
 }

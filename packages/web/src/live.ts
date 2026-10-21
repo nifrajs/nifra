@@ -26,10 +26,10 @@ import {
   type LiveRuntimeHandle,
 } from "./internal/live-contract.ts"
 import { queryDigester, querySalt } from "./internal/query-digest.ts"
-import { type LiveBus, type LiveBusEvent, memoryBus } from "./live/bus.ts"
+import { type LiveBus, type LiveBusEvent, type LiveBusInput, memoryBus } from "./live/bus.ts"
 import { applyEvent, type LiveCore } from "./live/core.ts"
 import { History, keyHasher } from "./live/history.ts"
-import { CLOSE_CAPACITY, LiveHub, type LiveSocket } from "./live/hub.ts"
+import { CLOSE_CAPACITY, LiveHub, type LiveSocket, tagCache, unref } from "./live/hub.ts"
 import {
   HUB_APPEND_PATH,
   HUB_AUTHORITY_PATH,
@@ -38,6 +38,7 @@ import {
   hubConfigOf,
   hubName,
   type LiveHubNamespace,
+  MAX_APPEND_KEYS,
   parseAuthorityReply,
   parseSeq,
 } from "./live/hub-protocol.ts"
@@ -91,7 +92,7 @@ export interface LiveOptions {
   readonly subject: (ctx: LoaderContext) => string | null | Promise<string | null>
   /** Separates this app's tags from another app's that shares a secret. Default `"nifra"`. */
   readonly appId?: string
-  /** Grant lifetime in seconds. Default 600. */
+  /** Grant lifetime in seconds, at most 3600. Default 600. */
   readonly grantTtl?: number
   /** The live load endpoint. Default `/_nifra/live/load`. */
   readonly loadPath?: string
@@ -149,7 +150,8 @@ export interface Live extends LiveRuntimeHandle {
   readonly ready: Promise<void>
   /**
    * `keys` changed: every open page watching one reloads it. Call it after the write is visible to
-   * loaders; resolves once this process has applied it.
+   * loaders; resolves once this process has applied it, or 2 s after the bus took it if this process
+   * has not read it back by then.
    */
   publish(...keys: string[]): Promise<void>
   /** Refuse every grant issued to `subject` before now, and close its sockets. */
@@ -175,6 +177,8 @@ const MAX_OWNER_CHARS = 512
 const PAGE_FRAME = "page"
 /** Renewals re-signed without loaders before one runs them all. */
 const MAX_QUIET_RENEWALS = 2
+/** How long a publish waits to read its own event back; the event is in the log either way. */
+const APPLY_WAIT_MS = 2000
 
 const HOP_BY_HOP = [
   "connection",
@@ -273,8 +277,13 @@ export function live(options: LiveOptions): Live {
   /** The last bus seq this process applied: a load reads it before any loader runs. */
   let seen = 0
   const waiters: { readonly seq: number; readonly resolve: () => void }[] = []
+  /** A publish already found this process behind the bus; the next applied event clears it. */
+  let lagging = false
 
   const keyring = createKeyring({ secrets, appId, ttl })
+  // One cache for the tags a load hands out and the tags this process's sockets join.
+  const tags = keyring.then((ring) => tagCache(ring))
+  tags.catch(() => {})
   const started: Promise<Core> = (async () => {
     const ring = await keyring
     // On Workers the hub holds the log: this isolate reads nothing.
@@ -291,7 +300,17 @@ export function live(options: LiveOptions): Live {
       ring,
       history,
       revocations,
-      { appId, trusted, maxSockets, maxRssBytes, reloadRate, instances, spreadFloor, hash },
+      {
+        appId,
+        trusted,
+        maxSockets,
+        maxRssBytes,
+        reloadRate,
+        instances,
+        spreadFloor,
+        hash,
+        tags: await tags,
+      },
       publishers,
     )
     core = { ring, history, revocations, hub }
@@ -417,6 +436,7 @@ export function live(options: LiveOptions): Live {
 
   function settle(seq: number): void {
     if (seq > seen) seen = seq
+    lagging = false
     for (let i = waiters.length - 1; i >= 0; i--) {
       const waiter = waiters[i]
       if (waiter !== undefined && waiter.seq <= seen) {
@@ -426,19 +446,57 @@ export function live(options: LiveOptions): Live {
     }
   }
 
-  /** Append to the bus, then wait until this process has applied it. */
+  /** Append to the bus, then wait until this process has applied it, at most {@link APPLY_WAIT_MS}. */
   async function append(input: Parameters<LiveBus["append"]>[0]): Promise<void> {
-    if (hubNamespace !== undefined) {
-      const ring = await keyring
-      if (parseSeq(await hubCall(hubNamespace, ring, HUB_APPEND_PATH, input)) === undefined) {
-        throw new Error("[nifra/web] live: the hub did not take the event; nothing was published")
-      }
-      return
-    }
+    if (hubNamespace !== undefined) return appendToHub(hubNamespace, input)
     await started
     const seq = await bus.append(input)
     if (seq <= seen) return
-    await new Promise<void>((resolve) => waiters.push({ seq, resolve }))
+    await new Promise<void>((resolve) => {
+      const waiter = {
+        seq,
+        resolve: () => {
+          clearTimeout(timer)
+          resolve()
+        },
+      }
+      // A reader that stalled would hold every publish, and every action awaiting one, for good.
+      const timer = unref(
+        setTimeout(() => {
+          const at = waiters.indexOf(waiter)
+          if (at !== -1) waiters.splice(at, 1)
+          if (!lagging) {
+            lagging = true
+            console.error(
+              `[nifra/web] live: this process did not read a publish back from the bus within ${APPLY_WAIT_MS} ms; its sockets miss changes until the bus reader recovers`,
+            )
+          }
+          resolve()
+        }, APPLY_WAIT_MS),
+      )
+      waiters.push(waiter)
+    })
+  }
+
+  /** The hub takes at most {@link MAX_APPEND_KEYS} keys a call: a larger change goes as several. */
+  async function appendToHub(namespace: LiveHubNamespace, input: LiveBusInput): Promise<void> {
+    const ring = await keyring
+    const parts: LiveBusInput[] = []
+    if (input.type === "change") {
+      for (let at = 0; at < input.keys.length; at += MAX_APPEND_KEYS) {
+        parts.push({ type: "change", keys: input.keys.slice(at, at + MAX_APPEND_KEYS) })
+      }
+    } else parts.push(input)
+    for (let at = 0; at < parts.length; at++) {
+      if (parseSeq(await hubCall(namespace, ring, HUB_APPEND_PATH, parts[at])) === undefined) {
+        const published = at * MAX_APPEND_KEYS
+        throw new Error(
+          published === 0
+            ? "[nifra/web] live: the hub did not take the event; nothing was published"
+            : `[nifra/web] live: the hub did not take the event; the first ${published} keys were published, the rest were not`,
+        )
+      }
+    }
   }
 
   let inflight = 0
@@ -703,9 +761,9 @@ export function live(options: LiveOptions): Live {
     async finish(input: LiveFinish): Promise<LiveEnvelope> {
       for (const entry of this.collectors.values()) entry.sealed = true
       const ring = this.ring
-      const subject = await ring.subjectTag(this.subject)
+      const subjects = await ring.subjectTags(this.subject)
       const pageRetained = input.retained.some((owner) => owner.startsWith("P:"))
-      const bare: LiveEnvelope = pageRetained ? { subject, page: "retained" } : { subject }
+      const bare: LiveEnvelope = pageRetained ? { subjects, page: "retained" } : { subjects }
       // No socket would accept a grant now, and revocations are unknown: the client polls.
       if (this.down || (core?.hub.down ?? false)) return bare
       const owners: Record<string, GrantOwner> = {}
@@ -762,20 +820,33 @@ export function live(options: LiveOptions): Live {
         )
         return bare
       }
-      const keys = [...new Set(Object.values(owners).flatMap((owner) => owner.k))]
-      const salt = queryKeys ? querySalt() : undefined
-      const digest = salt === undefined ? undefined : await queryDigester(salt)
-      const tags: Record<string, string[]> = {}
-      const digests: Record<string, string> = {}
-      for (const key of keys) {
-        const owning: string[] = []
-        for (const [name, owner] of Object.entries(owners))
-          if (owner.k.includes(key)) owning.push(name)
-        const tag = await ring.tag(key)
-        tags[tag] = owning
-        if (digest !== undefined) digests[tag] = await digest(key)
+      // Each key to the owners holding it, in owner order.
+      const owning = new Map<string, string[]>()
+      for (const [name, owner] of Object.entries(owners)) {
+        for (const key of owner.k) {
+          const list = owning.get(key)
+          if (list === undefined) owning.set(key, [name])
+          else if (list.at(-1) !== name) list.push(name)
+        }
       }
-      const envelope: LiveEnvelope = { ...bare, grant, tags, ttl }
+      const keys = [...owning.keys()]
+      const salt = queryKeys ? querySalt() : undefined
+      const tagOf = await tags
+      const [wire, digested] = await Promise.all([
+        Promise.all(keys.map((key) => tagOf(key, 0))),
+        salt === undefined
+          ? undefined
+          : queryDigester(salt).then((digest) => Promise.all(keys.map(digest))),
+      ])
+      const tagMap: Record<string, string[]> = {}
+      const digests: Record<string, string> = {}
+      keys.forEach((key, at) => {
+        const tag = wire[at] ?? ""
+        tagMap[tag] = owning.get(key) ?? []
+        const digest = digested?.[at]
+        if (digest !== undefined) digests[tag] = digest
+      })
+      const envelope: LiveEnvelope = { ...bare, grant, tags: tagMap, ttl }
       if (salt !== undefined) {
         return {
           ...envelope,

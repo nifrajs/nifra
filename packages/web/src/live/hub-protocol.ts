@@ -46,6 +46,8 @@ export function hubConfigMatches(ring: Keyring, header: string | null): boolean 
 /** Grants a load presents, at most. */
 const MAX_SUBJECTS = 3
 const MAX_KEYS = MAX_SUBJECTS * MAX_KEYS_PER_FRAME
+/** Keys one append carries; a larger publish goes out as several. */
+export const MAX_APPEND_KEYS = MAX_KEYS
 export const MAX_SUBJECT_CHARS = 1024
 
 export interface AuthorityRequest {
@@ -62,7 +64,7 @@ export function parseAppend(value: unknown): LiveBusInput | undefined {
   if (!isRecord(value)) return undefined
   if (value.type === "change") {
     const keys = value.keys
-    if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_KEYS) return undefined
+    if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_APPEND_KEYS) return undefined
     const list: string[] = []
     for (const key of keys) {
       if (typeof key !== "string" || !KEY_PATTERN.test(key)) return undefined
@@ -110,14 +112,15 @@ export function parseSeq(value: unknown): number | undefined {
   return isRecord(value) && seqLike(value.seq) && value.seq > 0 ? value.seq : undefined
 }
 
+/** Built from entries, so a subject named `__proto__` keeps its stamp. */
 function stampsOf(value: unknown): Record<string, number> | undefined {
   if (!isRecord(value)) return undefined
-  const out: Record<string, number> = {}
+  const out: [string, number][] = []
   for (const [name, seq] of Object.entries(value)) {
     if (!seqLike(seq)) return undefined
-    out[name] = seq
+    out.push([name, seq])
   }
-  return out
+  return Object.fromEntries(out)
 }
 
 const seqLike = (value: unknown): value is number =>

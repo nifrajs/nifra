@@ -11478,8 +11478,8 @@ revocation keeps or re-signs it, so the next load runs that loader, which decide
 ### Many processes
 
 The default bus serves one process. Behind a load balancer, give every process the same
-Redis Streams log. A reader that falls behind the stream's trim resyncs its sockets rather
-than miss a change.
+Redis Streams log. A reader that falls behind the stream's trim, or whose connection stops
+answering (`readTimeoutMs`), resyncs its sockets rather than miss a change.
 
 ```ts
 import { live } from "@nifrajs/web/live"
@@ -11552,11 +11552,18 @@ const comments = useQuery(["comments", id], () => fetchComments(id), {
 The digests let page code confirm a guess at a key its loaders read. Leave
 `queryKeys` off if your key names hold anything the viewer should not see.
 
+### Rotate the secret
+
+Put the new secret first and keep the old one listed: `secret: [next, current]`.
+Grants sealed under either keep working, and a viewer stays the same viewer whichever
+process serves the load. Remove the old secret once every process runs the new list and
+another `grantTtl` plus a minute has passed.
+
 ### Security
 
 -
 Grants are sealed with AES-256-GCM and bound to one socket, path, frame and viewer. They
-expire (`grantTtl`, default 10 minutes); tabs renew them.
+expire (`grantTtl`, default 10 minutes, at most an hour); tabs renew them.
 
 -
 The load endpoint and the socket check `Origin`; allow other origins with
@@ -11567,7 +11574,9 @@ Every reload runs your hooks, middleware, gates and loaders exactly as a navigat
 
 -
 Sockets, watches and outbound buffers are bounded per socket and per process (
-`maxSockets`, `maxRssBytes`).
+`maxSockets`, `maxRssBytes`). A socket that holds no key for a
+minute is closed, so holding one costs a live load. Limit connections per client at your
+proxy as well: the socket cap is shared by every visitor.
 
 ## Nifra 2.0 migration guide - upgrade from 1.x
 

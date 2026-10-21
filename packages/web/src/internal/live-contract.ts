@@ -65,8 +65,11 @@ export interface LiveFinish {
 }
 
 export interface LiveEnvelope {
-  /** Opaque, stable per viewer: a change means another user, so client caches are cleared. */
-  readonly subject: string
+  /**
+   * Opaque and stable per viewer, one per listed secret, newest first. A load sharing none with the
+   * last one is another user, so client caches are cleared; a rotation always leaves one in common.
+   */
+  readonly subjects: readonly string[]
   /** Absent when no grant could be issued; the client then polls. */
   readonly grant?: string
   /** Wire tag to the frame's owners that watch its key. */

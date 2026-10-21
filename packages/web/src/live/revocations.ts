@@ -113,13 +113,14 @@ export class Revocations implements RevocationCheck {
 
 const above = (stamp: Stamp | undefined, s: number): boolean => stamp !== undefined && stamp.seq > s
 
+/** Built from entries, so a name such as `__proto__` is an own property like any other. */
 function pick(map: Map<string, Stamp>, names: readonly string[]): Record<string, number> {
-  const out: Record<string, number> = {}
+  const out: [string, number][] = []
   for (const name of names) {
     const stamp = map.get(name)
-    if (stamp !== undefined) out[name] = stamp.seq
+    if (stamp !== undefined) out.push([name, stamp.seq])
   }
-  return out
+  return Object.fromEntries(out)
 }
 
 /** Re-insert so the map stays in age order. */
