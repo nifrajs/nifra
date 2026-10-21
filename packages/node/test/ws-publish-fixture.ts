@@ -16,7 +16,8 @@ interface FeedSocket {
   send(data: string): void
 }
 
-const PUBLISHED = [
+/** Every length class of the frame header, an empty text, and non-ASCII text sent twice. */
+export const PUBLISHED: readonly string[] = [
   "",
   "a".repeat(125),
   "b".repeat(126),
@@ -41,10 +42,11 @@ export function publishFeedApp<App extends PublishRoutable>(
   return { app, joined: () => joined }
 }
 
-/** What each of three subscribers read, beside what each should have read. */
+/** What each of three subscribers read of `texts`, beside what each should have read. */
 export async function publishRoundTrip(
   feed: { readonly app: PublishRoutable; joined(): number },
   port: number,
+  texts: readonly string[] = PUBLISHED,
 ): Promise<{ readonly got: string[][]; readonly expected: string[][] }> {
   const clients = Array.from({ length: 3 }, () => {
     const socket = new WebSocket(`ws://127.0.0.1:${port}/feed`)
@@ -60,12 +62,12 @@ export async function publishRoundTrip(
   if (first === undefined) throw new Error("[fixture] no clients")
   await Promise.all(clients.map((client) => client.open))
   await turnsUntil(() => feed.joined() === clients.length, "every socket joined")
-  for (const text of PUBLISHED) feed.app.publish("feed", text)
+  for (const text of texts) feed.app.publish("feed", text)
   first.socket.send("x")
-  await turnsUntil(() => first.got.length === PUBLISHED.length + 1, "the echo")
+  await turnsUntil(() => first.got.length === texts.length + 1, "the echo")
   feed.app.publish("feed", "after")
   const expected = clients.map((client) =>
-    client === first ? [...PUBLISHED, "echo:x", "after"] : [...PUBLISHED, "after"],
+    client === first ? [...texts, "echo:x", "after"] : [...texts, "after"],
   )
   await turnsUntil(
     () => clients.every((client, i) => client.got.length >= (expected[i]?.length ?? 0)),
