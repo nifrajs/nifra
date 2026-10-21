@@ -384,7 +384,14 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const routeId = request.routeId
     buildsByRoute.set(routeId, (buildsByRoute.get(routeId) ?? 0) + 1)
     const startedAt = invalidations
-    const signal = AbortSignal.timeout(options.maxHoleTimeoutMs)
+    // Not `AbortSignal.timeout`: under a run of misses its timers would stay pending long after the
+    // builds settle.
+    const timeout = new AbortController()
+    const signal = timeout.signal
+    const timer = setTimeout(
+      () => timeout.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      options.maxHoleTimeoutMs,
+    )
     const building = detached(() =>
       request.loadShell(signal).then(
         async (data) =>
@@ -413,6 +420,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     )
     builds.set(key, building)
     const done = (): void => {
+      clearTimeout(timer)
       builds.delete(key)
       const running = (buildsByRoute.get(routeId) ?? 1) - 1
       if (running === 0) buildsByRoute.delete(routeId)
