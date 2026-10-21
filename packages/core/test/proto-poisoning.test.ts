@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
-import { guardDecodedValue, parseJsonGuarded } from "../src/server/proto-guard.ts"
+import {
+  guardDecodedValue,
+  guardParsedValue,
+  type ProtoPoisoning,
+  parseJsonGuarded,
+} from "../src/server/proto-guard.ts"
 
 /**
  * The JSON body lane must not hand handlers a value that poisons prototypes downstream.
@@ -11,6 +16,68 @@ import { guardDecodedValue, parseJsonGuarded } from "../src/server/proto-guard.t
  * walk. Policy: `"reject"` (default) answers the same flat 400 as malformed JSON, `"strip"`
  * deletes the keys in place, `"ignore"` opts out.
  */
+test("the JSON guard matches a reference walk across alternating shapes and poisoning policies", () => {
+  let seed = 0x19af
+  const next = (max: number): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed % max
+  }
+  const value = (depth: number): unknown => {
+    if (depth === 0) return [null, true, 42, "__proto__"][next(4)]
+    if (next(3) === 0) return Array.from({ length: next(7) }, () => value(depth - 1))
+    return Object.fromEntries(
+      Array.from({ length: next(7) }, () => [
+        ["safe", "nested", "__proto__", "constructor", "prototype", "other"][next(6)]!,
+        value(depth - 1),
+      ]),
+    )
+  }
+  const reference = (node: unknown, policy: ProtoPoisoning): unknown => {
+    if (policy === "ignore" || node === null || typeof node !== "object") return node
+    if (Array.isArray(node)) {
+      for (const child of node) reference(child, policy)
+      return node
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The reference walker narrowed node to a non-null non-array JSON object above.
+    const record = node as Record<string, unknown>
+    for (const key of Object.keys(record)) {
+      const child = record[key]
+      if (
+        key === "__proto__" ||
+        (key === "constructor" &&
+          child !== null &&
+          typeof child === "object" &&
+          Object.hasOwn(child, "prototype"))
+      ) {
+        if (policy === "reject") throw new Error("poisoned")
+        delete record[key]
+      } else reference(child, policy)
+    }
+    return node
+  }
+  const broad = JSON.stringify({ items: Array.from({ length: 512 }, () => ({ a: { b: 1 } })) })
+  for (let i = 0; i < 500; i++) {
+    const text = i % 10 === 0 ? broad : JSON.stringify(value(4))
+    for (const policy of ["reject", "strip", "ignore"] as const) {
+      const expected: unknown = JSON.parse(text)
+      const actual: unknown = JSON.parse(text)
+      let rejected = false
+      try {
+        reference(expected, policy)
+      } catch (error) {
+        expect(error).toMatchObject({ message: "poisoned" })
+        rejected = true
+      }
+      if (rejected) expect(() => guardParsedValue(actual, policy)).toThrow("json_proto_poisoning")
+      else {
+        expect(guardParsedValue(actual, policy)).toBe(actual)
+        expect(actual).toEqual(expected)
+      }
+      expect(guardParsedValue({ ok: true }, "reject")).toEqual({ ok: true })
+    }
+  }
+})
+
 describe("parseJsonGuarded - policy matrix", () => {
   test("reject: own __proto__ at the top level throws", () => {
     expect(() => parseJsonGuarded('{"__proto__": {"admin": true}}', "reject")).toThrow()
@@ -107,6 +174,53 @@ function schema<Output>(
 const anyBody = schema<unknown>((value) => ({ value }))
 
 const POISONED = '{"name": "Ada", "__proto__": {"admin": true}}'
+
+test("broad mixed records preserve poisoning policies and clean subsequent requests", () => {
+  const poison = JSON.parse('{"__proto__":{"admin":true},"keep":1}')
+  const ctor = JSON.parse('{"constructor":{"prototype":{"admin":true}},"keep":2}')
+  for (const length of [15, 16, 17, 88, 560, 2048]) {
+    for (const position of [0, Math.floor(length / 2), length - 1]) {
+      for (const hostile of [poison, ctor, [poison], { nested: { list: [ctor] } }]) {
+        const items: unknown[] = Array.from({ length }, (_, i) => ({ id: i, name: "safe" }))
+        items[position] = hostile
+        // Alternate broad, scalar, array, and deeper-object shapes through the reused stack.
+        const shapes = [{ items }, { items: [null, ...items] }, [items, 42, { nested: items }]]
+        for (const shape of shapes) {
+          const text = JSON.stringify(shape)
+          expect(() => parseJsonGuarded(text, "reject")).toThrow("json_proto_poisoning")
+          const stripped: unknown = JSON.parse(text, (key, value: unknown) => {
+            if (
+              key === "__proto__" ||
+              (key === "constructor" &&
+                value !== null &&
+                typeof value === "object" &&
+                Object.hasOwn(value, "prototype"))
+            )
+              return undefined
+            return value
+          })
+          expect(parseJsonGuarded(text, "strip")).toEqual(stripped)
+          expect(parseJsonGuarded(text, "ignore")).toEqual(JSON.parse(text))
+          expect(parseJsonGuarded('{"clean":true}', "reject")).toEqual({ clean: true })
+        }
+      }
+    }
+  }
+})
+
+test("a custom parsed source throwing mid-walk leaves no pending work in the next request", () => {
+  const fail = Object.defineProperty({}, "fail", {
+    enumerable: true,
+    get() {
+      throw new Error("custom source failed")
+    },
+  })
+  const pending = JSON.parse('{"__proto__":{"admin":true}}')
+  expect(() => guardParsedValue({ pending, fail }, "reject")).toThrow("custom source failed")
+  expect(parseJsonGuarded('{"clean":true}', "reject")).toEqual({ clean: true })
+  expect(() => guardParsedValue(pending, "reject")).toThrow("json_proto_poisoning")
+  expect(parseJsonGuarded('{"clean":true}', "strip")).toEqual({ clean: true })
+})
 
 /** A POST with an explicit Content-Length matching the payload - the buffered fast path. */
 function lengthedRequest(path: string, payload: string): Request {

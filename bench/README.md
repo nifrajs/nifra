@@ -29,6 +29,8 @@ bun run bench:http:update --full     # all 4 workloads instead of the default GE
 bun run bench/http/route-count.ts --check  # fresh-process route-count matrix: core + network
 bun run bench:http:realworld    # realistic-shape matrix: auth + middleware route, all runtimes
 bun run bench:http:realworld:update  # repeated, medianed, writes BENCHMARKS-REALWORLD.md (git-ignored)
+bun run bench:memory               # fresh-process Node RSS/heap comparison, all peers native modules
+bun run bench:memory:update        # capture and update the local /benchmarks memory table
 
 # Other axes
 bun run bench:ssr               # SSR throughput per UI runtime

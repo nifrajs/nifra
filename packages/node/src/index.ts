@@ -22,11 +22,13 @@ import {
 } from "node:http"
 import { createServer as createHttpsServer } from "node:https"
 import { isAbsolute, relative, resolve, sep } from "node:path"
-import type { Duplex, Readable } from "node:stream"
+import { type Duplex, Readable } from "node:stream"
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
 import type { TlsOptions } from "node:tls"
 import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
 import { FastResponse } from "srvx/node"
+import { type BodyReadState, NodeBodyRead } from "./body-read.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
@@ -239,7 +241,6 @@ const SENT_BODY_OUTCOME: NodeServeOutcome = Object.freeze({
   cookies: undefined,
   body: INTERNAL_ERROR_BODY,
 })
-const EMPTY_BUFFER = Buffer.alloc(0)
 const NODE_RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
 const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
 /** Core's proof that a header record's names are already the lowercase wire spelling - set once per
@@ -2069,20 +2070,11 @@ function stripNodeMountPrefix(url: string, prefix: string): string {
  * lockstep by the serve integration test).
  */
 function originUrlParts(target: string): { pathname: string; search: string } {
-  let pathEnd = target.length
-  let searchStart = -1
-  let searchEnd = target.length
-  for (let i = 0; i < target.length; i++) {
-    const c = target.charCodeAt(i)
-    if (c === 63 /* ? */ && searchStart === -1) {
-      pathEnd = i
-      searchStart = i
-    } else if (c === 35 /* # */) {
-      if (searchStart === -1) pathEnd = i
-      searchEnd = i
-      break
-    }
-  }
+  const fragment = target.indexOf("#")
+  const searchEnd = fragment === -1 ? target.length : fragment
+  const question = target.indexOf("?")
+  const searchStart = question !== -1 && question < searchEnd ? question : -1
+  const pathEnd = searchStart === -1 ? searchEnd : searchStart
   return {
     pathname: pathEnd === 0 ? "/" : target.slice(0, pathEnd),
     search: searchStart === -1 ? "" : target.slice(searchStart, searchEnd),
@@ -2138,6 +2130,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private bodyValue: ReadableStream<Uint8Array> | null | undefined
   private requestValue: Request | undefined
   private consumedBody: Buffer | undefined
+  private bodyRead: BodyReadState | undefined
   private readBodyPromise: Promise<Buffer> | undefined
   private mappedRead: Promise<unknown> | undefined
   private rawReaders: NodeRawBodyReaders | undefined
@@ -2305,6 +2298,29 @@ class LazyNodeRequestSource implements NodeRequestSource {
           void real.arrayBuffer().catch(() => {})
           return real
         }
+        const handed = this.bodyValue
+        if (handed != null) {
+          const locked = handed.locked
+          // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
+          const disturbed = Readable.isDisturbed(handed as unknown as NodeWebReadableStream)
+          // undici refuses a body stream that was already read or locked, which `body` has handed
+          // out before any member forced this request. Seed it with a stand-in in the same state so
+          // `bodyUsed`, `signal`, and the rest answer as they would on a native request.
+          if (locked || disturbed) {
+            const real = makeWebRequest(
+              this.nodeReq,
+              this.method,
+              this.url,
+              headers,
+              new ReadableStream<Uint8Array>(),
+              this.nodeRes,
+            )
+            const standIn = real.body
+            if (disturbed) void standIn?.cancel()
+            if (locked) standIn?.getReader()
+            return real
+          }
+        }
         return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, this.nodeRes)
       },
     ) as unknown as Request
@@ -2335,59 +2351,34 @@ class LazyNodeRequestSource implements NodeRequestSource {
 
   /** Listen for the body once and settle with `map` of its bytes, which later readers share. */
   private collectBody<T>(map: (body: Buffer) => T): Promise<T> {
-    const read = new Promise<T>((resolve, reject) => {
-      // A request torn down before the first read already emitted `aborted`/`close`; listeners
-      // attached now would wait forever.
-      if (this.nodeReq.destroyed) {
-        reject(new Error("request closed before body completed"))
-        return
-      }
-      let first: Buffer | undefined
-      let chunks: Buffer[] | undefined
-      let total = 0
-      const finish = (): void => {
-        cleanup()
-        const body = chunks === undefined ? (first ?? EMPTY_BUFFER) : Buffer.concat(chunks, total)
-        this.consumedBody = body
-        try {
-          resolve(map(body))
-        } catch (error) {
-          reject(error)
-        }
-      }
-      const fail = (err: Error): void => {
-        cleanup()
-        reject(err)
-      }
-      const onData = (chunk: Buffer | string): void => {
-        const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk
-        if (first === undefined) {
-          first = buffer
-        } else {
-          chunks ??= [first]
-          chunks.push(buffer)
-        }
-        total += buffer.byteLength
-      }
-      const cleanup = (): void => {
-        this.nodeReq.removeListener("data", onData)
-        this.nodeReq.removeListener("end", finish)
-        this.nodeReq.removeListener("error", fail)
-        this.nodeReq.removeListener("close", onClose)
-      }
-      // `close` without `end` is the signal that the connection dropped mid-body (the deprecated
-      // `aborted` precedes it), so the read rejects instead of hanging forever.
-      const onClose = (): void => {
-        if (this.consumedBody === undefined) fail(new Error("request closed before body completed"))
-      }
-      // `on`, not `once`: `cleanup` removes all of them on settling, and `once` wraps each listener.
-      this.nodeReq.on("data", onData)
-      this.nodeReq.on("end", finish)
-      this.nodeReq.on("error", fail)
-      this.nodeReq.on("close", onClose)
-    })
-    if (map !== bodyItself) this.mappedRead = read
-    return read
+    if (this.nodeReq.destroyed)
+      return Promise.reject(new Error("request closed before body completed"))
+    const read = new NodeBodyRead(map, this.onBodyDone.bind(this))
+    this.bodyRead = read
+    this.nodeReq.on("data", read.onData)
+    this.nodeReq.on("end", read.onDone)
+    this.nodeReq.on("error", read.onDone)
+    this.nodeReq.on("close", read.onDone)
+    if (map !== bodyItself) this.mappedRead = read.result
+    return read.result
+  }
+
+  private onBodyDone(error?: unknown): void {
+    const read = this.bodyRead
+    if (read === undefined) return
+    this.bodyRead = undefined
+    this.nodeReq.removeListener("data", read.onData)
+    this.nodeReq.removeListener("end", read.onDone)
+    this.nodeReq.removeListener("error", read.onDone)
+    this.nodeReq.removeListener("close", read.onDone)
+    if (error !== undefined) read.fail(error)
+    else if (!this.nodeReq.readableEnded)
+      read.fail(new Error("request closed before body completed"))
+    else {
+      const body = read.bytes()
+      this.consumedBody = body
+      read.finish(body)
+    }
   }
 }
 

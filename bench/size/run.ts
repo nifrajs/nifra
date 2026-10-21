@@ -236,18 +236,21 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Guards registered after a `beforeHandler` hook still run first, so an idempotency replay waits
   // for every guard: bare 36,746 -> 36,814 B, effect-ledger 38,789 -> 38,833, valibot 37,756 ->
   // 37,801 (Bun 1.4.3); only these three caps are crossed.
-  "nifra-bare": 36.0,
+  // Bun's prototype-guard cursor stack, selected at load and dead elsewhere: bare 36,811 -> 36,880 B,
+  // idempotency 41,247 -> 41,328, effect-ledger 38,832 -> 38,921, mcp 37,065 -> 37,143, sse 37,664 ->
+  // 37,756 (Bun 1.4.2); +0.1 KiB on the five caps it crosses.
+  "nifra-bare": 36.1,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
   // Hook-handed responses held single-use (onResponse replacement, onRequest answer): idempotency
   // 41,108 -> 41,198 B, effect-ledger 38,706 -> 38,789, sse 37,535 -> 37,615, mcp 36,934 -> 37,035,
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
-  "nifra-idempotency": 40.3,
-  "nifra-effect-ledger": 38.0,
-  "nifra-mcp": 36.2,
+  "nifra-idempotency": 40.4,
+  "nifra-effect-ledger": 38.1,
+  "nifra-mcp": 36.3,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 36.8,
+  "nifra-sse": 36.9,
   "nifra-valibot": 37.0,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
