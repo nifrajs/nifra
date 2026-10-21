@@ -22,11 +22,18 @@ const readAll = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise
   }
 }
 
+const readerOf = (
+  body: ReadableStream<Uint8Array> | null,
+): ReadableStreamDefaultReader<Uint8Array> => {
+  assert.ok(body, "the request carries a body")
+  return body.getReader()
+}
+
 before(async () => {
   const mcp = createMcpServer({ name: "node-adapter", version: "1.0.0" })
   const app = server()
     .post("/read", async (c) => {
-      const text = await readAll((c.req.body as ReadableStream<Uint8Array>).getReader())
+      const text = await readAll(readerOf(c.req.body))
       return { text, aborted: c.req.signal.aborted, bodyUsed: c.req.bodyUsed }
     })
     .post("/cancel", async (c) => {
@@ -34,7 +41,7 @@ before(async () => {
       return { aborted: c.req.signal.aborted, bodyUsed: c.req.bodyUsed }
     })
     .post("/locked", async (c) => {
-      const reader = (c.req.body as ReadableStream<Uint8Array>).getReader()
+      const reader = readerOf(c.req.body)
       const aborted = c.req.signal.aborted
       return { aborted, text: await readAll(reader), bodyUsed: c.req.bodyUsed }
     })
@@ -48,8 +55,8 @@ after(async () => {
   await stop?.()
 })
 
-const post = (path: string, body: string, headers?: Record<string, string>) =>
-  fetch(`${base}${path}`, { method: "POST", body, ...(headers === undefined ? {} : { headers }) })
+const post = (path: string, body: string, headers: Record<string, string> = {}) =>
+  fetch(`${base}${path}`, { method: "POST", body, headers })
 
 test("a body drained through its reader leaves signal and bodyUsed readable", async () => {
   const response = await post("/read", "hello")
@@ -76,7 +83,8 @@ test("an MCP POST mounted through mcp.fetch(c.req) answers", async () => {
     { "content-type": "application/json" },
   )
   assert.equal(response.status, 200)
-  const reply = (await response.json()) as { id: number; result: { serverInfo: { name: string } } }
-  assert.equal(reply.id, 1)
-  assert.equal(reply.result.serverInfo.name, "node-adapter")
+  assert.partialDeepStrictEqual(await response.json(), {
+    id: 1,
+    result: { serverInfo: { name: "node-adapter" } },
+  })
 })

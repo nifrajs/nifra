@@ -2309,6 +2309,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
         const handed = this.bodyValue
         if (handed != null) {
           const locked = handed.locked
+          // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
           const disturbed = Readable.isDisturbed(handed as unknown as NodeWebReadableStream)
           // undici refuses a body stream that was already read or locked, which `body` has handed
           // out before any member forced this request. Seed it with a stand-in in the same state so
@@ -2322,9 +2323,9 @@ class LazyNodeRequestSource implements NodeRequestSource {
               new ReadableStream<Uint8Array>(),
               this.nodeRes,
             )
-            const standIn = real.body as ReadableStream<Uint8Array>
-            if (disturbed) void standIn.cancel()
-            if (locked) standIn.getReader()
+            const standIn = real.body
+            if (disturbed) void standIn?.cancel()
+            if (locked) standIn?.getReader()
             return real
           }
         }

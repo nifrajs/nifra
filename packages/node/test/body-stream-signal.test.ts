@@ -15,10 +15,17 @@ const readAll = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise
   }
 }
 
+const readerOf = (
+  body: ReadableStream<Uint8Array> | null,
+): ReadableStreamDefaultReader<Uint8Array> => {
+  if (body === null) throw new Error("the request carries no body")
+  return body.getReader()
+}
+
 beforeAll(async () => {
   const app = server()
     .post("/read", async (c) => {
-      const text = await readAll((c.req.body as ReadableStream<Uint8Array>).getReader())
+      const text = await readAll(readerOf(c.req.body))
       return { text, aborted: c.req.signal.aborted, bodyUsed: c.req.bodyUsed }
     })
     .post("/cancel", async (c) => {
