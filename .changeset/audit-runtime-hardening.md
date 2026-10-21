@@ -1,13 +1,15 @@
 ---
 "@nifrajs/middleware": minor
-"@nifrajs/core": patch
+"@nifrajs/core": minor
 "@nifrajs/client": patch
 "@nifrajs/web": patch
 ---
 
 Harden idempotency replay admission and reservation handling, rate-limit capacity, and SSE resource limits.
 
-Idempotency must be installed after authorization guards and before its protected routes; late installation now throws. Replays without an admission marker are refused. Oversized responses retain terminal replay records, active leases renew when supported, and lost reservations no longer report success. Stores without renewal reserve pending work for at least the replay retention TTL.
+Idempotency covers the routes declared after it; installing it after one throws. A replay runs just before the handler, once the route's authentication, validation and every guard, registered before or after the middleware, admit the retry. A request no covered route handles, such as one a mounted app answers, releases its key. Replays without an admission marker are refused. Oversized responses retain terminal replay records, active leases renew when supported, and lost reservations no longer report success. Stores without renewal reserve pending work for at least the replay retention TTL.
+
+`beforeHandler()` from `@nifrajs/core/server` marks a `beforeHandle` hook to run just before the handler, after every guard on the route, including guards registered after it in the same scope.
 
 The `idempotency()` return type is now `IdentityPlugin` rather than `Middleware`. Existing `.use(idempotency(...))` calls keep their spelling. Replace explicit `Middleware` annotations on the returned plugin with `IdentityPlugin` from `@nifrajs/core`, or let TypeScript infer the type; install the plugin directly with `.use()` instead of extracting its middleware hooks.
 

@@ -701,8 +701,13 @@ async function renderStreamedPage(
 }
 
 // A swap response shares its URL with the document, so like a data response it is never stored: a
-// cache keyed on the URL alone would serve one slot in place of the page.
-const DOCUMENT_ONLY_HEADERS = new Set([ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER])
+// cache keyed on the URL alone would serve one slot in place of the page. A slot joins a page that
+// already runs under its own policy, so the CSP header belongs to the document alone.
+const DOCUMENT_ONLY_HEADERS = new Set([
+  ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
+  "content-security-policy",
+])
 
 function swapHeaders(
   document: Readonly<Record<string, string>>,

@@ -1755,6 +1755,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -3028,6 +3030,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -7574,6 +7578,8 @@ _No named exports (side-effect entrypoint)._
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
+- **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+  Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`

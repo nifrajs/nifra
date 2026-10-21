@@ -7041,7 +7041,7 @@
     "name": "IdempotencyRecord",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface IdempotencyRecord {\n    readonly status: number;\n    /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */\n    readonly headers: ReadonlyArray<readonly [string, string]>;\n    /** Response body, base64-encoded. */\n    readonly body: string;\n    /**\n     * The response came from a route this middleware's `beforeHandle` covers, so a retry is replayed\n     * from there - after the route's authentication, validation and earlier guards accept it again. A\n     * record without it is refused: its original route admission cannot be established safely.\n     */\n    readonly recheck?: boolean;\n}",
+    "signature": "export interface IdempotencyRecord {\n    readonly status: number;\n    /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */\n    readonly headers: ReadonlyArray<readonly [string, string]>;\n    /** Response body, base64-encoded. */\n    readonly body: string;\n    /**\n     * Set on every record this middleware writes: the response came from a covered route, so a retry is\n     * replayed just before that route's handler, after its authentication, validation and guards accept\n     * it again. A record without it is refused: its original route admission cannot be established.\n     */\n    readonly recheck?: boolean;\n}",
     "doc": "/** A captured response, replayed verbatim on a retry. Body is base64 (binary-safe + JSON-serializable). */"
   },
   {
@@ -16903,6 +16903,20 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function bearer<P>(options: BearerOptions<P>): AuthPlugin<P>;",
     "doc": "/**\n * `Authorization: Bearer <token>` authentication. Parses the header, runs `verify`, and rejects with\n * `401` (+ `WWW-Authenticate: Bearer`) when the token is missing/invalid (unless `optional`). The\n * verified principal is read via the returned instance - see {@link AuthPlugin}.\n */"
+  },
+  {
+    "name": "beforeHandler",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function beforeHandler<H extends (context: Context) => unknown>(hook: H): H;",
+    "doc": "/**\n * Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same\n * scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers\n * from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.\n */"
+  },
+  {
+    "name": "beforeHandler",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function beforeHandler<H extends (context: Context) => unknown>(hook: H): H;",
+    "doc": "/**\n * Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same\n * scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers\n * from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.\n */"
   },
   {
     "name": "betterAuth",

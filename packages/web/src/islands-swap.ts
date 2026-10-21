@@ -9,9 +9,9 @@
  * The request is the one the link or form makes anyway, plus an `x-nifra-swap: <slot>` header. The
  * server runs the page as usual and answers with that slot's HTML alone (`slot()` in
  * `@nifrajs/web-vanilla`), so the fragment is a slice of the real page. Any other answer - a redirect,
- * another origin, a page without that slot or a response with CSP - loads the URL normally.
- * Only GET requests are enhanced. POST forms submit natively, preserving the response's security
- * policy, scripts and action result without ever sending the form twice.
+ * another origin, a page without that slot - loads the URL normally. Only GET requests are enhanced:
+ * a POST form submits natively, so the browser applies its response's security policy and scripts,
+ * and the form is never sent twice.
  */
 
 import { mountIsland } from "./internal/island-mount.ts"
@@ -148,11 +148,9 @@ export function enableSwap(
         load()
         return
       }
-      if (
-        response.headers.get(SWAP_HEADER) !== name ||
-        response.headers.has("content-security-policy")
-      ) {
-        // A fetched document's CSP cannot become the current document's policy.
+      // A slot answer joins this document, so this document's CSP governs it, whatever headers the
+      // fetch carried; anything that is not one loads as its own document under its own policy.
+      if (response.headers.get(SWAP_HEADER) !== name) {
         load()
         return
       }

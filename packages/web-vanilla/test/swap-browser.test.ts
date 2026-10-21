@@ -364,16 +364,22 @@ test.skipIf(chrome === undefined)(
 )
 
 test.skipIf(chrome === undefined)(
-  "a GET response with CSP loads as a document instead of weakening its policy",
+  "a page under CSP swaps in one request, and its own policy governs the slot",
   async () => {
-    const p = await open()
+    const p = await open("/hotels?policy=1")
+    // A capture listener on the document sees the slot's image error just before its own handler.
+    await p.evaluate(`document.addEventListener("error", (event) => {
+      if (event.target instanceof HTMLImageElement && event.target.closest("[data-swap-slot]"))
+        window.__slotImageFailed = true
+    }, true)`)
     await p.evaluate(
-      `document.getElementById("ritz").href = "/hotels?policy=1"; document.getElementById("ritz").click()`,
+      `document.getElementById("ritz").href = "/hotels?policy=1&q=Ritz"; document.getElementById("ritz").click()`,
     )
-    await waitAcrossLoad(p, 'location.search === "?policy=1" && window.__stop !== undefined')
-    expect(await swappedIn(p)).toBe(false)
+    await p.waitFor("window.__slotImageFailed === true")
+    expect(await swappedIn(p)).toBe(true)
+    expect(await rows(p)).toEqual(["Ritz"])
     expect(await p.evaluate<boolean>("window.__unsafe === true")).toBe(false)
-    expect(requests).toEqual(["GET /hotels?policy=1 results", "GET /hotels?policy=1 -"])
+    expect(requests).toEqual(["GET /hotels?policy=1&q=Ritz results"])
   },
   30_000,
 )

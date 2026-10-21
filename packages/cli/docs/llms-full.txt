@@ -2797,10 +2797,11 @@ adds to it, and a link or form inside the slot is spent: the slot's child that h
 is removed when the next page arrives.
 
 Any other answer - a redirect, another origin, a page without that slot, an error - loads
-the URL normally, as does a page whose Trusted Types policy refuses the HTML or a response
-that declares Content-Security-Policy. POST forms submit natively, so the browser applies
-the response's security policy, starts its scripts and preserves the action result.
-A form POST is sent once. Without the script, links and forms work as plain HTML.
+the URL normally, as does a page whose Trusted Types policy refuses the HTML. A swapped
+slot joins the current page, so that page's Content-Security-Policy governs it. POST
+forms submit natively, so the browser applies the response's security policy, starts
+its scripts and shows the action result. A form POST is sent once. Without the script,
+links and forms work as plain HTML.
 A loading slot carries
 `aria-busy="true"`, a newer swap of the same slot cancels the older
 one, and a failed request leaves the page as it is and sets `data-swap-error` on
@@ -4262,12 +4263,13 @@ accept either during a key rotation.
 A dropped connection or an impatient double-tap shouldn't double-charge a card. With an
 `Idempotency-Key` header, a retried unsafe request replays the first response instead of
 re-running the side effect. The key is claimed in `onRequest`, so a concurrent retry gets
-a `409`; the stored response is replayed from `beforeHandle`, _after_ the
-route's authentication accepts the retry, so a credential revoked since the first request gets the
-route's current answer. Install authorization guards first, then `.use(idempotency())`,
-then declare its protected routes. Installing it after a protected route throws instead of
-allowing a replay to bypass that route's admission. Older stored records without an admission
-marker are refused.
+a `409`; the stored response is replayed just before the handler, _after_ the
+route's authentication, validation and every guard accept the retry - a guard registered before
+or after the middleware alike - so a credential revoked since the first request gets the
+route's current answer. Declare protected routes after `.use(idempotency())`;
+installing it after one throws instead of allowing a replay to bypass that route's admission. A
+request no covered route handles, such as one a mounted app or an earlier hook answers, is not
+deduplicated. Older stored records without an admission marker are refused.
 
 ```ts
 // doc-check: skip - fragment: `app`, `chargeCard`, and `id` are your application's.
@@ -17804,7 +17806,7 @@ Vanilla is the render adapter an agent gets right on the first try. It ships no 
 
 Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
 
-To refresh one region from a link or GET form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. POST forms submit natively, and responses with CSP load as documents so their policy and scripts take effect. See [Refresh part of the page](https://nifra.dev/docs/islands).
+To refresh one region from a link or GET form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. POST forms submit natively, and a swapped slot runs under the current page's Content-Security-Policy. See [Refresh part of the page](https://nifra.dev/docs/islands).
 
 Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
 
@@ -18164,7 +18166,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `writableResponse`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `writableResponse`
 
 ## @nifrajs/cron
 

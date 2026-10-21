@@ -1,5 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
+  beforeHandler,
   defineIdentityPlugin,
   type IdentityPlugin,
   isAuthenticatedRequest,
@@ -12,9 +13,12 @@ import {
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
  * tap) with the same `Idempotency-Key` gets the **first** response replayed instead of the side effect
  * running twice (double-charge, double-publish). The key is claimed in `onRequest`, so an in-flight
- * collision short-circuits before any mutation; a replay waits for `beforeHandle`, so a credential
- * revoked since the first request gets the route's current auth answer, not the stored response.
- * Installation after a protected route throws: its order-scoped admission hook cannot guard a replay.
+ * collision short-circuits before any mutation; a replay waits until just before the handler, after
+ * the route's authentication, validation and every guard - registered before or after this
+ * middleware - accept the retry again, so a credential revoked since the first request gets the
+ * route's current answer, not the stored response. It covers routes declared after it; installing it
+ * after one throws. A request no covered route handles (a mounted app, an earlier hook's answer) is
+ * not deduplicated: its key is released.
  *
  * Pair it with a DB uniqueness constraint - this stops the *retry*, the constraint is the source of
  * truth for genuinely-concurrent distinct requests. Production MUST use a shared {@link IdempotencyStore}
@@ -29,9 +33,9 @@ export interface IdempotencyRecord {
   /** Response body, base64-encoded. */
   readonly body: string
   /**
-   * The response came from a route this middleware's `beforeHandle` covers, so a retry is replayed
-   * from there - after the route's authentication, validation and earlier guards accept it again. A
-   * record without it is refused: its original route admission cannot be established safely.
+   * Set on every record this middleware writes: the response came from a covered route, so a retry is
+   * replayed just before that route's handler, after its authentication, validation and guards accept
+   * it again. A record without it is refused: its original route admission cannot be established.
    */
   readonly recheck?: boolean
 }
@@ -269,12 +273,12 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // A stalled renewal must not admit another execution through the same store in this process.
 const ACTIVE = new WeakMap<IdempotencyStore, Set<string>>()
 
-function terminalRecord(error: string, status: number, recheck: boolean): IdempotencyRecord {
+function terminalRecord(error: string, status: number): IdempotencyRecord {
   return {
     status,
     headers: [["content-type", "application/json"]],
     body: toBase64(KEY_ENCODER.encode(JSON.stringify({ ok: false, error }))),
-    recheck,
+    recheck: true,
   }
 }
 
@@ -540,7 +544,7 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
     await claim.renewing
     return !claim.lost && (await store.complete(claim.key, claim.reservation, record, ttlMs))
   }
-  // Replays held for `beforeHandle`, and fresh claims whose route `beforeHandle` reached.
+  // Replays held for `beforeHandle`, and fresh claims every guard on a covered route admitted.
   const deferred = new WeakMap<Request, IdempotencyRecord>()
   const rechecked = new WeakSet<Request>()
 
@@ -615,8 +619,10 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
       }
       return undefined
     },
-    beforeHandle(context) {
-      // Authentication and validation have accepted this retry; only now is the stored answer its own.
+    // Runs after every guard on the route, whichever side of this middleware it was registered on.
+    beforeHandle: beforeHandler((context) => {
+      // Authentication, validation and every guard have accepted this retry; only now is the stored
+      // answer its own.
       const held = recordedRequest(deferred, context.req)
       if (held !== undefined) {
         deferred.delete(held[0])
@@ -625,7 +631,7 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
       const fresh = recordedRequest(claimed, context.req)
       if (fresh !== undefined) rechecked.add(fresh[0])
       return undefined
-    },
+    }),
     async onResponse(res, req) {
       const found = recordedRequest(claimed, req)
       if (found === undefined) return res // not a claimed request
@@ -637,7 +643,10 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
           discardResponse(res)
           return reservationLost()
         }
+        // Without `rechecked` no covered route ran: a guard refused it, or a mounted app or an earlier
+        // hook answered. Nothing deduplicated began, and its answer could never be replayed.
         if (
+          !rechecked.has(claimedReq) ||
           !shouldCache(res) ||
           (claim.anonymous && (isAuthenticatedRequest(req) || isAuthenticatedRequest(claimedReq)))
         ) {
@@ -651,16 +660,13 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
         try {
           captured = await captureBody(res, maxBytes)
         } catch (err) {
-          await complete(
-            claim,
-            terminalRecord("idempotency_response_unavailable", 500, rechecked.has(claimedReq)),
-          )
+          await complete(claim, terminalRecord("idempotency_response_unavailable", 500))
           throw err
         }
         if (!("bytes" in captured)) {
           const completed = await complete(
             claim,
-            terminalRecord("idempotency_response_too_large", 507, rechecked.has(claimedReq)),
+            terminalRecord("idempotency_response_too_large", 507),
           )
           if (!completed) {
             discardResponse(captured.response)
@@ -674,7 +680,7 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
           status: res.status,
           headers,
           body: toBase64(bytes),
-          recheck: rechecked.has(claimedReq),
+          recheck: true,
         })
         if (!completed) {
           discardResponse(captured.response)
@@ -694,12 +700,13 @@ export function idempotency(options: IdempotencyOptions): IdentityPlugin {
       stop(claim)
       try {
         await claim.renewing
+        if (!rechecked.has(original)) {
+          await store.release(claim.key, claim.reservation)
+          return
+        }
         // An earlier response transform failed, so there is no safe response to replay or reason to
         // repeat work. Preserve a terminal outcome rather than releasing the operation's reservation.
-        await complete(
-          claim,
-          terminalRecord("idempotency_response_unavailable", 500, rechecked.has(original)),
-        )
+        await complete(claim, terminalRecord("idempotency_response_unavailable", 500))
       } finally {
         activeKeys.delete(claim.key)
       }

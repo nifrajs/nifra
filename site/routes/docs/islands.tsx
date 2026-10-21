@@ -385,10 +385,11 @@ export default function Islands() {
       </p>
       <p>
         Any other answer - a redirect, another origin, a page without that slot, an error - loads
-        the URL normally, as does a page whose Trusted Types policy refuses the HTML or a response
-        that declares Content-Security-Policy. POST forms submit natively, so the browser applies
-        the response&apos;s security policy, starts its scripts and preserves the action result.
-        A form POST is sent once. Without the script, links and forms work as plain HTML.
+        the URL normally, as does a page whose Trusted Types policy refuses the HTML. A swapped
+        slot joins the current page, so that page&apos;s Content-Security-Policy governs it. POST
+        forms submit natively, so the browser applies the response&apos;s security policy, starts
+        its scripts and shows the action result. A form POST is sent once. Without the script,
+        links and forms work as plain HTML.
         A loading slot carries{" "}
         <code>aria-busy=&quot;true&quot;</code>, a newer swap of the same slot cancels the older
         one, and a failed request leaves the page as it is and sets <code>data-swap-error</code> on

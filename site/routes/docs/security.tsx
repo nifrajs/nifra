@@ -707,12 +707,13 @@ export default function Security() {
         A dropped connection or an impatient double-tap shouldn't double-charge a card. With an{" "}
         <code>Idempotency-Key</code> header, a retried unsafe request replays the first response instead of
         re-running the side effect. The key is claimed in <code>onRequest</code>, so a concurrent retry gets
-        a <code>409</code>; the stored response is replayed from <code>beforeHandle</code>, <i>after</i> the
-        route's authentication accepts the retry, so a credential revoked since the first request gets the
-        route's current answer. Install authorization guards first, then <code>.use(idempotency())</code>,
-        then declare its protected routes. Installing it after a protected route throws instead of
-        allowing a replay to bypass that route's admission. Older stored records without an admission
-        marker are refused.
+        a <code>409</code>; the stored response is replayed just before the handler, <i>after</i> the
+        route's authentication, validation and every guard accept the retry - a guard registered before
+        or after the middleware alike - so a credential revoked since the first request gets the
+        route's current answer. Declare protected routes after <code>.use(idempotency())</code>;
+        installing it after one throws instead of allowing a replay to bypass that route's admission. A
+        request no covered route handles, such as one a mounted app or an earlier hook answers, is not
+        deduplicated. Older stored records without an admission marker are refused.
       </p>
       <CodeBlock code={IDEMPOTENCY} />
       <ul>

@@ -1,9 +1,23 @@
-import { expect, test } from "bun:test"
+import { expect, setSystemTime, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { idempotency, MemoryIdempotencyStore, MemoryStore, rateLimit } from "../src/index.ts"
+import {
+  type IdempotencyStore,
+  idempotency,
+  MemoryIdempotencyStore,
+  MemoryStore,
+  rateLimit,
+} from "../src/index.ts"
 
 const post = (path: string) =>
   new Request(`http://x${path}`, { method: "POST", headers: { "idempotency-key": "same" } })
+
+/** The same store seen through another object, as a second process sharing it would see it. */
+const viewOf = (memory: MemoryIdempotencyStore): IdempotencyStore => ({
+  begin: memory.begin.bind(memory),
+  complete: memory.complete.bind(memory),
+  release: memory.release.bind(memory),
+  renew: memory.renew.bind(memory),
+})
 
 test("idempotency rejects installation after a mutating route before it can cache a private answer", () => {
   expect(() =>
@@ -11,6 +25,45 @@ test("idempotency rejects installation after a mutating route before it can cach
       .post("/protected", () => ({ private: true }))
       .use(idempotency({ store: new MemoryIdempotencyStore() })),
   ).toThrow(/before.*route/)
+})
+
+test("a guard registered after idempotency still refuses a replay to a revoked caller", async () => {
+  for (const shape of ["hook", "middleware", "group"] as const) {
+    let permitted = true
+    const guard = () => (permitted ? undefined : new Response("denied", { status: 403 }))
+    const base = server().use(idempotency({ store: new MemoryIdempotencyStore() }))
+    const handler = () => ({ value: "private" })
+    const app =
+      shape === "hook"
+        ? base.beforeHandle(guard).post("/p", handler)
+        : shape === "middleware"
+          ? base.use({ name: "guard", beforeHandle: guard }).post("/p", handler)
+          : base.group("/g", (g) => g.beforeHandle(guard).post("/p", handler))
+    const path = shape === "group" ? "/g/p" : "/p"
+    expect((await app.fetch(post(path))).status).toBe(200)
+    permitted = false
+    const retry = await app.fetch(post(path))
+    expect([shape, retry.status, await retry.text()]).toEqual([shape, 403, "denied"])
+  }
+})
+
+test("a request no covered route handles releases its key instead of storing an unservable record", async () => {
+  let mounted = 0
+  const app = server()
+    .use(idempotency({ store: new MemoryIdempotencyStore() }))
+    .mount({ path: "/m", app: { fetch: () => Response.json({ mounted: ++mounted }) } })
+  const first = await app.fetch(post("/m/x"))
+  const retry = await app.fetch(post("/m/x"))
+  expect([first.status, retry.status, mounted]).toEqual([200, 200, 2])
+  expect(await retry.json()).toEqual({ mounted: 2 })
+
+  const answered = server()
+    .use(idempotency({ store: new MemoryIdempotencyStore() }))
+    .use({ name: "early", onRequest: () => Response.json({ early: true }) })
+    .post("/p", () => ({ route: true }))
+  expect((await answered.fetch(post("/p"))).status).toBe(200)
+  const again = await answered.fetch(post("/p"))
+  expect([again.status, await again.json()]).toEqual([200, { early: true }])
 })
 
 test("an oversized successful mutation retains a terminal replay instead of running twice", async () => {
@@ -26,46 +79,80 @@ test("an oversized successful mutation retains a terminal replay instead of runn
 })
 
 test("idempotency renews an active handler's lease", async () => {
-  let release!: () => void
-  let started!: () => void
-  let effects = 0
+  const start = Date.parse("2026-01-01T00:00:00Z")
+  const lockTtlMs = 60
+  const memory = new MemoryIdempotencyStore()
+  const barrier = Promise.withResolvers<void>()
+  const entered = Promise.withResolvers<void>()
+  const renewed = Promise.withResolvers<void>()
   let renewals = 0
-  const store = new MemoryIdempotencyStore()
-  const renew = store.renew.bind(store)
-  store.renew = async (...args) => {
-    renewals++
-    return renew(...args)
+  let effects = 0
+  const store: IdempotencyStore = {
+    ...viewOf(memory),
+    async renew(key, reservation, ttl) {
+      // The first renewal lands just before the first lease ends, so past that point only the
+      // renewal holds the key.
+      if (++renewals === 1) setSystemTime(start + lockTtlMs - 1)
+      const owned = await memory.renew(key, reservation, ttl)
+      renewed.resolve()
+      return owned
+    },
   }
-  const barrier = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  const entered = new Promise<void>((resolve) => {
-    started = resolve
-  })
+  const handler = async () => {
+    effects++
+    entered.resolve()
+    await barrier.promise
+    return { ok: true }
+  }
+  const app = server().use(idempotency({ store, lockTtlMs })).post("/slow", handler)
+  const elsewhere = server()
+    .use(idempotency({ store: viewOf(memory), lockTtlMs }))
+    .post("/slow", () => ({ effect: ++effects }))
+  setSystemTime(start)
+  const first = app.fetch(post("/slow"))
+  try {
+    await entered.promise
+    await renewed.promise
+    setSystemTime(start + lockTtlMs + 40)
+    expect((await app.fetch(post("/slow"))).status).toBe(409)
+    expect((await elsewhere.fetch(post("/slow"))).status).toBe(409)
+    expect(effects).toBe(1)
+    barrier.resolve()
+    expect((await first).status).toBe(200)
+    expect((await app.fetch(post("/slow"))).status).toBe(200)
+    expect(effects).toBe(1)
+  } finally {
+    barrier.resolve()
+    await first
+    setSystemTime()
+  }
+})
+
+test("a renewal the store cannot confirm loses the reservation instead of reporting success", async () => {
+  const memory = new MemoryIdempotencyStore()
+  const failed = Promise.withResolvers<void>()
+  let effects = 0
   const app = server()
-    .use(idempotency({ store, lockTtlMs: 60 }))
-    .post("/slow", async () => {
+    .use(
+      idempotency({
+        store: {
+          ...viewOf(memory),
+          renew: async () => {
+            failed.resolve()
+            throw new Error("synthetic store outage")
+          },
+        },
+        lockTtlMs: 3,
+      }),
+    )
+    .post("/effect", async () => {
       effects++
-      started()
-      await barrier
+      await failed.promise
       return { ok: true }
     })
-  const first = app.fetch(post("/slow"))
-  let retry: ReturnType<typeof app.fetch> | undefined
-  try {
-    await entered
-    await Bun.sleep(180)
-    retry = app.fetch(post("/slow"))
-    const response = await Promise.race([retry, Bun.sleep(50).then(() => undefined)])
-    expect(response?.status).toBe(409)
-    expect(effects).toBe(1)
-    expect(renewals).toBeGreaterThan(0)
-  } finally {
-    release()
-    await Promise.allSettled([first, retry])
-  }
-  expect((await first).status).toBe(200)
-  expect((await app.fetch(post("/slow"))).status).toBe(200)
+  const response = await app.fetch(post("/effect"))
+  expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({ ok: false, error: "idempotency_reservation_lost" })
   expect(effects).toBe(1)
 })
 

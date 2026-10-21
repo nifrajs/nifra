@@ -3,4 +3,4 @@
 "@nifrajs/web-vanilla": patch
 ---
 
-Keep slot swaps within the final composed page, dispose removed islands during append, and bypass cached documents. POST forms now submit natively and GET responses with CSP load as documents so browser security policies and page scripts take effect. Native action pages include their island entries.
+A swap answers only with a slot that survives in the final composed page, an append disposes the islands it removes, and swap requests bypass the browser cache. Links and GET forms swap; POST forms submit natively, so the browser applies the response's security policy and scripts. A swapped slot runs under the current page's Content-Security-Policy, which stays on the document response alone. Native action pages include their island entries.
