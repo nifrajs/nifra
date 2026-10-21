@@ -499,7 +499,7 @@ async function continueFastAuthenticatedProgram<T>(
   try {
     const settled = await pending
     if (settled !== undefined) return wrapResponse(settled as Response | ResponseResult)
-    return await runFastAuthenticatedProgram(
+    const outcome = runFastAuthenticatedProgram(
       host,
       entry,
       program,
@@ -509,6 +509,7 @@ async function continueFastAuthenticatedProgram<T>(
       wrapResponse,
       validationIndex,
     )
+    return outcome instanceof Promise ? await outcome : outcome
   } catch (error) {
     return await host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
   }
@@ -585,7 +586,7 @@ async function continueValidationBeforeAuthentication<T>(
   try {
     const settled = await pending
     if (settled !== undefined) return wrapResponse(settled as Response | ResponseResult)
-    return await runValidationBeforeAuthentication(
+    const outcome = runValidationBeforeAuthentication(
       host,
       entry,
       program,
@@ -595,6 +596,7 @@ async function continueValidationBeforeAuthentication<T>(
       wrapResponse,
       validationIndex,
     )
+    return outcome instanceof Promise ? await outcome : outcome
   } catch (error) {
     return await host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
   }
@@ -616,7 +618,7 @@ function runValidatedProgram<T>(
 type ProgramResult<T> = MaybePromise<T>
 
 /** Opt-in sensitive-route lane: run authentication/policy hooks before parsing untrusted input. */
-async function runAuthBeforeValidation<T>(
+function runAuthBeforeValidation<T>(
   host: RouteProgramRuntime,
   entry: RouteEntry,
   program: RouteProgram,
@@ -625,23 +627,53 @@ async function runAuthBeforeValidation<T>(
   finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
   gated = false,
-): Promise<T> {
+  deriveStart = 0,
+  beforeStart = 0,
+  validationStart = 0,
+): ProgramResult<T> {
   try {
     if (!gated) {
-      if (program.hasDecorations) Object.assign(ctx, program.decorations)
+      if (deriveStart === 0 && beforeStart === 0 && program.hasDecorations)
+        Object.assign(ctx, program.decorations)
 
-      for (const derive of program.derives) {
-        const result = derive(ctx)
-        const settled = result instanceof Promise ? await result : result
-        if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
-        Object.assign(ctx, settled)
+      for (let i = deriveStart; i < program.derives.length; i++) {
+        const result = program.derives[i]!(ctx)
+        if (result instanceof Promise) {
+          return continueProgram(
+            host,
+            entry,
+            program,
+            source,
+            ctx,
+            finalize,
+            wrapResponse,
+            { kind: "derive", next: i + 1, policy: true },
+            result,
+            undefined,
+          )
+        }
+        if (isEarly(result)) return finishEarly(host, entry, ctx, result, finalize, wrapResponse)
+        Object.assign(ctx, result)
       }
 
-      for (const before of program.beforeHandle) {
-        const result = before(ctx)
-        const settled = result instanceof Promise ? await result : result
-        if (settled !== undefined)
-          return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
+      for (let i = beforeStart; i < program.beforeHandle.length; i++) {
+        const result = program.beforeHandle[i]!(ctx)
+        if (result instanceof Promise) {
+          return continueProgram(
+            host,
+            entry,
+            program,
+            source,
+            ctx,
+            finalize,
+            wrapResponse,
+            { kind: "before", next: i + 1, policy: true },
+            result,
+            undefined,
+          )
+        }
+        if (result !== undefined)
+          return finishEarly(host, entry, ctx, result, finalize, wrapResponse)
       }
 
       // The policy hooks have passed, so the idempotency gate may buffer the body now. Not awaited:
@@ -653,30 +685,52 @@ async function runAuthBeforeValidation<T>(
       }
     }
 
-    for (const stage of program.validationStages) {
+    for (let i = validationStart; i < program.validationStages.length; i++) {
+      const stage = program.validationStages[i]!
       const result =
         stage.kind === "body"
-          ? await host.readProgramBody(entry, source, ctx)
+          ? host.readProgramBody(entry, source, ctx)
           : host.validateProgramStage(entry, stage, source, ctx)
-      const settled = result instanceof Promise ? await result : result
-      if (settled !== undefined) return wrapResponse(settled)
+      if (result instanceof Promise) {
+        return continueProgram(
+          host,
+          entry,
+          program,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+          { kind: "validation", next: i + 1, policy: true },
+          result,
+          undefined,
+        )
+      }
+      if (result !== undefined) return wrapResponse(result)
     }
 
-    let result = await program.handler(ctx)
-    for (const after of program.afterHandle) {
-      const transformed = after(result, ctx)
-      result = transformed instanceof Promise ? await transformed : transformed
-    }
-    return await host.finishProgramResult(entry, ctx, result, finalize, wrapResponse)
+    // A pending outcome here already met the error boundary (continueProgram or the response
+    // contract), so wrapping it in another catch would only add a promise.
+    return runHooksSync(
+      host,
+      entry,
+      program,
+      source,
+      ctx,
+      finalize,
+      wrapResponse,
+      program.derives.length,
+      program.beforeHandle.length,
+      undefined,
+    )
   } catch (error) {
-    return await host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
+    return host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
   }
 }
 
 type PendingPhase =
-  | { readonly kind: "validation"; readonly next: number }
-  | { readonly kind: "derive"; readonly next: number }
-  | { readonly kind: "before"; readonly next: number }
+  | { readonly kind: "validation"; readonly next: number; readonly policy?: true }
+  | { readonly kind: "derive"; readonly next: number; readonly policy?: true }
+  | { readonly kind: "before"; readonly next: number; readonly policy?: true }
   | { readonly kind: "handler" }
   | { readonly kind: "after"; readonly next: number }
 
@@ -757,7 +811,7 @@ function runSync<T>(
     }
     if (outcome !== undefined) return wrapResponse(outcome)
   }
-  return runHooksSync(host, entry, program, source, ctx, finalize, wrapResponse, 0, 0, 0, initial)
+  return runHooksSync(host, entry, program, source, ctx, finalize, wrapResponse, 0, 0, initial)
 }
 
 function runHooksSync<T>(
@@ -770,7 +824,6 @@ function runHooksSync<T>(
   wrapResponse: (response: Response | ResponseResult) => T,
   deriveIndex: number,
   beforeIndex: number,
-  afterIndex: number,
   initial: unknown,
 ): ProgramResult<T> {
   for (let i = deriveIndex; i < program.derives.length; i++) {
@@ -826,7 +879,20 @@ function runHooksSync<T>(
       initial,
     )
   }
-  let result = output
+  return runAfterSync(host, entry, program, source, ctx, finalize, wrapResponse, 0, output)
+}
+
+function runAfterSync<T>(
+  host: RouteProgramRuntime,
+  entry: RouteEntry,
+  program: RouteProgram,
+  source: RequestSource,
+  ctx: RawContext,
+  finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
+  afterIndex: number,
+  result: unknown,
+): ProgramResult<T> {
   for (let i = afterIndex; i < program.afterHandle.length; i++) {
     const outcome = program.afterHandle[i]!(result, ctx)
     if (outcome instanceof Promise) {
@@ -876,7 +942,7 @@ async function continueProgram<T>(
     } else {
       result = settled
     }
-    return await runAsyncStages(
+    const outcome = runAsyncStages(
       host,
       entry,
       program,
@@ -887,12 +953,13 @@ async function continueProgram<T>(
       pendingPhase,
       result,
     )
+    return outcome instanceof Promise ? await outcome : outcome
   } catch (error) {
     return await host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
   }
 }
 
-async function runAsyncStages<T>(
+function runAsyncStages<T>(
   host: RouteProgramRuntime,
   entry: RouteEntry,
   program: RouteProgram,
@@ -902,54 +969,74 @@ async function runAsyncStages<T>(
   wrapResponse: (response: Response | ResponseResult) => T,
   pendingPhase: PendingPhase,
   result: unknown,
-): Promise<T> {
-  try {
-    if (pendingPhase.kind === "validation") {
-      const validations = program.validationStages
-      for (let i = pendingPhase.next; i < validations.length; i++) {
-        const stage = validations[i]!
-        const outcome =
-          stage.kind === "body"
-            ? await host.readProgramBody(entry, source, ctx)
-            : host.validateProgramStage(entry, stage, source, ctx)
-        const settled = outcome instanceof Promise ? await outcome : outcome
-        if (settled !== undefined) return wrapResponse(settled)
-      }
+): ProgramResult<T> {
+  // After an actual async boundary, resume the same sync runner until the next pending stage.
+  // Sync hooks and finalization need no async function wrapper or additional microtask turn.
+  if (pendingPhase.kind === "validation") {
+    if (pendingPhase.policy) {
+      return runAuthBeforeValidation(
+        host,
+        entry,
+        program,
+        source,
+        ctx,
+        finalize,
+        wrapResponse,
+        true,
+        0,
+        0,
+        pendingPhase.next,
+      )
     }
-
-    const deriveStart = pendingPhase.kind === "derive" ? pendingPhase.next : 0
-    if (pendingPhase.kind === "validation" || pendingPhase.kind === "derive") {
-      for (let i = deriveStart; i < program.derives.length; i++) {
-        const outcome = program.derives[i]!(ctx)
-        const settled = outcome instanceof Promise ? await outcome : outcome
-        if (isEarly(settled)) return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
-        Object.assign(ctx, settled)
-      }
-    }
-
-    const beforeStart = pendingPhase.kind === "before" ? pendingPhase.next : 0
-    if (
-      pendingPhase.kind === "validation" ||
-      pendingPhase.kind === "derive" ||
-      pendingPhase.kind === "before"
-    ) {
-      for (let i = beforeStart; i < program.beforeHandle.length; i++) {
-        const outcome = program.beforeHandle[i]!(ctx)
-        const settled = outcome instanceof Promise ? await outcome : outcome
-        if (settled !== undefined)
-          return finishEarly(host, entry, ctx, settled, finalize, wrapResponse)
-      }
-      const output = program.handler(ctx)
-      result = output instanceof Promise ? await output : output
-    }
-
-    const afterStart = pendingPhase.kind === "after" ? pendingPhase.next : 0
-    for (let i = afterStart; i < program.afterHandle.length; i++) {
-      const outcome = program.afterHandle[i]!(result, ctx)
-      result = outcome instanceof Promise ? await outcome : outcome
-    }
-    return await host.finishProgramResult(entry, ctx, result, finalize, wrapResponse)
-  } catch (error) {
-    return await host.handleProgramError(entry, error, ctx, finalize, wrapResponse)
+    return runSync(
+      host,
+      entry,
+      program,
+      source,
+      ctx,
+      finalize,
+      wrapResponse,
+      pendingPhase.next,
+      result,
+    )
   }
+  if (pendingPhase.kind === "derive" || pendingPhase.kind === "before") {
+    if (pendingPhase.policy) {
+      return runAuthBeforeValidation(
+        host,
+        entry,
+        program,
+        source,
+        ctx,
+        finalize,
+        wrapResponse,
+        false,
+        pendingPhase.kind === "derive" ? pendingPhase.next : program.derives.length,
+        pendingPhase.kind === "before" ? pendingPhase.next : 0,
+      )
+    }
+    return runHooksSync(
+      host,
+      entry,
+      program,
+      source,
+      ctx,
+      finalize,
+      wrapResponse,
+      pendingPhase.kind === "derive" ? pendingPhase.next : program.derives.length,
+      pendingPhase.kind === "before" ? pendingPhase.next : 0,
+      result,
+    )
+  }
+  return runAfterSync(
+    host,
+    entry,
+    program,
+    source,
+    ctx,
+    finalize,
+    wrapResponse,
+    pendingPhase.kind === "after" ? pendingPhase.next : 0,
+    result,
+  )
 }

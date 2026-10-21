@@ -14,6 +14,38 @@ const count = Number(arg("count", "100000"))
 if (![rounds, count].every((n) => Number.isSafeInteger(n) && n > 0))
   throw new Error("invalid sampling count")
 type App = { fetch(request: Request): Response | Promise<Response> }
+const diagnosticApp = (
+  module: typeof before,
+  validationOrder: "validate-before-auth" | "auth-before-validation",
+  asyncValidation: boolean,
+  asyncHandler: boolean,
+): App =>
+  module.makeWorstNifraApp(true).get(
+    "/diagnostic",
+    {
+      validationOrder,
+      query: {
+        "~standard": {
+          version: 1,
+          vendor: "profile",
+          validate(input: unknown) {
+            const result =
+              input !== null &&
+              typeof input === "object" &&
+              "trace" in input &&
+              typeof input.trace === "string"
+                ? { value: { trace: input.trace } }
+                : { issues: [{ message: "trace required" }] }
+            return asyncValidation ? Promise.resolve(result) : result
+          },
+        },
+      },
+    },
+    (ctx: { query: unknown }) => {
+      const result = { query: ctx.query }
+      return asyncHandler ? Promise.resolve(result) : result
+    },
+  )
 const auth = {
   authorization: "Bearer abcdefghijklmnopqrstuvwxyz",
   cookie: "theme=dark",
@@ -27,6 +59,19 @@ const cases: {
   makeRequest: () => Request
   post?: boolean
 }[] = [
+  ...(
+    [
+      ["policy-sync-get", "auth-before-validation", false, false],
+      ["policy-async-validation-get", "auth-before-validation", true, false],
+      ["generic-async-validation-get", "validate-before-auth", true, false],
+      ["generic-async-handler-get", "validate-before-auth", false, true],
+    ] as const
+  ).map(([name, order, asyncValidation, asyncHandler]) => ({
+    name,
+    makeApp: (module: typeof before) => diagnosticApp(module, order, asyncValidation, asyncHandler),
+    makeRequest: () =>
+      new Request("http://bench/diagnostic?trace=abc", { headers: { "x-req-id": "bench-1" } }),
+  })),
   {
     name: "realworld-get",
     makeApp: (m) => m.makeNifraApp(),
@@ -69,10 +114,36 @@ const cases: {
           { headers: { "x-req-id": "bench-1" } },
         ),
     },
+    ...[88, 560].map((items) => {
+      const payload = JSON.stringify({
+        items: Array.from({ length: items }, (_, i) => ({
+          title: `task-${i}`,
+          done: i % 2 === 0,
+          priority: i % 5,
+          notes: "x".repeat(64),
+        })),
+      })
+      return {
+        name: `${generic ? "generic" : "closed"}-post-${items}`,
+        makeApp: (m: typeof before) => m.makeWorstNifraApp(generic),
+        makeRequest: () =>
+          new Request("http://bench/orgs/acme/projects/apollo/tasks", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-req-id": "bench-1" },
+            body: payload,
+          }),
+        post: true,
+      }
+    }),
   ]),
 ]
+const selected = arg("cases", "").split(",").filter(Boolean)
+if (selected.some((name) => !cases.some((workload) => workload.name === name)))
+  throw new Error("unknown case")
 const results: Record<string, Record<string, number[]>> = {}
-for (const workload of cases) {
+for (const workload of cases.filter(
+  (workload) => selected.length === 0 || selected.includes(workload.name),
+)) {
   const request = workload.makeRequest()
   const targets = [
     { name: "before", app: workload.makeApp(before) },
