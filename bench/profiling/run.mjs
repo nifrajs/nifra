@@ -286,18 +286,21 @@ async function probeTarget(server) {
       headers: w.headers,
       body: w.body,
     })
+    if (response.status !== 200) {
+      await response.text()
+      throw new Error(`${server.name}/${w.name}: expected 200, got ${response.status}`)
+    }
     const body = await response.json()
     if (response.headers.get("x-request-id") !== "bench-1") {
       throw new Error(`${server.name}/${w.name}: missing request-id header`)
     }
     if (
-      response.status !== 200 ||
-      (worst
+      worst
         ? body.org !== "acme" ||
           (w.body ? body.count !== JSON.parse(w.body).items.length : body.id !== "42")
         : w.body
           ? body.id !== "ord_new"
-          : body.orders?.length !== 10)
+          : body.orders?.length !== 10
     )
       throw new Error(`${server.name}/${w.name}: invalid response`)
   }
