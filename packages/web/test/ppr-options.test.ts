@@ -36,7 +36,7 @@ describe("PPR options", () => {
       maxHoleWork: 1024,
       writeGraceMs: 5000,
       maxUnsentBytesPerResponse: 1024 * 1024,
-      maxUnsentBytes: 256 * 1024 * 1024,
+      maxUnsentBytes: 64 * 1024 * 1024,
       frameBytes: 256 * 1024,
       minShellBytes: 1024,
       holeHtmlValidation: "always",

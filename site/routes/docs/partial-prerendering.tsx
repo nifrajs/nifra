@@ -370,7 +370,7 @@ export default function PartialPrerendering() {
         behind those connections: <code>maxHoleWork</code> responses with hole loaders running per
         process; a loader that ignores its abort stops being admitted; a response whose client stops
         reading sends its later holes as errors once 1 MB is unsent, and the slowest readers are cut
-        off when the process's unsent bytes pass 256 MB. It does not bound the number of open
+        off when the process's unsent bytes pass 64 MB. It does not bound the number of open
         sockets. Set a connection limit at the proxy or load balancer, or
         in the runtime where it offers one (Node's <code>server.maxConnections</code>).
       </p>

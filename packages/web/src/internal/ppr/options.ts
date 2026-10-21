@@ -99,7 +99,7 @@ export const PPR_DEFAULTS: ResolvedPprOptions = Object.freeze({
   maxHoleWork: 1_024,
   writeGraceMs: 5_000,
   maxUnsentBytesPerResponse: MB,
-  maxUnsentBytes: 256 * MB,
+  maxUnsentBytes: 64 * MB,
   frameBytes: 256 * 1024,
   minShellBytes: 1_024,
   holeHtmlValidation: "always",
