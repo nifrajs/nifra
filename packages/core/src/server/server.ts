@@ -589,6 +589,8 @@ export {
 export type { IdentityPlugin }
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
+const BODY_RESPONSE = (response: Response | ResponseResult): Response | ResponseResult => response
+const BODY_ERROR = (error: unknown): Promise<never> => Promise.reject(error)
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 const STOP_HOOK_TIMEOUT_MS = 5_000
@@ -4258,8 +4260,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
-    // Routing only needs the pathname. Scan the URL once but keep the two slices in locals instead
-    // of allocating the `{ pathname, search }` pair returned by the public helper on every request.
+    // Native delimiter searches keep path/query splitting out of a character-by-character JS loop.
+    // Keep the slices in locals instead of allocating the public helper's pathname/search pair.
     let pathname: string
     let search: string
     // Read the source's split ONCE. `urlParts` is an accessor on the Node request sources that
@@ -4278,20 +4280,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         pathname = "/"
         search = ""
       } else {
-        let pathEnd = rawUrl.length
-        let searchStart = -1
-        let searchEnd = rawUrl.length
-        for (let i = start; i < rawUrl.length; i++) {
-          const c = rawUrl.charCodeAt(i)
-          if (c === 63 /* ? */ && searchStart === -1) {
-            pathEnd = i
-            searchStart = i
-          } else if (c === 35 /* # */) {
-            if (searchStart === -1) pathEnd = i
-            searchEnd = i
-            break
-          }
-        }
+        const fragment = rawUrl.indexOf("#", start)
+        const searchEnd = fragment === -1 ? rawUrl.length : fragment
+        const question = rawUrl.indexOf("?", start)
+        const searchStart = question !== -1 && question < searchEnd ? question : -1
+        const pathEnd = searchStart === -1 ? searchEnd : searchStart
         pathname = rawUrl.slice(start, pathEnd)
         search = searchStart === -1 ? "" : rawUrl.slice(searchStart, searchEnd)
       }
@@ -6554,8 +6547,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       bodyLimit ?? UNLIMITED_BODY_BYTES,
       this.protoPoisoning,
       validate,
-      (response) => response,
-      (error) => Promise.reject(error),
+      BODY_RESPONSE,
+      BODY_ERROR,
       bodySchema,
       this.formOrigins,
     )
@@ -6569,15 +6562,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     kind: ProgramValidationKind,
   ): MaybePromise<Response | ResponseResult | undefined> {
-    const assign = (value: unknown): void => {
-      ;(ctx as unknown as Record<ProgramValidationKind, unknown>)[kind] = value
-    }
     if (result.issues === undefined) {
-      assign(result.value)
+      // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: RawContext carries every ProgramValidationKind slot; this instruction assigns its validated value before handlers run.
+      ;(ctx as unknown as Record<ProgramValidationKind, unknown>)[kind] = result.value
       return undefined
     }
     const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
     if (hook === undefined) return plainValidationError(result.issues)
+    const assign = (value: unknown): void => {
+      ;(ctx as unknown as Record<ProgramValidationKind, unknown>)[kind] = value
+    }
     const attempted = hook(result.issues, ctx as unknown as Context, kind)
     if (attempted instanceof Promise) {
       return attempted.then((recovery) =>
