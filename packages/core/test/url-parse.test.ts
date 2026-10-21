@@ -57,6 +57,23 @@ describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AU
     })
   })
 
+  test("delimiter searches preserve empty queries, long values, and fragments before question marks", async () => {
+    const app = server()
+      .beforeHandle(() => undefined)
+      .get("/p", (c) => c.query)
+    for (const query of ["", "?", "?x=?&x=2", `?x=${"a".repeat(4096)}`, "?x=a%20b&y=a+b"]) {
+      for (const fragment of ["", "#", "#ignored?x=wrong", "#?after#fragment"]) {
+        const url = `http://host/p${query}${fragment}`
+        const expected = new URL(url)
+        expect(urlPartsOf(url).pathname).toBe(expected.pathname)
+        expect([...new URLSearchParams(urlPartsOf(url).search)]).toEqual([...expected.searchParams])
+        const response = await app.fetch(new Request(url))
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual(queryObjectOf(expected.search))
+      }
+    }
+  })
+
   test.each([
     "?q=ada&limit=10",
     "?q=a?b&limit=10",
@@ -69,6 +86,9 @@ describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AU
     "?q=a+b",
     "?q=a%20b",
     "?bad=%E0%A4%A",
+    "?tag=a%20b&tag=c+d&tag=%F0%9F%8C%8D",
+    "?%5f%5fproto%5f%5f=one&__proto__=two&constructor=a%20b",
+    "?%ZZ=%E0%A4%A&empty=&bare&%26=%3D",
     "?",
     "",
     "?a&b=1&c&d=2&e",

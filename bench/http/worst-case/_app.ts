@@ -2,8 +2,9 @@
  * The nifra WORST-CASE app - shared verbatim by the Bun, Node, and Deno servers so every
  * runtime section measures the identical app.
  *
- * This app is deliberately constructed to miss EVERY nifra fast tier at once:
- *   - derive + beforeHandle + afterHandle registered  → hookful (generic) lifecycle lane
+ * This app stresses the hookful route shape. Set BENCH_GENERIC=1 to exclude fusion:
+ *   - derive + beforeHandle + afterHandle registered (eligible for closed-shape fusion)
+ *   - BENCH_GENERIC=1 adds a second before hook, selecting the generic lifecycle runner
  *   - multi-segment path params                       → no static-map route hit
  *   - validated query                                 → query materialization + validate
  *   - JSON body validation on the generic body stage → parse + validate after runtime framing
@@ -96,32 +97,36 @@ const traceQuery: StandardSchemaV1<unknown, { verbose: string; trace: string }> 
   },
 }
 
-export function makeWorstNifraApp() {
-  return (
-    server()
-      // Readiness probe only - defined BEFORE the hooks so it stays hook-free; never benched.
-      .get("/health", () => ({ ok: true }))
-      .derive((c) => ({ requestId: c.header("x-req-id") ?? "none" }))
-      .beforeHandle((c) =>
-        c.header("x-block") === "1"
-          ? Response.json({ error: "blocked" }, { status: 403 })
-          : undefined,
-      )
-      .afterHandle((result) => result)
-      .get("/orgs/:org/projects/:proj/tasks/:id", { query: traceQuery }, (c) => {
-        c.set.headers["x-request-id"] = c.requestId
-        c.set.headers["x-trace"] = c.query.trace
-        return { org: c.params.org, proj: c.params.proj, id: c.params.id, verbose: c.query.verbose }
-      })
-      .post("/orgs/:org/projects/:proj/tasks", { body: taskBatchBody }, (c) => {
-        c.set.headers["x-request-id"] = c.requestId
-        c.set.headers["x-count"] = String(c.body.items.length)
-        return {
-          org: c.params.org,
-          proj: c.params.proj,
-          count: c.body.items.length,
-          first: c.body.items[0]?.title ?? "",
-        }
-      })
-  )
+export function makeWorstNifraApp(
+  generic = process.env.BENCH_GENERIC === "1",
+  protoPoisoning: "reject" | "strip" | "ignore" = "reject",
+) {
+  const app = server({ protoPoisoning })
+    // Readiness probe only - defined BEFORE the hooks so it stays hook-free; never benched.
+    .get("/health", () => ({ ok: true }))
+    .derive((c) => ({ requestId: c.header("x-req-id") ?? "none" }))
+    .beforeHandle((c) =>
+      c.header("x-block") === "1"
+        ? Response.json({ error: "blocked" }, { status: 403 })
+        : undefined,
+    )
+    .afterHandle((result) => result)
+  // A second before hook excludes the closed one-derive/one-before fused lanes.
+  if (generic) app.beforeHandle(() => undefined)
+  return app
+    .get("/orgs/:org/projects/:proj/tasks/:id", { query: traceQuery }, (c) => {
+      c.set.headers["x-request-id"] = c.requestId
+      c.set.headers["x-trace"] = c.query.trace
+      return { org: c.params.org, proj: c.params.proj, id: c.params.id, verbose: c.query.verbose }
+    })
+    .post("/orgs/:org/projects/:proj/tasks", { body: taskBatchBody }, (c) => {
+      c.set.headers["x-request-id"] = c.requestId
+      c.set.headers["x-count"] = String(c.body.items.length)
+      return {
+        org: c.params.org,
+        proj: c.params.proj,
+        count: c.body.items.length,
+        first: c.body.items[0]?.title ?? "",
+      }
+    })
 }

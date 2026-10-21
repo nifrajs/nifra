@@ -1,0 +1,1426 @@
+{
+  "date": "2026-10-21",
+  "scope": "Additional prototype traversal, encoded-query, and generic validation work; all timings are local diagnostics",
+  "baseline": {
+    "description": "Prior-turn retained implementation, before round two",
+    "bunBundleSHA256": "c58df55759e0a61d23a05288f9a6011786fd2c61cad9fec7b78aad1b7bcd75bb",
+    "nodeBundleSHA256": "c6fdaba9cae30833af58e08ed0a0476d2efba3607205e353763398b33242d225"
+  },
+  "candidate": {
+    "bunBundleSHA256": "a775df9500cfc4b3dd13f8682f8c822206a424740d8f3a18533e5c42c4ed656e",
+    "nodeBundleSHA256": "a76514b82ed6547fbf7eae63d4dd083649aec232ef17655c3770ce1e922622d9"
+  },
+  "cpuAttributionBefore": {
+    "nifra": {
+      "total": 9478240,
+      "top": [
+        {
+          "frame": "sweep packages/core/dist/server/proto-guard.js:48",
+          "value": 3011025,
+          "share": 0.317677649015007
+        },
+        {
+          "frame": "(anonymous) :0",
+          "value": 2259272,
+          "share": 0.23836408447137866
+        },
+        {
+          "frame": "validate packages/core/dist/server/server.js:4309",
+          "value": 1583031,
+          "share": 0.16701739985482536
+        },
+        {
+          "frame": "pop :0",
+          "value": 1083812,
+          "share": 0.11434738938874728
+        },
+        {
+          "frame": "json :0",
+          "value": 412457,
+          "share": 0.0435162013200763
+        },
+        {
+          "frame": "runAsyncStages packages/core/dist/internal/route-program.js:422",
+          "value": 277980,
+          "share": 0.029328229713533313
+        },
+        {
+          "frame": "headerOf packages/core/dist/server/runtime-core.js:115",
+          "value": 208189,
+          "share": 0.02196494285858978
+        },
+        {
+          "frame": "jsonResponseWithOwnHeaders packages/core/dist/server/respond.js:166",
+          "value": 114638,
+          "share": 0.012094861493273013
+        },
+        {
+          "frame": "get :0",
+          "value": 102595,
+          "share": 0.010824266952514391
+        },
+        {
+          "frame": "set :0",
+          "value": 83700,
+          "share": 0.008830753388814802
+        },
+        {
+          "frame": "isTaskBatch bench/http/worst-case/_app.ts:55",
+          "value": 64085,
+          "share": 0.006761276355103901
+        },
+        {
+          "frame": "applyLifecycleValidation packages/core/dist/server/server.js:4319",
+          "value": 59507,
+          "share": 0.006278275291615321
+        },
+        {
+          "frame": "continueProgram packages/core/dist/internal/route-program.js:393",
+          "value": 33035,
+          "share": 0.003485351710866152
+        },
+        {
+          "frame": "readBoundedJsonSource packages/core/dist/server/body-lane.js:13",
+          "value": 30398,
+          "share": 0.003207135501949729
+        },
+        {
+          "frame": "asyncFunctionDrive :0",
+          "value": 21416,
+          "share": 0.0022594912135586354
+        },
+        {
+          "frame": "fetchMatched packages/core/dist/server/server.js:2080",
+          "value": 12206,
+          "share": 0.0012877918263306267
+        },
+        {
+          "frame": "readAndValidateBody packages/core/dist/server/server.js:4304",
+          "value": 12162,
+          "share": 0.00128314961427438
+        },
+        {
+          "frame": "finishLifecycleContract packages/core/dist/server/server.js:4185",
+          "value": 10573,
+          "share": 0.001115502456152197
+        },
+        {
+          "frame": "(anonymous) bench/http/worst-case/_app.ts:104",
+          "value": 9939,
+          "share": 0.00104861240061446
+        },
+        {
+          "frame": "markResidentBody packages/core/dist/mount.js:55",
+          "value": 9093,
+          "share": 0.0009593553233511707
+        },
+        {
+          "frame": "LazyResponseControls :1",
+          "value": 8505,
+          "share": 0.0008973184895086008
+        },
+        {
+          "frame": "validate bench/http/worst-case/_app.ts:78",
+          "value": 6956,
+          "share": 0.0007338915241648238
+        },
+        {
+          "frame": "isTaskItem bench/http/worst-case/_app.ts:38",
+          "value": 5858,
+          "share": 0.0006180472323975759
+        },
+        {
+          "frame": "renderValue packages/core/dist/server/respond.js:512",
+          "value": 5817,
+          "share": 0.0006137215347997096
+        },
+        {
+          "frame": "status packages/core/dist/server/runtime-core.js:48",
+          "value": 5792,
+          "share": 0.0006110839143132059
+        }
+      ]
+    },
+    "elysia": {
+      "total": 8658976,
+      "top": [
+        {
+          "frame": "(anonymous) :0",
+          "value": 3396881,
+          "share": 0.3922959250608848
+        },
+        {
+          "frame": "(anonymous) :3",
+          "value": 2578215,
+          "share": 0.2977505654248262
+        },
+        {
+          "frame": "json :0",
+          "value": 1085464,
+          "share": 0.12535708610348384
+        },
+        {
+          "frame": "handle :6",
+          "value": 570652,
+          "share": 0.0659029427960073
+        },
+        {
+          "frame": "check :3",
+          "value": 482122,
+          "share": 0.055678870111200214
+        },
+        {
+          "frame": "(anonymous) :7",
+          "value": 290148,
+          "share": 0.0335083501790512
+        },
+        {
+          "frame": "toJSON :0",
+          "value": 144637,
+          "share": 0.01670370722819881
+        },
+        {
+          "frame": "(anonymous) bench/http/worst-case/_elysia-app.ts:41",
+          "value": 29666,
+          "share": 0.0034260402153788163
+        },
+        {
+          "frame": "map :1",
+          "value": 24669,
+          "share": 0.0028489511923811776
+        },
+        {
+          "frame": "asyncFunctionDrive :0",
+          "value": 16439,
+          "share": 0.0018984923852427816
+        },
+        {
+          "frame": "createBunRouteHandler node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/adapter/bun/compose.mjs:32",
+          "value": 15353,
+          "share": 0.001773073398055382
+        },
+        {
+          "frame": "checksum node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/utils.mjs:189",
+          "value": 7993,
+          "share": 0.0009230883651831348
+        },
+        {
+          "frame": "anonymous :1",
+          "value": 4100,
+          "share": 0.0004734970971163334
+        },
+        {
+          "frame": "importModule :0",
+          "value": 1780,
+          "share": 0.00020556703240660329
+        },
+        {
+          "frame": "mapRoutes node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/adapter/bun/index.mjs:43",
+          "value": 1071,
+          "share": 0.0001236866807345349
+        },
+        {
+          "frame": "composeHandler node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/compose.mjs:212",
+          "value": 727,
+          "share": 0.00008395911941550594
+        },
+        {
+          "frame": "map :4",
+          "value": 710,
+          "share": 0.00008199583876892602
+        },
+        {
+          "frame": "Set node_modules/.bun/@sinclair+typebox@0.34.52/node_modules/@sinclair/typebox/build/esm/type/registry/format.mjs:20",
+          "value": 664,
+          "share": 0.00007668343231347449
+        },
+        {
+          "frame": "serve :0",
+          "value": 642,
+          "share": 0.00007414271618260635
+        },
+        {
+          "frame": "Visit node_modules/.bun/@sinclair+typebox@0.34.52/node_modules/@sinclair/typebox/build/esm/compiler/compiler.mjs:449",
+          "value": 626,
+          "share": 0.00007229492263288407
+        },
+        {
+          "frame": "generatorResume :1",
+          "value": 381,
+          "share": 0.00004400058390276171
+        },
+        {
+          "frame": "getSchemaValidator node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/schema.mjs:198",
+          "value": 353,
+          "share": 0.00004076694519074773
+        },
+        {
+          "frame": "add node_modules/.bun/memoirist@0.4.0/node_modules/memoirist/src/index.ts:116",
+          "value": 350,
+          "share": 0.0000404204839001748
+        },
+        {
+          "frame": "FromObject node_modules/.bun/@sinclair+typebox@0.34.52/node_modules/@sinclair/typebox/build/esm/value/transform/has.mjs:46",
+          "value": 346,
+          "share": 0.000039958535512744235
+        },
+        {
+          "frame": "createValidator node_modules/.bun/elysia@1.4.30+2e77dd3e94e7c016/node_modules/elysia/dist/index.mjs:319",
+          "value": 344,
+          "share": 0.000039727561319028945
+        }
+      ]
+    }
+  },
+  "guard": {
+    "bun": {
+      "meta": {
+        "runtime": "1.4.3",
+        "rounds": 8,
+        "count": 30000,
+        "scope": "prototype guard on reused parsed clean JSON values; no parsing or network"
+      },
+      "results": {
+        "scalar": {
+          "before": [
+            9.569433333333333, 6.351366666666666, 6.195833333333334, 6.193033333333333,
+            6.358333333333333, 6.6514, 6.1986, 6.175
+          ],
+          "after": [
+            8.451366666666667, 8.005566666666667, 6.666666666666667, 6.4736, 6.383333333333334,
+            6.933333333333334, 7.304166666666666, 6.8472333333333335
+          ]
+        },
+        "flat": {
+          "before": [
+            24.6111, 14.216666666666667, 13.7653, 14.743066666666667, 13.973633333333334,
+            15.444466666666667, 14.506966666666667, 13.765266666666667
+          ],
+          "after": [
+            25.830566666666666, 26.079166666666666, 14.65, 15.102766666666666, 17.244466666666668,
+            15.2, 15.204166666666667, 15.0986
+          ]
+        },
+        "wide": {
+          "before": [
+            2805.304166666667, 2853.1152666666667, 2787.4791666666665, 2713.640266666667,
+            2791.819466666667, 2800.6430666666665, 2731.8639, 2742.780566666667
+          ],
+          "after": [
+            3545.016666666667, 2892.9, 2752.9333333333334, 2744.084733333333, 2732.7486,
+            2727.366666666667, 2571.6597333333334, 2655.2847
+          ]
+        },
+        "items-88": {
+          "before": [
+            1243.8930333333333, 1281.6153, 1288.4639, 1267.2847333333334, 1245.9222333333332,
+            1245.1777666666667, 1254.7375, 1250.6666666666667
+          ],
+          "after": [
+            1135.3125, 1126.2541666666666, 1167.1889, 1150.9597, 1135.2638666666667,
+            1126.5472333333332, 1127.0403, 1122.6944333333333
+          ]
+        },
+        "items-560": {
+          "before": [
+            7657.35, 7664.3611, 7583.2125, 7522.8972, 7592.954166666666, 7637.2125, 7478.8389,
+            7522.4486
+          ],
+          "after": [
+            6526.6694333333335, 7253.5805666666665, 6497.269433333333, 6532.304166666667,
+            6591.168033333333, 6528.4889, 6578.995833333333, 6538.8611
+          ]
+        },
+        "scalar-array": {
+          "before": [
+            3150.3805666666667, 3118.844433333333, 3140.156933333333, 3098.991666666667, 3101.0014,
+            3129.5180666666665, 3102.4555666666665, 3167.405566666667
+          ],
+          "after": [
+            3094.061133333333, 3104.469433333333, 3132.243066666667, 3121.4347333333335,
+            3102.811133333333, 3123.054166666667, 3096.5, 3138.4736333333335
+          ]
+        },
+        "nested": {
+          "before": [
+            95.0764, 93.39166666666667, 93.18056666666666, 99.21666666666667, 97.2236,
+            94.97083333333333, 95.97776666666667, 97.47776666666667
+          ],
+          "after": [
+            68.2097, 71.18196666666667, 70.77916666666667, 67.84583333333333, 67.97916666666667,
+            67.2111, 67.89443333333334, 67.13473333333333
+          ]
+        }
+      }
+    },
+    "node": {
+      "meta": {
+        "runtime": "v26.12.0",
+        "rounds": 8,
+        "count": 30000,
+        "scope": "prototype guard on reused parsed clean JSON values; no parsing or network"
+      },
+      "results": {
+        "scalar": {
+          "before": [
+            13.352766666666666, 9.879166666666666, 10.469433333333333, 9.884733333333333,
+            9.866666666666667, 10.1486, 10, 9.844466666666667
+          ],
+          "after": [
+            12.831933333333334, 9.145833333333334, 10.4764, 6.1625, 9.8472, 10.0875,
+            9.855566666666666, 9.8528
+          ]
+        },
+        "flat": {
+          "before": [
+            55.543033333333334, 45.5986, 51.5097, 47.5264, 49.97083333333333, 46.291666666666664,
+            48.94306666666667, 48.94166666666667
+          ],
+          "after": [
+            51.6375, 50.09863333333333, 45.954166666666666, 48.8361, 47.6125, 48.78333333333333,
+            44.6486, 49.57223333333334
+          ]
+        },
+        "wide": {
+          "before": [
+            475.30696666666665, 473.4180666666667, 467.64026666666666, 466.0597333333333,
+            465.39026666666666, 463.85693333333336, 463.3097333333333, 462.7472333333333
+          ],
+          "after": [
+            471.04723333333334, 473.8222333333333, 466.2847, 469.4694333333333, 463.1014,
+            465.05556666666666, 460.64306666666664, 464.1555333333333
+          ]
+        },
+        "items-88": {
+          "before": [
+            1474.3097333333333, 1508.9375, 1458.9403, 1435.8541666666667, 1430.5902666666666,
+            1455.3208333333334, 1469.6652666666666, 1457.3708333333334
+          ],
+          "after": [
+            1493.0166666666667, 1506.6972333333333, 1453.8583333333333, 1433.5611,
+            1440.8180666666667, 1477.5083333333334, 1462.4625, 1458.6152666666667
+          ]
+        },
+        "items-560": {
+          "before": [
+            9092.9, 8720.8653, 8901.483333333334, 8767.1639, 8803.731933333333, 8741.588866666667,
+            8768.995833333332, 9072.445833333333
+          ],
+          "after": [
+            8811.0375, 8865.505533333333, 8771.2347, 8882.359733333333, 8807.179166666667,
+            8919.1125, 8877.475, 8846.727766666667
+          ]
+        },
+        "scalar-array": {
+          "before": [
+            3346.2847333333334, 3401.3013666666666, 3372.175, 3371.8458333333333, 3415.9514,
+            3345.9166666666665, 3374.647233333333, 3341.6305333333335
+          ],
+          "after": [
+            3346.2680666666665, 3402.9555666666665, 3359.9319333333333, 3345.4764,
+            3357.743066666667, 3333.618066666667, 3419.0597333333335, 3353.4625
+          ]
+        },
+        "nested": {
+          "before": [
+            97.0236, 94.1361, 99, 98.0403, 95.8625, 95.15833333333333, 96.8125, 95.30696666666667
+          ],
+          "after": [
+            96.25, 96.99583333333334, 96.49446666666667, 94.91666666666667, 96.5139,
+            94.92223333333334, 95.7889, 97.9028
+          ]
+        }
+      }
+    }
+  },
+  "query": {
+    "bun": {
+      "meta": {
+        "runtime": "1.4.3",
+        "rounds": 8,
+        "count": 100000,
+        "scope": "query materialization; repeated input string; no routing or network"
+      },
+      "results": {
+        "plain": {
+          "before": [
+            118.98958, 98.39542, 111.0075, 104.94292, 106.4475, 126.58042, 103.15875, 100.6375
+          ],
+          "after": [
+            125.24542, 109.36833, 99.58417, 93.95959, 97.3425, 104.67458, 103.24625, 103.43208
+          ]
+        },
+        "encoded": {
+          "before": [
+            369.4775, 360.52375, 342.33375, 326.6525, 333.50417, 364.04959, 360.49542, 348.15792
+          ],
+          "after": [
+            297.95375, 304.23625, 268.52584, 276.285, 283.26792, 303.65291, 291.38542, 305.82459
+          ]
+        },
+        "plus": {
+          "before": [
+            403.64792, 449.55458, 466.92459, 610.30583, 499.05834, 431.28125, 438.89667, 458.43041
+          ],
+          "after": [
+            306.78375, 299.75458, 327.50083, 344.57417, 366.17833, 338.52166, 342.03458, 351.09167
+          ]
+        },
+        "repeated": {
+          "before": [
+            614.38958, 577.80708, 548.56041, 520.43, 519.32125, 573.15209, 557.81875, 616.61792
+          ],
+          "after": [
+            486.665, 459.25166, 459.69084, 425.2525, 425.37542, 472.05125, 424.21375, 507.35042
+          ]
+        },
+        "malformed": {
+          "before": [
+            718.055, 734.61584, 745.285, 703.45417, 679.67125, 710.34834, 646.31958, 750.14041
+          ],
+          "after": [
+            563.95417, 580.85333, 603.57708, 568.10834, 612.61209, 579.3575, 581.6525, 580.62667
+          ]
+        },
+        "encoded-16": {
+          "before": [
+            3034.49417, 3056.2325, 3071.075, 2962.81083, 2957.02417, 3131.56625, 2904.28625,
+            3372.91458
+          ],
+          "after": [
+            2394.51584, 2553.34417, 2341.05, 2404.11167, 2445.69375, 2294.32791, 2557.39208,
+            2629.32292
+          ]
+        }
+      }
+    },
+    "node": {
+      "meta": {
+        "runtime": "v26.12.0",
+        "rounds": 8,
+        "count": 100000,
+        "scope": "query materialization; repeated input string; no routing or network"
+      },
+      "results": {
+        "plain": {
+          "before": [
+            171.65, 189.30042, 175.49125, 166.98125, 174.665, 179.58125, 187.84042, 192.17167
+          ],
+          "after": [
+            173.74333, 171.97166, 176.03208, 171.32958, 178.38959, 182.57709, 189.36959, 190.82292
+          ]
+        },
+        "encoded": {
+          "before": [
+            572.01792, 512.79667, 463.39084, 411.05875, 407.89959, 403.81167, 408.36958, 411.48458
+          ],
+          "after": [
+            577.15166, 571.26958, 394.18167, 382.83875, 379.12292, 385.77083, 382.43917, 401.96292
+          ]
+        },
+        "plus": {
+          "before": [
+            432.89625, 443.13333, 484.25667, 485.81875, 472.54083, 483.17958, 503.29583, 492.32958
+          ],
+          "after": [
+            393.65917, 390.82917, 442.75958, 450.65833, 435.2, 426.41208, 464.575, 458.17583
+          ]
+        },
+        "repeated": {
+          "before": [
+            889.1725, 850.06083, 915.80292, 849.48667, 869.57041, 769.25917, 740.94958, 734.6825
+          ],
+          "after": [
+            846.97167, 878.41083, 829.16209, 813.38666, 822.45625, 762.65292, 705.34458, 701.99792
+          ]
+        },
+        "malformed": {
+          "before": [
+            2937.44875, 2898.44667, 2799.84916, 2829.04292, 2799.91959, 2819.01584, 2831.50959,
+            2831.36
+          ],
+          "after": [
+            2861.49, 2898.41167, 2789.59375, 2838.03417, 2778.67084, 2806.02458, 2770.16291,
+            2762.69334
+          ]
+        },
+        "encoded-16": {
+          "before": [
+            3792.20958, 3736.86959, 3709.73584, 3753.49542, 3728.44458, 3851.24917, 3737.29541,
+            3734.40333
+          ],
+          "after": [
+            3702.61125, 3641.52875, 3603.15959, 3606.91333, 3655.98416, 3681.21167, 3648.78584,
+            3616.86958
+          ]
+        }
+      }
+    }
+  },
+  "bunProducer": {
+    "meta": {
+      "bun": "1.4.3",
+      "rounds": 8,
+      "count": 100000
+    },
+    "results": {
+      "realworld-get": {
+        "before": [
+          2958.20709, 2767.29333, 2533.98375, 2712.31875, 2567.78125, 2527.68292, 2516.88, 2577.67
+        ],
+        "after": [
+          2722.16084, 2646.43, 2477.52042, 2638.21666, 2532.02875, 2569.715, 2470.42375, 2511.4425
+        ]
+      },
+      "realworld-post": {
+        "before": [
+          15170.1104, 14708.5021, 14649.63125, 14699.35415, 14196.35835, 14562.8875, 13966.54585,
+          15404.35
+        ],
+        "after": [
+          15082.1083, 14776.725, 14562.56455, 14705.1125, 14471.90625, 14664.4771, 14319.9354,
+          15009.8771
+        ]
+      },
+      "closed-get": {
+        "before": [
+          1001.36375, 910.52458, 938.92625, 918.5475, 903.26167, 913.87916, 959.595, 932.89625
+        ],
+        "after": [
+          988.8025, 931.90417, 949.81875, 942.51375, 968.615, 947.33667, 966.6125, 957.31834
+        ]
+      },
+      "closed-encoded": {
+        "before": [
+          1379.91625, 1330.3775, 1333.62625, 1349.07958, 1321.74333, 1362.0325, 1353.59208,
+          1334.28167
+        ],
+        "after": [
+          1267.38875, 1234.47167, 1242.58584, 1257.945, 1263.58167, 1248.18084, 1227.48542,
+          1236.09667
+        ]
+      },
+      "closed-long-query": {
+        "before": [
+          1501.77833, 1481.22125, 1427.55083, 1440.285, 1503.26209, 1499.075, 1529.78792, 1511.88125
+        ],
+        "after": [
+          1493.35042, 1501.04084, 1453.51417, 1453.78958, 1487.88208, 1519.65375, 1532.08959,
+          1470.67375
+        ]
+      },
+      "generic-get": {
+        "before": [
+          1105.08792, 1058.87583, 976.14042, 1079.76708, 1081.71375, 988.84042, 1062.265, 1000.26417
+        ],
+        "after": [
+          1047.67041, 1072.94834, 1051.545, 922.30291, 990.93333, 994.87166, 884.02042, 927.45167
+        ]
+      },
+      "generic-encoded": {
+        "before": [
+          1502.24, 1427.81958, 1505.26334, 1458.03791, 1489.7975, 1445.86583, 1486.39625, 1424.00084
+        ],
+        "after": [
+          1244.76667, 1347.67541, 1371.93625, 1232.51959, 1275.4975, 1209.22333, 1384.86125,
+          1254.76209
+        ]
+      },
+      "generic-long-query": {
+        "before": [
+          1600.90959, 1626.82334, 1664.67042, 1431.51333, 1741.78042, 1565.285, 1664.34958,
+          1578.44125
+        ],
+        "after": [
+          1602.33167, 1748.40167, 1646.1975, 1463.85708, 1614.30125, 1615.345, 1496.88709,
+          1591.17083
+        ]
+      }
+    }
+  },
+  "bunHttpMatched": {
+    "note": "Both Nifra variants bundled, same diagnostic entry; five untimed batches per workload and peer",
+    "meta": {
+      "bun": "1.4.3",
+      "runs": 6,
+      "scalePct": 50,
+      "connections": 50,
+      "generic": true
+    },
+    "results": {
+      "bun": {
+        "nifra": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 107730,
+            "p50ms": 0.42075,
+            "p99ms": 1.00875
+          },
+          "POST worst 10.4KB body": {
+            "rps": 46992,
+            "p50ms": 0.9879159999999999,
+            "p99ms": 2.094625
+          },
+          "POST worst 66.3KB body": {
+            "rps": 12161,
+            "p50ms": 4.0377909999999995,
+            "p99ms": 8.125333
+          }
+        },
+        "elysia": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 107617,
+            "p50ms": 0.424375,
+            "p99ms": 1.00525
+          },
+          "POST worst 10.4KB body": {
+            "rps": 50046,
+            "p50ms": 0.897625,
+            "p99ms": 2.072125
+          },
+          "POST worst 66.3KB body": {
+            "rps": 13110,
+            "p50ms": 3.735792,
+            "p99ms": 7.429209
+          }
+        },
+        "nifra-before": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 105815,
+            "p50ms": 0.466666,
+            "p99ms": 1.0025
+          },
+          "POST worst 10.4KB body": {
+            "rps": 47211,
+            "p50ms": 0.962375,
+            "p99ms": 2.105
+          },
+          "POST worst 66.3KB body": {
+            "rps": 11835,
+            "p50ms": 4.155749999999999,
+            "p99ms": 8.314084
+          }
+        }
+      }
+    },
+    "failures": []
+  },
+  "bunHttpNativeCandidate": {
+    "note": "Diagnostic only: native candidate versus bundled baseline; packaging differs",
+    "meta": {
+      "bun": "1.4.3",
+      "runs": 6,
+      "scalePct": 50,
+      "connections": 50,
+      "generic": true
+    },
+    "results": {
+      "bun": {
+        "nifra": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 104755,
+            "p50ms": 0.4705,
+            "p99ms": 1.010375
+          },
+          "POST worst 10.4KB body": {
+            "rps": 47561,
+            "p50ms": 0.970291,
+            "p99ms": 2.136292
+          },
+          "POST worst 66.3KB body": {
+            "rps": 12146,
+            "p50ms": 4.0505,
+            "p99ms": 8.160416999999999
+          }
+        },
+        "elysia": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 104337,
+            "p50ms": 0.451958,
+            "p99ms": 0.9963339999999999
+          },
+          "POST worst 10.4KB body": {
+            "rps": 50083,
+            "p50ms": 0.905834,
+            "p99ms": 2.043958
+          },
+          "POST worst 66.3KB body": {
+            "rps": 13031,
+            "p50ms": 3.77725,
+            "p99ms": 7.556666
+          }
+        },
+        "nifra-before": {
+          "GET worst (3 hooks + 3 params + query + dyn headers)": {
+            "rps": 105893,
+            "p50ms": 0.457583,
+            "p99ms": 0.996792
+          },
+          "POST worst 10.4KB body": {
+            "rps": 45950,
+            "p50ms": 1.03125,
+            "p99ms": 2.256917
+          },
+          "POST worst 66.3KB body": {
+            "rps": 11634,
+            "p50ms": 4.1901660000000005,
+            "p99ms": 8.473042
+          }
+        }
+      }
+    },
+    "failures": []
+  },
+  "nodeAllocation": {
+    "note": "Four balanced windows; sampled JS allocations include collected objects. Profiled throughput is not used as a speedup claim.",
+    "meta": {
+      "suite": "generic",
+      "mode": "heap",
+      "packaging": "bundled-nifra",
+      "completed": true,
+      "rounds": 4,
+      "requests": 30000,
+      "warmupRequests": 20000,
+      "connections": 50,
+      "workloads": ["get", "post-11kb", "post-69kb"],
+      "node": "v26.12.0",
+      "platform": "darwin 24.6.0",
+      "cpu": "Apple M3 Max",
+      "versions": {
+        "@nifrajs/core": "5.5.1",
+        "fastify": "5.12.7",
+        "elysia": "1.4.30",
+        "@elysiajs/node": "1.4.5",
+        "hono": "4.13.13",
+        "express": "5.3.0"
+      },
+      "nifraBundleSHA256": "6db90700940aec851b5416c79bba403227ecea79e0d2c1a3cdf56f599614b8b2",
+      "date": "2026-10-21T10:35:09.131Z",
+      "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+    },
+    "samples": [
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 0,
+        "rps": 68434.90414432473,
+        "cpuUsPerRequest": 18.683066666666665,
+        "allocatedBytesPerRequest": 6513.2776
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 0,
+        "rps": 56200.80237960491,
+        "cpuUsPerRequest": 20.177033333333334,
+        "allocatedBytesPerRequest": 6550.0712
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 1,
+        "rps": 50264.11345433398,
+        "cpuUsPerRequest": 21.339366666666667,
+        "allocatedBytesPerRequest": 6604.7256
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 1,
+        "rps": 51831.293231747404,
+        "cpuUsPerRequest": 20.926066666666667,
+        "allocatedBytesPerRequest": 6507.181866666667
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 2,
+        "rps": 54534.46089390616,
+        "cpuUsPerRequest": 19.727233333333334,
+        "allocatedBytesPerRequest": 6340.323466666667
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 2,
+        "rps": 54659.21199311732,
+        "cpuUsPerRequest": 20.426333333333332,
+        "allocatedBytesPerRequest": 6371.651466666666
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 3,
+        "rps": 54326.27272875435,
+        "cpuUsPerRequest": 20.178066666666666,
+        "allocatedBytesPerRequest": 6431.457866666667
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 3,
+        "rps": 54249.28638589963,
+        "cpuUsPerRequest": 20.110333333333333,
+        "allocatedBytesPerRequest": 6589.8272
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 0,
+        "rps": 23087.084359843782,
+        "cpuUsPerRequest": 48.3281,
+        "allocatedBytesPerRequest": 35300.652
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 0,
+        "rps": 22172.49288470476,
+        "cpuUsPerRequest": 49.81933333333333,
+        "allocatedBytesPerRequest": 35466.62613333333
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 1,
+        "rps": 23679.55406663782,
+        "cpuUsPerRequest": 46.34576666666667,
+        "allocatedBytesPerRequest": 35411.483733333334
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 1,
+        "rps": 23237.053941299535,
+        "cpuUsPerRequest": 46.945433333333334,
+        "allocatedBytesPerRequest": 35463.6464
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 2,
+        "rps": 22311.67481693059,
+        "cpuUsPerRequest": 48.80023333333333,
+        "allocatedBytesPerRequest": 35731.84106666667
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 2,
+        "rps": 24163.469096678502,
+        "cpuUsPerRequest": 46.13163333333333,
+        "allocatedBytesPerRequest": 35334.3512
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 3,
+        "rps": 24061.313037883134,
+        "cpuUsPerRequest": 46.2253,
+        "allocatedBytesPerRequest": 35456.62586666667
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 3,
+        "rps": 23227.79503859315,
+        "cpuUsPerRequest": 47.419,
+        "allocatedBytesPerRequest": 35666.18293333333
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 0,
+        "rps": 5862.810335472593,
+        "cpuUsPerRequest": 183.85526666666667,
+        "allocatedBytesPerRequest": 177227.9136
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 0,
+        "rps": 6050.553534063154,
+        "cpuUsPerRequest": 177.49856666666668,
+        "allocatedBytesPerRequest": 177452.95253333333
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 1,
+        "rps": 6148.812430756981,
+        "cpuUsPerRequest": 173.35573333333335,
+        "allocatedBytesPerRequest": 177827.69306666666
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 1,
+        "rps": 6094.484932985805,
+        "cpuUsPerRequest": 176.5439,
+        "allocatedBytesPerRequest": 177476.5712
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 2,
+        "rps": 6151.7850963627025,
+        "cpuUsPerRequest": 175.43836666666667,
+        "allocatedBytesPerRequest": 177867.3904
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 2,
+        "rps": 6077.9433436512645,
+        "cpuUsPerRequest": 175.6902,
+        "allocatedBytesPerRequest": 177926.37146666666
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 3,
+        "rps": 6305.602606736117,
+        "cpuUsPerRequest": 168.91126666666668,
+        "allocatedBytesPerRequest": 177616.7704
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 3,
+        "rps": 6059.219069862514,
+        "cpuUsPerRequest": 178.0954,
+        "allocatedBytesPerRequest": 177234.23973333332
+      }
+    ]
+  },
+  "nodeTimingInitial": {
+    "note": "Highly variable windows; GET required a longer isolated repeat. Do not use for a consistency claim.",
+    "meta": {
+      "suite": "generic",
+      "mode": "metrics",
+      "packaging": "bundled-nifra",
+      "completed": true,
+      "rounds": 6,
+      "requests": 100000,
+      "warmupRequests": 100000,
+      "connections": 50,
+      "workloads": ["get", "post-11kb", "post-69kb"],
+      "node": "v26.12.0",
+      "platform": "darwin 24.6.0",
+      "cpu": "Apple M3 Max",
+      "versions": {
+        "@nifrajs/core": "5.5.1",
+        "fastify": "5.12.7",
+        "elysia": "1.4.30",
+        "@elysiajs/node": "1.4.5",
+        "hono": "4.13.13",
+        "express": "5.3.0"
+      },
+      "nifraBundleSHA256": "6db90700940aec851b5416c79bba403227ecea79e0d2c1a3cdf56f599614b8b2",
+      "date": "2026-10-21T10:36:14.348Z",
+      "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+    },
+    "samples": [
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 0,
+        "rps": 73204.86349277543,
+        "cpuUsPerRequest": 15.12823
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 0,
+        "rps": 62640.6690968582,
+        "cpuUsPerRequest": 16.32113
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 1,
+        "rps": 40593.58235337611,
+        "cpuUsPerRequest": 23.29971
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 1,
+        "rps": 55344.38343388459,
+        "cpuUsPerRequest": 19.7984
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 2,
+        "rps": 61126.03634709504,
+        "cpuUsPerRequest": 16.73827
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 2,
+        "rps": 53494.08425478645,
+        "cpuUsPerRequest": 19.47224
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 3,
+        "rps": 53619.58085086783,
+        "cpuUsPerRequest": 19.51691
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 3,
+        "rps": 64117.57110778893,
+        "cpuUsPerRequest": 17.46574
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 4,
+        "rps": 69825.41116038749,
+        "cpuUsPerRequest": 16.0377
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 4,
+        "rps": 67491.20295869987,
+        "cpuUsPerRequest": 16.4358
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 5,
+        "rps": 71411.98089515275,
+        "cpuUsPerRequest": 15.5294
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 5,
+        "rps": 52306.83266501547,
+        "cpuUsPerRequest": 20.81217
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 0,
+        "rps": 20747.921596405256,
+        "cpuUsPerRequest": 51.73203
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 0,
+        "rps": 22685.12500753489,
+        "cpuUsPerRequest": 47.05273
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 1,
+        "rps": 18923.59605190392,
+        "cpuUsPerRequest": 56.27961
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 1,
+        "rps": 20994.90314903268,
+        "cpuUsPerRequest": 50.54747
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 2,
+        "rps": 17149.10823779708,
+        "cpuUsPerRequest": 61.77275
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 2,
+        "rps": 13676.26452665038,
+        "cpuUsPerRequest": 76.43771
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 3,
+        "rps": 16045.154489410976,
+        "cpuUsPerRequest": 63.40927
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 3,
+        "rps": 17786.95255035962,
+        "cpuUsPerRequest": 59.92183
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 4,
+        "rps": 21753.93769701307,
+        "cpuUsPerRequest": 49.40794
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 4,
+        "rps": 17677.5308572902,
+        "cpuUsPerRequest": 59.26777
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-11kb",
+        "round": 5,
+        "rps": 19595.961805909035,
+        "cpuUsPerRequest": 54.77915
+      },
+      {
+        "target": "nifra",
+        "workload": "post-11kb",
+        "round": 5,
+        "rps": 18170.209482755232,
+        "cpuUsPerRequest": 57.88754
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 0,
+        "rps": 5400.090269064557,
+        "cpuUsPerRequest": 193.99058
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 0,
+        "rps": 4488.087295070864,
+        "cpuUsPerRequest": 226.78063
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 1,
+        "rps": 6351.430492329622,
+        "cpuUsPerRequest": 164.41045
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 1,
+        "rps": 6567.092165038306,
+        "cpuUsPerRequest": 162.54227
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 2,
+        "rps": 5649.641666886944,
+        "cpuUsPerRequest": 187.81538
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 2,
+        "rps": 6786.400084768923,
+        "cpuUsPerRequest": 154.47784
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 3,
+        "rps": 7148.470969356091,
+        "cpuUsPerRequest": 145.41955
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 3,
+        "rps": 7047.697122678982,
+        "cpuUsPerRequest": 148.90147
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 4,
+        "rps": 6922.285978687371,
+        "cpuUsPerRequest": 151.76659
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 4,
+        "rps": 6890.802320016935,
+        "cpuUsPerRequest": 154.64327
+      },
+      {
+        "target": "nifra-before",
+        "workload": "post-69kb",
+        "round": 5,
+        "rps": 6788.423145359521,
+        "cpuUsPerRequest": 155.02765
+      },
+      {
+        "target": "nifra",
+        "workload": "post-69kb",
+        "round": 5,
+        "rps": 7011.4204496222865,
+        "cpuUsPerRequest": 149.91857
+      }
+    ]
+  },
+  "nodeGetRepeat": {
+    "note": "Eight balanced 500000-request windows after 500000 warmup requests per variant; no CPU/allocation sampler.",
+    "meta": {
+      "suite": "generic",
+      "mode": "metrics",
+      "packaging": "bundled-nifra",
+      "completed": true,
+      "rounds": 8,
+      "requests": 500000,
+      "warmupRequests": 500000,
+      "connections": 50,
+      "workloads": ["get"],
+      "node": "v26.12.0",
+      "platform": "darwin 24.6.0",
+      "cpu": "Apple M3 Max",
+      "versions": {
+        "@nifrajs/core": "5.5.1",
+        "fastify": "5.12.7",
+        "elysia": "1.4.30",
+        "@elysiajs/node": "1.4.5",
+        "hono": "4.13.13",
+        "express": "5.3.0"
+      },
+      "nifraBundleSHA256": "a76514b82ed6547fbf7eae63d4dd083649aec232ef17655c3770ce1e922622d9",
+      "date": "2026-10-21T10:45:07.657Z",
+      "head": "4432d483c2ba5c7656573363c7c67d1934332e5e"
+    },
+    "samples": [
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 0,
+        "rps": 86983.31765356392,
+        "cpuUsPerRequest": 11.535696
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 0,
+        "rps": 85917.99544037494,
+        "cpuUsPerRequest": 11.569294
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 1,
+        "rps": 93947.82622539805,
+        "cpuUsPerRequest": 10.960936
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 1,
+        "rps": 98896.32606007306,
+        "cpuUsPerRequest": 10.433944
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 2,
+        "rps": 91785.7210442903,
+        "cpuUsPerRequest": 11.185056
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 2,
+        "rps": 97025.51545472135,
+        "cpuUsPerRequest": 10.623116
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 3,
+        "rps": 98171.37489587592,
+        "cpuUsPerRequest": 10.486932
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 3,
+        "rps": 89793.44409983218,
+        "cpuUsPerRequest": 11.477192
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 4,
+        "rps": 91829.06017949835,
+        "cpuUsPerRequest": 10.796448
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 4,
+        "rps": 99786.30182707455,
+        "cpuUsPerRequest": 10.329412
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 5,
+        "rps": 102368.97767521939,
+        "cpuUsPerRequest": 10.061458
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 5,
+        "rps": 99818.49669352437,
+        "cpuUsPerRequest": 10.317738
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 6,
+        "rps": 94988.0850964051,
+        "cpuUsPerRequest": 10.842302
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 6,
+        "rps": 96014.26696424659,
+        "cpuUsPerRequest": 10.730846
+      },
+      {
+        "target": "nifra",
+        "workload": "get",
+        "round": 7,
+        "rps": 97567.76331814028,
+        "cpuUsPerRequest": 10.557078
+      },
+      {
+        "target": "nifra-before",
+        "workload": "get",
+        "round": 7,
+        "rps": 98751.6084926152,
+        "cpuUsPerRequest": 10.442872
+      }
+    ]
+  },
+  "verification": {
+    "bunTests": 2848,
+    "nodeTests": 76,
+    "profilerTests": 4,
+    "nifraCheck": true,
+    "corePerformanceGate": true
+  }
+}

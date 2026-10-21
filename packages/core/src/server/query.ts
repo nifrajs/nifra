@@ -64,12 +64,11 @@ function setQueryValue(out: Record<string, QueryValue>, rawKey: string, value: s
 }
 
 function queryObjectFallback(search: string): Record<string, QueryValue> {
-  // Manual iteration instead of Object.fromEntries: repeated keys must promote to arrays
-  // (fromEntries is last-wins), and __proto__ needs the same own-property guard.
+  // Native forEach avoids iterator/pair arrays while preserving repeated-key order and safe keys.
   const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
-  for (const [key, value] of new URLSearchParams(search)) {
+  new URLSearchParams(search).forEach((value, key) => {
     setQueryValue(out, key, value)
-  }
+  })
   return out
 }
 
