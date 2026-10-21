@@ -9,6 +9,7 @@ import {
   registeredAt,
   watchLiveQueries,
 } from "../src/internal/live-queries.ts"
+import { installQuerySeam, queryClients, querySeam } from "../src/internal/query-seam.ts"
 import { createQueryClient } from "../src/query.ts"
 
 function gated() {
@@ -247,10 +248,13 @@ test("a viewer switch clears every query client the page made, and no server-sid
   expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
 })
 
-test("the registry lets go of query clients the page dropped", () => {
+test("the registry lets go of query clients the page dropped", async () => {
   for (let i = 0; i < 40; i++) createQueryClient({ now: () => 0 }).setQueryData(["k"], i)
+  // A WeakRef holds its target until the job that made it ends.
+  await new Promise((resolve) => setImmediate(resolve))
   Bun.gc(true)
   const kept = createQueryClient({ now: () => 0 })
+  expect([...queryClients()].filter((ref) => ref.deref() === undefined)).toEqual([])
   kept.setQueryData(["k"], 1)
   clearQueryClients()
   expect(kept.getQueryData(["k"])).toBeUndefined()
@@ -275,4 +279,44 @@ test("a refetch that fails after clear is let go: the query shows the error", as
   expect(feed.snapshot().status).toBe("error")
   offPlain()
   offFeed()
+})
+
+/** Run `body` as a page does before its live client has loaded: no seam installed yet. */
+async function beforeLiveClient(body: () => void | Promise<void>): Promise<void> {
+  const seam = querySeam()
+  if (seam === undefined) throw new Error("the live client's seam is not installed")
+  Reflect.deleteProperty(globalThis, Symbol.for("nifra.web.querySeam"))
+  try {
+    await body()
+  } finally {
+    installQuerySeam(seam)
+  }
+}
+
+test("clients the page made before its live client loaded, and never used again, are cleared too", async () => {
+  const early: ReturnType<typeof createQueryClient>[] = []
+  await beforeLiveClient(() => {
+    for (const viewer of ["viewer-1's", "viewer-1's other"]) {
+      const client = createQueryClient({ now: () => 0 })
+      client.setQueryData(["account"], viewer)
+      early.push(client)
+    }
+  })
+  clearQueryClients()
+  expect(early.map((client) => client.getQueryData(["account"]))).toEqual([undefined, undefined])
+})
+
+test("a server-side client made before the live client loaded is never held", async () => {
+  let serverSide: ReturnType<typeof createQueryClient> | undefined
+  await beforeLiveClient(() => {
+    Reflect.deleteProperty(globalThis, "window")
+    try {
+      serverSide = createQueryClient({ now: () => 0 })
+      serverSide.setQueryData(["k"], "request-scoped")
+    } finally {
+      Reflect.set(globalThis, "window", globalThis)
+    }
+  })
+  clearQueryClients()
+  expect(serverSide?.getQueryData(["k"])).toBe("request-scoped")
 })

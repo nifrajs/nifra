@@ -253,8 +253,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
   // 17,437 -> 17,540 B; numbered fragment entries, closeBoundary on /client and status-page
   // re-matching: 17,540 -> 17,718 B (Bun 1.4.3). Queries refetching on live keys and
-  // QueryClient.clear(): 17,769 -> 18,212 B (Bun 1.4.3).
-  "nifra-web-client": 17.8,
+  // QueryClient.clear(): 17,769 -> 18,212 B; every browser client held weakly from creation, so a
+  // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
+  "nifra-web-client": 17.9,
   "nifra-i18n": 4.3,
 }
 

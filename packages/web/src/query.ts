@@ -11,7 +11,7 @@
  * + navigation use the path cache; component-level interactive data (search, infinite scroll, polling)
  * uses this arbitrary-keyed query cache. The two coexist.
  */
-import { type LiveQuery, querySeam } from "./internal/query-seam.ts"
+import { adoptClient, type LiveQuery, querySeam } from "./internal/query-seam.ts"
 
 /** A query's lifecycle status. `pending` = no data yet; `success`/`error` once it has settled once. */
 export type QueryStatus = "pending" | "success" | "error"
@@ -269,17 +269,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       if (e.subscribers === 0) entries.delete(h) // oldest-inserted unsubscribed first (Map order)
     }
   }
-  // A page with live refresh clears the clients it uses when the viewer changes.
-  let adopted = false
-  const adopt = (): void => {
-    const seam = adopted ? undefined : querySeam()
-    if (seam === undefined) return
-    adopted = true
-    seam.adopt(client)
-  }
-
   const sweep = (): void => {
-    adopt()
     const t = now()
     sweepEntries(cache, t)
     sweepEntries(infinite, t)
@@ -450,7 +440,6 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   }
 
   const setQueryData = <T>(key: unknown, updater: T | ((prev: T | undefined) => T)): void => {
-    adopt()
     // Create a placeholder entry if none exists - its `fn` throws until a real `query(key, fn)` re-binds
     // it, so a `setQueryData` for a key nobody queries yet never triggers a fetch on its own.
     const entry = upsert(
@@ -505,7 +494,6 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   }
 
   const hydrate = (state: DehydratedState): void => {
-    adopt()
     for (const q of state.queries) {
       const entry = upsert(
         q.key,
@@ -786,6 +774,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     hydrate,
     clear,
   }
+  // A page with live refresh clears every client it made when the viewer changes.
+  adoptClient(client)
   return client
 }
 
