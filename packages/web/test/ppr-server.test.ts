@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { BoundaryRequestCtx, BoundaryStates } from "../src/boundary.ts"
 import { createCspPolicy } from "../src/csp.ts"
-import { resolvePprOptions } from "../src/internal/ppr/options.ts"
+import { type PprOptions, resolvePprOptions } from "../src/internal/ppr/options.ts"
 import { PPR_RUNTIME, pprScriptHashes } from "../src/internal/ppr/runtime.ts"
 import {
   createPprServer,
@@ -391,34 +391,45 @@ describe("PPR server", () => {
   })
 
   describe("shellAfterRequests", () => {
-    const later = () => {
+    const later = (store: PprOptions = { shellEntriesPerRoute: 1 }) => {
       const built: string[] = []
       const server = createPprServer(
-        config({ options: resolvePprOptions({ shellAfterRequests: 2 }) }),
+        config({ options: resolvePprOptions({ shellAfterRequests: 2, ...store }) }),
       )
       const request = (id: string) =>
         pprRequest([hole("x", () => 1)], {
           path: `/p/${id}`,
           loadShell: async () => {
             built.push(id)
-            return { title: id }
+            return { title: id, blob: "x".repeat(40_000) }
           },
         })
       return { built, server, request }
     }
 
-    test("a key's requests before the last stream whole, and the last builds its shell", async () => {
+    test("with room a key builds at once; in a full route its requests before the last stream whole", async () => {
       const { built, server, request } = later()
-      await expect(server.respond(request("1"))).rejects.toBeInstanceOf(PprShellCold)
       expect(await (await server.respond(request("1"))).text()).toContain("<h1>1</h1>")
-      expect(await (await server.respond(request("1"))).text()).toContain("<h1>1</h1>")
-      await expect(server.shellData(request("2"))).rejects.toBeInstanceOf(PprShellCold)
-      expect(await server.shellData(request("2"))).toEqual({ title: "2" })
+      await expect(server.respond(request("2"))).rejects.toBeInstanceOf(PprShellCold)
+      expect(await (await server.respond(request("2"))).text()).toContain("<h1>2</h1>")
+      expect(await (await server.respond(request("2"))).text()).toContain("<h1>2</h1>")
+      // 2 took 1's place.
+      await expect(server.shellData(request("1"))).rejects.toBeInstanceOf(PprShellCold)
+      expect(await server.shellData(request("1"))).toMatchObject({ title: "1" })
+      expect(built).toEqual(["1", "2", "1"])
+    })
+
+    test("a store whose byte budget fits no further shell counts as full", async () => {
+      const { built, server, request } = later({ shellStoreBytes: 100_000 })
+      await server.respond(request("1"))
+      await server.respond(request("2"))
+      await expect(server.respond(request("3"))).rejects.toBeInstanceOf(PprShellCold)
       expect(built).toEqual(["1", "2"])
     })
 
     test("forgets every waiting key at once when too many wait", async () => {
       const { server, request } = later()
+      await server.respond(request("stored"))
       await server.respond(request("first")).catch(() => {})
       for (let i = 0; i < 10_000; i++) await server.respond(request(`n${i}`)).catch(() => {})
       await expect(server.respond(request("first"))).rejects.toBeInstanceOf(PprShellCold)

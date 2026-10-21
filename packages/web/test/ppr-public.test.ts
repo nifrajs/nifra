@@ -81,6 +81,12 @@ test.each([
   const current = { visitor: "" }
   const page = (data: unknown) =>
     `<main>${JSON.stringify(data)}<div data-nifra-hole="a" aria-busy="true"></div></main>`
+  const shellLoaders: Readonly<Record<string, () => unknown>> = {
+    "/leaky": () => ({ who: current.visitor }),
+    "/clean": () => ({ who: "everyone" }),
+    // Over half the store, so once it is kept the store counts as full and later shells wait.
+    "/filler": () => ({ blob: "x".repeat(40_000) }),
+  }
   const app = createWebApp({
     adapter: {
       ...adapter,
@@ -95,15 +101,14 @@ test.each([
         }),
     },
     manifest: {
-      routes: ["/leaky", "/clean"].map((pattern) => ({
+      routes: Object.entries(shellLoaders).map(([pattern, shellLoader]) => ({
         id: pattern.slice(1),
         pattern,
         layoutIds: [],
         file: `${pattern.slice(1)}.tsx`,
         load: async () => ({
           default: "page",
-          shellLoader: () =>
-            pattern === "/leaky" ? { who: current.visitor } : { who: "everyone" },
+          shellLoader,
           boundaries: [
             { name: "a", mode: "dynamic", render: () => "", fallback: "loading", load: () => 1 },
           ],
@@ -116,10 +121,11 @@ test.each([
     experimental: {
       ppr: partialPrerendering({
         shellChecks: "unchecked-development",
-        options: { shellAfterRequests },
+        options: { shellAfterRequests, shellStoreBytes: 100_000 },
       }),
     },
   })
+  await (await app.fetch(new Request("http://localhost/filler"))).text()
   const withMiddleware = {
     fetch: (request: Request) => {
       current.visitor = `${request.headers.get("cookie")} ${request.headers.get("x-nifra-canary")}`

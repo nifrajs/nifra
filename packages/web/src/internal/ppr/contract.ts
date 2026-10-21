@@ -74,7 +74,7 @@ export class PprShellBusy extends PprShellUnavailable {
   }
 }
 
-/** Thrown for a shell key seen fewer than `shellAfterRequests` times: the page streams whole. */
+/** Thrown for a key seen fewer than `shellAfterRequests` times in a full store: the page streams whole. */
 export class PprShellCold extends PprShellUnavailable {
   constructor(routeId: string) {
     super(`[nifra/web] ppr: route "${routeId}" has no shell for this key yet; rendered whole`)

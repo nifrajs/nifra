@@ -26,8 +26,9 @@ export interface PprOptions {
   /** Shell builds one route may run at once; requests over it get the blocking render. */
   readonly shellBuildConcurrency?: number
   /**
-   * Requests one shell key must see before its shell is built. The ones before stream the page whole,
-   * each hole as it settles, so a path visited once never pays for a shell nobody reuses.
+   * Once the store is full, requests one shell key must see before its shell is built and may push
+   * an older one out. The ones before stream the page whole, each hole as it settles, so a path
+   * visited once cannot evict a popular one. While the store has room, every key builds at once.
    */
   readonly shellAfterRequests?: number
   /** A failing rebuild keeps serving the stale shell for `revalidate` times this... */

@@ -308,10 +308,14 @@ describe("PPR fixture app: what the browser checks lean on", () => {
 })
 
 describe("PPR app with shellAfterRequests: 2", () => {
-  test("a key's first document streams whole with its holes, and its second builds the shell", async () => {
-    const later = await startPprApp(undefined, { pprOptions: { shellAfterRequests: 2 } })
+  test("in a full store a key's first document streams whole with its holes, and its second builds the shell", async () => {
+    const later = await startPprApp(undefined, {
+      pprOptions: { shellAfterRequests: 2, shellEntriesPerRoute: 1 },
+    })
     try {
       const headers = { cookie: "name=ada" }
+      // With room, a key builds at once; this shell fills the route.
+      await (await fetch(`${later.origin}/p/40`, { headers })).text()
       const [builds, holes] = [probe.shellBuilds, probe.slowStarted]
       const first = await fetch(`${later.origin}/p/41?slow=1`, { headers })
       const html = await first.text()

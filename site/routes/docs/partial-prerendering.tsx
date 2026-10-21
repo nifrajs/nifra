@@ -240,8 +240,8 @@ export default function PartialPrerendering() {
           </tr>
           <tr>
             <td>
-              A page whose shell key has had fewer requests than <code>shellAfterRequests</code>{" "}
-              (default 1)
+              Once the shell store is full, a page whose shell key has had fewer requests than{" "}
+              <code>shellAfterRequests</code> (default 1)
             </td>
             <td>The whole page streamed, each hole as it settles; no shell is built</td>
           </tr>
