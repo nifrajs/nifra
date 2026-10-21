@@ -1863,7 +1863,7 @@ export function createPageRequestExecutor<Env = unknown>(
           },
           serverLeafOf(route, mod),
         )
-        return renderPageResult({
+        const page: DocumentInput = {
           adapter,
           chain,
           data,
@@ -1888,7 +1888,9 @@ export function createPageRequestExecutor<Env = unknown>(
           ...cspOption,
           ...titleOption,
           ...swapOption(c.req),
-        })
+        }
+        if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
+        return renderPageResult(page)
       }),
 
     fallback: withResponseControls(async (c, controls) => {

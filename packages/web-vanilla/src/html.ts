@@ -8,6 +8,8 @@
  * unquoted attributes or inline scripts are NOT safe by design - the docs say "always quote".
  */
 
+import { type SlotRange, templateSlots } from "./template-slots.ts"
+
 /** Branded wrapper marking a string as pre-trusted markup. Construct only via {@link raw}. */
 export class RawHtml {
   readonly value: string
@@ -83,16 +85,22 @@ export type HtmlValue =
   | RawHtml
   | ReadonlyArray<HtmlValue>
 
-function renderValue(value: HtmlValue): string {
+function renderValue(value: HtmlValue, ranges: SlotRange[], offset: number): string {
   if (value == null || value === false) return ""
   if (typeof value === "string") return escapeHtml(value)
   if (typeof value === "number" || typeof value === "bigint") return String(value)
   if (value === true) return "true"
-  if (value instanceof Template) return value.html
+  if (value instanceof Template) {
+    const slots = templateSlots.get(value)
+    if (slots !== undefined)
+      for (const range of slots)
+        ranges.push({ name: range.name, start: offset + range.start, end: offset + range.end })
+    return value.html
+  }
   if (value instanceof RawHtml) return value.value
   if (Array.isArray(value)) {
     let out = ""
-    for (const item of value) out += renderValue(item)
+    for (const item of value) out += renderValue(item, ranges, offset + out.length)
     return out
   }
   // Objects/functions are a bug at the call site - render loudly rather than "[object Object]".
@@ -104,8 +112,11 @@ function renderValue(value: HtmlValue): string {
 /** The tag: `` html`<p>${user.name}</p>` `` → an escaped {@link Template}. */
 export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Template {
   let out = strings[0] as string
+  const ranges: SlotRange[] = []
   for (let i = 0; i < values.length; i++) {
-    out += renderValue(values[i] as HtmlValue) + (strings[i + 1] as string)
+    out += renderValue(values[i] as HtmlValue, ranges, out.length) + (strings[i + 1] as string)
   }
-  return new Template(out)
+  const template = new Template(out)
+  if (ranges.length > 0) templateSlots.set(template, ranges)
+  return template
 }

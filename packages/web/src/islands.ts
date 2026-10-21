@@ -20,15 +20,16 @@
  * binds: render user HTML there.
  */
 
-import {
+import { bindScope } from "./internal/island-bindings.ts"
+import { mountIsland } from "./internal/island-mount.ts"
+import { owned } from "./internal/island-owner.ts"
+import { type Signal, signal } from "./internal/island-signals.ts"
+
+export {
   type IslandStrategy,
   MAX_MEDIA_QUERY_LENGTH,
   scheduleTrigger,
 } from "@nifrajs/island-trigger"
-import { bindScope } from "./internal/island-bindings.ts"
-import { owned } from "./internal/island-owner.ts"
-import { type Signal, signal } from "./internal/island-signals.ts"
-
 export {
   type BindListOptions,
   bindList,
@@ -45,7 +46,6 @@ export {
   signal,
   untrack,
 } from "./internal/island-signals.ts"
-export { type IslandStrategy, MAX_MEDIA_QUERY_LENGTH, scheduleTrigger }
 
 /** Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`. */
 export type IslandCleanup = () => void
@@ -163,17 +163,6 @@ export function islandProps(props: Record<string, unknown>): string {
   return JSON.stringify(props)
 }
 
-/** Parse an island's inline `data-island-props` JSON; malformed/absent → `undefined` (never throws). */
-function readProps(el: HTMLElement): unknown {
-  const raw = el.dataset.islandProps
-  if (raw === undefined || raw === "") return undefined
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * Find every `[data-island]` element under `root` (default `document`) and enhance each with the
  * matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that
@@ -187,56 +176,15 @@ export function mountIslands(
   enhancers: Readonly<Record<string, IslandEnhancer<never>>>,
   options: { readonly root?: ParentNode } = {},
 ): () => void {
-  const root = options.root ?? document
   const disposers: Array<() => void> = []
-  for (const el of root.querySelectorAll<HTMLElement>(
+  for (const el of (options.root ?? document).querySelectorAll<HTMLElement>(
     "[data-island]:not([data-island-ignore],[data-island-ignore] *)",
   )) {
-    const id = el.dataset.island
-    if (id === undefined || el.dataset.islandMounted !== undefined) continue
-    const enhancer = Object.hasOwn(enhancers, id) ? enhancers[id] : undefined
-    if (enhancer === undefined) continue // no enhancer for this id → leave it as inert SSR markup
-    const strategyAttr = el.dataset.islandStrategy
-    const media = el.dataset.islandMedia
-    const strategy: IslandStrategy | undefined =
-      strategyAttr === "idle" || strategyAttr === "visible" || strategyAttr === "load"
-        ? strategyAttr
-        : strategyAttr === "media" &&
-            media !== undefined &&
-            media.length > 0 &&
-            media.length <= MAX_MEDIA_QUERY_LENGTH
-          ? { media }
-          : strategyAttr === undefined
-            ? "load"
-            : undefined
-    // Invalid media markers remain inert rather than silently becoming eager. Their SSR content stays
-    // usable, and untrusted HTML cannot turn an oversized query into an unexpected trigger.
-    if (strategy === undefined) continue
-    el.dataset.islandMounted = ""
-    disposers.push(() => {
-      delete el.dataset.islandMounted
-    })
-    const props = readProps(el)
-    const run = (): void => {
-      try {
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an enhancer's props type is a contract on its own server-rendered JSON, not a validator (see defineIsland)
-        const cleanup = owned(disposers, () => enhancer(el, props as never))
-        if (typeof cleanup === "function") disposers.push(cleanup)
-      } catch (err) {
-        // One island's failure must not take down the others; surface it without throwing.
-        console.error(`[nifra/islands] enhancer "${id}" failed:`, err)
-      }
-    }
-    disposers.push(scheduleTrigger(strategy, run, { target: el }))
+    const dispose = mountIsland(el, enhancers)
+    if (dispose !== undefined) disposers.push(dispose)
   }
   return () => {
-    for (const dispose of disposers.splice(0)) {
-      try {
-        dispose()
-      } catch {
-        // best-effort teardown - a failing cleanup must not block the rest
-      }
-    }
+    for (const dispose of disposers.splice(0)) dispose()
   }
 }
 

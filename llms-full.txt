@@ -2788,8 +2788,8 @@ const book = defineIsland((el) => {
 enableSwap({ book })
 ```
 
-The link or form makes its usual request with an `x-nifra-swap` header. The
-server runs the page as usual - middleware, loader, action - and answers with that
+The link or GET form makes its usual request with an `x-nifra-swap` header. The
+server runs the page as usual - middleware and loaders - and answers with that
 slot's HTML alone, so the fragment is a slice of the real page, never a second
 template. `replace` swaps the slot's content and, for a GET, pushes the
 URL, so a filtered list survives a reload and back and forward work. `append`
@@ -2797,13 +2797,11 @@ adds to it, and a link or form inside the slot is spent: the slot's child that h
 is removed when the next page arrives.
 
 Any other answer - a redirect, another origin, a page without that slot, an error - loads
-the URL normally, as does a page whose Trusted Types policy refuses the HTML. A POST that
-gets a whole page back without a redirect has already run, so that page is shown in place
-at the action's URL, and going back loads the page before it. If Trusted Types
-refuses that page too, the URL loads with a plain GET: the form is not sent again, but the
-action's result is not shown. A form POST is never sent twice. Without the script, the
-links and
-forms work as plain HTML. A loading slot carries
+the URL normally, as does a page whose Trusted Types policy refuses the HTML or a response
+that declares Content-Security-Policy. POST forms submit natively, so the browser applies
+the response's security policy, starts its scripts and preserves the action result.
+A form POST is sent once. Without the script, links and forms work as plain HTML.
+A loading slot carries
 `aria-busy="true"`, a newer swap of the same slot cancels the older
 one, and a failed request leaves the page as it is and sets `data-swap-error` on
 the link or form. Islands inside a slot
@@ -2811,7 +2809,8 @@ mount with it and unmount when it is replaced, so interactivity inside a slot co
 islands in it, not from bindings of an island around it. Only
 `@nifrajs/web-vanilla` pages answer a swap.
 
-A swap response is `private, no-store` with `vary: x-nifra-swap`, and
+A swap fetch bypasses the browser cache. Documents and fragments vary on
+`x-nifra-swap`; fragments are `private, no-store`, and
 ISR never serves or stores one. A CDN that ignores `Vary`, such as a Cloudflare
 zone, needs its cache rule to bypass requests carrying `x-nifra-swap`;
 `nifra cdn-check` tests that. `nifra check` reads both sides:
@@ -17805,7 +17804,7 @@ Vanilla is the render adapter an agent gets right on the first try. It ships no 
 
 Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
 
-To refresh one region from a link or form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. See [Refresh part of the page](https://nifra.dev/docs/islands).
+To refresh one region from a link or GET form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. POST forms submit natively, and responses with CSP load as documents so their policy and scripts take effect. See [Refresh part of the page](https://nifra.dev/docs/islands).
 
 Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
 

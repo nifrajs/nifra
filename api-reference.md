@@ -5460,7 +5460,7 @@ _No named exports (side-effect entrypoint)._
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
-  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization or accepted by an authentication stag…
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an authenticatio…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **isHostPolicy** _(function)_ - `isHostPolicy: (value: unknown) => value is HostPolicy`
@@ -6095,7 +6095,7 @@ _No named exports (side-effect entrypoint)._
 - **SwapOptions** _(interface)_ - `interface SwapOptions`
   Where `enableSwap` looks for links, forms, slots and islands.
 - **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
-  Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and form under `root` refresh its slot in place. Call it instead of `mountIslands`.
+  Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under `root` refresh its slot in place. Call it instead of `mountIslands`.
 
 ### `@nifrajs/web/plugins/css-modules`
 

@@ -10,7 +10,7 @@ import {
   findChrome,
   launchChrome,
 } from "../../cli/test/headless-chrome.ts"
-import { html, slot, type VanillaComponent, vanillaAdapter } from "../src/index.ts"
+import { html, raw, slot, type VanillaComponent, vanillaAdapter } from "../src/index.ts"
 
 /**
  * `@nifrajs/web/islands/swap` against a real server and a real browser: the vanilla page answers a
@@ -47,7 +47,7 @@ const Hotels: VanillaComponent = (props) => {
   const rows = found.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const more =
     found.length > (page + 1) * PAGE_SIZE
-      ? html`<li><a id="more" href="/hotels?q=${q}&page=${page + 1}" data-swap="append:results">More</a></li>`
+      ? html`<li data-island="more"><a id="more" href="/hotels?q=${q}&page=${page + 1}" data-swap="append:results">More</a></li>`
       : ""
   return html`<form id="search" action="/hotels" method="" data-swap="replace:results"><input name="q" value="${q}"><button>Go</button></form>
     <a id="ritz" href="/hotels?q=Ritz" data-swap="replace:results">Ritz</a>
@@ -65,7 +65,7 @@ const Hotels: VanillaComponent = (props) => {
 }
 
 const Note: VanillaComponent = (props) =>
-  html`<main id="app"><h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1><ul><li data-island="row">Note</li></ul></main>`
+  html`<main id="app"><h1 id="saved">Saved ${String(props.actionData ?? "nothing")}</h1><ul><li data-island="row">Note</li></ul>${raw('<img src="data:," onerror="window.__unsafe = true">')}</main>`
 
 const manifest = (): Manifest => ({
   routes: [
@@ -109,6 +109,7 @@ const manifest = (): Manifest => ({
       load: async () => ({
         default: Note,
         hydrate: false,
+        islandScripts: ["/note.js"],
         action: async () => {
           notes++
           return notes
@@ -130,6 +131,7 @@ const manifest = (): Manifest => ({
 const ENTRY = `import { defineIsland } from ${JSON.stringify(fileURLToPath(new URL("../../web/src/islands.ts", import.meta.url)))}
 import { enableSwap } from ${JSON.stringify(fileURLToPath(new URL("../../web/src/islands-swap.ts", import.meta.url)))}
 window.__log = []
+window.__moreActive = 0
 const row = defineIsland((el) => {
   const name = el.textContent
   window.__log.push("mount " + name)
@@ -137,7 +139,20 @@ const row = defineIsland((el) => {
 })
 // \`?scoped\` scopes the swaps to the layout's \`#app\` element instead of the document.
 const app = location.search.includes("scoped") ? document.getElementById("app") : null
-window.__stop = enableSwap({ row }, app ? { root: app } : {})
+const more = defineIsland(() => {
+  window.__moreActive++
+  return () => window.__moreActive--
+})
+window.__stop = enableSwap({ row, more }, app ? { root: app } : {})
+`
+
+const NOTE_ENTRY = `import { mountIslands } from ${JSON.stringify(fileURLToPath(new URL("../../web/src/islands.ts", import.meta.url)))}
+window.__log = []
+window.__stop = mountIslands({ row: (el) => {
+  window.__log.push("mount " + el.textContent)
+  return () => window.__log.push("unmount " + el.textContent)
+} })
+window.__noteStarted = true
 `
 
 let page: ChromePage | undefined
@@ -153,6 +168,10 @@ beforeAll(async () => {
   const built = await Bun.build({ entrypoints: [join(dir, "entry.js")], target: "browser" })
   if (!built.success) throw new AggregateError(built.logs, "the swap entry did not build")
   const bundle = await built.outputs[0]!.text()
+  writeFileSync(join(dir, "note.js"), NOTE_ENTRY)
+  const note = await Bun.build({ entrypoints: [join(dir, "note.js")], target: "browser" })
+  if (!note.success) throw new AggregateError(note.logs, "the note entry did not build")
+  const noteBundle = await note.outputs[0]!.text()
   // No page here hydrates, so the client entry is never requested.
   const app = createWebApp({ adapter: vanillaAdapter, manifest: manifest(), clientEntry: "/c.js" })
   server = Bun.serve({
@@ -163,10 +182,30 @@ beforeAll(async () => {
       if (url.pathname === "/favicon.ico") return new Response(null, { status: 404 })
       if (url.pathname === "/swap.js")
         return new Response(bundle, { headers: { "content-type": "text/javascript" } })
+      if (url.pathname === "/note.js")
+        return new Response(noteBundle, { headers: { "content-type": "text/javascript" } })
       requests.push(
         `${request.method} ${url.pathname}${url.search} ${request.headers.get("x-nifra-swap") ?? "-"}`,
       )
       const response = await app.fetch(request)
+      if (url.pathname === "/note")
+        response.headers.set("content-security-policy", "script-src 'self'")
+      if (url.searchParams.has("policy"))
+        return new Response(
+          `${await response.text()}<img src="data:," onerror="window.__unsafe = true">`,
+          {
+            status: response.status,
+            headers: {
+              ...Object.fromEntries(response.headers),
+              "content-security-policy": "script-src 'self'",
+            },
+          },
+        )
+      if (url.searchParams.has("cached"))
+        response.headers.set("cache-control", "public, max-age=3600")
+      // Model an already-cached document from before the swap runtime was deployed.
+      if (url.searchParams.has("cached") && request.headers.get("x-nifra-swap") === null)
+        response.headers.delete("vary")
       if (!url.searchParams.has("tt")) return response
       // A document that enforces Trusted Types, with no policy to let HTML through.
       const headers = new Headers(response.headers)
@@ -289,50 +328,105 @@ test.skipIf(chrome === undefined)(
 )
 
 test.skipIf(chrome === undefined)(
-  "a POST swaps by the action's redirect without pushing, and never posts twice",
+  "append disposes spent islands while retaining earlier rows",
+  async () => {
+    const p = await open()
+    expect(await p.evaluate<number>("window.__moreActive")).toBe(1)
+    await p.evaluate('document.getElementById("more").click()')
+    await p.waitFor('document.querySelectorAll("[data-swap-slot=results] li").length === 5')
+    expect(await p.evaluate<number>("window.__moreActive")).toBe(1)
+    await p.evaluate('document.getElementById("more").click()')
+    await p.waitFor('document.getElementById("more") === null')
+    expect(await p.evaluate<number>("window.__moreActive")).toBe(0)
+    expect(await p.evaluate<string[]>("window.__log")).not.toContain("unmount Ritz")
+    await p.evaluate("window.__stop()")
+    expect(await p.evaluate<string[]>("window.__log")).toContain("unmount Ritz")
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "a swap bypasses an already cached full document without Vary",
+  async () => {
+    const p = await open("/hotels?cached=1")
+    await p.evaluate(
+      `document.getElementById("ritz").href = location.href; document.getElementById("ritz").click()`,
+    )
+    await p.waitFor(
+      "document.querySelector('[data-swap-slot=results]').hasAttribute('aria-busy') === false",
+    )
+    // A second round trip lets a cached-document fallback finish if one was incorrectly scheduled.
+    await p.evaluate('fetch("/swap.js").then((r) => r.text())')
+    expect(await swappedIn(p)).toBe(true)
+    expect(requests).toEqual(["GET /hotels?cached=1 results"])
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "a GET response with CSP loads as a document instead of weakening its policy",
+  async () => {
+    const p = await open()
+    await p.evaluate(
+      `document.getElementById("ritz").href = "/hotels?policy=1"; document.getElementById("ritz").click()`,
+    )
+    await waitAcrossLoad(p, 'location.search === "?policy=1" && window.__stop !== undefined')
+    expect(await swappedIn(p)).toBe(false)
+    expect(await p.evaluate<boolean>("window.__unsafe === true")).toBe(false)
+    expect(requests).toEqual(["GET /hotels?policy=1 results", "GET /hotels?policy=1 -"])
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "a POST uses native navigation and follows its redirect without posting twice",
   async () => {
     const p = await open()
     const before = cart
     await p.evaluate(`document.querySelector("#add button").click()`)
-    await p.waitFor(
-      `document.querySelector("[data-swap-slot=cart]").textContent === "${before + 1}"`,
+    await waitAcrossLoad(
+      p,
+      `document.querySelector("[data-swap-slot=cart]")?.textContent === "${before + 1}" && window.__stop !== undefined`,
     )
     expect(cart).toBe(before + 1)
     expect(await path(p)).toBe("/hotels")
-    expect(await swappedIn(p)).toBe(true)
-    expect(requests).toEqual(["POST /hotels cart", "GET /hotels cart"])
+    expect(await swappedIn(p)).toBe(false)
+    expect(requests).toEqual(["POST /hotels -", "GET /hotels -"])
   },
   30_000,
 )
 
 test.skipIf(chrome === undefined)(
-  "a POST answered with a whole page shows that page in place and never fetches the URL again",
+  "a POST document runs its own entry, enforces its CSP and submits exactly once",
   async () => {
     const p = await open()
     const before = notes
     await p.evaluate(`document.querySelector("#note button").click()`)
-    await p.waitFor(`document.getElementById("saved")?.textContent === "Saved ${before + 1}"`)
+    await waitAcrossLoad(
+      p,
+      `document.getElementById("saved")?.textContent === "Saved ${before + 1}" && window.__noteStarted === true`,
+    )
     expect(notes).toBe(before + 1)
     expect(await path(p)).toBe("/note")
-    expect(await swappedIn(p)).toBe(true)
-    expect(requests).toEqual(["POST /note results"])
+    expect(await swappedIn(p)).toBe(false)
+    expect(requests).toEqual(["POST /note -"])
+    expect(await p.evaluate<boolean>("window.__unsafe === true")).toBe(false)
     expect(await p.evaluate<string[]>("window.__log")).toContain("mount Note")
-    // No history entry holds this page, so going back loads the one it left.
     await p.evaluate("history.back()")
     await waitAcrossLoad(p, `location.pathname === "/hotels" && window.__stop !== undefined`)
-    expect(await swappedIn(p)).toBe(false)
+    expect(await rows(p)).toEqual(["Ritz", "Savoy", "More"])
     expect(notes).toBe(before + 1)
   },
   30_000,
 )
 
 test.skipIf(chrome === undefined)(
-  "an element root carries on as the shown page's element with its id",
+  "a scoped swap root also leaves POST startup to the destination document",
   async () => {
     const p = await open("/hotels?scoped=1")
     await p.evaluate(`document.querySelector("#note button").click()`)
-    await p.waitFor(`document.getElementById("saved")?.textContent?.startsWith("Saved ") === true`)
-    expect(await swappedIn(p)).toBe(true)
+    await waitAcrossLoad(p, "window.__noteStarted === true")
+    expect(await swappedIn(p)).toBe(false)
     expect(await p.evaluate<string[]>("window.__log")).toContain("mount Note")
     await p.evaluate("window.__stop()")
     expect(await p.evaluate<string[]>("window.__log")).toContain("unmount Note")
