@@ -122,6 +122,7 @@ const upstreamReads = async (): Promise<number> =>
 interface OhaSummary {
   readonly summary: { readonly requestsPerSec: number; readonly successRate: number }
   readonly statusCodeDistribution: Readonly<Record<string, number>>
+  readonly errorDistribution?: Readonly<Record<string, number>>
 }
 function oha(target: readonly string[], n: number, connections: number): OhaSummary {
   const run = Bun.spawnSync([
@@ -143,7 +144,9 @@ function oha(target: readonly string[], n: number, connections: number): OhaSumm
   const result = JSON.parse(run.stdout.toString()) as OhaSummary
   const codes = Object.keys(result.statusCodeDistribution)
   if (result.summary.successRate !== 1 || codes.some((code) => code !== "200")) {
-    throw new Error(`oha ${target.join(" ")}: ${JSON.stringify(result.statusCodeDistribution)}`)
+    throw new Error(
+      `oha ${target.join(" ")}: ${JSON.stringify(result.statusCodeDistribution)} ${JSON.stringify(result.errorDistribution ?? {})}`,
+    )
   }
   return result
 }
