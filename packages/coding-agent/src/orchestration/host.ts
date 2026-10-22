@@ -97,7 +97,9 @@ export interface OrchestrationHostOptions {
   /**
    * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability
    * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or
-   * approval requirement. A descriptor, plan, model, or extension cannot override it.
+   * approval requirement, and its capability allowlist bounds every catalog step a submitted plan
+   * resolves to, under any narrower `limits.allowedCapabilities`. A descriptor, plan, model, or
+   * extension cannot override it.
    */
   readonly policy?: HostPolicy
   /**
@@ -139,6 +141,21 @@ interface RunRecord {
   finish: () => void
 }
 
+/** `limits` with its capability ceiling narrowed to what `policy` allows; a wider limit cannot widen it. */
+function boundedByPolicy(
+  limits: OrchestrationLimits | undefined,
+  policy: HostPolicy,
+): OrchestrationLimits {
+  const granted = limits?.allowedCapabilities
+  return {
+    ...limits,
+    allowedCapabilities:
+      granted === undefined
+        ? policy.allowedCapabilities
+        : granted.filter((capability) => policy.allowedCapabilities.includes(capability)),
+  }
+}
+
 /** Owns run lifecycle and evidence projection over the kernel WorkflowRunner. */
 export class OrchestrationHost {
   private readonly catalog: StepCatalog
@@ -155,7 +172,10 @@ export class OrchestrationHost {
 
   constructor(options: OrchestrationHostOptions) {
     this.catalog = options.catalog
-    this.limits = options.limits
+    this.limits =
+      options.policy === undefined
+        ? options.limits
+        : boundedByPolicy(options.limits, options.policy)
     this.maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.policy = options.policy

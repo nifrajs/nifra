@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import {
   chmod,
   mkdir,
@@ -13,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import {
   assertSafeKey,
   assertStorageAdapterConformance,
@@ -433,6 +434,69 @@ describe("FileStorage on an ordinary host", () => {
       }
     },
   )
+
+  test.skipIf(process.platform === "win32")(
+    "its bookkeeping beside the root is the owner's alone, while objects keep their usual mode",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "nifra-storage-private-"))
+      tmpDirs.push(parent)
+      const mode = async (path: string) => (await stat(path)).mode & 0o777
+      const previous = process.umask(0o022)
+      try {
+        const fresh = join(parent, "fresh")
+        await new FileStorage(fresh).put("record.txt", "PRIVATE", { metadata: { owner: "u1" } })
+        // An earlier version left its bookkeeping open to every local user.
+        const earlier = join(parent, "earlier")
+        await mkdir(join(`${earlier}.nifra-state`, "metadata"), { recursive: true, mode: 0o755 })
+        await new FileStorage(earlier).put("record.txt", "PRIVATE", { metadata: { owner: "u1" } })
+        for (const root of [fresh, earlier]) {
+          expect(await mode(`${root}.nifra-state`)).toBe(0o700)
+          expect(await mode(join(root, "record.txt"))).toBe(0o644)
+        }
+      } finally {
+        process.umask(previous)
+      }
+    },
+  )
+
+  test("a sidecar naming its body by content still describes only that content", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "nifra-storage-digest-"))
+    tmpDirs.push(parent)
+    const root = join(await realpath(parent), "objects")
+    const storage = new FileStorage(root)
+    await storage.put("doc.txt", "first")
+    const body = join(root, "doc.txt")
+    const { dev, ino } = await stat(body, { bigint: true })
+    // As an earlier version wrote it for a body rewritten in place, whose inode never changed.
+    const sidecar = join(`${root}.nifra-state`, "metadata", "doc.txt")
+    await mkdir(dirname(sidecar), { recursive: true })
+    await writeFile(
+      sidecar,
+      JSON.stringify({
+        contentType: "text/x-first",
+        body: {
+          dev: String(dev),
+          ino: String(ino),
+          sha256: createHash("sha256").update("first").digest("base64"),
+        },
+      }),
+    )
+    expect((await storage.get("doc.txt"))?.contentType).toBe("text/x-first")
+    await writeFile(body, "changed")
+    expect((await storage.get("doc.txt"))?.contentType).toBe("text/plain")
+  })
+
+  test("a put its bookkeeping could not be set up for fails, and a later one tries again", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "nifra-storage-blocked-"))
+    tmpDirs.push(parent)
+    const root = join(parent, "objects")
+    await writeFile(`${root}.nifra-state`, "not a directory")
+    const storage = new FileStorage(root)
+    await expect(storage.put("record.txt", "x")).rejects.toThrow()
+    await rm(`${root}.nifra-state`)
+    await storage.put("record.txt", "x")
+    expect(new TextDecoder().decode((await storage.get("record.txt"))?.body)).toBe("x")
+  })
 
   test.skipIf(process.platform === "win32")(
     "a group-writable directory it refuses is named, with the fix",
