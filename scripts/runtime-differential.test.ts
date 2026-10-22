@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { createServer } from "node:net"
 import fc from "fast-check"
-import { INTERNAL_SENTINEL } from "./fixtures/runtime-differential/app.ts"
-import { type Case, caseArbitrary, parseCase } from "./runtime-differential/arbitraries.ts"
+import { createDifferentialApp, INTERNAL_SENTINEL } from "./fixtures/runtime-differential/app.ts"
+import {
+  type Case,
+  caseArbitrary,
+  parseCase,
+  parseWsCase,
+  wsCaseArbitrary,
+} from "./runtime-differential/arbitraries.ts"
 import type { LaneName } from "./runtime-differential/lanes.ts"
 import { canonical, judge, unknownStderr } from "./runtime-differential/oracle.ts"
 import {
@@ -13,6 +19,14 @@ import {
   toRequest,
   type WireRequest,
 } from "./runtime-differential/wire.ts"
+import {
+  runWsCase,
+  type WsCase,
+  type WsEvent,
+  type WsOutcome,
+  type WsStep,
+} from "./runtime-differential/ws.ts"
+import { judgeWs } from "./runtime-differential/ws-oracle.ts"
 
 const text = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes)
 const bytes = (value: string) => new TextEncoder().encode(value)
@@ -287,6 +301,27 @@ describe("judge", () => {
     })
   })
 
+  test("form pages that differ only in what the action read wait on W2, and nothing else does", () => {
+    const page = (saved: string, heading = "form") =>
+      response(200, `<h1>${heading}</h1><p class="saved">${saved}</p>`, [
+        ["content-type", "text/html; charset=utf-8"],
+      ])
+    const form = caseOf({ ...get("/pages/form"), method: "POST" }, "pageForm")
+    const read = new Map<LaneName, Outcome>([
+      ["bun-serve", page("[[&quot;f&quot;,{&quot;type&quot;:&quot;text/plain&quot;}]]")],
+      ["deno", page("[[&quot;f&quot;,{&quot;type&quot;:&quot;&quot;}]]")],
+      ["workerd", response(400, '{"error":"invalid_form"}')],
+    ])
+    expect(judge(form, read)).toEqual({
+      violations: [],
+      excusedBy: ["W2 runtime-form-parsers-differ"],
+    })
+    const elsewhere = new Map<LaneName, Outcome>([...read, ["deno", page("[]", "other")]])
+    expect(judge(form, elsewhere).violations[0]?.kind).toBe("difference")
+    const otherRoute = caseOf(get("/pages"), "pageHome")
+    expect(judge(otherRoute, read).violations[0]?.kind).toBe("difference")
+  })
+
   test("an exposed open finding is reported instead of excused", () => {
     const echoed = caseOf(
       get("/whoami", [
@@ -333,4 +368,146 @@ test("a printed case replays as the same case, and anything else is refused", ()
   expect(() =>
     parseCase(JSON.stringify({ ...caseOf(get("/")), request: { ...get("/"), framing: {} } })),
   ).toThrow("not a framing")
+})
+
+describe("judgeWs", () => {
+  const wsCase = (steps: WsStep[], route: WsCase["route"] = "echo"): WsCase => ({
+    kind: "ws",
+    route,
+    path: route === "guarded" ? "/ws/guarded" : "/ws/echo",
+    headers: route === "guarded" ? [["x-ws-token", "throw"]] : [],
+    steps,
+    peers: 0,
+  })
+  const opened = (upgrade = "websocket"): WsEvent => ({
+    kind: "open",
+    headers: [
+      ["upgrade", upgrade],
+      ["connection", "Upgrade"],
+      ["sec-websocket-accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="],
+      ["date", "Mon"],
+    ],
+  })
+  const said = (value: string): WsEvent => ({ kind: "text", bytes: bytes(value) })
+  const closed = (code: number, reason = ""): WsEvent => ({
+    kind: "close",
+    bytes: Uint8Array.of(code >> 8, code & 0xff, ...bytes(reason)),
+  })
+  const lanes = (...sessions: [LaneName, WsEvent[]][]) =>
+    new Map<LaneName, WsOutcome>(sessions.map(([lane, events]) => [lane, { sockets: [events] }]))
+  const hi = wsCase([{ kind: "text", text: "hi" }])
+
+  test("agreeing sessions pass; the handshake tokens compare without case", () => {
+    const outcomes = lanes(
+      ["bun-serve", [opened(), said("hi"), closed(1000)]],
+      ["node", [opened("WebSocket"), said("hi"), closed(1000)]],
+    )
+    expect(judgeWs(hi, outcomes)).toEqual({ violations: [], excusedBy: [] })
+  })
+
+  test("a different frame is a difference, and the sentinel in a frame a leak", () => {
+    const differing = lanes(
+      ["bun-serve", [opened(), said("hi"), closed(1000)]],
+      ["deno", [opened(), said("hi"), closed(1000, "bye")]],
+    )
+    expect(judgeWs(hi, differing).violations.map((violation) => violation.kind)).toEqual([
+      "difference",
+    ])
+    const leaked = lanes(["node", [opened(), said(`boom ${INTERNAL_SENTINEL}`)]])
+    expect(judgeWs(hi, leaked).violations.map((violation) => violation.signature)).toEqual([
+      "leak ws:echo sentinel [node]",
+    ])
+  })
+
+  test("a refused handshake is a server error unless the guard throws by design", () => {
+    const refused: WsEvent = { kind: "refused", status: 500, headers: [], body: bytes("{}") }
+    expect(judgeWs(wsCase([], "guarded"), lanes(["node", [refused]])).violations).toEqual([])
+    expect(judgeWs(hi, lanes(["node", [refused]])).violations[0]?.signature).toBe(
+      "server-error ws:echo 500 [node]",
+    )
+  })
+
+  test("Bun's 1000 for a close without a code waits on WS1, and only that", () => {
+    const noCode = wsCase([{ kind: "text", text: "close::" }])
+    const empty: WsEvent = { kind: "close", bytes: new Uint8Array(0) }
+    const outcomes = lanes(["bun-serve", [opened(), closed(1000)]], ["node", [opened(), empty]])
+    expect(judgeWs(noCode, outcomes)).toEqual({
+      violations: [],
+      excusedBy: ["WS1 bun-close-without-code-sends-1000"],
+    })
+    expect(judgeWs(hi, outcomes).violations[0]?.kind).toBe("difference")
+    const alsoText = lanes(
+      ["bun-serve", [opened(), said("x"), closed(1000)]],
+      ["node", [opened(), empty]],
+    )
+    expect(judgeWs(noCode, alsoText).violations[0]?.kind).toBe("difference")
+  })
+
+  test("after a forbidden frame or a message over the cap, each runtime closes its own way", () => {
+    const failed = wsCase([{ kind: "unmasked" }])
+    const forbidden: WsEvent = { kind: "violation", step: "unmasked" }
+    expect(
+      judgeWs(
+        failed,
+        lanes(
+          ["node", [opened(), forbidden, closed(1002)]],
+          ["deno", [opened(), forbidden, said("x")]],
+        ),
+      ).violations,
+    ).toEqual([])
+    const big = wsCase([{ kind: "binary", size: 5000 }])
+    const over: WsEvent = { kind: "oversize" }
+    expect(
+      judgeWs(
+        big,
+        lanes(
+          ["bun-serve", [opened(), over, { kind: "end" }]],
+          ["node", [opened(), over, closed(1009)]],
+        ),
+      ).violations,
+    ).toEqual([])
+  })
+})
+
+test("a session goes over a real socket, and the watcher hears the server's close", async () => {
+  const running = createDifferentialApp().listen(0, { hostname: "127.0.0.1" })
+  try {
+    const outcome = await runWsCase(
+      running.port,
+      wsCase([
+        { kind: "fragments", parts: ["a", "b"] },
+        { kind: "binary", size: 3 },
+        { kind: "text", text: "close:999:" },
+        { kind: "text", text: "close:4000:bye" },
+      ]),
+      5000,
+    )
+    const shown = outcome.sockets.map((events) => events.map(eventText))
+    expect(shown).toEqual([
+      ["open", "text ab", "binary 0,1,2", "text refused:range", "close 4000 bye"],
+      ["open", "text joined", "text closed:4000:bye", "close 1000 done"],
+    ])
+  } finally {
+    running.stop(true)
+  }
+
+  function wsCase(steps: WsStep[]): WsCase {
+    return { kind: "ws", route: "echo", path: "/ws/echo", headers: [], steps, peers: 0 }
+  }
+  function eventText(event: WsEvent): string {
+    if (event.kind === "text") return `text ${new TextDecoder().decode(event.bytes)}`
+    if (event.kind === "binary") return `binary ${event.bytes.join(",")}`
+    if (event.kind === "close") {
+      const reason = new TextDecoder().decode(event.bytes.subarray(2))
+      return `close ${((event.bytes[0] ?? 0) << 8) | (event.bytes[1] ?? 0)} ${reason}`
+    }
+    return event.kind
+  }
+})
+
+test("a seeded WebSocket case replays as the same case, and anything else is refused", () => {
+  const sampled = fc.sample(wsCaseArbitrary, { seed: 3, numRuns: 50 })
+  expect(fc.sample(wsCaseArbitrary, { seed: 3, numRuns: 50 })).toEqual(sampled)
+  for (const generated of sampled) expect(parseWsCase(JSON.stringify(generated))).toEqual(generated)
+  expect(() => parseWsCase('{"kind":"ws","route":"nowhere"}')).toThrow()
 })

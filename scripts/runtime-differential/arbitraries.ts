@@ -8,6 +8,7 @@
  */
 import fc from "fast-check"
 import { deliversWholeBody, type Framing, type WireRequest } from "./wire.ts"
+import type { WsCase, WsRouteId, WsStep } from "./ws.ts"
 
 export const ROUTE_IDS = [
   "root",
@@ -37,6 +38,14 @@ export const ROUTE_IDS = [
   "private",
   "static",
   "unknown",
+  "pageHome",
+  "pageMeta",
+  "pageStream",
+  "pageThrow",
+  "pageGo",
+  "pageMissing",
+  "pageForm",
+  "pageUnknown",
 ] as const
 export type RouteId = (typeof ROUTE_IDS)[number]
 
@@ -45,6 +54,7 @@ export const SERVER_FAULT_ROUTES: ReadonlySet<RouteId> = new Set([
   "errorThrow",
   "errorReject",
   "errorContract",
+  "pageThrow",
 ])
 
 export interface Case {
@@ -596,6 +606,98 @@ const STATIC_HEADERS: readonly (readonly [string, string])[] = [
 
 const pathOf = (...parts: readonly string[]) => `/${parts.join("/")}`
 
+type HeaderList = readonly (readonly [string, string])[]
+
+/** A page answers a client navigation's data request (`X-Nifra-Data`) with its loader data alone. */
+const dataMode = fc.constantFrom<HeaderList>([], [], [], [["x-nifra-data", "1"]])
+
+/** An action refuses another site's `Origin`; a request without one is a non-browser client. */
+const formOrigin = fc.constantFrom<HeaderList>(
+  [],
+  [],
+  [],
+  [["origin", "http://127.0.0.1"]],
+  [["origin", "http://evil.example"]],
+  [["origin", "null"]],
+  [["sec-fetch-site", "cross-site"]],
+)
+
+const formBody = fc.oneof(
+  {
+    weight: 4,
+    arbitrary: body(
+      fc.constantFrom(
+        ["application/x-www-form-urlencoded"],
+        ["application/x-www-form-urlencoded; charset=utf-8"],
+      ),
+      fc
+        .tuple(queryValue, fc.boolean())
+        .map(([name, go]) => (go ? `go=1&name=${name}` : `name=${name}`)),
+    ),
+  },
+  { weight: 2, arbitrary: multipartBody },
+  { weight: 1, arbitrary: anyBody },
+)
+
+const pageDrafts: fc.Arbitrary<Draft> = fc.oneof(
+  fc
+    .tuple(fc.option(queryValue, { nil: undefined }), dataMode)
+    .map(
+      ([q, headers]): Draft =>
+        q === undefined
+          ? { route: "pageHome", method: "GET", path: "/pages", headers }
+          : { route: "pageHome", method: "GET", path: "/pages", query: `q=${q}`, headers },
+    ),
+  fc.tuple(segment, dataMode).map(
+    ([slug, headers]): Draft => ({
+      route: "pageMeta",
+      method: "GET",
+      path: pathOf("pages", "meta", slug),
+      headers,
+    }),
+  ),
+  dataMode.map(
+    (headers): Draft => ({ route: "pageStream", method: "GET", path: "/pages/stream", headers }),
+  ),
+  fc.tuple(fc.constantFrom("throw", "throw-bare"), dataMode).map(
+    ([page, headers]): Draft => ({
+      route: "pageThrow",
+      method: "GET",
+      path: pathOf("pages", page),
+      headers,
+    }),
+  ),
+  fc.tuple(queryValue, dataMode).map(
+    ([to, headers]): Draft => ({
+      route: "pageGo",
+      method: "GET",
+      path: "/pages/go",
+      query: `to=${to}`,
+      headers,
+    }),
+  ),
+  fc.tuple(fc.oneof(fc.constant("1"), segment), dataMode).map(
+    ([id, headers]): Draft => ({
+      route: "pageMissing",
+      method: "GET",
+      path: pathOf("pages", "missing", id),
+      headers,
+    }),
+  ),
+  fc.tuple(formBody, formOrigin, dataMode).map(
+    ([value, origin, headers]): Draft => ({
+      route: "pageForm",
+      method: "POST",
+      path: "/pages/form",
+      body: value,
+      headers: [...origin, ...headers],
+    }),
+  ),
+  segments.map(
+    (parts): Draft => ({ route: "pageUnknown", method: "GET", path: pathOf("pages", ...parts) }),
+  ),
+)
+
 const drafts: fc.Arbitrary<Draft> = fc.oneof(
   fc.constant<Draft>({ route: "root", method: "GET", path: "/" }),
   segment.map((id): Draft => ({ route: "user", method: "GET", path: pathOf("users", id) })),
@@ -730,6 +832,7 @@ const drafts: fc.Arbitrary<Draft> = fc.oneof(
       }),
     ),
   segments.map((parts): Draft => ({ route: "unknown", method: "GET", path: pathOf(...parts) })),
+  { weight: 8, arbitrary: pageDrafts },
 )
 
 const METHODS = {
@@ -974,3 +1077,206 @@ export const caseArbitrary: fc.Arbitrary<Case> = fc
       refusable: refusableReasons(request, hosts, draft.body?.malformed),
     }
   })
+
+// --- WebSocket sessions ---
+
+/** Text that crosses each frame-length class and the 4096-byte message cap, in bytes and in chars. */
+const wsText = fc.oneof(
+  { weight: 4, arbitrary: fc.string({ unit: "grapheme", maxLength: 12 }) },
+  {
+    weight: 2,
+    arbitrary: fc.constantFrom(
+      "",
+      "x".repeat(125),
+      "x".repeat(126),
+      "x".repeat(4096),
+      "x".repeat(4097),
+      "é".repeat(2048),
+      "é".repeat(2049),
+      "x".repeat(65_536),
+    ),
+  },
+)
+
+/** `close:<code>:<reason>` asks the echo route to close the socket with that code and reason. */
+const serverClose = fc
+  .tuple(
+    fc.constantFrom(
+      "1000",
+      "1001",
+      "1002",
+      "1011",
+      "1012",
+      "3000",
+      "4000",
+      "4999",
+      "1005",
+      "1006",
+      "999",
+      "5000",
+      "abc",
+      "",
+    ),
+    fc.constantFrom("", "bye", "ünï", "r".repeat(123), "r".repeat(124)),
+  )
+  .map(([code, reason]): WsStep => ({ kind: "text", text: `close:${code}:${reason}` }))
+
+const clientClose = fc
+  .tuple(
+    fc.option(
+      fc.constantFrom(1000, 1001, 1003, 1008, 1011, 3000, 4999, 999, 1004, 1005, 1006, 1015, 5000),
+      { nil: undefined },
+    ),
+    fc.constantFrom("", "bye", "ünï", "r".repeat(123)),
+  )
+  .map(
+    ([code, reason]): WsStep =>
+      code === undefined ? { kind: "close", reason: "" } : { kind: "close", code, reason },
+  )
+
+const dataStep: fc.Arbitrary<WsStep> = fc.oneof(
+  { weight: 4, arbitrary: wsText.map((text): WsStep => ({ kind: "text", text })) },
+  {
+    weight: 2,
+    arbitrary: fc
+      .constantFrom(0, 1, 125, 126, 4096, 4097, 65_536)
+      .map((size): WsStep => ({ kind: "binary", size })),
+  },
+  {
+    weight: 1,
+    arbitrary: fc
+      .array(fc.constantFrom("", "ab", "é", "x".repeat(2100)), { minLength: 2, maxLength: 3 })
+      .map((parts): WsStep => ({ kind: "fragments", parts })),
+  },
+)
+
+const echoStep: fc.Arbitrary<WsStep> = fc.oneof(
+  { weight: 6, arbitrary: dataStep },
+  { weight: 2, arbitrary: serverClose },
+  {
+    weight: 1,
+    arbitrary: fc
+      .constantFrom("", "p", "x".repeat(125))
+      .map((text): WsStep => ({ kind: "ping", text })),
+  },
+)
+
+/** How a session ends: a close from the client, or a frame the protocol forbids. Either is last. */
+const lastStep: fc.Arbitrary<WsStep> = fc.oneof(
+  { weight: 3, arbitrary: clientClose },
+  {
+    weight: 1,
+    arbitrary: fc.constantFrom<WsStep>(
+      { kind: "bad-utf8" },
+      { kind: "unmasked" },
+      { kind: "ping", text: "x".repeat(126) },
+    ),
+  },
+)
+
+const wsOrigin = fc.constantFrom<HeaderList>(
+  [],
+  [],
+  [],
+  [["origin", "http://127.0.0.1"]],
+  [["origin", "http://evil.example"]],
+)
+
+export const wsCaseArbitrary: fc.Arbitrary<WsCase> = fc.oneof(
+  {
+    weight: 6,
+    arbitrary: fc
+      .tuple(
+        fc.array(echoStep, { maxLength: 4 }),
+        fc.option(lastStep, { nil: undefined, freq: 3 }),
+        wsOrigin,
+      )
+      .map(
+        ([steps, close, origin]): WsCase => ({
+          kind: "ws",
+          route: "echo",
+          path: "/ws/echo",
+          headers: origin,
+          steps: close === undefined ? steps : [...steps, close],
+          peers: 0,
+        }),
+      ),
+  },
+  {
+    weight: 3,
+    arbitrary: fc
+      .tuple(
+        // A room name that keeps the request line well-formed: the target's parsing is the HTTP
+        // cases' subject, not this one's.
+        fc.oneof(
+          plainSegment,
+          unicodeText.map(encodeURIComponent),
+          fc.constantFrom("..", "%2e", "a%2Fb"),
+        ),
+        fc.integer({ min: 1, max: 2 }),
+        fc.array(dataStep, { minLength: 1, maxLength: 3 }),
+      )
+      .map(
+        ([room, peers, steps]): WsCase => ({
+          kind: "ws",
+          route: "room",
+          path: pathOf("ws", "room", room),
+          headers: [],
+          steps,
+          peers,
+        }),
+      ),
+  },
+  {
+    weight: 2,
+    arbitrary: fc
+      .tuple(
+        fc.constantFrom<HeaderList>(
+          [],
+          [["x-ws-token", "ok"]],
+          [["x-ws-token", "bad"]],
+          [["x-ws-token", "throw"]],
+        ),
+        wsOrigin,
+        fc.constantFrom<HeaderList>([], [], [["x-caller", "c"]], [["x-block", "1"]]),
+      )
+      .map(
+        ([token, origin, extra]): WsCase => ({
+          kind: "ws",
+          route: "guarded",
+          path: "/ws/guarded",
+          headers: [...token, ...origin, ...extra],
+          steps: [],
+          peers: 0,
+        }),
+      ),
+  },
+)
+
+const WS_ROUTES: readonly WsRouteId[] = ["echo", "room", "guarded"]
+const isWsRoute = (value: unknown): value is WsRouteId => WS_ROUTES.some((route) => route === value)
+
+/** A WebSocket case from the JSON a failing run prints, as `--replay` takes it. */
+export function parseWsCase(json: string): WsCase {
+  const value: unknown = JSON.parse(json)
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("kind" in value) ||
+    !("route" in value) ||
+    !("path" in value) ||
+    !("headers" in value) ||
+    !("steps" in value) ||
+    !("peers" in value)
+  )
+    throw new Error("a WebSocket case has kind, route, path, headers, steps and peers")
+  const { kind, route, path, headers, steps, peers } = value
+  if (kind !== "ws" || !isWsRoute(route))
+    throw new Error("a WebSocket case has kind ws and a known route")
+  if (!isString(path) || typeof peers !== "number") throw new Error("a case's path and peers")
+  if (!Array.isArray(headers) || !headers.every(isHeader)) throw new Error("headers are pairs")
+  if (!Array.isArray(steps)) throw new Error("steps are a list")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: replay JSON is what a run printed; a step of another shape fails when it is sent.
+  const sent = steps as WsStep[]
+  return { kind: "ws", route, path, headers, steps: sent, peers }
+}

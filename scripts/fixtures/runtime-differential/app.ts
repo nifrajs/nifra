@@ -10,7 +10,9 @@ import { isSameOriginPath, server, silentLogger, status } from "@nifrajs/core"
 import { method } from "@nifrajs/core/methods"
 import { responseContract } from "@nifrajs/core/response-contract"
 import { responseObserver } from "@nifrajs/core/response-observer"
+import { websocket } from "@nifrajs/core/ws"
 import { t } from "@nifrajs/schema/form"
+import { createDifferentialPages } from "./pages.ts"
 
 /** Planted in every server-side failure. A body or header that carries it leaked an internal message. */
 export const INTERNAL_SENTINEL = "nifra-differential-internal-7f3a"
@@ -65,6 +67,7 @@ function encodePath(path: string): string | undefined {
 export function createDifferentialApp(options: DifferentialAppOptions = {}) {
   const staticFiles = options.staticFiles
   const app = server({ logger: silentLogger, maxBodyBytes: MAX_BODY_BYTES })
+    .use(websocket())
     .use(responseContract("enforce", { extra: "strip" }))
     .use(responseObserver())
     .onResponseHeaders((headers) => {
@@ -188,6 +191,51 @@ export function createDifferentialApp(options: DifferentialAppOptions = {}) {
         )
         .get("/me", (c) => ({ caller: c.caller, scope: "private" })),
     )
+    .mount({ path: "/pages", app: createDifferentialPages(INTERNAL_SENTINEL) })
+
+  // A text frame `close:<code>:<reason>` asks the server to close - an empty code or reason is left
+  // out - and a close the protocol refuses comes back as `refused:range`; anything else comes back
+  // as sent.
+  // The close each socket reports is published to `/ws/watch` sockets, the one place a client can
+  // see what the server's `close` callback was given.
+  app.ws("/ws/echo", {
+    message: (ws, data) => {
+      if (typeof data === "string" && data.startsWith("close:")) {
+        const [, code = "", reason = ""] = data.split(":")
+        try {
+          ws.close(code === "" ? undefined : Number(code), reason === "" ? undefined : reason)
+        } catch (error) {
+          ws.send(`refused:${error instanceof RangeError ? "range" : "other"}`)
+        }
+        return
+      }
+      ws.send(data)
+    },
+    close: (_ws, code, reason) => app.publish("watch", `closed:${code}:${reason}`),
+  })
+  app.ws("/ws/watch", {
+    open: (ws) => {
+      ws.subscribe("watch")
+      ws.send("joined")
+    },
+  })
+  app.ws<{ room: string }>("/ws/room/:room", {
+    upgrade: (c) => ({ room: c.params.room ?? "" }),
+    open: (ws) => {
+      ws.subscribe(`room:${ws.data.room}`)
+      ws.send(`joined:${ws.data.room}`)
+    },
+    message: (ws, data) => app.publish(`room:${ws.data.room}`, data),
+  })
+  app.ws<{ caller: string }>("/ws/guarded", {
+    upgrade: (c) => {
+      const token = c.req.headers.get("x-ws-token")
+      if (token === "throw") throw new Error(INTERNAL_SENTINEL)
+      if (token !== "ok") return new Response("unauthorized", { status: 401 })
+      return { caller: c.caller }
+    },
+    open: (ws) => ws.send(`hello:${ws.data.caller}`),
+  })
 
   if (staticFiles !== undefined) {
     app.get(

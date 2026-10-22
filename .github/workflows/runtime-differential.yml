@@ -1,7 +1,7 @@
 name: Runtime differential
 
 # The pull-request job in ci.yml replays one fixed seed. This explores: a fresh seed every night, a
-# budget fifty times larger, and both NODE_ENV modes. A failure prints each distinct violation
+# budget fifty times larger for requests and WebSocket sessions, and both NODE_ENV modes. A failure prints each distinct violation
 # shrunk to a minimal request with a `--replay` command; the JSON report keeps every signature.
 on:
   schedule:
@@ -12,6 +12,10 @@ on:
         description: Generated requests per mode
         type: number
         default: 20000
+      ws_runs:
+        description: Generated WebSocket sessions per mode
+        type: number
+        default: 3000
       seed:
         description: fast-check seed (empty for a fresh one)
         type: string
@@ -53,6 +57,7 @@ jobs:
       - name: Generated requests on every runtime
         env:
           NIFRA_DIFFERENTIAL_RUNS: ${{ inputs.runs || 20000 }}
+          NIFRA_DIFFERENTIAL_WS_RUNS: ${{ inputs.ws_runs || 3000 }}
           NIFRA_DIFFERENTIAL_SEED: ${{ inputs.seed }}
           NIFRA_DIFFERENTIAL_MODE: ${{ matrix.mode }}
           NIFRA_DIFFERENTIAL_REPORT: runtime-differential-${{ matrix.mode }}.json

@@ -26,6 +26,8 @@ export const isLaneName = (name: string): name is LaneName =>
 export interface Lane {
   readonly name: LaneName
   send(request: WireRequest, deadlineMs: number): Promise<Outcome>
+  /** The port a WebSocket client connects to; `undefined` for a lane with no socket. */
+  wsPort(): Promise<number | undefined>
   /** What went wrong in the runtime itself since the last call - an exit, a rejection - or undefined. */
   fault(): string | undefined
   /** What the runtime wrote to stderr since the last call. The app's logger is silent. */
@@ -84,6 +86,7 @@ function inProcessLane(
       fault = undefined
       return reported
     },
+    wsPort: async () => undefined,
     stderr: () => "",
     async stop() {},
   }
@@ -98,6 +101,7 @@ export async function startBunServe(publicDir: string): Promise<Lane> {
   return {
     name: "bun-serve",
     send: (request, deadlineMs) => exchange(running.port, request, deadlineMs),
+    wsPort: async () => running.port,
     fault: () => undefined,
     stderr: () => "",
     async stop() {
@@ -175,15 +179,19 @@ async function childLane(
   let child = await spawnChild(name, command, args, env, readyMs)
   let reportedExit = false
   let stopping = false
+  const current = async (): Promise<Child> => {
+    if (child.exit !== undefined && reportedExit) {
+      child = await spawnChild(name, command, args, env, readyMs)
+      reportedExit = false
+    }
+    return child
+  }
   return {
     name,
     async send(request, deadlineMs) {
-      if (child.exit !== undefined && reportedExit) {
-        child = await spawnChild(name, command, args, env, readyMs)
-        reportedExit = false
-      }
-      return exchange(child.port, request, deadlineMs)
+      return exchange((await current()).port, request, deadlineMs)
     },
+    wsPort: async () => (await current()).port,
     fault() {
       if (child.exit === undefined || reportedExit || stopping) return undefined
       reportedExit = true
@@ -255,6 +263,7 @@ export async function startWorkerd(): Promise<Lane> {
   return {
     name: "workerd",
     send: (request, deadlineMs) => exchange(dev.port, request, deadlineMs),
+    wsPort: async () => dev.port,
     fault: () => undefined,
     stderr() {
       const text = complete

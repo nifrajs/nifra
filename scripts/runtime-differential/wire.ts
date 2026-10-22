@@ -228,8 +228,8 @@ function decodeChunked(bytes: Uint8Array): Uint8Array | undefined {
   }
 }
 
-const CONNECT_ATTEMPTS = 3
-const RETRYABLE_CONNECT = new Set(["ECONNREFUSED", "EADDRNOTAVAIL"])
+export const CONNECT_ATTEMPTS = 3
+export const RETRYABLE_CONNECT: ReadonlySet<string> = new Set(["ECONNREFUSED", "EADDRNOTAVAIL"])
 
 /**
  * Send `request` to `127.0.0.1:port` and read the first final response. When the declared length

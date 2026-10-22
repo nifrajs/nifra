@@ -311,7 +311,8 @@ jobs:
         run: bun run check:workerd
 
   # One app on Bun (app.fetch and Bun.serve), Node, Deno and a local workerd, sent the same generated
-  # requests and held to one set of invariants and to each other (scripts/check-runtime-differential.ts).
+  # requests and WebSocket sessions and held to one set of invariants and to each other
+  # (scripts/check-runtime-differential.ts).
   # The fixed seed keeps a pull request's run repeatable; the nightly runtime-differential workflow
   # explores fresh seeds with a far larger budget.
   runtime-differential:
@@ -345,6 +346,7 @@ jobs:
         env:
           NIFRA_DIFFERENTIAL_SEED: "20261022"
           NIFRA_DIFFERENTIAL_RUNS: "400"
+          NIFRA_DIFFERENTIAL_WS_RUNS: "60"
         run: bun run check:runtime-differential
 
   # Opt-in evidence for the two production bundlers. The fixture deliberately contains routes, public

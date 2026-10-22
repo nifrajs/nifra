@@ -38,7 +38,7 @@ export interface Violation {
 export type Outcomes = ReadonlyMap<LaneName, Outcome>
 
 /** Framing and transport headers each runtime sets its own way; none of them is the app's answer. */
-const TRANSPORT_HEADERS = new Set([
+export const TRANSPORT_HEADERS: ReadonlySet<string> = new Set([
   "date",
   "connection",
   "keep-alive",
@@ -160,7 +160,7 @@ export const OPEN_EQUIVALENCES: readonly Equivalence[] = []
 const PARSER_REFUSAL = "refused by its own parser"
 
 /** An open entry named in `exposed`, by its whole id or its leading code (`F7`), excuses nothing. */
-const isExposed = (id: string, exposed: ReadonlySet<string>) =>
+export const isExposed = (id: string, exposed: ReadonlySet<string>) =>
   exposed.has(id) || exposed.has(id.slice(0, id.indexOf(" ")))
 
 /** The app marks every answer it gives (`onResponseHeaders` in the fixture). */
@@ -226,7 +226,48 @@ const aloneIn = (violation: Violation, outcomes: Outcomes, lane: LaneName) =>
     ? othersAgree(outcomes, lane)
     : violation.lanes.every((name) => name === lane)
 
+/**
+ * A form page's answer with what its action read left out: the `saved` paragraph of the page, or
+ * the whole body in data mode, where the action's result is the body. A 400 is kept only as the
+ * `invalid_form` a body the runtime cannot parse gets; anything else is `undefined`.
+ */
+function withoutFormRead(outcome: Outcome | undefined): string | undefined {
+  if (outcome?.kind !== "response") return undefined
+  const text = bodyText(outcome.body)
+  if (outcome.status === 400)
+    return text.includes('"invalid_form"') ? "400 invalid_form" : undefined
+  if (outcome.status !== 200) return undefined
+  const data = outcome.headers.some(
+    ([name, value]) => name === "content-type" && value.startsWith("application/json"),
+  )
+  const masked = data
+    ? "(what the action read)"
+    : text.replace(/<p class="saved">[^<]*<\/p>/, '<p class="saved">(what the action read)</p>')
+  return canonical({ ...outcome, body: new TextEncoder().encode(masked) })
+}
+
 export const OPEN_FINDINGS: readonly Waiver[] = [
+  {
+    id: "W2 runtime-form-parsers-differ",
+    why:
+      "`c.req.formData()` is the runtime's own parser, and the runtimes read one body differently: a file " +
+      "part without a Content-Type is text/plain;charset=utf-8 on Bun, text/plain on Node, " +
+      "application/octet-stream on Deno and '' on workerd; workerd decodes a malformed `%A` and unescapes " +
+      "`\\` in a filename; Bun accepts a quoted boundary holding a quote and Deno an unclosed multipart, " +
+      "which the others refuse as invalid_form. Waived only where every lane answers the page or " +
+      "invalid_form and the pages differ in nothing but what the action read.",
+    matches: (violation, testCase, outcomes) => {
+      if (violation.kind !== "difference" || testCase.route !== "pageForm") return false
+      const pages = new Set<string>()
+      for (const lane of LANE_NAMES) {
+        if (!outcomes.has(lane)) continue
+        const page = withoutFormRead(outcomes.get(lane))
+        if (page === undefined) return false
+        if (page !== "400 invalid_form") pages.add(page)
+      }
+      return pages.size <= 1
+    },
+  },
   {
     id: "F7 workerd-joins-cookies-with-comma",
     why:
@@ -337,7 +378,9 @@ export const KNOWN_STDERR: readonly {
   {
     // `wrangler dev`'s proxy logs a client that hangs up once it has its answer, or mid-body (the
     // harness closes every connection after the first response, and half-closes inside a body), and
-    // any request it failed itself, whose answer the case is already judged on.
+    // any request it failed itself, whose answer the case is already judged on. A Durable Object
+    // holding N WebSockets also logs "Network connection lost" N-1 times as they close; a bare
+    // WebSocketPair hub without nifra does the same.
     id: "U8 wrangler-proxy-log",
     lane: "workerd",
     entry:
@@ -368,6 +411,18 @@ function safeDecode(text: string): string {
   }
 }
 
+/** Every leak pattern found in `said` that nothing in `sent` carried. */
+export function leaksIn(said: string, sent: readonly string[]): string[] {
+  const found: string[] = []
+  for (const [id, pattern] of LEAK_PATTERNS) {
+    for (const match of said.matchAll(pattern)) {
+      if (!sent.some((text) => text.includes(match[0])))
+        found.push(`${id}: ${JSON.stringify(match[0].slice(0, 80))}`)
+    }
+  }
+  return found
+}
+
 /** Every leak pattern found in the response that the request did not itself carry. */
 function leaks(testCase: Case, outcome: Outcome): string[] {
   if (outcome.kind !== "response") return []
@@ -379,17 +434,10 @@ function leaks(testCase: Case, outcome: Outcome): string[] {
     safeDecode(request.body),
     ...request.headers.flat(),
   ]
-  const said = [latin1.decode(outcome.body), ...outcome.headers.map(([, value]) => value)].join(
-    "\n",
+  return leaksIn(
+    [latin1.decode(outcome.body), ...outcome.headers.map(([, value]) => value)].join("\n"),
+    sent,
   )
-  const found: string[] = []
-  for (const [id, pattern] of LEAK_PATTERNS) {
-    for (const match of said.matchAll(pattern)) {
-      if (!sent.some((text) => text.includes(match[0])))
-        found.push(`${id}: ${JSON.stringify(match[0].slice(0, 80))}`)
-    }
-  }
-  return found
 }
 
 /** Group lanes by identical canonical outcome, in lane order. */
