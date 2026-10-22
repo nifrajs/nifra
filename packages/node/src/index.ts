@@ -1374,12 +1374,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   // Only a WebSocket handshake leaves the HTTP parser; any other `Upgrade` (curl's h2c offer) is an
   // ordinary request. Node versions without the option send every upgrade to the `upgrade` event.
-  const upgradeOptions =
-    resolveWs === undefined ? {} : { shouldUpgradeCallback: isWebSocketUpgrade }
+  // A field sent twice is joined with ", ", as Fetch's `Headers` hands it to an app on Bun, Deno and
+  // Workers. Node otherwise keeps only the first of a field it treats as a singleton (Content-Type,
+  // Authorization, User-Agent), so the same request was JSON here and an unsupported type there.
+  const serverOptions =
+    resolveWs === undefined
+      ? { joinDuplicateHeaders: true }
+      : { joinDuplicateHeaders: true, shouldUpgradeCallback: isWebSocketUpgrade }
   const server =
     options.tls === undefined
-      ? createServer(upgradeOptions, onRequest)
-      : createHttpsServer({ ...options.tls, ...upgradeOptions }, onRequest)
+      ? createServer(serverOptions, onRequest)
+      : createHttpsServer({ ...options.tls, ...serverOptions }, onRequest)
   if (report !== undefined) (server as ReportingServer)[ERROR_REPORTER] = report
 
   // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can

@@ -260,16 +260,6 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       othersAgree(outcomes, "workerd"),
   },
   {
-    id: "F8 repeated-content-type",
-    why:
-      "Content-Type is a single field, but nothing refuses it repeated, and each runtime reads two of them " +
-      "its own way: Node keeps the first, Bun joins them with ', ' (a 415), Deno and workerd drop an empty " +
-      "one. The same bytes are JSON on one runtime and unsupported on another.",
-    matches: (violation, testCase) =>
-      violation.kind === "difference" &&
-      testCase.request.headers.filter(([name]) => name.toLowerCase() === "content-type").length > 1,
-  },
-  {
     id: "U4 workerd-waits-after-early-eof",
     why:
       "When a request's body ends early (the client half-closes inside its framing), local workerd keeps " +
