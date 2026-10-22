@@ -6,7 +6,7 @@ import type { HoleRegistration } from "../src/internal/ppr/contract.ts"
 import { frameBodyOf } from "../src/internal/ppr/frames.ts"
 import { partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, HOLE_FILL_HEADER } from "../src/router.ts"
-import { serverHole } from "../src/server-components/hole.ts"
+import { serverHole, serverHoleComponent } from "../src/server-components/hole.ts"
 import {
   createServerComponents,
   defineServerComponent,
@@ -284,4 +284,22 @@ test("a route is an owner or hosts holes, never both", () => {
       holes: { "p/[id]": { components: [Summary] } },
     }),
   ).toThrow()
+})
+
+test("a server component hole's render names its component and renders nothing itself", () => {
+  const Summary = defineServerComponent(
+    {
+      input: t.object({}),
+      props: t.object({}),
+      authorize() {},
+      load: () => ({}),
+      view: () => null,
+    },
+    "ref_render",
+  )
+  const render = serverHole(Summary)
+  expect(serverHoleComponent(render)).toBe(Summary)
+  expect(serverHoleComponent(() => null)).toBeUndefined()
+  // An adapter that rendered the hole in the browser, past the server's own path, would fail loudly.
+  expect(() => render({})).toThrow("renders on the server only")
 })

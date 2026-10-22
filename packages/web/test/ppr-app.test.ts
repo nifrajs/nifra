@@ -480,6 +480,13 @@ describe("PPR fixture app: what the browser checks lean on", () => {
     expect((await fetch(`${app.origin}/assets/a%20b.js`)).status).toBe(400)
     expect(await (await fetch(`${app.origin}/__unrelated`)).text()).toBe("unrelated ok")
   })
+
+  test("the probe routes a browser check reads from another process answer with this one's counters", async () => {
+    const counters = await (await fetch(`${app.origin}/__probe`)).json()
+    expect(counters).toMatchObject({ slowStarted: probe.slowStarted, cancels: probe.cancels })
+    expect(counters.timeOrigin).toBe(performance.timeOrigin)
+    expect(await (await fetch(`${app.origin}/__release`, { method: "POST" })).json()).toBe(0)
+  })
 })
 
 describe("PPR app with shellAfterRequests: 2", () => {

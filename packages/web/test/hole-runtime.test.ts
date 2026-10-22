@@ -188,6 +188,58 @@ test("without a component client the hole shows its error slot", async () => {
   expect(host.text).toBe("This section is unavailable.")
 })
 
+test("islands that finish mounting after their host goes are disposed, and the host is left alone", async () => {
+  const { adapter, log, releases } = client()
+  let mount: () => void = () => {}
+  const held = new Promise<void>((resolve) => {
+    mount = resolve
+  })
+  holeComponents({
+    ...adapter,
+    hydrate: async (host, next, prepared, valid) => {
+      await held
+      log.push(`valid ${valid()}`)
+      return adapter.hydrate(host, next, prepared, valid)
+    },
+  })
+  runtime({ summary: { error: false, component: record(1), html: "a" } })
+  const host = new FakeHost()
+  const driven = holeHost("summary", hostOf(host), undefined)
+  await flush()
+  driven.dispose()
+  mount()
+  await flush()
+  expect(log).toEqual(["prepare a", "valid false", "hydrate a", "dispose a"])
+  releases[0]?.()
+  await flush()
+  expect(host.attributes.has("aria-busy")).toBe(false)
+})
+
+test("a refill with plain HTML replaces a server component's islands", async () => {
+  const { adapter, log, releases } = client()
+  holeComponents(adapter)
+  runtime({ summary: { error: false, component: record(1), html: "a" } })
+  const host = new FakeHost()
+  const driven = holeHost("summary", hostOf(host), undefined)
+  await flush()
+  driven.refill({ v: 1, html: "plain" })
+  await flush()
+  releases[0]?.()
+  await flush()
+  expect(log).toEqual(["prepare a", "hydrate a", "dispose a", "disposed a"])
+  expect(host.text).toBe("plain")
+})
+
+test("a deferred refill that fails shows the error slot", async () => {
+  runtime({})
+  const host = new FakeHost()
+  const driven = holeHost("summary", hostOf(host), undefined)
+  driven.refill({ __nifra_deferred: true, promise: Promise.reject(new Error("stream ended")) })
+  await flush()
+  expect(host.text).toBe('<p data-nifra-hole-error="">This section is unavailable.</p>')
+  expect(host.attributes.get("aria-busy")).toBe("false")
+})
+
 test("a host renders a blocking render's settled HTML, and nothing for a deferred fill", () => {
   expect(initialHtml({ v: 1, html: "<section>a</section>" })).toBe("<section>a</section>")
   expect(initialHtml({ __nifra_deferred: true, html: "x" })).toBe("")

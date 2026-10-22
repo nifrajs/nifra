@@ -38,7 +38,7 @@ if (RUNTIME !== "bun" && (RUNTIME !== "deno" || FRAMEWORK !== "react")) {
 }
 const app =
   RUNTIME === "deno"
-    ? await (await import("./app/server.ts")).startPprAppOnDeno()
+    ? await (await import("./app/deno-app.ts")).startPprAppOnDeno()
     : await twin.startPprApp()
 const { origin } = app
 

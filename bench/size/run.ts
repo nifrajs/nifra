@@ -262,7 +262,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // QueryClient.clear(): 17,769 -> 18,212 B; every browser client held weakly from creation, so a
   // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
   // Partial prerendering's prefetch marker and its leave hook on navigation: 18,265 -> 18,368 B.
-  "nifra-web-client": 18.0,
+  // A reload asks for the fill of each hole host on screen, a server component's included, and the
+  // leave hook runs only for a navigation that loads: 18,368 -> 18,436 B (Bun 1.4.3).
+  "nifra-web-client": 18.1,
   "nifra-i18n": 4.3,
 }
 
