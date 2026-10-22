@@ -37,8 +37,9 @@
  * `JSON.stringify` writes what a `toJSON` hook returns, not the fields a validator reads off the
  * object. So a value's hooks are applied first, as the serializer would, and that result is validated
  * and sent: a class whose `toJSON` adds a private field fails a closed schema instead of passing on its
- * public ones. A `Date` is the exception; it stays a `Date` for a date schema and is written as its
- * ISO string.
+ * public ones. `strip` keeps the declared fields of what the hook writes, so a hook that writes `id`
+ * from private state keeps it. A `Date` is the exception; it stays a `Date` for a date schema and is
+ * written as its ISO string.
  *
  * ## What enforcement costs
  *
@@ -175,7 +176,12 @@ function compileProjector(node: unknown): Projector | undefined {
     const item = Array.isArray(items) ? undefined : compileProjector(items)
     return item === undefined
       ? undefined
-      : (value) => (Array.isArray(value) ? value.map(item) : value)
+      : (value) => {
+          if (!Array.isArray(value)) return value
+          const out: unknown[] = []
+          for (let i = 0; i < value.length; i++) out.push(item(writtenAt(value[i], i)))
+          return out
+        }
   }
   if (type !== "object") return undefined
   const properties = objectField(schema, "properties") ?? {}
@@ -205,7 +211,7 @@ function compileProjector(node: unknown): Projector | undefined {
     for (const key of closed ? keys : nested.keys()) {
       if (!hasField(value, key)) continue
       const projector = nested.get(key)
-      define(out, key, projector === undefined ? value[key] : projector(value[key]))
+      define(out, key, projector === undefined ? value[key] : projector(writtenAt(value[key], key)))
     }
     if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed)
     return out
@@ -349,7 +355,8 @@ function projectPatternKeys(
         matches++
       }
     if (matches === 0) continue
-    if (matches === 1 && projector !== undefined) define(out, key, projector(value[key]))
+    if (matches === 1 && projector !== undefined)
+      define(out, key, projector(writtenAt(value[key], key)))
     else if (closed) define(out, key, value[key])
   }
 }
@@ -399,12 +406,29 @@ const wireValueOf = (value: unknown): unknown =>
     ? wireValue(value, "", [])
     : value
 
-function wireValue(value: unknown, key: string | number, path: object[]): unknown {
+const wireValue = (value: unknown, key: string | number, path: object[]): unknown =>
+  wireChildren(writtenAt(value, key), path)
+
+/** `value` as the serializer takes it under `key`: its own hook applied, its fields still as they are. */
+function writtenAt(value: unknown, key: string | number): unknown {
   if (typeof value !== "object" || value === null) return value
   const hook: unknown = Reflect.get(value, "toJSON")
-  if (typeof hook !== "function") return wireChildren(value, path)
-  if (hook === DATE_TO_JSON && value instanceof Date) return value
-  return wireChildren(Reflect.apply(hook, value, [String(key)]), path)
+  if (typeof hook !== "function" || (hook === DATE_TO_JSON && value instanceof Date)) return value
+  return fieldsOf(Reflect.apply(hook, value, [String(key)]))
+}
+
+/**
+ * The serializer calls one hook per value, so a hook's result that has a hook of its own is written
+ * by its fields. Copying them out keeps that second hook from running when the checked value is sent.
+ */
+function fieldsOf(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value
+  if (typeof Reflect.get(value, "toJSON") !== "function") return value
+  if (Array.isArray(value)) return Array.from({ length: value.length }, (_, i): unknown => value[i])
+  const fields: Record<string, unknown> = {}
+  for (const name of Object.keys(value))
+    if (name !== "toJSON") define(fields, name, Reflect.get(value, name))
+  return fields
 }
 
 function wireChildren(value: unknown, path: object[]): unknown {
@@ -610,9 +634,14 @@ function validateContract(
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   const project = policy.strip ? projectorOf(schema) : undefined
-  // A projection is a fresh copy of the declared fields, so walking it never reads the payload's keys.
-  const sent = wireValueOf(project === undefined ? payload : project(payload))
-  const before = project === undefined ? sent : payload
+  // Naming what was stripped compares against everything the payload writes, so it walks it whole.
+  const before =
+    project === undefined || policy.report !== undefined || mode === "warn"
+      ? wireValueOf(payload)
+      : payload
+  // The projection applies the hook of each value it descends into and reads only declared fields,
+  // so a quiet strip never enumerates the payload's own keys. What it copies whole is walked after.
+  const sent = project === undefined ? before : wireValueOf(project(writtenAt(before, "")))
   const settled = schema["~standard"].validate(sent)
   return settled instanceof Promise
     ? settled.then((r) => interpret(r, before, served, mode, replace, policy.report))

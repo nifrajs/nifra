@@ -159,6 +159,10 @@ describe('responseContract: "enforce"', () => {
         return (this.cents / 100).toFixed(2)
       }
     }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: what these values write by toJSON is the declared row, which no static type can say.
+    const writesRow = (value: object): { id: string; name: string } => value as never
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrapper's toJSON writes the declared list, which no static type can say.
+    const writesTags = (value: object): string[] => value as never
 
     test("is judged by what the hook writes, at the top, nested, and in a c.json reply", async () => {
       const app = server({ logger: silentLogger })
@@ -182,6 +186,76 @@ describe('responseContract: "enforce"', () => {
       expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
         id: "u1",
         name: "Ada",
+      })
+    })
+
+    test("strip keeps a declared field the hook writes from private state, at the top and nested", async () => {
+      class Member {
+        #id = "u1"
+        name = "Ada"
+        toJSON() {
+          return { id: this.#id, name: this.name, passwordHash: "SECRET" }
+        }
+      }
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce", { extra: "strip" }))
+        .get("/me", { response: STRICT }, () => writesRow(new Member()))
+        .get("/list", { response: t.object({ users: t.array(STRICT) }) }, () => ({
+          users: [writesRow(new Member())],
+        }))
+      const me = await app.fetch(new Request("http://t/me"))
+      expect(me.status).toBe(200)
+      expect(await me.json()).toEqual({ id: "u1", name: "Ada" })
+      const list = await app.fetch(new Request("http://t/list"))
+      expect(list.status).toBe(200)
+      expect(await list.json()).toEqual({ users: [{ id: "u1", name: "Ada" }] })
+    })
+
+    test("strip reports the fields a hook writes that were not sent", async () => {
+      const reports: ResponseContractReport[] = []
+      const app = server({ logger: silentLogger })
+        .use(
+          responseContract("enforce", {
+            extra: "strip",
+            onReport: (report) => void reports.push(report),
+          }),
+        )
+        .get("/me", { response: STRICT }, () => new Account())
+      expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
+        id: "u1",
+        name: "Ada",
+      })
+      expect(reports).toMatchObject([{ kind: "stripped", fields: ["passwordHash"] }])
+    })
+
+    test("a hook's result is written by its fields, never by a hook of its own", async () => {
+      class Wrapper {
+        constructor(readonly inner: object) {}
+        toJSON() {
+          return this.inner
+        }
+      }
+      // The serializer calls one hook per value: this writes the account's own fields, not its hook's.
+      expect(JSON.parse(JSON.stringify(new Wrapper(new Account())))).toEqual({
+        id: "u1",
+        name: "Ada",
+      })
+      for (const extra of ["reject", "strip"] as const) {
+        const app = server({ logger: silentLogger })
+          .use(responseContract("enforce", { extra }))
+          .get("/me", { response: STRICT }, () => writesRow(new Wrapper(new Account())))
+        const res = await app.fetch(new Request("http://t/me"))
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+      }
+      const tags = Object.assign(["a", "b"], { toJSON: () => "SECRET" })
+      const tagged = server({ logger: silentLogger })
+        .use(responseContract("enforce"))
+        .get("/tags", { response: t.object({ tags: t.array(t.string()) }) }, () => ({
+          tags: writesTags(new Wrapper(tags)),
+        }))
+      expect(await (await tagged.fetch(new Request("http://t/tags"))).json()).toEqual({
+        tags: ["a", "b"],
       })
     })
 
