@@ -373,6 +373,9 @@ function replayRawResponse(
  * fallback for handler-returned/proxied Responses. The common JSON path stays on Node's direct
  * writer; raw streams are compressed incrementally without being fully buffered.
  *
+ * On Cloudflare Workers it does nothing: the runtime gzips any body sent with `Content-Encoding:
+ * gzip` again, and the platform compresses responses for clients that accept it.
+ *
  * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,
  * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible
  * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds
@@ -396,6 +399,9 @@ export function compression(options: CompressionOptions = {}) {
     throw new Error("compression: threshold must be a non-negative safe integer")
   }
   const isCompressible = options.compressible ?? defaultCompressible
+  if (globalThis.navigator?.userAgent === "Cloudflare-Workers") {
+    return defineRouterPlugin("compression", (app) => app)
+  }
   return defineRouterPlugin("compression", (app) =>
     app.use(
       withResponseObserver<Middleware>({

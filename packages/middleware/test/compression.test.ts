@@ -100,6 +100,34 @@ describe("buffered gzip lanes", () => {
 })
 
 describe("compression()", () => {
+  test("on Cloudflare Workers it leaves every body to the platform", async () => {
+    const agent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent")
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value: "Cloudflare-Workers",
+      configurable: true,
+    })
+    let plugin: ReturnType<typeof compression>
+    try {
+      plugin = compression()
+    } finally {
+      if (agent === undefined) Reflect.deleteProperty(globalThis.navigator, "userAgent")
+      else Object.defineProperty(globalThis.navigator, "userAgent", agent)
+    }
+    const app = server()
+      .use(plugin)
+      .get("/", () => ({ data: big }))
+      .get(
+        "/stream",
+        () => new Response(streamOf(big), { headers: { "content-type": "text/html" } }),
+      )
+    const buffered = await app.fetch(new Request("http://x/", { headers: GZIP }))
+    expect(buffered.headers.get("content-encoding")).toBeNull()
+    expect(await buffered.json()).toEqual({ data: big })
+    const streamed = await app.fetch(new Request("http://x/stream", { headers: GZIP }))
+    expect(streamed.headers.get("content-encoding")).toBeNull()
+    expect(await streamed.text()).toBe(big)
+  })
+
   test("gzips a framework-serialized body when the client accepts gzip (round-trips)", async () => {
     const app = server()
       .use(compression())

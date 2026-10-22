@@ -1,0 +1,14 @@
+name = "nifra-workerd-ppr"
+main = "worker.ts"
+compatibility_date = "2026-08-18"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "SHELLS"
+id = "nifra-workerd-ppr-shells"
+
+# The sources, as the Bun suites load them, so the check needs no package build.
+[alias]
+"@nifrajs/web/backend-only" = "../../src/backend-only.ts"
+"@nifrajs/middleware" = "../../../middleware/src/index.ts"

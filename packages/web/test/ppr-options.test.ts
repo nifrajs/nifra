@@ -40,8 +40,38 @@ describe("PPR options", () => {
       frameBytes: 256 * 1024,
       minShellBytes: 1024,
       holeHtmlValidation: "always",
+      cancelBeacon: true,
     })
     expect(Object.isFrozen(PPR_DEFAULTS)).toBe(true)
+  })
+
+  test("on Cloudflare Workers the store is smaller and the beacon is off", () => {
+    const agent = Object.getOwnPropertyDescriptor(globalThis.navigator, "userAgent")
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value: "Cloudflare-Workers",
+      configurable: true,
+    })
+    try {
+      const resolved = resolvePprOptions()
+      expect(resolved.shellStoreBytes).toBe(8 * 1024 * 1024)
+      expect(resolved.cancelBeacon).toBe(false)
+      expect(resolvePprOptions({ cancelBeacon: true, shellStoreBytes: 1024 })).toMatchObject({
+        cancelBeacon: true,
+        shellStoreBytes: 1024,
+      })
+    } finally {
+      if (agent === undefined) Reflect.deleteProperty(globalThis.navigator, "userAgent")
+      else Object.defineProperty(globalThis.navigator, "userAgent", agent)
+    }
+    expect(resolvePprOptions().cancelBeacon).toBe(true)
+  })
+
+  test("cancelBeacon must be a boolean", () => {
+    const override: Record<string, unknown> = { cancelBeacon: "no" }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a wrong type is what this test feeds in, which the option type refuses to spell.
+    expect(() => resolvePprOptions(override as PprOptions)).toThrow(
+      /cancelBeacon must be a boolean/,
+    )
   })
 
   test("an override replaces only its own key and the result is frozen", () => {

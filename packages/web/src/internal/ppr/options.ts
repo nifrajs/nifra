@@ -63,6 +63,11 @@ export interface PprOptions {
    * in production only when a strict CSP already blocks inline script.
    */
   readonly holeHtmlValidation?: "always" | "development"
+  /**
+   * Whether a page left with holes pending posts a cancel beacon, so their loaders stop before their
+   * deadline. Off by default on Cloudflare Workers, where the beacon reaches another isolate.
+   */
+  readonly cancelBeacon?: boolean
 }
 
 export type ResolvedPprOptions = {
@@ -103,7 +108,19 @@ export const PPR_DEFAULTS: ResolvedPprOptions = Object.freeze({
   frameBytes: 256 * 1024,
   minShellBytes: 1_024,
   holeHtmlValidation: "always",
+  cancelBeacon: true,
 })
+
+/**
+ * On Cloudflare Workers an isolate's memory is shared by everything it runs, and a beacon almost
+ * always reaches another isolate than the one running the holes.
+ */
+const WORKERS_DEFAULTS: Partial<ResolvedPprOptions> = Object.freeze({
+  shellStoreBytes: 8 * MB,
+  cancelBeacon: false,
+})
+
+const onWorkers = (): boolean => globalThis.navigator?.userAgent === "Cloudflare-Workers"
 
 type NumericKey = {
   [K in keyof ResolvedPprOptions]: ResolvedPprOptions[K] extends number ? K : never
@@ -133,9 +150,13 @@ export function resolvePprOptions(overrides: PprOptions = {}): ResolvedPprOption
   const defined = Object.fromEntries(
     Object.entries(overrides).filter(([, value]) => value !== undefined),
   )
-  const resolved: ResolvedPprOptions = { ...PPR_DEFAULTS, ...defined }
+  const resolved: ResolvedPprOptions = {
+    ...PPR_DEFAULTS,
+    ...(onWorkers() ? WORKERS_DEFAULTS : undefined),
+    ...defined,
+  }
   for (const [key, value] of Object.entries(resolved)) {
-    if (key === "blockingFor" || key === "holeHtmlValidation") continue
+    if (key === "blockingFor" || key === "holeHtmlValidation" || key === "cancelBeacon") continue
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
       throw optionError(`${key} must be a non-negative integer, got ${String(value)}`)
     }
@@ -165,6 +186,9 @@ export function resolvePprOptions(overrides: PprOptions = {}): ResolvedPprOption
     throw optionError(
       `holeHtmlValidation must be "always" or "development", got ${String(resolved.holeHtmlValidation)}`,
     )
+  }
+  if (typeof resolved.cancelBeacon !== "boolean") {
+    throw optionError(`cancelBeacon must be a boolean, got ${String(resolved.cancelBeacon)}`)
   }
   // A global or sticky pattern keeps `lastIndex` between `test` calls, so one bot would alternate.
   if (blockingFor instanceof RegExp && (blockingFor.global || blockingFor.sticky)) {

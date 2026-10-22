@@ -379,12 +379,20 @@ const DECODER = new TextDecoder()
 // How long a shared store keeps a shell that has no `revalidate`: a year, as good as forever.
 const KEEP_UNREVALIDATED_SECONDS = 365 * 24 * 60 * 60
 
+// Taken when this module is evaluated, before any request: a build run through it sees no visitor's
+// async context, even in an app created while a request was being handled.
+const detached: <T>(fn: () => T) => T =
+  globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage?.snapshot?.() ??
+  ((fn) => fn())
+
 /** A 404 entry answers as the shell loader's own `notFound()` did. */
 const served = (entry: ShellEntry): ShellEntry | Promise<never> =>
   entry.notFound === undefined ? entry : Promise.reject(entry.notFound)
 
 export function createPprServer(config: PprServerConfig): PprServer {
-  const { options, adapter, deployment, cancelUrl, shellChecks } = config
+  const { options, adapter, deployment, shellChecks } = config
+  // With the beacon off, the request script names no address, so the runtime sends none.
+  const cancelUrl = options.cancelBeacon ? config.cancelUrl : ""
   const renderFragment = adapter.renderFragment
   if (renderFragment === undefined) {
     throw new TypeError("[nifra/web] ppr: the render adapter does not implement renderFragment")
@@ -397,10 +405,6 @@ export function createPprServer(config: PprServerConfig): PprServer {
     (shellChecks.deployment === (config.clientEntry ?? deployment) &&
       Object.hasOwn(shellChecks.routes, routeId))
   const now = config.now ?? Date.now
-  // Captured outside any request, so an on-demand build sees no visitor's async context.
-  const detached: <T>(fn: () => T) => T =
-    globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage?.snapshot?.() ??
-    ((fn) => fn())
   const shared = config.shared
   // One shared-store read per key at a time; concurrent misses wait on it.
   const lookups = new Map<string, Promise<ShellEntry | undefined>>()
@@ -711,7 +715,10 @@ export function createPprServer(config: PprServerConfig): PprServer {
   const rebuild = (key: string, request: PprRequest, stale: ShellEntry): void => {
     if (builds.has(key) || now() < stale.retryAt) return
     if ((buildsByRoute.get(request.routeId) ?? 0) >= options.shellBuildConcurrency) return
-    startBuild(key, request).catch((error: unknown) => {
+    const building = startBuild(key, request)
+    // No visitor waits on it, so a platform that stops work at the response's end must be told.
+    request.waitUntil?.(building.catch(() => undefined))
+    building.catch((error: unknown) => {
       stale.failures++
       stale.retryAt = now() + Math.min(2 ** stale.failures, request.revalidate ?? 1) * 1000
       console.error("[nifra/web] ppr: shell rebuild failed; serving the stale shell", {

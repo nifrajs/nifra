@@ -25,7 +25,12 @@ describe("compileShells", () => {
     ])
     expect(record.routes.clean).toMatch(/^[0-9a-f]{64}$/)
     const failed = new Map(failures)
-    expect([...failed.keys()].sort()).toEqual(["ambient", "leaky", "loaded/[id]"])
+    expect([...failed.keys()].sort()).toEqual(["ambient", "leaky", "loaded/[id]", "platform-env"])
+    // A Worker's env reaches a module through an import, with no request: it counts too.
+    const platform = failed.get("platform-env")
+    expect(platform instanceof ShellCheckError ? platform.chain.at(-1) : "").toEndWith(
+      "/shell-routes/platform-env.backend.ts",
+    )
     expect(String(failed.get("loaded/[id]"))).toContain(
       'route "loaded/[id]" has a shellLoader, but its layout "loaded/_layout" has a loader that is not a gate',
     )

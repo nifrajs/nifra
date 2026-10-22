@@ -54,6 +54,9 @@ const NIFRA_REQUEST_SCOPED_FILTER = new RegExp(
   `^(?:${NIFRA_REQUEST_SCOPED.map(escapeRegExp).join("|")})$`,
 )
 
+/** Hands any module the Worker's `env`, its secrets included, with no request in sight. */
+const PLATFORM_ENV = /^cloudflare:workers$/
+
 /** The import chain from `root` to the first request-scoped module it reaches, breadth first. */
 function requestScopedChain(
   root: string,
@@ -158,6 +161,7 @@ async function compileShell(
       lines.push(`export { default as layout${index} } from ${at(layout.file)}`)
   })
   const nifraScoped = new Set<string>()
+  const envImporters = new Set<string>()
   const result = await Bun.build({
     // Bun reads a `/` in an entry name as a directory, and route ids have them.
     entrypoints: [`${NAMESPACE}:${encodeURIComponent(route.id)}`],
@@ -188,6 +192,10 @@ async function compileShell(
             }
             nifraScoped.add(path)
             return { path }
+          })
+          build.onResolve({ filter: PLATFORM_ENV }, (args) => {
+            envImporters.add(toPosix(resolve(args.importer)))
+            return { path: args.path, external: true }
           })
           // The backend half's other exports are not shell code. A hole loader's `output: t.object()`
           // is a call into a package, which the bundler must keep, and with it every import the
@@ -243,7 +251,8 @@ async function compileShell(
   for (const [id, module] of Object.entries(graph.modules)) {
     const from = absolute(id)
     if (id.startsWith(`${NAMESPACE}:`)) root = from
-    if (emitted(id) && (nifraScoped.has(from) || requestScoped(from))) scoped.add(from)
+    if (emitted(id) && (nifraScoped.has(from) || envImporters.has(from) || requestScoped(from)))
+      scoped.add(from)
     next.set(
       from,
       module.imports.flatMap((edge) => (edge.path === undefined ? [] : [absolute(edge.path)])),

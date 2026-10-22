@@ -1113,3 +1113,27 @@ describe("PPR server: what a hole cannot do, and when its slot frees", () => {
     })
   })
 })
+
+describe("PPR server outside the request", () => {
+  test("a server made inside a visitor's async context builds its shells outside it", async () => {
+    const { AsyncLocalStorage } = await import("node:async_hooks")
+    const visitor = new AsyncLocalStorage<string>()
+    const seen: unknown[] = []
+    const server = visitor.run("first visitor", () => createPprServer(config()))
+    const request = pprRequest([hole("cart", () => "c")], {
+      loadShell: async () => {
+        seen.push(visitor.getStore())
+        return { title: "Tea" }
+      },
+    })
+    await visitor.run("second visitor", async () => (await server.respond(request)).text())
+    expect(seen).toEqual([undefined])
+  })
+
+  test("with the cancel beacon off, the request script names no address", async () => {
+    const server = createPprServer(config({ options: resolvePprOptions({ cancelBeacon: false }) }))
+    const html = await (await server.respond(pprRequest([hole("cart", () => "c")]))).text()
+    expect(html).toContain('"cancel":""')
+    expect(html).not.toContain("/__nifra/ppr/cancel")
+  })
+})
