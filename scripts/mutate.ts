@@ -670,7 +670,10 @@ export function scoreOf(mutants: readonly MutantResult[]): number | undefined {
 const cell = (text: string, max = 80): string => {
   const cut = text.length > max ? `${text.slice(0, max - 3)}...` : text
   const fence = cut.includes("`") ? "``" : "`"
-  return `${fence}${fence === "``" ? " " : ""}${cut.replace(/\|/g, "\\|")}${fence === "``" ? " " : ""}${fence}`
+  // A table splits cells on a pipe no backslash escapes, so a backslash of the source's own, left
+  // as it is, would escape the backslash added for its pipe and end the cell there.
+  const escaped = cut.replace(/\\/g, "\\\\").replace(/\|/g, "\\|")
+  return `${fence}${fence === "``" ? " " : ""}${escaped}${fence === "``" ? " " : ""}${fence}`
 }
 
 const SURVIVOR_ROWS = 150

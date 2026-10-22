@@ -350,6 +350,30 @@ describe("formatSummary", () => {
     expect(formatSummary([], "Lines changed.")).toContain("No mutable source lines changed.")
   })
 
+  test("a backslash in a cell is escaped too, so it cannot unescape the pipe after it", () => {
+    const mutant = generateMutants(
+      "q.ts",
+      "export const g = (s: string) => /a\\|b/.test(s) || s === ''\n",
+    ).find((m) => m.op === "binary ||->&&")
+    if (mutant === undefined) throw new Error("expected a || mutant")
+    const summary = formatSummary(
+      [
+        {
+          file: "q.ts",
+          tests: [{ file: "q.test.ts", depth: 1 }],
+          baselineMs: undefined,
+          baselineFailures: undefined,
+          mutants: [{ ...mutant, status: "survived", killedBy: [] }],
+          unusedEquivalents: [],
+        },
+      ],
+      "Whole files.",
+    )
+    expect(summary).toContain(
+      "| `q.ts:1` | `binary \\|\\|->&&` | `export const g = (s: string) => /a\\\\\\|b/.test(s) \\|\\| s === ''` | `g` |",
+    )
+  })
+
   test("names untested files, tests already red, a missing baseline and stale equivalents", () => {
     const quiet = { tests: [], mutants: [], baselineMs: undefined, unusedEquivalents: [] }
     const stale = { op: "drop !", fn: "f", code: "!a", from: "!a", reason: "r" }
