@@ -59,9 +59,17 @@ export function encodeHoleFrame(name: string, outcome: HoleOutcome, maxBytes: nu
   return frame
 }
 
-/** The per-response facts the runtime needs to send a cancel beacon. Inert JSON: never cached. */
-export const encodeRequestScript = (cancelUrl: string, token: string, holes: readonly string[]) =>
-  `<script type="application/json" id="nifra-ppr-req">${serializeData({ cancel: cancelUrl, token, holes })}</script>`
+/**
+ * The per-response facts the runtime needs to send a cancel beacon. Inert JSON: never cached. `shared`
+ * names the holes whose frames serve every visitor, which the canary check scans with the shell.
+ */
+export const encodeRequestScript = (
+  cancelUrl: string,
+  token: string,
+  holes: readonly string[],
+  shared: readonly string[] = [],
+) =>
+  `<script type="application/json" id="nifra-ppr-req">${serializeData(shared.length === 0 ? { cancel: cancelUrl, token, holes } : { cancel: cancelUrl, token, holes, shared })}</script>`
 
 const TOKEN_KEY = '"token":"'
 
@@ -74,8 +82,9 @@ const TOKEN_KEY = '"token":"'
 export function requestScriptAround(
   cancelUrl: string,
   holes: readonly string[],
+  shared: readonly string[] = [],
 ): readonly [string, string] {
-  const script = encodeRequestScript(cancelUrl, "", holes)
+  const script = encodeRequestScript(cancelUrl, "", holes, shared)
   const at = script.indexOf(TOKEN_KEY) + TOKEN_KEY.length
   return [script.slice(0, at), script.slice(at)]
 }

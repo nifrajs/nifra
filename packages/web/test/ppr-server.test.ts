@@ -5,6 +5,7 @@ import { type PprOptions, resolvePprOptions } from "../src/internal/ppr/options.
 import { PPR_RUNTIME, pprScriptHashes } from "../src/internal/ppr/runtime.ts"
 import {
   createPprServer,
+  type DynamicHole,
   type HoleRegistration,
   type PprRequest,
   type PprServerConfig,
@@ -45,8 +46,8 @@ const gate = (): Gate => {
 const hole = (
   name: string,
   load: (ctx: BoundaryRequestCtx) => unknown,
-  extra: Partial<HoleRegistration> = {},
-): HoleRegistration => ({
+  extra: Partial<DynamicHole> = {},
+): DynamicHole => ({
   name,
   mode: "dynamic",
   render: (data: never) => `${name}:${JSON.stringify(data)}`,
@@ -75,10 +76,18 @@ const pprRequest = (
   request: new Request("https://shop.test/p/1"),
   holes,
   holeContext,
+  shellContext: {
+    phase: "shell",
+    params: { id: "1" },
+    locale: undefined,
+    variations: {},
+    api: undefined,
+  },
   loadShell: async () => ({ title: "Tea" }),
   renderShellDocument: async (data, states) => document(data, states),
   revalidate: undefined,
   tags: () => [],
+  holeTags: () => [],
   ...overrides,
 })
 

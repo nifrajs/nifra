@@ -15,6 +15,7 @@ import {
   type BoundaryStates,
   boundaryDescriptors,
   resolveStaticBoundaries,
+  type ShellCtx,
   type StaticBoundaryCache,
   startDynamicBoundaries,
 } from "../boundary.ts"
@@ -1526,6 +1527,11 @@ export function createPageRequestExecutor<Env = unknown>(
     const variations =
       options.ppr?.variationsOf(mod.shellVariations, urlPartsFor(c.req).search) ?? {}
     const shellSearch = options.ppr?.variationQuery(variations) ?? ""
+    // The unbound `api`: a shell is built for every visitor, so no visitor's platform reaches it.
+    const shellContext: Omit<ShellCtx, "signal"> =
+      shellOrigin === undefined
+        ? { phase: "shell", params, locale, variations, api }
+        : { phase: "shell", params, locale, variations, api, origin: shellOrigin }
     return {
       routeId: route.id,
       path,
@@ -1534,24 +1540,22 @@ export function createPageRequestExecutor<Env = unknown>(
       request: c.req,
       holes: boundaries.filter(isHole),
       holeContext: { request: c.req, params, api: requestApi, env: c.env, draft, search },
+      shellContext,
       revalidate: mod.revalidate,
       waitUntil: c.waitUntil,
       tags: () =>
         mod.revalidateTags === undefined
           ? []
           : routeTags(mod.revalidateTags, { params, url: new URL(c.req.url) }, route.id),
-      // The unbound `api`: a shell is built for every visitor, so no visitor's platform reaches it.
-      loadShell: async (signal) =>
-        shellLoader({
-          phase: "shell",
-          params,
-          locale,
-          variations,
-          signal,
-          api,
-          // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: an app with no configured origin has none, which the shell loader reads as absent.
-          ...(shellOrigin === undefined ? {} : { origin: shellOrigin }),
-        }),
+      holeTags: (hole) =>
+        hole.revalidateTags === undefined
+          ? []
+          : routeTags(
+              hole.revalidateTags,
+              { params, url: new URL(c.req.url) },
+              `${route.id}#${hole.name}`,
+            ),
+      loadShell: async (signal) => shellLoader({ ...shellContext, signal }),
       renderShellDocument: async (shellData, states) => {
         const statics = boundaries.some((boundary) => boundary.mode === "static")
           ? await resolveStaticBoundaries(

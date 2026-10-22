@@ -17,6 +17,7 @@
  * 0%-hit PPR CPU at most 1.2x `defer()`. A CPU gate takes the median of its ratio over
  * `GATE_ROUNDS` rounds, each running the four variants back to back in an order reversed every other
  * round, so a load spike from another process moves one round's ratio and not the verdict.
+ * `shared-hole.ts`, run after it by `bench:ppr`, gates what a shared hole's hit adds.
  */
 import { join } from "node:path"
 

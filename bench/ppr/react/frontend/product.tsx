@@ -31,6 +31,16 @@ export function ProductPage(props: { readonly product: Product; readonly childre
   )
 }
 
+export const Related = (props: { readonly items: Product["related"] }) => (
+  <ul>
+    {props.items.map((item) => (
+      <li key={item.id}>
+        <a href={`/ppr/${item.id}`}>{item.name}</a> {item.price}
+      </li>
+    ))}
+  </ul>
+)
+
 export const Greeting = (props: { readonly name: string }) => <p>hello {props.name}</p>
 
 export function Cart(props: { readonly count: number }) {

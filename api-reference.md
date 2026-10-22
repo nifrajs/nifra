@@ -5088,7 +5088,7 @@ _No named exports (side-effect entrypoint)._
   A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **Boundary** _(type)_ - `type Boundary<Data, UI> = | StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | InterceptBoundary<Data, UI>`
+- **Boundary** _(type)_ - `type Boundary<Data, UI> = | StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | SharedBoundary<Data, UI> | InterceptBoundary<Data, UI>`
   A discriminated union: the `mode` selects the context type accepted by `load`.
 - **BoundaryDescriptor** _(interface)_ - `interface BoundaryDescriptor`
   Neutral manifest descriptor: no framework component crosses the web core boundary.
@@ -5097,7 +5097,7 @@ _No named exports (side-effect entrypoint)._
   A boundary's server loader, declared in the route's backend half under `boundaryLoaders`.
 - **BoundaryLoadersOf** _(type)_ - `type BoundaryLoadersOf<Frontend, Backend>`
   The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry names a boundary the page declares, and a route with a `shellLoader` needs one for each hole. Unchecked when TypeScript cannot read the page (`.svelte`, `.vue`) or its boundary names are not literal type…
-- **BoundaryMode** _(type)_ - `type BoundaryMode = "static" | "dynamic" | { readonly intercept: string }`
+- **BoundaryMode** _(type)_ - `type BoundaryMode = "static" | "dynamic" | "shared" | { readonly intercept: string }`
 - **BoundaryRegistration** _(type)_ - `type BoundaryRegistration`
 - **BoundaryRequestCtx** _(interface)_ - `interface BoundaryRequestCtx`
   Request-scoped inputs available to dynamic and intercepting boundaries.
@@ -5385,6 +5385,8 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
+- **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI>`
+  Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **ShellCtx** _(interface)_ - `interface ShellCtx`
   Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
@@ -6332,7 +6334,7 @@ _No named exports (side-effect entrypoint)._
 - **ShellCtx** _(interface)_ - `interface ShellCtx`
   Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **checkShellCanaries** _(function)_ - `checkShellCanaries: (app: { fetch(request: Request): Response | Promise<Response>; }, paths: readonly string[], options?: ShellCanaryOptions) => Promise<readonly ShellCanaryFinding[]>`
-  The canary check. Each path is requested through the app's own middleware and gates with a unique value in a cookie, an `Authorization` header, a custom header and the query, until a response carries a shell (`shellAfterRequests` decides which request builds it), and that shell is scanned for every…
+  The canary check. Each path is requested through the app's own middleware and gates with a unique value in a cookie, an `Authorization` header, a custom header and the query, until a response carries a shell (`shellAfterRequests` decides which request builds it) and a built frame for each shared ho…
 - **compileShells** _(function)_ - `compileShells: (options: CompileShellsOptions) => Promise<ShellCheckRecord>`
   Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else) and refuse it when the emitted code reaches a request-scoped module. A module counts only when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose backend half…
 - **defineShellLoader** _(const)_ - `defineShellLoader: <Data>(loader: (ctx: ShellCtx) => Data | Promise<Data>) => ((ctx: ShellCtx) => Data | Promise<Data>)`

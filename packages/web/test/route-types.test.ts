@@ -285,6 +285,51 @@ describe("generated route types", () => {
     expect(misspelt).toContain("'crat' does not exist")
   }, 60_000)
 
+  test("Route.BoundaryLoaders types a shared entry with the shell's context and needs revalidate", () => {
+    write(
+      "routes/stock.tsx",
+      [
+        'const price = { name: "price", mode: "shared", render: () => null } as const',
+        'const cart = { name: "cart", mode: "dynamic", render: () => null } as const',
+        "export const boundaries = [price, cart]",
+        "export default () => null",
+        "",
+      ].join("\n"),
+    )
+    const cart = "cart: { load: (ctx) => ({ path: new URL(ctx.request.url).pathname }) }"
+    const backend = (loaders: string) =>
+      [
+        'import type { Route } from "./+types/stock"',
+        "export const shellLoader = async () => ({})",
+        `export const boundaryLoaders = ${loaders} satisfies Route.BoundaryLoaders`,
+        "",
+      ].join("\n")
+    const cases: Readonly<Record<string, string>> = {
+      priced: `{ ${cart}, price: { load: (ctx) => ctx.params.id, revalidate: 30, revalidateTags: ["price"] } }`,
+      unpriced: `{ ${cart}, price: { load: () => 1 } }`,
+      nosy: `{ ${cart}, price: { load: (ctx) => ctx.request.url, revalidate: 30 } }`,
+      timed: `{ cart: { load: () => 1, revalidate: 30 }, price: { load: () => 1, revalidate: 30 } }`,
+      unfilled: `{ ${cart} }`,
+    }
+    const page = readFileSync(join(root, "routes/stock.tsx"), "utf8")
+    for (const [name, loaders] of Object.entries(cases)) {
+      write(`routes/${name}.tsx`, page)
+      write(`routes/${name}.backend.ts`, backend(loaders).replace("+types/stock", `+types/${name}`))
+    }
+    writeRouteTypes({ appRoot: root })
+    const errors = typeErrors(Object.keys(cases).map((name) => `routes/${name}.backend.ts`)).sort()
+    expect(errors).toHaveLength(4)
+    const [nosy, timed, unfilled, unpriced] = errors
+    expect(nosy).toStartWith("routes/nosy.backend.ts:3 ")
+    expect(nosy).toContain("Property 'request' does not exist on type 'ShellCtx'")
+    expect(timed).toStartWith("routes/timed.backend.ts:3 ")
+    expect(timed).toContain("'revalidate' does not exist")
+    expect(unfilled).toStartWith("routes/unfilled.backend.ts:3 ")
+    expect(unfilled).toContain("Property 'price' is missing")
+    expect(unpriced).toStartWith("routes/unpriced.backend.ts:3 ")
+    expect(unpriced).toContain("Property 'revalidate' is missing")
+  }, 60_000)
+
   test("a route with no backend half sends no data", () => {
     write(
       "routes/about.tsx",

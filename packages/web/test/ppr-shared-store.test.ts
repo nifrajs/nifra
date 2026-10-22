@@ -59,6 +59,13 @@ const pprRequest = (probe: Probe, overrides: Partial<PprRequest> = {}): PprReque
     draft: false,
     search: {},
   },
+  shellContext: {
+    phase: "shell",
+    params: { id: "1" },
+    locale: undefined,
+    variations: {},
+    api: undefined,
+  },
   loadShell: async () => {
     probe.builds++
     return { title: `Tea ${probe.builds}` }
@@ -66,6 +73,7 @@ const pprRequest = (probe: Probe, overrides: Partial<PprRequest> = {}): PprReque
   renderShellDocument: async (data, states) => document(data, states),
   revalidate: undefined,
   tags: () => [],
+  holeTags: () => [],
   waitUntil: (promise) => {
     probe.writes.push(promise)
   },
@@ -160,7 +168,7 @@ describe("PPR shared shell store", () => {
       expect(second.builds).toBe(1)
       expect(text).not.toContain("steal()")
       expect(errors).toHaveBeenCalledWith(
-        "[nifra/web] ppr: a shared shell entry failed its signature check",
+        "[nifra/web] ppr: a shared store entry failed its signature check",
         { key },
       )
     } finally {
@@ -313,10 +321,10 @@ describe("PPR shared shell store", () => {
       await Promise.all(probe.writes)
       expect(probe.builds).toBe(1)
       expect(text).toContain("cart 3 items")
-      expect(errors).toHaveBeenCalledWith(
-        "[nifra/web] ppr: writing a shell to the shared store failed",
-        { route: "product/[id]", kind: "error" },
-      )
+      expect(errors).toHaveBeenCalledWith("[nifra/web] ppr: writing to the shared store failed", {
+        route: "product/[id]",
+        kind: "error",
+      })
     } finally {
       errors.mockRestore()
     }

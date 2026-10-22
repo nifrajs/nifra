@@ -68,7 +68,7 @@
     "bench:ssr": "bun run bench/ssr/run.ts",
     "bench:content": "bun bench/content-index.ts",
     "bench:prerender": "bun run bench/ssr/prerender-ttfb.ts",
-    "bench:ppr": "bun run bench/ppr/cost.ts",
+    "bench:ppr": "bun run bench/ppr/cost.ts && bun run bench/ppr/shared-hole.ts",
     "bench:size": "bun run bench/size/run.ts",
     "bench:workers": "bun run bench/workers/run.ts",
     "gen:llms": "bun run scripts/gen-llms.ts && bun run gen:cards",

@@ -3,8 +3,14 @@
  * imports no runtime code: the server, its options and the hole HTML validator load only through
  * `partialPrerendering` (`@nifrajs/web/ppr`), so an app without it carries none of them.
  */
-import type { BoundaryRegistration, BoundaryRequestCtx, BoundaryStates } from "../../boundary.ts"
+import type {
+  BoundaryRegistration,
+  BoundaryRequestCtx,
+  BoundaryStates,
+  ShellCtx,
+} from "../../boundary.ts"
 import type { CspPolicy } from "../../csp.ts"
+import type { RevalidateTags } from "../../isr.ts"
 import type { RouteEntry, RouteModule } from "../../manifest.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
 import type { LoadedLayoutModules } from "../render-document.ts"
@@ -20,14 +26,26 @@ export const PPR_SETUP: unique symbol = Symbol.for("nifra.web.ppr.setup")
 /** Where the runtime's cancel beacon goes, under the app's base path. */
 export const PPR_CANCEL_PATH = "/__nifra/ppr/cancel"
 
-/** The boundary fields partial prerendering reads beyond the neutral registration. */
-export type HoleRegistration = Extract<BoundaryRegistration, { readonly mode: "dynamic" }> & {
+interface HoleFields {
   readonly interactive?: boolean
   readonly timeout?: number
 }
 
+/** A hole filled per visitor. */
+export type DynamicHole = Extract<BoundaryRegistration, { readonly mode: "dynamic" }> & HoleFields
+
+/** A hole built once for every visitor, with its loader entry's freshness merged in. */
+export type SharedHole = Extract<BoundaryRegistration, { readonly mode: "shared" }> &
+  HoleFields & {
+    readonly revalidate: number
+    readonly revalidateTags?: RevalidateTags | undefined
+  }
+
+/** The boundary fields partial prerendering reads beyond the neutral registration. */
+export type HoleRegistration = DynamicHole | SharedHole
+
 export const isHole = (boundary: BoundaryRegistration): boundary is HoleRegistration =>
-  boundary.mode === "dynamic"
+  boundary.mode === "dynamic" || boundary.mode === "shared"
 
 /** What the page executor hands over for one PPR request. */
 export interface PprRequest {
@@ -38,9 +56,12 @@ export interface PprRequest {
   /** The declared variations this request selected, by name; part of the shell key. */
   readonly variations: Readonly<Record<string, string>>
   readonly request: Request
-  /** The route's dynamic boundaries, in declaration order, with their merged (guarded) loaders. */
+  /** The route's dynamic and shared boundaries, in declaration order, with their merged (guarded)
+   * loaders. */
   readonly holes: readonly HoleRegistration[]
   readonly holeContext: Omit<BoundaryRequestCtx, "signal">
+  /** What the shell loader and every shared hole loader get, but the build's signal. */
+  readonly shellContext: Omit<ShellCtx, "signal">
   readonly loadShell: (signal: AbortSignal) => Promise<unknown>
   /** Render the full document for `shellData` with every hole pending, under no nonce. */
   readonly renderShellDocument: (shellData: unknown, states: BoundaryStates) => Promise<string>
@@ -48,6 +69,8 @@ export interface PprRequest {
   readonly revalidate: number | undefined
   /** The route's `revalidateTags` for this request, read only when a shell is built. */
   readonly tags: () => readonly string[]
+  /** A shared hole's `revalidateTags` for this request, read only when its entry is built. */
+  readonly holeTags: (hole: SharedHole) => readonly string[]
   /** Keeps the platform alive for work that outlives the response, where the platform needs it. */
   readonly waitUntil?: ((promise: Promise<unknown>) => void) | undefined
 }

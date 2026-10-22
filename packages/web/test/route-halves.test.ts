@@ -193,6 +193,73 @@ describe("boundaries", () => {
   })
 })
 
+describe("shared boundaries", () => {
+  const render = () => null
+  const front = (mode: "shared" | "dynamic") =>
+    asModule({ default: null, boundaries: [{ name: "price", mode, render }] })
+  const shellLoader = () => ({})
+
+  test("a shared entry keeps its revalidate and tags on the merged boundary", () => {
+    const merged = mergeRouteHalves("p.tsx", front("shared"), "p.backend.ts", {
+      shellLoader,
+      boundaryLoaders: { price: { load: () => 1, revalidate: 30, revalidateTags: ["price"] } },
+    })
+    expect(merged.boundaries?.[0]).toMatchObject({
+      mode: "shared",
+      revalidate: 30,
+      revalidateTags: ["price"],
+    })
+  })
+
+  test("a shared boundary on a page with no shellLoader is refused, backend half or not", () => {
+    expect(() => mergeRouteHalves("p.tsx", front("shared"), undefined, undefined)).toThrow(
+      'boundary "price" in "p.tsx" is shared, which only a partially prerendered page has: its backend half must export shellLoader',
+    )
+    expect(() =>
+      mergeRouteHalves("p.tsx", front("shared"), "p.backend.ts", {
+        boundaryLoaders: { price: { load: () => 1, revalidate: 30 } },
+      }),
+    ).toThrow("its backend half must export shellLoader")
+  })
+
+  test.each([
+    undefined,
+    0,
+    1.5,
+    "30",
+    365 * 24 * 60 * 60 + 1,
+  ])("a shared entry with revalidate %p is refused", (revalidate) => {
+    expect(() =>
+      mergeRouteHalves("p.tsx", front("shared"), "p.backend.ts", {
+        shellLoader,
+        boundaryLoaders: { price: { load: () => 1, revalidate } },
+      }),
+    ).toThrow(
+      'boundaryLoaders["price"] in "p.backend.ts" is for a shared boundary, so it needs revalidate',
+    )
+  })
+
+  test("tags that are neither a list of strings nor a function are refused", () => {
+    expect(() =>
+      mergeRouteHalves("p.tsx", front("shared"), "p.backend.ts", {
+        shellLoader,
+        boundaryLoaders: { price: { load: () => 1, revalidate: 30, revalidateTags: "price" } },
+      }),
+    ).toThrow('boundaryLoaders["price"].revalidateTags in "p.backend.ts" must be a list of tags')
+  })
+
+  test("a per-visitor entry with revalidate or tags is refused", () => {
+    for (const extra of [{ revalidate: 30 }, { revalidateTags: ["price"] }]) {
+      expect(() =>
+        mergeRouteHalves("p.tsx", front("dynamic"), "p.backend.ts", {
+          shellLoader,
+          boundaryLoaders: { price: { load: () => 1, ...extra } },
+        }),
+      ).toThrow("which only a shared boundary's entry takes")
+    }
+  })
+})
+
 describe("shell variations", () => {
   const merge = (back: Record<string, unknown>) => () =>
     mergeRouteHalves("p.tsx", asModule({ default: null }), "p.backend.ts", back)

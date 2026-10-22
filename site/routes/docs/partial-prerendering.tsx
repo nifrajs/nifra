@@ -4,7 +4,7 @@ import { docsMeta } from "../../shared/meta"
 export const meta = docsMeta(
   "/docs/partial-prerendering",
   "Nifra - Partial prerendering (experimental)",
-  "Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Eligibility rules, the no-JavaScript limit, proxies and connection limits.",
+  "Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.",
 )
 
 const SERVER = `import { createCspPolicy, createWebApp } from "@nifrajs/web"
@@ -183,6 +183,46 @@ import { checkShellCanaries } from "@nifrajs/web/ppr"
 const leaks = await checkShellCanaries(app, ["/tea/1", "/tea/2"])
 if (leaks.length > 0) throw new Error(\`visitor data in a shared shell: \${JSON.stringify(leaks)}\`)`
 
+const SHARED_PAGE = `// doc-check: skip - an excerpt of the React page above, beside its cart hole.
+const price = {
+  name: "price",
+  mode: "shared", // the same for every visitor: built once, cached on its own
+  render: (data: { readonly amount: string }) => <p>{data.amount}</p>,
+  fallback: <p>Loading the price</p>,
+} as const
+export const boundaries = [cart, price]`
+
+const SHARED_BACKEND = `import { t } from "@nifrajs/schema"
+import type { ShellCtx } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
+
+const prices: Readonly<Record<string, string>> = { "1": "$12.00", "2": "$9.50" }
+
+export const boundaryLoaders = {
+  // Inline, with revalidate: the build checks this loader with the shell, so its frame is stored.
+  price: {
+    load: async ({ params }: ShellCtx) => ({ amount: prices[params.id ?? ""] ?? "-" }),
+    output: t.object({ amount: t.string() }),
+    revalidate: 10,
+    revalidateTags: ({ params }) => [\`price:\${params.id}\`],
+  },
+} satisfies Route.BoundaryLoaders`
+
+const STORE = `// doc-check: skip - a Worker's partialPrerendering call, with the server snippet's records.
+import { KVCacheStore } from "@nifrajs/web"
+
+partialPrerendering({
+  shellChecks,
+  store: new KVCacheStore(env.SHELLS),
+  storeSecret: env.PPR_STORE_SECRET, // at least 32 characters, the same in every process
+  deployment: env.CF_VERSION_METADATA.id,
+})`
+
+const DENO = `// doc-check: skip - continues the server snippet above (\`app\`) on Deno.
+import { serve } from "@nifrajs/deno"
+
+await serve(app, { port: 8000 })`
+
 const OPTIONS = `// doc-check: skip - an excerpt of the server snippet's partialPrerendering call.
 partialPrerendering({
   shellChecks,
@@ -243,7 +283,7 @@ export default function PartialPrerendering() {
         The import check cannot see visitor data an app keeps in module state, such as a variable
         middleware writes. <code>checkShellCanaries</code> requests each path once with unique values
         in a cookie, <code>Authorization</code>, a header and the query, and reports each value found
-        in the shared shell.
+        in the shared shell or in a shared hole's frame (the finding names the hole).
       </p>
       <CodeBlock code={CANARY} lang="ts" />
 
@@ -254,7 +294,7 @@ export default function PartialPrerendering() {
           <code>prerender = true</code>.
         </li>
         <li>
-          It declares 1 to 32 <code>dynamic</code> boundaries, each with a{" "}
+          It declares 1 to 32 <code>dynamic</code> or <code>shared</code> boundaries, each with a{" "}
           <code>boundaryLoaders</code> entry. Names are 1-32 lowercase letters, digits and single
           hyphens, start with a letter and do not end with a hyphen.
         </li>
@@ -326,6 +366,71 @@ export default function PartialPrerendering() {
         rebuild keeps the old one for up to ten times <code>revalidate</code>, at most a day. A shell
         loader's <code>notFound()</code> is remembered for 60 seconds.
       </p>
+
+      <h2>Shared holes</h2>
+      <p>
+        A part that is the same for every visitor but changes faster than the shell, such as a price
+        or a stock level, is a <code>shared</code> hole. Its loader gets the shell's context, never
+        the request, so a hole that should have been per visitor shows generic content, never one
+        visitor's data to another. It is built once per route, params, locale and variations, and
+        kept on its own <code>revalidate</code> (required, in seconds) and{" "}
+        <code>revalidateTags</code>, apart from the shell.
+      </p>
+      <CodeBlock code={SHARED_PAGE} lang="tsx" />
+      <CodeBlock code={SHARED_BACKEND} lang="ts" />
+      <ul>
+        <li>
+          A frame this process holds goes out with the shell, in its first write. On a miss the
+          visitor waits up to the hole's <code>timeout</code>, then gets the error slot while the
+          build finishes for the next visitor.
+        </li>
+        <li>
+          An older frame is served while one rebuild runs. A failed build is never stored: the old
+          frame stays for up to ten times <code>revalidate</code>, at most a day.
+        </li>
+        <li>
+          Builds count against the route's <code>shellBuildConcurrency</code>; past it, a missing
+          frame is built anyway as hole work under <code>maxHoleWork</code>, and stored.
+        </li>
+        <li>
+          <code>compileShells</code> bundles each shared loader with the shell and refuses the route
+          if it reaches a module that reads the visitor. It finds an entry written inline in{" "}
+          <code>boundaryLoaders</code> with <code>revalidate</code>; any other shared hole loads for
+          every visitor and warns once in development.
+        </li>
+        <li>A draft loads it fresh and never reads or fills the cache.</li>
+      </ul>
+
+      <h2>Across processes</h2>
+      <p>
+        Each process keeps its own shells and shared frames. Give <code>partialPrerendering</code> a{" "}
+        <code>store</code> the processes share, such as Workers KV, and a process that has not built
+        an entry reads it from there. Every entry is signed with <code>storeSecret</code> over its key,
+        deployment and contents, so a store other services can write cannot hand visitors a page this
+        app did not build; one that fails the check is a miss. Entries are kept apart per deployment:
+        the client build, each route's checked shell code and the optional <code>deployment</code>{" "}
+        name all go into the key. A route whose tags the store cannot drop keeps its entries in the
+        process, with one warning.
+      </p>
+      <CodeBlock code={STORE} lang="ts" />
+
+      <h2>Runtimes</h2>
+      <ul>
+        <li>Bun and Node serve it as they serve any nifra app.</li>
+        <li>
+          Deno serves it through <code>@nifrajs/deno</code>; a hang-up aborts the holes still
+          running.
+        </li>
+        <li>
+          On Cloudflare Workers, the shell store defaults to 8 MB and the cancel beacon is off, since
+          it would reach another isolate: a hole the visitor left stops at its deadline. Rebuilds and
+          store writes run through <code>waitUntil</code>. Workers compress responses themselves, so{" "}
+          <code>compression()</code> leaves them alone there. A shell that imports{" "}
+          <code>cloudflare:workers</code> fails its check: that module hands any code the Worker's{" "}
+          <code>env</code>.
+        </li>
+      </ul>
+      <CodeBlock code={DENO} lang="ts" />
 
       <h2>Without JavaScript</h2>
       <p>

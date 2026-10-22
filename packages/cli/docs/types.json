@@ -2125,7 +2125,7 @@
     "name": "Boundary",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type Boundary<Data, UI> = StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | InterceptBoundary<Data, UI>;",
+    "signature": "export type Boundary<Data, UI> = StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | SharedBoundary<Data, UI> | InterceptBoundary<Data, UI>;",
     "doc": "/** A discriminated union: the `mode` selects the context type accepted by `load`. */"
   },
   {
@@ -2172,7 +2172,7 @@
     "name": "BoundaryLoaderEntry",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BoundaryLoaderEntry {\n    readonly load: NonNullable<BoundaryRegistration[\"load\"]>;\n    /** The boundary data's output schema. Required whenever `load` returns data. */\n    readonly output?: StandardSchemaV1;\n}",
+    "signature": "export interface BoundaryLoaderEntry {\n    readonly load: NonNullable<BoundaryRegistration[\"load\"]>;\n    /** The boundary data's output schema. Required whenever `load` returns data. */\n    readonly output?: StandardSchemaV1;\n    /**\n     * A `shared` boundary's freshness in seconds, required for one and refused for any other: an older\n     * entry is served while one rebuild runs. Write the entry inline, so the build can find it.\n     */\n    readonly revalidate?: number;\n    /** A `shared` boundary's tags, as a route's `revalidateTags`: purging one drops its entries. */\n    readonly revalidateTags?: RevalidateTags;\n}",
     "doc": "/** A boundary's server loader, declared in the route's backend half under `boundaryLoaders`. */"
   },
   {
@@ -2186,7 +2186,7 @@
     "name": "BoundaryMode",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type BoundaryMode = \"static\" | \"dynamic\" | {\n    readonly intercept: string;\n};"
+    "signature": "export type BoundaryMode = \"static\" | \"dynamic\" | \"shared\" | {\n    readonly intercept: string;\n};"
   },
   {
     "name": "BoundaryOp",
@@ -2199,7 +2199,7 @@
     "name": "BoundaryRegistration",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
+    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: ShellCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
   },
   {
     "name": "BoundaryRejection",
@@ -11077,13 +11077,13 @@
     "name": "PprConfig",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface PprConfig {\n    /** From `compileShells` for this deployment; `\"unchecked-development\"` is refused in production. */\n    readonly shellChecks: ShellCheckRecord | \"unchecked-development\";\n    /** Overrides for the defaults in `PPR_DEFAULTS`. */\n    readonly options?: PprOptions;\n    /**\n     * The deployment's public origin, such as `https://shop.example`, given to `shellLoader` and to the\n     * shell's `meta` as `origin`. Without it both get `\"\"`: a shell is shared, so no visitor's Host\n     * header may supply it.\n     */\n    readonly origin?: string;\n}"
+    "signature": "export interface PprConfig {\n    /** From `compileShells` for this deployment; `\"unchecked-development\"` is refused in production. */\n    readonly shellChecks: ShellCheckRecord | \"unchecked-development\";\n    /** Overrides for the defaults in `PPR_DEFAULTS`. */\n    readonly options?: PprOptions;\n    /**\n     * The deployment's public origin, such as `https://shop.example`, given to `shellLoader` and to the\n     * shell's `meta` as `origin`. Without it both get `\"\"`: a shell is shared, so no visitor's Host\n     * header may supply it.\n     */\n    readonly origin?: string;\n    /**\n     * A store the app's processes share, such as `new KVCacheStore(env.SHELLS)`, behind each process's\n     * own shells and shared hole frames: a process that has not built one reads it from here. Needs\n     * `storeSecret` and checked shells. A route whose tags the store cannot drop keeps its entries\n     * in-process.\n     */\n    readonly store?: CacheStore;\n    /**\n     * Signs every entry written to `store`, so a store other services can write cannot hand visitors\n     * a page this app did not build. At least 32 characters, the same in every process.\n     */\n    readonly storeSecret?: string;\n    /**\n     * The platform's name for this deployment, such as a commit or a version id. Shells are already\n     * kept apart by the client build and by each route's checked shell code; this adds to that.\n     */\n    readonly deployment?: string;\n}"
   },
   {
     "name": "PprOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface PprOptions {\n    /** A hole's deadline when its boundary sets no `timeout`. */\n    readonly holeTimeoutMs?: number;\n    /** The largest `timeout` a boundary may set, and the cap on a route's total deadline. */\n    readonly maxHoleTimeoutMs?: number;\n    /** Added to the largest hole timeout to give the route's total deadline. */\n    readonly totalDeadlineSlackMs?: number;\n    /** Dynamic plus shared boundaries one PPR route may declare. */\n    readonly maxHolesPerRoute?: number;\n    /** Shell entries one route may keep in the memory store. */\n    readonly shellEntriesPerRoute?: number;\n    /**\n     * Bytes every shell entry in the memory store may hold together: its document, an estimate of the\n     * heap its loader data holds, and its key. An entry over the whole budget is served but not kept.\n     */\n    readonly shellStoreBytes?: number;\n    /** How long a `notFound()` shell is cached. */\n    readonly notFoundTtlSeconds?: number;\n    /** Shell builds one route may run at once; requests over it get the blocking render. */\n    readonly shellBuildConcurrency?: number;\n    /**\n     * Once the store is full, requests one shell key must see before its shell is built and may push\n     * an older one out. The ones before stream the page whole, each hole as it settles, so a path\n     * visited once cannot evict a popular one. While the store has room, every key builds at once.\n     */\n    readonly shellAfterRequests?: number;\n    /** A failing rebuild keeps serving the stale shell for `revalidate` times this... */\n    readonly staleOnErrorFactor?: number;\n    /** ...but never longer than this. */\n    readonly maxStaleOnErrorSeconds?: number;\n    /** Requests that get the blocking render instead of a stream: a user-agent pattern or a predicate. */\n    readonly blockingFor?: RegExp | ((request: Request) => boolean);\n    /** Abandoned invocations at which one boundary stops being admitted. */\n    readonly boundaryAbandonedTrip?: number;\n    /** Abandoned invocations per process at which boundaries holding any stop being admitted. */\n    readonly processAbandonedTrip?: number;\n    /** Abandoned invocations per process at which no hole is admitted. */\n    readonly admissionStop?: number;\n    /** How long after its abort a still-pending invocation counts as abandoned. */\n    readonly abandonGraceMs?: number;\n    /** PPR responses per process with hole loaders still running. */\n    readonly maxHoleWork?: number;\n    /** How long after the total deadline an undrained stream is kept before it is aborted. */\n    readonly writeGraceMs?: number;\n    /** Unsent bytes one response may queue. */\n    readonly maxUnsentBytesPerResponse?: number;\n    /** Unsent bytes every PPR response in the process may queue together. */\n    readonly maxUnsentBytes?: number;\n    /** Serialized size of one hole frame. */\n    readonly frameBytes?: number;\n    /** The shell is padded to at least this many bytes; Safari holds back smaller first chunks. */\n    readonly minShellBytes?: number;\n    /**\n     * When hole HTML is checked for script, handlers and other escapes before it is framed:\n     * `\"always\"`, or `\"development\"` only. The check costs about 20 us per KB of hole HTML; turn it off\n     * in production only when a strict CSP already blocks inline script.\n     */\n    readonly holeHtmlValidation?: \"always\" | \"development\";\n}",
+    "signature": "export interface PprOptions {\n    /** A hole's deadline when its boundary sets no `timeout`. */\n    readonly holeTimeoutMs?: number;\n    /** The largest `timeout` a boundary may set, and the cap on a route's total deadline. */\n    readonly maxHoleTimeoutMs?: number;\n    /** Added to the largest hole timeout to give the route's total deadline. */\n    readonly totalDeadlineSlackMs?: number;\n    /** Dynamic plus shared boundaries one PPR route may declare. */\n    readonly maxHolesPerRoute?: number;\n    /** Shell entries one route may keep in the memory store. */\n    readonly shellEntriesPerRoute?: number;\n    /**\n     * Bytes every shell entry in the memory store may hold together: its document, an estimate of the\n     * heap its loader data holds, and its key. An entry over the whole budget is served but not kept.\n     */\n    readonly shellStoreBytes?: number;\n    /** How long a `notFound()` shell is cached. */\n    readonly notFoundTtlSeconds?: number;\n    /** Shell builds one route may run at once; requests over it get the blocking render. */\n    readonly shellBuildConcurrency?: number;\n    /**\n     * Once the store is full, requests one shell key must see before its shell is built and may push\n     * an older one out. The ones before stream the page whole, each hole as it settles, so a path\n     * visited once cannot evict a popular one. While the store has room, every key builds at once.\n     */\n    readonly shellAfterRequests?: number;\n    /** A failing rebuild keeps serving the stale shell for `revalidate` times this... */\n    readonly staleOnErrorFactor?: number;\n    /** ...but never longer than this. */\n    readonly maxStaleOnErrorSeconds?: number;\n    /** Requests that get the blocking render instead of a stream: a user-agent pattern or a predicate. */\n    readonly blockingFor?: RegExp | ((request: Request) => boolean);\n    /** Abandoned invocations at which one boundary stops being admitted. */\n    readonly boundaryAbandonedTrip?: number;\n    /** Abandoned invocations per process at which boundaries holding any stop being admitted. */\n    readonly processAbandonedTrip?: number;\n    /** Abandoned invocations per process at which no hole is admitted. */\n    readonly admissionStop?: number;\n    /** How long after its abort a still-pending invocation counts as abandoned. */\n    readonly abandonGraceMs?: number;\n    /** PPR responses per process with hole loaders still running. */\n    readonly maxHoleWork?: number;\n    /** How long after the total deadline an undrained stream is kept before it is aborted. */\n    readonly writeGraceMs?: number;\n    /** Unsent bytes one response may queue. */\n    readonly maxUnsentBytesPerResponse?: number;\n    /** Unsent bytes every PPR response in the process may queue together. */\n    readonly maxUnsentBytes?: number;\n    /** Serialized size of one hole frame. */\n    readonly frameBytes?: number;\n    /** The shell is padded to at least this many bytes; Safari holds back smaller first chunks. */\n    readonly minShellBytes?: number;\n    /**\n     * When hole HTML is checked for script, handlers and other escapes before it is framed:\n     * `\"always\"`, or `\"development\"` only. The check costs about 20 us per KB of hole HTML; turn it off\n     * in production only when a strict CSP already blocks inline script.\n     */\n    readonly holeHtmlValidation?: \"always\" | \"development\";\n    /**\n     * Whether a page left with holes pending posts a cancel beacon, so their loaders stop before their\n     * deadline. Off by default on Cloudflare Workers, where the beacon reaches another isolate.\n     */\n    readonly cancelBeacon?: boolean;\n}",
     "doc": "/** Overrides for {@link PPR_DEFAULTS}. Every field is optional; an omitted one keeps its default. */"
   },
   {
@@ -11097,7 +11097,7 @@
     "name": "PprShells",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface PprShells {\n    /** Drop every shell whose route listed `tag` in `revalidateTags`; a build running now is not kept. */\n    invalidateTag(tag: string): void;\n    stats(): PprStats;\n}",
+    "signature": "export interface PprShells {\n    /**\n     * Drop every shell whose route listed `tag` in `revalidateTags`, here and in the shared store; a\n     * build running now is not kept.\n     */\n    invalidateTag(tag: string): Promise<void>;\n    stats(): PprStats;\n}",
     "doc": "/** One app's shell cache. */"
   },
   {
@@ -14902,6 +14902,13 @@
     "doc": "/** Options for {@link shapeRows}. */"
   },
   {
+    "name": "SharedBoundary",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: ShellCtx) => Data | Promise<Data>;\n    /** The hole ships its props and hydrates. Default `false`. */\n    readonly interactive?: boolean;\n    /** How long a visitor waits for a build in milliseconds, then gets the error slot. Default 5000. */\n    readonly timeout?: number;\n};",
+    "doc": "/**\n * Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell\n * from a request-free context and cached on its own `revalidate`, then written right after the shell.\n * Its loader entry in `boundaryLoaders` needs `revalidate`.\n */"
+  },
+  {
     "name": "SharedKey",
     "kind": "type",
     "package": "@nifrajs/content",
@@ -14926,7 +14933,7 @@
     "name": "ShellCanaryFinding",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ShellCanaryFinding {\n    readonly path: string;\n    readonly via: CanaryCarrier;\n}"
+    "signature": "export interface ShellCanaryFinding {\n    readonly path: string;\n    readonly via: CanaryCarrier;\n    /** The shared hole whose frame carried it; absent when the shell did. */\n    readonly hole?: string;\n}"
   },
   {
     "name": "ShellCanaryOptions",
@@ -14944,7 +14951,7 @@
     "name": "ShellCheckRecord",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ShellCheckRecord {\n    readonly v: 1;\n    readonly deployment: string;\n    /** Route id to the sha256 of the checked shell bundle. */\n    readonly routes: Readonly<Record<string, string>>;\n}",
+    "signature": "export interface ShellCheckRecord {\n    readonly v: 1;\n    readonly deployment: string;\n    /** Route id to the sha256 of the checked shell bundle. */\n    readonly routes: Readonly<Record<string, string>>;\n    /** Route id to the shared holes whose loaders were checked in that bundle: only these are stored. */\n    readonly sharedHoles?: Readonly<Record<string, readonly string[]>>;\n}",
     "doc": "/**\n * Which routes passed the shell check for one deployment. The server shares a shell only for a route\n * listed here under its own deployment; anything else renders blocking (fail closed).\n */"
   },
   {
@@ -17748,7 +17755,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function checkShellCanaries(app: {\n    fetch(request: Request): Response | Promise<Response>;\n}, paths: readonly string[], options?: ShellCanaryOptions): Promise<readonly ShellCanaryFinding[]>;",
-    "doc": "/**\n * The canary check. Each path is requested through the app's own middleware and gates with a\n * unique value in a cookie, an `Authorization` header, a custom header and the query, until a\n * response carries a shell (`shellAfterRequests` decides which request builds it), and that shell is\n * scanned for every value the path's requests carried. It catches visitor data the app keeps in\n * module state, which no import check sees. Run it against a fresh app before it serves traffic: a\n * shell already cached was built without the canaries.\n */"
+    "doc": "/**\n * The canary check. Each path is requested through the app's own middleware and gates with a\n * unique value in a cookie, an `Authorization` header, a custom header and the query, until a\n * response carries a shell (`shellAfterRequests` decides which request builds it) and a built frame\n * for each shared hole, and those are scanned for every value the path's requests carried. It\n * catches visitor data the app keeps in module state, which no import check sees. Run it against a\n * fresh app before it serves traffic: a shell or frame already cached was built without the canaries.\n */"
   },
   {
     "name": "checkTrajectoryInvariants",
@@ -18061,7 +18068,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function compression(options?: CompressionOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
-    "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs\n * on every nifra runtime including the edge; gzip is the one encoding `CompressionStream`\n * guarantees everywhere, so brotli isn't offered.\n *\n * Built on the portable `onResponseBody` tier for framework-serialized bytes, with a stream-safe raw\n * fallback for handler-returned/proxied Responses. The common JSON path stays on Node's direct\n * writer; raw streams are compressed incrementally without being fully buffered.\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible\n * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds\n * `Vary: Accept-Encoding` to every response it would compress for a gzip-accepting client, the\n * identity one sent to any other client included.\n *\n * **Security (BREACH).** Compression makes the response length depend on its content, so a response\n * that mixes a secret with attacker-reflected input leaks the secret through the compressed size\n * (the BREACH class of attacks). This applies to any HTTP compression, not this middleware\n * specifically. Nifra's own CSRF tokens are HMAC-signed per session and safe to compress, but if a\n * response body reflects request input **and** carries a per-request secret, exclude that route via\n * `compressible`/route scoping, or split the secret and the reflection into separate responses.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
+    "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs\n * on every nifra runtime including the edge; gzip is the one encoding `CompressionStream`\n * guarantees everywhere, so brotli isn't offered.\n *\n * Built on the portable `onResponseBody` tier for framework-serialized bytes, with a stream-safe raw\n * fallback for handler-returned/proxied Responses. The common JSON path stays on Node's direct\n * writer; raw streams are compressed incrementally without being fully buffered.\n *\n * On Cloudflare Workers it does nothing: the runtime gzips any body sent with `Content-Encoding:\n * gzip` again, and the platform compresses responses for clients that accept it.\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible\n * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds\n * `Vary: Accept-Encoding` to every response it would compress for a gzip-accepting client, the\n * identity one sent to any other client included.\n *\n * **Security (BREACH).** Compression makes the response length depend on its content, so a response\n * that mixes a secret with attacker-reflected input leaks the secret through the compressed size\n * (the BREACH class of attacks). This applies to any HTTP compression, not this middleware\n * specifically. Nifra's own CSRF tokens are HMAC-signed per session and safe to compress, but if a\n * response body reflects request input **and** carries a per-request secret, exclude that route via\n * `compressible`/route scoping, or split the secret and the reflection into separate responses.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
   },
   {
     "name": "computeEffectDigest",

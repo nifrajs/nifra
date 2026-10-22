@@ -479,6 +479,13 @@ export interface BoundaryLoaderEntry {
   readonly load: NonNullable<BoundaryRegistration["load"]>
   /** The boundary data's output schema. Required whenever `load` returns data. */
   readonly output?: StandardSchemaV1
+  /**
+   * A `shared` boundary's freshness in seconds, required for one and refused for any other: an older
+   * entry is served while one rebuild runs. Write the entry inline, so the build can find it.
+   */
+  readonly revalidate?: number
+  /** A `shared` boundary's tags, as a route's `revalidateTags`: purging one drops its entries. */
+  readonly revalidateTags?: RevalidateTags
 }
 
 type DeclaredBoundaryOf<Frontend> = Frontend extends {
@@ -492,14 +499,19 @@ type BoundaryNameOf<Declared> = Declared extends { readonly name: infer Name ext
 // A hole needs an entry unless the page gives it a `load` of its own.
 type HoleNameOf<Declared> = Declared extends { readonly load: (...args: never[]) => unknown }
   ? never
-  : Declared extends { readonly mode: "dynamic" }
+  : Declared extends { readonly mode: "dynamic" | "shared" }
     ? BoundaryNameOf<Declared>
     : never
-type LoaderEntryOf<Declared> = Omit<BoundaryLoaderEntry, "load"> & {
-  readonly load: (
-    ctx: Declared extends { readonly mode: "static" } ? StaticCtx : BoundaryRequestCtx,
-  ) => unknown
-}
+type LoaderEntryOf<Declared> = Declared extends { readonly mode: "shared" }
+  ? Omit<BoundaryLoaderEntry, "load" | "revalidate"> & {
+      readonly load: (ctx: ShellCtx) => unknown
+      readonly revalidate: number
+    }
+  : Omit<BoundaryLoaderEntry, "load" | "revalidate" | "revalidateTags"> & {
+      readonly load: (
+        ctx: Declared extends { readonly mode: "static" } ? StaticCtx : BoundaryRequestCtx,
+      ) => unknown
+    }
 
 /**
  * The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry
@@ -746,6 +758,45 @@ function assertShellVariations(backend: string, value: unknown): void {
   }
 }
 
+// A year: past it, an entry may as well never refresh.
+const MAX_SHARED_REVALIDATE_SECONDS = 365 * 24 * 60 * 60
+
+/** A `shared` boundary's entry carries its own freshness; any other boundary's carries none. */
+function assertSharedEntry(
+  backend: string,
+  name: string,
+  shared: boolean,
+  entry: { readonly revalidate?: unknown; readonly revalidateTags?: unknown },
+): void {
+  const key = `boundaryLoaders["${name}"]`
+  if (!shared) {
+    if (entry.revalidate !== undefined || entry.revalidateTags !== undefined) {
+      throw routeError(
+        `${key} in "${backend}" has revalidate or revalidateTags, which only a shared boundary's entry takes`,
+      )
+    }
+    return
+  }
+  const { revalidate, revalidateTags } = entry
+  if (
+    typeof revalidate !== "number" ||
+    !Number.isInteger(revalidate) ||
+    revalidate < 1 ||
+    revalidate > MAX_SHARED_REVALIDATE_SECONDS
+  ) {
+    throw routeError(
+      `${key} in "${backend}" is for a shared boundary, so it needs revalidate: a whole number of seconds from 1 to ${MAX_SHARED_REVALIDATE_SECONDS}`,
+    )
+  }
+  if (
+    revalidateTags !== undefined &&
+    typeof revalidateTags !== "function" &&
+    !(Array.isArray(revalidateTags) && revalidateTags.every((tag) => typeof tag === "string"))
+  ) {
+    throw routeError(`${key}.revalidateTags in "${backend}" must be a list of tags or a function`)
+  }
+}
+
 /** Exports only the server or the build reads. They live in the route's `x.backend.ts`. */
 export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "loader",
@@ -833,6 +884,12 @@ export function mergeRouteHalves(
   const cached = mergedHalves.get(front)
   if (cached !== undefined && cached.back === back) return cached.module
   assertFrontendHalf(file, front as unknown as Readonly<Record<string, unknown>>)
+  const shared = front.boundaries?.find((boundary) => boundary.mode === "shared")
+  if (shared !== undefined && back?.shellLoader === undefined) {
+    throw routeError(
+      `boundary "${shared.name}" in "${file}" is shared, which only a partially prerendered page has: its backend half must export shellLoader`,
+    )
+  }
   if (back === undefined || backend === undefined) {
     mergedHalves.set(front, { back, module: front })
     return front
@@ -891,11 +948,20 @@ export function mergeRouteHalves(
       throw routeError(`"${backend}" exports boundaryLoaders that is not an object of loaders`)
     }
     const loaders = boundaryLoaders as Readonly<
-      Record<string, { readonly load?: unknown; readonly output?: unknown }>
+      Record<
+        string,
+        {
+          readonly load?: unknown
+          readonly output?: unknown
+          readonly revalidate?: unknown
+          readonly revalidateTags?: unknown
+        }
+      >
     >
-    const declared = new Set((front.boundaries ?? []).map((boundary) => boundary.name))
+    const declared = new Map((front.boundaries ?? []).map((boundary) => [boundary.name, boundary]))
     for (const [name, entry] of Object.entries(loaders)) {
-      if (!declared.has(name)) {
+      const boundary = declared.get(name)
+      if (boundary === undefined) {
         throw routeError(
           `"${backend}" has boundaryLoaders["${name}"], but "${file}" declares no boundary named "${name}"`,
         )
@@ -903,6 +969,7 @@ export function mergeRouteHalves(
       if (typeof entry?.load !== "function") {
         throw routeError(`boundaryLoaders["${name}"].load in "${backend}" must be a function`)
       }
+      assertSharedEntry(backend, name, boundary.mode === "shared", entry)
     }
     boundaries = front.boundaries?.map((boundary) => {
       const entry = loaders[boundary.name]
@@ -916,7 +983,16 @@ export function mergeRouteHalves(
             : outputGuard(entry.output, `"${backend}"`, `${key}.output`),
         missing: `${key}.output in "${backend}"`,
       })
-      return { ...boundary, load } as BoundaryRegistration
+      const merged =
+        boundary.mode === "shared"
+          ? {
+              ...boundary,
+              load,
+              revalidate: entry.revalidate,
+              revalidateTags: entry.revalidateTags,
+            }
+          : { ...boundary, load }
+      return merged as BoundaryRegistration
     })
   }
   const module = {

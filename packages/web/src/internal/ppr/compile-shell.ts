@@ -1,6 +1,9 @@
-import { resolve } from "node:path"
+import { createRequire } from "node:module"
+import { join, resolve } from "node:path"
+import type * as TS from "typescript"
 import type { Manifest, RouteEntry } from "../../manifest.ts"
 import { type BunMetafileLike, fromBunMetafile } from "../../module-graph.ts"
+import { isTypeScriptCompiler } from "../typescript-api.ts"
 
 /**
  * Which routes passed the shell check for one deployment. The server shares a shell only for a route
@@ -11,6 +14,8 @@ export interface ShellCheckRecord {
   readonly deployment: string
   /** Route id to the sha256 of the checked shell bundle. */
   readonly routes: Readonly<Record<string, string>>
+  /** Route id to the shared holes whose loaders were checked in that bundle: only these are stored. */
+  readonly sharedHoles?: Readonly<Record<string, readonly string[]>>
 }
 
 export class ShellCheckError extends Error {
@@ -20,7 +25,7 @@ export class ShellCheckError extends Error {
     readonly chain: readonly string[],
   ) {
     super(
-      `[nifra/web] ppr: the shell of route "${routeId}" reaches request-scoped module "${chain.at(-1)}" through ${chain.join(" -> ")}. Move that read into a dynamic boundary's loader`,
+      `[nifra/web] ppr: the shell of route "${routeId}" reaches request-scoped module "${chain.at(-1)}" through ${chain.join(" -> ")}. Move that read into a dynamic boundary's loader: a shared boundary's loader is part of the shell`,
     )
   }
 }
@@ -93,24 +98,112 @@ function requestScopedChain(
 export async function compileShells(options: CompileShellsOptions): Promise<ShellCheckRecord> {
   const dir = resolve(options.routesDir)
   const routes: Record<string, string> = {}
+  const sharedHoles: Record<string, readonly string[]> = {}
+  const parser = typeScriptFor(dir)
   for (const route of options.manifest.routes) {
     if (route.backend === undefined) continue
     try {
-      const hash = await compileShell(
+      const checked = await compileShell(
         dir,
         options.manifest,
         route,
         route.backend,
         options.requestScoped,
         options.plugins ?? [],
+        parser,
       )
-      if (hash !== undefined) routes[route.id] = hash
+      if (checked === undefined) continue
+      routes[route.id] = checked.hash
+      if (checked.sharedHoles.length > 0) sharedHoles[route.id] = checked.sharedHoles
     } catch (error) {
       if (options.onFailure === undefined) throw error
       options.onFailure(route.id, error)
     }
   }
-  return { v: 1, deployment: options.deployment, routes }
+  return Object.keys(sharedHoles).length === 0
+    ? { v: 1, deployment: options.deployment, routes }
+    : { v: 1, deployment: options.deployment, routes, sharedHoles }
+}
+
+/** The app's TypeScript compiler, read only when a backend half has boundary loaders to sort. */
+function typeScriptFor(dir: string): () => typeof TS | undefined {
+  let loaded: typeof TS | undefined
+  let tried = false
+  return () => {
+    if (tried) return loaded
+    tried = true
+    let ts: unknown
+    try {
+      ts = createRequire(join(dir, "package.json"))("typescript")
+    } catch {
+      ts = undefined
+    }
+    if (isTypeScriptCompiler(ts)) loaded = ts
+    else {
+      console.warn(
+        "[nifra/web] ppr: no shared hole's loader is checked, so each loads for every visitor: finding them reads boundaryLoaders with the TypeScript compiler API, which the app's TypeScript does not have (TypeScript 7 ships none; install typescript@^6 as a dev dependency)",
+      )
+    }
+    return loaded
+  }
+}
+
+/** `node` without the `satisfies`, `as` and parentheses around it. */
+function unwrapped(ts: typeof TS, node: TS.Expression): TS.Expression {
+  let at = node
+  while (ts.isSatisfiesExpression(at) || ts.isAsExpression(at) || ts.isParenthesizedExpression(at))
+    at = at.expression
+  return at
+}
+
+/**
+ * The backend half with `boundaryLoaders` cut down to its shared entries, and their names. A shared
+ * entry is one written inline with `revalidate`, which only a shared boundary's entry may have; one the
+ * source does not spell out that way is left out, so its hole is not stored (fail closed). A per-visitor
+ * entry's loader may read the request, so it never joins the shell bundle.
+ */
+function sharedLoaders(
+  ts: typeof TS,
+  module: SourceModule,
+): { readonly source: string; readonly names: readonly string[] } | undefined {
+  const file = ts.createSourceFile(
+    module.path,
+    module.source,
+    ts.ScriptTarget.Latest,
+    true,
+    module.loader === "tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "boundaryLoaders")
+        continue
+      const initializer = declaration.initializer && unwrapped(ts, declaration.initializer)
+      if (initializer === undefined || !ts.isObjectLiteralExpression(initializer)) return undefined
+      const names: string[] = []
+      const kept: string[] = []
+      for (const property of initializer.properties) {
+        if (!ts.isPropertyAssignment(property)) continue
+        const { name } = property
+        if (!ts.isIdentifier(name) && !ts.isStringLiteral(name)) continue
+        const entry = unwrapped(ts, property.initializer)
+        if (!ts.isObjectLiteralExpression(entry)) continue
+        const shared = entry.properties.some(
+          (field) =>
+            field.name !== undefined &&
+            (ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) &&
+            field.name.text === "revalidate",
+        )
+        if (!shared) continue
+        names.push(name.text)
+        kept.push(module.source.slice(property.getStart(file), property.getEnd()))
+      }
+      if (names.length === 0) return undefined
+      const source = `${module.source.slice(0, initializer.getStart(file))}{ ${kept.join(", ")} }${module.source.slice(initializer.getEnd())}`
+      return { source, names }
+    }
+  }
+  return undefined
 }
 
 interface SourceModule {
@@ -135,9 +228,13 @@ async function compileShell(
   backend: string,
   requestScoped: (moduleId: string) => boolean,
   plugins: readonly import("bun").BunPlugin[],
-): Promise<string | undefined> {
+  parser: () => typeof TS | undefined,
+): Promise<{ readonly hash: string; readonly sharedHoles: readonly string[] } | undefined> {
   const backendModule = await readModule(dir, backend)
   if (!backendModule.exports.includes("shellLoader")) return undefined
+  const ts = backendModule.exports.includes("boundaryLoaders") ? parser() : undefined
+  const shared = ts === undefined ? undefined : sharedLoaders(ts, backendModule)
+  const kept = shared === undefined ? ["shellLoader"] : ["shellLoader", "boundaryLoaders"]
   // A gate's loader runs for its redirect or refusal and its data never reaches the shell; any other
   // layout loader reads the request for data the shell would show every visitor.
   for (const id of route.layoutIds) {
@@ -152,7 +249,7 @@ async function compileShell(
   }
   const at = (file: string): string => JSON.stringify(toPosix(resolve(dir, file)))
   const lines = [
-    `export { shellLoader } from ${at(backend)}`,
+    `export { ${kept.join(", ")} } from ${at(backend)}`,
     `export { default as page } from ${at(route.file)}`,
   ]
   route.layoutIds.forEach((id, index) => {
@@ -199,17 +296,18 @@ async function compileShell(
           })
           // The backend half's other exports are not shell code. A hole loader's `output: t.object()`
           // is a call into a package, which the bundler must keep, and with it every import the
-          // hole uses. Eliminating them first scopes the check to `shellLoader`; their imports stay
-          // as bare imports, so a module with top-level effects still counts.
+          // hole uses. Eliminating them first scopes the check to `shellLoader` and the shared
+          // holes' loaders; their imports stay as bare imports, so a module with top-level effects
+          // still counts.
           build.onLoad({ filter: new RegExp(`^${escapeRegExp(backendModule.path)}$`) }, () => ({
             loader: "js",
             contents: new Bun.Transpiler({
               loader: backendModule.loader,
               trimUnusedImports: true,
               exports: {
-                eliminate: backendModule.exports.filter((name) => name !== "shellLoader"),
+                eliminate: backendModule.exports.filter((name) => !kept.includes(name)),
               },
-            }).transformSync(backendModule.source),
+            }).transformSync(shared?.source ?? backendModule.source),
           }))
         },
       },
@@ -267,5 +365,8 @@ async function compileShell(
   const digest = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(await output.text())),
   )
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")
+  return {
+    hash: Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+    sharedHoles: shared?.names ?? [],
+  }
 }

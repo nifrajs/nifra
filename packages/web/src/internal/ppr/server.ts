@@ -3,6 +3,7 @@ import type {
   BoundaryRequestCtx,
   BoundaryState,
   BoundaryStates,
+  ShellCtx,
 } from "../../boundary.ts"
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import { defer } from "../../deferred.ts"
@@ -17,6 +18,7 @@ import {
   PprShellBusy,
   PprShellCold,
   PprShellUnchecked,
+  type SharedHole,
   variationQuery,
 } from "./contract.ts"
 import {
@@ -28,9 +30,10 @@ import {
 } from "./frames.ts"
 import { type ResolvedPprOptions, totalDeadlineMs } from "./options.ts"
 import { PPR_BOOT, PPR_RUNTIME, pprScriptHashes } from "./runtime.ts"
-import type { SharedShellStore, StoredShell } from "./shell-store.ts"
+import type { SharedShellStore, StoredEntry } from "./shell-store.ts"
 
 export {
+  type DynamicHole,
   type HoleRegistration,
   type HoleStatesMode,
   PPR_CANCEL_PATH,
@@ -42,6 +45,7 @@ export {
   PprShellCold,
   PprShellUnavailable,
   PprShellUnchecked,
+  type SharedHole,
   variationQuery,
 } from "./contract.ts"
 
@@ -83,6 +87,22 @@ interface ShellEntry {
   retryAt: number
 }
 
+/** A shared hole's frame, built once for every visitor whose request maps to its key. */
+interface HoleEntry {
+  readonly routeId: string
+  /** The finished frame, encoded once. */
+  readonly frame: Uint8Array
+  /** The loader's output after its `output` projection, for a data request or a blocking render. */
+  readonly data: unknown
+  readonly bytes: number
+  readonly builtAt: number
+  readonly tags: readonly string[]
+  failures: number
+  retryAt: number
+}
+
+type Entry = ShellEntry | HoleEntry
+
 export interface PprServerConfig {
   readonly options: ResolvedPprOptions
   readonly adapter: RenderAdapter
@@ -104,10 +124,29 @@ export interface PprServerConfig {
   readonly shared?: SharedShellStore | undefined
 }
 
-interface HoleStart {
-  readonly hole: HoleRegistration
-  readonly run: Promise<HoleRun<unknown>>
-}
+/** One hole of a response, started: exactly one of `hit`, `entry` and `run` is set. */
+type HoleStart =
+  | {
+      readonly hole: HoleRegistration
+      /** A shared hole's entry held here when the hole started: its frame goes out with the shell. */
+      readonly hit: HoleEntry
+      readonly entry?: undefined
+      readonly run?: undefined
+    }
+  | {
+      readonly hole: HoleRegistration
+      /** A shared hole's entry, being read or built; aborted on the visitor's deadline. */
+      readonly entry: Promise<HoleRun<HoleEntry>>
+      readonly hit?: undefined
+      readonly run?: undefined
+    }
+  | {
+      readonly hole: HoleRegistration
+      /** The hole's loader, run for this visitor. */
+      readonly run: Promise<HoleRun<unknown>>
+      readonly hit?: undefined
+      readonly entry?: undefined
+    }
 
 /** One streamed response's own queue of frames its client has not read yet. */
 interface StreamState {
@@ -400,20 +439,33 @@ export function createPprServer(config: PprServerConfig): PprServer {
   if (shellChecks === "unchecked-development" && isProduction()) {
     throw new TypeError("[nifra/web] ppr: production needs the build's shell check records")
   }
+  const ownRecord = (): boolean =>
+    shellChecks !== "unchecked-development" &&
+    shellChecks.deployment === (config.clientEntry ?? deployment)
   const checked = (routeId: string): boolean =>
     shellChecks === "unchecked-development" ||
-    (shellChecks.deployment === (config.clientEntry ?? deployment) &&
-      Object.hasOwn(shellChecks.routes, routeId))
+    (ownRecord() && Object.hasOwn(shellChecks.routes, routeId))
+  /** Whether the build checked this shared hole's loader with its route's shell. */
+  const checkedShared = (routeId: string, name: string): boolean =>
+    shellChecks === "unchecked-development" ||
+    (ownRecord() &&
+      Object.hasOwn(shellChecks.routes, routeId) &&
+      shellChecks.sharedHoles?.[routeId]?.includes(name) === true)
   const now = config.now ?? Date.now
   const shared = config.shared
   // One shared-store read per key at a time; concurrent misses wait on it.
-  const lookups = new Map<string, Promise<ShellEntry | undefined>>()
+  const shellLookups = new Map<string, Promise<ShellEntry | undefined>>()
+  const holeLookups = new Map<string, Promise<HoleEntry | undefined>>()
   const untaggableWarned = new Set<string>()
-  const settled = new Map<string, ShellEntry>()
+  const uncheckedHoleWarned = new Set<string>()
+  // Shells and shared hole frames, under one byte budget and one entry cap per route.
+  const settled = new Map<string, Entry>()
   const sightings = new Map<string, number>()
   const routeCounts = new Map<string, number>()
   let storedBytes = 0
   const builds = new Map<string, Promise<ShellEntry>>()
+  const holeBuilds = new Map<string, Promise<HoleEntry>>()
+  // Shell and shared hole builds, which share the route's limit.
   const buildsByRoute = new Map<string, number>()
   // A build records the count when it starts and is not stored if one of its tags was invalidated
   // since. Only running builds read the map, so it empties whenever none run.
@@ -432,10 +484,11 @@ export function createPprServer(config: PprServerConfig): PprServer {
   >()
   const requestScriptOf = (holes: readonly HoleRegistration[]) => {
     const names = holes.map((hole) => hole.name)
-    const key = names.join(",")
+    const sharedNames = holes.filter((hole) => hole.mode === "shared").map((hole) => hole.name)
+    const key = `${names.join(",")}|${sharedNames.join(",")}`
     let script = requestScripts.get(key)
     if (script === undefined) {
-      const [before, after] = requestScriptAround(cancelUrl, names)
+      const [before, after] = requestScriptAround(cancelUrl, names, sharedNames)
       const text = before + TOKEN_ROOM + after
       script = { text, bytes: ENCODER.encode(text).length, tokenAt: ENCODER.encode(before).length }
       requestScripts.set(key, script)
@@ -478,7 +531,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     routeCounts.set(entry.routeId, (routeCounts.get(entry.routeId) ?? 1) - 1)
   }
 
-  const store = (key: string, entry: ShellEntry): void => {
+  const store = (key: string, entry: Entry): void => {
     evict(key)
     settled.set(key, entry)
     storedBytes += entry.bytes
@@ -581,52 +634,64 @@ export function createPprServer(config: PprServerConfig): PprServer {
     }
   }
 
-  /** The shared store's copy of `entry`, unless its tags could never be dropped there. */
+  /** The shared store's copy of an entry, unless its tags could never be dropped there. */
   const share = (
     key: string,
-    entry: ShellEntry,
+    stored: StoredEntry,
+    keepSeconds: number,
     request: PprRequest,
     fence: Promise<number | undefined>,
   ): void => {
     if (shared === undefined) return
-    if (entry.tags.length > 0 && shared.invalidateTag === undefined) {
-      if (!untaggableWarned.has(entry.routeId)) {
-        untaggableWarned.add(entry.routeId)
+    if (stored.tags.length > 0 && shared.invalidateTag === undefined) {
+      if (!untaggableWarned.has(stored.routeId)) {
+        untaggableWarned.add(stored.routeId)
         console.warn(
-          `[nifra/web] ppr: route "${entry.routeId}" lists revalidateTags, which the shared store cannot drop, so its shells stay in this process`,
+          `[nifra/web] ppr: route "${stored.routeId}" lists revalidateTags, which the shared store cannot drop, so its shells and shared holes stay in this process`,
         )
       }
       return
     }
-    const stored: StoredShell = {
-      routeId: entry.routeId,
-      document: DECODER.decode(entry.first),
-      tokenAt: entry.tokenAt,
-      data: entry.data,
-      builtAt: entry.builtAt,
-      tags: entry.tags,
-      notFound: entry.notFound !== undefined,
-    }
-    const keepSeconds =
-      entry.notFound !== undefined
-        ? options.notFoundTtlSeconds
-        : request.revalidate === undefined
-          ? KEEP_UNREVALIDATED_SECONDS
-          : staleLimitMs(request.revalidate) / 1000
     const write = fence
       .then((at) => shared.set(key, stored, keepSeconds, at))
       .catch((error: unknown) =>
-        console.error("[nifra/web] ppr: writing a shell to the shared store failed", {
-          route: entry.routeId,
+        console.error("[nifra/web] ppr: writing to the shared store failed", {
+          route: stored.routeId,
           kind: error instanceof Error ? "error" : typeof error,
         }),
       )
     request.waitUntil?.(write)
   }
 
+  const shareShell = (
+    key: string,
+    entry: ShellEntry,
+    request: PprRequest,
+    fence: Promise<number | undefined>,
+  ): void =>
+    share(
+      key,
+      {
+        routeId: entry.routeId,
+        html: DECODER.decode(entry.first),
+        tokenAt: entry.tokenAt,
+        data: entry.data,
+        builtAt: entry.builtAt,
+        tags: entry.tags,
+        notFound: entry.notFound !== undefined,
+      },
+      entry.notFound !== undefined
+        ? options.notFoundTtlSeconds
+        : request.revalidate === undefined
+          ? KEEP_UNREVALIDATED_SECONDS
+          : staleLimitMs(request.revalidate) / 1000,
+      request,
+      fence,
+    )
+
   /** A shell read back from the shared store, as this process keeps it. */
-  const entryOf = (key: string, stored: StoredShell): ShellEntry => {
-    const first = stored.notFound ? NO_BYTES : ENCODER.encode(stored.document)
+  const entryOf = (key: string, stored: StoredEntry): ShellEntry => {
+    const first = stored.notFound ? NO_BYTES : ENCODER.encode(stored.html)
     const bytes = ENTRY_BYTES + key.length + first.length
     return {
       routeId: stored.routeId,
@@ -640,6 +705,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
       failures: 0,
       retryAt: 0,
     }
+  }
+
+  const leaveBuild = (routeId: string): void => {
+    const running = (buildsByRoute.get(routeId) ?? 1) - 1
+    if (running === 0) buildsByRoute.delete(routeId)
+    else buildsByRoute.set(routeId, running)
+    if (builds.size === 0 && holeBuilds.size === 0) invalidatedAt.clear()
   }
 
   const startBuild = (key: string, request: PprRequest): Promise<ShellEntry> => {
@@ -688,16 +760,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const done = (): void => {
       clearTimeout(timer)
       builds.delete(key)
-      const running = (buildsByRoute.get(routeId) ?? 1) - 1
-      if (running === 0) buildsByRoute.delete(routeId)
-      else buildsByRoute.set(routeId, running)
-      if (builds.size === 0) invalidatedAt.clear()
+      leaveBuild(routeId)
     }
     building.then((entry) => {
       const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
       done()
       if (fenced) return
-      share(key, entry, request, fence)
+      shareShell(key, entry, request, fence)
       if (entry.bytes <= options.shellStoreBytes) return store(key, entry)
       // Kept, it would empty the store and still overrun it; a stale entry it replaces goes too.
       evict(key)
@@ -791,15 +860,15 @@ export function createPprServer(config: PprServerConfig): PprServer {
     key: string,
     request: PprRequest,
   ): Promise<ShellEntry> => {
-    let lookup = lookups.get(key)
+    let lookup = shellLookups.get(key)
     if (lookup === undefined) {
       const read = sharedStore.get(key).then(
         (found) => (found === undefined ? undefined : entryOf(key, found)),
         () => undefined,
       )
       lookup = read
-      lookups.set(key, read)
-      read.then(() => lookups.delete(key))
+      shellLookups.set(key, read)
+      read.then(() => shellLookups.delete(key))
     }
     return lookup.then((entry) => {
       if (entry !== undefined && entry.routeId === request.routeId) {
@@ -818,7 +887,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     key = shellKey(deployment, request),
   ): Promise<ShellEntry> => {
     const entry = settled.get(key)
-    if (entry !== undefined) {
+    if (entry !== undefined && "first" in entry) {
       settled.delete(key)
       settled.set(key, entry)
       const usable = serveEntry(key, entry, request)
@@ -829,6 +898,276 @@ export function createPprServer(config: PprServerConfig): PprServer {
     if (running !== undefined) return running.then(served)
     if (!checked(request.routeId)) return Promise.reject(new PprShellUnchecked(request.routeId))
     return shared === undefined ? build(key, request) : fromShared(shared, key, request)
+  }
+
+  /** What a shared hole's loader gets: the shell's context, under the build's own signal. */
+  const shellCtx = (request: PprRequest, signal: AbortSignal): ShellCtx =>
+    Object.freeze({ ...request.shellContext, signal })
+
+  /** A shared hole's frame and data, rendered once for every visitor. */
+  const finishHole = async (
+    key: string,
+    request: PprRequest,
+    hole: SharedHole,
+    data: unknown,
+  ): Promise<HoleEntry> => {
+    // The visitor's status and headers went out with the shell, so a hole has none to give.
+    if (isControlFlow(data) || isStatusSignal(data))
+      throw new TypeError("[nifra/web] ppr: a shared hole returned a redirect or status")
+    // The id prefix is the hole's own, never a request's, so every visitor gets the same bytes.
+    const html = await renderFragment.call(
+      adapter,
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
+      () => hole.render(data as never),
+      { idPrefix: `nifra-${hole.name}-` },
+    )
+    validateHoleHtml(html)
+    // A component that copied the nonce into the frame would hand it to every visitor.
+    if (html.includes(" nonce=")) {
+      throw new Error(
+        `[nifra/web] ppr: shared hole "${hole.name}" of "${request.routeId}" rendered a nonce`,
+      )
+    }
+    const frame = ENCODER.encode(
+      encodeHoleFrame(
+        hole.name,
+        hole.interactive === true ? { html, props: data } : { html },
+        options.frameBytes,
+      ),
+    )
+    const bytes = ENTRY_BYTES + key.length + frame.length
+    return {
+      routeId: request.routeId,
+      frame,
+      data,
+      bytes: bytes + heldBytes(data, options.shellStoreBytes - bytes),
+      builtAt: now(),
+      tags: request.holeTags(hole),
+      failures: 0,
+      retryAt: 0,
+    }
+  }
+
+  /**
+   * Build one shared hole's entry, detached from the visitor, under its own deadline, and keep it.
+   * With `slot`, the build is hole work under admission instead of one of the route's builds.
+   */
+  const startHoleBuild = (
+    key: string,
+    request: PprRequest,
+    hole: SharedHole,
+    slot: HoleSlot | undefined,
+  ): Promise<HoleEntry> => {
+    const routeId = request.routeId
+    if (slot === undefined) buildsByRoute.set(routeId, (buildsByRoute.get(routeId) ?? 0) + 1)
+    const startedAt = invalidations
+    const fence: Promise<number | undefined> =
+      shared === undefined ? Promise.resolve(undefined) : shared.fence().catch(() => undefined)
+    const timeout = new AbortController()
+    const signal = timeout.signal
+    const timer = setTimeout(
+      () => timeout.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      options.maxHoleTimeoutMs,
+    )
+    const load = (): Promise<HoleEntry> =>
+      detached(() =>
+        Promise.resolve()
+          .then(() => hole.load?.(shellCtx(request, signal)))
+          .then((data) => finishHole(key, request, hole, data)),
+      )
+    const building =
+      slot === undefined
+        ? load()
+        : slot
+            .run(`${routeId}|${hole.name}`, signal, load)
+            .then((run) =>
+              run.ok ? run.value : Promise.reject(run.error ?? new PprShellBusy(routeId)),
+            )
+    holeBuilds.set(key, building)
+    const done = (): void => {
+      clearTimeout(timer)
+      holeBuilds.delete(key)
+      if (slot === undefined) leaveBuild(routeId)
+      else if (builds.size === 0 && holeBuilds.size === 0) invalidatedAt.clear()
+    }
+    building.then(
+      (entry) => {
+        const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
+        done()
+        if (fenced) return
+        share(
+          key,
+          {
+            routeId,
+            html: DECODER.decode(entry.frame),
+            tokenAt: 0,
+            data: entry.data,
+            builtAt: entry.builtAt,
+            tags: entry.tags,
+            notFound: false,
+          },
+          staleLimitMs(hole.revalidate) / 1000,
+          request,
+          fence,
+        )
+        if (entry.bytes <= options.shellStoreBytes) store(key, entry)
+        else evict(key)
+      },
+      (error: unknown) => {
+        done()
+        console.error("[nifra/web] ppr: shared hole build failed", {
+          route: routeId,
+          hole: hole.name,
+          kind: error instanceof Error ? "error" : typeof error,
+        })
+      },
+    )
+    return building
+  }
+
+  /**
+   * A shared hole's build. Over the route's build limit it still runs, as hole work under admission:
+   * it reads no request, so storing it is as safe as any build, and the next visitor hits it instead
+   * of calling a slow upstream again.
+   */
+  const buildHole = (key: string, request: PprRequest, hole: SharedHole): Promise<HoleEntry> => {
+    const running = holeBuilds.get(key)
+    if (running !== undefined) return running
+    if ((buildsByRoute.get(request.routeId) ?? 0) < options.shellBuildConcurrency)
+      return startHoleBuild(key, request, hole, undefined)
+    const slot = admission.slot()
+    if (slot === undefined) return Promise.reject(new PprShellBusy(request.routeId))
+    const building = startHoleBuild(key, request, hole, slot)
+    slot.seal()
+    return building
+  }
+
+  /** `entry` if it is still usable, rebuilding behind a stale one within the route's build limit. */
+  const usableHole = (
+    key: string,
+    entry: HoleEntry,
+    request: PprRequest,
+    hole: SharedHole,
+  ): HoleEntry | undefined => {
+    const age = now() - entry.builtAt
+    if (age < hole.revalidate * 1000) return entry
+    if (age >= staleLimitMs(hole.revalidate)) return undefined
+    const routeId = request.routeId
+    if (
+      !holeBuilds.has(key) &&
+      now() >= entry.retryAt &&
+      (buildsByRoute.get(routeId) ?? 0) < options.shellBuildConcurrency
+    ) {
+      const building = startHoleBuild(key, request, hole, undefined)
+      // No visitor waits on it, so a platform that stops work at the response's end must be told.
+      request.waitUntil?.(building.catch(() => undefined))
+      building.catch(() => {
+        entry.failures++
+        entry.retryAt = now() + Math.min(2 ** entry.failures, hole.revalidate) * 1000
+      })
+    }
+    return entry
+  }
+
+  /** The shared hole's entry this process holds, if it is usable now: a hit costs no promise. */
+  const heldHole = (key: string, request: PprRequest, hole: SharedHole): HoleEntry | undefined => {
+    const entry = settled.get(key)
+    if (entry === undefined || "first" in entry) return undefined
+    settled.delete(key)
+    settled.set(key, entry)
+    const usable = usableHole(key, entry, request, hole)
+    if (usable === undefined) evict(key)
+    return usable
+  }
+
+  /** The shared hole's entry: being built, in the shared store, or built now. */
+  const holeEntry = (key: string, request: PprRequest, hole: SharedHole): Promise<HoleEntry> => {
+    const running = holeBuilds.get(key)
+    if (running !== undefined) return running
+    if (shared === undefined) return buildHole(key, request, hole)
+    let lookup = holeLookups.get(key)
+    if (lookup === undefined) {
+      const read = shared.get(key).then(
+        (found): HoleEntry | undefined => {
+          if (found === undefined || found.notFound) return undefined
+          const frame = ENCODER.encode(found.html)
+          const bytes = ENTRY_BYTES + key.length + frame.length
+          return {
+            routeId: found.routeId,
+            frame,
+            data: found.data,
+            bytes: bytes + heldBytes(found.data, options.shellStoreBytes - bytes),
+            builtAt: found.builtAt,
+            tags: found.tags,
+            failures: 0,
+            retryAt: 0,
+          }
+        },
+        () => undefined,
+      )
+      lookup = read
+      holeLookups.set(key, read)
+      read.then(() => holeLookups.delete(key))
+    }
+    return lookup.then((entry) => {
+      if (entry !== undefined && entry.routeId === request.routeId) {
+        const usable = usableHole(key, entry, request, hole)
+        if (usable !== undefined) {
+          if (!settled.has(key) && entry.bytes <= options.shellStoreBytes) store(key, entry)
+          return usable
+        }
+      }
+      return buildHole(key, request, hole)
+    })
+  }
+
+  /**
+   * The key of `hole`'s shared entry for `request`, or `undefined` when this request must not read
+   * or fill one: a draft, a hole the build did not check, or a key a full store has seen too rarely.
+   */
+  const sharedKey = (request: PprRequest, hole: SharedHole): string | undefined => {
+    if (request.holeContext.draft) return undefined
+    if (!checkedShared(request.routeId, hole.name)) {
+      const warning = `${request.routeId}|${hole.name}`
+      if (checked(request.routeId) && !isProduction() && !uncheckedHoleWarned.has(warning)) {
+        uncheckedHoleWarned.add(warning)
+        console.warn(
+          `[nifra/web] ppr: shared hole "${hole.name}" of "${request.routeId}" has no passing build check, so it loads for every visitor. Write its boundaryLoaders entry inline, with revalidate`,
+        )
+      }
+      return undefined
+    }
+    const key = `ppr-hole:v1|${deployment}|${request.routeId}|${hole.name}|${request.locale ?? ""}|${variationQuery(request.holeContext.params)}|${variationQuery(request.variations)}`
+    return due(key, request.routeId) ? key : undefined
+  }
+
+  /** Wait for a shared hole's entry until the hole's deadline; the build itself goes on. */
+  const awaitHole = (
+    key: string,
+    request: PprRequest,
+    hole: SharedHole,
+    deadlines: HoleDeadlines,
+  ): Promise<HoleRun<HoleEntry>> => {
+    const deadline = deadlines.join(hole.timeout ?? options.holeTimeoutMs)
+    return new Promise((resolve) => {
+      let unwatch = (): void => {}
+      let answered = false
+      const answer = (run: HoleRun<HoleEntry>): void => {
+        if (answered) return
+        answered = true
+        unwatch()
+        deadline.leave()
+        resolve(run)
+      }
+      const aborted = (): void =>
+        answer({ ok: false, reason: "aborted", error: deadline.signal.reason })
+      if (deadline.signal.aborted) return aborted()
+      unwatch = deadline.watch(aborted)
+      holeEntry(key, request, hole).then(
+        (value) => answer({ ok: true, value }),
+        (error: unknown) => answer({ ok: false, reason: "failed", error }),
+      )
+    })
   }
 
   // The log carries the failure's kind only: a thrown message can hold credentials or user data.
@@ -846,18 +1185,17 @@ export function createPprServer(config: PprServerConfig): PprServer {
     hole: HoleRegistration,
     deadlines: HoleDeadlines,
   ): Promise<HoleRun<unknown>> => {
-    const load = hole.load
-    if (load === undefined) return Promise.resolve({ ok: true, value: undefined })
+    if (hole.load === undefined) return Promise.resolve({ ok: true, value: undefined })
     if (slot === undefined) return Promise.resolve(SHED)
     const deadline = deadlines.join(hole.timeout ?? options.holeTimeoutMs)
     const signal = deadline.signal
+    // A shared hole that is not stored for this request still loads as it is built: no request.
+    const invoke =
+      hole.mode === "shared"
+        ? () => detached(() => hole.load?.(shellCtx(request, signal)))
+        : () => hole.load?.(holeCtx(request.holeContext, signal))
     return slot
-      .run(
-        `${request.routeId}|${hole.name}`,
-        signal,
-        () => load(holeCtx(request.holeContext, signal)),
-        deadline.watch,
-      )
+      .run(`${request.routeId}|${hole.name}`, signal, invoke, deadline.watch)
       .then((run) => {
         deadline.leave()
         // The shell's status and headers are already sent, so a hole has no redirect or status to give.
@@ -870,16 +1208,33 @@ export function createPprServer(config: PprServerConfig): PprServer {
       })
   }
 
-  /** Start every hole of one response. No free slot: none is invoked and each gets its error. */
+  /**
+   * Start every hole of one response. A shared hole's held entry is a hit at once; any loader run for
+   * this visitor needs the response's slot, and with none free, each such hole gets its error.
+   */
   const startHoles = (request: PprRequest, response: AbortSource): HoleStart[] => {
-    const slot = admission.slot()
-    const deadlines = holeDeadlines(response)
-    const runs = request.holes.map((hole) => ({
-      hole,
-      run: runHole(slot, request, hole, deadlines),
-    }))
+    let slot: HoleSlot | undefined
+    let slotTaken = false
+    let deadlines: HoleDeadlines | undefined
+    const starts = request.holes.map((hole): HoleStart => {
+      if (hole.mode === "shared") {
+        const key = sharedKey(request, hole)
+        if (key !== undefined) {
+          const hit = heldHole(key, request, hole)
+          if (hit !== undefined) return { hole, hit }
+          deadlines ??= holeDeadlines(response)
+          return { hole, entry: awaitHole(key, request, hole, deadlines) }
+        }
+      }
+      if (!slotTaken) {
+        slotTaken = true
+        slot = admission.slot()
+      }
+      deadlines ??= holeDeadlines(response)
+      return { hole, run: runHole(slot, request, hole, deadlines) }
+    })
     slot?.seal()
-    return runs
+    return starts
   }
 
   const frameOf = async (
@@ -1003,13 +1358,15 @@ export function createPprServer(config: PprServerConfig): PprServer {
         unwatchDisconnect()
       }
       // A cached shell is known at once, so holes start only once it is known to be a page; on a
-      // miss they start beside the build, which is where starting early pays.
+      // miss they start beside the build, which is where starting early pays. The shell's build is
+      // claimed first: a shared hole's build must not take the route's last one from it.
       const cached = settled.has(key)
+      const shellAndCsp = Promise.all([shellFor(request, key), cspHeader(request)])
       let runs = cached ? undefined : startHoles(request, response)
       let shell: ShellEntry
       let csp: string | undefined
       try {
-        ;[shell, csp] = await Promise.all([shellFor(request, key), cspHeader(request)])
+        ;[shell, csp] = await shellAndCsp
       } catch (error) {
         abort(error)
         cleanup()
@@ -1062,9 +1419,10 @@ export function createPprServer(config: PprServerConfig): PprServer {
         state.wanted = false
         send(sink)
       }
-      const push = (name: string, frame: string): void => {
+      const push = (name: string, frame: string | Uint8Array): void => {
         if (state.dead) return
-        let bytes = ENCODER.encode(frame)
+        // A shared frame's bytes serve every visitor, and a reader may write into a chunk.
+        let bytes = typeof frame === "string" ? ENCODER.encode(frame) : frame.slice()
         // Past the per-response cap every later hole sends its error frame, a few hundred bytes each.
         if (state.overflowed || state.queued + bytes.length > options.maxUnsentBytesPerResponse) {
           state.overflowed = true
@@ -1091,22 +1449,34 @@ export function createPprServer(config: PprServerConfig): PprServer {
       }
       // The end is queued in the same turn as the last frame, so the two go out as one write.
       let unframed = runs.length
-      if (unframed === 0) pushEnd()
-      for (const { hole, run } of runs) {
-        run
-          .then((outcome) => frameOf(request, hole, outcome))
-          .then((frame) => {
-            push(hole.name, frame)
-            if (--unframed === 0) pushEnd()
-          })
+      // Shared frames this process holds go out with the shell, in its one chunk.
+      const hits: Uint8Array[] = []
+      for (const start of runs) {
+        if (start.hit !== undefined) {
+          hits.push(start.hit.frame)
+          unframed--
+          continue
+        }
+        const { hole } = start
+        const frame: Promise<string | Uint8Array> =
+          start.entry !== undefined
+            ? start.entry.then((outcome) =>
+                outcome.ok ? outcome.value.frame : errorFrame(hole.name),
+              )
+            : start.run.then((outcome) => frameOf(request, hole, outcome))
+        frame.then((framed) => {
+          push(hole.name, framed)
+          if (--unframed === 0) pushEnd()
+        })
       }
+      if (unframed === 0) pushEnd()
 
       const body = new ReadableStream<Uint8Array>(
         {
           start(stream) {
             sink = stream
             // A copy: a reader may write into a chunk, and the shell's bytes serve every visitor.
-            const first = shell.first.slice()
+            const first = hits.length === 0 ? shell.first.slice() : concat([shell.first, ...hits])
             for (let at = 0; at < TOKEN_LENGTH; at++)
               first[shell.tokenAt + at] = token.charCodeAt(at)
             stream.enqueue(first)
@@ -1137,9 +1507,26 @@ export function createPprServer(config: PprServerConfig): PprServer {
       if (mode === "omitted") return pendingStates(request.holes)
       const entries = await Promise.all(
         startHoles(request, signalSource(signal)).map(
-          async ({ hole, run }): Promise<[string, BoundaryState]> => {
+          async (start): Promise<[string, BoundaryState]> => {
+            const { hole } = start
             const base: BoundaryState = { name: hole.name, mode: hole.mode, status: "pending" }
             if (hole.errorId !== undefined) Object.assign(base, { errorId: hole.errorId })
+            // A held shared entry is ready at once, so a soft navigation renders it with the shell.
+            if (start.hit !== undefined) {
+              const data = start.hit.data
+              return [
+                hole.name,
+                data === undefined
+                  ? { ...base, status: "ready" }
+                  : { ...base, status: "ready", data },
+              ]
+            }
+            const run: Promise<HoleRun<unknown>> =
+              start.entry === undefined
+                ? start.run
+                : start.entry.then((outcome) =>
+                    outcome.ok ? { ok: true, value: outcome.value.data } : outcome,
+                  )
             if (mode === "deferred") {
               const value = run.then((outcome) => {
                 if (outcome.ok) return outcome.value

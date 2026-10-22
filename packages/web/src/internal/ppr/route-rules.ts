@@ -63,7 +63,7 @@ export function assertPprRoute(
   }
   if (holes === 0 || holes > limits.maxHolesPerRoute) {
     throw new RangeError(
-      `[nifra/web] ppr: route "${route.id}" has a shellLoader and ${holes} dynamic boundaries; it needs 1 to ${limits.maxHolesPerRoute}. A page with no per-visitor part needs no shell: prerender it or give it \`revalidate\``,
+      `[nifra/web] ppr: route "${route.id}" has a shellLoader and ${holes} dynamic or shared boundaries; it needs 1 to ${limits.maxHolesPerRoute}. A page with no per-visitor or fast-changing part needs no shell: prerender it or give it \`revalidate\``,
     )
   }
 }

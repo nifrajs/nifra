@@ -51,13 +51,14 @@ export interface PprConfig {
   readonly origin?: string
   /**
    * A store the app's processes share, such as `new KVCacheStore(env.SHELLS)`, behind each process's
-   * own shells: a process that has not built a shell reads it from here. Needs `storeSecret` and
-   * checked shells. A route whose `revalidateTags` the store cannot drop keeps its shells in-process.
+   * own shells and shared hole frames: a process that has not built one reads it from here. Needs
+   * `storeSecret` and checked shells. A route whose tags the store cannot drop keeps its entries
+   * in-process.
    */
   readonly store?: CacheStore
   /**
-   * Signs every shell written to `store`, so a store other services can write cannot hand visitors
-   * a shell this app did not build. At least 32 characters, the same in every process.
+   * Signs every entry written to `store`, so a store other services can write cannot hand visitors
+   * a page this app did not build. At least 32 characters, the same in every process.
    */
   readonly storeSecret?: string
   /**

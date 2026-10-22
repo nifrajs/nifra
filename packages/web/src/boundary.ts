@@ -44,7 +44,7 @@ export interface ShellCtx {
   readonly api: unknown
 }
 
-export type BoundaryMode = "static" | "dynamic" | { readonly intercept: string }
+export type BoundaryMode = "static" | "dynamic" | "shared" | { readonly intercept: string }
 
 interface BoundaryBase<Data, UI> {
   readonly name: string
@@ -68,6 +68,20 @@ export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {
   readonly timeout?: number
 }
 
+/**
+ * Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell
+ * from a request-free context and cached on its own `revalidate`, then written right after the shell.
+ * Its loader entry in `boundaryLoaders` needs `revalidate`.
+ */
+export type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & {
+  readonly mode: "shared"
+  readonly load?: (ctx: ShellCtx) => Data | Promise<Data>
+  /** The hole ships its props and hydrates. Default `false`. */
+  readonly interactive?: boolean
+  /** How long a visitor waits for a build in milliseconds, then gets the error slot. Default 5000. */
+  readonly timeout?: number
+}
+
 export type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & {
   readonly mode: { readonly intercept: string }
   readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>
@@ -77,6 +91,7 @@ export type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & {
 export type Boundary<Data, UI> =
   | StaticBoundary<Data, UI>
   | DynamicBoundary<Data, UI>
+  | SharedBoundary<Data, UI>
   | InterceptBoundary<Data, UI>
 
 /**
@@ -100,6 +115,10 @@ export type BoundaryRegistration =
   | (ErasedBoundaryBase & {
       readonly mode: "dynamic"
       readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>
+    })
+  | (ErasedBoundaryBase & {
+      readonly mode: "shared"
+      readonly load?: (ctx: ShellCtx) => unknown | Promise<unknown>
     })
   | (ErasedBoundaryBase & {
       readonly mode: { readonly intercept: string }
@@ -237,7 +256,7 @@ const modeKey = (mode: BoundaryMode): string =>
   typeof mode === "string" ? mode : `intercept:${mode.intercept}`
 
 const assertMode = (mode: BoundaryMode): void => {
-  if (mode === "static" || mode === "dynamic") return
+  if (mode === "static" || mode === "dynamic" || mode === "shared") return
   if (
     typeof mode !== "object" ||
     mode === null ||

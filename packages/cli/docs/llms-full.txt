@@ -12683,7 +12683,7 @@ reads, no events, no extra frames.
 
 ## Nifra - Partial prerendering (experimental)
 
-> Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Eligibility rules, the no-JavaScript limit, proxies and connection limits.
+> Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.
 
 Most of a product page is the same for everyone: the title, the description, the layout. A
 partially prerendered route serves that part from a cached shell at once, then streams each
@@ -12893,7 +12893,7 @@ export default function Tea(props: { data: { title: string }; boundaries?: Bound
 The import check cannot see visitor data an app keeps in module state, such as a variable
 middleware writes. `checkShellCanaries` requests each path once with unique values
 in a cookie, `Authorization`, a header and the query, and reports each value found
-in the shared shell.
+in the shared shell or in a shared hole's frame (the finding names the hole).
 
 ```ts
 // doc-check: skip - continues the server snippet above (`app`).
@@ -12911,7 +12911,7 @@ The backend half exports `shellLoader`, and not `loader` or
 `prerender = true`.
 
 -
-It declares 1 to 32 `dynamic` boundaries, each with a
+It declares 1 to 32 `dynamic` or `shared` boundaries, each with a
 `boundaryLoaders` entry. Names are 1-32 lowercase letters, digits and single
 hyphens, start with a letter and do not end with a hyphen.
 
@@ -12965,6 +12965,111 @@ cache such as `withISR` never stores the route's response, however it rendered.
 A shell older than `revalidate` is served while one rebuild runs; a failing
 rebuild keeps the old one for up to ten times `revalidate`, at most a day. A shell
 loader's `notFound()` is remembered for 60 seconds.
+
+### Shared holes
+
+A part that is the same for every visitor but changes faster than the shell, such as a price
+or a stock level, is a `shared` hole. Its loader gets the shell's context, never
+the request, so a hole that should have been per visitor shows generic content, never one
+visitor's data to another. It is built once per route, params, locale and variations, and
+kept on its own `revalidate` (required, in seconds) and
+`revalidateTags`, apart from the shell.
+
+```tsx
+// doc-check: skip - an excerpt of the React page above, beside its cart hole.
+const price = {
+  name: "price",
+  mode: "shared", // the same for every visitor: built once, cached on its own
+  render: (data: { readonly amount: string }) => <p>{data.amount}</p>,
+  fallback: <p>Loading the price</p>,
+} as const
+export const boundaries = [cart, price]
+```
+
+```ts
+import { t } from "@nifrajs/schema"
+import type { ShellCtx } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
+
+const prices: Readonly<Record<string, string>> = { "1": "$12.00", "2": "$9.50" }
+
+export const boundaryLoaders = {
+  // Inline, with revalidate: the build checks this loader with the shell, so its frame is stored.
+  price: {
+    load: async ({ params }: ShellCtx) => ({ amount: prices[params.id ?? ""] ?? "-" }),
+    output: t.object({ amount: t.string() }),
+    revalidate: 10,
+    revalidateTags: ({ params }) => [`price:${params.id}`],
+  },
+} satisfies Route.BoundaryLoaders
+```
+
+-
+A frame this process holds goes out with the shell, in its first write. On a miss the
+visitor waits up to the hole's `timeout`, then gets the error slot while the
+build finishes for the next visitor.
+
+-
+An older frame is served while one rebuild runs. A failed build is never stored: the old
+frame stays for up to ten times `revalidate`, at most a day.
+
+-
+Builds count against the route's `shellBuildConcurrency`; past it, a missing
+frame is built anyway as hole work under `maxHoleWork`, and stored.
+
+-
+`compileShells` bundles each shared loader with the shell and refuses the route
+if it reaches a module that reads the visitor. It finds an entry written inline in
+`boundaryLoaders` with `revalidate`; any other shared hole loads for
+every visitor and warns once in development.
+
+- A draft loads it fresh and never reads or fills the cache.
+
+### Across processes
+
+Each process keeps its own shells and shared frames. Give `partialPrerendering` a
+`store` the processes share, such as Workers KV, and a process that has not built
+an entry reads it from there. Every entry is signed with `storeSecret` over its key,
+deployment and contents, so a store other services can write cannot hand visitors a page this
+app did not build; one that fails the check is a miss. Entries are kept apart per deployment:
+the client build, each route's checked shell code and the optional `deployment`
+name all go into the key. A route whose tags the store cannot drop keeps its entries in the
+process, with one warning.
+
+```ts
+// doc-check: skip - a Worker's partialPrerendering call, with the server snippet's records.
+import { KVCacheStore } from "@nifrajs/web"
+
+partialPrerendering({
+  shellChecks,
+  store: new KVCacheStore(env.SHELLS),
+  storeSecret: env.PPR_STORE_SECRET, // at least 32 characters, the same in every process
+  deployment: env.CF_VERSION_METADATA.id,
+})
+```
+
+### Runtimes
+
+- Bun and Node serve it as they serve any nifra app.
+
+-
+Deno serves it through `@nifrajs/deno`; a hang-up aborts the holes still
+running.
+
+-
+On Cloudflare Workers, the shell store defaults to 8 MB and the cancel beacon is off, since
+it would reach another isolate: a hole the visitor left stops at its deadline. Rebuilds and
+store writes run through `waitUntil`. Workers compress responses themselves, so
+`compression()` leaves them alone there. A shell that imports
+`cloudflare:workers` fails its check: that module hands any code the Worker's
+`env`.
+
+```ts
+// doc-check: skip - continues the server snippet above (`app`) on Deno.
+import { serve } from "@nifrajs/deno"
+
+await serve(app, { port: 8000 })
+```
 
 ### Without JavaScript
 
@@ -18961,7 +19066,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

@@ -22,10 +22,24 @@ describe("compileShells", () => {
       "clean",
       "gated/[id]",
       "nested/[id]",
+      "shared-hole",
     ])
     expect(record.routes.clean).toMatch(/^[0-9a-f]{64}$/)
+    // Only a shared entry written inline, with revalidate, is checked, so only that one is stored.
+    expect(record.sharedHoles).toEqual({ "shared-hole": ["price"] })
     const failed = new Map(failures)
-    expect([...failed.keys()].sort()).toEqual(["ambient", "leaky", "loaded/[id]", "platform-env"])
+    expect([...failed.keys()].sort()).toEqual([
+      "ambient",
+      "leaky",
+      "loaded/[id]",
+      "platform-env",
+      "shared-leak",
+    ])
+    // A shared hole's loader is part of the shell, so its request read fails the route.
+    const sharedLeak = failed.get("shared-leak")
+    expect(sharedLeak instanceof ShellCheckError ? sharedLeak.chain.at(-1) : "").toEndWith(
+      "/shell-lib/session.ts",
+    )
     // A Worker's env reaches a module through an import, with no request: it counts too.
     const platform = failed.get("platform-env")
     expect(platform instanceof ShellCheckError ? platform.chain.at(-1) : "").toEndWith(

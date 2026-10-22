@@ -1,16 +1,18 @@
 /**
- * Shells in a store shared by processes (Workers KV, Redis): a second level behind the in-process
- * map. Whoever can write the store could put script into every visitor's shell, so each entry is
- * signed with the app's secret over its key, deployment and contents; anything that fails the check
- * is a miss.
+ * Shells and shared hole frames in a store shared by processes (Workers KV, Redis): a second level
+ * behind the in-process map. Whoever can write the store could put script into every visitor's page,
+ * so each entry is signed with the app's secret over its key, deployment and contents; anything that
+ * fails the check is a miss.
  */
 import type { CachedResponse, CacheStore } from "../../isr.ts"
 
-/** A shell as the shared store holds it: everything a process needs to serve it. */
-export interface StoredShell {
+/** A shell or a shared hole's frame as the shared store holds it: everything a process needs to
+ * serve it. */
+export interface StoredEntry {
   readonly routeId: string
-  /** The document up to the request script's end, with room for the token at `tokenAt` (bytes). */
-  readonly document: string
+  /** A shell's document up to the request script's end, with room for the token at `tokenAt`
+   * (bytes); or a hole's frame. */
+  readonly html: string
   readonly tokenAt: number
   readonly data: unknown
   readonly builtAt: number
@@ -20,11 +22,11 @@ export interface StoredShell {
 }
 
 export interface SharedShellStore {
-  get(key: string): Promise<StoredShell | undefined>
+  get(key: string): Promise<StoredEntry | undefined>
   /** Skipped by the store when the key or one of its tags was purged after `fence`. */
   set(
     key: string,
-    shell: StoredShell,
+    entry: StoredEntry,
     keepSeconds: number,
     fence: number | undefined,
   ): Promise<void>
@@ -43,7 +45,7 @@ const hex = (bytes: ArrayBuffer): string => {
   return text
 }
 
-const fromHex = (text: string): Uint8Array | undefined => {
+const fromHex = (text: string): Uint8Array<ArrayBuffer> | undefined => {
   if (text.length % 2 !== 0 || !/^[0-9a-f]*$/.test(text)) return undefined
   const bytes = new Uint8Array(text.length / 2)
   for (let at = 0; at < bytes.length; at++)
@@ -56,12 +58,12 @@ const isStrings = (value: unknown): value is readonly string[] =>
 
 const field = (value: object, name: string): unknown => Reflect.get(value, name)
 
-const isStoredShell = (value: unknown): value is StoredShell => {
+const isStoredEntry = (value: unknown): value is StoredEntry => {
   if (typeof value !== "object" || value === null) return false
   const tokenAt = field(value, "tokenAt")
   return (
     typeof field(value, "routeId") === "string" &&
-    typeof field(value, "document") === "string" &&
+    typeof field(value, "html") === "string" &&
     typeof tokenAt === "number" &&
     Number.isSafeInteger(tokenAt) &&
     typeof field(value, "builtAt") === "number" &&
@@ -101,7 +103,7 @@ export function sharedShellStore(
         encoder.encode(cached.body),
       )
       if (!verified) {
-        console.error("[nifra/web] ppr: a shared shell entry failed its signature check", {
+        console.error("[nifra/web] ppr: a shared store entry failed its signature check", {
           key: entryKey,
         })
         return undefined
@@ -122,19 +124,19 @@ export function sharedShellStore(
       ) {
         return undefined
       }
-      const shell = field(payload, "shell")
-      return isStoredShell(shell) ? shell : undefined
+      const entry = field(payload, "entry")
+      return isStoredEntry(entry) ? entry : undefined
     },
-    async set(entryKey, shell, keepSeconds, fence) {
-      const body = JSON.stringify({ v: 1, key: entryKey, deployment, shell })
+    async set(entryKey, entry, keepSeconds, fence) {
+      const body = JSON.stringify({ v: 1, key: entryKey, deployment, entry })
       const mac = hex(await crypto.subtle.sign("HMAC", await key(), encoder.encode(body)))
       const value: CachedResponse = {
         body,
-        status: shell.notFound ? 404 : 200,
+        status: entry.notFound ? 404 : 200,
         headers: { [MAC_HEADER]: mac },
-        storedAt: shell.builtAt,
+        storedAt: entry.builtAt,
         revalidate: keepSeconds * 1000,
-        tags: shell.tags,
+        tags: entry.tags,
         fence,
       }
       await store.set(entryKey, value)

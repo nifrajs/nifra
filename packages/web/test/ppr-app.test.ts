@@ -253,6 +253,56 @@ describe("PPR app: requests that are not a streamed document", () => {
   })
 })
 
+describe("PPR app: a shared hole", () => {
+  /** Hole `name`'s frame: its inert JSON script and its invoker. */
+  const frameOf = (html: string, name: string): string => {
+    const start = html.indexOf(`<script type="application/json" id="nifra-ppr:${name}">`)
+    const invoker = html.indexOf("<script>", start)
+    return start === -1 ? "" : html.slice(start, html.indexOf("</script>", invoker) + 9)
+  }
+  const frameHtml = (html: string, name: string): unknown => {
+    const frame = frameOf(html, name)
+    return JSON.parse(frame.slice(frame.indexOf(">") + 1, frame.indexOf("</script>"))).html
+  }
+
+  test("is built once, its loader checked, and every visitor gets the same frame bytes", async () => {
+    const before = probe.priceBuilds
+    const visit = async (name: string) =>
+      (await fetch(`${app.origin}/s/41`, { headers: { cookie: `name=${name}` } })).text()
+    const ada = await visit("ada")
+    const grace = await visit("grace")
+    expect(probe.priceBuilds - before).toBe(1)
+    expect(frameHtml(ada, "price")).toBe('<p id="price">price <!-- -->410</p>')
+    expect(frameOf(grace, "price")).toBe(frameOf(ada, "price"))
+    expect(frameHtml(ada, "greeting")).toBe('<p id="greeting">hello <!-- -->ada</p>')
+    expect(frameHtml(grace, "greeting")).toBe('<p id="greeting">hello <!-- -->grace</p>')
+    expect(app.warnings.some((warning) => warning.includes('shared hole "price"'))).toBe(false)
+  })
+
+  test("a soft navigation's data request carries the held frame's data, ready", async () => {
+    await (await fetch(`${app.origin}/s/43`)).text()
+    const payload = firstLine(
+      await (await fetch(`${app.origin}/s/43`, { headers: { [DATA_HEADER]: "1" } })).text(),
+    )
+    expect(payload.boundaries?.price).toEqual({
+      name: "price",
+      mode: "shared",
+      status: "ready",
+      data: { amount: 430 },
+    })
+  })
+
+  test("the canary check scans the shared frame and passes it", async () => {
+    const proxy = {
+      fetch: (request: Request) => {
+        const url = new URL(request.url)
+        return fetch(`${app.origin}${url.pathname}${url.search}`, { headers: request.headers })
+      },
+    }
+    expect(await checkShellCanaries(proxy, ["/s/44"])).toEqual([])
+  })
+})
+
 describe("PPR app behind compression()", () => {
   test("the gzipped stream delivers the shell and early holes while a slow hole runs", async () => {
     const zipped = await startPprApp(undefined, { compress: true })
@@ -446,9 +496,9 @@ describe("PPR app configuration", () => {
         process.stderr.write = write
       }
     }
-    expect(await failureOf([])).toContain("0 dynamic boundaries; it needs 1 to 2")
+    expect(await failureOf([])).toContain("0 dynamic or shared boundaries; it needs 1 to 2")
     expect(await failureOf([hole("a"), hole("b"), hole("c")])).toContain(
-      "3 dynamic boundaries; it needs 1 to 2",
+      "3 dynamic or shared boundaries; it needs 1 to 2",
     )
     for (const timeout of [0, 1.5, 30_001, Number.NaN]) {
       expect(await failureOf([hole("a", timeout)])).toContain(

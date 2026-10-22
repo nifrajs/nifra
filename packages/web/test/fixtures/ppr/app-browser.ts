@@ -5,7 +5,7 @@
  * unrelated fetch survives; an unchecked shell renders blocking. Each hole is filled once whether it
  * arrives before or after hydration; a tampered invoker is blocked; fills work under enforced Trusted
  * Types where the framework's client can run under them; the router keeps the holes through a param
- * change and back. Chromium also checks the heap and listener count stay flat over 1000 soft
+ * change and back; a shared hole is built once and filled once for each visitor. Chromium also checks the heap and listener count stay flat over 1000 soft
  * navigations. Run: `bun packages/web/test/fixtures/ppr/app-browser.ts`, with `FRAMEWORK=<name>` for
  * the twin of the app in `web-<name>/test/fixtures/ppr-app`.
  */
@@ -505,6 +505,63 @@ async function checkRouter(name: string, browser: Browser): Promise<Record<strin
   return { engine: name, router: "param change, back, back, forward" }
 }
 
+/**
+ * A shared hole: the first visitor waits on its build, the next gets its frame with the shell, both
+ * fill once with their own per-visitor hole beside it; a soft navigation renders it from the held
+ * entry's data.
+ */
+async function checkSharedHole(name: string, browser: Browser): Promise<Record<string, unknown>> {
+  const id = { chromium: 61, firefox: 71, webkit: 81 }[name] ?? 91
+  const before = (await serverProbe()).priceBuilds
+  for (const visitor of ["ada", "grace"]) {
+    const context = await browser.newContext()
+    await context.addCookies([{ name: "name", value: visitor, url: origin }])
+    await instrument(context)
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on("pageerror", (error) => errors.push(error.message))
+    await page.goto(`${origin}/s/${id}`, { waitUntil: "commit" })
+    await filled(page, "price")
+    await filled(page, "greeting")
+    await hydrated(page)
+    const shown = await page.evaluate(() => ({
+      price: document.querySelector("#price")?.textContent ?? null,
+      greeting: document.querySelector("#greeting")?.textContent ?? null,
+      fills: window.__holeFills,
+      rewrites: window.__rewrites,
+      violations: window.__violations,
+    }))
+    assert.deepEqual(
+      shown,
+      {
+        price: `price ${id * 10}`,
+        greeting: `hello ${visitor}`,
+        fills: { price: 1, greeting: 1 },
+        rewrites: {},
+        violations: [],
+      },
+      `${name}: the shared hole for ${visitor}`,
+    )
+    if (visitor === "grace") {
+      await routed(page)
+      await go(page, "#to-s9")
+      await page.waitForFunction(
+        () =>
+          document.querySelector("#title")?.textContent === "Stock 9" &&
+          document.querySelector("#price")?.textContent === "price 90" &&
+          document.querySelector("#greeting")?.textContent === "hello grace",
+      )
+    }
+    assert.deepEqual(errors, [], `${name}: shared hole page errors`)
+    await context.close()
+  }
+  assert.ok(
+    (await serverProbe()).priceBuilds - before <= 2,
+    `${name}: the shared hole is built once per id`,
+  )
+  return { engine: name, shared: "built once, filled once per visitor, soft navigation" }
+}
+
 /** Soft navigations between the PPR route and another page; the heap after a forced GC must stay flat. */
 async function checkHeap(browser: Browser): Promise<Record<string, unknown>> {
   const context = await browser.newContext()
@@ -580,6 +637,7 @@ try {
       console.log(JSON.stringify(await checkHoleOrders(name, browser)))
       console.log(JSON.stringify(await checkScriptPolicy(name, browser)))
       console.log(JSON.stringify(await checkRouter(name, browser)))
+      console.log(JSON.stringify(await checkSharedHole(name, browser)))
       if (name === "chromium") console.log(JSON.stringify(await checkHeap(browser)))
     } finally {
       await browser.close()

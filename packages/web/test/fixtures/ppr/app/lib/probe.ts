@@ -7,6 +7,7 @@ export const probe = {
   slowAborted: 0,
   abortedAt,
   shellBuilds: 0,
+  priceBuilds: 0,
   cancels: 0,
   shellOrigin: "",
   shellVariations,

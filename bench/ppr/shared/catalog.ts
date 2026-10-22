@@ -38,6 +38,10 @@ export async function readProduct(id: string): Promise<Product> {
   return { id, ...body }
 }
 
+export const relatedSchema = t.object({
+  items: t.array(t.object({ id: t.string(), name: t.string(), price: t.string() })),
+})
+
 export const greetingSchema = t.object({ name: t.string() })
 export const cartSchema = t.object({ count: t.number() })
 export const recsSchema = t.object({ items: t.array(t.string()) })
