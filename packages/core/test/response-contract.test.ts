@@ -143,6 +143,81 @@ describe('responseContract: "enforce"', () => {
     expect(res.body).not.toContain("SECRET") // the detail goes to the logger, never to the caller
   })
 
+  // `JSON.stringify` writes what a `toJSON` hook returns, not the fields the validator was shown.
+  describe("a value with a toJSON hook", () => {
+    class Account {
+      id = "u1"
+      name = "Ada"
+      #passwordHash = "SECRET"
+      toJSON() {
+        return { id: this.id, name: this.name, passwordHash: this.#passwordHash }
+      }
+    }
+    class Price {
+      constructor(readonly cents: number) {}
+      toJSON() {
+        return (this.cents / 100).toFixed(2)
+      }
+    }
+
+    test("is judged by what the hook writes, at the top, nested, and in a c.json reply", async () => {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce"))
+        .get("/me", { response: STRICT }, () => new Account())
+        .get("/list", { response: t.object({ users: t.array(STRICT) }) }, () => ({
+          users: [{ id: "u0", name: "Bo" }, new Account()],
+        }))
+        .get("/reply", { response: STRICT }, (c) => c.json(new Account()))
+      for (const path of ["/me", "/list", "/reply"]) {
+        const res = await app.fetch(new Request(`http://t${path}`))
+        expect(res.status).toBe(500)
+        expect(await res.text()).not.toContain("SECRET")
+      }
+    })
+
+    test("strip sends the declared fields of the value, never what its hook adds", async () => {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce", { extra: "strip" }))
+        .get("/me", { response: STRICT }, () => new Account())
+      expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
+        id: "u1",
+        name: "Ada",
+      })
+    })
+
+    test("a hook that writes the declared shape passes, and its output is what is sent", async () => {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce"))
+        .get(
+          "/item",
+          { response: t.object({ id: t.string(), price: t.string(), at: t.date() }) },
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `Price` is written as the declared string by its toJSON, which no static type can say.
+          () => ({ id: "i1", price: new Price(1250), at: new Date(0) }) as never,
+        )
+      const res = await app.fetch(new Request("http://t/item"))
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        id: "i1",
+        price: "12.50",
+        at: "1970-01-01T00:00:00.000Z",
+      })
+    })
+
+    test("warn names what the hook adds and still sends it unchanged", async () => {
+      const { logger, records } = recorder()
+      const app = server({ logger })
+        .use(responseContract("warn"))
+        .get("/me", { response: STRICT }, () => new Account())
+      expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
+        id: "u1",
+        name: "Ada",
+        passwordHash: "SECRET",
+      })
+      const warned = records.find((r) => r.message === "response contract")
+      expect(String(warned?.detail)).toContain("passwordHash")
+    })
+  })
+
   test("a conforming payload is untouched", async () => {
     const app = server()
       .use(responseContract("enforce"))

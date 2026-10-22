@@ -32,13 +32,22 @@
  * carries its JSON Schema as `jsonSchema` (every `t` schema does) CAN list its declared keys, so for
  * those the payload is projected onto the declared shape before it is validated.
  *
+ * ## What is judged is what is written
+ *
+ * `JSON.stringify` writes what a `toJSON` hook returns, not the fields a validator reads off the
+ * object. So a value's hooks are applied first, as the serializer would, and that result is validated
+ * and sent: a class whose `toJSON` adds a private field fails a closed schema instead of passing on its
+ * public ones. A `Date` is the exception; it stays a `Date` for a date schema and is written as its
+ * ISO string.
+ *
  * ## What enforcement costs
  *
  * Less than it looks like it should. With a compiled validator (`@nifrajs/schema`'s `t` compiles at
  * construction; zod/valibot equivalents are similarly cheap), the check itself measures in the
  * ~100ns-per-response range - on a realistic middleware-carrying route, enforce mode benchmarks
- * within measurement noise of the same route with no contract at all, on Bun and Node alike. The
- * one real cost is structural: a contracted route cannot take the bare-route fused lane, because
+ * within measurement noise of the same route with no contract at all, on Bun and Node alike. Looking
+ * for `toJSON` hooks visits every object in the payload, about 13 ns each, so a 50-row list pays near
+ * 0.7 us. The other cost is structural: a contracted route cannot take the bare-route fused lane, because
  * the check needs the handler's VALUE before it becomes bytes. A route with any middleware, derive,
  * or lifecycle hook has already left that lane, so for the routes that look like production the
  * contract is effectively free - declare it.
@@ -352,6 +361,84 @@ function define(out: Record<string, unknown>, key: string, value: unknown): void
   else out[key] = value
 }
 
+const DATE_TO_JSON = Date.prototype.toJSON
+
+// Deeper than this, the copying walk takes over with its own cycle check.
+const MAX_HOOK_SCAN_DEPTH = 64
+
+/** Whether `value` holds a `toJSON` hook other than a `Date`'s. Allocates nothing: most payloads
+ * have none, and this is the price every contracted response pays. */
+function hasHook(value: object, depth: number): boolean {
+  if (depth > MAX_HOOK_SCAN_DEPTH) return true
+  const hook: unknown = Reflect.get(value, "toJSON")
+  if (typeof hook === "function") return !(hook === DATE_TO_JSON && value instanceof Date)
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const item: unknown = value[i]
+      if (typeof item === "object" && item !== null && hasHook(item, depth + 1)) return true
+    }
+    return false
+  }
+  // Inherited enumerable keys are scanned too; that only ever sends a value to the copying walk.
+  for (const key in value) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `key` was enumerated from `value`; `Reflect.get` here halves the speed of this for-in.
+    const field: unknown = (value as Record<string, unknown>)[key]
+    if (typeof field === "object" && field !== null && hasHook(field, depth + 1)) return true
+  }
+  return false
+}
+
+/**
+ * What `JSON.stringify` writes for `value`: every `toJSON` hook applied as the serializer applies it,
+ * so the contract judges the bytes that go out rather than fields a hook then replaces. Copies only the
+ * containers above a hook. A `Date` keeps its object, since its own hook writes nothing but the ISO
+ * string a date schema declares.
+ */
+const wireValueOf = (value: unknown): unknown =>
+  typeof value === "object" && value !== null && hasHook(value, 0)
+    ? wireValue(value, "", [])
+    : value
+
+function wireValue(value: unknown, key: string | number, path: object[]): unknown {
+  if (typeof value !== "object" || value === null) return value
+  const hook: unknown = Reflect.get(value, "toJSON")
+  if (typeof hook !== "function") return wireChildren(value, path)
+  if (hook === DATE_TO_JSON && value instanceof Date) return value
+  return wireChildren(Reflect.apply(hook, value, [String(key)]), path)
+}
+
+function wireChildren(value: unknown, path: object[]): unknown {
+  // A cycle is left as it is for `JSON.stringify` to refuse.
+  if (typeof value !== "object" || value === null || path.includes(value)) return value
+  path.push(value)
+  if (Array.isArray(value)) {
+    let items: unknown[] | undefined
+    for (let i = 0; i < value.length; i++) {
+      const item: unknown = value[i]
+      const written = wireValue(item, i, path)
+      if (written !== item) items ??= value.slice(0, i)
+      if (items !== undefined) items[i] = written
+    }
+    path.pop()
+    return items ?? value
+  }
+  const keys = Object.keys(value)
+  let out: Record<string, unknown> | undefined
+  let index = 0
+  for (const name of keys) {
+    const field: unknown = Reflect.get(value, name)
+    const written = wireValue(field, name, path)
+    if (written !== field && out === undefined) {
+      out = {}
+      for (const earlier of keys.slice(0, index)) define(out, earlier, Reflect.get(value, earlier))
+    }
+    if (out !== undefined) define(out, name, written)
+    index++
+  }
+  path.pop()
+  return out ?? value
+}
+
 const MAX_STRIPPED_NAMES = 20
 const MAX_NAME_LENGTH = 64
 const MAX_REPORTED_SETS = 32
@@ -523,10 +610,13 @@ function validateContract(
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   const project = policy.strip ? projectorOf(schema) : undefined
-  const settled = schema["~standard"].validate(project === undefined ? payload : project(payload))
+  // A projection is a fresh copy of the declared fields, so walking it never reads the payload's keys.
+  const sent = wireValueOf(project === undefined ? payload : project(payload))
+  const before = project === undefined ? sent : payload
+  const settled = schema["~standard"].validate(sent)
   return settled instanceof Promise
-    ? settled.then((r) => interpret(r, payload, served, mode, replace, policy.report))
-    : interpret(settled, payload, served, mode, replace, policy.report)
+    ? settled.then((r) => interpret(r, before, served, mode, replace, policy.report))
+    : interpret(settled, before, served, mode, replace, policy.report)
 }
 
 function interpret(

@@ -28,8 +28,9 @@ function post(contentType: string, body: string, headers: Record<string, string>
 const FORM = "application/x-www-form-urlencoded"
 const crossSite = { origin: "https://evil.test" }
 
-// Every lane that reads a body schema: body only, one derive + before, the same with an after, and
-// the generic lifecycle a second before hook falls back to.
+// Every lane that reads a body schema: body only, one derive + before, the same with an after, the
+// generic lifecycle a second before hook falls back to, and the body-only runner an around hook or a
+// validation-recovery hook takes.
 function lanes(options: ServerOptions = {}) {
   let ran = 0
   const handler = (c: { body: { name: string } }) => {
@@ -54,6 +55,13 @@ function lanes(options: ServerOptions = {}) {
       .beforeHandle(() => undefined)
       .beforeHandle(() => undefined)
       .post("/f", { body: nameBody }, handler),
+    around: server(options)
+      .use(nodeDirect())
+      .around((_c, next) => next())
+      .post("/f", { body: nameBody }, handler),
+    recovery: server(options)
+      .use(nodeDirect())
+      .post("/f", { body: nameBody, onValidationError: () => ({ name: "fallback" }) }, handler),
   }
   return { apps: Object.entries(apps), ran: () => ran }
 }
@@ -69,6 +77,9 @@ async function statuses(options: ServerOptions, request: () => Request) {
   return { out, ran: ran() }
 }
 
+/** `status` from every lane, through both `fetch` and the node-direct resolver. */
+const everyLane = (status: number): number[] => lanes().apps.flatMap(() => [status, status])
+
 describe("a form body from another site", () => {
   test("is refused with 403 on every body lane, before the handler runs", async () => {
     const { out, ran } = await statuses({}, () => post(FORM, "name=Ada", crossSite))
@@ -77,6 +88,8 @@ describe("a form body from another site", () => {
       deriveBefore: [403, 403],
       deriveBeforeAfter: [403, 403],
       generic: [403, 403],
+      around: [403, 403],
+      recovery: [403, 403],
     })
     expect(ran).toBe(0)
     const { apps } = lanes()
@@ -104,8 +117,8 @@ describe("a form body from another site", () => {
   test("passes from the app's own origin, behind a TLS-terminating proxy, and without an Origin", async () => {
     for (const headers of [{ origin: "http://app.test" }, { origin: "https://app.test" }, {}]) {
       const { out, ran } = await statuses({}, () => post(FORM, "name=Ada", headers))
-      expect(Object.values(out).flat()).toEqual([200, 200, 200, 200, 200, 200, 200, 200])
-      expect(ran).toBe(8)
+      expect(Object.values(out).flat()).toEqual(everyLane(200))
+      expect(ran).toBe(everyLane(200).length)
     }
   })
 
@@ -124,11 +137,11 @@ describe("a form body from another site", () => {
     const listed = await statuses({ formOrigins: ["https://idp.test"] }, () =>
       post(FORM, "name=Ada", { origin: "https://idp.test" }),
     )
-    expect(Object.values(listed.out).flat()).toEqual([200, 200, 200, 200, 200, 200, 200, 200])
+    expect(Object.values(listed.out).flat()).toEqual(everyLane(200))
     const prefix = await statuses({ formOrigins: ["https://idp.test"] }, () =>
       post(FORM, "name=Ada", { origin: "https://idp.test.evil.test" }),
     )
-    expect(Object.values(prefix.out).flat()).toEqual([403, 403, 403, 403, 403, 403, 403, 403])
+    expect(Object.values(prefix.out).flat()).toEqual(everyLane(403))
   })
 
   test("passes when a formOrigins function accepts the origin", async () => {
@@ -148,6 +161,6 @@ describe("a form body from another site", () => {
 
   test("a cross-origin JSON body is left to CORS", async () => {
     const { out } = await statuses({}, () => post("application/json", '{"name":"Ada"}', crossSite))
-    expect(Object.values(out).flat()).toEqual([200, 200, 200, 200, 200, 200, 200, 200])
+    expect(Object.values(out).flat()).toEqual(everyLane(200))
   })
 })
