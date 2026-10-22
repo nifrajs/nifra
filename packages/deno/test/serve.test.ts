@@ -609,6 +609,28 @@ Deno.test("a Host that is not an authority never steers the routed path", async 
   }
 })
 
+// No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
+// adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
+Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    for (const target of ["/posts", "/users/../posts"]) {
+      const refused = await rawExchange(running.port, "GET", target, undefined, "127.0.0.1:99999")
+      assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+    }
+    const served = await rawExchange(
+      running.port,
+      "GET",
+      "/users/../posts",
+      undefined,
+      "127.0.0.1:65535",
+    )
+    assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 const named: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
     version: 1,

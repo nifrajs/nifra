@@ -646,12 +646,16 @@ const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegm
 // A Host as RFC 9110 allows it: a reg-name or an IP literal, then an optional port. Deno builds
 // `Request.url` by appending the target to the Host as received, so `Host: x/admin#` turned a
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
-const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::\d{1,5})?$/i
+const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
 // `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every header.
+// A port past 65535 is refused as Node refuses it: no URL can be built on one, so resolving a dot
+// segment against it threw out of `fetch`.
 const invalidHost = (req: Request): boolean => {
   const host = headerOf(req, "host")
-  return host !== null && !HOST_AUTHORITY.test(host)
+  if (host === null) return false
+  const authority = HOST_AUTHORITY.exec(host)
+  return authority === null || (authority[1] !== undefined && Number(authority[1]) > 65_535)
 }
 
 function normalizeMountPrefix(path: string): string {

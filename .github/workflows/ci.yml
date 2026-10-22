@@ -310,6 +310,43 @@ jobs:
       - name: Run the real workerd contract laboratory
         run: bun run check:workerd
 
+  # One app on Bun (app.fetch and Bun.serve), Node, Deno and a local workerd, sent the same generated
+  # requests and held to one set of invariants and to each other (scripts/check-runtime-differential.ts).
+  # The fixed seed keeps a pull request's run repeatable; the nightly runtime-differential workflow
+  # explores fresh seeds with a far larger budget.
+  runtime-differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 26.12.0
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Node and Deno load the built dist, and wrangler bundles the Worker from it.
+      - name: Build
+        run: bun run build
+
+      - name: Generated requests on every runtime
+        env:
+          NIFRA_DIFFERENTIAL_SEED: "20261022"
+          NIFRA_DIFFERENTIAL_RUNS: "400"
+        run: bun run check:runtime-differential
+
   # Opt-in evidence for the two production bundlers. The fixture deliberately contains routes, public
   # files, shared CSS Modules, and a keyframe export so a dropped route or a pipeline-specific class map
   # turns this job red. Hashed filenames are intentionally ignored by the checker.
