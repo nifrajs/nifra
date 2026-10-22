@@ -370,12 +370,18 @@ describe("createClientRouter", () => {
     })
     r.subscribe(() => seenPending.push(r.snapshot().pending))
     // Only `tab` (declared client-only) changed → publish the new URL, keep the data, never fetch.
-    await r.navigate("/reports?tab=b")
+    const clientOnly = r.navigate("/reports?tab=b")
+    // installHistory reads this right after the call to decide whether the page leaves its first
+    // document: a navigation that loads names its path before its first await, this one never does.
+    expect(r.snapshot().pendingPath).toBeUndefined()
+    await clientOnly
     expect(fetches).toBe(0)
     expect(seenPending).toEqual([false]) // no pending flash - it is a synchronous re-render
     expect(r.snapshot()).toMatchObject({ path: "/reports?tab=b", data: "D", pending: false })
     // A loader-affecting key (`page`) DOES revalidate, even though `tab` is client-only.
-    await r.navigate("/reports?tab=b&page=2")
+    const loading = r.navigate("/reports?tab=b&page=2")
+    expect(r.snapshot().pendingPath).toBe("/reports?tab=b&page=2")
+    await loading
     expect(fetches).toBe(1)
     expect(r.snapshot()).toMatchObject({ path: "/reports?tab=b&page=2", data: "FRESH" })
   })

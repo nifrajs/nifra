@@ -41,6 +41,7 @@ describe("PPR options", () => {
       minShellBytes: 1024,
       holeHtmlValidation: "always",
       cancelBeacon: true,
+      sharedRecheckMs: 1000,
     })
     expect(Object.isFrozen(PPR_DEFAULTS)).toBe(true)
   })

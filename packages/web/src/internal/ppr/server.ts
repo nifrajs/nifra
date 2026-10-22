@@ -85,6 +85,8 @@ interface ShellEntry {
   /** Background rebuilds that failed in a row; the next waits `2 ** failures` seconds. */
   failures: number
   retryAt: number
+  /** When this process last saw it in the shared store; unset for an entry kept only here. */
+  checkedAt: number | undefined
 }
 
 /** A shared hole's frame, built once for every visitor whose request maps to its key. */
@@ -101,6 +103,7 @@ interface HoleEntry {
   readonly keys: readonly string[]
   failures: number
   retryAt: number
+  checkedAt: number | undefined
 }
 
 type Entry = ShellEntry | HoleEntry
@@ -439,6 +442,25 @@ const detached: <T>(fn: () => T) => T =
 const served = (entry: ShellEntry): ShellEntry | Promise<never> =>
   entry.notFound === undefined ? entry : Promise.reject(entry.notFound)
 
+/**
+ * `work`, or the abort's reason once `signal` aborts first: a loader that ignores its signal leaves
+ * no request waiting on it, and its late result reaches no one.
+ */
+const boundedBy = <T>(work: Promise<T>, signal: AbortSignal): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    work.then(resolve, reject)
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+  })
+
+/** `read`, or a miss once `ms` pass: a shared store that stalls is answered by a build, not a wait. */
+const missAfter = <T>(read: Promise<T | undefined>, ms: number): Promise<T | undefined> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(resolve, ms, undefined)
+  })
+  return Promise.race([read, late]).finally(() => clearTimeout(timer))
+}
+
 export function createPprServer(config: PprServerConfig): PprServer {
   const { options, adapter, deployment, shellChecks } = config
   // With the beacon off, the request script names no address, so the runtime sends none.
@@ -557,6 +579,13 @@ export function createPprServer(config: PprServerConfig): PprServer {
     }
   }
 
+  /**
+   * Whether a held entry is due a read of the shared store: another process may have purged it there,
+   * and reading it again is how that purge reaches this one.
+   */
+  const recheckDue = (entry: Entry): boolean =>
+    entry.checkedAt !== undefined && now() - entry.checkedAt >= options.sharedRecheckMs
+
   const finishShell = async (
     key: string,
     html: string,
@@ -642,18 +671,22 @@ export function createPprServer(config: PprServerConfig): PprServer {
       tags: request.tags(),
       failures: 0,
       retryAt: 0,
+      checkedAt: undefined,
     }
   }
 
-  /** The shared store's copy of an entry, unless its tags could never be dropped there. */
+  /**
+   * The shared store's copy of an entry, unless its tags could never be dropped there. True when the
+   * write started, so the entry is one a purge on another process can reach.
+   */
   const share = (
     key: string,
     stored: StoredEntry,
     keepSeconds: number,
     request: PprRequest,
     fence: Promise<number | undefined>,
-  ): void => {
-    if (shared === undefined) return
+  ): boolean => {
+    if (shared === undefined) return false
     if (stored.tags.length > 0 && shared.invalidateTag === undefined) {
       if (!untaggableWarned.has(stored.routeId)) {
         untaggableWarned.add(stored.routeId)
@@ -661,7 +694,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
           `[nifra/web] ppr: route "${stored.routeId}" lists revalidateTags, which the shared store cannot drop, so its shells and shared holes stay in this process`,
         )
       }
-      return
+      return false
     }
     const write = fence
       .then((at) => shared.set(key, stored, keepSeconds, at))
@@ -672,6 +705,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
         }),
       )
     request.waitUntil?.(write)
+    return true
   }
 
   const shareShell = (
@@ -679,7 +713,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     entry: ShellEntry,
     request: PprRequest,
     fence: Promise<number | undefined>,
-  ): void =>
+  ): boolean =>
     share(
       key,
       {
@@ -715,6 +749,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       notFound: stored.notFound ? notFoundSignal() : undefined,
       failures: 0,
       retryAt: 0,
+      checkedAt: now(),
     }
   }
 
@@ -740,7 +775,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       () => timeout.abort(new DOMException("The operation timed out.", "TimeoutError")),
       options.maxHoleTimeoutMs,
     )
-    const building = detached(() =>
+    const loading = detached(() =>
       request.loadShell(signal).then(
         async (data) =>
           finishShell(
@@ -763,21 +798,28 @@ export function createPprServer(config: PprServerConfig): PprServer {
             notFound: error,
             failures: 0,
             retryAt: 0,
+            checkedAt: undefined,
           }
         },
       ),
     )
+    const building = boundedBy(loading, signal)
     builds.set(key, building)
+    // The route's build is held until the loader itself ends: one that ignores its signal past the
+    // deadline still counts, so it cannot leave room for unbounded replacements.
+    loading.then(
+      () => leaveBuild(routeId),
+      () => leaveBuild(routeId),
+    )
     const done = (): void => {
       clearTimeout(timer)
-      builds.delete(key)
-      leaveBuild(routeId)
+      if (builds.get(key) === building) builds.delete(key)
     }
     building.then((entry) => {
       const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
       done()
       if (fenced) return
-      shareShell(key, entry, request, fence)
+      if (shareShell(key, entry, request, fence)) entry.checkedAt = now()
       if (entry.bytes <= options.shellStoreBytes) return store(key, entry)
       // Kept, it would empty the store and still overrun it; a stale entry it replaces goes too.
       evict(key)
@@ -873,7 +915,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
   ): Promise<ShellEntry> => {
     let lookup = shellLookups.get(key)
     if (lookup === undefined) {
-      const read = sharedStore.get(key).then(
+      const read = missAfter(sharedStore.get(key), options.holeTimeoutMs).then(
         (found) => (found === undefined ? undefined : entryOf(key, found)),
         () => undefined,
       )
@@ -901,7 +943,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     if (entry !== undefined && "first" in entry) {
       settled.delete(key)
       settled.set(key, entry)
-      const usable = serveEntry(key, entry, request)
+      const usable = recheckDue(entry) ? undefined : serveEntry(key, entry, request)
       if (usable !== undefined) return usable
       evict(key)
     }
@@ -961,6 +1003,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       keys,
       failures: 0,
       retryAt: 0,
+      checkedAt: undefined,
     }
   }
 
@@ -1000,7 +1043,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
           })
           .then((data) => finishHole(key, request, hole, data, [...keys])),
       )
-    const building =
+    const loading =
       slot === undefined
         ? load()
         : slot
@@ -1008,19 +1051,24 @@ export function createPprServer(config: PprServerConfig): PprServer {
             .then((run) =>
               run.ok ? run.value : Promise.reject(run.error ?? new PprShellBusy(routeId)),
             )
+    const building = boundedBy(loading, signal)
     holeBuilds.set(key, building)
-    const done = (): void => {
-      clearTimeout(timer)
-      holeBuilds.delete(key)
+    // As for a shell: the route's build is held until the loader itself ends.
+    const leave = (): void => {
       if (slot === undefined) leaveBuild(routeId)
       else if (builds.size === 0 && holeBuilds.size === 0) invalidatedAt.clear()
+    }
+    loading.then(leave, leave)
+    const done = (): void => {
+      clearTimeout(timer)
+      if (holeBuilds.get(key) === building) holeBuilds.delete(key)
     }
     building.then(
       (entry) => {
         const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
         done()
         if (fenced) return
-        share(
+        const written = share(
           key,
           {
             routeId,
@@ -1036,6 +1084,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
           request,
           fence,
         )
+        if (written) entry.checkedAt = now()
         if (entry.bytes <= options.shellStoreBytes) store(key, entry)
         else evict(key)
       },
@@ -1101,7 +1150,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     if (entry === undefined || "first" in entry) return undefined
     settled.delete(key)
     settled.set(key, entry)
-    const usable = usableHole(key, entry, request, hole)
+    const usable = recheckDue(entry) ? undefined : usableHole(key, entry, request, hole)
     if (usable === undefined) evict(key)
     return usable
   }
@@ -1113,7 +1162,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     if (shared === undefined) return buildHole(key, request, hole)
     let lookup = holeLookups.get(key)
     if (lookup === undefined) {
-      const read = shared.get(key).then(
+      const read = missAfter(shared.get(key), options.holeTimeoutMs).then(
         (found): HoleEntry | undefined => {
           if (found === undefined || found.notFound) return undefined
           const frame = ENCODER.encode(found.html)
@@ -1128,6 +1177,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
             keys: found.keys ?? [],
             failures: 0,
             retryAt: 0,
+            checkedAt: now(),
           }
         },
         () => undefined,

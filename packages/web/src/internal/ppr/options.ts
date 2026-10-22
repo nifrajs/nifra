@@ -68,6 +68,11 @@ export interface PprOptions {
    * deadline. Off by default on Cloudflare Workers, where the beacon reaches another isolate.
    */
   readonly cancelBeacon?: boolean
+  /**
+   * How long a process serves a shell or shared hole it wrote to or read from the shared store before
+   * reading it there again, so a purge another process made reaches this one. 0 reads it every time.
+   */
+  readonly sharedRecheckMs?: number
 }
 
 export type ResolvedPprOptions = {
@@ -109,6 +114,7 @@ export const PPR_DEFAULTS: ResolvedPprOptions = Object.freeze({
   minShellBytes: 1_024,
   holeHtmlValidation: "always",
   cancelBeacon: true,
+  sharedRecheckMs: 1_000,
 })
 
 /**

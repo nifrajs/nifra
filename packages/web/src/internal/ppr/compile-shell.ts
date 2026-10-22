@@ -90,7 +90,7 @@ function requestScopedChain(
 }
 
 /**
- * Bundle each route's shell (its page, its backend `shellLoader` and its layouts, and nothing else)
+ * Bundle each route's shell (its page and layout modules, its backend `shellLoader`, and nothing else)
  * and refuse it when the emitted code reaches a request-scoped module. A module counts only
  * when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose
  * backend half has no `shellLoader` are skipped. Bun only.
@@ -248,14 +248,15 @@ async function compileShell(
     }
   }
   const at = (file: string): string => JSON.stringify(toPosix(resolve(dir, file)))
+  // A page's and each layout's module whole: the shell runs `meta`, `handle` and `searchSchema` as
+  // well as the component, and an import only one of them uses must not escape the check.
   const lines = [
     `export { ${kept.join(", ")} } from ${at(backend)}`,
-    `export { default as page } from ${at(route.file)}`,
+    `export * as page from ${at(route.file)}`,
   ]
   route.layoutIds.forEach((id, index) => {
     const layout = manifest.layouts[id]
-    if (layout !== undefined)
-      lines.push(`export { default as layout${index} } from ${at(layout.file)}`)
+    if (layout !== undefined) lines.push(`export * as layout${index} from ${at(layout.file)}`)
   })
   const nifraScoped = new Set<string>()
   const envImporters = new Set<string>()

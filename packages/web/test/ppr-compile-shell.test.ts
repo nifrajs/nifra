@@ -30,11 +30,20 @@ describe("compileShells", () => {
     const failed = new Map(failures)
     expect([...failed.keys()].sort()).toEqual([
       "ambient",
+      "layout-meta/[id]",
       "leaky",
       "loaded/[id]",
+      "meta-leak",
       "platform-env",
       "shared-leak",
     ])
+    // The shell renders meta too: a read only a page's or a layout's meta makes fails the route.
+    for (const id of ["meta-leak", "layout-meta/[id]"]) {
+      const error = failed.get(id)
+      expect(error instanceof ShellCheckError ? error.chain.at(-1) : "").toEndWith(
+        "/shell-lib/session.ts",
+      )
+    }
     // A shared hole's loader is part of the shell, so its request read fails the route.
     const sharedLeak = failed.get("shared-leak")
     expect(sharedLeak instanceof ShellCheckError ? sharedLeak.chain.at(-1) : "").toEndWith(

@@ -253,6 +253,51 @@ describe("PPR shared shell store", () => {
     expect(second.builds).toBe(1)
   })
 
+  test("a purge on one process reaches another that holds the shell, once sharedRecheckMs passes", async () => {
+    const shared = new MemoryCacheStore()
+    let clock = 1_000_000
+    const options = resolvePprOptions({ sharedRecheckMs: 500 })
+    const one = serverOn(shared, { options, now: () => clock })
+    const two = serverOn(shared, { options, now: () => clock })
+    const probe = probeOf()
+    let product = "old"
+    const request = pprRequest(probe, {
+      tags: () => ["product:1"],
+      loadShell: async () => {
+        probe.builds++
+        return { title: product }
+      },
+    })
+    await (await one.respond(request)).text()
+    await Promise.all(probe.writes)
+    expect(await titleOf(await two.respond(request))).toContain("old")
+    // A recheck that finds the same entry keeps it and builds nothing.
+    clock += 500
+    expect(await titleOf(await two.respond(request))).toContain("old")
+    expect(probe.builds).toBe(1)
+
+    product = "new"
+    await one.invalidateTag("product:1")
+    clock += 499
+    expect(await titleOf(await two.respond(request))).toContain("old")
+    clock += 1
+    expect(await titleOf(await two.respond(request))).toContain("new")
+    expect(probe.builds).toBe(2)
+    await Promise.all(probe.writes)
+  })
+
+  test("a store that never answers a read is a miss once holeTimeoutMs passes", async () => {
+    const stalled: CacheStore = {
+      get: () => new Promise(() => {}),
+      set: async () => {},
+      delete: async () => {},
+    }
+    const probe = probeOf()
+    const server = serverOn(stalled, { options: resolvePprOptions({ holeTimeoutMs: 10 }) })
+    expect(await titleOf(await server.respond(pprRequest(probe)))).toContain("Tea 1")
+    expect(probe.builds).toBe(1)
+  })
+
   test("a build that began before a purge is not written to the shared store", async () => {
     const shared = new MemoryCacheStore()
     let release!: () => void

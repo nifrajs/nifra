@@ -300,7 +300,8 @@ export default function PartialPrerendering() {
       <h2>Set it up</h2>
       <p>
         <code>compileShells</code> bundles each route's shell and refuses one whose emitted code
-        reaches a module that reads the visitor. A route missing from its record, or from a record
+        reaches a module that reads the visitor. The shell is the page's and its layouts' whole
+        modules, <code>meta</code> included, and the backend half's <code>shellLoader</code>. A route missing from its record, or from a record
         made for another deployment, renders whole. Run it in your build (Bun), and pass the record
         to <code>partialPrerendering</code>. A Svelte, Vue or Solid app passes its server plugin, such
         as <code>plugins: [svelteBunPlugin("ssr")]</code>.
@@ -429,7 +430,10 @@ export default function PartialPrerendering() {
       <p>
         A shell older than <code>revalidate</code> is served while one rebuild runs; a failing
         rebuild keeps the old one for up to ten times <code>revalidate</code>, at most a day. A shell
-        loader's <code>notFound()</code> is remembered for 60 seconds.
+        loader's <code>notFound()</code> is remembered for 60 seconds. A shell or shared hole build
+        that runs past <code>maxHoleTimeoutMs</code> fails every request waiting on it and keeps
+        nothing it returns later; until its loader does end, it still counts against the route's{" "}
+        <code>shellBuildConcurrency</code>.
       </p>
 
       <h2>Shared holes</h2>
@@ -546,7 +550,10 @@ export default function PartialPrerendering() {
         app did not build; one that fails the check is a miss. Entries are kept apart per deployment:
         the client build, each route's checked shell code and the optional <code>deployment</code>{" "}
         name all go into the key. A route whose tags the store cannot drop keeps its entries in the
-        process, with one warning.
+        process, with one warning. A process reads an entry it holds from the store again once{" "}
+        <code>sharedRecheckMs</code> (default 1000) has passed, so a purge made on another process
+        reaches it within that time; a store that does not answer within <code>holeTimeoutMs</code>{" "}
+        counts as a miss.
       </p>
       <CodeBlock code={STORE} lang="ts" />
 

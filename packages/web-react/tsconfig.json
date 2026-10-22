@@ -8,6 +8,7 @@
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
       "@nifrajs/web/islands": ["../web/src/islands.ts"],
+      "@nifrajs/web/ppr": ["../web/src/ppr.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
       "@nifrajs/core/mount": ["../core/src/mount.ts"],
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"],

@@ -252,6 +252,38 @@ describe("PPR shared holes", () => {
     expect(loads).toBe(1)
   })
 
+  test("a build whose loader ignores its signal keeps nothing past maxHoleTimeoutMs; the next visitor builds again", async () => {
+    const never = gate()
+    let loads = 0
+    let seen: AbortSignal | undefined
+    const price = shared(
+      "price",
+      async (ctx) => {
+        loads++
+        if (loads > 1) return { amount: 4 }
+        seen = ctx.signal
+        await never.promise
+        return { amount: 3 }
+      },
+      { timeout: 10 },
+    )
+    const server = createPprServer(
+      config({ pprOptions: { holeTimeoutMs: 10, maxHoleTimeoutMs: 30 } }),
+    )
+    const first = await (await server.respond(pprRequest([price]))).text()
+    expect(frameJson(first, "price")).toEqual(ERROR_FRAME)
+    const signal = seen
+    if (signal === undefined) throw new Error("the build never started")
+    if (!signal.aborted) await new Promise((resolve) => signal.addEventListener("abort", resolve))
+    never.release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const second = await (await server.respond(pprRequest([price]))).text()
+    expect(frameJson(second, "price")).toMatchObject({
+      html: '<p data-prefix="nifra-price-">price:{"amount":4}</p>',
+    })
+    expect(loads).toBe(2)
+  })
+
   test("its own revalidate refreshes it behind the stale frame, without a shell rebuild", async () => {
     const time = clock()
     const counts: Counts = { shells: 0 }
@@ -260,10 +292,17 @@ describe("PPR shared holes", () => {
     const server = createPprServer(config({ now: time.now }))
     await (await server.respond(pprRequest([price], { counts }))).text()
     time.advance(11_000)
-    const stale = await (await server.respond(pprRequest([price], { counts }))).text()
+    const rebuilds: Promise<unknown>[] = []
+    const stale = await (
+      await server.respond(
+        pprRequest([price], { counts, waitUntil: (promise) => rebuilds.push(promise) }),
+      )
+    ).text()
     expect(frameJson(stale, "price")).toMatchObject({
       html: '<p data-prefix="nifra-price-">price:{"build":1}</p>',
     })
+    expect(rebuilds).toHaveLength(1)
+    await Promise.all(rebuilds)
     const fresh = await firstChunk(await server.respond(pprRequest([price], { counts })))
     expect(frameJson(fresh, "price")).toMatchObject({
       html: '<p data-prefix="nifra-price-">price:{"build":2}</p>',

@@ -962,6 +962,48 @@ describe("PPR shell cache (6.3, 6.4)", () => {
     expect(builds).toBe(2)
   })
 
+  test("a shell loader that ignores its signal fails its waiters at the deadline, keeps nothing, and holds its build", async () => {
+    const server = createPprServer(
+      config({
+        options: resolvePprOptions({
+          holeTimeoutMs: 10,
+          maxHoleTimeoutMs: 20,
+          shellBuildConcurrency: 1,
+        }),
+      }),
+    )
+    const never = gate()
+    let calls = 0
+    let seen: AbortSignal | undefined
+    const request = pprRequest([hole("cart", () => 1)], {
+      loadShell: async (signal) => {
+        calls++
+        if (calls > 1) return { title: "fresh" }
+        seen = signal
+        await never.promise
+        return { title: "late" }
+      },
+    })
+    // Not `expect().rejects` on each: it runs the event loop until its own promise settles, so the
+    // other waiter would reject with no handler yet.
+    const failures = await Promise.all(
+      [server.respond(request), server.respond(request)].map((response) =>
+        response.then(
+          () => undefined,
+          (error: unknown) => error,
+        ),
+      ),
+    )
+    for (const failure of failures) expect(failure).toHaveProperty("name", "TimeoutError")
+    expect(seen?.aborted).toBe(true)
+    // The loader still runs, so the route has no build to spare.
+    await expect(server.respond(request)).rejects.toBeInstanceOf(PprShellBusy)
+    never.release()
+    await tick()
+    expect(titleOf(await (await server.respond(request)).text())).toBe("fresh")
+    expect(calls).toBe(2)
+  })
+
   test("invalidating a tag drops its shells, and a build that started before is not stored", async () => {
     const server = createPprServer(config())
     const counter = { builds: 0 }

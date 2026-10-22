@@ -343,6 +343,15 @@ export function installHistory(
   type ViewTransitionDocument = Document & {
     startViewTransition?: (cb: () => unknown) => ViewTransition
   }
+  // A navigation that loads takes the page from the first document, whose holes then stop filling;
+  // `navigate` publishes its `pendingPath` before its first await. A client-only search change, or a
+  // boundary already showing its target, loads nothing, so the holes still pending keep filling.
+  const navigateFrom = (routePath: string, failed: (error: unknown) => void): Promise<void> => {
+    const run = router.navigate(routePath).catch(failed)
+    if (router.snapshot().pendingPath === routePath) leavePprDocument()
+    return run
+  }
+
   const transition = (run: () => Promise<void>): void => {
     const doc = document as ViewTransitionDocument
     if (typeof doc.startViewTransition !== "function") {
@@ -433,8 +442,7 @@ export function installHistory(
     here = url.pathname + url.search + url.hash
     expected = routePath
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    leavePprDocument()
-    transition(() => router.navigate(routePath).catch((error) => leave(error, path)))
+    transition(() => navigateFrom(routePath, (error) => leave(error, path)))
     settle()
   }
 
@@ -591,8 +599,7 @@ export function installHistory(
     pendingScroll = { pos: scrollOf(history.state) }
     const routePath = location.pathname + location.search
     expected = routePath
-    leavePprDocument()
-    transition(() => router.navigate(routePath).catch((error) => leave(error, dest)))
+    transition(() => navigateFrom(routePath, (error) => leave(error, dest)))
     settle()
   }
 
