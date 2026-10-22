@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import { method as route } from "../src/server/methods.ts"
 import {
+  INVALID_HOSTS,
   invalidHostMismatches,
   requestTargetApp,
   requestTargetMismatches,
@@ -319,6 +320,18 @@ describe("Bun-native route table agrees with the portable router", () => {
     } finally {
       instance.stop(true)
     }
+  })
+
+  test("a request built in process keeps the URL its caller built, whatever its Host says", async () => {
+    const app = requestTargetApp(server())
+    const answers: unknown[] = []
+    for (const host of INVALID_HOSTS) {
+      const response = await app.fetch(new Request("http://localhost/url", { headers: { host } }))
+      answers.push([host, response.status, await response.json()])
+    }
+    expect(answers).toEqual(
+      INVALID_HOSTS.map((host) => [host, 200, { route: "GET /url", path: "/url" }]),
+    )
   })
 
   test("generated route tables answer every probe the same on both lanes", async () => {

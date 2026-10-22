@@ -10,7 +10,7 @@ import {
   type WebSocketUpgradeOutcome,
 } from "../src/index.ts"
 import { websocket } from "../src/ws.ts"
-import { rawUpgradeStatus } from "./request-target-matrix.ts"
+import { INVALID_HOSTS, rawUpgradeStatus } from "./request-target-matrix.ts"
 
 /**
  * A WebSocket handshake is a `GET`, so it runs the chain an HTTP `GET` registered at the same point
@@ -256,6 +256,20 @@ describe("a WebSocket handshake runs the route chain an HTTP GET runs", () => {
     running = app.listen(0, { hostname: "127.0.0.1" })
     expect(await rawUpgradeStatus(running.port, "/socket")).toBe(401)
     expect(await rawUpgradeStatus(running.port, "/socket", { authorization: GOOD })).toBe(101)
+  })
+
+  test("a handshake with a Host no URL can be built on is refused, as HTTP refuses it", async () => {
+    // Bun hands such a request over with its target unparsed; `upgrade()` would read a URL the app
+    // cannot parse.
+    const app = base().ws("/socket", { upgrade: (c) => ({ path: new URL(c.req.url).pathname }) })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    for (const host of INVALID_HOSTS) {
+      expect({ host, status: await rawUpgradeStatus(running.port, "/socket", {}, host) }).toEqual({
+        host,
+        status: 400,
+      })
+    }
+    expect(await rawUpgradeStatus(running.port, "/socket")).toBe(101)
   })
 
   test("toFetchHandler on Workers answers a handshake without credentials with 401", async () => {

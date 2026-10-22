@@ -643,6 +643,13 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
 /**
+ * Bun parses the target only when it can read the Host. Otherwise `Request.url` is the target as sent:
+ * relative for a Host with a space or a byte past ASCII, the raw authority for a port past 65535, and
+ * `new URL(req.url)` throws in the app. So Bun is held to the Host check Deno runs.
+ */
+const unparsedBunTargets = typeof Bun !== "undefined"
+
+/**
  * `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it.
  * `undefined` when the `Request` constructor refuses what the wire carried - a TRACE, CONNECT or TRACK,
  * a lower-case `get` with a body - which {@link resolvedSource} routes instead.
@@ -700,6 +707,10 @@ const invalidHost = (req: Request): boolean => {
   if (authority[1] !== undefined && Number(authority[1]) > 65_535) return true
   return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
 }
+
+/** A Host Bun could not read, so it left the target unparsed. A request built in process (an
+ * adapter's, a test's) carries the URL its caller built, whatever its Host header says. */
+const leftUnparsed = (req: Request): boolean => invalidHost(req) && !URL.canParse(req.url)
 
 function normalizeMountPrefix(path: string): string {
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
@@ -3286,10 +3297,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, url), platform)
         req = rebuilt
       }
-    } else if (needsResolving(req.url) && invalidHost(req)) {
-      // Every other runtime parses the target, but Bun leaves it as sent when it cannot parse the Host
-      // (a port past 65535, an IPv6 literal it refuses, a space): `/users/../admin` arrives unresolved
-      // and would be routed raw. Refused as Node and Deno refuse that Host.
+    } else if (unparsedBunTargets && leftUnparsed(req)) {
+      // Refused as Node and Deno refuse that Host: Bun left the target unparsed, so `/users/../admin`
+      // would be routed raw and the app's `new URL(req.url)` would throw.
       return jsonError(400, "invalid_host")
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
@@ -3799,7 +3809,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (rebuilt === undefined) return WS_PASS
         req = rebuilt
       }
-    } else if (needsResolving(req.url) && invalidHost(req)) {
+    } else if (unparsedBunTargets && leftUnparsed(req)) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
@@ -6907,7 +6917,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       const paramNames = pattern.paramNames
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
-      tableAt(path, pattern.segments)[method as Method] = this.compileBunNativeHandler(
+      const handler = this.compileBunNativeHandler(
         entry,
         paramNames,
         fused,
@@ -6916,6 +6926,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         peer,
         fallback,
       )
+      // The table never passes through `fetch`, so it refuses the Host Bun could not parse there too.
+      tableAt(path, pattern.segments)[method as Method] = (request, server) =>
+        leftUnparsed(request) ? jsonError(400, "invalid_host") : handler(request, server)
       count += 1
       if (paramNames.length > 0) {
         below.add(pattern.segments.length + method)

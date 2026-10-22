@@ -29,6 +29,7 @@ export function requestTargetApp<App>(app: App): App {
     .get("/", () => ({ route: "GET /" }))
     .delete("/", () => ({ route: "DELETE /" }))
     .get("/posts", () => ({ route: "GET /posts" }))
+    .get("/url", (c) => ({ route: "GET /url", path: new URL(c.req.url).pathname }))
     .get("/users/:id", (c) => ({ route: "GET /users/:id", id: c.params.id }))
     .get("/users/:id/posts", (c) => ({ route: "GET /users/:id/posts", id: c.params.id }))
     .get("/tags/%3Cb%3E", () => ({ route: "GET /tags/%3Cb%3E" }))
@@ -158,19 +159,28 @@ export const INVALID_HOSTS: readonly string[] = [
   "127.0.0.1:99999",
   "[1:2]",
   "a b",
+  "ü.example",
+  "",
 ]
 
+const INVALID_HOST_ANSWERS: Readonly<Record<string, string>> = {
+  "/posts": JSON.stringify({ route: "GET /posts" }),
+  "/users/../posts": JSON.stringify({ route: "GET /posts" }),
+  // A handler that parses `c.req.url` throws on a URL built from no Host at all.
+  "/url": JSON.stringify({ route: "GET /url", path: "/url" }),
+}
+
 /**
- * Each invalid Host whose request for `/posts`, spelled plainly or through a dot segment, was answered
- * by anything but a 400 or `GET /posts`.
+ * Each invalid Host whose request, spelled plainly or through a dot segment, was answered by anything
+ * but a 400 or the route's own answer.
  */
 export async function invalidHostMismatches(port: number): Promise<string[]> {
   const mismatches: string[] = []
   for (const host of INVALID_HOSTS) {
-    for (const target of ["/posts", "/users/../posts"]) {
+    for (const [target, expected] of Object.entries(INVALID_HOST_ANSWERS)) {
       const answer = await rawExchange(port, "GET", target, undefined, host)
       if (answer.status === 400) continue
-      if (answer.status === 200 && answer.body === JSON.stringify({ route: "GET /posts" })) continue
+      if (answer.status === 200 && answer.body === expected) continue
       mismatches.push(`Host ${host} ${target}: got ${answer.status} ${answer.body}`)
     }
   }

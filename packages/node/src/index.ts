@@ -878,6 +878,8 @@ function normalizeHostAuthority(value: string): string | undefined {
     }
     if (hostname.length === 0 || !/^[0-9a-f:.%]+$/i.test(hostname)) return undefined
     hostname = `[${hostname.toLowerCase()}]`
+    // `[1:2]` passes the character test, but no URL can be built on it.
+    if (!URL.canParse(`http://${hostname}/`)) return undefined
   } else {
     const colon = value.indexOf(":")
     if (colon === -1) {
