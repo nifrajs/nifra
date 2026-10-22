@@ -350,7 +350,8 @@ describe("optional agent safety surfaces", () => {
   })
 
   test("inside the root, only an allowed root admits a cwd, from the spec or from a lease", async () => {
-    const base = realpathSync(mkdtempSync(join(tmpdir(), "nifra-subagent-")))
+    // The runner hands out long names; the JS realpath keeps Windows short names like RUNNER~1.
+    const base = realpathSync.native(mkdtempSync(join(tmpdir(), "nifra-subagent-")))
     try {
       const root = join(base, "root")
       for (const dir of ["allowed", "second", "other"])
