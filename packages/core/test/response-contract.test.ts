@@ -290,6 +290,28 @@ describe('responseContract: "enforce"', () => {
       const warned = records.find((r) => r.message === "response contract")
       expect(String(warned?.detail)).toContain("passwordHash")
     })
+
+    test("warn sends what it judged, even from a hook that writes something new each call", async () => {
+      let calls = 0
+      class Ticket {
+        toJSON() {
+          return { id: "u1", name: "Ada", [`extra${++calls}`]: true }
+        }
+      }
+      const { logger, records } = recorder()
+      const app = server({ logger })
+        .use(responseContract("warn"))
+        .get("/plain", { response: STRICT }, () => writesRow(new Ticket()))
+        .get("/status", { response: STRICT }, () => status(200, writesRow(new Ticket())))
+        .get("/reply", { response: STRICT }, (c) => c.json(writesRow(new Ticket())))
+      for (const path of ["/plain", "/status", "/reply"]) {
+        const body: object = await (await app.fetch(new Request(`http://t${path}`))).json()
+        const sent = Object.keys(body).find((key) => key.startsWith("extra"))
+        const warned = records.findLast((r) => r.message === "response contract")
+        expect(sent).toBeDefined()
+        expect(String(warned?.detail)).toContain(`${sent}:`)
+      }
+    })
   })
 
   test("a conforming payload is untouched", async () => {

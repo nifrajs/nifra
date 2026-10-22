@@ -643,9 +643,12 @@ function validateContract(
   // so a quiet strip never enumerates the payload's own keys. What it copies whole is walked after.
   const sent = project === undefined ? before : wireValueOf(project(writtenAt(before, "")))
   const settled = schema["~standard"].validate(sent)
+  // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again,
+  // so a hook that answers differently on a second call cannot send what was not judged.
+  const shown = mode === "warn" && before !== payload ? replace(before) : served
   return settled instanceof Promise
-    ? settled.then((r) => interpret(r, before, served, mode, replace, policy.report))
-    : interpret(settled, before, served, mode, replace, policy.report)
+    ? settled.then((r) => interpret(r, before, shown, mode, replace, policy.report))
+    : interpret(settled, before, shown, mode, replace, policy.report)
 }
 
 function interpret(
