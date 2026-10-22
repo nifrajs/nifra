@@ -40,6 +40,12 @@ describe("a request body the app's own c.req.json() cannot parse", () => {
         })
       }
       expect((await app.fetch(post(path, '{"a":1}'))).status).toBe(200)
+      // No body at all, as Bun.serve hands over a `Content-Length: 0` request.
+      const bodiless = new Request(`http://localhost${path}`, { method: "POST" })
+      expect(await answer(await app.fetch(bodiless))).toEqual({
+        status: 400,
+        body: { ok: false, error: "invalid_json" },
+      })
     }
     expect(logged).toEqual([])
   })

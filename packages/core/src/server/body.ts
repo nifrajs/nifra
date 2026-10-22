@@ -535,10 +535,8 @@ export function applyTransportCap(source: object, request: Request): void {
   if (maxBytes === undefined || TRANSPORT_CAPPED.has(request)) return
   const provide = (source as { rawBodyReaders?: () => RawBodyReaders }).rawBodyReaders
   const preset = provide === undefined ? undefined : provide.call(source)
-  // The null-body shortcut is only worth its probe when there is no cheaper surface: on a source
-  // that defers its `Request`, reading `request.body` would materialize the very object the preset
-  // readers exist to avoid. Capping a bodiless request costs nothing but the shadowing itself.
-  if (preset === undefined && request.body === null) return
+  // A bodiless request is capped too: its `json()` must fail the way a capped one does, as a client
+  // input error, and Bun.serve hands over `Content-Length: 0` with no body where others give one.
   capRequestBodyReads(request, maxBytes, preset)
   // A wrapper source (Node's lazy source) delegates its own body readers to the request once it
   // materializes - which are now the shadowed ones. Mirror the raw-reader stash onto the source so
