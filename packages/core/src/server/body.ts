@@ -215,7 +215,7 @@ const CAP_DECODER = new TextDecoder()
 // rejects so app code that catches it is unchanged. One the app lets escape is the client's 400.
 const CLIENT_JSON_ERRORS = new WeakSet<object>()
 
-/** True when `err` is a request body that a capped `c.req.json()` could not parse. */
+/** True when `err` is a request body that the capped `json()` reader could not parse. */
 export const isClientJsonError = (err: unknown): boolean =>
   err instanceof Error && CLIENT_JSON_ERRORS.has(err)
 
