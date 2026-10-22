@@ -337,9 +337,14 @@ describe('responseContract: "enforce"', () => {
         { response: STRICT as never },
         () => new Response(null, { status: 302, headers: { location: "/" } }) as never,
       )
+      // A 2xx raw Response has a declared schema for its status, and is still not read.
+      .get("/raw", { response: STRICT }, () => new Response("raw bytes", { status: 200 }))
     const res = await app.fetch(new Request("http://t/redirect"))
     expect(res.status).toBe(302)
     expect(res.headers.get("location")).toBe("/")
+    const raw = await app.fetch(new Request("http://t/raw"))
+    expect(raw.status).toBe(200)
+    expect(await raw.text()).toBe("raw bytes")
   })
 
   test("a c.json reply is held to the contract like a returned value", async () => {
@@ -394,6 +399,42 @@ describe('responseContract: "enforce"', () => {
     const res = await app.fetch(new Request("http://t/missing"))
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("a checked status() result keeps its status and headers", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .post("/users", { response: STRIPPING }, () =>
+        status(201, LEAK, { headers: { "x-request": "r1" } }),
+      )
+      .get("/missing", { errors: { 404: STRIPPING } }, () =>
+        status(404, LEAK, { headers: { "x-request": "r2" } }),
+      )
+    const created = await app.fetch(new Request("http://t/users", { method: "POST" }))
+    expect(created.status).toBe(201)
+    expect(created.headers.get("x-request")).toBe("r1")
+    expect(await created.json()).toEqual({ id: "u1", name: "Ada" })
+    const missing = await app.fetch(new Request("http://t/missing"))
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get("x-request")).toBe("r2")
+    expect(await missing.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("a reply whose status has no declared schema is sent as it is", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/conflict", { errors: { 404: STRIPPING } }, () => status(409, LEAK))
+      .get("/teapot", { errors: { 404: STRIPPING } }, (c) => c.json(LEAK, 418))
+      .get("/ok", { errors: { 404: STRIPPING } }, () => LEAK)
+    for (const [path, code] of [
+      ["/conflict", 409],
+      ["/teapot", 418],
+      ["/ok", 200],
+    ] as const) {
+      const res = await app.fetch(new Request(`http://t${path}`))
+      expect(res.status).toBe(code)
+      expect(await res.json()).toEqual(LEAK)
+    }
   })
 })
 
@@ -546,6 +587,18 @@ describe('responseContract: extra "strip"', () => {
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ id: "u1", name: "Ada" })
     expect(res.body).not.toContain("SECRET")
+  })
+
+  test("a field declared as __proto__ is sent as a field, never set as the prototype", async () => {
+    const declared = JSON.parse(
+      '{"type":"object","additionalProperties":false,"properties":{"__proto__":{"type":"object","additionalProperties":false,"properties":{"role":{"type":"string"}}},"id":{"type":"string"}}}',
+    )
+    const app = strip("enforce").get("/me", { response: passthrough(declared) }, () =>
+      JSON.parse('{"__proto__":{"role":"user","admin":true},"id":"u1","secret":"SECRET"}'),
+    )
+    const res = await fetchJson(app, "/me")
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('{"__proto__":{"role":"user"},"id":"u1"}')
   })
 
   test("projects nested objects, arrays, records and a nullable union", async () => {
