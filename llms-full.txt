@@ -4288,7 +4288,7 @@ the route still reads; send another format with `fetch`.
 
 ### File uploads - `@nifrajs/uploads`
 
-A dependency-free package for the upload-hardening basics. `validateUpload` enforces a
+A small package for the upload-hardening basics. `validateUpload` enforces a
 size cap and sniffs the **real** type from magic bytes - never the client-set
 `Content-Type`, which is trivially forged - against an optional allow-list. An oversized
 `Blob` is rejected by its `.size` before it's ever buffered.
@@ -4321,8 +4321,9 @@ app.post("/avatar", async (c) => {
 ```
 
 Pair it with `c.boundedBody` to also bound the _read_: cap the read, then validate
-the buffered bytes. `detectFileType(bytes)` is exposed standalone too (returns
-`{ mime, ext }` or `null`), covering common image / A-V / archive types.
+the buffered bytes. The detection alone is `detectFileType(bytes)` from
+`@nifrajs/core/file-type` (returns `{ mime, ext }` or `null`),
+covering common image / A-V / archive types.
 
 `signDownloadUrl` / `verifyDownloadUrl` mint short-TTL, tamper-evident
 download links (HMAC-SHA256 over the path + expiry, constant-time verify). And
@@ -17933,7 +17934,7 @@ MIT
 
 ## @nifrajs/uploads
 
-File-upload hardening for nifra - magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
+File-upload hardening for nifra - size + magic-byte type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Edge-safe.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
@@ -17949,8 +17950,9 @@ bun add @nifrajs/uploads
 body schema instead - validated before the handler runs, typed in `c.body` - use `t.file` and
 `t.form` from `@nifrajs/schema/form`, which run the same signature detection.
 
-`@nifrajs/uploads/detect` exports the detection alone (`detectFileType`, `DETECTABLE_MIME_TYPES`,
-`FILE_TYPE_PREFIX_BYTES`) for code that needs the type and nothing else.
+For code that needs file-type detection and nothing else, import `detectFileType`,
+`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES` and the `FileType` type from
+`@nifrajs/core/file-type`.
 
 ## Docs
 
@@ -18597,7 +18599,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/uploads
 
-`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES`, `FileType`, `ImagePixelLimitError`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `detectFileType`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
+`ImagePixelLimitError`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
 
 ## @nifrajs/web
 

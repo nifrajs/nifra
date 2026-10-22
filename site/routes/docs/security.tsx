@@ -664,7 +664,7 @@ export default function Security() {
 
       <h2>File uploads - <code>@nifrajs/uploads</code></h2>
       <p>
-        A dependency-free package for the upload-hardening basics. <code>validateUpload</code> enforces a
+        A small package for the upload-hardening basics. <code>validateUpload</code> enforces a
         size cap and sniffs the <b>real</b> type from magic bytes - never the client-set{" "}
         <code>Content-Type</code>, which is trivially forged - against an optional allow-list. An oversized{" "}
         <code>Blob</code> is rejected by its <code>.size</code> before it's ever buffered.
@@ -672,8 +672,9 @@ export default function Security() {
       <CodeBlock code={UPLOADS} />
       <p>
         Pair it with <code>c.boundedBody</code> to also bound the <i>read</i>: cap the read, then validate
-        the buffered bytes. <code>detectFileType(bytes)</code> is exposed standalone too (returns{" "}
-        <code>{`{ mime, ext }`}</code> or <code>null</code>), covering common image / A-V / archive types.
+        the buffered bytes. The detection alone is <code>detectFileType(bytes)</code> from{" "}
+        <code>@nifrajs/core/file-type</code> (returns <code>{`{ mime, ext }`}</code> or <code>null</code>),
+        covering common image / A-V / archive types.
       </p>
       <p>
         <code>signDownloadUrl</code> / <code>verifyDownloadUrl</code> mint short-TTL, tamper-evident
