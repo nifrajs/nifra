@@ -16,8 +16,9 @@ bun add @nifrajs/uploads
 body schema instead - validated before the handler runs, typed in `c.body` - use `t.file` and
 `t.form` from `@nifrajs/schema/form`, which run the same signature detection.
 
-For code that needs the type and nothing else, the detection both of them run is
-`@nifrajs/core/file-type` (`detectFileType`, `DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES`).
+For code that needs file-type detection and nothing else, import `detectFileType`,
+`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES` and the `FileType` type from
+`@nifrajs/core/file-type`.
 
 ## Docs
 
