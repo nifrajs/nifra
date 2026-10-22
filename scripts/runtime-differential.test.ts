@@ -283,20 +283,24 @@ describe("judge", () => {
     ])
     expect(judge(caseOf(get("/")), outcomes)).toEqual({
       violations: [],
-      excusedBy: ["node-json-content-type"],
+      excusedBy: ["json-content-type-is-the-runtimes"],
     })
   })
 
   test("an exposed open finding is reported instead of excused", () => {
-    const json = (type: string) => response(200, "{}", [["content-type", type]])
-    const outcomes = new Map<LaneName, Outcome>([
-      ["bun-serve", json("application/json;charset=utf-8")],
-      ["deno", json("application/json")],
-    ])
-    expect(judge(caseOf(get("/")), outcomes).excusedBy).toEqual(["F2 json-content-type-mixed"])
-    expect(judge(caseOf(get("/")), outcomes, new Set(["F2"])).violations[0]?.kind).toBe(
-      "difference",
+    const echoed = caseOf(
+      get("/whoami", [
+        ["Host", "127.0.0.1"],
+        ["x-caller", "café"],
+      ]),
     )
+    const outcomes = new Map<LaneName, Outcome>([
+      ["bun-serve", response(200, '{"caller":"cafÃ©"}')],
+      ["deno", response(200, '{"caller":"cafÃ©"}')],
+      ["workerd", response(200, '{"caller":"café"}')],
+    ])
+    expect(judge(echoed, outcomes).excusedBy).toEqual(["U5 workerd-decodes-header-bytes-as-utf8"])
+    expect(judge(echoed, outcomes, new Set(["U5"])).violations[0]?.kind).toBe("difference")
   })
 })
 

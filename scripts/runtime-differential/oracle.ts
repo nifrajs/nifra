@@ -143,30 +143,19 @@ export const DOCUMENTED_EQUIVALENCES: readonly Equivalence[] = [
     apply: (lane, outcome) => (lane === "workerd" ? decoded(outcome) : undefined),
   },
   {
-    id: "node-json-content-type",
+    id: "json-content-type-is-the-runtimes",
     why:
-      "@nifrajs/node writes the Content-Type the host's own Response.json writes, so its direct lane and " +
-      "its Response lane agree byte for byte: undici says application/json, Bun application/json;charset=utf-8.",
+      "nifra's JSON carries the Content-Type the runtime's own Response.json writes, so a handler's JSON " +
+      "and the framework's envelopes agree on one runtime: Bun says application/json;charset=utf-8, " +
+      "undici, Deno and workerd application/json.",
     apply: (lane, outcome) =>
-      lane === "node"
+      lane === "node" || lane === "deno" || lane === "workerd"
         ? withContentType(outcome, "application/json", "application/json;charset=utf-8")
         : undefined,
   },
 ]
 
-export const OPEN_EQUIVALENCES: readonly Equivalence[] = [
-  {
-    id: "F2 json-content-type-mixed",
-    why:
-      "On Deno and workerd a handler's JSON says application/json;charset=utf-8 (core's constant) while " +
-      "nifra's own envelopes (401 from a guard, 404, 405, 422, invalid_multipart, Deno's adapter 500) say " +
-      "application/json (the host's Response.json): one app answers in both spellings.",
-    apply: (lane, outcome) =>
-      lane === "deno" || lane === "workerd"
-        ? withContentType(outcome, "application/json", "application/json;charset=utf-8")
-        : undefined,
-  },
-]
+export const OPEN_EQUIVALENCES: readonly Equivalence[] = []
 
 const PARSER_REFUSAL = "refused by its own parser"
 

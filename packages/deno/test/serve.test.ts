@@ -408,7 +408,7 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
     assertEquals(res.headers.get("x-sec"), "nosniff")
     assertEquals(res.headers.get("x-status-seen"), "200")
     assertEquals(res.headers.get("x-multi"), "one, two")
-    assertEquals(res.headers.get("content-type"), "application/json;charset=utf-8")
+    assertEquals(res.headers.get("content-type"), "application/json")
     const body = await res.text()
     assertEquals(res.headers.get("x-body-len"), String(body.length))
     assertEquals(JSON.parse(body), { ok: true })
@@ -682,6 +682,43 @@ Deno.test("a JSON body led by a byte order mark parses through a schema and c.bo
       })
       assertEquals([path, res.status, await res.json()], [path, 200, { name: "Ada" }])
     }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// The framework's own 404 and 422 said `application/json;charset=utf-8`, Bun's spelling baked into core,
+// while a handler's JSON and a 405 said Deno's `application/json`. Found by
+// scripts/check-runtime-differential.ts.
+Deno.test("a handler's JSON and the framework's envelopes carry the Content-Type Response.json writes", async () => {
+  const app = server()
+    .get("/ok", () => ({ ok: true }))
+    .post("/users", { body: named }, (c) => c.body)
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const base = `http://127.0.0.1:${running.port}`
+    const answers = [
+      await fetch(`${base}/ok`),
+      await fetch(`${base}/missing`),
+      await fetch(`${base}/ok`, { method: "DELETE" }),
+      await fetch(`${base}/users`, {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json" },
+      }),
+    ]
+    const types = []
+    for (const answer of answers) {
+      types.push([answer.status, answer.headers.get("content-type")])
+      await answer.body?.cancel()
+    }
+    const native = Response.json(0).headers.get("content-type")
+    assertEquals(types, [
+      [200, native],
+      [404, native],
+      [405, native],
+      [422, native],
+    ])
   } finally {
     await running.stop({ drainMs: 0 })
   }
