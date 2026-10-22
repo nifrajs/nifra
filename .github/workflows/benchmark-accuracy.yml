@@ -15,3 +15,4 @@ jobs:
       min_runs: 7
       max_runs: 15
       max_ci_width: 5
+      skip_ssr: true

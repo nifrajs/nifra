@@ -2,12 +2,13 @@
 import { loadavg } from "node:os"
 import {
   buildTarget,
+  formatResultRow,
   measureOnce,
   median,
   pairedRatio,
-  printResultRow,
   roundOrder,
   rowKind,
+  SSR_BENCH_ROUND_OFFSET,
   SSR_BENCH_ROUNDS,
   type SsrBenchMeasure,
   type SsrBenchTarget,
@@ -18,6 +19,8 @@ import type { SsrTableSection } from "./targets.ts"
 export interface SectionResult {
   readonly rows: SsrRunRow[]
   readonly samples: Record<string, number[]>
+  /** Every measured row's samples by target name, one per round in round order. */
+  readonly rounds: Record<string, SsrBenchMeasure[]>
   /** `<section> / <target>: <reason>` for every target that failed to build or to measure a round. */
   readonly failures: string[]
 }
@@ -27,19 +30,24 @@ export interface SectionSteps {
   readonly build: (target: SsrBenchTarget) => Promise<void>
   readonly measure: typeof measureOnce
   readonly rounds: number
+  readonly roundOffset?: number
+  /** Progress and result lines; failures always go to stderr. */
+  readonly log?: (line: string) => void
 }
 
-const hostSteps: SectionSteps = {
+export const hostSteps: SectionSteps = {
   build: buildTarget,
   measure: measureOnce,
   rounds: SSR_BENCH_ROUNDS,
+  roundOffset: SSR_BENCH_ROUND_OFFSET,
 }
 
 export async function runSection(
   section: SsrTableSection,
   steps: SectionSteps = hostSteps,
 ): Promise<SectionResult> {
-  console.log(`\n${section.label}\n${section.blurb}\n`)
+  const log = steps.log ?? console.log
+  log(`\n${section.label}\n${section.blurb}\n`)
   const framework = section.label.split(" - ")[0] ?? section.label
   const failures: string[] = []
   const fail = (target: SsrBenchTarget, e: unknown): void => {
@@ -62,7 +70,7 @@ export async function runSection(
   const payloads = new Map<SsrBenchTarget, { raw: number; gzip: number }>()
   const failed = new Set<SsrBenchTarget>()
   for (let round = 0; round < steps.rounds; round++) {
-    for (const target of roundOrder(live, round)) {
+    for (const target of roundOrder(live, round + (steps.roundOffset ?? 0))) {
       if (failed.has(target)) continue
       try {
         const m = await steps.measure(target, !payloads.has(target))
@@ -77,7 +85,7 @@ export async function runSection(
     const line = live
       .filter((t) => !failed.has(t))
       .map((t) => `${t.name} ${samples.get(t)?.[round]?.rps.toLocaleString() ?? "-"}`)
-    console.log(
+    log(
       `  round ${round + 1}/${steps.rounds}  load ${loadavg()[0]?.toFixed(1)}  ${line.join(" · ")}`,
     )
   }
@@ -86,7 +94,7 @@ export async function runSection(
   const rpsOf = (t: SsrBenchTarget): number[] => (samples.get(t) ?? []).map((m) => m.rps)
   const baseline = measured.find((t) => t.name === section.baseline)
   const rows: SsrRunRow[] = []
-  console.log(`\n  ratio = median of per-round ratios to ${section.baseline}\n`)
+  log(`\n  ratio = median of per-round ratios to ${section.baseline}\n`)
   for (const kindOrder of ["app", "renderer", "static-host"] as const) {
     for (const target of measured.filter((t) => rowKind(t) === kindOrder)) {
       const all = samples.get(target) ?? []
@@ -100,7 +108,7 @@ export async function runSection(
       }
       const ratio =
         baseline === undefined ? "" : `${pairedRatio(rpsOf(target), rpsOf(baseline)).toFixed(3)}x`
-      printResultRow(target, result, ratio)
+      log(formatResultRow(target, result, ratio))
       rows.push({ framework, target, result, samples: rpsOf(target) })
     }
   }
@@ -108,6 +116,12 @@ export async function runSection(
   return {
     rows,
     samples: Object.fromEntries(measured.map((t) => [t.name, rpsOf(t)])),
+    rounds: Object.fromEntries(
+      measured.map((t) => [
+        t.name,
+        (samples.get(t) ?? []).map(({ rps, p50ms, p99ms }) => ({ rps, p50ms, p99ms })),
+      ]),
+    ),
     failures,
   }
 }

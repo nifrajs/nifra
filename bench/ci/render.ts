@@ -1,11 +1,5 @@
 /** Markdown for the GitHub job summary: one section per suite x runtime job, and a headline table. */
-import {
-  type CiReport,
-  rivalRow,
-  summarize,
-  unsettledRows,
-  type WorkloadSummary,
-} from "./report.ts"
+import { type CiReport, summarize, unsettledRows, type WorkloadSummary } from "./report.ts"
 import type { MedianInterval } from "./stats.ts"
 
 const pct = (x: number): number => Math.round(x * 100)
@@ -47,7 +41,7 @@ function contextLine(report: CiReport): string {
 
 function workloadTable(w: WorkloadSummary): string {
   const lines = [
-    `**${w.workload}** (ceiling: ${w.ceiling})`,
+    `**${w.workload}** (ceiling: ${w.ceiling ?? "none"})`,
     "",
     "| row | % of ceiling | nifra vs row | verdict |",
     "| --- | ---: | ---: | --- |",
@@ -65,6 +59,12 @@ export function renderSection(report: CiReport): string {
   const workloads = summarize(report.runs, report.runtime, report.settings.maxCiWidthPts)
   const unsettled = unsettledRows(workloads)
   const parts = [`### ${report.suite} - ${report.runtime}`, "", contextLine(report), ""]
+  if (report.suite === "ssr") {
+    parts.push(
+      `nifra runs on ${report.runtime}; the rival apps run on node in both ssr jobs (bench/ssr/README.md).`,
+      "",
+    )
+  }
   if (unsettled > 0) {
     parts.push(
       `${unsettled} row(s) still noisy after ${report.runs.length} of at most ${report.settings.maxRuns} runs; their numbers are listed but are not comparable.`,
@@ -84,8 +84,7 @@ export function renderHeadline(reports: readonly CiReport[]): string {
     const workloads = summarize(report.runs, report.runtime, report.settings.maxCiWidthPts)
     for (const w of workloads) {
       const nifra = w.rows.find((r) => r.row === w.nifra)
-      const rivalName = w.nifra === undefined ? undefined : rivalRow(report.runtime, w.nifra)
-      const rival = w.rows.find((r) => r.row === rivalName)
+      const rival = w.rows.find((r) => r.row === w.rival)
       const vsRival =
         rival === undefined ? "-" : `${formatInterval(rival.nifraOver, "%")} vs ${rival.row}`
       const unsettled = w.rows.filter((r) => r.verdict !== "ok").length
@@ -100,8 +99,9 @@ export function renderHeadline(reports: readonly CiReport[]): string {
 export function renderFootnote(maxCiWidthPts: number): string {
   return [
     "Every number is the median of per-round ratios measured inside one job, with its 95% interval in brackets",
-    "(distribution-free, from order statistics). % of ceiling divides a row by its runtime's raw server in the same",
-    "round; nifra vs row divides nifra by that row. Absolute req/s is left out: on a shared runner it does not",
-    `compare between runs. A row is noisy when an interval is wider than ${maxCiWidthPts} points.`,
+    "(distribution-free, from order statistics). % of ceiling divides a row by its workload's ceiling in the same",
+    "round: the runtime's raw server for http and realworld, the raw renderer or the static file server for ssr;",
+    "nifra vs row divides nifra by that row. Absolute req/s is left out: on a shared runner it does not compare",
+    `between runs. A row is noisy when an interval is wider than ${maxCiWidthPts} points.`,
   ].join("\n")
 }
