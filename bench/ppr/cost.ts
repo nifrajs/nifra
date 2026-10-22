@@ -13,49 +13,54 @@
  * product id for the rest, so each of those requests builds its shell; the upstream column reads
  * back the hit rate the run got.
  *
- * Gates (S1, each framework): cached PPR CPU at most 0.75x blocking, cached TTFB p50 under 2 ms,
- * 0%-hit PPR CPU at most 1.2x `defer()`. A CPU gate takes the median of its ratio over
- * `GATE_ROUNDS` rounds, each running the four variants back to back in an order reversed every other
- * round, so a load spike from another process moves one round's ratio and not the verdict.
+ * `PPR_GZIP=1` (`bench:ppr:gzip`) runs it all with `compression()` on and every client accepting gzip: time to first byte is
+ * then to the first byte of page, and bytes are on the wire. A hole frame's arrival is when the page so
+ * far holds the whole frame, so a gzip lane that held output back would show as late frames.
+ *
+ * Gates (S1, each framework): cached PPR CPU at most 0.75x blocking, cached TTFB p50 under 2 ms, each
+ * cached hole frame p50 within 25 ms of its loader, 0%-hit PPR CPU at most 1.2x `defer()`. A CPU gate
+ * takes the median of its ratio over `GATE_ROUNDS` rounds, each running the four variants back to back
+ * in an order reversed every other round, so a load spike from another process moves one round's
+ * ratio and not the verdict.
  * `shared-hole.ts`, run after it by `bench:ppr`, gates what a shared hole's hit adds.
  */
-import { join } from "node:path"
+import { constants, gunzipSync } from "node:zlib"
+import {
+  cpuOf,
+  freshId,
+  idleCpuPerMs,
+  type Listening,
+  mean,
+  median,
+  spawnUntilListening,
+} from "./harness.ts"
 
-const here = import.meta.dir
 const PASSES = 2
 const WARMUP_PASSES = 1
 const TTFB_ROUNDS = 25
 const GATE_ROUNDS = 7
 const GATE_REQUESTS = 1_500
-
-async function spawnUntilListening(script: string, env: Record<string, string>) {
-  const proc = Bun.spawn(["bun", join(here, script)], {
-    env: { ...process.env, NODE_ENV: "production", ...env },
-    stdout: "pipe",
-    stderr: "inherit",
-  })
-  const reader = proc.stdout.getReader()
-  let out = ""
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) throw new Error(`${script} exited before listening: ${out}`)
-    out += new TextDecoder().decode(value)
-    const origin = /on (http:\/\/\S+)/.exec(out)?.[1]
-    if (origin !== undefined) {
-      reader.releaseLock()
-      return { proc, origin: origin.replace(/\/$/, "") }
-    }
-  }
-}
+const GZIP = process.env.PPR_GZIP === "1"
+/** Each hole's loader time at `scale=1` (shared/catalog.ts), and how late its frame may arrive. */
+const HOLES = { greeting: 40, cart: 150, recs: 400 } as const
+const FRAME_SLACK_MS = 25
 
 const upstream = await spawnUntilListening("upstream.ts", {})
 const FRAMEWORKS = (process.env.FRAMEWORKS ?? "react,svelte,preact,vue,solid").split(",")
-const servers = new Map<string, Awaited<ReturnType<typeof spawnUntilListening>>>()
+const servers = new Map<string, Listening>()
+const compress: Record<string, string> = GZIP ? { PPR_COMPRESS: "1" } : {}
 for (const framework of FRAMEWORKS) {
-  servers.set(`${framework} S0`, await spawnUntilListening("server.ts", { FRAMEWORK: framework }))
+  servers.set(
+    `${framework} S0`,
+    await spawnUntilListening("server.ts", { FRAMEWORK: framework, ...compress }),
+  )
   servers.set(
     `${framework} S1`,
-    await spawnUntilListening("server.ts", { FRAMEWORK: framework, PPR_UPSTREAM: upstream.origin }),
+    await spawnUntilListening("server.ts", {
+      FRAMEWORK: framework,
+      PPR_UPSTREAM: upstream.origin,
+      ...compress,
+    }),
   )
 }
 const originOf = (key: string): string => {
@@ -107,15 +112,9 @@ function ohaTarget(origin: string, variant: Variant, scale: number): string[] {
   ]
 }
 
-const freshId = (): string => `u${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`
 const pathFor = (variant: Variant, scale: number): string =>
   `${variant.path}${Math.random() < variant.hits ? "1" : freshId()}?scale=${scale}`
 
-const cpuOf = async (origin: string): Promise<number> => {
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the bench server's own /__cpu route returns process.cpuUsage().
-  const usage = (await (await fetch(`${origin}/__cpu`)).json()) as { user: number; system: number }
-  return usage.user + usage.system
-}
 const upstreamReads = async (): Promise<number> =>
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the bench's catalog process returns its read count.
   ((await (await fetch(`${upstream.origin}/__count`)).json()) as { served: number }).served
@@ -136,6 +135,7 @@ function oha(target: readonly string[], n: number, connections: number): OhaSumm
     "json",
     "-H",
     "cookie: user=ada",
+    ...(GZIP ? ["-H", "accept-encoding: gzip"] : []),
     ...target,
   ])
   if (run.exitCode !== 0) throw new Error(`oha failed: ${run.stderr.toString()}`)
@@ -168,33 +168,42 @@ async function load(
   }
 }
 
+/** The page in `chunks` so far. A sync flush lets a gzip prefix decode without the stream's end. */
+const pageOf = (chunks: readonly Uint8Array[]): string =>
+  GZIP
+    ? gunzipSync(Buffer.concat(chunks), { finishFlush: constants.Z_SYNC_FLUSH }).toString()
+    : Buffer.concat(chunks).toString()
+
 async function timeToFirstByte(origin: string, path: string) {
   const started = performance.now()
-  const response = await fetch(`${origin}${path}`, { headers: { cookie: "user=ada" } })
+  const response = await fetch(`${origin}${path}`, {
+    headers: GZIP ? { cookie: "user=ada", "accept-encoding": "gzip" } : { cookie: "user=ada" },
+    decompress: false,
+  })
   if (response.status !== 200 || response.body === null)
     throw new Error(`${path}: ${response.status}`)
+  if (GZIP && response.headers.get("content-encoding") !== "gzip")
+    throw new Error(`${path}: not gzipped`)
   const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
   let first: number | undefined
-  let bytes = 0
+  const frames = new Map<string, number>()
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
-    first ??= performance.now()
-    bytes += value.byteLength
+    const at = performance.now() - started
+    chunks.push(value)
+    // gzip's 10-byte header can come alone, before any of the page.
+    const page =
+      first === undefined || frames.size < Object.keys(HOLES).length ? pageOf(chunks) : ""
+    if (first === undefined && page.length > 0) first = at
+    for (const name of Object.keys(HOLES)) {
+      const opened = frames.has(name) ? -1 : page.indexOf(`id="nifra-ppr:${name}"`)
+      if (opened !== -1 && page.includes("</script>", opened)) frames.set(name, at)
+    }
   }
-  return { ttfb: (first ?? performance.now()) - started, total: performance.now() - started, bytes }
-}
-
-const median = (values: readonly number[]): number =>
-  [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? Number.NaN
-const mean = (values: readonly number[]): number =>
-  values.reduce((sum, value) => sum + value, 0) / values.length
-
-async function idleCpuPerMs(origin: string): Promise<number> {
-  const before = await cpuOf(origin)
-  const started = performance.now()
-  await Bun.sleep(3_000)
-  return ((await cpuOf(origin)) - before) / (performance.now() - started)
+  const bytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+  return { ttfb: first ?? Number.NaN, total: performance.now() - started, bytes, frames }
 }
 
 const failures: string[] = []
@@ -224,20 +233,31 @@ try {
   }
 
   console.log(
-    "\n## S1: catalog read (20 ms, ~20 KB), holes at 40/150/400 ms (oha -n 3000 -c 128)\n",
+    `\n## S1: catalog read (20 ms, ~20 KB), holes at 40/150/400 ms (oha -n 3000 -c 128)${GZIP ? ", gzip on" : ""}\n`,
   )
   const rows: string[] = []
   for (const framework of FRAMEWORKS) {
     const origin = originOf(`${framework} S1`)
-    const samples = new Map<string, { ttfb: number[]; total: number[]; bytes: number }>()
+    const samples = new Map<
+      string,
+      { ttfb: number[]; total: number[]; bytes: number; frames: Map<string, number[]> }
+    >()
     for (const variant of VARIANTS) await timeToFirstByte(origin, pathFor(variant, 1))
     for (let round = 0; round < TTFB_ROUNDS; round++) {
       for (const variant of VARIANTS) {
         const sample = await timeToFirstByte(origin, pathFor(variant, 1))
-        const entry = samples.get(variant.name) ?? { ttfb: [], total: [], bytes: 0 }
+        const entry = samples.get(variant.name) ?? {
+          ttfb: [],
+          total: [],
+          bytes: 0,
+          frames: new Map<string, number[]>(),
+        }
         entry.ttfb.push(sample.ttfb)
         entry.total.push(sample.total)
         entry.bytes = sample.bytes
+        for (const [name, at] of sample.frames) {
+          entry.frames.set(name, [...(entry.frames.get(name) ?? []), at])
+        }
         samples.set(variant.name, entry)
       }
     }
@@ -270,8 +290,14 @@ try {
         c.us.length > PASSES
           ? `${median(c.us).toFixed(0)} us (${Math.min(...c.us).toFixed(0)}-${Math.max(...c.us).toFixed(0)})`
           : `${c.us.map((x) => x.toFixed(0)).join(" / ")} us`
+      const frames =
+        t.frames.size === 0
+          ? "-"
+          : `${Object.keys(HOLES)
+              .map((name) => median(t.frames.get(name) ?? []).toFixed(0))
+              .join(" / ")} ms`
       rows.push(
-        `| ${framework} ${variant.name} | ${median(t.ttfb).toFixed(2)} ms | ${median(t.total).toFixed(1)} ms | ${t.bytes} | ${us} | ${mean(c.reads).toFixed(2)} |`,
+        `| ${framework} ${variant.name} | ${median(t.ttfb).toFixed(2)} ms | ${frames} | ${median(t.total).toFixed(1)} ms | ${t.bytes} | ${us} | ${mean(c.reads).toFixed(2)} |`,
       )
     }
     /** The median over rounds of one variant's CPU over another's, beside the rounds' range. */
@@ -287,12 +313,20 @@ try {
     const cached = ratio("PPR, 100% shell hits", "blocking SSR")
     const uncached = ratio("PPR, 0% shell hits", "defer() streaming")
     const cachedTtfb = median(samples.get("PPR, 100% shell hits")?.ttfb ?? [])
+    const cachedFrames = samples.get("PPR, 100% shell hits")?.frames
+    const lateFrames = Object.entries(HOLES).filter(
+      ([name, ms]) => !(median(cachedFrames?.get(name) ?? []) <= ms + FRAME_SLACK_MS),
+    )
     const gates: Array<readonly [string, boolean]> = [
       [
         `cached CPU ${cached.median.toFixed(2)}x blocking, median of ${GATE_ROUNDS} rounds ${cached.range} (gate 0.75x)`,
         cached.median <= 0.75,
       ],
       [`cached TTFB p50 ${cachedTtfb.toFixed(2)} ms (gate 2 ms)`, cachedTtfb < 2],
+      [
+        `cached hole frames ${lateFrames.length === 0 ? "each" : `${lateFrames.map(([name]) => name).join(", ")} not`} within ${FRAME_SLACK_MS} ms of its loader`,
+        lateFrames.length === 0,
+      ],
       [
         `0%-hit CPU ${uncached.median.toFixed(2)}x defer(), median of ${GATE_ROUNDS} rounds ${uncached.range} (gate 1.2x)`,
         uncached.median <= 1.2,
@@ -305,9 +339,9 @@ try {
     }
   }
   console.log(
-    "\n| variant | TTFB p50 | complete p50 | bytes | CPU per request | catalog reads per request |",
+    `\n| variant | TTFB p50 | hole frames p50 (${Object.values(HOLES).join("/")} ms loaders) | complete p50 | bytes | CPU per request | catalog reads per request |`,
   )
-  console.log("|---|---|---|---|---|---|")
+  console.log("|---|---|---|---|---|---|---|")
   for (const row of rows) console.log(row)
 } finally {
   for (const { proc } of [...servers.values(), upstream]) proc.kill()

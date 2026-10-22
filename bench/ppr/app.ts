@@ -3,8 +3,9 @@
  * (`/defer/:id`) and a partially prerendered route (`/ppr/:id`), for `FRAMEWORK` (default react),
  * whose `<name>/` holds its routes and `setup.ts`. `PPR_UPSTREAM` points the product read at the
  * catalog process (S1); without it the page is tiny (S0). `PPR_OPTIONS` (JSON) overrides partial
- * prerendering's options.
+ * prerendering's options, and `PPR_COMPRESS=1` gzips responses through `compression()`.
  */
+import { compression } from "@nifrajs/middleware"
 import { createCspPolicy, createWebApp, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { compileShells, partialPrerendering } from "@nifrajs/web/ppr"
@@ -54,3 +55,4 @@ export const app = createWebApp({
     }),
   },
 })
+if (process.env.PPR_COMPRESS === "1") app.use(compression())

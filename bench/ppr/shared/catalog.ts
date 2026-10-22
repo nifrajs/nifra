@@ -3,7 +3,9 @@ import { t } from "@nifrajs/schema"
 /**
  * The bench page's data. The product comes from the catalog process when `PPR_UPSTREAM` is set (S1: 20
  * ms and ~20 KB per read) and inline otherwise (S0). The three per-visitor parts settle at 40, 150 and
- * 400 ms times the request's `scale`, so `scale=0` measures render work alone.
+ * 400 ms times the request's `scale`, so `scale=0` measures render work alone: on a timer, or with
+ * `PPR_PARTS_UPSTREAM=1` by reading the catalog process for that long, where a capped pool of reads
+ * makes them wait under load.
  */
 export interface Product {
   readonly id: string
@@ -49,8 +51,16 @@ export const recsSchema = t.object({ items: t.array(t.string()) })
 const scaleOf = (request: Request): number =>
   Number(new URL(request.url).searchParams.get("scale") ?? "1")
 
-const after = <T>(ms: number, value: T): Promise<T> =>
-  ms <= 0 ? Promise.resolve(value) : new Promise((resolve) => setTimeout(() => resolve(value), ms))
+function after<T>(ms: number, value: T): Promise<T> {
+  if (process.env.PPR_PARTS_UPSTREAM === "1") {
+    return fetch(`${process.env.PPR_UPSTREAM}/part/${ms}`)
+      .then((response) => response.json())
+      .then(() => value)
+  }
+  return ms <= 0
+    ? Promise.resolve(value)
+    : new Promise((resolve) => setTimeout(() => resolve(value), ms))
+}
 
 const RECS = Array.from({ length: 8 }, (_, i) => `Recommended tea ${i}`)
 
