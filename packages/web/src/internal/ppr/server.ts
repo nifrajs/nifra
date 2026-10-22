@@ -7,7 +7,7 @@ import type {
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
-import { isControlFlow, isStatusSignal } from "../render-document.ts"
+import { isControlFlow, isStatusSignal, notFound } from "../render-document.ts"
 import { HoleAdmission, type HoleRun, type HoleSlot, watchAbort } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {
@@ -28,6 +28,7 @@ import {
 } from "./frames.ts"
 import { type ResolvedPprOptions, totalDeadlineMs } from "./options.ts"
 import { PPR_BOOT, PPR_RUNTIME, pprScriptHashes } from "./runtime.ts"
+import type { SharedShellStore, StoredShell } from "./shell-store.ts"
 
 export {
   type HoleRegistration,
@@ -88,6 +89,8 @@ export interface PprServerConfig {
   readonly csp?: CspPolicy
   /** Part of every shell key, so a shell built by one deployment is never served by another. */
   readonly deployment: string
+  /** The client entry `shellChecks` was recorded for; `deployment` when not given. */
+  readonly clientEntry?: string
   readonly cancelUrl: string
   /**
    * The routes whose shell import check passed, for this deployment. A route not listed, or a record
@@ -97,6 +100,8 @@ export interface PprServerConfig {
   readonly shellChecks: ShellCheckRecord | "unchecked-development"
   /** Milliseconds, for shell freshness. Tests pass their own clock. */
   readonly now?: () => number
+  /** Shells shared with other processes, behind this process's own; signed entries only. */
+  readonly shared?: SharedShellStore | undefined
 }
 
 interface HoleStart {
@@ -361,6 +366,19 @@ function heldBytes(value: unknown, room: number, depth = 0): number {
   return bytes
 }
 
+const notFoundSignal = (): unknown => {
+  try {
+    return notFound()
+  } catch (signal) {
+    return signal
+  }
+}
+
+const DECODER = new TextDecoder()
+
+// How long a shared store keeps a shell that has no `revalidate`: a year, as good as forever.
+const KEEP_UNREVALIDATED_SECONDS = 365 * 24 * 60 * 60
+
 /** A 404 entry answers as the shell loader's own `notFound()` did. */
 const served = (entry: ShellEntry): ShellEntry | Promise<never> =>
   entry.notFound === undefined ? entry : Promise.reject(entry.notFound)
@@ -376,12 +394,17 @@ export function createPprServer(config: PprServerConfig): PprServer {
   }
   const checked = (routeId: string): boolean =>
     shellChecks === "unchecked-development" ||
-    (shellChecks.deployment === deployment && Object.hasOwn(shellChecks.routes, routeId))
+    (shellChecks.deployment === (config.clientEntry ?? deployment) &&
+      Object.hasOwn(shellChecks.routes, routeId))
   const now = config.now ?? Date.now
   // Captured outside any request, so an on-demand build sees no visitor's async context.
   const detached: <T>(fn: () => T) => T =
     globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage?.snapshot?.() ??
     ((fn) => fn())
+  const shared = config.shared
+  // One shared-store read per key at a time; concurrent misses wait on it.
+  const lookups = new Map<string, Promise<ShellEntry | undefined>>()
+  const untaggableWarned = new Set<string>()
   const settled = new Map<string, ShellEntry>()
   const sightings = new Map<string, number>()
   const routeCounts = new Map<string, number>()
@@ -554,10 +577,74 @@ export function createPprServer(config: PprServerConfig): PprServer {
     }
   }
 
+  /** The shared store's copy of `entry`, unless its tags could never be dropped there. */
+  const share = (
+    key: string,
+    entry: ShellEntry,
+    request: PprRequest,
+    fence: Promise<number | undefined>,
+  ): void => {
+    if (shared === undefined) return
+    if (entry.tags.length > 0 && shared.invalidateTag === undefined) {
+      if (!untaggableWarned.has(entry.routeId)) {
+        untaggableWarned.add(entry.routeId)
+        console.warn(
+          `[nifra/web] ppr: route "${entry.routeId}" lists revalidateTags, which the shared store cannot drop, so its shells stay in this process`,
+        )
+      }
+      return
+    }
+    const stored: StoredShell = {
+      routeId: entry.routeId,
+      document: DECODER.decode(entry.first),
+      tokenAt: entry.tokenAt,
+      data: entry.data,
+      builtAt: entry.builtAt,
+      tags: entry.tags,
+      notFound: entry.notFound !== undefined,
+    }
+    const keepSeconds =
+      entry.notFound !== undefined
+        ? options.notFoundTtlSeconds
+        : request.revalidate === undefined
+          ? KEEP_UNREVALIDATED_SECONDS
+          : staleLimitMs(request.revalidate) / 1000
+    const write = fence
+      .then((at) => shared.set(key, stored, keepSeconds, at))
+      .catch((error: unknown) =>
+        console.error("[nifra/web] ppr: writing a shell to the shared store failed", {
+          route: entry.routeId,
+          kind: error instanceof Error ? "error" : typeof error,
+        }),
+      )
+    request.waitUntil?.(write)
+  }
+
+  /** A shell read back from the shared store, as this process keeps it. */
+  const entryOf = (key: string, stored: StoredShell): ShellEntry => {
+    const first = stored.notFound ? NO_BYTES : ENCODER.encode(stored.document)
+    const bytes = ENTRY_BYTES + key.length + first.length
+    return {
+      routeId: stored.routeId,
+      first,
+      tokenAt: stored.tokenAt,
+      data: stored.data,
+      bytes: bytes + heldBytes(stored.data, options.shellStoreBytes - bytes),
+      builtAt: stored.builtAt,
+      tags: stored.tags,
+      notFound: stored.notFound ? notFoundSignal() : undefined,
+      failures: 0,
+      retryAt: 0,
+    }
+  }
+
   const startBuild = (key: string, request: PprRequest): Promise<ShellEntry> => {
     const routeId = request.routeId
     buildsByRoute.set(routeId, (buildsByRoute.get(routeId) ?? 0) + 1)
     const startedAt = invalidations
+    // Read before the build starts, so a purge the shared store sees during it keeps it out.
+    const fence: Promise<number | undefined> =
+      shared === undefined ? Promise.resolve(undefined) : shared.fence().catch(() => undefined)
     // Not `AbortSignal.timeout`: under a run of misses its timers would stay pending long after the
     // builds settle.
     const timeout = new AbortController()
@@ -606,6 +693,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       const fenced = entry.tags.some((tag) => (invalidatedAt.get(tag) ?? -1) > startedAt)
       done()
       if (fenced) return
+      share(key, entry, request, fence)
       if (entry.bytes <= options.shellStoreBytes) return store(key, entry)
       // Kept, it would empty the store and still overrun it; a stale entry it replaces goes too.
       evict(key)
@@ -660,6 +748,64 @@ export function createPprServer(config: PprServerConfig): PprServer {
     return false
   }
 
+  /** Serves `entry` if it is still usable for `request`, rebuilding behind a stale one. */
+  const serveEntry = (
+    key: string,
+    entry: ShellEntry,
+    request: PprRequest,
+  ): Promise<ShellEntry> | undefined => {
+    const age = now() - entry.builtAt
+    if (entry.notFound !== undefined) {
+      return age < options.notFoundTtlSeconds * 1000 ? Promise.reject(entry.notFound) : undefined
+    }
+    if (request.revalidate === undefined || age < request.revalidate * 1000) {
+      return Promise.resolve(entry)
+    }
+    if (age < staleLimitMs(request.revalidate)) {
+      rebuild(key, request, entry)
+      return Promise.resolve(entry)
+    }
+    return undefined
+  }
+
+  const build = (key: string, request: PprRequest): Promise<ShellEntry> => {
+    const running = builds.get(key)
+    if (running !== undefined) return running.then(served)
+    if ((buildsByRoute.get(request.routeId) ?? 0) >= options.shellBuildConcurrency) {
+      return Promise.reject(new PprShellBusy(request.routeId))
+    }
+    for (const hole of request.holes) assertHoleName(hole.name)
+    return startBuild(key, request).then(served)
+  }
+
+  /** The shared store's shell for `key`, kept here once read; a failed or missing read builds one. */
+  const fromShared = (
+    sharedStore: SharedShellStore,
+    key: string,
+    request: PprRequest,
+  ): Promise<ShellEntry> => {
+    let lookup = lookups.get(key)
+    if (lookup === undefined) {
+      const read = sharedStore.get(key).then(
+        (found) => (found === undefined ? undefined : entryOf(key, found)),
+        () => undefined,
+      )
+      lookup = read
+      lookups.set(key, read)
+      read.then(() => lookups.delete(key))
+    }
+    return lookup.then((entry) => {
+      if (entry !== undefined && entry.routeId === request.routeId) {
+        const usable = serveEntry(key, entry, request)
+        if (usable !== undefined) {
+          if (!settled.has(key) && entry.bytes <= options.shellStoreBytes) store(key, entry)
+          return usable
+        }
+      }
+      return build(key, request)
+    })
+  }
+
   const shellFor = (
     request: PprRequest,
     key = shellKey(deployment, request),
@@ -668,25 +814,14 @@ export function createPprServer(config: PprServerConfig): PprServer {
     if (entry !== undefined) {
       settled.delete(key)
       settled.set(key, entry)
-      const age = now() - entry.builtAt
-      if (entry.notFound !== undefined) {
-        if (age < options.notFoundTtlSeconds * 1000) return Promise.reject(entry.notFound)
-      } else if (request.revalidate === undefined || age < request.revalidate * 1000) {
-        return Promise.resolve(entry)
-      } else if (age < staleLimitMs(request.revalidate)) {
-        rebuild(key, request, entry)
-        return Promise.resolve(entry)
-      }
+      const usable = serveEntry(key, entry, request)
+      if (usable !== undefined) return usable
       evict(key)
     }
     const running = builds.get(key)
     if (running !== undefined) return running.then(served)
     if (!checked(request.routeId)) return Promise.reject(new PprShellUnchecked(request.routeId))
-    if ((buildsByRoute.get(request.routeId) ?? 0) >= options.shellBuildConcurrency) {
-      return Promise.reject(new PprShellBusy(request.routeId))
-    }
-    for (const hole of request.holes) assertHoleName(hole.name)
-    return startBuild(key, request).then(served)
+    return shared === undefined ? build(key, request) : fromShared(shared, key, request)
   }
 
   // The log carries the failure's kind only: a thrown message can hold credentials or user data.
@@ -1023,10 +1158,11 @@ export function createPprServer(config: PprServerConfig): PprServer {
       return Object.fromEntries(entries)
     },
 
-    invalidateTag(tag) {
+    async invalidateTag(tag) {
       invalidations++
       if (builds.size > 0) invalidatedAt.set(tag, invalidations)
       for (const [key, entry] of settled) if (entry.tags.includes(tag)) evict(key)
+      await shared?.invalidateTag?.(tag)
     },
 
     cancel(token) {

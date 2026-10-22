@@ -1535,6 +1535,7 @@ export function createPageRequestExecutor<Env = unknown>(
       holes: boundaries.filter(isHole),
       holeContext: { request: c.req, params, api: requestApi, env: c.env, draft, search },
       revalidate: mod.revalidate,
+      waitUntil: c.waitUntil,
       tags: () =>
         mod.revalidateTags === undefined
           ? []

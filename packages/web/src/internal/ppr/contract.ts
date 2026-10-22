@@ -48,6 +48,8 @@ export interface PprRequest {
   readonly revalidate: number | undefined
   /** The route's `revalidateTags` for this request, read only when a shell is built. */
   readonly tags: () => readonly string[]
+  /** Keeps the platform alive for work that outlives the response, where the platform needs it. */
+  readonly waitUntil?: ((promise: Promise<unknown>) => void) | undefined
 }
 
 /** The shell cannot be served now; the caller renders the page whole for this request. */
@@ -114,7 +116,7 @@ export interface PprServer {
    * Drop every shell carrying `tag`. A build that started before the call is not stored when it
    * finishes, so a shell built from data read before the purge never outlives it.
    */
-  invalidateTag(tag: string): void
+  invalidateTag(tag: string): Promise<void>
   stats(): PprServerStats
 }
 
