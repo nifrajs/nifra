@@ -1,8 +1,11 @@
 /**
  * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client
- * sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload
- * types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic
- * number - handle those explicitly if you accept them).
+ * sets freely). Reads only the leading bytes; imports nothing, so it is edge-safe. Covers the common
+ * upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no
+ * magic number - handle those explicitly if you accept them).
+ *
+ * The shared owner for every type-by-bytes check: `@nifrajs/schema/form`'s `t.file({ accept })` and
+ * `@nifrajs/uploads`'s `validateUpload` must give one file one verdict, so both read this module.
  */
 
 export interface FileType {

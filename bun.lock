@@ -602,7 +602,6 @@
       "name": "@nifrajs/schema",
       "version": "5.5.1",
       "dependencies": {
-        "@nifrajs/uploads": "workspace:*",
         "@sinclair/typebox": "^0.34.49",
       },
       "devDependencies": {
@@ -658,6 +657,12 @@
     "packages/uploads": {
       "name": "@nifrajs/uploads",
       "version": "5.5.1",
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+      },
+      "peerDependencies": {
+        "@nifrajs/core": "workspace:^",
+      },
     },
     "packages/web": {
       "name": "@nifrajs/web",

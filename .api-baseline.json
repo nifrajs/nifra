@@ -757,8 +757,6 @@
   },
   "@nifrajs/uploads": {
     ".": {
-      "detectFileType": "(bytes: Uint8Array<ArrayBufferLike>) => FileType",
-      "FileType": "{ ext: string; mime: string }",
       "SignDownloadUrlOptions": "{ expiresInSeconds: number; now?: number }",
       "signDownloadUrl": "(url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>",
       "verifyDownloadUrl": "(url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>",
