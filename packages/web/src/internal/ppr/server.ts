@@ -1,3 +1,4 @@
+import { markRepeatedPrefix } from "@nifrajs/core/response-observer"
 import type {
   BoundaryError,
   BoundaryRequestCtx,
@@ -1601,6 +1602,8 @@ export function createPprServer(config: PprServerConfig): PprServer {
             const first = hits.length === 0 ? shell.first.slice() : concat([shell.first, ...hits])
             for (let at = 0; at < TOKEN_LENGTH; at++)
               first[shell.tokenAt + at] = token.charCodeAt(at)
+            // Every visitor gets the same bytes up to the token, so compression() compresses them once.
+            markRepeatedPrefix(first, shell.first, shell.tokenAt)
             stream.enqueue(first)
           },
           // Called only for a read the stream's queue cannot fill, so unread frames stay counted in

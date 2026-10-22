@@ -2776,6 +2776,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
+- **RepeatedPrefix** _(interface)_ - `interface RepeatedPrefix`
+  What {@link markRepeatedPrefix} recorded for a chunk.
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
@@ -2786,6 +2788,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ResponseObserverRuntime** _(interface)_ - `interface ResponseObserverRuntime`
 - **ResponseObserverServer** _(type)_ - `type ResponseObserverServer<S extends AnyServer> = S & import("./server/response-observer-runtime.ts").ResponseObserverMethods`
   A server shape with the opt-in response observation methods installed.
+- **markRepeatedPrefix** _(function)_ - `markRepeatedPrefix: (chunk: Uint8Array, source: Uint8Array, length: number) => void`
+  Record that `chunk` starts with the first `length` bytes of `source`: bytes its producer sends again in later responses and never changes, such as a cached page shell. A response observer that transforms streamed bodies may keep its work on those bytes, keyed by `source`, and reuse it. It must chec…
+- **repeatedPrefixOf** _(const)_ - `repeatedPrefixOf: (chunk: Uint8Array) => RepeatedPrefix | undefined`
+  The repeated prefix {@link markRepeatedPrefix} recorded for `chunk`, if any.
 - **responseObserver** _(function)_ - `responseObserver: () => ResponseObserverPlugin`
   Enable the response observation methods on a server.
 - **withResponseObserver** _(function)_ - `withResponseObserver: <T extends object>(middleware: T) => T`

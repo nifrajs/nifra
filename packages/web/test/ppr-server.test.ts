@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { repeatedPrefixOf } from "@nifrajs/core/response-observer"
 import type { BoundaryRequestCtx, BoundaryStates } from "../src/boundary.ts"
 import { createCspPolicy } from "../src/csp.ts"
 import { type PprOptions, resolvePprOptions } from "../src/internal/ppr/options.ts"
@@ -211,6 +212,27 @@ describe("PPR server", () => {
     expect(tokenOf(a)).not.toBe(tokenOf(b))
     expect(tokenOf(a)).toMatch(/^[A-Za-z0-9_-]{22}$/)
     expect(shellOf(a).includes(tokenOf(a))).toBe(false)
+  })
+
+  test("each visitor's first chunk marks the shell's bytes up to its token as a repeated prefix", async () => {
+    const server = createPprServer(config())
+    const request = pprRequest([hole("cart", () => 1)])
+    const firsts: Uint8Array[] = []
+    for (let visitor = 0; visitor < 2; visitor++) {
+      const reader = readerOf(await server.respond(request))
+      const first = await reader.read()
+      if (first.done) throw new Error("no shell")
+      firsts.push(first.value)
+      await readRest(reader)
+    }
+    const [a, b] = firsts
+    const prefix = a === undefined ? undefined : repeatedPrefixOf(a)
+    if (a === undefined || b === undefined || prefix === undefined) throw new Error("no prefix")
+    expect(repeatedPrefixOf(b)).toEqual(prefix)
+    expect(a).not.toBe(prefix.source)
+    expect(a.subarray(0, prefix.length)).toEqual(prefix.source.subarray(0, prefix.length))
+    const token = new TextDecoder().decode(a.subarray(prefix.length, prefix.length + 22))
+    expect(token).toBe(tokenOf(new TextDecoder().decode(a)))
   })
 
   test("a short shell is padded to the minimum before the request script; a fallback renders once", async () => {

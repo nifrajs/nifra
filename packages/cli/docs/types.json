@@ -12365,6 +12365,13 @@
     "signature": "export interface RepairRequiredView extends EventViewBase {\n    readonly kind: \"repair.required\";\n    readonly turnId?: string;\n    readonly taskId: string;\n    readonly verification: \"check\" | \"assure\" | \"test\";\n    readonly capabilities: readonly string[];\n}"
   },
   {
+    "name": "RepeatedPrefix",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface RepeatedPrefix {\n    /** Bytes the producer sends again in later responses and never changes. */\n    readonly source: Uint8Array;\n    /** How many of `source`'s leading bytes the chunk starts with. */\n    readonly length: number;\n}",
+    "doc": "/** What {@link markRepeatedPrefix} recorded for a chunk. */"
+  },
+  {
     "name": "ReplayBackend",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
@@ -20951,6 +20958,13 @@
     "doc": "/**\n * Opt a concrete 5xx response into releasing its idempotency reservation, but only while the\n * request-local effect scope still proves that no owned effect began.\n */"
   },
   {
+    "name": "markRepeatedPrefix",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markRepeatedPrefix(chunk: Uint8Array, source: Uint8Array, length: number): void;",
+    "doc": "/**\n * Record that `chunk` starts with the first `length` bytes of `source`: bytes its producer sends again\n * in later responses and never changes, such as a cached page shell. A response observer that\n * transforms streamed bodies may keep its work on those bytes, keyed by `source`, and reuse it. It must\n * check that the chunk still holds them, since a later reader may have written into the chunk.\n */"
+  },
+  {
     "name": "markResidentBody",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -22670,6 +22684,13 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function renderWorkGraphText(result: ProjectWorkGraphResult): string;"
+  },
+  {
+    "name": "repeatedPrefixOf",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const repeatedPrefixOf: (chunk: Uint8Array) => RepeatedPrefix | undefined;",
+    "doc": "/** The repeated prefix {@link markRepeatedPrefix} recorded for `chunk`, if any. */"
   },
   {
     "name": "replacedRequestOf",

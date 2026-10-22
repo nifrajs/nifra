@@ -1,4 +1,4 @@
-import { withResponseObserver } from "@nifrajs/core/response-observer"
+import { repeatedPrefixOf, withResponseObserver } from "@nifrajs/core/response-observer"
 import { defineRouterPlugin, type Middleware, type ResponseHeadersView } from "@nifrajs/core/server"
 
 export interface CompressionOptions {
@@ -94,7 +94,7 @@ function hasNoTransform(value: string | null): boolean {
 }
 
 interface RawReader {
-  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array }>
+  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array | undefined }>
   cancel(reason?: unknown): Promise<void>
 }
 
@@ -186,32 +186,19 @@ async function compressRawBody(
     return replayRawResponse(response, buffered, reader)
   }
 
-  const source = new ReadableStream({
-    start(controller) {
-      for (const chunk of buffered) controller.enqueue(chunk)
-    },
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read()
-        if (done || value === undefined) controller.close()
-        else controller.enqueue(value)
-      } catch (error) {
-        controller.error(error)
-      }
+  const replaying: RawReader = {
+    read: () => {
+      const value = buffered.shift()
+      return value === undefined ? reader.read() : Promise.resolve({ done: false, value })
     },
     cancel: (reason) => reader.cancel(reason),
+  }
+  planLookup ??= gzipPlanFor(globalThis)
+  return new Response(streamedGzip(replaying, zlibModule(), planLookup, bytesCompare()), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: gzipHeaders(response.headers),
   })
-  const zlib = zlibModule()
-  return new Response(
-    zlib === undefined
-      ? source.pipeThrough(new CompressionStream("gzip"))
-      : syncFlushedGzip(zlib, source),
-    {
-      status: response.status,
-      statusText: response.statusText,
-      headers: gzipHeaders(response.headers),
-    },
-  )
 }
 
 interface GzipStream {
@@ -223,10 +210,28 @@ interface GzipStream {
   once(event: "end" | "error", listener: (error?: unknown) => void): unknown
 }
 
+interface DeflateOptions {
+  readonly finishFlush: number
+  readonly dictionary?: Uint8Array
+}
+
+/** The `node:zlib` calls the segmented lane needs. */
+interface SegmentCalls {
+  deflateRawSync(body: Uint8Array, options: DeflateOptions): Uint8Array
+  crc32(data: Uint8Array, value?: number): number
+}
+
 interface Zlib {
   createGzip(): GzipStream
   gzipSync?(body: string | Uint8Array): Uint8Array
   gzip?(body: string | Uint8Array, done: (error: Error | null, result: Uint8Array) => void): void
+  deflateRawSync?(body: Uint8Array, options: DeflateOptions): Uint8Array
+  deflateRaw?(
+    body: Uint8Array,
+    options: DeflateOptions,
+    done: (error: Error | null, result: Uint8Array) => void,
+  ): void
+  crc32?(data: Uint8Array, value?: number): number
   readonly constants: { readonly Z_SYNC_FLUSH: number }
 }
 
@@ -242,24 +247,49 @@ const isZlib = (value: unknown): value is Zlib =>
 
 let zlibLookup: { readonly zlib: Zlib | undefined } | undefined
 
-function zlibModule(): Zlib | undefined {
-  if (zlibLookup !== undefined) return zlibLookup.zlib
-  let zlib: Zlib | undefined
+function builtinModule(specifier: string): unknown {
   try {
     const proc: unknown = Reflect.get(globalThis, "process")
     const load: unknown =
       typeof proc === "object" && proc !== null ? Reflect.get(proc, "getBuiltinModule") : undefined
-    const module: unknown = typeof load === "function" ? load.call(proc, "node:zlib") : undefined
-    if (isZlib(module)) zlib = module
-  } catch {}
+    return typeof load === "function" ? load.call(proc, specifier) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function zlibModule(): Zlib | undefined {
+  if (zlibLookup !== undefined) return zlibLookup.zlib
+  const module = builtinModule("node:zlib")
+  const zlib = isZlib(module) ? module : undefined
   zlibLookup = { zlib }
   return zlib
 }
 
-/** Up to which length (UTF-16 units for a string) a buffered body is gzipped inline, then by one call. */
+type CompareBytes = (a: Uint8Array, b: Uint8Array) => number
+
+let compareLookup: { readonly compare: CompareBytes | undefined } | undefined
+
+/** `node:buffer`'s native compare: a JS loop took 7 us over a 16 KB prefix, this 0.35 us. */
+function bytesCompare(): CompareBytes | undefined {
+  if (compareLookup !== undefined) return compareLookup.compare
+  const module = builtinModule("node:buffer")
+  const buffer: unknown =
+    typeof module === "object" && module !== null ? Reflect.get(module, "Buffer") : undefined
+  const compare: unknown = typeof buffer === "function" ? Reflect.get(buffer, "compare") : undefined
+  compareLookup = {
+    compare:
+      typeof compare === "function" ? (a, b) => Reflect.apply(compare, buffer, [a, b]) : undefined,
+  }
+  return compareLookup.compare
+}
+
+/** Up to which length (UTF-16 units for a string) a buffered body is gzipped inline, then by one call;
+ * and whether a streamed body is gzipped by deflate segments rather than one sync-flushed stream. */
 export interface GzipPlan {
   readonly inlineMax: number
   readonly oneShotMax: number
+  readonly segments: boolean
 }
 
 /**
@@ -270,16 +300,26 @@ export interface GzipPlan {
  * process by ~250 MB, after which inline calls serve at 0.6x. Node never gzips inline (16 KB: 0.44x),
  * and its one-shot beats `CompressionStream` only up to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). These bodies
  * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
+ *
+ * A streamed page (a 16 KB shell, then three frames of 150-350 bytes; 64 connections) measured on Bun
+ * 178 us of CPU per response by segments against 250 us through `createGzip`, at 0.93x the requests
+ * per second, and 97 us at 1.08x with the shell's segment reused. Node's and Deno's native streams
+ * win there: segments cost them 1.12x and 1.10x the CPU at 0.90x and 0.92x the requests.
  */
 export function gzipPlanFor(runtime: {
   readonly Bun?: unknown
   readonly Deno?: unknown
 }): GzipPlan {
   if (runtime.Bun !== undefined)
-    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY }
-  if (runtime.Deno !== undefined)
-    return { inlineMax: Number.POSITIVE_INFINITY, oneShotMax: Number.POSITIVE_INFINITY }
-  return { inlineMax: -1, oneShotMax: 8 * 1024 }
+    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY, segments: true }
+  if (runtime.Deno !== undefined) {
+    return {
+      inlineMax: Number.POSITIVE_INFINITY,
+      oneShotMax: Number.POSITIVE_INFINITY,
+      segments: false,
+    }
+  }
+  return { inlineMax: -1, oneShotMax: 8 * 1024, segments: false }
 }
 
 /** Gzip a buffered body by `plan`, through `zlib` where it has the call, else `CompressionStream`. */
@@ -301,6 +341,170 @@ export function gzipBuffered(
 }
 
 let planLookup: GzipPlan | undefined
+
+/** Gzip the body `reader` reads so each chunk's bytes reach the client as soon as it arrives: by
+ * deflate segments read straight from `reader` where `plan` says so and `zlib` has the calls, else
+ * through one sync-flushed stream, else `CompressionStream`. */
+export function streamedGzip(
+  reader: RawReader,
+  zlib: Zlib | undefined,
+  plan: GzipPlan,
+  compare: CompareBytes | undefined,
+): ReadableStream<Uint8Array> {
+  if (zlib !== undefined && plan.segments && hasSegmentCalls(zlib)) {
+    return segmentedGzip(reader, zlib, plan, compare)
+  }
+  const source = new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read()
+        if (done || value === undefined) controller.close()
+        else controller.enqueue(value)
+      } catch (error) {
+        controller.error(error)
+      }
+    },
+    cancel: (reason) => reader.cancel(reason),
+  })
+  return zlib === undefined
+    ? source.pipeThrough(new CompressionStream("gzip"))
+    : syncFlushedGzip(zlib, source)
+}
+
+const hasSegmentCalls = (zlib: Zlib): zlib is Zlib & SegmentCalls =>
+  typeof zlib.deflateRawSync === "function" && typeof zlib.crc32 === "function"
+
+/** A gzip member's header: no name, time or flags. */
+const GZIP_HEADER = Uint8Array.of(0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff)
+
+/** How far back into the body a segment may refer. A page's 150-byte hole frame came to 142 bytes
+ * alone, 90 with 2 KB before it (7.5 us) and 88 with 8 KB (11.4 us). */
+const DICTIONARY_BYTES = 2 * 1024
+
+/** The compressed form of a repeated prefix's bytes, per source. */
+interface PrefixSegment {
+  readonly length: number
+  readonly segment: Uint8Array | Promise<Uint8Array>
+}
+/** A source seen once has no segment yet. */
+const prefixSegments = new WeakMap<
+  Uint8Array,
+  PrefixSegment | { readonly length: number; readonly segment: undefined }
+>()
+
+const NO_BYTES = new Uint8Array(0)
+
+/** The last `DICTIONARY_BYTES` of `window` followed by `chunk`, copied: the chunk is not ours to keep. */
+function slide(window: Uint8Array, chunk: Uint8Array): Uint8Array {
+  if (chunk.byteLength >= DICTIONARY_BYTES) return chunk.slice(chunk.byteLength - DICTIONARY_BYTES)
+  const kept = window.subarray(Math.max(0, window.byteLength + chunk.byteLength - DICTIONARY_BYTES))
+  const next = new Uint8Array(kept.byteLength + chunk.byteLength)
+  next.set(kept)
+  next.set(chunk, kept.byteLength)
+  return next
+}
+
+/**
+ * Gzip each upstream chunk as its own raw deflate segment ending in a sync flush, so the chunk's bytes
+ * go out at once. The segments join into one deflate stream, which an empty final block and the gzip
+ * trailer close. Each segment may refer back into the body's previous `DICTIONARY_BYTES`, so a small
+ * chunk after a large one compresses as it would in one stream. A chunk a producer marked with a
+ * repeated prefix (a cached page shell) reuses that prefix's segment once compressed, when `compare`
+ * shows the chunk still holds the prefix's bytes. Measured against `createGzip` in `gzipPlanFor`.
+ */
+function segmentedGzip(
+  reader: RawReader,
+  zlib: Zlib & SegmentCalls,
+  plan: GzipPlan,
+  compare: CompareBytes | undefined,
+): ReadableStream<Uint8Array> {
+  const flush = zlib.constants.Z_SYNC_FLUSH
+  let window: Uint8Array = NO_BYTES
+  let crc = 0
+  let size = 0
+  let started = false
+  const deflate = (bytes: Uint8Array, dictionary: Uint8Array): Uint8Array | Promise<Uint8Array> => {
+    const options: DeflateOptions =
+      dictionary.byteLength === 0 ? { finishFlush: flush } : { finishFlush: flush, dictionary }
+    const deflateRaw = zlib.deflateRaw
+    if (bytes.byteLength <= plan.inlineMax || deflateRaw === undefined) {
+      return zlib.deflateRawSync(bytes, options)
+    }
+    return new Promise((resolve, reject) => {
+      deflateRaw.call(zlib, bytes, options, (error, result) =>
+        error === null ? resolve(result) : reject(error),
+      )
+    })
+  }
+  /** The marked prefix's segment when `chunk` still holds the prefix's bytes, compressed on its second use. */
+  const prefixSegment = (chunk: Uint8Array): PrefixSegment | undefined => {
+    const prefix = repeatedPrefixOf(chunk)
+    if (
+      prefix === undefined ||
+      compare === undefined ||
+      compare(chunk.subarray(0, prefix.length), prefix.source.subarray(0, prefix.length)) !== 0
+    ) {
+      return undefined
+    }
+    const known = prefixSegments.get(prefix.source)
+    if (known?.length !== prefix.length) {
+      // From the second sight: a shell built for one response would pay a second deflate for nothing.
+      prefixSegments.set(prefix.source, { length: prefix.length, segment: undefined })
+      return undefined
+    }
+    if (known.segment !== undefined) return known
+    // By the same rule as any chunk: inline, a large prefix holds up every response on the loop.
+    // A response that meets the source meanwhile waits on the same segment.
+    const segment = deflate(prefix.source.subarray(0, prefix.length), NO_BYTES)
+    const entry = { length: prefix.length, segment }
+    prefixSegments.set(prefix.source, entry)
+    if (segment instanceof Promise) {
+      segment.catch(() => {
+        if (prefixSegments.get(prefix.source) === entry) prefixSegments.delete(prefix.source)
+      })
+    }
+    return entry
+  }
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      // A pull that enqueues nothing is not called again, so an empty chunk is read past here.
+      let read = await reader.read()
+      while (!read.done && read.value?.byteLength === 0) read = await reader.read()
+      const { done, value } = read
+      const parts: Uint8Array[] = started ? [] : [GZIP_HEADER]
+      started = true
+      if (done || value === undefined) {
+        const trailer = new Uint8Array(10)
+        trailer[0] = 3 // An empty final block with fixed codes: BFINAL, BTYPE 01, end of block.
+        const view = new DataView(trailer.buffer)
+        view.setUint32(2, crc >>> 0, true)
+        view.setUint32(6, size >>> 0, true)
+        parts.push(trailer)
+        controller.enqueue(concat(parts, total(parts)))
+        controller.close()
+        return
+      }
+      crc = zlib.crc32(value, crc)
+      size += value.byteLength
+      let rest = value
+      const prefix = prefixSegment(value)
+      if (prefix !== undefined) {
+        parts.push(await prefix.segment)
+        window = slide(window, value.subarray(0, prefix.length))
+        rest = value.subarray(prefix.length)
+      }
+      if (rest.byteLength > 0) {
+        parts.push(await deflate(rest, window))
+        window = slide(window, rest)
+      }
+      controller.enqueue(concat(parts, total(parts)))
+    },
+    cancel: (reason) => reader.cancel(reason),
+  })
+}
+
+const total = (parts: readonly Uint8Array[]): number =>
+  parts.reduce((sum, part) => sum + part.byteLength, 0)
 
 /** `CompressionStream` holds deflate output until its window fills or the input closes, so a
  * streamed shell would not reach the client until the whole page did. A sync flush after each
