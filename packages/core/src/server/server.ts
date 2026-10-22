@@ -689,13 +689,15 @@ function resolvedSource(req: Request, url: string): RequestSource {
 const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
 // `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every header.
-// A port past 65535 is refused as Node refuses it: no URL can be built on one, so resolving a dot
-// segment against it threw out of `fetch`.
+// A port past 65535, or an IPv6 literal no URL parser takes (`[1:2]`), is refused as Node refuses it:
+// no URL can be built on either, so resolving a dot segment against one threw out of `fetch`.
 const invalidHost = (req: Request): boolean => {
   const host = headerOf(req, "host")
   if (host === null) return false
   const authority = HOST_AUTHORITY.exec(host)
-  return authority === null || (authority[1] !== undefined && Number(authority[1]) > 65_535)
+  if (authority === null) return true
+  if (authority[1] !== undefined && Number(authority[1]) > 65_535) return true
+  return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
 }
 
 function normalizeMountPrefix(path: string): string {
@@ -3283,6 +3285,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, url), platform)
         req = rebuilt
       }
+    } else if (needsResolving(req.url) && invalidHost(req)) {
+      // Every other runtime parses the target, but Bun leaves it as sent when it cannot parse the Host
+      // (a port past 65535, an IPv6 literal it refuses, a space): `/users/../admin` arrives unresolved
+      // and would be routed raw. Refused as Node and Deno refuse that Host.
+      return jsonError(400, "invalid_host")
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
@@ -3791,6 +3798,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (rebuilt === undefined) return WS_PASS
         req = rebuilt
       }
+    } else if (needsResolving(req.url) && invalidHost(req)) {
+      return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
     platform = this.trustedPlatform(req, platform)

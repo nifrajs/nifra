@@ -154,16 +154,25 @@ export const INVALID_HOSTS: readonly string[] = [
   "x@y",
   "x\\users\\7#",
   "x:1/users/7#",
+  // Syntactically a Host, but no URL can be built on it: Bun then leaves the target unparsed.
+  "127.0.0.1:99999",
+  "[1:2]",
+  "a b",
 ]
 
-/** Each invalid Host whose request for `/posts` was answered by anything but a 400 or `GET /posts`. */
+/**
+ * Each invalid Host whose request for `/posts`, spelled plainly or through a dot segment, was answered
+ * by anything but a 400 or `GET /posts`.
+ */
 export async function invalidHostMismatches(port: number): Promise<string[]> {
   const mismatches: string[] = []
   for (const host of INVALID_HOSTS) {
-    const answer = await rawExchange(port, "GET", "/posts", undefined, host)
-    if (answer.status === 400) continue
-    if (answer.status === 200 && answer.body === JSON.stringify({ route: "GET /posts" })) continue
-    mismatches.push(`Host ${host}: got ${answer.status} ${answer.body}`)
+    for (const target of ["/posts", "/users/../posts"]) {
+      const answer = await rawExchange(port, "GET", target, undefined, host)
+      if (answer.status === 400) continue
+      if (answer.status === 200 && answer.body === JSON.stringify({ route: "GET /posts" })) continue
+      mismatches.push(`Host ${host} ${target}: got ${answer.status} ${answer.body}`)
+    }
   }
   return mismatches
 }
