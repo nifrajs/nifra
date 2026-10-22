@@ -359,11 +359,18 @@ function attachDenoWebSocket(
 ): void {
   const { handler, data, pubsub, maxPayloadBytes } = outcome
   const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => socket.send(payload)
+  // Deno's close event carries the peer's echo, without its reason; `close` is given the server's
+  // own close when the server closed first, as on Bun.
+  let sentClose: readonly [number, string] | undefined
+  const closeSocket = (code?: number, reason?: string): void => {
+    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+    socket.close(code, reason)
+  }
   const ws: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
     close: (code, reason) => {
       assertCloseArgs(code, reason)
-      socket.close(code, reason)
+      closeSocket(code, reason)
     },
     get readyState() {
       return socket.readyState
@@ -398,14 +405,15 @@ function attachDenoWebSocket(
     // `Deno.upgradeWebSocket` takes no size limit: Deno has buffered the whole message (up to its own
     // limit) by now, so this keeps an oversize one from the handler but cannot bound that buffer.
     if (maxPayloadBytes !== undefined && exceedsPayloadCap(payload, maxPayloadBytes)) {
-      socket.close(1009, "message too large")
+      closeSocket(1009, "message too large")
       return
     }
     safe(() => handler.message?.(ws, payload))
   })
   socket.addEventListener("close", (event) => {
     pubsub.unsubscribeAll(ws) // drop topic subscriptions so the registry never holds a dead socket
-    safe(() => handler.close?.(ws, event.code, event.reason))
+    const [code, reason] = sentClose ?? [event.code, event.reason]
+    safe(() => handler.close?.(ws, code, reason))
   })
   socket.addEventListener("error", (event) => reportError(event))
 }

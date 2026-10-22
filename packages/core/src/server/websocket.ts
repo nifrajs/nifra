@@ -213,6 +213,9 @@ export interface WebSocketHandler<
     issues: ReadonlyArray<StandardIssue>,
     raw: WebSocketData,
   ): MaybePromise<void>
+  /** The connection closed. `code` and `reason` are the server's own close when it closed first
+   * (`ws.close()`, or 1009 for a message over the cap), the peer's when the peer did, and 1006 when
+   * the connection dropped without a close frame. */
   close?(ws: NifraWebSocket<Data>, code: number, reason: string): MaybePromise<void>
   error?(ws: NifraWebSocket<Data>, error: unknown): MaybePromise<void>
 }
@@ -316,11 +319,18 @@ export function attachWebSocket<
     handler.transport,
     reportError,
   )
+  // The runtime's close event carries the peer's echo, which may drop the reason; `close` is given
+  // the server's own close when the server closed first, as on Bun.
+  let sentClose: readonly [number, string] | undefined
+  const closeSocket = (code?: number, reason?: string): void => {
+    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+    socket.close(code, reason)
+  }
   ws = {
     send,
     close: (code, reason) => {
       assertCloseArgs(code, reason)
-      socket.close(code, reason)
+      closeSocket(code, reason)
     },
     get readyState() {
       return socket.readyState
@@ -347,7 +357,7 @@ export function attachWebSocket<
     // The runtime hands over each message whole, so this bounds what reaches the handler, not what
     // the runtime buffered to deliver it.
     if (maxPayloadBytes !== undefined && exceedsPayloadCap(payload, maxPayloadBytes)) {
-      socket.close(1009, "message too large")
+      closeSocket(1009, "message too large")
       return
     }
     safe(() =>
@@ -362,7 +372,8 @@ export function attachWebSocket<
     "close",
     (event: { readonly code?: number; readonly reason?: string }) => {
       pubsub.unsubscribeAll(ws) // drop topic subscriptions so the registry never holds a dead socket
-      safe(() => handler.close?.(ws, event.code ?? 1005, event.reason ?? ""))
+      const [code, reason] = sentClose ?? [event.code ?? 1005, event.reason ?? ""]
+      safe(() => handler.close?.(ws, code, reason))
     },
   )
   socket.addEventListener("error", (event: unknown) => reportError(event))

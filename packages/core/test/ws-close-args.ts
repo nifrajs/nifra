@@ -1,10 +1,17 @@
 /**
- * One check of `ws.close()` arguments over a real socket, run by the Bun suite and by the Node
- * adapter's: a close RFC 6455 forbids throws a `RangeError` on every runtime, and the socket stays
- * open to answer and close cleanly afterwards. Bun and Deno used to send such a close on the wire,
- * Node's `ws` threw with the socket left half-open, and workerd threw. The file imports nothing:
- * each suite registers the route on its own app.
+ * Checks of `ws.close()` over a real socket, run by the Bun, Node and Deno suites.
+ *
+ * - A close RFC 6455 forbids throws a `RangeError` on every runtime, and the socket stays open to
+ *   answer and close cleanly afterwards. Bun and Deno used to send such a close on the wire, Node's
+ *   `ws` threw with the socket left half-open, and workerd threw.
+ * - The `close` callback is given the server's own close when the server closed first. Node, Deno
+ *   and workerd used to report the peer's echo, which drops the reason, and Node reported 1006 for
+ *   its own 1009.
+ *
+ * Each suite registers the routes on its own app. `node:net` is here because Bun, Node and Deno all
+ * provide it.
  */
+import { connect } from "node:net"
 
 interface CloseRoutable {
   ws(path: string, handler: object): unknown
@@ -73,4 +80,123 @@ export async function closeArgsAnswers(
   }
   socket.send(JSON.stringify(["4000", "ok"]))
   return { answers: messages, closed: await closed }
+}
+
+/** The closes `/report` is asked for. A close with no code is left out: Bun sends 1000 for it. */
+export const SERVER_CLOSES: readonly (readonly [number, string])[] = [
+  [4000, "bye"],
+  [1001, "going away"],
+  [3000, "é"],
+  [1000, ""],
+]
+
+/** The payload cap the `/report` app is built with. */
+export const REPORT_CAP = 32
+
+/** What `close` is given for each of {@link SERVER_CLOSES}, then for a message over the cap. */
+export const SERVER_CLOSE_REPORTS: readonly string[] = [
+  ...SERVER_CLOSES.map(([code, reason]) => `${code} ${reason}`),
+  "1009 message too large",
+]
+
+/**
+ * `/report` closes with the `[code, reason]` its message names. The returned function waits for the
+ * next `code reason` the route's `close` callback was given.
+ */
+export function closeReportRoute<App extends CloseRoutable>(app: App): () => Promise<string> {
+  const heard: string[] = []
+  let wake: (() => void) | undefined
+  app.ws("/report", {
+    message: (ws: ClosingSocket, data: unknown) => {
+      const [code, reason]: [number, string] = JSON.parse(String(data))
+      ws.close(code, reason)
+    },
+    close: (_ws: ClosingSocket, code: number, reason: string) => {
+      heard.push(`${code} ${reason}`)
+      wake?.()
+    },
+  })
+  return async () => {
+    while (heard.length === 0)
+      await new Promise<void>((resolve) => {
+        wake = resolve
+      })
+    return heard.shift() ?? ""
+  }
+}
+
+/** A masked client frame with a payload under 126 bytes. */
+function clientFrame(opcode: number, payload: Uint8Array): Uint8Array {
+  const mask = [1, 2, 3, 4]
+  const frame = new Uint8Array(6 + payload.length)
+  frame.set([0x80 | opcode, 0x80 | payload.length, ...mask])
+  payload.forEach((byte, i) => {
+    frame[6 + i] = byte ^ (mask[i % 4] ?? 0)
+  })
+  return frame
+}
+
+/**
+ * Send `message` to `/report` over a raw socket and answer the server's close with its code alone,
+ * as RFC 6455 section 5.5.1 has an endpoint echo it. A standard client may echo the reason too,
+ * which hid the reason a runtime lost.
+ */
+function rawReport(port: number, message: string): Promise<void> {
+  return new Promise((resolve) => {
+    const socket = connect(port, "127.0.0.1")
+    let pending = new Uint8Array(0)
+    let open = false
+    socket.on("connect", () => {
+      socket.write(
+        [
+          "GET /report HTTP/1.1",
+          "Host: 127.0.0.1",
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version: 13",
+          "",
+          "",
+        ].join("\r\n"),
+      )
+    })
+    socket.on("data", (chunk: Uint8Array) => {
+      const joined = new Uint8Array(pending.length + chunk.length)
+      joined.set(pending)
+      joined.set(chunk, pending.length)
+      pending = joined
+      if (!open) {
+        const end = new TextDecoder("latin1").decode(pending).indexOf("\r\n\r\n")
+        if (end < 0) return
+        open = true
+        pending = pending.subarray(end + 4)
+        socket.write(clientFrame(0x1, new TextEncoder().encode(message)))
+      }
+      // The server's frames here are unmasked and under 126 bytes.
+      while (pending.length >= 2 && pending.length >= 2 + ((pending[1] ?? 0) & 0x7f)) {
+        const length = (pending[1] ?? 0) & 0x7f
+        if (((pending[0] ?? 0) & 0x0f) === 0x8) {
+          socket.end(clientFrame(0x8, pending.subarray(2, Math.min(4, 2 + length))))
+        }
+        pending = pending.subarray(2 + length)
+      }
+    })
+    // Bun drops the connection for a message over the cap, which a client may see as a reset.
+    socket.on("error", () => {})
+    socket.on("close", () => resolve())
+  })
+}
+
+/** Each of {@link SERVER_CLOSES} on its own socket, then a message over the cap, as reported. */
+export async function closeReports(port: number, next: () => Promise<string>): Promise<string[]> {
+  const reports: string[] = []
+  const messages = [
+    ...SERVER_CLOSES.map((close) => JSON.stringify(close)),
+    "x".repeat(REPORT_CAP + 1),
+  ]
+  for (const message of messages) {
+    await rawReport(port, message)
+    reports.push(await next())
+  }
+  return reports
 }

@@ -3054,11 +3054,18 @@ function attachNodeWebSocket(
   const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => {
     if (typeof payload !== "string" || !writeTextFrame(ws, payload)) ws.send(payload)
   }
+  // `ws` reports the peer's echo, without its reason, and 1006 after failing a message over its own
+  // `maxPayload`; `close` is given the server's own close when the server closed first, as on Bun.
+  let sentClose: readonly [number, string] | undefined
+  const closeSocket = (code?: number, reason?: string): void => {
+    if (sentClose === undefined && ws.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+    ws.close(code, reason)
+  }
   const nifra: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
     close: (code, reason) => {
       assertCloseArgs(code, reason)
-      ws.close(code, reason)
+      closeSocket(code, reason)
     },
     get readyState() {
       return ws.readyState
@@ -3087,7 +3094,7 @@ function attachNodeWebSocket(
   }
   ws.on("message", (raw, isBinary) => {
     if (maxPayloadBytes !== undefined && raw.byteLength > maxPayloadBytes) {
-      ws.close(1009, "message too large")
+      closeSocket(1009, "message too large")
       return
     }
     const payload: NifraWsData = isBinary
@@ -3097,9 +3104,14 @@ function attachNodeWebSocket(
   })
   ws.on("close", (code, reason) => {
     pubsub.unsubscribeAll(nifra) // drop topic subscriptions so the registry never holds a dead socket
-    safe(() => handler.close?.(nifra, code, reason.toString()))
+    const [sentCode, sentReason] = sentClose ?? [code, reason.toString()]
+    safe(() => handler.close?.(nifra, sentCode, sentReason))
   })
-  ws.on("error", (error) => reportError(error))
+  ws.on("error", (error) => {
+    if ("code" in error && error.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH")
+      sentClose ??= [1009, "message too large"]
+    reportError(error)
+  })
   safe(() => handler.open?.(nifra)) // open: the socket is already established here
 }
 

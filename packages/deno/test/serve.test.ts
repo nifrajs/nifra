@@ -13,7 +13,11 @@ import {
 import {
   closeArgsAnswers,
   closeArgsRoute,
+  closeReportRoute,
+  closeReports,
   FORBIDDEN_CLOSES,
+  REPORT_CAP,
+  SERVER_CLOSE_REPORTS,
 } from "../../core/test/ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { serve } from "../src/index.ts"
@@ -354,6 +358,17 @@ Deno.test("a close RFC 6455 forbids throws a RangeError and leaves the socket op
       answers: FORBIDDEN_CLOSES.map(() => "range"),
       closed: { code: 4000, reason: "ok" },
     })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("close is given the server's own close when the server closed first", async () => {
+  const app = server({ wsMaxPayloadBytes: REPORT_CAP }).use(websocket())
+  const next = closeReportRoute(app)
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    assertEquals(await closeReports(running.port, next), [...SERVER_CLOSE_REPORTS])
   } finally {
     await running.stop({ drainMs: 0 })
   }

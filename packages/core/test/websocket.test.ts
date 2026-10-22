@@ -12,7 +12,15 @@ import {
 import { exceedsPayloadCap } from "../src/server/websocket.ts"
 // The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
 import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
-import { closeArgsAnswers, closeArgsRoute, FORBIDDEN_CLOSES } from "./ws-close-args.ts"
+import {
+  closeArgsAnswers,
+  closeArgsRoute,
+  closeReportRoute,
+  closeReports,
+  FORBIDDEN_CLOSES,
+  REPORT_CAP,
+  SERVER_CLOSE_REPORTS,
+} from "./ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "./ws-send-contract.ts"
 
 let running: RunningServer | undefined
@@ -305,6 +313,13 @@ describe("app.listen() WebSockets", () => {
       answers: FORBIDDEN_CLOSES.map(() => "range"),
       closed: { code: 4000, reason: "ok" },
     })
+  })
+
+  test("close is given the server's own close when the server closed first", async () => {
+    const app = server({ wsMaxPayloadBytes: REPORT_CAP }).use(websocket())
+    const next = closeReportRoute(app)
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    expect(await closeReports(running.port, next)).toEqual([...SERVER_CLOSE_REPORTS])
   })
 
   test("echo: open → welcome, message → echo", async () => {
@@ -769,6 +784,34 @@ describe("attachWebSocket", () => {
     expect(socket.closedWith).toBeUndefined()
     ws.close(1011, "é".repeat(61))
     expect(socket.closedWith).toEqual({ code: 1011, reason: "é".repeat(61) })
+  })
+
+  test("close is given the server's own close, not the peer's echo of it", () => {
+    const heard: string[] = []
+    const attach = (maxPayloadBytes?: number) => {
+      const socket = new FakeSocket()
+      const handler: WebSocketHandler = {
+        close: (_ws, code, reason) => {
+          heard.push(`${code} ${reason}`)
+        },
+      }
+      const ws = attachWebSocket(socket, handler, undefined, {
+        openNow: true,
+        pubsub: new TopicRegistry(),
+        maxPayloadBytes,
+      })
+      return { socket, ws }
+    }
+    const closing = attach()
+    closing.ws.close(4000, "bye")
+    // A runtime's close event carries the peer's echo, which repeats the code alone.
+    closing.socket.fire("close", { code: 4000, reason: "" })
+    const peer = attach()
+    peer.socket.fire("close", { code: 4001, reason: "peer" })
+    const capped = attach(4)
+    capped.socket.fire("message", { data: "12345" })
+    capped.socket.fire("close", { code: 1009, reason: "" })
+    expect(heard).toEqual(["4000 bye", "4001 peer", "1009 message too large"])
   })
 
   test("openNow fires open immediately; sets arraybuffer; send/close proxy", () => {
