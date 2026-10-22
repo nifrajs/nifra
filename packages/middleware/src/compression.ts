@@ -290,7 +290,6 @@ function bytesCompare(): CompareBytes | undefined {
 export interface GzipPlan {
   readonly inlineMax: number
   readonly oneShotMax: number
-  readonly segments: boolean
 }
 
 /**
@@ -302,26 +301,23 @@ export interface GzipPlan {
  * and its one-shot beats `CompressionStream` only up to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). These bodies
  * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
  *
- * A streamed page (a 16 KB shell, then three frames of 150-350 bytes; 64 connections) measured on Bun
- * 158 us of CPU per response by segments against 254 us through `createGzip`, at 1.10x the requests
- * per second, and 67 us at 1.32x with the shell's segment reused (37 us and 1.38x uncompressed).
- * Node's and Deno's native streams won there with zlib for every segment, which cost them 1.12x and
- * 1.10x the CPU at 0.90x and 0.92x the requests; not measured since small segments skip zlib.
+ * A streamed page (a 16 KB shell, then three frames of 150-350 bytes; 64 connections) is gzipped by
+ * segments on every runtime, against `createGzip` with a sync flush per chunk. CPU per response and
+ * the change in requests per second: Bun, the frames a timer tick apart, 158 against 254 us (1.10x),
+ * and 67 us (1.32x) with the shell's segment reused; Node and Deno, the chunks back to back, since
+ * Node's rate with the ticks follows its timer rather than its CPU, 160 against 260 us (1.62x) and
+ * 120 against 171 us (1.38x), and 61 us (1.96x) and 67 us (3.0x) reused.
  */
 export function gzipPlanFor(runtime: {
   readonly Bun?: unknown
   readonly Deno?: unknown
 }): GzipPlan {
   if (runtime.Bun !== undefined)
-    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY, segments: true }
+    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY }
   if (runtime.Deno !== undefined) {
-    return {
-      inlineMax: Number.POSITIVE_INFINITY,
-      oneShotMax: Number.POSITIVE_INFINITY,
-      segments: false,
-    }
+    return { inlineMax: Number.POSITIVE_INFINITY, oneShotMax: Number.POSITIVE_INFINITY }
   }
-  return { inlineMax: -1, oneShotMax: 8 * 1024, segments: false }
+  return { inlineMax: -1, oneShotMax: 8 * 1024 }
 }
 
 /** Gzip a buffered body by `plan`, through `zlib` where it has the call, else `CompressionStream`. */
@@ -345,15 +341,15 @@ export function gzipBuffered(
 let planLookup: GzipPlan | undefined
 
 /** Gzip the body `reader` reads so each chunk's bytes reach the client as soon as it arrives: by
- * deflate segments read straight from `reader` where `plan` says so and `zlib` has the calls, else
- * through one sync-flushed stream, else `CompressionStream`. */
+ * deflate segments read straight from `reader` where `zlib` has the calls (`zlib.crc32` is Node 22.2
+ * and later), else through one sync-flushed stream, else `CompressionStream`. */
 export function streamedGzip(
   reader: RawReader,
   zlib: Zlib | undefined,
   plan: GzipPlan,
   compare: CompareBytes | undefined,
 ): ReadableStream<Uint8Array> {
-  if (zlib !== undefined && plan.segments && hasSegmentCalls(zlib)) {
+  if (zlib !== undefined && hasSegmentCalls(zlib)) {
     return segmentedGzip(reader, zlib, plan, compare)
   }
   const source = new ReadableStream({

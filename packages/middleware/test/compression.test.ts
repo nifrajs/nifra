@@ -62,9 +62,9 @@ describe("buffered gzip lanes", () => {
   test("each runtime gets the lanes measured fastest for it", () => {
     const unbounded = Number.POSITIVE_INFINITY
     expect([gzipPlanFor({ Bun: {} }), gzipPlanFor({ Deno: {} }), gzipPlanFor({})]).toEqual([
-      { inlineMax: 4096, oneShotMax: unbounded, segments: true },
-      { inlineMax: unbounded, oneShotMax: unbounded, segments: false },
-      { inlineMax: -1, oneShotMax: 8192, segments: false },
+      { inlineMax: 4096, oneShotMax: unbounded },
+      { inlineMax: unbounded, oneShotMax: unbounded },
+      { inlineMax: -1, oneShotMax: 8192 },
     ])
   })
 
@@ -83,7 +83,7 @@ describe("buffered gzip lanes", () => {
         done(null, gzipSync(body))
       },
     }
-    const plan = { inlineMax: 2, oneShotMax: 4, segments: false }
+    const plan = { inlineMax: 2, oneShotMax: 4 }
     const inline = gzipBuffered("ab", plan, zlib)
     if (inline instanceof Promise)
       throw new Error("a body within inlineMax was gzipped off the loop")
@@ -121,7 +121,8 @@ const joined = (chunks: readonly Uint8Array[]): Buffer => Buffer.concat(chunks)
 const decodedSoFar = (received: readonly Uint8Array[]): Buffer =>
   gunzipSync(joined(received), { finishFlush: constants.Z_SYNC_FLUSH })
 const compare = (a: Uint8Array, b: Uint8Array): number => Buffer.compare(a, b)
-const SEGMENTS: GzipPlan = { inlineMax: 4096, oneShotMax: Number.POSITIVE_INFINITY, segments: true }
+const PLAN: GzipPlan = { inlineMax: 4096, oneShotMax: Number.POSITIVE_INFINITY }
+const { crc32: _crc32, ...noCrc } = zlib
 const text = (value: string): Uint8Array => new TextEncoder().encode(value)
 
 /** Read `stream` to its end: after each chunk the client can decode all it was sent, and the decoded
@@ -158,7 +159,7 @@ describe("streamed gzip lanes", () => {
       new Uint8Array(randomBytes(40_000)),
       text("!"),
     ]
-    const lane = streamedGzip(readerOf(sources), zlib, SEGMENTS, compare)
+    const lane = streamedGzip(readerOf(sources), zlib, PLAN, compare)
     const body = await readEachDecodes(lane, sources)
     // gunzip checks the trailer's CRC and length against what it decoded.
     expect(Buffer.compare(gunzipSync(body), joined(sources))).toBe(0)
@@ -167,7 +168,7 @@ describe("streamed gzip lanes", () => {
   test("a small chunk refers back into the bytes before it", async () => {
     const before = text(randomBytes(3000).toString("base64"))
     const again = before.subarray(before.byteLength - 1024)
-    const reader = streamedGzip(readerOf([before, again]), zlib, SEGMENTS, compare).getReader()
+    const reader = streamedGzip(readerOf([before, again]), zlib, PLAN, compare).getReader()
     const first = await reader.read()
     const second = await reader.read()
     if (first.done || second.done) throw new Error("ended early")
@@ -188,7 +189,7 @@ describe("streamed gzip lanes", () => {
     const noise = text(randomBytes(450).toString("base64"))
     const tiny = text(randomBytes(60).toString("base64"))
     const sources = [markup, text("<p>2 in cart</p>"), noise, tiny]
-    const lane = streamedGzip(readerOf(sources), counting, SEGMENTS, compare)
+    const lane = streamedGzip(readerOf(sources), counting, PLAN, compare)
     expect(Buffer.compare(gunzipSync(await readEachDecodes(lane, sources)), joined(sources))).toBe(
       0,
     )
@@ -197,7 +198,7 @@ describe("streamed gzip lanes", () => {
   })
 
   test("an empty body is a header and an empty final block", async () => {
-    const lane = streamedGzip(readerOf([new Uint8Array(0)]), zlib, SEGMENTS, compare)
+    const lane = streamedGzip(readerOf([new Uint8Array(0)]), zlib, PLAN, compare)
     const body = await new Response(lane).arrayBuffer()
     expect(gunzipSync(new Uint8Array(body)).byteLength).toBe(0)
   })
@@ -219,7 +220,7 @@ describe("streamed gzip lanes", () => {
       markRepeatedPrefix(first, shell, tokenAt)
       alter?.(first)
       const sources = [first, text("<script>frame</script></body></html>")]
-      const plan = { ...SEGMENTS, inlineMax: 1 << 20 }
+      const plan = { ...PLAN, inlineMax: 1 << 20 }
       const lane = streamedGzip(readerOf(sources), counting, plan, compare)
       const body = gunzipSync(await readEachDecodes(lane, sources))
       expect(Buffer.compare(body, joined(sources))).toBe(0)
@@ -239,12 +240,7 @@ describe("streamed gzip lanes", () => {
     late.set(text("EEEEEEEE"), tokenAt)
     markRepeatedPrefix(late, shell, tokenAt)
     const led = [text("<!doctype html>"), late]
-    const after = streamedGzip(
-      readerOf(led),
-      counting,
-      { ...SEGMENTS, inlineMax: 1 << 20 },
-      compare,
-    )
+    const after = streamedGzip(readerOf(led), counting, { ...PLAN, inlineMax: 1 << 20 }, compare)
     const ledBody = gunzipSync(new Uint8Array(await new Response(after).arrayBuffer()))
     expect(Buffer.compare(ledBody, joined(led))).toBe(0)
     expect(deflated).toEqual([])
@@ -255,7 +251,7 @@ describe("streamed gzip lanes", () => {
     const plain = streamedGzip(
       readerOf([unchecked]),
       counting,
-      { ...SEGMENTS, inlineMax: 1 << 20 },
+      { ...PLAN, inlineMax: 1 << 20 },
       undefined,
     )
     expect(gunzipSync(new Uint8Array(await new Response(plain).arrayBuffer()))).toEqual(
@@ -267,7 +263,7 @@ describe("streamed gzip lanes", () => {
   test("a prefix is compressed on its second sight, off the loop when large, once for the visits meanwhile; a failure is forgotten", async () => {
     const shell = text(`<html><body>${"<li>Recommended tea</li>".repeat(300)}`)
     const tokenAt = shell.byteLength - 8
-    expect(tokenAt).toBeGreaterThan(SEGMENTS.inlineMax)
+    expect(tokenAt).toBeGreaterThan(PLAN.inlineMax)
     const held: Array<() => void> = []
     const lengths: number[] = []
     let onCall: () => void = () => {}
@@ -305,7 +301,7 @@ describe("streamed gzip lanes", () => {
       first.set(text(token), tokenAt)
       markRepeatedPrefix(first, source, tokenAt)
       const sources = [first, text("</body></html>")]
-      const lane = streamedGzip(readerOf(sources), offLoop, SEGMENTS, counted)
+      const lane = streamedGzip(readerOf(sources), offLoop, PLAN, counted)
       return { sources, body: new Response(lane).arrayBuffer() }
     }
     /** One visit whose deflate fails when `failing`; its error, or undefined once it decoded. */
@@ -367,7 +363,7 @@ describe("streamed gzip lanes", () => {
     const inlined = text(randomBytes(900).toString("base64"))
     const large = text(randomBytes(1500).toString("base64"))
     expect(inlined.byteLength).toBeGreaterThan(FIXED_DEFLATE_MAX)
-    const plan = { ...SEGMENTS, inlineMax: inlined.byteLength }
+    const plan = { ...PLAN, inlineMax: inlined.byteLength }
     const ok = streamedGzip(readerOf([inlined, large]), offLoop, plan, compare)
     expect(
       Buffer.compare(
@@ -397,15 +393,12 @@ describe("streamed gzip lanes", () => {
     expect(String(settled)).toContain("zlib failed")
   })
 
-  test("without segments in the plan or the calls they need, one sync-flushed stream", async () => {
+  test("without the calls segments need, one sync-flushed stream", async () => {
     const sources = [text(`<p>${"x".repeat(3000)}</p>`), text("<p>frame</p>")]
-    const { crc32: _, ...noCrc } = zlib
-    for (const [lane, plan] of [
-      [zlib, { ...SEGMENTS, segments: false }],
-      [noCrc, SEGMENTS],
-    ] as const) {
+    const { deflateRawSync: _, ...noDeflateRaw } = zlib
+    for (const lane of [noCrc, noDeflateRaw]) {
       const body = await readEachDecodes(
-        streamedGzip(readerOf(sources), lane, plan, compare),
+        streamedGzip(readerOf(sources), lane, PLAN, compare),
         sources,
       )
       expect(Buffer.compare(gunzipSync(body), joined(sources))).toBe(0)
@@ -413,7 +406,7 @@ describe("streamed gzip lanes", () => {
   })
 
   test("cancelling either lane's body cancels the upstream", async () => {
-    for (const plan of [SEGMENTS, { ...SEGMENTS, segments: false }]) {
+    for (const lane of [zlib, noCrc]) {
       let cancelled: unknown
       const upstream = {
         read: () => Promise.resolve({ done: false, value: text("<p>page</p>") }),
@@ -421,7 +414,7 @@ describe("streamed gzip lanes", () => {
           cancelled = reason
         },
       }
-      const reader = streamedGzip(upstream, zlib, plan, compare).getReader()
+      const reader = streamedGzip(upstream, lane, PLAN, compare).getReader()
       await reader.read()
       await reader.cancel("left")
       expect(cancelled).toBe("left")
@@ -430,14 +423,14 @@ describe("streamed gzip lanes", () => {
 
   test("without zlib, CompressionStream; an upstream failure errors the body", async () => {
     const sources = [text("<p>page</p>"), text("<p>frame</p>")]
-    const lane = streamedGzip(readerOf(sources), undefined, SEGMENTS, compare)
+    const lane = streamedGzip(readerOf(sources), undefined, PLAN, compare)
     const body = gunzipSync(new Uint8Array(await new Response(lane).arrayBuffer()))
     expect(Buffer.compare(body, joined(sources))).toBe(0)
     const failing = {
       read: () => Promise.reject(new Error("upstream failed")),
       cancel: async () => {},
     }
-    const broken = streamedGzip(failing, zlib, { ...SEGMENTS, segments: false }, compare)
+    const broken = streamedGzip(failing, noCrc, PLAN, compare)
     const settled = await new Response(broken).arrayBuffer().then(
       () => undefined,
       (error: unknown) => error,
