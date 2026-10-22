@@ -1834,3 +1834,49 @@ describe("fetchers (concurrent)", () => {
     }
   })
 })
+
+describe("a page whose holes are hosts a partially prerendered document filled", () => {
+  test("an action's revalidation and an invalidation reload them as fills; a navigation does not", async () => {
+    const purposes: unknown[] = []
+    const hosts = {
+      cart: {
+        name: "cart",
+        mode: "dynamic" as const,
+        status: "pending" as const,
+        ppr: true as const,
+      },
+    }
+    const r = createClientRouter({
+      patterns: [{ routeId: "p", pattern: "/p/:id" }],
+      initial: {
+        routeId: "p",
+        params: { id: "1" },
+        path: "/p/1",
+        data: null,
+        pending: false,
+        boundaries: hosts,
+      },
+      fetchData: async (_path, _match, _signal, _navigation, purpose) => {
+        purposes.push(purpose)
+        return { v: 1, data: null, boundaries: hosts }
+      },
+    })
+    const spy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async () =>
+          new Response(JSON.stringify({ added: true }), {
+            headers: { "content-type": "application/json" },
+          }),
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      await r.submit("/p/1", new URLSearchParams({ op: "add" }))
+      await r.invalidate()
+      await r.navigate("/p/2")
+    } finally {
+      spy.mockRestore()
+    }
+    expect(purposes).toEqual(["refill", "refill", undefined])
+  })
+})

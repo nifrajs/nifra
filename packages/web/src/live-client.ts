@@ -10,6 +10,8 @@
  * Query hooks that name live keys refetch on the same changes: each load carries a salted digest of
  * every key it grants, and the client matches the keys the page's queries name against them.
  */
+
+import type { BoundaryState, BoundaryStates } from "./boundary.ts"
 import {
   advanceLiveTick,
   clearQueryClients,
@@ -24,9 +26,11 @@ import {
   type ClientRouter,
   DATA_HEADER,
   type FetchRouteData,
+  HOLE_FILL_HEADER,
   isRouteDataEnvelope,
   NAV_FROM_HEADER,
   RETAIN_HEADER,
+  type RouteDataEnvelope,
   routeDataOf,
 } from "./router.ts"
 
@@ -66,20 +70,25 @@ const MAX_SPREAD_MS = 5_000
 const PAGE = "page"
 const SID = /^[0-9a-f]{32}$/
 
-/** What a live load handed the router, carried in its state beside the data it loaded. */
+/**
+ * What a live load handed the router, carried in its state beside the data it loaded. A load whose
+ * holes were still loading gets its grant after them: until then `trailing` is set and the fields the
+ * envelope fills are empty.
+ */
 interface Loaded {
   readonly routeId: string
   /** The socket id the grant is bound to. */
   readonly sid: string
-  readonly grant: string | undefined
+  grant: string | undefined
   /** Wire tag to the owners in this load that watch its key. */
-  readonly tags: ReadonlyMap<string, readonly string[]>
+  tags: ReadonlyMap<string, readonly string[]>
   /** Client clock, in ms. */
-  readonly expiresAt: number
-  readonly ttlMs: number
+  expiresAt: number
+  ttlMs: number
   /** The live tick its response arrived at. */
   readonly tick: number
-  readonly query: QueryKeys | undefined
+  query: QueryKeys | undefined
+  trailing: boolean
 }
 
 /** What a load tells query hooks about the keys it grants. */
@@ -100,6 +109,7 @@ interface Intent {
   /** What is on screen now: the copies a retained owner keeps. */
   readonly data: unknown
   readonly layoutData: readonly unknown[] | undefined
+  readonly boundaries: BoundaryStates | undefined
 }
 
 /** A load on screen: the page, or the target an intercept boundary holds. */
@@ -180,14 +190,38 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
   const warned = new Set<string>()
   let unwatchQueries: (() => void) | undefined
 
-  const ownersOf = (routeId: string): string[] => [
-    ...(layoutIdsOf[routeId] ?? []).map((id) => `L:${id}`),
-    `P:${routeId}`,
-  ]
+  /** The owners a load of `routeId` may keep: its layouts, its page and the holes `shown` holds. */
+  const ownersOf = (routeId: string, shown: BoundaryStates | undefined): string[] => {
+    const owners = [...(layoutIdsOf[routeId] ?? []).map((id) => `L:${id}`), `P:${routeId}`]
+    for (const state of Object.values(shown ?? {}))
+      if (state.mode === "dynamic" || state.mode === "shared")
+        owners.push(`B:${state.name}:${routeId}`)
+    return owners
+  }
+
+  /** A load's envelope written into its handle; a new viewer clears what the last one cached. */
+  const settleLoaded = (loaded: Loaded, live: ServerEnvelope | undefined): void => {
+    loaded.trailing = false
+    if (live === undefined) return
+    const last = subjects
+    if (last !== undefined && !live.subjects.some((tag) => last.includes(tag))) {
+      switched = true
+      // Nothing a query loaded for the last viewer may show to this one.
+      clearQueryClients()
+    }
+    subjects = live.subjects
+    loaded.grant = live.grant
+    loaded.tags = new Map(Object.entries(live.tags ?? {}))
+    loaded.expiresAt =
+      live.ttl === undefined ? Number.POSITIVE_INFINITY : Date.now() + live.ttl * 1000
+    loaded.ttlMs = live.ttl === undefined ? Number.POSITIVE_INFINITY : live.ttl * 1000
+    loaded.query = live.query
+  }
 
   /** A plain data GET: the router's own transport, for a navigation the live endpoint turned away. */
-  const plainLoad: FetchRouteData = async (path, _match, signal, navigation) => {
+  const plainLoad: FetchRouteData = async (path, _match, signal, navigation, purpose) => {
     const headers = new Headers({ [DATA_HEADER]: "1" })
+    if (purpose === "refill") headers.set(HOLE_FILL_HEADER, "1")
     if (navigation !== undefined && navigation.retain.length > 0) {
       headers.set(RETAIN_HEADER, navigation.retain.join(","))
       headers.set(NAV_FROM_HEADER, navigation.from)
@@ -195,7 +229,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     return routeDataOf(await send(appUrl(path), { headers, signal: signal ?? null }), path, signal)
   }
 
-  const fetchData: FetchRouteData = async (path, match, signal, navigation) => {
+  const fetchData: FetchRouteData = async (path, match, signal, navigation, purpose) => {
     // Read before anything awaits: the client's own reload calls the router, which calls here at once.
     const own = intent?.path === path ? intent : undefined
     if (own !== undefined) intent = undefined
@@ -224,49 +258,76 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
         mode: own?.mode ?? "load",
         retain: grant === undefined ? [] : retain,
         grants: grant === undefined ? [] : [grant],
+        fill: purpose === "refill" || undefined,
       }),
       signal: signal ?? null,
     })
     if (res.status === 503) {
       await res.body?.cancel()
       // Admission bounds reloads; a navigation the user asked for is not held behind it.
-      if (own === undefined) return plainLoad(path, match, signal, navigation)
+      if (own === undefined) return plainLoad(path, match, signal, navigation, purpose)
       throw new Error(`[nifra/web] live load busy: ${path}`)
     }
     const payload = await routeDataOf(res, path, signal)
     if (!isRouteDataEnvelope(payload)) return payload
-    const live = envelopeOf(payload.live)
-    if (live === undefined) return { ...payload, live: undefined }
-    const last = subjects
-    if (last !== undefined && !live.subjects.some((tag) => last.includes(tag))) {
-      switched = true
-      // Nothing a query loaded for the last viewer may show to this one.
-      clearQueryClients()
-    }
-    subjects = live.subjects
+    const kept = own === undefined || grant === undefined ? payload : keptBy(payload, own)
     const loaded: Loaded = {
       routeId: match.routeId,
       sid: bound,
-      grant: live.grant,
-      tags: new Map(Object.entries(live.tags ?? {})),
-      expiresAt: live.ttl === undefined ? Number.POSITIVE_INFINITY : Date.now() + live.ttl * 1000,
-      ttlMs: live.ttl === undefined ? Number.POSITIVE_INFINITY : live.ttl * 1000,
+      grant: undefined,
+      tags: new Map(),
+      expiresAt: Number.POSITIVE_INFINITY,
+      ttlMs: Number.POSITIVE_INFINITY,
       tick: advanceLiveTick(),
-      query: live.query,
+      query: undefined,
+      trailing: false,
     }
+    const trailing = deferredOf(payload.live)
+    if (trailing !== undefined) {
+      // The grant follows the holes: the frame waits for it, then watches or polls as any other.
+      loaded.trailing = true
+      issued.set(loaded, loaded)
+      trailing.then(
+        (value) => granted(loaded, envelopeOf(value)),
+        () => granted(loaded, undefined),
+      )
+      return { ...kept, live: loaded }
+    }
+    const live = envelopeOf(payload.live)
+    if (live === undefined) return { ...kept, live: undefined }
+    settleLoaded(loaded, live)
     issued.set(loaded, loaded)
-    if (own === undefined || grant === undefined) return { ...payload, live: loaded }
-    // The server kept what was offered and is still current: show the copies already on screen.
-    const kept = new Set(payload.retained ?? [])
+    // The page loader did not run: show the copy already on screen.
+    if (own !== undefined && grant !== undefined && live.page === "retained")
+      return { ...kept, data: own.data, live: loaded }
+    return { ...kept, live: loaded }
+  }
+
+  /** What the server kept of what was offered, and is still current: the copies already on screen. */
+  const keptBy = (payload: RouteDataEnvelope, own: Intent): RouteDataEnvelope => {
+    const retained = new Set(payload.retained ?? [])
     const shown = own.layoutData
+    let boundaries = payload.boundaries
+    for (const [name, state] of Object.entries(payload.boundaries ?? {})) {
+      const held = own.boundaries?.[name]
+      if (state.kept !== true || held === undefined) continue
+      boundaries = { ...boundaries, [name]: held satisfies BoundaryState }
+    }
+    const layoutData = payload.layoutData?.map((value, index) =>
+      retained.has(index) && shown !== undefined && index < shown.length ? shown[index] : value,
+    )
     return {
       ...payload,
-      data: live.page === "retained" ? own.data : payload.data,
-      layoutData: payload.layoutData?.map((value, index) =>
-        kept.has(index) && shown !== undefined && index < shown.length ? shown[index] : value,
-      ),
-      live: loaded,
+      ...(layoutData === undefined ? {} : { layoutData }),
+      ...(boundaries === undefined ? {} : { boundaries }),
     }
+  }
+
+  /** A trailing grant arrived, or will not: the frame holding `loaded` watches or polls from now. */
+  const granted = (loaded: Loaded, live: ServerEnvelope | undefined): void => {
+    settleLoaded(loaded, live)
+    for (const frame of frames) if (frame.loaded === loaded) frame.renewAt = renewAtOf(loaded)
+    reconcile()
   }
 
   // --- On screen -----------------------------------------------------------------------------------
@@ -311,13 +372,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       loading: false,
       failures: 0,
       retryAt: 0,
-      // A minute early, less up to 30 s of jitter; a short grant renews a third of its life early.
-      renewAt:
-        loaded === undefined
-          ? Number.POSITIVE_INFINITY
-          : loaded.expiresAt -
-            Math.min(RENEW_BEFORE_MS, loaded.ttlMs / 3) -
-            Math.random() * Math.min(RENEW_JITTER_MS, loaded.ttlMs / 6),
+      renewAt: loaded === undefined ? Number.POSITIVE_INFINITY : renewAtOf(loaded),
       pollAt: now + jittered(POLL_MS * 2 ** Math.min(pollFailures.get(path) ?? 0, 4), MAX_POLL_MS),
     }
   }
@@ -353,8 +408,13 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     // Nothing to watch let the last socket go; a frame that now holds a tag opens the next.
     if (ws === undefined && reconnect === undefined && wantsSocket()) connect()
     for (const frame of frames) {
-      // No grant to watch by yet: load one once the socket can take it.
-      if (!watchable(frame) && sid !== undefined && !tried.has(`${sid}\n${frame.path}`)) {
+      // No grant to watch by yet: load one once the socket can take it. A trailing one is on its way.
+      if (
+        !watchable(frame) &&
+        frame.loaded?.trailing !== true &&
+        sid !== undefined &&
+        !tried.has(`${sid}\n${frame.path}`)
+      ) {
         tried.add(`${sid}\n${frame.path}`)
         frame.whole = true
         // A new socket is a new chance: no backoff carries over, only the spread it was given.
@@ -400,6 +460,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
   const wakeOf = (frame: Frame): number => {
     let due: number
     if (frame.whole || frame.dirty.size > 0) due = 0
+    // Its grant trails the holes still loading; it arrives with or without one, and runs this again.
+    else if (frame.loaded?.trailing === true) due = Number.POSITIVE_INFINITY
     // A renewal waits for the pending watch's `ready`, which runs this again.
     else if (watchable(frame))
       due = frame.pending === undefined ? frame.renewAt : Number.POSITIVE_INFINITY
@@ -434,9 +496,12 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       retain:
         held === undefined || mode === "renew"
           ? []
-          : ownersOf(frame.routeId).filter((owner) => !frame.dirty.has(owner)),
+          : ownersOf(frame.routeId, page ? state.boundaries : undefined).filter(
+              (owner) => !frame.dirty.has(owner),
+            ),
       data: page ? state.data : state.boundaries?.[frame.slot]?.data,
       layoutData: page ? state.layoutData : undefined,
+      boundaries: page ? state.boundaries : undefined,
     }
     frame.loading = true
     frame.whole = false
@@ -877,6 +942,18 @@ function envelopeOf(value: unknown): ServerEnvelope | undefined {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** A minute before `loaded` expires, less up to 30 s of jitter; a short grant renews a third early. */
+const renewAtOf = (loaded: Loaded): number =>
+  loaded.expiresAt -
+  Math.min(RENEW_BEFORE_MS, loaded.ttlMs / 3) -
+  Math.random() * Math.min(RENEW_JITTER_MS, loaded.ttlMs / 6)
+
+/** The promise of a value the NDJSON stream settles later, as the data reader marks one. */
+const deferredOf = (value: unknown): Promise<unknown> | undefined =>
+  isRecord(value) && value.__nifra_deferred === true && value.promise instanceof Promise
+    ? value.promise
+    : undefined
 
 /** `ms` spread over +/-20%, capped. */
 const jittered = (ms: number, max: number): number =>

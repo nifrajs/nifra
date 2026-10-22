@@ -197,9 +197,10 @@ describe("PPR shared holes", () => {
       v: 1,
       html: '<p data-prefix="nifra-price-">price:{"amount":12}</p>',
     })
-    // The loader gets the shell's context: no request, cookies, env or draft.
+    // The loader gets the shell's context and its own key collector: no request, cookies, env or draft.
     expect(Object.keys(contexts[0] ?? {}).sort()).toEqual([
       "api",
+      "live",
       "locale",
       "params",
       "phase",

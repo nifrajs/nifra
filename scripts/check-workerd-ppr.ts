@@ -17,7 +17,7 @@ const WAIT_MS = 7_000
 const IDENTITY = { "accept-encoding": "identity" }
 
 interface Probe {
-  readonly builds: Readonly<Record<string, number>>
+  readonly builds: Readonly<Record<"a" | "b" | "c", number>>
   readonly shellContexts: readonly unknown[]
   readonly holeStarts: number
   readonly holeAborts: number
@@ -28,7 +28,8 @@ function check(step: string, ok: boolean, detail: unknown): void {
   if (!ok) throw new Error(`${step}: ${JSON.stringify(detail)}`)
 }
 
-const probeOf = async (origin: string): Promise<Probe> => (await fetch(`${origin}/__probe`)).json()
+const probeOf = async (origin: string): Promise<Probe> =>
+  JSON.parse(await (await fetch(`${origin}/__probe`)).text())
 
 /** Polls the probe until `done` holds for it, for at most {@link WAIT_MS}. */
 async function until(
@@ -50,7 +51,7 @@ async function readUntil(
   step: string,
   body: ReadableStream<Uint8Array> | null,
   done: (text: string) => boolean,
-): Promise<{ text: string; reader: ReadableStreamDefaultReader<Uint8Array> }> {
+) {
   if (body === null) throw new Error(`${step}: no body`)
   const reader = body.getReader()
   const decoder = new TextDecoder()

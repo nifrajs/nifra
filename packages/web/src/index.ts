@@ -30,6 +30,7 @@ export {
   resolveDynamicBoundaries,
   resolveStaticBoundaries,
   type SharedBoundary,
+  type SharedHoleCtx,
   type ShellCtx,
   type StaticBoundary,
   type StaticBoundaryCache,

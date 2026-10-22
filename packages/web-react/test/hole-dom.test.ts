@@ -41,6 +41,13 @@ interface Fill {
   readonly error: boolean
 }
 
+/** A data request's fill: the frame's JSON. */
+interface Frame {
+  readonly html: string
+  readonly props?: unknown
+  readonly error?: true
+}
+
 /** A stand-in for the shell's inline runtime: the fills it holds and who waits for one. */
 function runtime(fills: Record<string, Fill> = {}) {
   const waiting = new Map<string, (fill: Fill) => void>()
@@ -54,6 +61,12 @@ function runtime(fills: Record<string, Fill> = {}) {
         unsubscribed.push(name)
       }
     },
+    put(name: string, frame: Frame, host: Element) {
+      host.innerHTML = frame.html
+      if (frame.error === true) host.setAttribute("data-nifra-hole-error", "")
+      else host.removeAttribute("data-nifra-hole-error")
+      fills[name] = { props: frame.props, error: frame.error === true }
+    },
   })
   Reflect.set(globalThis, "__nifraPpr", api)
   return { waiting, unsubscribed }
@@ -66,6 +79,34 @@ function Counter(props: { readonly start: number }): ReactNode {
     { type: "button", onClick: () => setCount(count + 1) },
     `cart ${count}`,
   )
+}
+
+/** Shows the props it was given beside a click count only the component holds. */
+function Tally(props: { readonly count: number }): ReactNode {
+  const [clicks, setClicks] = useState(0)
+  return createElement(
+    "button",
+    { type: "button", onClick: () => setClicks(clicks + 1) },
+    `cart ${props.count} clicked ${clicks}`,
+  )
+}
+
+const tally: HoleDefinition<{ readonly count: number }> = {
+  name: "cart",
+  interactive: true,
+  render: (data) => createElement(Tally, { count: data.count }),
+}
+
+/** A deferred fill, settled by the test as the NDJSON stream would. */
+function deferredFill() {
+  let resolve: (frame: Frame) => void = () => {}
+  let reject: (error: Error) => void = () => {}
+  const promise = new Promise<Frame>((settle, fail) => {
+    resolve = settle
+    reject = fail
+  })
+  promise.catch(() => {})
+  return { fill: { __nifra_deferred: true, id: 0, promise }, resolve, reject, promise }
 }
 
 const cart: HoleDefinition<{ readonly count: number }> = {
@@ -106,6 +147,23 @@ async function hydratePage(
   if (root === undefined) throw new Error("no root")
   return { host, root, container }
 }
+
+/** The page re-rendered with a reloaded state for its hole, as the router publishes it. */
+const reload = async (root: Root, of: HoleDefinition<{ readonly count: number }>, fill: unknown) =>
+  act(async () => {
+    root.render(
+      createElement(Hole<{ readonly count: number }>, {
+        of,
+        state: { status: "pending", ppr: true, fill },
+      }),
+    )
+  })
+
+/** Lets a settled fill's promise reactions, and the renders they start, run. */
+const settle = async (promise: Promise<unknown>) =>
+  act(async () => {
+    await promise.catch(() => {})
+  })
 
 /** Unmounts a page, then waits the task a hole's own root takes to unmount after it. */
 const unmount = async (root: Root | undefined) => {
@@ -193,6 +251,70 @@ describe("Hole in the browser", () => {
       console.error = error
     }
   })
+  test("a refill re-renders an interactive root with new props and keeps its state; an older one is dropped", async () => {
+    runtime({ cart: { props: { count: 2 }, error: false } })
+    const { host, root } = await hydratePage(tally, { count: 2 })
+    await click(host)
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    const first = deferredFill()
+    await reload(root, tally, first.fill)
+    // The old content stays while the refill is in flight.
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("true")
+    first.resolve({ html: "<button>cart 7 clicked 0</button>", props: { count: 7 } })
+    await settle(first.promise)
+    expect(host.textContent).toBe("cart 7 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("false")
+
+    const older = deferredFill()
+    const newer = deferredFill()
+    await reload(root, tally, older.fill)
+    await reload(root, tally, newer.fill)
+    newer.resolve({ html: "", props: { count: 9 } })
+    await settle(newer.promise)
+    older.resolve({ html: "", props: { count: 8 } })
+    await settle(older.promise)
+    expect(host.textContent).toBe("cart 9 clicked 1")
+    await unmount(root)
+  })
+
+  test("a refill replaces a server-only host's HTML, and a failed one shows the error slot", async () => {
+    runtime({ cart: { error: false } })
+    const inert = { ...cart, interactive: false }
+    const { host, root } = await hydratePage(inert, { count: 1 })
+    expect(host.textContent).toBe("cart 1")
+    await reload(root, inert, { html: "<p>cart 4</p>" })
+    await settle(Promise.resolve())
+    expect(host.innerHTML).toBe("<p>cart 4</p>")
+
+    const failed = deferredFill()
+    await reload(root, inert, failed.fill)
+    failed.reject(new Error("deferred_error"))
+    await settle(failed.promise)
+    expect(host.textContent).toBe("This section is unavailable.")
+    expect(host.hasAttribute("data-nifra-hole-error")).toBe(true)
+    await unmount(root)
+  })
+
+  test("an interactive hole whose refill errors loses its root, and the next refill hydrates a new one", async () => {
+    runtime({ cart: { props: { count: 2 }, error: false } })
+    const { host, root } = await hydratePage(tally, { count: 2 })
+    await click(host)
+    await reload(root, tally, { html: "<p>unavailable</p>", error: true })
+    await settle(Promise.resolve())
+    expect(host.innerHTML).toBe("<p>unavailable</p>")
+    const served = server.renderToString(tally.render({ count: 3 }), {
+      identifierPrefix: "nifra-cart-",
+    })
+    await reload(root, tally, { html: served, props: { count: 3 } })
+    await settle(Promise.resolve())
+    expect(host.textContent).toBe("cart 3 clicked 0")
+    expect(host.hasAttribute("data-nifra-hole-error")).toBe(false)
+    await click(host)
+    expect(host.textContent).toBe("cart 3 clicked 1")
+    await unmount(root)
+  })
+
   test("the browser checks' product page hydrates its interactive cart hole", async () => {
     const page = await import("../../web/test/fixtures/ppr/app/routes/p/[id].tsx")
     const states = (cart: {

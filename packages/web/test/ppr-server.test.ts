@@ -56,7 +56,7 @@ const hole = (
   ...extra,
 })
 
-const holeContext: Omit<BoundaryRequestCtx, "signal"> = {
+const holeContext: Omit<BoundaryRequestCtx, "signal" | "live"> = {
   request: new Request("https://shop.test/p/1"),
   params: { id: "1" },
   api: undefined,

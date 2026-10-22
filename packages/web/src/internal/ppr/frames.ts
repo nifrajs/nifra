@@ -14,6 +14,11 @@ export type HoleOutcome =
   | { readonly html: string; readonly props?: unknown; readonly error?: undefined }
   | { readonly html: string; readonly error: true }
 
+/** A frame's JSON, as the runtime reads it to fill a host. */
+export type HoleFrameBody =
+  | { readonly v: 1; readonly html: string; readonly props?: unknown; readonly error?: undefined }
+  | { readonly v: 1; readonly html: string; readonly error: true }
+
 export const assertHoleName = (name: string): void => {
   if (!HOLE_NAME.test(name)) {
     throw new TypeError(
@@ -41,7 +46,7 @@ const scriptJson = (value: unknown): string =>
  * encoded frame exceeds `maxBytes`.
  */
 export function encodeHoleFrame(name: string, outcome: HoleOutcome, maxBytes: number): string {
-  const body =
+  const body: HoleFrameBody =
     outcome.error === true
       ? { v: 1, error: true, html: outcome.html }
       : outcome.props === undefined
@@ -57,6 +62,16 @@ export function encodeHoleFrame(name: string, outcome: HoleOutcome, maxBytes: nu
     throw new RangeError(`[nifra/web] ppr: hole "${name}" frame exceeds ${maxBytes} bytes`)
   }
   return frame
+}
+
+/**
+ * The JSON of a frame {@link encodeHoleFrame} wrote: what a data request sends to refill a host. The
+ * opening tag holds no `>` before its end, and the escaped JSON no `</script>`.
+ */
+export function frameBodyOf(frame: string): HoleFrameBody {
+  const start = frame.indexOf(">") + 1
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: encodeHoleFrame wrote this JSON from a HoleFrameBody.
+  return JSON.parse(frame.slice(start, frame.indexOf("</script>", start))) as HoleFrameBody
 }
 
 /**

@@ -1096,3 +1096,125 @@ test("a load whose query member is malformed is no live load: nothing is watched
   expect(r.socket().watches()).toEqual([])
   r.stop()
 })
+
+// --- Holes of a partially prerendered page --------------------------------------------------------
+
+const CART = "B:cart:posts/[id]"
+const PRICE = "B:price:posts/[id]"
+
+/**
+ * A live load endpoint for a page whose holes are hosts: every answer streams, its holes' fills and
+ * then its grant as deferred lines the test sends, and the second keeps `price`.
+ */
+function holeServer() {
+  const loads: (LoadBody & { readonly fill?: boolean })[] = []
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  const fetch = async (_input: string, init: RequestInit): Promise<Response> => {
+    const body = JSON.parse(String(init.body))
+    loads.push(body)
+    const n = loads.length
+    const price =
+      n === 1
+        ? {
+            name: "price",
+            mode: "shared",
+            status: "pending",
+            ppr: true,
+            fill: { __nifra_deferred: 1 },
+          }
+        : { name: "price", mode: "shared", status: "pending", ppr: true, kept: true }
+    const head = {
+      v: 1,
+      data: { n },
+      layoutData: [{ root: n }],
+      retained: [],
+      boundaries: {
+        cart: {
+          name: "cart",
+          mode: "dynamic",
+          status: "pending",
+          ppr: true,
+          fill: { __nifra_deferred: 0 },
+        },
+        price,
+      },
+      live: { __nifra_deferred: 2 },
+    }
+    const body$ = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`${JSON.stringify(head)}\n`))
+        streams.push(controller)
+      },
+    })
+    return new Response(body$, { headers: { "content-type": "application/x-ndjson" } })
+  }
+  /** Send load `n`'s fills, then its grant, and end its stream. */
+  const finish = (n: number): void => {
+    const controller = streams[n - 1]
+    if (controller === undefined) throw new Error(`no load ${n}`)
+    const line = (value: unknown) =>
+      controller.enqueue(new TextEncoder().encode(`${JSON.stringify(value)}\n`))
+    line({ i: 0, v: { v: 1, html: `<p>cart ${n}</p>` } })
+    if (n === 1) line({ i: 1, v: { v: 1, html: "<p>price</p>" } })
+    line({
+      i: 2,
+      v: {
+        subjects: ["viewer-1"],
+        grant: `grant-${n}`,
+        tags: { "tag:cart": [CART], "tag:price": [PRICE] },
+        ttl: 600,
+      },
+    })
+    controller.close()
+  }
+  return { fetch, loads, finish }
+}
+
+test("a page whose holes are hosts reloads them as fills; its grant follows them, and a reload keeps the holes the server kept", async () => {
+  const server = holeServer()
+  const client = liveClient({ fetch: server.fetch, layoutIdsOf })
+  const hosts: BoundaryStates = {
+    cart: { name: "cart", mode: "dynamic", status: "pending", ppr: true },
+    price: { name: "price", mode: "shared", status: "pending", ppr: true },
+  }
+  const router = createClientRouter({
+    patterns,
+    initial: { ...initial(), boundaries: hosts },
+    fetchData: client.fetchData,
+  })
+  const stop = client.attach(router)
+  const socket = (): FakeSocket => {
+    const last = FakeSocket.all.at(-1)
+    if (last === undefined) throw new Error("no socket")
+    return last
+  }
+  socket().welcome()
+  await until(() => server.loads.length === 1 && !router.snapshot().pending, "first load")
+  expect(server.loads[0]).toMatchObject({ retain: [], grants: [], fill: true })
+  // The head is shown at once; the grant is still on its way, so nothing is watched or loaded again.
+  expect(router.snapshot().data).toEqual({ n: 1 })
+  await settle()
+  expect(socket().watches()).toEqual([])
+  expect(server.loads).toHaveLength(1)
+
+  server.finish(1)
+  await until(() => socket().watches().length === 1, "watch after the grant")
+  expect(socket().lastWatch().grants).toEqual(["grant-1"])
+  socket().deliver({ t: "ready", gen: socket().lastWatch().gen, stale: [] })
+  await settle()
+  const price = router.snapshot().boundaries?.price
+
+  socket().deliver({ t: "changed", tag: "tag:cart", spread: 0 })
+  await until(() => server.loads.length === 2 && !router.snapshot().pending, "reload")
+  expect(server.loads[1]).toMatchObject({
+    retain: [ROOT, POST, PRICE],
+    grants: ["grant-1"],
+    fill: true,
+  })
+  // The kept hole is the state already on screen, so its host is left as it is.
+  expect(router.snapshot().boundaries?.price).toBe(price)
+  expect(router.snapshot().boundaries?.cart).toMatchObject({ ppr: true })
+  server.finish(2)
+  await until(() => socket().lastWatch().grants[0] === "grant-2", "rewatch")
+  stop()
+})

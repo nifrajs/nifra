@@ -4,7 +4,7 @@ import { DRAFT_COOKIE, enableDraft } from "../src/draft.ts"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
 import { type CachedResponse, type CacheStore, withISR } from "../src/isr.ts"
 import { checkShellCanaries, partialPrerendering } from "../src/ppr.ts"
-import { DATA_HEADER, PREFETCH_HEADER } from "../src/router.ts"
+import { DATA_HEADER, HOLE_FILL_HEADER, KEEP_HOLES_HEADER, PREFETCH_HEADER } from "../src/router.ts"
 import { nextSlowAbort, probe, releaseHeld } from "./fixtures/ppr/app/lib/probe.ts"
 import { DRAFT_SECRET, type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
 
@@ -250,6 +250,114 @@ describe("PPR app: requests that are not a streamed document", () => {
 
   test("the fixture's shells hold enough text for WebKit to paint them early", () => {
     expect(app.warnings.filter((line) => line.includes("characters of text"))).toEqual([])
+  })
+})
+
+/** A whole NDJSON data response: its first line, with each deferred value put in its place. */
+const settledPayload = (text: string): { readonly boundaries?: Record<string, unknown> } => {
+  const [head = "null", ...rest] = text.split("\n").filter((line) => line !== "")
+  const values = new Map<number, unknown>()
+  for (const line of rest) {
+    const settled: { readonly i: number; readonly v?: unknown; readonly e?: string } =
+      JSON.parse(line)
+    values.set(settled.i, settled.e === undefined ? settled.v : { rejected: settled.e })
+  }
+  return JSON.parse(head, (_key, value: unknown) =>
+    typeof value === "object" &&
+    value !== null &&
+    "__nifra_deferred" in value &&
+    typeof value.__nifra_deferred === "number"
+      ? values.get(value.__nifra_deferred)
+      : value,
+  )
+}
+
+describe("PPR app: a page that reloads with its holes as hosts", () => {
+  const refill = (path: string, headers: Record<string, string> = {}) =>
+    fetch(`${app.origin}${path}`, {
+      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "1", cookie: "name=ada", ...headers },
+    })
+
+  test("each hole's state carries its fill: server HTML, with props only for an interactive hole", async () => {
+    const payload = settledPayload(await (await refill("/p/31")).text())
+    expect(payload.boundaries?.greeting).toEqual({
+      name: "greeting",
+      mode: "dynamic",
+      status: "pending",
+      ppr: true,
+      fill: { v: 1, html: '<p id="greeting">hello <!-- -->ada</p>' },
+    })
+    // The output schema still applies: the coupon the loader returned reaches no response.
+    expect(payload.boundaries?.cart).toMatchObject({
+      ppr: true,
+      fill: { v: 1, props: { count: 2 } },
+    })
+    expect(JSON.stringify(payload).includes("staff-only-coupon")).toBe(false)
+  })
+
+  test("a shared hole's fill comes from its entry", async () => {
+    const before = probe.priceBuilds
+    await (await fetch(`${app.origin}/s/45`)).text()
+    const payload = settledPayload(await (await refill("/s/45")).text())
+    expect(probe.priceBuilds - before).toBe(1)
+    expect(payload.boundaries?.price).toEqual({
+      name: "price",
+      mode: "shared",
+      status: "pending",
+      ppr: true,
+      fill: { v: 1, html: '<p id="price">price <!-- -->450</p>' },
+    })
+  })
+
+  test("a hole that fails sends the error frame, never content from before", async () => {
+    const payload = settledPayload(await (await refill("/p/32?fail")).text())
+    expect(payload.boundaries?.slow).toMatchObject({ ppr: true, fill: { v: 1, error: true } })
+  })
+
+  test("a kept hole does not load, and a name the route does not declare is refused", async () => {
+    const started = probe.slowStarted
+    const payload = settledPayload(
+      await (await refill("/p/33", { [KEEP_HOLES_HEADER]: "slow, cart" })).text(),
+    )
+    expect(probe.slowStarted).toBe(started)
+    expect(payload.boundaries?.slow).toEqual({
+      name: "slow",
+      mode: "dynamic",
+      status: "pending",
+      ppr: true,
+      kept: true,
+    })
+    expect(payload.boundaries?.cart).toMatchObject({ kept: true })
+    expect(payload.boundaries?.greeting).toMatchObject({ fill: { v: 1 } })
+    const refused = await refill("/p/33", { [KEEP_HOLES_HEADER]: "slow,coupon" })
+    expect(refused.status).toBe(400)
+    expect(await refused.text()).toBe("Bad Request: the route has no such hole")
+  })
+
+  test("a gate that refuses answers before any hole loads", async () => {
+    const started = probe.slowStarted
+    const refused = await fetch(`${app.origin}/members/3`, {
+      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "1" },
+    })
+    expect(refused.status).toBe(401)
+    expect(await refused.text()).toBe("members only")
+    expect(probe.slowStarted).toBe(started)
+  })
+
+  test("leaving during a refill aborts its holes on the server", async () => {
+    const started = probe.slowStarted
+    const client = new AbortController()
+    const res = await fetch(`${app.origin}/p/34?slow=60000`, {
+      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "1" },
+      signal: client.signal,
+    })
+    const reader = res.body?.getReader()
+    const head = new TextDecoder().decode((await reader?.read())?.value)
+    expect(probe.slowStarted).toBe(started + 1)
+    expect(firstLine(head).boundaries?.slow).toMatchObject({ ppr: true })
+    const aborted = nextSlowAbort()
+    client.abort()
+    await aborted
   })
 })
 

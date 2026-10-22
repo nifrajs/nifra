@@ -2199,7 +2199,7 @@
     "name": "BoundaryRegistration",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: ShellCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
+    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: SharedHoleCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
   },
   {
     "name": "BoundaryRejection",
@@ -2212,14 +2212,14 @@
     "name": "BoundaryRequestCtx",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BoundaryRequestCtx {\n    readonly request: Request;\n    readonly params: Readonly<Record<string, string>>;\n    readonly api: unknown;\n    readonly env: unknown;\n    readonly draft: boolean;\n    readonly search: Readonly<Record<string, unknown>>;\n    readonly signal: AbortSignal;\n}",
+    "signature": "export interface BoundaryRequestCtx {\n    readonly request: Request;\n    readonly params: Readonly<Record<string, string>>;\n    readonly api: unknown;\n    readonly env: unknown;\n    readonly draft: boolean;\n    readonly search: Readonly<Record<string, unknown>>;\n    readonly signal: AbortSignal;\n    /**\n     * Declare what this hole's data depends on, as keys in the cache-tag charset. In a live load of a\n     * partially prerendered page the hole reloads when one of them changes; elsewhere it does nothing.\n     */\n    readonly live: (...keys: string[]) => void;\n}",
     "doc": "/** Request-scoped inputs available to dynamic and intercepting boundaries. */"
   },
   {
     "name": "BoundaryState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n    /** While an intercept boundary holds a target: the result of the last action posted to that target,\n     * which the page's own `actionData` never sees. Only on a `\"ready\"` state. */\n    readonly actionData?: unknown;\n    /** Set on a hole of a partially prerendered shell: the adapter renders an opaque host the PPR\n     * runtime fills, not the boundary's content. */\n    readonly ppr?: true;\n    /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */\n    readonly live?: unknown;\n}",
+    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n    /** While an intercept boundary holds a target: the result of the last action posted to that target,\n     * which the page's own `actionData` never sees. Only on a `\"ready\"` state. */\n    readonly actionData?: unknown;\n    /** Set on a hole of a partially prerendered shell: the adapter renders an opaque host the PPR\n     * runtime fills, not the boundary's content. */\n    readonly ppr?: true;\n    /** On a hole the client reloads as a host: its frame, the server's HTML plus props when it\n     * hydrates, usually deferred. */\n    readonly fill?: unknown;\n    /** A live load kept this hole: the client shows the copy it holds. */\n    readonly kept?: true;\n    /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */\n    readonly live?: unknown;\n}",
     "doc": "/** Serializable boundary state passed to the adapter's render seam. */"
   },
   {
@@ -6253,8 +6253,8 @@
     "name": "FetchRouteData",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}, purpose?: \"prefetch\") => Promise<unknown>;",
-    "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). `purpose` is `\"prefetch\"` when no navigation is waiting on the result. */"
+    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}, purpose?: \"prefetch\" | \"refill\") => Promise<unknown>;",
+    "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). `purpose` is `\"prefetch\"` when no navigation is waiting on the result,\n * and `\"refill\"` when it reloads the page on screen whose holes are hosts a partially prerendered\n * document filled ({@link HOLE_FILL_HEADER}). */"
   },
   {
     "name": "FetchTransportOptions",
@@ -6759,28 +6759,28 @@
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function Hole<Data>(props: HoleProps<Data>): ComponentChildren;",
-    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Preact never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * After a client navigation the hole renders like any streamed boundary.\n */"
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Preact never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * When the page reloads, after an action or a live change, the host takes the new fill in place: an\n * interactive root re-renders with the new props and keeps its state. After a client navigation the\n * hole renders like any streamed boundary.\n */"
   },
   {
     "name": "Hole",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function Hole<Data>(props: HoleProps<Data>): ReactNode;",
-    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host React never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * After a client navigation the hole renders like any streamed boundary.\n */"
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host React never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * When the page reloads, after an action or a live change, the host takes the new fill in place: an\n * interactive root re-renders with the new props and keeps its state. After a client navigation the\n * hole renders like any streamed boundary.\n */"
   },
   {
     "name": "Hole",
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function Hole<Data>(props: HoleProps<Data>): JSX.Element;",
-    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Solid never fills: the PPR runtime puts the server's\n * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. After a\n * client navigation the hole renders like any streamed boundary.\n */"
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Solid never fills: the PPR runtime puts the server's\n * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. When the\n * page reloads, after an action or a live change, the same host takes the new fill in place: an\n * interactive root gets the new props through its store and keeps its state. After a client\n * navigation the hole renders like any streamed boundary.\n */"
   },
   {
     "name": "Hole",
     "kind": "const",
     "package": "@nifrajs/web-vue",
     "signature": "export declare const Hole: new <Data>(props: HoleProps<Data> & {} & import(\"vue\").VNodeProps & import(\"vue\").AllowedComponentProps & import(\"vue\").ComponentCustomProps) => import(\"vue\").CreateComponentPublicInstanceWithMixins<HoleProps<Data> & {}, {}, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, import(\"vue\").PublicProps, {}, false, {}, HoleSlots, {}, {}, string, {}, any, import(\"vue\").ComponentProvideOptions, {\n    P: {};\n    B: {};\n    D: {};\n    C: {};\n    M: {};\n    Defaults: {};\n}, HoleProps<Data> & {}, {}, {}, {}, {}, {}>;",
-    "doc": "/**\n * Experimental: one `dynamic` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Vue never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own app from the frame's props.\n * After a client navigation the hole renders like any streamed boundary.\n */"
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Vue never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own app from the frame's props.\n * When the page reloads, after an action or a live change, the host takes the new fill in place: an\n * interactive app re-renders with the new props and keeps its state. After a client navigation the\n * hole renders like any streamed boundary.\n */"
   },
   {
     "name": "HoleDefinition",
@@ -6852,8 +6852,8 @@
     "name": "HoleState",
     "kind": "interface",
     "package": "@nifrajs/web-svelte",
-    "signature": "export interface HoleState {\n  readonly status: \"unresolved\" | \"pending\" | \"ready\" | \"error\"\n  readonly data?: unknown\n  readonly ppr?: true\n}",
-    "doc": "/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open. */"
+    "signature": "export interface HoleState {\n  readonly status: \"unresolved\" | \"pending\" | \"ready\" | \"error\"\n  readonly data?: unknown\n  readonly ppr?: true\n  readonly fill?: unknown\n}",
+    "doc": "/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and\n * `fill` that host's refill when the page reloads. */"
   },
   {
     "name": "HookKind",
@@ -14905,8 +14905,15 @@
     "name": "SharedBoundary",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: ShellCtx) => Data | Promise<Data>;\n    /** The hole ships its props and hydrates. Default `false`. */\n    readonly interactive?: boolean;\n    /** How long a visitor waits for a build in milliseconds, then gets the error slot. Default 5000. */\n    readonly timeout?: number;\n};",
+    "signature": "export type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>;\n    /** The hole ships its props and hydrates. Default `false`. */\n    readonly interactive?: boolean;\n    /** How long a visitor waits for a build in milliseconds, then gets the error slot. Default 5000. */\n    readonly timeout?: number;\n};",
     "doc": "/**\n * Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell\n * from a request-free context and cached on its own `revalidate`, then written right after the shell.\n * Its loader entry in `boundaryLoaders` needs `revalidate`.\n */"
+  },
+  {
+    "name": "SharedHoleCtx",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface SharedHoleCtx extends ShellCtx {\n    readonly live: (...keys: string[]) => void;\n}",
+    "doc": "/**\n * Experimental: what a shared hole's loader receives. The keys it declares are kept with the built\n * entry and watched for every visitor it serves; a change reloads the hole, which the shared entry\n * answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.\n */"
   },
   {
     "name": "SharedKey",

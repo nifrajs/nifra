@@ -1,5 +1,5 @@
+import { type HoleHost, holeHost } from "@nifrajs/web/internal/hole-runtime"
 import {
-  type App,
   createSSRApp,
   defineComponent,
   h,
@@ -12,26 +12,6 @@ import {
 import { Await } from "./await.ts"
 import { freshVNode } from "./fresh-vnode.ts"
 
-/** One hole's fill, as the PPR runtime keeps it. */
-interface HoleFill {
-  readonly props?: unknown
-  readonly error: boolean
-}
-
-interface PprRuntime {
-  get(name: string): HoleFill | undefined
-  subscribe(name: string, callback: (fill: HoleFill) => void): () => void
-}
-
-/** The runtime the shell's inline script defines, when this document has one. */
-const pprRuntime = (): PprRuntime | undefined => {
-  const runtime: unknown = Reflect.get(globalThis, "__nifraPpr")
-  return typeof runtime === "function" && "get" in runtime && "subscribe" in runtime
-    ? // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the shell's constant inline runtime defines exactly this shape (internal/ppr/runtime.ts in @nifrajs/web).
-      (runtime as PprRuntime)
-    : undefined
-}
-
 /**
  * The fields of a route's boundary declaration a hole renders from: `h()` output, not templates.
  * `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.
@@ -43,11 +23,13 @@ export interface HoleDefinition<Data> {
   readonly interactive?: boolean
 }
 
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open. */
+/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
+ * `fill` that host's refill when the page reloads. */
 interface HoleState {
   readonly status: "unresolved" | "pending" | "ready" | "error"
   readonly data?: unknown
   readonly ppr?: true
+  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {
@@ -59,44 +41,64 @@ export interface HoleProps<Data> {
 type HoleSlots = SlotsType<{ error?: () => VNodeChild }>
 
 /**
- * Experimental: one `dynamic` boundary of a partially prerendered page.
+ * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host Vue never fills or diffs: the PPR runtime puts the
  * server's HTML into it, and an interactive hole then hydrates as its own app from the frame's props.
- * After a client navigation the hole renders like any streamed boundary.
+ * When the page reloads, after an action or a live change, the host takes the new fill in place: an
+ * interactive app re-renders with the new props and keeps its state. After a client navigation the
+ * hole renders like any streamed boundary.
  */
 export const Hole = defineComponent(
   <Data>(props: HoleProps<Data>, { slots }: SetupContext<[], HoleSlots>) => {
     const host = shallowRef<HTMLElement | null>(null)
+    let driver: HoleHost | undefined
+    // One getter per value: a getter returning a fresh array, or a shallow ref among the sources, makes
+    // every state a change and would remake the host's app on each refill.
     watch(
-      () =>
-        [
-          props.state?.ppr === true,
-          props.of.interactive === true,
-          props.of.name,
-          props.of.render,
-          host.value,
-        ] as const,
+      [
+        () => props.state?.ppr === true,
+        () => props.of.interactive === true,
+        () => props.of.name,
+        () => props.of.render,
+        () => host.value,
+      ] as const,
       ([open, interactive, name, render, element], _, onCleanup) => {
-        const runtime = pprRuntime()
-        if (!open || !interactive || element === null || runtime === undefined) return
-        let app: App | undefined
-        const fill = (frame: HoleFill): void => {
-          if (frame.error || app !== undefined) return
-          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
-          app = createSSRApp({ render: () => render(frame.props as Data) })
-          app.config.idPrefix = `nifra-${name}-`
-          app.mount(element)
-        }
-        const now = runtime.get(name)
-        const unsubscribe = now === undefined ? runtime.subscribe(name, fill) : undefined
-        if (now !== undefined) fill(now)
+        if (!open || element === null) return
+        const driven = holeHost(
+          name,
+          element,
+          interactive
+            ? (target, data) => {
+                const current = shallowRef(data)
+                // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
+                const app = createSSRApp({ render: () => render(current.value as Data) })
+                app.config.idPrefix = `nifra-${name}-`
+                app.mount(target)
+                return {
+                  update: (next) => {
+                    current.value = next
+                    return true
+                  },
+                  dispose: () => app.unmount(),
+                }
+              }
+            : undefined,
+        )
+        driver = driven
         onCleanup(() => {
-          unsubscribe?.()
-          app?.unmount()
+          driver = undefined
+          driven?.dispose()
         })
       },
       { immediate: true, flush: "post" },
+    )
+    watch(
+      () => (props.state?.ppr === true ? props.state.fill : undefined),
+      (fill) => {
+        if (fill !== undefined) driver?.refill(fill)
+      },
+      { flush: "post" },
     )
     return () => {
       const { of: hole, state } = props

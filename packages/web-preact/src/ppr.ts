@@ -1,27 +1,8 @@
+import { type HoleHost, holeHost } from "@nifrajs/web/internal/hole-runtime"
 import { type ComponentChildren, createElement, hydrate, render as renderInto } from "preact"
 import { useEffect, useRef } from "preact/hooks"
 import { Await } from "./await.ts"
 import { idScope } from "./id-scope.ts"
-
-/** One hole's fill, as the PPR runtime keeps it. */
-interface HoleFill {
-  readonly props?: unknown
-  readonly error: boolean
-}
-
-interface PprRuntime {
-  get(name: string): HoleFill | undefined
-  subscribe(name: string, callback: (fill: HoleFill) => void): () => void
-}
-
-/** The runtime the shell's inline script defines, when this document has one. */
-const pprRuntime = (): PprRuntime | undefined => {
-  const runtime: unknown = Reflect.get(globalThis, "__nifraPpr")
-  return typeof runtime === "function" && "get" in runtime && "subscribe" in runtime
-    ? // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the shell's constant inline runtime defines exactly this shape (internal/ppr/runtime.ts in @nifrajs/web).
-      (runtime as PprRuntime)
-    : undefined
-}
 
 /** The fields of a route's boundary declaration a hole renders from. */
 export interface HoleDefinition<Data> {
@@ -31,11 +12,13 @@ export interface HoleDefinition<Data> {
   readonly interactive?: boolean
 }
 
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open. */
+/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
+ * `fill` that host's refill when the page reloads. */
 interface HoleState {
   readonly status: "unresolved" | "pending" | "ready" | "error"
   readonly data?: unknown
   readonly ppr?: true
+  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {
@@ -48,37 +31,52 @@ export interface HoleProps<Data> {
 const EMPTY_HTML = { __html: "" }
 
 /**
- * Experimental: one `dynamic` boundary of a partially prerendered page.
+ * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host Preact never fills or diffs: the PPR runtime puts the
  * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.
- * After a client navigation the hole renders like any streamed boundary.
+ * When the page reloads, after an action or a live change, the host takes the new fill in place: an
+ * interactive root re-renders with the new props and keeps its state. After a client navigation the
+ * hole renders like any streamed boundary.
  */
 export function Hole<Data>(props: HoleProps<Data>): ComponentChildren {
   const { of: hole, state } = props
   const host = useRef<HTMLDivElement>(null)
+  const driver = useRef<HoleHost | undefined>(undefined)
   const open = state?.ppr === true
   const interactive = hole.interactive === true
   const { name, render } = hole
   useEffect(() => {
     const element = host.current
-    const runtime = pprRuntime()
-    if (!open || !interactive || element === null || runtime === undefined) return
-    let hydrated = false
-    const fill = (frame: HoleFill): void => {
-      if (frame.error || hydrated) return
-      hydrated = true
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
-      hydrate(idScope(render(frame.props as Data), `nifra-${name}-`), element)
-    }
-    const now = runtime.get(name)
-    const unsubscribe = now === undefined ? runtime.subscribe(name, fill) : undefined
-    if (now !== undefined) fill(now)
+    if (!open || element === null) return
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
+    const view = (data: unknown) => idScope(render(data as Data), `nifra-${name}-`)
+    const driven = holeHost(
+      name,
+      element,
+      interactive
+        ? (target, data) => {
+            hydrate(view(data), target)
+            return {
+              update: (next) => {
+                renderInto(view(next), target)
+                return true
+              },
+              dispose: () => renderInto(null, target),
+            }
+          }
+        : undefined,
+    )
+    driver.current = driven
     return () => {
-      unsubscribe?.()
-      if (hydrated) renderInto(null, element)
+      driver.current = undefined
+      driven?.dispose()
     }
   }, [open, interactive, name, render])
+  const fill = open ? state?.fill : undefined
+  useEffect(() => {
+    if (fill !== undefined) driver.current?.refill(fill)
+  }, [fill])
   if (open) {
     return createElement("div", {
       ref: host,

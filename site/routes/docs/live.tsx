@@ -114,7 +114,9 @@ export default function Live() {
         <code>live(...keys)</code> in any loader, page or layout, names what its data reads. A key
         is your own name for a piece of data, such as <code>post:42</code>: a letter, then up to
         127 of <code>A-Z a-z 0-9 . _ : / -</code>. A frame holds at most 64. A live load returns
-        an encrypted grant for its keys beside the data.
+        an encrypted grant for its keys beside the data. A hole of a{" "}
+        <a href="/docs/partial-prerendering">partially prerendered page</a> declares its own the
+        same way, and a change reloads that hole alone.
       </p>
       <CodeBlock code={LOADER} />
 

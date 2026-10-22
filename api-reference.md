@@ -5165,8 +5165,8 @@ _No named exports (side-effect entrypoint)._
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, purpose?: "prefetch", ) => Promise<unknown>`
-  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result.
+- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, purpose?: "prefetch" | "refill", ) => Promise<unknown>`
+  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result, and `"refill"` when it reloads the page on screen whose holes are hosts a partially prerendered document fil…
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`
@@ -5387,6 +5387,8 @@ _No named exports (side-effect entrypoint)._
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
 - **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI>`
   Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
+- **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
+  Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
 - **ShellCtx** _(interface)_ - `interface ShellCtx`
   Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
@@ -6326,6 +6328,8 @@ _No named exports (side-effect entrypoint)._
   One app's shell cache.
 - **PprStats** _(type)_ - `type PprStats = PprServerStats`
   Admission, shedding and unsent-byte counters of one app's partially prerendered responses.
+- **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
+  Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
 - **ShellCanaryFinding** _(interface)_ - `interface ShellCanaryFinding`
 - **ShellCanaryOptions** _(interface)_ - `interface ShellCanaryOptions`
 - **ShellCheckError** _(class)_ - `class ShellCheckError`
@@ -6717,7 +6721,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-preact/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren`
-  Experimental: one `dynamic` boundary of a partially prerendered page.
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`
@@ -6857,7 +6861,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-react/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode`
-  Experimental: one `dynamic` boundary of a partially prerendered page.
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`
@@ -7076,7 +7080,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-solid/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => JSX.Element`
-  Experimental: one `dynamic` boundary of a partially prerendered page.
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX evaluated at import is one DOM node, so every place that shows it would take it from the last.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`
@@ -7347,7 +7351,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-vue/ppr`
 
 - **Hole** _(const)_ - `Hole: new <Data>(props: HoleProps<Data> & {} & import("vue").VNodeProps & import("vue").AllowedComponentProps & import("vue").ComponentCustomProps) => import("vue").CreateComponentPublicInstanceWithMixins<HoleProps<Data…`
-  Experimental: one `dynamic` boundary of a partially prerendered page.
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from: `h()` output, not templates. `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`

@@ -9,7 +9,7 @@
  * that never imports it ships none of it. Backend-only: a browser build that reaches this module fails.
  */
 import "@nifrajs/web/backend-only"
-import type { ShellCtx } from "./boundary.ts"
+import type { SharedHoleCtx, ShellCtx } from "./boundary.ts"
 import type { ShellCheckRecord } from "./internal/ppr/compile-shell.ts"
 import {
   PPR_SERVER,
@@ -36,7 +36,7 @@ export {
   type ShellCheckRecord,
 } from "./internal/ppr/compile-shell.ts"
 export { PPR_DEFAULTS, type PprOptions } from "./internal/ppr/options.ts"
-export type { PprSetup, ShellCtx }
+export type { PprSetup, SharedHoleCtx, ShellCtx }
 
 export interface PprConfig {
   /** From `compileShells` for this deployment; `"unchecked-development"` is refused in production. */

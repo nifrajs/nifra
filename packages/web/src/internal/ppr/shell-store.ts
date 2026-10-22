@@ -17,6 +17,8 @@ export interface StoredEntry {
   readonly data: unknown
   readonly builtAt: number
   readonly tags: readonly string[]
+  /** A shared hole's live keys. */
+  readonly keys?: readonly string[]
   /** The shell loader's `notFound()`. */
   readonly notFound: boolean
 }
@@ -61,6 +63,7 @@ const field = (value: object, name: string): unknown => Reflect.get(value, name)
 const isStoredEntry = (value: unknown): value is StoredEntry => {
   if (typeof value !== "object" || value === null) return false
   const tokenAt = field(value, "tokenAt")
+  const keys = field(value, "keys")
   return (
     typeof field(value, "routeId") === "string" &&
     typeof field(value, "html") === "string" &&
@@ -68,6 +71,7 @@ const isStoredEntry = (value: unknown): value is StoredEntry => {
     Number.isSafeInteger(tokenAt) &&
     typeof field(value, "builtAt") === "number" &&
     isStrings(field(value, "tags")) &&
+    (keys === undefined || isStrings(keys)) &&
     typeof field(value, "notFound") === "boolean"
   )
 }

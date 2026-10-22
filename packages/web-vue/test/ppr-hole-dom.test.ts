@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { GlobalWindow } from "happy-dom"
-import { type App, createSSRApp, defineComponent, h, nextTick, ref, useId } from "vue"
+import { type App, createSSRApp, defineComponent, h, nextTick, ref, shallowRef, useId } from "vue"
 import { renderToString } from "vue/server-renderer"
 import { Hole, type HoleDefinition, type HoleProps } from "../src/ppr.ts"
 
@@ -32,6 +32,13 @@ interface Fill {
   readonly error: boolean
 }
 
+/** A data request's fill: the frame's JSON. */
+interface Frame {
+  readonly html: string
+  readonly props?: unknown
+  readonly error?: true
+}
+
 /** A stand-in for the shell's inline runtime: the fills it holds and who waits for one. */
 function runtime(fills: Record<string, Fill> = {}) {
   const waiting = new Map<string, (fill: Fill) => void>()
@@ -44,6 +51,12 @@ function runtime(fills: Record<string, Fill> = {}) {
         waiting.delete(name)
         unsubscribed.push(name)
       }
+    },
+    put(name: string, frame: Frame, host: Element) {
+      host.innerHTML = frame.html
+      if (frame.error === true) host.setAttribute("data-nifra-hole-error", "")
+      else host.removeAttribute("data-nifra-hole-error")
+      fills[name] = { props: frame.props, error: frame.error === true }
     },
   })
   Reflect.set(globalThis, "__nifraPpr", api)
@@ -59,6 +72,39 @@ const Counter = defineComponent({
       h("button", { id, type: "button", onClick: () => count.value++ }, `cart ${count.value}`)
   },
 })
+
+/** Shows the props it was given beside a click count only the component holds. */
+const Tally = defineComponent({
+  props: { count: { type: Number, required: true } },
+  setup(props) {
+    const clicks = ref(0)
+    return () =>
+      h(
+        "button",
+        { type: "button", onClick: () => clicks.value++ },
+        `cart ${props.count} clicked ${clicks.value}`,
+      )
+  },
+})
+
+/** A deferred fill, settled by the test as the NDJSON stream would. */
+function deferredFill() {
+  let resolve: (frame: Frame) => void = () => {}
+  let reject: (error: Error) => void = () => {}
+  const promise = new Promise<Frame>((settle, fail) => {
+    resolve = settle
+    reject = fail
+  })
+  promise.catch(() => {})
+  return { fill: { __nifra_deferred: true, id: 0, promise }, resolve, reject, promise }
+}
+
+/** Lets a settled fill's promise reactions, and the renders they start, run. */
+const settle = async (promise: Promise<unknown>) => {
+  await promise.catch(() => {})
+  await nextTick()
+  await nextTick()
+}
 
 type Cart = { readonly count: number }
 const cart: HoleDefinition<Cart> = {
@@ -81,8 +127,10 @@ async function served(of: HoleDefinition<Cart>, data: Cart): Promise<string> {
  */
 async function hydratePage(of: HoleDefinition<Cart>, data?: Cart) {
   const tick = ref(0)
-  const props: HoleProps<Cart> = { of, state: { status: "pending", ppr: true } }
-  const Page = defineComponent(() => () => h("main", { "data-tick": tick.value }, [h(Hole, props)]))
+  const state = shallowRef<HoleProps<Cart>["state"]>({ status: "pending", ppr: true })
+  const Page = defineComponent(
+    () => () => h("main", { "data-tick": tick.value }, [h(Hole, { of, state: state.value })]),
+  )
   const container = document.createElement("div")
   container.innerHTML = await renderToString(createSSRApp(Page))
   document.body.append(container)
@@ -92,7 +140,18 @@ async function hydratePage(of: HoleDefinition<Cart>, data?: Cart) {
   const page: App = createSSRApp(Page)
   page.mount(container)
   await nextTick()
-  return { host, page, tick }
+  /** The page rendered again with a reloaded state for its hole, as the router publishes it. */
+  const reload = async (fill: unknown) => {
+    state.value = { status: "pending", ppr: true, fill }
+    await nextTick()
+  }
+  return { host, page, tick, reload }
+}
+
+const tally: HoleDefinition<Cart> = {
+  name: "cart",
+  interactive: true,
+  render: (data) => h(Tally, { count: data.count }),
 }
 
 const click = async (host: Element) => {
@@ -101,6 +160,63 @@ const click = async (host: Element) => {
 }
 
 describe("Hole in the browser", () => {
+  test("a refill re-renders an interactive app with new props and keeps its state; an older one is dropped", async () => {
+    runtime({ cart: { props: { count: 2 }, error: false } })
+    const { host, page, reload } = await hydratePage(tally, { count: 2 })
+    await click(host)
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    const first = deferredFill()
+    await reload(first.fill)
+    // The old content stays while the refill is in flight.
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("true")
+    first.resolve({ html: "<button>cart 7 clicked 0</button>", props: { count: 7 } })
+    await settle(first.promise)
+    expect(host.textContent).toBe("cart 7 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("false")
+
+    const older = deferredFill()
+    const newer = deferredFill()
+    await reload(older.fill)
+    await reload(newer.fill)
+    newer.resolve({ html: "", props: { count: 9 } })
+    await settle(newer.promise)
+    older.resolve({ html: "", props: { count: 8 } })
+    await settle(older.promise)
+    expect(host.textContent).toBe("cart 9 clicked 1")
+    page.unmount()
+  })
+
+  test("a refill replaces a server-only host's HTML, and a failed one shows the error slot", async () => {
+    runtime({ cart: { error: false } })
+    const { host, page, reload } = await hydratePage({ ...cart, interactive: false }, { count: 1 })
+    await reload({ html: "<p>cart 4</p>" })
+    await settle(Promise.resolve())
+    expect(host.innerHTML).toBe("<p>cart 4</p>")
+    const failed = deferredFill()
+    await reload(failed.fill)
+    failed.reject(new Error("deferred_error"))
+    await settle(failed.promise)
+    expect(host.textContent).toBe("This section is unavailable.")
+    expect(host.hasAttribute("data-nifra-hole-error")).toBe(true)
+    page.unmount()
+  })
+
+  test("an interactive hole whose refill errors loses its app, and the next refill hydrates a new one", async () => {
+    runtime({ cart: { props: { count: 2 }, error: false } })
+    const { host, page, reload } = await hydratePage(tally, { count: 2 })
+    await click(host)
+    await reload({ html: "<p>unavailable</p>", error: true })
+    await settle(Promise.resolve())
+    expect(host.innerHTML).toBe("<p>unavailable</p>")
+    await reload({ html: await served(tally, { count: 3 }), props: { count: 3 } })
+    await settle(Promise.resolve())
+    expect(host.textContent).toBe("cart 3 clicked 0")
+    await click(host)
+    expect(host.textContent).toBe("cart 3 clicked 1")
+    page.unmount()
+  })
+
   test("an interactive hole whose fill arrived first hydrates its server HTML as its own app", async () => {
     const fill = { props: { count: 2 }, error: false }
     runtime({ cart: fill })

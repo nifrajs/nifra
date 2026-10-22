@@ -66,7 +66,13 @@ import {
   spreadFloorOf,
 } from "./live/settings.ts"
 import type { LoaderContext } from "./manifest.ts"
-import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "./router.ts"
+import {
+  DATA_HEADER,
+  HOLE_FILL_HEADER,
+  KEEP_HOLES_HEADER,
+  NAV_FROM_HEADER,
+  RETAIN_HEADER,
+} from "./router.ts"
 
 export type {
   LiveBus,
@@ -200,6 +206,8 @@ interface LoadBody {
   readonly mode: "load" | "renew"
   readonly retain: readonly string[]
   readonly grants: readonly string[]
+  /** The page's holes are hosts its partially prerendered document filled: reload them as fills. */
+  readonly fill: boolean
 }
 
 /** What the runtime holds once the keyring is derived and the bus subscribed. */
@@ -582,6 +590,7 @@ export function live(options: LiveOptions): Live {
               ? []
               : Object.keys(grant.claims.owners)
       const layouts: number[] = []
+      const holes: string[] = []
       let retainPage = false
       if (grant !== undefined && match !== null) {
         const claims = grant.claims
@@ -595,6 +604,9 @@ export function live(options: LiveOptions): Live {
             if (index !== -1 && !layouts.includes(index)) layouts.push(index)
           } else if (owner === `P:${match.routeId}` && claims.path === path) {
             retainPage = true
+          } else if (claims.path === path) {
+            const hole = holeOf(owner, match.routeId)
+            if (hole !== undefined && !holes.includes(hole)) holes.push(hole)
           }
         }
       }
@@ -605,6 +617,8 @@ export function live(options: LiveOptions): Live {
         headers.set(RETAIN_HEADER, layouts.sort((a, b) => a - b).join(","))
         headers.set(NAV_FROM_HEADER, grant.claims.path)
       }
+      if (holes.length > 0) headers.set(KEEP_HOLES_HEADER, holes.join(","))
+      if (body.fill) headers.set(HOLE_FILL_HEADER, "1")
       const target = new Request(new URL(path, req.url), {
         method: "GET",
         headers,
@@ -981,6 +995,14 @@ function busy(): Response {
   )
 }
 
+/** The hole a `B:<hole>:<routeId>` owner of route `routeId` names. */
+function holeOf(owner: string, routeId: string): string | undefined {
+  const suffix = `:${routeId}`
+  if (!owner.startsWith("B:") || !owner.endsWith(suffix)) return undefined
+  const hole = owner.slice(2, owner.length - suffix.length)
+  return hole === "" || hole.includes(":") || hole.includes(",") ? undefined : hole
+}
+
 function parseBody(text: string): LoadBody | undefined {
   let value: unknown
   try {
@@ -989,14 +1011,15 @@ function parseBody(text: string): LoadBody | undefined {
     return undefined
   }
   if (!isRecord(value)) return undefined
-  const { path, sid, frame, mode, retain = [], grants = [] } = value
+  const { path, sid, frame, mode, retain = [], grants = [], fill = false } = value
   if (typeof path !== "string" || typeof sid !== "string" || !SID_PATTERN.test(sid))
     return undefined
   // Phase 2 serves the page frame; boundary frames arrive with the client's frame support.
   if (frame !== PAGE_FRAME || (mode !== "load" && mode !== "renew")) return undefined
   if (!isStringList(retain, MAX_RETAIN, MAX_OWNER_CHARS)) return undefined
   if (!isStringList(grants, MAX_GRANTS, MAX_GRANT_CHARS)) return undefined
-  return { path, sid, frame, mode, retain, grants }
+  if (typeof fill !== "boolean") return undefined
+  return { path, sid, frame, mode, retain, grants, fill }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

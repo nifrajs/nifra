@@ -21,7 +21,7 @@ import {
 } from "../boundary.ts"
 import type { CspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
-import { defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
+import { type Deferred, defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
 import { routeTags } from "../isr.ts"
 import type {
@@ -41,6 +41,8 @@ import { SWAP_HEADER } from "../render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
+  HOLE_FILL_HEADER,
+  KEEP_HOLES_HEADER,
   NAV_FROM_HEADER,
   PREFETCH_HEADER,
   REDIRECT_HEADER,
@@ -50,9 +52,15 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
-import type { LiveEnvelope, LiveFinish, LiveLoad, LiveRouteMatch } from "./live-contract.ts"
+import {
+  holeOwner,
+  type LiveEnvelope,
+  type LiveFinish,
+  type LiveLoad,
+  type LiveRouteMatch,
+} from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
-import { isHole, type PprIntegration, type PprRequest } from "./ppr/contract.ts"
+import { type HoleLive, isHole, type PprIntegration, type PprRequest } from "./ppr/contract.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -123,8 +131,64 @@ function swapOption(req: Request): { readonly swapSlot?: string } {
   return swapSlot === undefined ? {} : { swapSlot }
 }
 
+const headerOf = (c: PageRouteContext<unknown>, name: string): string | null =>
+  c.header !== undefined ? c.header(name) : c.req.headers.get(name)
+
 function isDataRequest(c: PageRouteContext<unknown>): boolean {
-  return (c.header !== undefined ? c.header(DATA_HEADER) : c.req.headers.get(DATA_HEADER)) !== null
+  return headerOf(c, DATA_HEADER) !== null
+}
+
+/** The live owners of one response's holes, settled once the last hole that ran does. */
+interface HoleOwners {
+  readonly kept: readonly string[]
+  readonly loaded: Promise<readonly string[]>
+}
+
+/**
+ * A data request's hole refresh: fills when the client holds the hosts, the holes it keeps, and in a
+ * live load each hole's owner. A kept name the route does not declare is a 400.
+ */
+function holeRefresh(
+  c: PageRouteContext<unknown>,
+  request: PprRequest,
+  live: LiveLoad | undefined,
+): { readonly request: PprRequest; readonly owners?: HoleOwners } | Response {
+  if (!isDataRequest(c)) return { request }
+  const keep = headerOf(c, KEEP_HOLES_HEADER)
+  const kept = new Set<string>()
+  if (keep !== null) {
+    const declared = new Set(request.holes.map((hole) => hole.name))
+    for (const name of keep.split(",")) {
+      const trimmed = name.trim()
+      // A live load's names come from a grant this server sealed: one naming a hole an older build
+      // declared keeps nothing.
+      if (!declared.has(trimmed) && live !== undefined) continue
+      if (!declared.has(trimmed)) {
+        return new Response("Bad Request: the route has no such hole", {
+          status: 400,
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+        })
+      }
+      kept.add(trimmed)
+    }
+  }
+  const fill = headerOf(c, HOLE_FILL_HEADER) !== null
+  const refreshed: PprRequest = { ...request, fill, ...(kept.size === 0 ? {} : { kept }) }
+  if (live === undefined) return { request: refreshed }
+  const routeId = request.routeId
+  let finish: (loaded: readonly string[]) => void = () => {}
+  const loaded = new Promise<readonly string[]>((resolve) => {
+    finish = resolve
+  })
+  const holeLive: HoleLive = {
+    collector: (hole) => live.collector(holeOwner(hole, routeId)),
+    seal: (hole) => live.seal(holeOwner(hole, routeId)),
+    done: (names) => finish(names.map((hole) => holeOwner(hole, routeId))),
+  }
+  return {
+    request: { ...refreshed, live: holeLive },
+    owners: { kept: [...kept].map((hole) => holeOwner(hole, routeId)), loaded },
+  }
 }
 
 /** The page slot of an `ssr = false` route with no `HydrateFallback`: a component that renders nothing. */
@@ -132,6 +196,27 @@ const EMPTY_LEAF = (): null => null
 
 /** `ctx.live` outside a live load: keys are declared for nobody. */
 const NO_LIVE = (): void => {}
+
+/**
+ * The envelope's `live` member. With holes running it trails them: one grant, issued once the last hole
+ * settled, holding each hole that loaded and each the client kept.
+ */
+const liveEnvelopeOf = (
+  live: LiveLoad,
+  owners: LiveFinish,
+  holes: HoleOwners | undefined,
+): Promise<LiveEnvelope> | Deferred<LiveEnvelope> =>
+  holes === undefined
+    ? live.finish(owners)
+    : defer(
+        holes.loaded.then((loaded) =>
+          live.finish({
+            ...owners,
+            fresh: [...owners.fresh, ...loaded],
+            retained: [...owners.retained, ...holes.kept],
+          }),
+        ),
+      )
 
 /** Run one owner's loader with its `ctx.live`, closing the collector once the loader settles. */
 const runLiveLoader = (
@@ -1209,7 +1294,7 @@ export function createPageRequestExecutor<Env = unknown>(
     responseHeaders: Record<string, string> | undefined,
     personalized: boolean,
     serverComponents?: import("../server-components/types.ts").ComponentState,
-    live?: LiveEnvelope,
+    live?: LiveEnvelope | Deferred<LiveEnvelope>,
   ): Promise<PageResponse> => {
     // Every layout loader settled before the page rendered, so a status or error page can reuse them.
     const settled: LayoutChainSource = async (_page, count) =>
@@ -1232,6 +1317,9 @@ export function createPageRequestExecutor<Env = unknown>(
         ...deferred,
         ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
       ]
+      // Deferred when holes run: their owners are known only once the last one settles.
+      const liveSplit = live === undefined ? undefined : prepareDeferred(live, allDeferred.length)
+      if (liveSplit !== undefined) allDeferred.push(...liveSplit.deferred)
       const payload =
         layoutData === undefined &&
         boundarySplit === undefined &&
@@ -1245,7 +1333,7 @@ export function createPageRequestExecutor<Env = unknown>(
               retained: layoutRetained,
               ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
               ...(serverComponents === undefined ? {} : { serverComponents }),
-              ...(live === undefined ? {} : { live }),
+              ...(liveSplit === undefined ? {} : { live: liveSplit.forClient }),
             }
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
@@ -1678,6 +1766,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let run: LayoutRun | undefined
         let skipPage = false
         let liveCtx: LoaderContext
+        let holeOwners: HoleOwners | undefined
         try {
           const ctx: LoaderContext = {
             params: c.params,
@@ -1739,6 +1828,10 @@ export function createPageRequestExecutor<Env = unknown>(
               draft,
               effectiveSearch,
             )
+            const refresh = holeRefresh(c, pprRequest, live)
+            if (refresh instanceof Response) return refresh
+            pprRequest = refresh.request
+            holeOwners = refresh.owners
             // A draft is the editor's alone, so it never reads or fills the shared shell.
             if (!draft && !isDataRequest(c)) {
               const streamed = await ppr.stream(pprRequest, () => controls.documentHeaders())
@@ -1772,6 +1865,7 @@ export function createPageRequestExecutor<Env = unknown>(
                   draft,
                   search: effectiveSearch,
                   signal: c.req.signal,
+                  live: NO_LIVE,
                 } satisfies BoundaryRequestCtx)
           const staticBoundaryPromise =
             boundaryDefinitions.length === 0
@@ -1905,7 +1999,8 @@ export function createPageRequestExecutor<Env = unknown>(
         const liveEnvelope =
           live === undefined || !isData || isStatusSignal(data) || isControlFlow(data)
             ? undefined
-            : await live.finish(
+            : await liveEnvelopeOf(
+                live,
                 liveOwners(
                   route,
                   layoutModules,
@@ -1915,6 +2010,7 @@ export function createPageRequestExecutor<Env = unknown>(
                   skipPage,
                   liveCtx,
                 ),
+                holeOwners,
               )
         return handleDataOrDocument(
           c.req,

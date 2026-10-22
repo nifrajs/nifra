@@ -49,7 +49,9 @@ export const boundaryLoaders = {
   slow: {
     load: (ctx: { readonly request: Request; readonly signal: AbortSignal }) => {
       probe.slowStarted++
-      const ms = Number(new URL(ctx.request.url).searchParams.get("slow") ?? "50")
+      const search = new URL(ctx.request.url).searchParams
+      if (search.has("fail")) throw new Error("the slow service is down")
+      const ms = Number(search.get("slow") ?? "50")
       return abortable(ctx.signal, ms)
     },
     output: t.object({ at: t.number() }),

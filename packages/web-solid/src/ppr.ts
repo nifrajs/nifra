@@ -1,7 +1,7 @@
 import { createComponent, createMemo, type JSX, untrack } from "solid-js"
 import { Dynamic, isServer } from "solid-js/web"
 import { Await } from "./await.ts"
-import { interactiveHost } from "./ppr-client.ts"
+import { clientHost } from "./ppr-client.ts"
 
 /**
  * The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX
@@ -14,11 +14,13 @@ export interface HoleDefinition<Data> {
   readonly interactive?: boolean
 }
 
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open. */
+/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
+ * `fill` that host's refill when the page reloads. */
 interface HoleState {
   readonly status: "unresolved" | "pending" | "ready" | "error"
   readonly data?: unknown
   readonly ppr?: true
+  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {
@@ -29,26 +31,29 @@ export interface HoleProps<Data> {
 }
 
 /** An open hole's host: claimed by its hydration key like any element, never given children. */
-function openHost<Data>(hole: HoleDefinition<Data>): JSX.Element {
+function openHost<Data>(hole: HoleDefinition<Data>, fill: () => unknown): JSX.Element {
   const attributes = { "data-nifra-hole": hole.name, "aria-busy": "true" }
-  if (isServer || hole.interactive !== true) {
-    return createComponent(Dynamic, { component: "div", ...attributes })
-  }
-  return interactiveHost(hole.name, hole.render, attributes)
+  if (isServer) return createComponent(Dynamic, { component: "div", ...attributes })
+  return clientHost(hole.name, hole.render, hole.interactive === true, attributes, fill)
 }
 
 /**
- * Experimental: one `dynamic` boundary of a partially prerendered page.
+ * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host Solid never fills: the PPR runtime puts the server's
- * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. After a
- * client navigation the hole renders like any streamed boundary.
+ * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. When the
+ * page reloads, after an action or a live change, the same host takes the new fill in place: an
+ * interactive root gets the new props through its store and keeps its state. After a client
+ * navigation the hole renders like any streamed boundary.
  */
 export function Hole<Data>(props: HoleProps<Data>): JSX.Element {
+  const open = createMemo(() => props.state?.ppr === true)
+  const fill = createMemo(() => (open() ? props.state?.fill : undefined))
   const view = createMemo(() => {
+    // Only `open` is read for a host, so a refill keeps it.
+    if (open()) return untrack(() => openHost(props.of, fill))
     const hole = props.of
     const state = props.state
-    if (state?.ppr === true) return untrack(() => openHost(hole))
     if (state === undefined) return untrack(() => hole.fallback?.())
     if (state.status === "error") return props.error
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a ready state carries this boundary's loader output, through its output guard.

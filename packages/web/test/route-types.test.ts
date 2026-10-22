@@ -321,7 +321,7 @@ describe("generated route types", () => {
     expect(errors).toHaveLength(4)
     const [nosy, timed, unfilled, unpriced] = errors
     expect(nosy).toStartWith("routes/nosy.backend.ts:3 ")
-    expect(nosy).toContain("Property 'request' does not exist on type 'ShellCtx'")
+    expect(nosy).toContain("Property 'request' does not exist on type 'SharedHoleCtx'")
     expect(timed).toStartWith("routes/timed.backend.ts:3 ")
     expect(timed).toContain("'revalidate' does not exist")
     expect(unfilled).toStartWith("routes/unfilled.backend.ts:3 ")

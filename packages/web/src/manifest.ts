@@ -16,6 +16,7 @@ import type {
   BoundaryDescriptor,
   BoundaryRegistration,
   BoundaryRequestCtx,
+  SharedHoleCtx,
   ShellCtx,
   StaticCtx,
 } from "./boundary.ts"
@@ -504,7 +505,7 @@ type HoleNameOf<Declared> = Declared extends { readonly load: (...args: never[])
     : never
 type LoaderEntryOf<Declared> = Declared extends { readonly mode: "shared" }
   ? Omit<BoundaryLoaderEntry, "load" | "revalidate"> & {
-      readonly load: (ctx: ShellCtx) => unknown
+      readonly load: (ctx: SharedHoleCtx) => unknown
       readonly revalidate: number
     }
   : Omit<BoundaryLoaderEntry, "load" | "revalidate" | "revalidateTags"> & {

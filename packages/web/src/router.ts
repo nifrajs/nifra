@@ -91,6 +91,20 @@ export const RETAIN_HEADER = "x-nifra-retain"
 export const NAV_FROM_HEADER = "x-nifra-from"
 
 /**
+ * Sent on a data request that reloads the route instance on screen when its holes are hosts the
+ * partially prerendered document filled. Each hole's state then carries its fill (server HTML, plus
+ * props when it hydrates) instead of its data, so the client updates the host in place.
+ */
+export const HOLE_FILL_HEADER = "x-nifra-hole-fill"
+
+/**
+ * Holes of a partially prerendered page the client keeps, comma separated: they are not loaded, and
+ * each state says so. Only the live load endpoint sets it, for holes whose keys did not change. A name
+ * the route does not declare is refused with a 400.
+ */
+export const KEEP_HOLES_HEADER = "x-nifra-keep-holes"
+
+/**
  * The data-mode payload once a chain can carry layout data.
  *
  * Versioned because a prerendered `_data.json` is a static file on a CDN and outlives the deploy that
@@ -216,7 +230,9 @@ export function createMatcher(
 }
 
 /** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch
- * (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result. */
+ * (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result,
+ * and `"refill"` when it reloads the page on screen whose holes are hosts a partially prerendered
+ * document filled ({@link HOLE_FILL_HEADER}). */
 export type FetchRouteData = (
   path: string,
   match: RouteMatch,
@@ -225,7 +241,7 @@ export type FetchRouteData = (
     readonly from: string
     readonly retain: readonly number[]
   },
-  purpose?: "prefetch",
+  purpose?: "prefetch" | "refill",
 ) => Promise<unknown>
 
 /** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */
@@ -481,6 +497,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
   }
   const headers = new Headers({ [DATA_HEADER]: "1" })
   if (purpose === "prefetch") headers.set(PREFETCH_HEADER, "1")
+  else if (purpose === "refill") headers.set(HOLE_FILL_HEADER, "1")
   if (navigation !== undefined && navigation.retain.length > 0) {
     headers.set(RETAIN_HEADER, navigation.retain.join(","))
     headers.set(NAV_FROM_HEADER, navigation.from)
@@ -633,7 +650,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     signal?: AbortSignal,
     // Offer the server the layout data on screen: it re-runs whichever of those loaders it must.
     keepLayouts?: boolean,
-    purpose?: "prefetch",
+    purpose?: "prefetch" | "refill",
   ): Promise<LoadedRouteData> => {
     const retainFrom = keepLayouts
       ? state.layoutData && { path: pagePathOf(state), layoutData: state.layoutData }
@@ -931,12 +948,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const pageRoute = match(pagePath) ?? { routeId: state.routeId, params: state.params }
     const rematched = pageRoute.routeId !== state.routeId
     const targetRoute = intercepted !== undefined && target ? match(targetPath) : null
+    // Hosts a partially prerendered document filled stay hosts: their holes reload as fills.
+    const refill =
+      !rematched && Object.values(state.boundaries ?? {}).some((held) => held.ppr === true)
     const [reloaded, targetOutcome] = await Promise.all([
       page
         ? (async (): Promise<LoadedRouteData> => {
             if (rematched) await loadModule?.(pageRoute.routeId, pagePath)
             return applyClientLoader(pagePath, pageRoute, signal, () =>
-              loadRouteData(pagePath, pageRoute, signal),
+              loadRouteData(pagePath, pageRoute, signal, false, refill ? "refill" : undefined),
             )
           })()
         : undefined,

@@ -195,6 +195,9 @@ test(
             unsubscribed.push(name);
           };
         },
+        put(name, frame, host) {
+          host.innerHTML = frame.html;
+        },
       });
       const container = document.createElement("div");
       container.innerHTML = served.page;
@@ -220,6 +223,122 @@ test(
       first: { clicked: "cart 3", kept: true, unsubscribed: [], emptied: true },
       later: { clicked: "cart 3", kept: true, unsubscribed: ["cart"], emptied: true },
     })
+  },
+  SPAWN_TIMEOUT_MS,
+)
+
+test(
+  "in a browser, a refill updates an interactive root through its store and keeps its state, drops an older one, and shows the error slot",
+  async () => {
+    const page = asImport("./fixtures/ppr-refill.tsx")
+    const served = await inBun(
+      "ssr",
+      `
+      const { createComponent } = await import("solid-js");
+      const { renderToString } = await import("solid-js/web");
+      const { solidAdapter } = await import(${asImport("../src/index.ts")});
+      const page = await import(${page});
+      const shell = (interactive) =>
+        renderToString(() => createComponent(page.Page, { interactive, state: { status: "pending", ppr: true } }));
+      const frame = (count) =>
+        solidAdapter.renderFragment(() => page.tally.render({ count }), { idPrefix: "nifra-cart-" });
+      console.log(JSON.stringify({ shell: shell(true), inertShell: shell(false), two: frame(2), three: frame(3) }));
+    `,
+    )
+    const visit = (interactive: boolean) =>
+      inBun(
+        "dom",
+        `
+      const { GlobalWindow } = await import("happy-dom");
+      const window = new GlobalWindow({ url: "http://shop.test/" });
+      for (const key of Object.getOwnPropertyNames(window)) {
+        if (!(key in globalThis)) globalThis[key] = window[key];
+      }
+      globalThis._$HY = { events: [], completed: new WeakSet(), r: {}, fe() {} };
+      const { createComponent, createSignal } = await import("solid-js");
+      const { hydrate } = await import("solid-js/web");
+      const page = await import(${page});
+      const served = ${JSON.stringify(served)};
+      const fills = { cart: { props: { count: 2 }, error: false } };
+      globalThis.__nifraPpr = Object.assign(() => {}, {
+        get: (name) => fills[name],
+        subscribe: () => () => {},
+        put(name, frame, host) {
+          host.innerHTML = frame.html;
+          if (frame.error) host.setAttribute("data-nifra-hole-error", "");
+          else host.removeAttribute("data-nifra-hole-error");
+        },
+      });
+      const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+      const deferred = () => {
+        let resolve, reject;
+        const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+        promise.catch(() => {});
+        return { fill: { __nifra_deferred: true, id: 0, promise }, resolve, reject };
+      };
+      const container = document.createElement("div");
+      container.innerHTML = ${interactive} ? served.shell : served.inertShell;
+      document.body.append(container);
+      const host = container.querySelector('[data-nifra-hole="cart"]');
+      host.innerHTML = served.two;
+      const [state, setState] = createSignal({ status: "pending", ppr: true });
+      const dispose = hydrate(
+        () => createComponent(page.Page, { interactive: ${interactive}, get state() { return state(); } }),
+        container,
+      );
+      await tick();
+      const seen = [];
+      host.querySelector("button").click();
+      seen.push(host.textContent);
+      const first = deferred();
+      setState({ status: "pending", ppr: true, fill: first.fill });
+      seen.push(host.textContent, host.getAttribute("aria-busy"));
+      first.resolve({ html: "<p>cart 7</p>", props: { count: 7 } });
+      await tick();
+      seen.push(host.textContent);
+      const older = deferred();
+      const newer = deferred();
+      setState({ status: "pending", ppr: true, fill: older.fill });
+      setState({ status: "pending", ppr: true, fill: newer.fill });
+      newer.resolve({ html: "<p>cart 9</p>", props: { count: 9 } });
+      await tick();
+      older.resolve({ html: "<p>cart 8</p>", props: { count: 8 } });
+      await tick();
+      seen.push(host.textContent);
+      const failed = deferred();
+      setState({ status: "pending", ppr: true, fill: failed.fill });
+      failed.reject(new Error("deferred_error"));
+      await tick();
+      seen.push(host.textContent, host.hasAttribute("data-nifra-hole-error"));
+      setState({ status: "pending", ppr: true, fill: { html: served.three, props: { count: 3 } } });
+      await tick();
+      host.querySelector("button")?.click();
+      seen.push(host.textContent);
+      dispose();
+      console.log(JSON.stringify(seen));
+    `,
+      )
+    expect(await visit(true)).toEqual([
+      "cart 2 clicked 1",
+      "cart 2 clicked 1",
+      "true",
+      "cart 7 clicked 1",
+      "cart 9 clicked 1",
+      "This section is unavailable.",
+      true,
+      "cart 3 clicked 1",
+    ])
+    // A server-only host only ever shows the server's HTML: a click changes nothing.
+    expect(await visit(false)).toEqual([
+      "cart 2 clicked 0",
+      "cart 2 clicked 0",
+      "true",
+      "cart 7",
+      "cart 9",
+      "This section is unavailable.",
+      true,
+      "cart 3 clicked 0",
+    ])
   },
   SPAWN_TIMEOUT_MS,
 )

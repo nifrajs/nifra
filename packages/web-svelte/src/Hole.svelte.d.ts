@@ -9,11 +9,13 @@ export interface HoleDefinition<Data> {
   readonly interactive?: boolean
 }
 
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open. */
+/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
+ * `fill` that host's refill when the page reloads. */
 export interface HoleState {
   readonly status: "unresolved" | "pending" | "ready" | "error"
   readonly data?: unknown
   readonly ppr?: true
+  readonly fill?: unknown
 }
 
 /** Hand-written types for `Hole.svelte`, as for `Await.svelte`. */

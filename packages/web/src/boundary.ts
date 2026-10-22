@@ -14,6 +14,11 @@ export interface BoundaryRequestCtx {
   readonly draft: boolean
   readonly search: Readonly<Record<string, unknown>>
   readonly signal: AbortSignal
+  /**
+   * Declare what this hole's data depends on, as keys in the cache-tag charset. In a live load of a
+   * partially prerendered page the hole reloads when one of them changes; elsewhere it does nothing.
+   */
+  readonly live: (...keys: string[]) => void
 }
 
 /** Build-safe inputs available to a static boundary. It intentionally has no request/session/params API. */
@@ -42,6 +47,15 @@ export interface ShellCtx {
   readonly signal: AbortSignal
   /** The in-process api, unbound to any request: build-safe calls only, as in a prerender. */
   readonly api: unknown
+}
+
+/**
+ * Experimental: what a shared hole's loader receives. The keys it declares are kept with the built
+ * entry and watched for every visitor it serves; a change reloads the hole, which the shared entry
+ * answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
+ */
+export interface SharedHoleCtx extends ShellCtx {
+  readonly live: (...keys: string[]) => void
 }
 
 export type BoundaryMode = "static" | "dynamic" | "shared" | { readonly intercept: string }
@@ -75,7 +89,7 @@ export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {
  */
 export type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & {
   readonly mode: "shared"
-  readonly load?: (ctx: ShellCtx) => Data | Promise<Data>
+  readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>
   /** The hole ships its props and hydrates. Default `false`. */
   readonly interactive?: boolean
   /** How long a visitor waits for a build in milliseconds, then gets the error slot. Default 5000. */
@@ -118,7 +132,7 @@ export type BoundaryRegistration =
     })
   | (ErasedBoundaryBase & {
       readonly mode: "shared"
-      readonly load?: (ctx: ShellCtx) => unknown | Promise<unknown>
+      readonly load?: (ctx: SharedHoleCtx) => unknown | Promise<unknown>
     })
   | (ErasedBoundaryBase & {
       readonly mode: { readonly intercept: string }
@@ -154,6 +168,11 @@ export interface BoundaryState {
   /** Set on a hole of a partially prerendered shell: the adapter renders an opaque host the PPR
    * runtime fills, not the boundary's content. */
   readonly ppr?: true
+  /** On a hole the client reloads as a host: its frame, the server's HTML plus props when it
+   * hydrates, usually deferred. */
+  readonly fill?: unknown
+  /** A live load kept this hole: the client shows the copy it holds. */
+  readonly kept?: true
   /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */
   readonly live?: unknown
 }
@@ -299,6 +318,7 @@ const scopedContext = (context: BoundaryRequestCtx): BoundaryRequestCtx =>
     draft: context.draft,
     search: Object.freeze({ ...context.search }),
     signal: context.signal,
+    live: context.live,
   })
 
 /**

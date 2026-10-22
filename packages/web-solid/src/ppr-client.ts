@@ -1,34 +1,30 @@
-import { createComponent, type JSX, onCleanup, onMount, sharedConfig } from "solid-js"
+import { type HoleRoot, holeHost } from "@nifrajs/web/internal/hole-runtime"
+import {
+  createComponent,
+  createEffect,
+  type JSX,
+  on,
+  onCleanup,
+  onMount,
+  sharedConfig,
+} from "solid-js"
+import { createStore, reconcile } from "solid-js/store"
 import { Dynamic, hydrate } from "solid-js/web"
 
-/** One hole's fill, as the PPR runtime keeps it. */
-interface HoleFill {
-  readonly props?: unknown
-  readonly error: boolean
-}
-
-interface PprRuntime {
-  get(name: string): HoleFill | undefined
-  subscribe(name: string, callback: (fill: HoleFill) => void): () => void
-}
-
-/** The runtime the shell's inline script defines, when this document has one. */
-const pprRuntime = (): PprRuntime | undefined => {
-  const runtime: unknown = Reflect.get(globalThis, "__nifraPpr")
-  return typeof runtime === "function" && "get" in runtime && "subscribe" in runtime
-    ? // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the shell's constant inline runtime defines exactly this shape (internal/ppr/runtime.ts in @nifrajs/web).
-      (runtime as PprRuntime)
-    : undefined
-}
+const isObject = (value: unknown): value is object => typeof value === "object" && value !== null
 
 /**
- * An interactive hole's host in the browser: once mounted, it hydrates the server's HTML the PPR
- * runtime put into it as its own root, from the frame's props, and disposes that root on leave.
+ * A hole's host in the browser: once mounted, the PPR runtime's fill goes in, an interactive hole
+ * hydrates that server HTML as its own root from the frame's props, and each refill `fill` brings is
+ * applied in place. Object props reach the root as a store, so a refill updates it and keeps its
+ * state; any other value makes the root again.
  */
-export function interactiveHost<Data>(
+export function clientHost<Data>(
   name: string,
   render: (data: Data) => JSX.Element,
+  interactive: boolean,
   attributes: Readonly<Record<string, string>>,
+  fill: () => unknown,
 ): JSX.Element {
   let host: HTMLElement | undefined
   const element = createComponent(Dynamic, {
@@ -39,34 +35,44 @@ export function interactiveHost<Data>(
     ...attributes,
   })
   onMount(() => {
-    const runtime = pprRuntime()
     const target = host
-    if (target === undefined || runtime === undefined) return
-    let dispose: (() => void) | undefined
-    let left = false
-    const start = (frame: HoleFill): void => {
-      if (left || dispose !== undefined) return
-      dispose = hydrate(
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
-        () => render(frame.props as Data),
-        target,
-        { renderId: `nifra-${name}-` },
-      )
-    }
-    const fill = (frame: HoleFill): void => {
-      if (frame.error) return
+    if (target === undefined) return
+    const root = (into: Element, data: unknown): HoleRoot => {
+      const [props, setProps] = createStore({ value: data })
+      let dispose: (() => void) | undefined
+      let left = false
+      const start = (): void => {
+        if (left) return
+        dispose = hydrate(
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
+          () => render(props.value as Data),
+          into,
+          { renderId: `nifra-${name}-` },
+        )
+      }
       // Solid keeps one hydration context: a fill met while the page hydrates waits for it to end.
-      if (sharedConfig.context) queueMicrotask(() => start(frame))
-      else start(frame)
+      if (sharedConfig.context) queueMicrotask(start)
+      else start()
+      return {
+        update: (next) => {
+          if (!isObject(next) || !isObject(props.value)) return false
+          setProps("value", reconcile(next))
+          return true
+        },
+        dispose: () => {
+          left = true
+          dispose?.()
+        },
+      }
     }
-    const now = runtime.get(name)
-    const unsubscribe = now === undefined ? runtime.subscribe(name, fill) : undefined
-    if (now !== undefined) fill(now)
-    onCleanup(() => {
-      left = true
-      unsubscribe?.()
-      dispose?.()
-    })
+    const driven = holeHost(name, target, interactive ? root : undefined)
+    if (driven === undefined) return
+    createEffect(
+      on(fill, (next) => {
+        if (next !== undefined) driven.refill(next)
+      }),
+    )
+    onCleanup(() => driven.dispose())
   })
   return element
 }

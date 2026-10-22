@@ -208,6 +208,27 @@ export const boundaryLoaders = {
   },
 } satisfies Route.BoundaryLoaders`
 
+const LIVE = `// doc-check: skip - an excerpt of a backend half, on an app created with \`live\`.
+export const boundaryLoaders = {
+  cart: {
+    load: async ({ api, params, live }: BoundaryRequestCtx) => {
+      live(\`cart:\${params.id}\`)
+      return api.cart.get({ id: params.id })
+    },
+    output: t.object({ count: t.number() }),
+  },
+  price: {
+    // Kept with the stored entry: publish this key with a purge of the price tag.
+    load: async ({ params, live }: SharedHoleCtx) => {
+      live(\`price:\${params.id}\`)
+      return { amount: await priceOf(params.id) }
+    },
+    output: t.object({ amount: t.string() }),
+    revalidate: 10,
+    revalidateTags: ({ params }) => [\`price:\${params.id}\`],
+  },
+} satisfies Route.BoundaryLoaders`
+
 const STORE = `// doc-check: skip - a Worker's partialPrerendering call, with the server snippet's records.
 import { KVCacheStore } from "@nifrajs/web"
 
@@ -400,6 +421,39 @@ export default function PartialPrerendering() {
         </li>
         <li>A draft loads it fresh and never reads or fills the cache.</li>
       </ul>
+
+      <h2>When the page reloads</h2>
+      <p>
+        After an action posted from the page, and when a live key its holes read changes (
+        <code>createWebApp(&#123; live &#125;)</code>), the router reloads the page on screen. A page
+        the partially prerendered document filled keeps its holes where they are: each hole's new
+        HTML, with props for an interactive one, goes into its host in place.
+      </p>
+      <ul>
+        <li>
+          An interactive hole's own root renders the new props and keeps its state. A Solid root gets
+          object props through a store, so a component that reads them in JSX updates; Svelte keeps
+          the root while the render picks the same component.
+        </li>
+        <li>
+          The old content stays until the new arrives. A hole whose reload fails shows its error
+          slot, never content from before the action. A reload overtaken by a newer one is dropped,
+          and leaving the page aborts its hole loaders on the server.
+        </li>
+        <li>
+          After a client navigation the holes render as streamed boundaries, and reload as they do.
+        </li>
+      </ul>
+      <p>
+        A hole loader declares its live keys with <code>ctx.live(...)</code>, as a page loader does.
+        A change reloads only the holes whose keys changed; the live load keeps the rest. The page's
+        grant comes after its holes, in one trailing frame of the reload, and holds each hole that
+        loaded: a hole that failed or timed out is not watched until it loads again. The shell and
+        the first document carry no grant. A shared hole's keys are kept with its stored entry, and
+        the entry answers the reload until it is dropped, so publish a shared hole's key together
+        with a purge of its tag.
+      </p>
+      <CodeBlock code={LIVE} lang="ts" />
 
       <h2>Across processes</h2>
       <p>

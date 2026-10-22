@@ -59,7 +59,7 @@ export interface PprRequest {
   /** The route's dynamic and shared boundaries, in declaration order, with their merged (guarded)
    * loaders. */
   readonly holes: readonly HoleRegistration[]
-  readonly holeContext: Omit<BoundaryRequestCtx, "signal">
+  readonly holeContext: Omit<BoundaryRequestCtx, "signal" | "live">
   /** What the shell loader and every shared hole loader get, but the build's signal. */
   readonly shellContext: Omit<ShellCtx, "signal">
   readonly loadShell: (signal: AbortSignal) => Promise<unknown>
@@ -73,6 +73,22 @@ export interface PprRequest {
   readonly holeTags: (hole: SharedHole) => readonly string[]
   /** Keeps the platform alive for work that outlives the response, where the platform needs it. */
   readonly waitUntil?: ((promise: Promise<unknown>) => void) | undefined
+  /** The client holds this route instance's hole hosts: a data request sends each hole's fill. */
+  readonly fill?: boolean
+  /** Holes the client keeps: none of them loads, and each state says it was kept. */
+  readonly kept?: ReadonlySet<string>
+  /** A live load: each hole's keys, and which holes loaded. */
+  readonly live?: HoleLive
+}
+
+/** A live load's view of one response's holes. Owners are named by hole. */
+export interface HoleLive {
+  /** `ctx.live` for one hole's loader. */
+  collector(hole: string): (...keys: string[]) => void
+  /** Close one hole's collector once its loader settled. */
+  seal(hole: string): void
+  /** Called once, after every hole that ran settled, with the holes that loaded. */
+  done(loaded: readonly string[]): void
 }
 
 /** The shell cannot be served now; the caller renders the page whole for this request. */
