@@ -93,6 +93,7 @@ export interface InvariantSetupResult {
 }
 
 /** Provisions a throwaway L4 target. Called once, before the first L4 request - never on import. */
+// biome-ignore lint/suspicious/noConfusingVoidType: `void` lets a setup that provisions nothing be written as `async () => {}`.
 export type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>
 
 /** Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`). */
