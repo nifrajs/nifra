@@ -1,5 +1,6 @@
 import { repeatedPrefixOf, withResponseObserver } from "@nifrajs/core/response-observer"
 import { defineRouterPlugin, type Middleware, type ResponseHeadersView } from "@nifrajs/core/server"
+import { FIXED_DEFLATE_MAX, fixedDeflate } from "./_fixed-deflate.ts"
 
 export interface CompressionOptions {
   /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body
@@ -302,9 +303,10 @@ export interface GzipPlan {
  * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
  *
  * A streamed page (a 16 KB shell, then three frames of 150-350 bytes; 64 connections) measured on Bun
- * 178 us of CPU per response by segments against 250 us through `createGzip`, at 0.93x the requests
- * per second, and 97 us at 1.08x with the shell's segment reused. Node's and Deno's native streams
- * win there: segments cost them 1.12x and 1.10x the CPU at 0.90x and 0.92x the requests.
+ * 158 us of CPU per response by segments against 254 us through `createGzip`, at 1.10x the requests
+ * per second, and 67 us at 1.32x with the shell's segment reused (37 us and 1.38x uncompressed).
+ * Node's and Deno's native streams won there with zlib for every segment, which cost them 1.12x and
+ * 1.10x the CPU at 0.90x and 0.92x the requests; not measured since small segments skip zlib.
  */
 export function gzipPlanFor(runtime: {
   readonly Bun?: unknown
@@ -381,10 +383,11 @@ const GZIP_HEADER = Uint8Array.of(0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff)
  * alone, 90 with 2 KB before it (7.5 us) and 88 with 8 KB (11.4 us). */
 const DICTIONARY_BYTES = 2 * 1024
 
-/** The compressed form of a repeated prefix's bytes, per source. */
+/** The compressed form of a repeated prefix's bytes, and their CRC, per source. */
 interface PrefixSegment {
   readonly length: number
   readonly segment: Uint8Array | Promise<Uint8Array>
+  readonly crc: number
 }
 /** A source seen once has no segment yet. */
 const prefixSegments = new WeakMap<
@@ -394,23 +397,18 @@ const prefixSegments = new WeakMap<
 
 const NO_BYTES = new Uint8Array(0)
 
-/** The last `DICTIONARY_BYTES` of `window` followed by `chunk`, copied: the chunk is not ours to keep. */
-function slide(window: Uint8Array, chunk: Uint8Array): Uint8Array {
-  if (chunk.byteLength >= DICTIONARY_BYTES) return chunk.slice(chunk.byteLength - DICTIONARY_BYTES)
-  const kept = window.subarray(Math.max(0, window.byteLength + chunk.byteLength - DICTIONARY_BYTES))
-  const next = new Uint8Array(kept.byteLength + chunk.byteLength)
-  next.set(kept)
-  next.set(chunk, kept.byteLength)
-  return next
-}
+/** A chunk this small goes out in fixed codes however little they shrink it: the table of dynamic
+ * codes alone costs zlib tens of bytes. */
+const FIXED_ALWAYS = 128
 
 /**
  * Gzip each upstream chunk as its own raw deflate segment ending in a sync flush, so the chunk's bytes
  * go out at once. The segments join into one deflate stream, which an empty final block and the gzip
  * trailer close. Each segment may refer back into the body's previous `DICTIONARY_BYTES`, so a small
- * chunk after a large one compresses as it would in one stream. A chunk a producer marked with a
- * repeated prefix (a cached page shell) reuses that prefix's segment once compressed, when `compare`
- * shows the chunk still holds the prefix's bytes. Measured against `createGzip` in `gzipPlanFor`.
+ * chunk after a large one compresses as it would in one stream; a small chunk is deflated in
+ * JavaScript (`fixedDeflate`), skipping zlib's setup. A chunk a producer marked with a repeated prefix
+ * (a cached page shell) reuses that prefix's segment and CRC once compressed, when `compare` shows the
+ * chunk still holds the prefix's bytes. Measured against `createGzip` in `gzipPlanFor`.
  */
 function segmentedGzip(
   reader: RawReader,
@@ -419,11 +417,33 @@ function segmentedGzip(
   compare: CompareBytes | undefined,
 ): ReadableStream<Uint8Array> {
   const flush = zlib.constants.Z_SYNC_FLUSH
-  let window: Uint8Array = NO_BYTES
+  // The body's last bytes, right-aligned in a buffer of their own: the chunks are not ours to keep.
+  let window: Uint8Array | undefined
+  let held = 0
+  const history = (): Uint8Array =>
+    window === undefined ? NO_BYTES : window.subarray(DICTIONARY_BYTES - held)
+  const remember = (bytes: Uint8Array): void => {
+    window ??= new Uint8Array(DICTIONARY_BYTES)
+    if (bytes.byteLength >= DICTIONARY_BYTES) {
+      window.set(bytes.subarray(bytes.byteLength - DICTIONARY_BYTES))
+      held = DICTIONARY_BYTES
+      return
+    }
+    const kept = Math.min(held, DICTIONARY_BYTES - bytes.byteLength)
+    window.copyWithin(DICTIONARY_BYTES - bytes.byteLength - kept, DICTIONARY_BYTES - kept)
+    window.set(bytes, DICTIONARY_BYTES - bytes.byteLength)
+    held = kept + bytes.byteLength
+  }
   let crc = 0
   let size = 0
   let started = false
   const deflate = (bytes: Uint8Array, dictionary: Uint8Array): Uint8Array | Promise<Uint8Array> => {
+    if (bytes.byteLength <= FIXED_DEFLATE_MAX) {
+      const limit =
+        bytes.byteLength <= FIXED_ALWAYS ? Number.POSITIVE_INFINITY : bytes.byteLength / 2
+      const fixed = fixedDeflate(bytes, dictionary, limit)
+      if (fixed !== undefined) return fixed
+    }
     const options: DeflateOptions =
       dictionary.byteLength === 0 ? { finishFlush: flush } : { finishFlush: flush, dictionary }
     const deflateRaw = zlib.deflateRaw
@@ -453,10 +473,11 @@ function segmentedGzip(
       return undefined
     }
     if (known.segment !== undefined) return known
+    const bytes = prefix.source.subarray(0, prefix.length)
     // By the same rule as any chunk: inline, a large prefix holds up every response on the loop.
     // A response that meets the source meanwhile waits on the same segment.
-    const segment = deflate(prefix.source.subarray(0, prefix.length), NO_BYTES)
-    const entry = { length: prefix.length, segment }
+    const segment = deflate(bytes, NO_BYTES)
+    const entry = { length: prefix.length, segment, crc: zlib.crc32(bytes) }
     prefixSegments.set(prefix.source, entry)
     if (segment instanceof Promise) {
       segment.catch(() => {
@@ -484,18 +505,21 @@ function segmentedGzip(
         controller.close()
         return
       }
-      crc = zlib.crc32(value, crc)
-      size += value.byteLength
       let rest = value
       const prefix = prefixSegment(value)
+      // A prefix that opens the body starts the CRC where its own ended.
+      if (prefix !== undefined && size === 0)
+        crc = zlib.crc32(value.subarray(prefix.length), prefix.crc)
+      else crc = zlib.crc32(value, crc)
+      size += value.byteLength
       if (prefix !== undefined) {
         parts.push(await prefix.segment)
-        window = slide(window, value.subarray(0, prefix.length))
+        remember(value.subarray(0, prefix.length))
         rest = value.subarray(prefix.length)
       }
       if (rest.byteLength > 0) {
-        parts.push(await deflate(rest, window))
-        window = slide(window, rest)
+        parts.push(await deflate(rest, history()))
+        remember(rest)
       }
       controller.enqueue(concat(parts, total(parts)))
     },

@@ -5,6 +5,7 @@ import { constants, gunzipSync, gzipSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { markRepeatedPrefix } from "@nifrajs/core/response-observer"
 import { compression } from "@nifrajs/middleware"
+import { FIXED_DEFLATE_MAX } from "../src/_fixed-deflate.ts"
 import { type GzipPlan, gzipBuffered, gzipPlanFor, streamedGzip } from "../src/compression.ts"
 
 const GZIP = { "accept-encoding": "gzip, deflate, br" }
@@ -174,6 +175,27 @@ describe("streamed gzip lanes", () => {
     expect(second.value.byteLength).toBeLessThan(alone.byteLength / 10)
   })
 
+  test("a small chunk is deflated without zlib unless fixed codes cannot halve it", async () => {
+    const deflated: number[] = []
+    const counting = {
+      ...zlib,
+      deflateRawSync: (body: Uint8Array, options: zlib.ZlibOptions) => {
+        deflated.push(body.byteLength)
+        return zlib.deflateRawSync(body, options)
+      },
+    }
+    const markup = text("<li>Loose-leaf tea</li>".repeat(30))
+    const noise = text(randomBytes(450).toString("base64"))
+    const tiny = text(randomBytes(60).toString("base64"))
+    const sources = [markup, text("<p>2 in cart</p>"), noise, tiny]
+    const lane = streamedGzip(readerOf(sources), counting, SEGMENTS, compare)
+    expect(Buffer.compare(gunzipSync(await readEachDecodes(lane, sources)), joined(sources))).toBe(
+      0,
+    )
+    // Random base64 shrinks by a quarter at most, so it goes to zlib; past FIXED_ALWAYS bytes only.
+    expect(deflated).toEqual([noise.byteLength])
+  })
+
   test("an empty body is a header and an empty final block", async () => {
     const lane = streamedGzip(readerOf([new Uint8Array(0)]), zlib, SEGMENTS, compare)
     const body = await new Response(lane).arrayBuffer()
@@ -211,6 +233,21 @@ describe("streamed gzip lanes", () => {
       chunk[20] = 0x21
     })
     expect(deflated).toContain(shell.byteLength)
+    // After a chunk of its own, a marked chunk's segment is reused and the CRC runs over its prefix.
+    deflated.length = 0
+    const late = shell.slice()
+    late.set(text("EEEEEEEE"), tokenAt)
+    markRepeatedPrefix(late, shell, tokenAt)
+    const led = [text("<!doctype html>"), late]
+    const after = streamedGzip(
+      readerOf(led),
+      counting,
+      { ...SEGMENTS, inlineMax: 1 << 20 },
+      compare,
+    )
+    const ledBody = gunzipSync(new Uint8Array(await new Response(after).arrayBuffer()))
+    expect(Buffer.compare(ledBody, joined(led))).toBe(0)
+    expect(deflated).toEqual([])
     // Without a compare to check the chunk against, a mark is never trusted.
     deflated.length = 0
     const unchecked = shell.slice()
@@ -239,15 +276,15 @@ describe("streamed gzip lanes", () => {
         onCall = resolve
       })
     let fail = false
-    let crcCalls = 0
-    let onSecondCrc: () => void = () => {}
+    let lookups = 0
+    let onSecondLookup: () => void = () => {}
+    // A lookup and the deflate call it starts run in one turn.
+    const counted = (a: Uint8Array, b: Uint8Array): number => {
+      if (++lookups === 2) onSecondLookup()
+      return compare(a, b)
+    }
     const offLoop = {
       ...zlib,
-      // The lane looks the prefix up right after the chunk's CRC, in the same turn.
-      crc32: (data: Uint8Array, value?: number) => {
-        if (++crcCalls === 2) onSecondCrc()
-        return zlib.crc32(data, value)
-      },
       deflateRaw: (
         body: Uint8Array,
         options: zlib.ZlibOptions,
@@ -268,7 +305,7 @@ describe("streamed gzip lanes", () => {
       first.set(text(token), tokenAt)
       markRepeatedPrefix(first, source, tokenAt)
       const sources = [first, text("</body></html>")]
-      const lane = streamedGzip(readerOf(sources), offLoop, SEGMENTS, compare)
+      const lane = streamedGzip(readerOf(sources), offLoop, SEGMENTS, counted)
       return { sources, body: new Response(lane).arrayBuffer() }
     }
     /** One visit whose deflate fails when `failing`; its error, or undefined once it decoded. */
@@ -291,9 +328,9 @@ describe("streamed gzip lanes", () => {
     // A shell seen once compresses whole, like an unmarked chunk.
     expect(await visitOnce(shell, "00000000")).toBeUndefined()
     expect(lengths).toEqual([shell.byteLength])
-    crcCalls = 0
+    lookups = 0
     const bothChecked = new Promise<void>((resolve) => {
-      onSecondCrc = resolve
+      onSecondLookup = resolve
     })
     const a = visit(shell, "AAAAAAAA")
     const b = visit(shell, "BBBBBBBB")
@@ -326,17 +363,24 @@ describe("streamed gzip lanes", () => {
         zlib.deflateRaw(body, options, (error, result) => done(error, result))
       },
     }
-    const plan = { ...SEGMENTS, inlineMax: 4 }
-    const ok = streamedGzip(readerOf([text("abc"), text("abcdefgh")]), offLoop, plan, compare)
-    expect(gunzipSync(new Uint8Array(await new Response(ok).arrayBuffer())).toString()).toBe(
-      "abcabcdefgh",
-    )
-    expect(calls).toEqual(["one-shot 8"])
+    // Past what fixed codes take, so zlib's: inline up to inlineMax, then off the loop.
+    const inlined = text(randomBytes(900).toString("base64"))
+    const large = text(randomBytes(1500).toString("base64"))
+    expect(inlined.byteLength).toBeGreaterThan(FIXED_DEFLATE_MAX)
+    const plan = { ...SEGMENTS, inlineMax: inlined.byteLength }
+    const ok = streamedGzip(readerOf([inlined, large]), offLoop, plan, compare)
+    expect(
+      Buffer.compare(
+        gunzipSync(new Uint8Array(await new Response(ok).arrayBuffer())),
+        joined([inlined, large]),
+      ),
+    ).toBe(0)
+    expect(calls).toEqual([`one-shot ${large.byteLength}`])
     const { deflateRaw: _, ...syncOnly } = zlib
-    const inline = streamedGzip(readerOf([text("abcdefgh")]), syncOnly, plan, compare)
-    expect(gunzipSync(new Uint8Array(await new Response(inline).arrayBuffer())).toString()).toBe(
-      "abcdefgh",
-    )
+    const inline = streamedGzip(readerOf([large]), syncOnly, plan, compare)
+    expect(
+      Buffer.compare(gunzipSync(new Uint8Array(await new Response(inline).arrayBuffer())), large),
+    ).toBe(0)
     const failing = {
       ...zlib,
       deflateRaw: (
@@ -345,7 +389,7 @@ describe("streamed gzip lanes", () => {
         done: (error: Error | null, r: Uint8Array) => void,
       ) => done(new Error("zlib failed"), new Uint8Array()),
     }
-    const broken = streamedGzip(readerOf([text("abcdefgh")]), failing, plan, compare)
+    const broken = streamedGzip(readerOf([large]), failing, plan, compare)
     const settled = await new Response(broken).arrayBuffer().then(
       () => undefined,
       (error: unknown) => error,
