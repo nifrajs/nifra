@@ -205,6 +205,11 @@
       "types": "./dist/static-file.d.ts",
       "default": "./dist/static-file.js"
     },
+    "./file-type": {
+      "bun": "./src/file-type.ts",
+      "types": "./dist/file-type.d.ts",
+      "default": "./dist/file-type.js"
+    },
     "./contract": {
       "bun": "./src/server/contract.ts",
       "types": "./dist/server/contract.d.ts",

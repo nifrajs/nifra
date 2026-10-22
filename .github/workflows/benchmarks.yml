@@ -126,7 +126,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       # The nifra servers load core and middleware from dist, like a deployed app. Middleware's build
-      # needs schema's and uploads' declarations, so the full ordered build is the reliable one.
+      # needs schema's declarations, so the full ordered build is the reliable one.
       - name: Build
         run: bun run build
 

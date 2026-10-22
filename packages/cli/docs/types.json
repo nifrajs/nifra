@@ -4463,7 +4463,7 @@
   {
     "name": "DETECTABLE_MIME_TYPES",
     "kind": "const",
-    "package": "@nifrajs/uploads",
+    "package": "@nifrajs/core",
     "signature": "export declare const DETECTABLE_MIME_TYPES: readonly string[];",
     "doc": "/**\n * Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and\n * outside a `type/*` wildcard that covers one of them) can never match, so check a configured\n * allow-list against it up front instead of rejecting every upload at request time.\n */"
   },
@@ -6019,7 +6019,7 @@
   {
     "name": "FILE_TYPE_PREFIX_BYTES",
     "kind": "const",
-    "package": "@nifrajs/uploads",
+    "package": "@nifrajs/core",
     "signature": "export declare const FILE_TYPE_PREFIX_BYTES = 32;",
     "doc": "/**\n * How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file\n * (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows: it reaches the first four\n * compatible brands of an ISO-BMFF `ftyp` box, where an AVIF with the generic `mif1` brand says `avif`.\n */"
   },
@@ -6340,9 +6340,9 @@
   {
     "name": "FileType",
     "kind": "interface",
-    "package": "@nifrajs/uploads",
+    "package": "@nifrajs/core",
     "signature": "export interface FileType {\n    /** Detected MIME type, e.g. `\"image/png\"`. */\n    readonly mime: string;\n    /** Canonical extension (no dot), e.g. `\"png\"`. */\n    readonly ext: string;\n}",
-    "doc": "/**\n * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client\n * sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload\n * types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic\n * number - handle those explicitly if you accept them).\n */"
+    "doc": "/**\n * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client\n * sets freely). Reads only the leading bytes; imports nothing, so it is edge-safe. Covers the common\n * upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no\n * magic number - handle those explicitly if you accept them).\n *\n * The shared owner for every type-by-bytes check: `@nifrajs/schema/form`'s `t.file({ accept })` and\n * `@nifrajs/uploads`'s `validateUpload` must give one file one verdict, so both read this module.\n */"
   },
   {
     "name": "FileVersion",
@@ -19030,7 +19030,7 @@
   {
     "name": "detectFileType",
     "kind": "function",
-    "package": "@nifrajs/uploads",
+    "package": "@nifrajs/core",
     "signature": "export declare function detectFileType(bytes: Uint8Array): FileType | null;",
     "doc": "/** Detect a file's type from its magic bytes, or `null` if unrecognized. */"
   },
