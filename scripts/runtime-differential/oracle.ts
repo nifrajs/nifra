@@ -261,9 +261,9 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
   {
     id: "U6 repeated-header-empty-member",
     why:
-      "A field repeated with an empty member (`x:` and `x: 1`) is read three ways: Bun and workerd join " +
-      "it as ', 1', Deno's `Headers` iteration drops the empty member (`get` does not), and Node keeps " +
-      "its own join. A header schema or an echo of the value differs by runtime.",
+      "A field repeated with an empty member (`x:` and `x: 1`) is read two ways: Bun, Node and workerd " +
+      "join it as ', 1', while Deno's `Headers` iteration drops the empty member (`get` does not). A " +
+      "header schema or an echo of the value differs by runtime.",
     matches: (violation, testCase) => {
       if (violation.kind !== "difference") return false
       const seen = new Map<string, number>()
