@@ -261,17 +261,6 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
         (violation.kind === "difference" && othersAgree(outcomes, "deno"))),
   },
   {
-    id: "F11 deno-500-on-cut-body",
-    why:
-      "When the client hangs up inside a request's body, only Deno hands the app the request; the body " +
-      "read then fails. The JSON lane answers that 400 invalid_json, but the urlencoded lane and a " +
-      "handler's own `c.req.text()` let the read error through as 500. Bun and Node close instead.",
-    matches: (violation, testCase, outcomes) =>
-      statusOf(outcomes, "deno") === 500 &&
-      testCase.refusable.includes("body shorter than its framing") &&
-      aloneIn(violation, outcomes, "deno"),
-  },
-  {
     id: "F5 multipart-platform-parser",
     why:
       "nifra hands a multipart body to the platform's own `Response.formData()`, and the parsers disagree " +
@@ -368,8 +357,8 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
     id: "U3 deno-truncates-after-early-eof",
     why:
       "When a request's body ends early (the client half-closes inside its framing), Deno.serve writes the " +
-      "head of a streamed response, Content-Length included, then closes without the body. A bare " +
-      "Deno.serve handler does the same; Bun and Node close without answering.",
+      "head of a streamed response, Content-Length included, then closes without the body, or sends nothing " +
+      "at all. A bare Deno.serve handler does the same; Bun and Node close without answering.",
     matches: (violation, testCase) =>
       violation.kind === "malformed-response" &&
       violation.lanes.length === 1 &&

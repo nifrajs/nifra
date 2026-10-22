@@ -16496,7 +16496,7 @@
     "name": "WebhookFailureReason",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type WebhookFailureReason = \"missing_signature\" | \"invalid_signature\" | \"timestamp_out_of_tolerance\" | \"malformed_signature\" | \"payload_too_large\" | \"invalid_content_length\";"
+    "signature": "export type WebhookFailureReason = \"missing_signature\" | \"invalid_signature\" | \"timestamp_out_of_tolerance\" | \"malformed_signature\" | \"payload_too_large\" | \"invalid_content_length\" | \"invalid_body\";"
   },
   {
     "name": "WebhookProvider",

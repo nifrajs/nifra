@@ -160,17 +160,23 @@ export function readBoundedJsonSource<T>(
   }
 
   const body = raw.body
+  // A body off a client's connection that fails mid-read is refused as this lane's other failures
+  // are; one built in this process, or a stream the app already holds, keeps its error.
+  const refuseFailedRead = body !== null && !body.locked && hasTrustedBodyFraming(req)
   const streamed =
     body === null
       ? Promise.resolve<unknown | ResponseResult>(plainError(400, "invalid_json"))
-      : drainCapped(body, maxBytes).then((drained) => {
-          if (!drained.ok) return plainError(413, "payload_too_large")
-          try {
-            return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
-          } catch {
-            return plainError(400, "invalid_json")
-          }
-        })
+      : drainCapped(body, maxBytes).then(
+          (drained) => {
+            if (!drained.ok) return plainError(413, "payload_too_large")
+            try {
+              return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
+            } catch {
+              return plainError(400, "invalid_json")
+            }
+          },
+          refuseFailedRead ? INVALID_JSON : undefined,
+        )
   return onResult === undefined ? streamed : streamed.then(onResult, onError)
 }
 

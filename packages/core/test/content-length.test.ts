@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { server, toFetchHandler } from "../src/index.ts"
 import {
   applyTransportCap,
@@ -140,34 +141,54 @@ describe("readBoundedBytes - the cap holds on real bytes (GHSA-rv63-4mwf-qqc2 cl
     const atCap = await readBoundedBytes(lyingSource(String(CAP), bytes(CAP)).source, CAP)
     expect(atCap.ok).toBe(true)
     const oneOver = await readBoundedBytes(lyingSource(String(CAP), bytes(CAP + 1)).source, CAP)
-    expect(oneOver).toEqual({ ok: false, status: 413 })
+    expect(oneOver).toEqual({ ok: false, status: 413, error: "payload_too_large" })
   })
 
   test("understated length: real bytes over the cap are rejected post-read", async () => {
     const { source } = lyingSource("5", bytes(3000))
-    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+    expect(await readBoundedBytes(source, CAP)).toEqual({
+      ok: false,
+      status: 413,
+      error: "payload_too_large",
+    })
   })
 
   test("understated length: even under the cap, delivering more than declared is rejected", async () => {
     const { source } = lyingSource("5", bytes(800))
-    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+    expect(await readBoundedBytes(source, CAP)).toEqual({
+      ok: false,
+      status: 413,
+      error: "payload_too_large",
+    })
   })
 
   test("overstated length is rejected before any buffering happens", async () => {
     const { source, wasBuffered } = lyingSource("3000", bytes(3000))
-    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+    expect(await readBoundedBytes(source, CAP)).toEqual({
+      ok: false,
+      status: 413,
+      error: "payload_too_large",
+    })
     expect(wasBuffered()).toBe(false)
   })
 
   test("malformed length is 400, not a fall-through to the streaming guard", async () => {
     const { source, wasBuffered } = lyingSource("5; drop", bytes(5))
-    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 400 })
+    expect(await readBoundedBytes(source, CAP)).toEqual({
+      ok: false,
+      status: 400,
+      error: "invalid_content_length",
+    })
     expect(wasBuffered()).toBe(false)
   })
 
   test("chunked bodies skip the fast path and the streaming guard counts real bytes", async () => {
     const { source, wasBuffered } = lyingSource("5", bytes(3000), true)
-    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+    expect(await readBoundedBytes(source, CAP)).toEqual({
+      ok: false,
+      status: 413,
+      error: "payload_too_large",
+    })
     expect(wasBuffered()).toBe(false) // enforced by drainCapped, never by arrayBuffer framing
   })
 
@@ -178,6 +199,79 @@ describe("readBoundedBytes - the cap holds on real bytes (GHSA-rv63-4mwf-qqc2 cl
       arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
     }
     expect(await readBoundedBytes(source, CAP)).toEqual({ ok: true, bytes: new Uint8Array(0) })
+  })
+
+  test("a client's body that fails while it is read is a 400; one built here keeps its error", async () => {
+    const lost = new Error("connection lost")
+    const broken = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes(4))
+          controller.error(lost)
+        },
+      })
+    const streamed = (body: ReadableStream<Uint8Array>) => ({
+      headers: { get: () => null },
+      body,
+      arrayBuffer: () => Promise.reject(new Error("unused")),
+    })
+    const sized = () => ({
+      headers: { get: (name: string) => (name === "content-length" ? "8" : null) },
+      body: null,
+      arrayBuffer: () => Promise.reject(lost),
+    })
+    for (const source of [streamed(broken()), sized()]) {
+      markTrustedBodyFraming(source)
+      expect(await readBoundedBytes(source, CAP)).toEqual({
+        ok: false,
+        status: 400,
+        error: "invalid_body",
+      })
+    }
+    for (const source of [streamed(broken()), sized()])
+      await expect(readBoundedBytes(source, CAP)).rejects.toBe(lost)
+    const held = broken()
+    held.getReader()
+    const locked = streamed(held)
+    markTrustedBodyFraming(locked)
+    await expect(readBoundedBytes(locked, CAP)).rejects.toThrow()
+  })
+})
+
+// A client that hangs up inside a body reaches the app only on Deno, where the read then fails. Found by
+// scripts/check-runtime-differential.ts: the form lane and `c.boundedBody` answered it 500.
+describe("a body that fails while it is read", () => {
+  const cutRequest = (path: string, type: string) => {
+    const init: RequestInit & { duplex: "half" } = {
+      method: "POST",
+      headers: { "content-type": type },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("name=a"))
+          controller.error(new Error("connection lost"))
+        },
+      }),
+      duplex: "half",
+    }
+    const request = new Request(`http://localhost${path}`, init)
+    // As a runtime marks a request it took off a client's connection.
+    markTrustedBodyFraming(request)
+    return request
+  }
+  const app = server()
+    .post("/form", { body: t.object({ name: t.string() }) }, (c) => c.body)
+    .post("/json", { body: t.object({ name: t.string() }) }, (c) => c.body)
+    .post("/bounded", async (c) => ({ size: (await c.boundedBody()).byteLength }))
+    .post("/text", async (c) => ({ text: await c.req.text() }))
+
+  test.each([
+    ["/form", "application/x-www-form-urlencoded", "invalid_body"],
+    ["/json", "application/json", "invalid_json"],
+    ["/bounded", "application/octet-stream", "invalid_body"],
+    ["/text", "text/plain", "invalid_body"],
+  ])("%s answers 400", async (path, type, error) => {
+    const res = await app.fetch(cutRequest(path, type))
+    expect([res.status, await res.json()]).toEqual([400, { ok: false, error }])
   })
 })
 
@@ -191,7 +285,11 @@ describe("drainCapped", () => {
         throw new Error("cancel failed")
       },
     })
-    expect(await drainCapped(stream, 1000)).toEqual({ ok: false, status: 413 })
+    expect(await drainCapped(stream, 1000)).toEqual({
+      ok: false,
+      status: 413,
+      error: "payload_too_large",
+    })
     await Bun.sleep(0)
     expect(cancelled).toBe(true)
   })

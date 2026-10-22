@@ -368,11 +368,7 @@ function createReader(
     if (boundary === null) return INVALID()
 
     const read = await readBoundedBytes(source, maxBodyBytes)
-    if (!read.ok) {
-      return read.status === 413
-        ? plainError(413, "payload_too_large")
-        : plainError(400, "invalid_content_length")
-    }
+    if (!read.ok) return plainError(read.status, read.error)
     const bytes = read.bytes
 
     // Counted on the raw bytes: the platform parser allocates per part, so a body of many tiny

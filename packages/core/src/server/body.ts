@@ -65,13 +65,26 @@ export function parseContentLength(value: string): number | undefined {
   return length
 }
 
+/** Why a bounded read refused a body: the status and the error code it is answered with. */
+export type BoundedReadFailure =
+  | { ok: false; status: 413; error: "payload_too_large" }
+  | { ok: false; status: 400; error: "invalid_content_length" | "invalid_body" }
+
+const TOO_LARGE: { ok: false; status: 413; error: "payload_too_large" } = {
+  ok: false,
+  status: 413,
+  error: "payload_too_large",
+}
+const BAD_LENGTH: BoundedReadFailure = { ok: false, status: 400, error: "invalid_content_length" }
+const UNREADABLE: BoundedReadFailure = { ok: false, status: 400, error: "invalid_body" }
+
 /** The shared streaming byte-cap loop: read until done, or cancel + 413 once over `maxBytes`.
  * A single-chunk body (the common case for small chunked payloads) returns the runtime's own
  * chunk directly - no chunk array, no copy-merge. */
 export async function drainCapped(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
-): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; status: 413 }> {
+): Promise<{ ok: true; bytes: Uint8Array } | typeof TOO_LARGE> {
   assertByteLimit(maxBytes)
   const reader = body.getReader()
   let first: Uint8Array | undefined
@@ -85,7 +98,7 @@ export async function drainCapped(
       // Not awaited: on a teed body (a `clone()` taken first) the cancel settles only once the other
       // branch is read or cancelled too, and nothing here ever reads it.
       reader.cancel().catch(() => {})
-      return { ok: false, status: 413 }
+      return TOO_LARGE
     }
     if (first === undefined) {
       first = value
@@ -112,38 +125,52 @@ export async function drainCapped(
  * `Content-Length` within the cap is read via native `arrayBuffer()`, then the **real** byte count
  * is checked against the declared length - a source that delivers more than it declared (a lying
  * or upstream-decoding adapter) is rejected with `413` even though its header passed the hint.
+ * A body a runtime took off a client's connection that fails while it is read - a client that hung
+ * up inside it, which only Deno hands an app - is refused `400` `invalid_body`. A body built in this
+ * process keeps its producer's error, and a reader the app spent or locked keeps its throw.
  */
 export async function readBoundedBytes(
   source: BodySource,
   maxBytes: number,
-): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; status: 400 | 413 }> {
+): Promise<{ ok: true; bytes: Uint8Array } | BoundedReadFailure> {
   assertByteLimit(maxBytes)
   const req = rawBodySourceOf(source)
   const declared = req.headers.get("content-length")
+  let length: number | undefined
   if (declared !== null) {
     // A present Content-Length must be a non-negative integer (HTTP grammar: `1*DIGIT`). A non-numeric
     // / negative / fractional value is malformed → 400, rather than falling through to the streaming
     // guard (an UPPER-bound cap only, so a lying SMALLER length would otherwise be read in full).
-    const length = parseContentLength(declared)
-    if (length === undefined) return { ok: false, status: 400 }
-    if (length > maxBytes) return { ok: false, status: 413 }
-    const chunked = req.headers.get("transfer-encoding") !== null
-    if (!chunked) {
-      const bytesReader = req.bytes
-      const bytes =
-        bytesReader === undefined
-          ? new Uint8Array(await req.arrayBuffer())
-          : await bytesReader.call(req)
-      // Content-Length was the fast-reject hint, never the enforcement: a lying or buffering
-      // source (an adapter that decoded/expanded the body upstream) can hand over more bytes
-      // than it declared. `length <= maxBytes` held above, so one comparison seals the cap.
-      if (bytes.byteLength > length) return { ok: false, status: 413 }
-      return { ok: true, bytes }
+    length = parseContentLength(declared)
+    if (length === undefined) return BAD_LENGTH
+    if (length > maxBytes) return TOO_LARGE
+  }
+  const fromClient = hasTrustedBodyFraming(source) || hasTrustedBodyFraming(req)
+  if (length !== undefined && req.headers.get("transfer-encoding") === null) {
+    // Called outside the `try`: a spent reader throws synchronously, and that throw is the app's.
+    const bytesReader = req.bytes
+    const reading =
+      bytesReader === undefined
+        ? req.arrayBuffer().then((buffer) => new Uint8Array(buffer))
+        : bytesReader.call(req)
+    let bytes: Uint8Array
+    try {
+      bytes = await reading
+    } catch (error) {
+      if (fromClient) return UNREADABLE
+      throw error
     }
+    // Content-Length was the fast-reject hint, never the enforcement: a lying or buffering
+    // source (an adapter that decoded/expanded the body upstream) can hand over more bytes
+    // than it declared. `length <= maxBytes` held above, so one comparison seals the cap.
+    if (bytes.byteLength > length) return TOO_LARGE
+    return { ok: true, bytes }
   }
   const body = req.body
   if (body === null) return { ok: true, bytes: new Uint8Array(0) }
-  return drainCapped(body, maxBytes)
+  const lockedByApp = body.locked
+  const draining = drainCapped(body, maxBytes)
+  return fromClient && !lockedByApp ? draining.catch(() => UNREADABLE) : draining
 }
 
 /** Key under which a transport-capped request stashes its {@link RawBodyReaders}. */
@@ -190,8 +217,8 @@ const TRANSPORT_CAP = Symbol("nifra.body.transportCap")
 /** The transport cap's over-cap rejection: the flat error a shadowed direct reader throws (and the
  * capped `body` stream errors with). The lifecycle already treats a thrown `Response` as control
  * flow (the `c.boundedBody` contract), so an over-cap direct read answers 413 like every other cap. */
-function transportCapError(status: 400 | 413): Response {
-  return jsonError(status, status === 413 ? "payload_too_large" : "invalid_content_length")
+function transportCapError(failure: BoundedReadFailure): Response {
+  return jsonError(failure.status, failure.error)
 }
 
 /**
@@ -211,11 +238,11 @@ export function capBodyBytes(request: Request, maxBytes: number): Request {
       new TransformStream<Uint8Array, Uint8Array>({
         start(controller) {
           if (length === undefined || length > maxBytes)
-            controller.error(transportCapError(length === undefined ? 400 : 413))
+            controller.error(transportCapError(length === undefined ? BAD_LENGTH : TOO_LARGE))
         },
         transform(chunk, controller) {
           total += chunk.byteLength
-          if (total > maxBytes) controller.error(transportCapError(413))
+          if (total > maxBytes) controller.error(transportCapError(TOO_LARGE))
           else controller.enqueue(chunk)
         },
       }),
@@ -279,11 +306,11 @@ function spendRaw(raw: RawBodyReaders): void {
   Object.defineProperty(raw, "body", { get: spent })
 }
 
-/** A pass-through stream that errors (with `reject(413)`) once more than `maxBytes` flow through. */
+/** A pass-through stream that errors (with `reject` of a 413) once more than `maxBytes` flow through. */
 function cappedStreamOf(
   body: RawStream,
   maxBytes: number,
-  reject: (status: 400 | 413) => unknown,
+  reject: (failure: BoundedReadFailure) => unknown,
 ): ReadableStream<Uint8Array> {
   // The reader is acquired on first pull, and `highWaterMark: 0` defers that first pull until a
   // consumer actually reads (the default of 1 pulls eagerly at construction): merely *accessing*
@@ -312,7 +339,7 @@ function cappedStreamOf(
           // Not awaited, as in drainCapped: on a teed body the cancel settles only once the other
           // branch is read or cancelled too, and the 413 must not wait for an unread clone.
           active.cancel().catch(() => {})
-          controller.error(reject(413))
+          controller.error(reject(TOO_LARGE))
           return
         }
         controller.enqueue(value)
@@ -332,8 +359,9 @@ function cappedStreamOf(
  * pre-decoded body), and hook-observed references all survive. Nothing is read eagerly: the cap
  * only pays when user code actually reads, and framework readers bypass it through
  * {@link rawBodySourceOf} (stashed under {@link RAW_BODY_READERS}) to enforce their own caps.
- * An over-cap read rejects with `reject(413)` (a lying `Content-Length` with `reject(400)`), which
- * the lifecycle already treats as control flow - the same contract as `c.boundedBody`.
+ * An over-cap read rejects with the cap's flat 413 (a lying `Content-Length` with its 400, a body
+ * that fails mid-read with 400 `invalid_body`), which the lifecycle already treats as control flow -
+ * the same contract as `c.boundedBody`.
  */
 /** The request's own pre-shadow readers - the fallback surface when the source offers none. */
 function requestBodyReaders(request: Request): RawBodyReaders {
@@ -361,13 +389,15 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
   TRANSPORT_CAPPED.add(request)
   const reject = transportCapError
   const raw = preset ?? requestBodyReaders(request)
+  // The shadowed readers read through `raw`, which must still say where the body came from.
+  if (hasTrustedBodyFraming(request)) markTrustedBodyFraming(raw)
   // One bounded buffer backs every shadowed reader; a second read replays it instead of failing
   // with "body already used" (a strict superset of the native one-shot contract).
   let buffered: Promise<Uint8Array> | undefined
   const cappedBytes = (): Promise<Uint8Array> => {
     if (buffered === undefined) {
       const read = readBoundedBytes(raw, maxBytes).then((result) => {
-        if (!result.ok) throw reject(result.status)
+        if (!result.ok) throw reject(result)
         return result.bytes
       })
       buffered = read
