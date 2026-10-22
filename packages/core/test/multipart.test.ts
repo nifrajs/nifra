@@ -610,8 +610,8 @@ describe("multipartBody reads a body as the Fetch standard's parser does", () =>
     const app = server().post("/upload", { body: multipartBody(anyBody) }, async (c) => {
       const out: Record<string, unknown> = {}
       for (const [name, value] of Object.entries(c.body)) {
-        const file = value as File
-        out[name] = { name: file.name, type: file.type, text: await file.text() }
+        if (value instanceof File)
+          out[name] = { name: value.name, type: value.type, text: await value.text() }
       }
       return out
     })

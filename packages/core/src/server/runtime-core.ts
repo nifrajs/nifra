@@ -18,9 +18,7 @@ export type HandlerResult = Response | unknown
  * probed: workerd forbids `Response.json()` while a module loads.
  */
 export const JSON_CONTENT_TYPE =
-  typeof (globalThis as { Bun?: unknown }).Bun !== "undefined"
-    ? "application/json;charset=utf-8"
-    : "application/json"
+  "Bun" in globalThis ? "application/json;charset=utf-8" : "application/json"
 
 export const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
 export const CONTEXT_SET = Symbol("nifra.context.set")

@@ -87,9 +87,9 @@ describe("a request body the app's own c.req.json() cannot parse", () => {
   test("a SyntaxError the app raises on its own string stays a logged 500", async () => {
     const logged: string[] = []
     const app = server({ logger: loggerInto(logged) })
-      .post("/own", () => JSON.parse("{") as unknown)
+      .post("/own", (): unknown => JSON.parse("{"))
       .derive(() => ({ seen: true }))
-      .post("/own-program", (c) => ({ parsed: JSON.parse("{") as unknown, seen: c.seen }))
+      .post("/own-program", (c): unknown => [JSON.parse("{"), c.seen])
     for (const path of ["/own", "/own-program"])
       expect((await app.fetch(post(path, '{"a":1}'))).status).toBe(500)
     expect(logged).toEqual(["unhandled request error", "unhandled request error"])
