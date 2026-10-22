@@ -1162,6 +1162,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A run that returned while its executor kept running, having ignored its abort signal.
 - **SubagentAbandonmentLedger** _(interface)_ - `interface SubagentAbandonmentLedger`
   Abandoned executors still running. Runners sharing one ledger are counted, and bounded by `maxAbandoned`, together.
+- **SubagentChildLedger** _(interface)_ - `interface SubagentChildLedger`
+  Children started, plus those still acquiring a workspace. Runners sharing one ledger are counted, and bounded by `maxChildren`, together.
 - **SubagentExecutor** _(interface)_ - `interface SubagentExecutor`
 - **SubagentResult** _(interface)_ - `interface SubagentResult`
 - **SubagentRunnerOptions** _(interface)_ - `interface SubagentRunnerOptions`

@@ -4,7 +4,9 @@
  * traversal). Explicit content type and custom metadata are persisted in a sidecar tree beside the
  * root that mirrors the object paths; sidecars written by earlier versions (`<key>.json` in
  * `<root>.nifra-metadata`) are still read, and objects with none infer content type from their extension.
- * Every write is staged beside the root and renamed into place, so a reader sees an object whole.
+ * Every write is staged beside the root and renamed into place, so a reader sees an object whole; a
+ * root that is its own mount point stages next to the object instead. The bookkeeping beside the root
+ * is the owner's alone.
  */
 import { createHash } from "node:crypto"
 import { constants, type Dirent } from "node:fs"
@@ -90,6 +92,9 @@ const isMissing = (error: unknown): boolean => {
   return code === "ENOENT" || code === "ENOTDIR"
 }
 
+// No key holds a backslash, so a file staged under this name never meets a key or a listing.
+const STAGED_BESIDE = ".nifra\\"
+
 /** Remove a staging file that may already be gone. */
 const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => {})
 
@@ -122,6 +127,8 @@ export class FileStorage implements StorageAdapter {
   private metadataRoot = ""
   private legacyMetadataRoot = ""
   private stagingRoot = ""
+  private stateRoot = ""
+  private statePrivate: Promise<void> | undefined
   /** Each key's latest write, so this instance publishes a key's body and sidecar one put at a time. */
   private readonly writes = new Map<string, Promise<void>>()
   /** The directory holding the root and its bookkeeping, by real path and identity, once resolved. */
@@ -138,9 +145,9 @@ export class FileStorage implements StorageAdapter {
     // Keep bookkeeping outside the object tree so every otherwise-safe key remains usable, including
     // `.nifra-metadata/*`, and list() never needs a reserved-prefix exception. Sidecars mirror the
     // object paths exactly, so two keys clash there only where their objects would clash anyway.
-    const state = `${root}.nifra-state`
-    this.metadataRoot = join(state, "metadata")
-    this.stagingRoot = join(state, "staging")
+    this.stateRoot = `${root}.nifra-state`
+    this.metadataRoot = join(this.stateRoot, "metadata")
+    this.stagingRoot = join(this.stateRoot, "staging")
     this.legacyMetadataRoot = `${root}.nifra-metadata`
   }
 
@@ -394,9 +401,10 @@ export class FileStorage implements StorageAdapter {
   }
 
   /**
-   * Write `data` whole or not at all: staged in a sibling directory, then renamed over `path`, so a
-   * reader never sees a half-written object and a failed write leaves the previous one. The renamed
-   * inode is then proven to be the staged one, reachable beneath the same root.
+   * Write `data` whole or not at all: staged in a sibling directory, or next to `path` where a rename
+   * from there would cross devices, then renamed over `path`, so a reader never sees a half-written
+   * object and a failed write leaves the previous one. The renamed inode is then proven to be the
+   * staged one, reachable beneath the same root.
    */
   private async writeContained(
     base: string,
@@ -405,19 +413,32 @@ export class FileStorage implements StorageAdapter {
     data: Uint8Array | string,
   ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
+    await this.privateState()
     await mkdir(dirname(path), { recursive: true, mode: 0o755 })
     await this.pinHolder(key)
-    const staged = await this.stage(key, data)
+    try {
+      return await this.stageAndRename(base, path, key, data, this.stagingRoot)
+    } catch (error) {
+      // A root that is its own mount point takes no rename from beside it, so the write is staged next
+      // to the object and is still one rename. Windows has no name to stage it under: a backslash
+      // separates paths there.
+      if (errorCode(error) !== "EXDEV" || process.platform === "win32") throw error
+      return await this.stageAndRename(base, path, key, data, dirname(path))
+    }
+  }
+
+  private async stageAndRename(
+    base: string,
+    path: string,
+    key: string,
+    data: Uint8Array | string,
+    stagingDir: string,
+  ): Promise<FileIdentity> {
+    const staged = await this.stage(key, data, stagingDir)
     try {
       await this.assertNoSymlinkPath(base, path, key)
       const baseBefore = await lstat(base)
-      try {
-        await renameOver(staged.path, path)
-      } catch (error) {
-        // A root that is its own mount point cannot take a rename from beside it.
-        if (errorCode(error) !== "EXDEV") throw error
-        return await this.writeInPlace(base, path, key, data)
-      }
+      await renameOver(staged.path, path)
       const [current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
         lstat(path),
         lstat(base),
@@ -436,15 +457,17 @@ export class FileStorage implements StorageAdapter {
     }
   }
 
-  /** A new, exclusively created file in the staging directory holding `data`. */
+  /** A new, exclusively created file in `dir` holding `data`. */
   private async stage(
     key: string,
     data: Uint8Array | string,
+    dir: string,
   ): Promise<FileIdentity & { readonly path: string }> {
-    await mkdir(this.stagingRoot, { recursive: true, mode: 0o755 })
+    const own = dir === this.stagingRoot
+    if (own) await mkdir(dir, { recursive: true, mode: 0o700 })
     await this.pinHolder(key)
-    const path = join(this.stagingRoot, `${crypto.randomUUID()}.tmp`)
-    await this.assertNoSymlinkPath(this.stagingRoot, path, key)
+    const path = join(dir, `${own ? "" : STAGED_BESIDE}${crypto.randomUUID()}.tmp`)
+    await this.assertNoSymlinkPath(dir, path, key)
     let handle: FileHandle
     try {
       handle = await open(
@@ -468,54 +491,37 @@ export class FileStorage implements StorageAdapter {
   }
 
   /**
-   * Create parents and open without truncating. The opened inode is validated against the current,
-   * fully resolved path before any caller data is written, closing the check/open symlink race.
+   * Staged bytes and sidecars sit beside the root, where its own mode cannot cover them, so that tree
+   * is the owner's alone. One an earlier version left open is closed once per instance.
    */
-  private async writeInPlace(
-    base: string,
-    path: string,
-    key: string,
-    data: Uint8Array | string,
-  ): Promise<FileIdentity> {
-    await this.assertNoSymlinkPath(base, path, key)
-    // 0o755 whatever the umask: a group-writable directory (umask 002) would fail the trust check above.
-    await mkdir(dirname(path), { recursive: true, mode: 0o755 })
-    await this.pinHolder(key)
-    await this.assertNoSymlinkPath(base, path, key)
-    try {
-      const baseBefore = await lstat(base)
-      const handle = await open(
-        path,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW,
-        0o666,
-      )
-      try {
-        // Do not truncate until the descriptor is proven to be the same file currently reachable
-        // through a symlink-free path beneath the same storage-root directory.
-        await this.assertNoSymlinkPath(base, path, key)
-        const [opened, current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
-          handle.stat(),
-          lstat(path),
-          lstat(base),
-          realpath(base),
-          realpath(path),
-        ])
-        const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
-        const targetChanged =
-          current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino
-        const escaped =
-          resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
-        if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
-
-        await handle.truncate(0)
-        await handle.writeFile(data)
-        return { ...(await identityOf(handle)), sha256: sha256(data) }
-      } finally {
-        await handle.close()
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOOP") throw this.symlinkError(key)
+  private privateState(): Promise<void> {
+    this.statePrivate ??= this.closeState().catch((error: unknown) => {
+      this.statePrivate = undefined
       throw error
+    })
+    return this.statePrivate
+  }
+
+  private async closeState(): Promise<void> {
+    await mkdir(dirname(this.stateRoot), { recursive: true, mode: 0o755 })
+    await mkdir(this.stateRoot, { recursive: true, mode: 0o700 })
+    if (process.platform === "win32") return
+    let handle: FileHandle
+    try {
+      handle = await open(
+        this.stateRoot,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      )
+    } catch (error) {
+      // A link there is left to the checks every write makes; it is not this one's to judge.
+      if (errorCode(error) === "ELOOP" || errorCode(error) === "ENOTDIR") return
+      throw error
+    }
+    try {
+      const info = await handle.stat()
+      if ((info.mode & 0o077) !== 0 && info.uid === process.getuid?.()) await handle.chmod(0o700)
+    } finally {
+      await handle.close()
     }
   }
 
@@ -730,7 +736,8 @@ export class FileStorage implements StorageAdapter {
     const entries: { readonly name: string; readonly order: string; readonly kind: string }[] = []
     for (const dirent of listed) {
       const { name } = dirent
-      if (!name.startsWith(namePrefix)) continue
+      // A write staged next to its object, or one a crash left there.
+      if (!name.startsWith(namePrefix) || name.includes("\\")) continue
       // The type readdir reports is the entry's own, as lstat would give it, so a file costs no stat;
       // only an entry of any other or unrecorded type is stat'ed here.
       const info =
