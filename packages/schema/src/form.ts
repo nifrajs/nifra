@@ -27,13 +27,13 @@
  *
  * A subpath on purpose: an app that takes no uploads carries none of this.
  */
-import { type MultipartLimits, multipartBody } from "@nifrajs/core/multipart"
-import type { StandardIssue, StandardResult, StandardTypes } from "@nifrajs/core/schema"
 import {
   DETECTABLE_MIME_TYPES,
   detectFileType,
   FILE_TYPE_PREFIX_BYTES,
-} from "@nifrajs/uploads/detect"
+} from "@nifrajs/core/file-type"
+import { type MultipartLimits, multipartBody } from "@nifrajs/core/multipart"
+import type { StandardIssue, StandardResult, StandardTypes } from "@nifrajs/core/schema"
 import {
   type ArrayOptions,
   Kind,
