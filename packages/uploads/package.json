@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/uploads",
   "version": "5.5.1",
-  "description": "File-upload hardening for nifra - magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.",
+  "description": "File-upload hardening for nifra - size + magic-byte type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Edge-safe.",
   "keywords": [
     "bun",
     "typescript",
@@ -27,11 +27,6 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./detect": {
-      "bun": "./src/detect.ts",
-      "types": "./dist/detect.d.ts",
-      "default": "./dist/detect.js"
     }
   },
   "files": [
@@ -46,6 +41,12 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*"
   },
   "repository": {
     "type": "git",

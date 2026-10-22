@@ -348,4 +348,56 @@ describe("optional agent safety surfaces", () => {
       rmSync(base, { recursive: true, force: true })
     }
   })
+
+  test("inside the root, only an allowed root admits a cwd, from the spec or from a lease", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "nifra-subagent-")))
+    try {
+      const root = join(base, "root")
+      for (const dir of ["allowed", "second", "other"])
+        mkdirSync(join(root, dir), { recursive: true })
+      symlinkSync(join(root, "other"), join(root, "allowed", "to-other"))
+      const ran: Array<string | undefined> = []
+      const executor = {
+        run: ({ cwd }: { readonly cwd?: string }) => {
+          ran.push(cwd)
+          return "ran"
+        },
+      }
+      const policy = { root, allowedRoots: [join(root, "allowed"), join(root, "second")] }
+      const runner = new BoundedSubagentRunner(executor, { workspace: policy })
+      const spec = { id: "child", role: "worker", prompt: "edit" }
+      for (const cwd of ["other", "allowed/to-other", "other/not-yet-created"])
+        await expect(runner.run({ ...spec, cwd })).resolves.toMatchObject({
+          ok: false,
+          error: "subagent workspace is not in an allowed root",
+        })
+      expect(ran).toEqual([])
+      // Any one of the allowed roots admits, the second as well as the first.
+      await expect(runner.run({ ...spec, cwd: "allowed" })).resolves.toMatchObject({ ok: true })
+      await expect(runner.run({ ...spec, cwd: "second/new" })).resolves.toMatchObject({ ok: true })
+      expect(ran).toEqual([join(root, "allowed"), join(root, "second", "new")])
+
+      ran.length = 0
+      let lease = join(root, "other")
+      const leased = new BoundedSubagentRunner(executor, {
+        workspace: { ...policy, isolatedWorktree: () => ({ cwd: lease }) },
+      })
+      // The requested cwd is allowed; the lease it is given is not.
+      await expect(leased.run({ ...spec, cwd: "allowed" })).resolves.toMatchObject({
+        ok: false,
+        error: "isolated worktree escapes workspace policy",
+      })
+      lease = join(root, "allowed", "to-other")
+      await expect(leased.run({ ...spec, cwd: "allowed" })).resolves.toMatchObject({
+        ok: false,
+        error: "isolated worktree escapes workspace policy",
+      })
+      expect(ran).toEqual([])
+      lease = join(root, "second")
+      await expect(leased.run({ ...spec, cwd: "allowed" })).resolves.toMatchObject({ ok: true })
+      expect(ran).toEqual([join(root, "second")])
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
 })

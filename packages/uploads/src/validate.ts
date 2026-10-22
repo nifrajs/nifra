@@ -1,4 +1,4 @@
-import { detectFileType, type FileType } from "./detect.ts"
+import { detectFileType, type FileType } from "@nifrajs/core/file-type"
 
 /**
  * Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`).

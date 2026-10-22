@@ -9,8 +9,8 @@
 const ENC = new TextEncoder()
 const DUMMY_BASE = "http://localhost" // lets us parse a relative path/URL with the WHATWG URL parser
 
-// 256-bit secret floor - mirrors @nifrajs/core's HMAC guard. This package is deliberately
-// dependency-free (ships its own crypto), so the constant is inlined rather than imported.
+// 256-bit secret floor - mirrors @nifrajs/core's HMAC guard. Core does not export the constant, so
+// it is inlined rather than imported.
 const MIN_SECRET_BYTES = 32
 
 const importKey = (secret: string): Promise<CryptoKey> => {

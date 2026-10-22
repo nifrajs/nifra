@@ -1,6 +1,6 @@
 # @nifrajs/uploads
 
-File-upload hardening for nifra - magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
+File-upload hardening for nifra - size + magic-byte type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Edge-safe.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
@@ -16,8 +16,9 @@ bun add @nifrajs/uploads
 body schema instead - validated before the handler runs, typed in `c.body` - use `t.file` and
 `t.form` from `@nifrajs/schema/form`, which run the same signature detection.
 
-`@nifrajs/uploads/detect` exports the detection alone (`detectFileType`, `DETECTABLE_MIME_TYPES`,
-`FILE_TYPE_PREFIX_BYTES`) for code that needs the type and nothing else.
+For code that needs file-type detection and nothing else, import `detectFileType`,
+`DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES` and the `FileType` type from
+`@nifrajs/core/file-type`.
 
 ## Docs
 
