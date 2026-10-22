@@ -8,6 +8,7 @@ import type {
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
+import { serverHoleComponent } from "../../server-components/hole.ts"
 import { HOLE_ERROR_HTML } from "../hole-runtime.ts"
 import { isControlFlow, isStatusSignal, notFound } from "../render-document.ts"
 import { HoleAdmission, type HoleRun, type HoleSlot, watchAbort } from "./admission.ts"
@@ -218,6 +219,10 @@ const frozenParts = new WeakMap<
 
 /** `ctx.live` outside a live load: keys are declared for nobody. */
 const NO_LIVE = (): void => {}
+
+/** The server component a dynamic hole shows, if it shows one. */
+const componentOf = (hole: HoleRegistration): object | undefined =>
+  hole.mode === "dynamic" ? serverHoleComponent(hole.render) : undefined
 
 /** A frozen context per invocation, so no hole changes what a sibling sees. The frozen params and
  * search are copied once per request and shared. */
@@ -1212,11 +1217,24 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const deadline = deadlines.join(hole.timeout ?? options.holeTimeoutMs)
     const signal = deadline.signal
     const live = request.live?.collector(hole.name) ?? NO_LIVE
+    const component = componentOf(hole)
     // A shared hole that is not stored for this request still loads as it is built: no request.
     const invoke =
       hole.mode === "shared"
         ? () => detached(() => hole.load?.(sharedHoleCtx(request, signal, live)))
-        : () => hole.load?.(holeCtx(request.holeContext, signal, live))
+        : component === undefined
+          ? () => hole.load?.(holeCtx(request.holeContext, signal, live))
+          : // The component runs under the hole's own deadline and admission, after its loader.
+            async () => {
+              const input = await hole.load?.(holeCtx(request.holeContext, signal, live))
+              if (isControlFlow(input) || isStatusSignal(input)) return input
+              if (request.component === undefined) {
+                throw new TypeError(
+                  `[nifra/web] ppr: hole "${hole.name}" shows a server component that the app's serverComponents does not list under holes for "${request.routeId}"`,
+                )
+              }
+              return request.component(hole.name, component, input, signal)
+            }
     return slot
       .run(`${request.routeId}|${hole.name}`, signal, invoke, deadline.watch)
       .then((run) => {
@@ -1271,6 +1289,20 @@ export function createPprServer(config: PprServerConfig): PprServer {
   ): Promise<string> => {
     if (!run.ok) return errorFrame(hole.name)
     try {
+      if (componentOf(hole) !== undefined) {
+        const value: unknown = run.value
+        const html: unknown =
+          typeof value === "object" && value !== null ? Reflect.get(value, "html") : null
+        if (typeof value !== "object" || value === null || typeof html !== "string") {
+          throw new TypeError("a server component rendered no HTML")
+        }
+        validateHoleHtml(html)
+        // The frame carries the HTML once; the record the islands mount from is the rest.
+        const component = Object.fromEntries(
+          Object.entries(value).filter(([key]) => key !== "html"),
+        )
+        return encodeHoleFrame(hole.name, { html, component }, options.frameBytes)
+      }
       const html = await renderFragment.call(
         adapter,
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
@@ -1532,14 +1564,18 @@ export function createPprServer(config: PprServerConfig): PprServer {
 
     async holeStates(request, mode, signal) {
       const { live, kept } = request
-      const fill = mode === "deferred" && request.fill === true
+      // A host the client holds reloads as a fill. A server component's hole is always a host: no
+      // browser can render it.
+      const fills = (hole: HoleRegistration): boolean =>
+        (mode !== "omitted" && componentOf(hole) !== undefined) ||
+        (mode === "deferred" && request.fill?.has(hole.name) === true)
       const keptStates: Record<string, BoundaryState> = {}
       const holes =
         kept === undefined || kept.size === 0
           ? request.holes
           : request.holes.filter((hole) => {
               if (!kept.has(hole.name)) return true
-              keptStates[hole.name] = fill
+              keptStates[hole.name] = fills(hole)
                 ? { name: hole.name, mode: hole.mode, status: "pending", ppr: true, kept: true }
                 : { name: hole.name, mode: hole.mode, status: "pending", kept: true }
               return false
@@ -1576,7 +1612,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
             if (start.hit !== undefined) {
               const hit = start.hit
               settle(hole.name, true, hit.keys)
-              if (fill)
+              if (fills(hole))
                 return [
                   hole.name,
                   { ...base, ppr: true, fill: frameBodyOf(DECODER.decode(hit.frame)) },
@@ -1601,14 +1637,19 @@ export function createPprServer(config: PprServerConfig): PprServer {
                     settle(hole.name, outcome.ok, outcome.ok ? outcome.value.keys : undefined),
                   ),
             )
-            if (fill) {
+            if (fills(hole)) {
               const frame =
                 start.entry === undefined
                   ? start.run.then((outcome) => frameOf(request, hole, outcome))
                   : start.entry.then((outcome) =>
                       outcome.ok ? DECODER.decode(outcome.value.frame) : errorFrame(hole.name),
                     )
-              return [hole.name, { ...base, ppr: true, fill: defer(frame.then(frameBodyOf)) }]
+              const body = frame.then(frameBodyOf)
+              // A blocking render puts the HTML in the host on the server.
+              return [
+                hole.name,
+                { ...base, ppr: true, fill: mode === "settled" ? await body : defer(body) },
+              ]
             }
             if (mode === "deferred") {
               const value = run.then((outcome) => {

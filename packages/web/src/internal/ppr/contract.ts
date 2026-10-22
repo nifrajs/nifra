@@ -73,8 +73,16 @@ export interface PprRequest {
   readonly holeTags: (hole: SharedHole) => readonly string[]
   /** Keeps the platform alive for work that outlives the response, where the platform needs it. */
   readonly waitUntil?: ((promise: Promise<unknown>) => void) | undefined
-  /** The client holds this route instance's hole hosts: a data request sends each hole's fill. */
-  readonly fill?: boolean
+  /** The holes the client holds as hosts: a data request sends each one's fill. A hole that shows a
+   * server component always gets its fill. */
+  readonly fill?: ReadonlySet<string>
+  /** Render a hole's server component for this visitor, when the app's server components list it. */
+  readonly component?: (
+    hole: string,
+    component: object,
+    input: unknown,
+    signal: AbortSignal,
+  ) => Promise<{ readonly html: string }>
   /** Holes the client keeps: none of them loads, and each state says it was kept. */
   readonly kept?: ReadonlySet<string>
   /** A live load: each hole's keys, and which holes loaded. */

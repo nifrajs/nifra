@@ -1190,7 +1190,7 @@ test("a page whose holes are hosts reloads them as fills; its grant follows them
   }
   socket().welcome()
   await until(() => server.loads.length === 1 && !router.snapshot().pending, "first load")
-  expect(server.loads[0]).toMatchObject({ retain: [], grants: [], fill: true })
+  expect(server.loads[0]).toMatchObject({ retain: [], grants: [], fill: ["cart", "price"] })
   // The head is shown at once; the grant is still on its way, so nothing is watched or loaded again.
   expect(router.snapshot().data).toEqual({ n: 1 })
   await settle()
@@ -1209,7 +1209,7 @@ test("a page whose holes are hosts reloads them as fills; its grant follows them
   expect(server.loads[1]).toMatchObject({
     retain: [ROOT, POST, PRICE],
     grants: ["grant-1"],
-    fill: true,
+    fill: ["cart", "price"],
   })
   // The kept hole is the state already on screen, so its host is left as it is.
   expect(router.snapshot().boundaries?.price).toBe(price)

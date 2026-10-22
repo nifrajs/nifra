@@ -219,9 +219,9 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
   }
 
   /** A plain data GET: the router's own transport, for a navigation the live endpoint turned away. */
-  const plainLoad: FetchRouteData = async (path, _match, signal, navigation, purpose) => {
+  const plainLoad: FetchRouteData = async (path, _match, signal, navigation, _purpose, hosts) => {
     const headers = new Headers({ [DATA_HEADER]: "1" })
-    if (purpose === "refill") headers.set(HOLE_FILL_HEADER, "1")
+    if (hosts !== undefined && hosts.length > 0) headers.set(HOLE_FILL_HEADER, hosts.join(","))
     if (navigation !== undefined && navigation.retain.length > 0) {
       headers.set(RETAIN_HEADER, navigation.retain.join(","))
       headers.set(NAV_FROM_HEADER, navigation.from)
@@ -229,7 +229,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     return routeDataOf(await send(appUrl(path), { headers, signal: signal ?? null }), path, signal)
   }
 
-  const fetchData: FetchRouteData = async (path, match, signal, navigation, purpose) => {
+  const fetchData: FetchRouteData = async (path, match, signal, navigation, purpose, hosts) => {
     // Read before anything awaits: the client's own reload calls the router, which calls here at once.
     const own = intent?.path === path ? intent : undefined
     if (own !== undefined) intent = undefined
@@ -258,14 +258,14 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
         mode: own?.mode ?? "load",
         retain: grant === undefined ? [] : retain,
         grants: grant === undefined ? [] : [grant],
-        fill: purpose === "refill" || undefined,
+        fill: hosts !== undefined && hosts.length > 0 ? hosts : undefined,
       }),
       signal: signal ?? null,
     })
     if (res.status === 503) {
       await res.body?.cancel()
       // Admission bounds reloads; a navigation the user asked for is not held behind it.
-      if (own === undefined) return plainLoad(path, match, signal, navigation, purpose)
+      if (own === undefined) return plainLoad(path, match, signal, navigation, purpose, hosts)
       throw new Error(`[nifra/web] live load busy: ${path}`)
     }
     const payload = await routeDataOf(res, path, signal)

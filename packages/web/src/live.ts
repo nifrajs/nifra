@@ -180,6 +180,10 @@ const MAX_PATH_CHARS = 2048
 const MAX_GRANTS = 3
 const MAX_RETAIN = 64
 const MAX_OWNER_CHARS = 512
+/** A partially prerendered page has at most 32 holes, each named in at most 32 characters. */
+const MAX_HOSTS = 32
+const MAX_HOST_CHARS = 32
+const HOST = /^[a-z0-9-]+$/
 const PAGE_FRAME = "page"
 /** Renewals re-signed without loaders before one runs them all. */
 const MAX_QUIET_RENEWALS = 2
@@ -206,8 +210,8 @@ interface LoadBody {
   readonly mode: "load" | "renew"
   readonly retain: readonly string[]
   readonly grants: readonly string[]
-  /** The page's holes are hosts its partially prerendered document filled: reload them as fills. */
-  readonly fill: boolean
+  /** The holes whose hosts the page holds: each reloads as a fill. */
+  readonly fill: readonly string[]
 }
 
 /** What the runtime holds once the keyring is derived and the bus subscribed. */
@@ -618,7 +622,7 @@ export function live(options: LiveOptions): Live {
         headers.set(NAV_FROM_HEADER, grant.claims.path)
       }
       if (holes.length > 0) headers.set(KEEP_HOLES_HEADER, holes.join(","))
-      if (body.fill) headers.set(HOLE_FILL_HEADER, "1")
+      if (body.fill.length > 0) headers.set(HOLE_FILL_HEADER, body.fill.join(","))
       const target = new Request(new URL(path, req.url), {
         method: "GET",
         headers,
@@ -1011,14 +1015,15 @@ function parseBody(text: string): LoadBody | undefined {
     return undefined
   }
   if (!isRecord(value)) return undefined
-  const { path, sid, frame, mode, retain = [], grants = [], fill = false } = value
+  const { path, sid, frame, mode, retain = [], grants = [], fill = [] } = value
   if (typeof path !== "string" || typeof sid !== "string" || !SID_PATTERN.test(sid))
     return undefined
   // Phase 2 serves the page frame; boundary frames arrive with the client's frame support.
   if (frame !== PAGE_FRAME || (mode !== "load" && mode !== "renew")) return undefined
   if (!isStringList(retain, MAX_RETAIN, MAX_OWNER_CHARS)) return undefined
   if (!isStringList(grants, MAX_GRANTS, MAX_GRANT_CHARS)) return undefined
-  if (typeof fill !== "boolean") return undefined
+  if (!isStringList(fill, MAX_HOSTS, MAX_HOST_CHARS) || !fill.every((name) => HOST.test(name)))
+    return undefined
   return { path, sid, frame, mode, retain, grants, fill }
 }
 

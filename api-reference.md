@@ -5165,8 +5165,8 @@ _No named exports (side-effect entrypoint)._
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, purpose?: "prefetch" | "refill", ) => Promise<unknown>`
-  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result, and `"refill"` when it reloads the page on screen whose holes are hosts a partially prerendered document fil…
+- **FetchRouteData** _(type)_ - `type FetchRouteData`
+  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result. `hosts` names the holes of the page on screen whose hosts reload in place ({@link HOLE_FILL_HEADER}).
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`
@@ -6480,11 +6480,20 @@ _No named exports (side-effect entrypoint)._
 - **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
   Optional router integration; imported only by opted-in application entries.
+- **holeComponents** _(function)_ - `holeComponents: (client: ComponentClientAdapter | undefined) => void`
+  Experimental: how the client islands inside partially prerendered holes that show server components mount, as the adapter's component client, such as `vueComponentClient({ islands })`; `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a hole shows its er…
 - **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
 - **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
 - **refreshAfterComponentMutation** _(function)_ - `refreshAfterComponentMutation: <T extends { readonly ok: boolean; }>(mutation: Promise<T>, controller: ComponentController, instances: readonly string[]) => Promise<T>`
   Refresh only after the existing mutation transport reports success.
 - **resolveComponentRecord** _(function)_ - `resolveComponentRecord: <Input>(state: ComponentState, component: Pick<ServerComponent<Input>, "reference" | "input">, key: ComponentKey, input: NoInfer<Input>, parent?: string | null) => ComponentRecord`
+
+### `@nifrajs/web/server-components/hole`
+
+- **serverHole** _(function)_ - `serverHole: <Input, Props, View>(component: ServerComponent<Input, Props, View>) => (data: Input) => never`
+  A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its input. The page's app lists the component under `createServerComponents({ holes })` for the route. The hole cannot be `interactive`; its client islands are.
+- **serverHoleComponent** _(const)_ - `serverHoleComponent: (render: unknown) => object | undefined`
+  The server component a hole's `render` names, or `undefined` for an ordinary `render`.
 
 ### `@nifrajs/web/server-components/islands`
 
@@ -6540,6 +6549,8 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web/server-components/state`
 
 - **componentToken** _(function)_ - `componentToken: (value: unknown) => value is string`
+- **parseComponentRecord** _(function)_ - `parseComponentRecord: (value: unknown) => ComponentRecord`
+  A record that arrives alone, as a partially prerendered hole's does, checked as a state's are.
 - **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
 
 ### `@nifrajs/web/server-components/stream`

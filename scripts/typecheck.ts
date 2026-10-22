@@ -85,6 +85,8 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "bench/ssr/tsconfig.vue.json",
   "bench/ppr/tsconfig.json",
   "packages/web/test/fixtures/ppr/tsconfig.json",
+  "packages/web/test/fixtures/ppr/components/tsconfig.json",
+  "packages/web-react/test/fixtures/ppr-components/tsconfig.json",
 ]
 
 /**

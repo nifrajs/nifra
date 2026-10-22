@@ -1,5 +1,5 @@
-import { type HoleHost, holeHost } from "@nifrajs/web/internal/hole-runtime"
-import { createElement, type ReactNode, useEffect, useRef } from "react"
+import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import { createElement, type ReactNode, useEffect, useRef, useState } from "react"
 import { hydrateRoot } from "react-dom/client"
 import { Await } from "./await.ts"
 
@@ -27,8 +27,6 @@ export interface HoleProps<Data> {
   readonly error?: ReactNode
 }
 
-const EMPTY_HTML = { __html: "" }
-
 /**
  * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
  *
@@ -43,6 +41,7 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
   const host = useRef<HTMLDivElement>(null)
   const driver = useRef<HoleHost | undefined>(undefined)
   const open = state?.ppr === true
+  const [initial] = useState(() => ({ __html: initialHtml(state?.fill) }))
   const interactive = hole.interactive === true
   const { name, render } = hole
   useEffect(() => {
@@ -75,7 +74,7 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
     driver.current = driven
     return () => {
       driver.current = undefined
-      driven?.dispose()
+      driven.dispose()
     }
   }, [open, interactive, name, render])
   const fill = open ? state?.fill : undefined
@@ -87,8 +86,8 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
       ref: host,
       "data-nifra-hole": name,
       "aria-busy": "true",
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: always empty; it only stops React from reconciling the host the PPR runtime fills.
-      dangerouslySetInnerHTML: EMPTY_HTML,
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: the server-checked HTML of a blocking render's fill, else empty, fixed at first render; it only stops React from reconciling the host the PPR runtime fills.
+      dangerouslySetInnerHTML: initial,
       suppressHydrationWarning: true,
     })
   }

@@ -1,4 +1,4 @@
-import { type HoleHost, holeHost } from "@nifrajs/web/internal/hole-runtime"
+import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
 import {
   createSSRApp,
   defineComponent,
@@ -52,6 +52,7 @@ type HoleSlots = SlotsType<{ error?: () => VNodeChild }>
 export const Hole = defineComponent(
   <Data>(props: HoleProps<Data>, { slots }: SetupContext<[], HoleSlots>) => {
     const host = shallowRef<HTMLElement | null>(null)
+    const initial = initialHtml(props.state?.fill)
     let driver: HoleHost | undefined
     // One getter per value: a getter returning a fresh array, or a shallow ref among the sources, makes
     // every state a change and would remake the host's app on each refill.
@@ -86,9 +87,12 @@ export const Hole = defineComponent(
             : undefined,
         )
         driver = driven
+        // A host the page mounts with its fill, as a client navigation brings it, takes that fill now.
+        const fill = props.state?.fill
+        if (fill !== undefined) driven.refill(fill)
         onCleanup(() => {
           driver = undefined
-          driven?.dispose()
+          driven.dispose()
         })
       },
       { immediate: true, flush: "post" },
@@ -103,8 +107,10 @@ export const Hole = defineComponent(
     return () => {
       const { of: hole, state } = props
       if (state?.ppr === true) {
-        // No children: hydration and later renders leave the ones the PPR runtime puts in alone.
-        return h("div", { ref: host, "data-nifra-hole": hole.name, "aria-busy": "true" })
+        // No children, or a blocking render's HTML fixed at setup: hydration and later renders leave
+        // what the PPR runtime puts in alone.
+        const attributes = { ref: host, "data-nifra-hole": hole.name, "aria-busy": "true" }
+        return h("div", initial === "" ? attributes : { ...attributes, innerHTML: initial })
       }
       if (state === undefined) return freshVNode(hole.fallback)
       if (state.status === "error") return slots.error?.()

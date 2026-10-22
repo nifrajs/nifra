@@ -8,15 +8,27 @@ import { holeInvoker } from "./runtime.ts"
  */
 export const HOLE_NAME: RegExp = /^(?=[a-z0-9-]{1,32}$)[a-z](?:-?[a-z0-9])*$/
 
-/** What one hole sends: its server HTML, plus props when it hydrates. An error carries the error
- * slot's HTML only, never the thrown message. */
+/** What one hole sends: its server HTML, plus props when it hydrates, or the record of the server
+ * component it shows, without that HTML. An error carries the error slot's HTML only, never the
+ * thrown message. */
 export type HoleOutcome =
-  | { readonly html: string; readonly props?: unknown; readonly error?: undefined }
+  | {
+      readonly html: string
+      readonly props?: unknown
+      readonly component?: unknown
+      readonly error?: undefined
+    }
   | { readonly html: string; readonly error: true }
 
 /** A frame's JSON, as the runtime reads it to fill a host. */
 export type HoleFrameBody =
-  | { readonly v: 1; readonly html: string; readonly props?: unknown; readonly error?: undefined }
+  | {
+      readonly v: 1
+      readonly html: string
+      readonly props?: unknown
+      readonly component?: unknown
+      readonly error?: undefined
+    }
   | { readonly v: 1; readonly html: string; readonly error: true }
 
 export const assertHoleName = (name: string): void => {
@@ -49,9 +61,11 @@ export function encodeHoleFrame(name: string, outcome: HoleOutcome, maxBytes: nu
   const body: HoleFrameBody =
     outcome.error === true
       ? { v: 1, error: true, html: outcome.html }
-      : outcome.props === undefined
-        ? { v: 1, html: outcome.html }
-        : { v: 1, html: outcome.html, props: outcome.props }
+      : outcome.component !== undefined
+        ? { v: 1, html: outcome.html, component: outcome.component }
+        : outcome.props === undefined
+          ? { v: 1, html: outcome.html }
+          : { v: 1, html: outcome.html, props: outcome.props }
   const frame = `<script type="application/json" id="nifra-ppr:${name}">${scriptJson(body)}</script><script>${holeInvoker(name)}</script>`
   // UTF-8 needs at least one and at most three bytes per UTF-16 unit, so only a frame between the two
   // bounds is encoded to measure it.

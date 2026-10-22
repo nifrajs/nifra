@@ -19,5 +19,7 @@
       "@nifrajs/i18n": ["../i18n/src/index.ts"]
     }
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*"],
+  // Built by the coordinated compiler; checked by its own project (scripts/typecheck.ts).
+  "exclude": ["test/fixtures/ppr-components"]
 }

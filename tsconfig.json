@@ -126,6 +126,8 @@
     "packages/web/test/fixtures/ppr/transport-cost.ts",
     "packages/web/test/fixtures/ppr/refresh-app/routes",
     "packages/web/test/fixtures/ppr/refresh-browser.ts",
+    "packages/web/test/fixtures/ppr/components",
+    "packages/web/test/fixtures/ppr/components-browser.ts",
     // Run by Deno only, and it imports packages/deno, which uses the `Deno` global.
     "packages/web/test/fixtures/ppr/app/deno-server.ts",
     "bench/http/serve-deno.ts",

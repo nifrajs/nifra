@@ -130,6 +130,7 @@ test("Hole renders an empty host for a shell, and the boundary's own states othe
     )
   expect({
     shell: await body({ status: "pending", ppr: true }),
+    blocking: await body({ status: "pending", ppr: true, fill: { v: 1, html: "<p>held</p>" } }),
     unrendered: await body(undefined),
     ready: await body({ status: "ready", data: { n: 1 } }),
     failed: await body({ status: "error" }),
@@ -137,6 +138,7 @@ test("Hole renders an empty host for a shell, and the boundary's own states othe
     streamedValue: await body({ status: "pending", data: { n: 2 } }),
   }).toEqual({
     shell: '<div data-nifra-hole="cart" aria-busy="true"></div>',
+    blocking: '<div data-nifra-hole="cart" aria-busy="true"><p>held</p></div>',
     unrendered: "<p>waiting</p>",
     ready: "<p>ready 1</p>",
     // A slot's output is a fragment, which Vue brackets with its hydration markers.

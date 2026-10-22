@@ -1,3 +1,4 @@
+import { initialHtml } from "@nifrajs/web/internal/hole-runtime"
 import { createComponent, createMemo, type JSX, untrack } from "solid-js"
 import { Dynamic, isServer } from "solid-js/web"
 import { Await } from "./await.ts"
@@ -30,10 +31,18 @@ export interface HoleProps<Data> {
   readonly error?: JSX.Element
 }
 
-/** An open hole's host: claimed by its hydration key like any element, never given children. */
+/** An open hole's host: claimed by its hydration key like any element, never given children in the
+ * browser. On the server it holds a blocking render's HTML. */
 function openHost<Data>(hole: HoleDefinition<Data>, fill: () => unknown): JSX.Element {
   const attributes = { "data-nifra-hole": hole.name, "aria-busy": "true" }
-  if (isServer) return createComponent(Dynamic, { component: "div", ...attributes })
+  if (isServer) {
+    const initial = initialHtml(fill())
+    return createComponent(Dynamic, {
+      component: "div",
+      ...attributes,
+      ...(initial === "" ? {} : { innerHTML: initial }),
+    })
+  }
   return clientHost(hole.name, hole.render, hole.interactive === true, attributes, fill)
 }
 

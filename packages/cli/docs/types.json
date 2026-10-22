@@ -6253,8 +6253,8 @@
     "name": "FetchRouteData",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}, purpose?: \"prefetch\" | \"refill\") => Promise<unknown>;",
-    "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). `purpose` is `\"prefetch\"` when no navigation is waiting on the result,\n * and `\"refill\"` when it reloads the page on screen whose holes are hosts a partially prerendered\n * document filled ({@link HOLE_FILL_HEADER}). */"
+    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}, purpose?: \"prefetch\", hosts?: readonly string[]) => Promise<unknown>;",
+    "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). `purpose` is `\"prefetch\"` when no navigation is waiting on the result.\n * `hosts` names the holes of the page on screen whose hosts reload in place\n * ({@link HOLE_FILL_HEADER}). */"
   },
   {
     "name": "FetchTransportOptions",
@@ -14577,14 +14577,14 @@
     "name": "ServerComponentRuntime",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerComponentRuntime {\n    owns(routeId: string): boolean;\n    capabilities(routeId: string): readonly string[];\n    classify(request: Request, routeId: string): import(\"./protocol.js\").ComponentRequest | undefined;\n    execute(routeId: string, context: ServerComponentContext, selection?: import(\"./protocol.js\").ComponentRequest, nonce?: string): Promise<ComponentState>;\n    response(state: ComponentState, selection: import(\"./protocol.js\").ComponentRequest): Response;\n    failure(error: unknown): Response;\n}",
+    "signature": "export interface ServerComponentRuntime {\n    owns(routeId: string): boolean;\n    capabilities(routeId: string): readonly string[];\n    classify(request: Request, routeId: string): import(\"./protocol.js\").ComponentRequest | undefined;\n    execute(routeId: string, context: ServerComponentContext, selection?: import(\"./protocol.js\").ComponentRequest, nonce?: string): Promise<ComponentState>;\n    response(state: ComponentState, selection: import(\"./protocol.js\").ComponentRequest): Response;\n    failure(error: unknown): Response;\n    /** Whether the route's partially prerendered holes may show server components. */\n    hosts?(routeId: string): boolean;\n    /** Render `component` as the route's hole `key`, with the hole loader's output as its input. */\n    hole?(routeId: string, component: object, key: string, input: unknown, context: ServerComponentContext): Promise<ComponentRecord>;\n}",
     "doc": "/** Optional seam passed to createWebApp; disabled applications have no runtime import of this feature. */"
   },
   {
     "name": "ServerComponentsOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerComponentsOptions {\n    readonly build: string;\n    readonly adapter: ServerComponentRenderAdapter;\n    readonly owners: Readonly<Record<string, ComponentOwner>>;\n    readonly capabilities?: readonly CapabilityDefinition[];\n    readonly assets?: readonly string[];\n}"
+    "signature": "export interface ServerComponentsOptions {\n    readonly build: string;\n    readonly adapter: ServerComponentRenderAdapter;\n    readonly owners: Readonly<Record<string, ComponentOwner>>;\n    /**\n     * Experimental: route id to the server components its partially prerendered holes may show, each\n     * through `serverHole`. A route is an owner or hosts holes, never both.\n     */\n    readonly holes?: Readonly<Record<string, ComponentHoles>>;\n    readonly capabilities?: readonly CapabilityDefinition[];\n    readonly assets?: readonly string[];\n}"
   },
   {
     "name": "ServerComponentsPluginOptions",
@@ -20205,6 +20205,13 @@
     "doc": "/**\n * Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200`\n * (the process is serving). Readiness runs each `check` and returns `200 { status: \"ok\", checks }`\n * when all pass, or `503 { status: \"error\", checks }` when any fail (a thrown check counts as failed).\n * Both are `Cache-Control: no-store`.\n *\n * Apply it **before** auth guards so the endpoints stay public (`beforeHandle` is order-scoped):\n *\n * ```ts\n * app.use(healthcheck({ checks: { db: () => db.ping() } })).use(bearer({ verify }))\n * ```\n */"
   },
   {
+    "name": "holeComponents",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function holeComponents(client: ComponentClientAdapter | undefined): void;",
+    "doc": "/**\n * Experimental: how the client islands inside partially prerendered holes that show server\n * components mount, as the adapter's component client, such as `vueComponentClient({ islands })`;\n * `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a\n * hole shows its error slot.\n */"
+  },
+  {
     "name": "hotUpdateNeedsReload",
     "kind": "const",
     "package": "@nifrajs/web-preact",
@@ -21556,6 +21563,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function parseComponentHTML(html: string, context: Element, trustedHTML?: NativeRangeOptions[\"trustedHTML\"]): DocumentFragment;",
     "doc": "/** Parse inertly and reject executable content before it can reach a live document. */"
+  },
+  {
+    "name": "parseComponentRecord",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseComponentRecord(value: unknown): ComponentRecord;",
+    "doc": "/** A record that arrives alone, as a partially prerendered hole's does, checked as a state's are. */"
   },
   {
     "name": "parseComponentState",
@@ -23516,6 +23530,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function serverFunctions(namespace: string, module: ServerFnModule): IdentityPlugin;",
     "doc": "/**\n * Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.\n *\n *     import * as todos from \"./actions/todos.fn\"\n *     app.use(serverFunctions(\"todos\", todos))   // -> POST /_nifra/fn/todos/addTodo\n *\n * The namespace is explicit rather than derived from the file path: a path-derived one would put the\n * build machine's layout in a public URL, and this keeps the route readable in logs and greppable in\n * the codebase. Phase 2's transform supplies it automatically from the file's location in the project.\n *\n * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.\n */"
+  },
+  {
+    "name": "serverHole",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function serverHole<Input, Props, View>(component: ServerComponent<Input, Props, View>): (data: Input) => never;",
+    "doc": "/**\n * A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its\n * input. The page's app lists the component under `createServerComponents({ holes })` for the route.\n * The hole cannot be `interactive`; its client islands are.\n */"
+  },
+  {
+    "name": "serverHoleComponent",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const serverHoleComponent: (render: unknown) => object | undefined;",
+    "doc": "/** The server component a hole's `render` names, or `undefined` for an ordinary `render`. */"
   },
   {
     "name": "serviceWorkerRegistration",

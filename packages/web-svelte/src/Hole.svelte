@@ -9,12 +9,15 @@
   are `ui(Component, props)` values. Plain JS, like Await.svelte.
 -->
 <script>
-  import { holeHost } from "@nifrajs/web/internal/hole-runtime"
-  import { hydrate, unmount } from "svelte"
+  import { holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
+  import { hydrate, unmount, untrack } from "svelte"
   import Await from "./Await.svelte"
 
   // Aliased: a binding named `state` would make `$state` read as that store's value.
   let { of, state: shown, error: failed } = $props()
+
+  // A blocking render's HTML, read once: no later state changes what the runtime put in the host.
+  const initial = untrack(() => initialHtml(shown?.fill))
 
   /** An interactive hole's own root: a refill writes the new props into its state proxy. */
   const hydrateRoot = (target, data) => {
@@ -39,13 +42,13 @@
   // comes first; a refill reaches it as the action's new parameter.
   const hostHole = (host, fill) => {
     const driven = holeHost(of.name, host, of.interactive === true ? hydrateRoot : undefined)
-    if (fill !== undefined) driven?.refill(fill)
+    if (fill !== undefined) driven.refill(fill)
     return {
       update(next) {
-        if (next !== undefined) driven?.refill(next)
+        if (next !== undefined) driven.refill(next)
       },
       destroy() {
-        driven?.dispose()
+        driven.dispose()
       },
     }
   }
@@ -56,7 +59,12 @@
 {/snippet}
 
 {#if shown?.ppr === true}
-  <div use:hostHole={shown.fill} data-nifra-hole={of.name} aria-busy="true"></div>
+  {#if initial === ""}
+    <!-- No children, not even a marker: the PPR runtime fills the host before hydration. -->
+    <div use:hostHole={shown.fill} data-nifra-hole={of.name} aria-busy="true"></div>
+  {:else}
+    <div use:hostHole={shown.fill} data-nifra-hole={of.name} aria-busy="true">{@html initial}</div>
+  {/if}
 {:else if shown === undefined}
   {@render view(of.fallback)}
 {:else if shown.status === "error"}

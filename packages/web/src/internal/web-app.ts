@@ -462,9 +462,10 @@ export function createWebApp<Env = unknown>(
   options.use?.(app)
   if (options.serverComponents !== undefined) {
     const runtime = options.serverComponents
+    // A route whose holes show server components is one visitor's too.
     const match = createMatcher(
       manifest.routes
-        .filter((route) => runtime.owns(route.id))
+        .filter((route) => runtime.owns(route.id) || runtime.hosts?.(route.id) === true)
         .map((route) => ({ routeId: route.id, pattern: route.pattern })),
     )
     const privateRoute = (request: Request): boolean =>
@@ -664,7 +665,8 @@ export function createWebApp<Env = unknown>(
     app.register(
       "GET",
       pattern,
-      options.serverComponents?.owns(route.id)
+      options.serverComponents?.owns(route.id) ||
+        options.serverComponents?.hosts?.(route.id) === true
         ? { capabilities: options.serverComponents.capabilities(route.id) }
         : undefined,
       prerendered === undefined ? render : prerendered(render),

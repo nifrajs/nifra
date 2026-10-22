@@ -4,7 +4,7 @@ import { docsMeta } from "../../shared/meta"
 export const meta = docsMeta(
   "/docs/partial-prerendering",
   "Nifra - Partial prerendering (experimental)",
-  "Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.",
+  "Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, server components in holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.",
 )
 
 const SERVER = `import { createCspPolicy, createWebApp } from "@nifrajs/web"
@@ -228,6 +228,39 @@ export const boundaryLoaders = {
     revalidateTags: ({ params }) => [\`price:\${params.id}\`],
   },
 } satisfies Route.BoundaryLoaders`
+
+const COMPONENT_HOLE = `// doc-check: skip - excerpts of a component file, a page, its backend half and both entries.
+// Basket.component.server.tsx
+export const Basket = defineServerComponent({
+  input: t.object({ id: t.string() }),
+  props: t.object({ title: t.string(), count: t.number() }),
+  authorize: ({ request }) => requireVisitor(request),
+  load: async ({ request }, input) => basketOf(request, input.id),
+  view: ({ props }) => (
+    <section>
+      <h2>{props.title}</h2>
+      <AddButton count={props.count} /> {/* a "use client" island */}
+    </section>
+  ),
+})
+
+// routes/tea/[id].tsx
+const basket = { name: "basket", mode: "dynamic", render: serverHole(Basket) } as const
+export const boundaries = [cart, basket]
+
+// routes/tea/[id].backend.ts: the hole's loader returns the component's input
+export const boundaryLoaders = {
+  basket: {
+    load: ({ params }: BoundaryRequestCtx) => ({ id: params.id ?? "" }),
+    output: t.object({ id: t.string() }),
+  },
+} satisfies Route.BoundaryLoaders
+
+// The server entry: the components each route's holes may show.
+createServerComponents({ build, adapter, owners: {}, holes: { "tea/[id]": { components: [Basket] } } })
+
+// The client entry, before the router mounts.
+holeComponents(reactComponentClient())`
 
 const STORE = `// doc-check: skip - a Worker's partialPrerendering call, with the server snippet's records.
 import { KVCacheStore } from "@nifrajs/web"
@@ -454,6 +487,44 @@ export default function PartialPrerendering() {
         with a purge of its tag.
       </p>
       <CodeBlock code={LIVE} lang="ts" />
+
+      <h2>Server components in holes</h2>
+      <p>
+        A <code>dynamic</code> hole can show a server component: <code>serverHole(Basket)</code>, from{" "}
+        <code>@nifrajs/web/server-components/hole</code>, is its <code>render</code>. The hole's loader
+        returns the component's input; the component authorizes, loads and renders on the server for
+        each request. The browser gets its HTML and the code of its client islands, never its view or
+        anything its loader returned beyond its props. Like every server component, it needs the
+        coordinated compiler (<code>buildServerComponents</code>).
+      </p>
+      <CodeBlock code={COMPONENT_HOLE} lang="tsx" />
+      <ul>
+        <li>
+          List each route's hole components in <code>createServerComponents(&#123; holes &#125;)</code>.
+          A route that shows a server component the list leaves out fails, and a route either owns
+          server components or shows them in holes, never both.
+        </li>
+        <li>
+          The hole is not interactive. Its loader declares an <code>output</code> like any hole's: its
+          value reaches the browser as the component's input.
+        </li>
+        <li>
+          The component reads the visitor's request, under the hole's timeout and admission. It cannot
+          set a cookie or a header, since the shell sent them already: a component that tries shows
+          the error slot, as does an input or authorization it refuses.
+        </li>
+        <li>
+          Call <code>holeComponents</code> in the client entry before the router mounts, with the
+          adapter's component client, such as <code>reactComponentClient()</code> or{" "}
+          <code>vueComponentClient(&#123; islands &#125;)</code>. Without it the hole shows its error
+          slot.
+        </li>
+        <li>
+          The hole is a host on every load: a client navigation mounts it from its fill, and a
+          crawler's blocking render has its HTML in the host. A reload puts the new HTML in and mounts
+          its islands afresh, so they do not keep their state.
+        </li>
+      </ul>
 
       <h2>Across processes</h2>
       <p>

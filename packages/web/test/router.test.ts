@@ -1837,7 +1837,7 @@ describe("fetchers (concurrent)", () => {
 
 describe("a page whose holes are hosts a partially prerendered document filled", () => {
   test("an action's revalidation and an invalidation reload them as fills; a navigation does not", async () => {
-    const purposes: unknown[] = []
+    const sent: unknown[] = []
     const hosts = {
       cart: {
         name: "cart",
@@ -1856,8 +1856,8 @@ describe("a page whose holes are hosts a partially prerendered document filled",
         pending: false,
         boundaries: hosts,
       },
-      fetchData: async (_path, _match, _signal, _navigation, purpose) => {
-        purposes.push(purpose)
+      fetchData: async (_path, _match, _signal, _navigation, _purpose, names) => {
+        sent.push(names)
         return { v: 1, data: null, boundaries: hosts }
       },
     })
@@ -1877,6 +1877,6 @@ describe("a page whose holes are hosts a partially prerendered document filled",
     } finally {
       spy.mockRestore()
     }
-    expect(purposes).toEqual(["refill", "refill", undefined])
+    expect(sent).toEqual([["cart"], ["cart"], undefined])
   })
 })

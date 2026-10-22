@@ -68,6 +68,7 @@ test(
       const body = (state) => render(Hole, { props: { of, state } }).body.replace(/<!--[^>]*-->/g, "");
       console.log(JSON.stringify({
         shell: body({ status: "pending", ppr: true }),
+        blocking: body({ status: "pending", ppr: true, fill: { v: 1, html: "<p>held</p>" } }),
         unrendered: body(undefined),
         ready: body({ status: "ready", data: { n: 1 } }),
         failed: body({ status: "error" }),
@@ -77,6 +78,7 @@ test(
     `)
     expect(out).toEqual({
       shell: '<div data-nifra-hole="cart" aria-busy="true"></div>',
+      blocking: '<div data-nifra-hole="cart" aria-busy="true"><p>held</p></div>',
       unrendered: '<label for="s1">waiting</label><input id="s1"/>',
       ready: '<label for="s1">ready 1</label><input id="s1"/>',
       failed: "",

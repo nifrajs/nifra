@@ -66,7 +66,6 @@ export function clientHost<Data>(
       }
     }
     const driven = holeHost(name, target, interactive ? root : undefined)
-    if (driven === undefined) return
     createEffect(
       on(fill, (next) => {
         if (next !== undefined) driven.refill(next)

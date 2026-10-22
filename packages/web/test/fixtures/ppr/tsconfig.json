@@ -7,6 +7,7 @@
     "refresh-app/routes/**/*.tsx",
     "app-browser.ts",
     "refresh-browser.ts",
+    "components-browser.ts",
     "runtime-browser.ts",
     "transport-cost.ts"
   ]

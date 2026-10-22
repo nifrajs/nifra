@@ -1,5 +1,6 @@
 import type { BoundaryRegistration } from "../../boundary.ts"
 import type { RouteEntry, RouteModule } from "../../manifest.ts"
+import { serverHoleComponent } from "../../server-components/hole.ts"
 import type { LoadedLayoutModules } from "../render-document.ts"
 import { isHole } from "./contract.ts"
 import type { ResolvedPprOptions } from "./options.ts"
@@ -51,6 +52,14 @@ export function assertPprRoute(
     if (typeof boundary.load !== "function") {
       throw new Error(
         `[nifra/web] ppr: boundary "${boundary.name}" of route "${route.id}" has no boundaryLoaders entry; a hole is filled from its own loader`,
+      )
+    }
+    if (
+      serverHoleComponent(boundary.render) !== undefined &&
+      (boundary.mode !== "dynamic" || boundary.interactive === true)
+    ) {
+      throw new Error(
+        `[nifra/web] ppr: boundary "${boundary.name}" of route "${route.id}" shows a server component, so it must be a dynamic hole that is not interactive: the component runs for each visitor, and its client islands hydrate`,
       )
     }
     const { timeout } = boundary

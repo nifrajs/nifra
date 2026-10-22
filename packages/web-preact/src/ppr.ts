@@ -1,6 +1,6 @@
-import { type HoleHost, holeHost } from "@nifrajs/web/internal/hole-runtime"
+import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
 import { type ComponentChildren, createElement, hydrate, render as renderInto } from "preact"
-import { useEffect, useRef } from "preact/hooks"
+import { useEffect, useRef, useState } from "preact/hooks"
 import { Await } from "./await.ts"
 import { idScope } from "./id-scope.ts"
 
@@ -28,8 +28,6 @@ export interface HoleProps<Data> {
   readonly error?: ComponentChildren
 }
 
-const EMPTY_HTML = { __html: "" }
-
 /**
  * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
  *
@@ -44,6 +42,7 @@ export function Hole<Data>(props: HoleProps<Data>): ComponentChildren {
   const host = useRef<HTMLDivElement>(null)
   const driver = useRef<HoleHost | undefined>(undefined)
   const open = state?.ppr === true
+  const [initial] = useState(() => ({ __html: initialHtml(state?.fill) }))
   const interactive = hole.interactive === true
   const { name, render } = hole
   useEffect(() => {
@@ -70,7 +69,7 @@ export function Hole<Data>(props: HoleProps<Data>): ComponentChildren {
     driver.current = driven
     return () => {
       driver.current = undefined
-      driven?.dispose()
+      driven.dispose()
     }
   }, [open, interactive, name, render])
   const fill = open ? state?.fill : undefined
@@ -82,8 +81,9 @@ export function Hole<Data>(props: HoleProps<Data>): ComponentChildren {
       ref: host,
       "data-nifra-hole": name,
       "aria-busy": "true",
-      // Always empty; it only stops Preact from diffing the children the PPR runtime puts in.
-      dangerouslySetInnerHTML: EMPTY_HTML,
+      // The server-checked HTML of a blocking render's fill, else empty, fixed at first render; it
+      // only stops Preact from diffing the children the PPR runtime puts in.
+      dangerouslySetInnerHTML: initial,
     })
   }
   if (state === undefined) return hole.fallback ?? null

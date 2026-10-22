@@ -273,9 +273,15 @@ const settledPayload = (text: string): { readonly boundaries?: Record<string, un
 }
 
 describe("PPR app: a page that reloads with its holes as hosts", () => {
+  /** A reload of a page whose holes on screen are all hosts. */
   const refill = (path: string, headers: Record<string, string> = {}) =>
     fetch(`${app.origin}${path}`, {
-      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "1", cookie: "name=ada", ...headers },
+      headers: {
+        [DATA_HEADER]: "1",
+        [HOLE_FILL_HEADER]: path.startsWith("/s/") ? "price,greeting" : "greeting,cart,slow",
+        cookie: "name=ada",
+        ...headers,
+      },
     })
 
   test("each hole's state carries its fill: server HTML, with props only for an interactive hole", async () => {
@@ -334,10 +340,21 @@ describe("PPR app: a page that reloads with its holes as hosts", () => {
     expect(await refused.text()).toBe("Bad Request: the route has no such hole")
   })
 
+  test("only the holes the client names as hosts reload as fills; an unknown name is refused", async () => {
+    const payload = settledPayload(
+      await (await refill("/p/35", { [HOLE_FILL_HEADER]: "cart" })).text(),
+    )
+    expect(payload.boundaries?.cart).toMatchObject({ ppr: true, fill: { v: 1 } })
+    expect(payload.boundaries?.greeting).toMatchObject({ data: { name: "ada" } })
+    expect(payload.boundaries?.greeting).not.toHaveProperty("ppr")
+    const refused = await refill("/p/35", { [HOLE_FILL_HEADER]: "cart,coupon" })
+    expect(refused.status).toBe(400)
+  })
+
   test("a gate that refuses answers before any hole loads", async () => {
     const started = probe.slowStarted
     const refused = await fetch(`${app.origin}/members/3`, {
-      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "1" },
+      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "note" },
     })
     expect(refused.status).toBe(401)
     expect(await refused.text()).toBe("members only")
@@ -348,7 +365,7 @@ describe("PPR app: a page that reloads with its holes as hosts", () => {
     const started = probe.slowStarted
     const client = new AbortController()
     const res = await fetch(`${app.origin}/p/34?slow=60000`, {
-      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "1" },
+      headers: { [DATA_HEADER]: "1", [HOLE_FILL_HEADER]: "slow" },
       signal: client.signal,
     })
     const reader = res.body?.getReader()

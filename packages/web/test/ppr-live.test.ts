@@ -13,6 +13,7 @@ const SID = "0123456789abcdef0123456789abcdef"
 const CART = "B:cart:p/[id]"
 const PRICE = "B:price:p/[id]"
 const BROKEN = "B:broken:p/[id]"
+const HOSTS = ["cart", "price", "broken"]
 
 const page = (props: { readonly data: unknown; readonly boundaries?: object }) =>
   `<main>${JSON.stringify(props.data)}${Object.keys(props.boundaries ?? {})
@@ -157,7 +158,7 @@ const ownersOf = async (grant: string | undefined) => {
 test("a live load grants each hole that loaded, in one frame after the holes", async () => {
   const { app } = liveApp()
   await (await app.fetch(new Request(`${ORIGIN}/p/1`))).text()
-  const payload = await settled(await liveLoad(app, { fill: true }))
+  const payload = await settled(await liveLoad(app, { fill: HOSTS }))
   expect(payload.boundaries?.cart).toMatchObject({
     ppr: true,
     fill: { v: 1, html: "<p>cart 2</p>" },
@@ -183,10 +184,10 @@ test("a live load grants each hole that loaded, in one frame after the holes", a
 test("a load presenting the grant keeps each hole whose keys did not change", async () => {
   const { app, calls } = liveApp()
   await (await app.fetch(new Request(`${ORIGIN}/p/1`))).text()
-  const first = await settled(await liveLoad(app, { fill: true }))
+  const first = await settled(await liveLoad(app, { fill: HOSTS }))
   const grant = first.live?.grant
   const before = calls.cart
-  const again = await settled(await liveLoad(app, { fill: true, retain: [CART], grants: [grant] }))
+  const again = await settled(await liveLoad(app, { fill: HOSTS, retain: [CART], grants: [grant] }))
   expect(calls.cart).toBe(before)
   expect(again.boundaries?.cart).toEqual({
     name: "cart",

@@ -205,6 +205,16 @@ describe("Hole in the browser", () => {
     expect(host.childNodes.length).toBe(0)
   })
 
+  test("a blocking render's settled fill is the host's server HTML", () => {
+    const html = server.renderToString(
+      createElement(Hole<{ readonly count: number }>, {
+        of: { ...cart, interactive: false },
+        state: { status: "pending", ppr: true, fill: { v: 1, html: "<p>held</p>" } },
+      }),
+    )
+    expect(html).toBe('<div data-nifra-hole="cart" aria-busy="true"><p>held</p></div>')
+  })
+
   test("a failed fill, a non-interactive hole and a page without the runtime hydrate nothing", async () => {
     const failed = runtime({ cart: { error: true } })
     const broken = await hydratePage(cart)

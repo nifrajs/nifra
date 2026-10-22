@@ -27,6 +27,7 @@ import { routeTags } from "../isr.ts"
 import type {
   LayoutEntry,
   LoaderContext,
+  LoaderResponseControls,
   Manifest,
   Meta,
   MetaArgs,
@@ -51,6 +52,7 @@ import {
   STATUS_HEADER,
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
+import { serverHoleComponent } from "../server-components/hole.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
 import {
   holeOwner,
@@ -145,8 +147,8 @@ interface HoleOwners {
 }
 
 /**
- * A data request's hole refresh: fills when the client holds the hosts, the holes it keeps, and in a
- * live load each hole's owner. A kept name the route does not declare is a 400.
+ * A data request's hole refresh: the hosts the client holds, which reload as fills, the holes it
+ * keeps, and in a live load each hole's owner. A name the route does not declare is a 400.
  */
 function holeRefresh(
   c: PageRouteContext<unknown>,
@@ -154,26 +156,33 @@ function holeRefresh(
   live: LiveLoad | undefined,
 ): { readonly request: PprRequest; readonly owners?: HoleOwners } | Response {
   if (!isDataRequest(c)) return { request }
-  const keep = headerOf(c, KEEP_HOLES_HEADER)
-  const kept = new Set<string>()
-  if (keep !== null) {
-    const declared = new Set(request.holes.map((hole) => hole.name))
-    for (const name of keep.split(",")) {
+  const declared = new Set(request.holes.map((hole) => hole.name))
+  const namesOf = (header: string): Set<string> | undefined => {
+    const value = headerOf(c, header)
+    const names = new Set<string>()
+    if (value === null) return names
+    for (const name of value.split(",")) {
       const trimmed = name.trim()
-      // A live load's names come from a grant this server sealed: one naming a hole an older build
-      // declared keeps nothing.
-      if (!declared.has(trimmed) && live !== undefined) continue
-      if (!declared.has(trimmed)) {
-        return new Response("Bad Request: the route has no such hole", {
-          status: 400,
-          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-        })
-      }
-      kept.add(trimmed)
+      if (declared.has(trimmed)) names.add(trimmed)
+      // A live load's names come from a grant this server sealed and the page's own client: one
+      // naming a hole an older build declared is skipped.
+      else if (live === undefined) return undefined
     }
+    return names
   }
-  const fill = headerOf(c, HOLE_FILL_HEADER) !== null
-  const refreshed: PprRequest = { ...request, fill, ...(kept.size === 0 ? {} : { kept }) }
+  const kept = namesOf(KEEP_HOLES_HEADER)
+  const fill = namesOf(HOLE_FILL_HEADER)
+  if (kept === undefined || fill === undefined) {
+    return new Response("Bad Request: the route has no such hole", {
+      status: 400,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    })
+  }
+  const refreshed: PprRequest = {
+    ...request,
+    ...(fill.size === 0 ? {} : { fill }),
+    ...(kept.size === 0 ? {} : { kept }),
+  }
   if (live === undefined) return { request: refreshed }
   const routeId = request.routeId
   let finish: (loaded: readonly string[]) => void = () => {}
@@ -196,6 +205,19 @@ const EMPTY_LEAF = (): null => null
 
 /** `ctx.live` outside a live load: keys are declared for nobody. */
 const NO_LIVE = (): void => {}
+
+const headersSent = (): never => {
+  throw new TypeError(
+    "[nifra/web] ppr: a hole's server component cannot set a cookie: the shell already sent the headers",
+  )
+}
+
+/** A hole's response headers went out with the shell, so its server component sets none. */
+const SENT_CONTROLS: LoaderResponseControls = Object.freeze({
+  headers: Object.freeze({}),
+  cookie: headersSent,
+  deleteCookie: headersSent,
+})
 
 /**
  * The envelope's `live` member. With holes running it trails them: one grant, issued once the last hole
@@ -1832,6 +1854,42 @@ export function createPageRequestExecutor<Env = unknown>(
             if (refresh instanceof Response) return refresh
             pprRequest = refresh.request
             holeOwners = refresh.owners
+            const components = options.serverComponents
+            const renderHole = components?.hosts?.(route.id) === true ? components.hole : undefined
+            if (
+              renderHole === undefined &&
+              pprRequest.holes.some((hole) => serverHoleComponent(hole.render) !== undefined)
+            ) {
+              throw new Error(
+                `[nifra/web] ppr: route "${route.id}" has a hole that shows a server component; list the component under createServerComponents({ holes }) for this route`,
+              )
+            }
+            if (renderHole !== undefined) {
+              const loaderCtx = ctx
+              pprRequest = {
+                ...pprRequest,
+                // The owner path's context, but with the hole's signal and no response to change.
+                component: (name, component, input, signal) =>
+                  renderHole.call(
+                    components,
+                    route.id,
+                    component,
+                    name,
+                    input,
+                    Object.create(
+                      c,
+                      Object.getOwnPropertyDescriptors({
+                        ...loaderCtx,
+                        search: effectiveSearch,
+                        set: SENT_CONTROLS,
+                        signal,
+                        data: undefined,
+                        layoutData: [],
+                      }),
+                    ),
+                  ),
+              }
+            }
             // A draft is the editor's alone, so it never reads or fills the shared shell.
             if (!draft && !isDataRequest(c)) {
               const streamed = await ppr.stream(pprRequest, () => controls.documentHeaders())

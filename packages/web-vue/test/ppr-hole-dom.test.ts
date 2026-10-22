@@ -269,6 +269,25 @@ describe("Hole in the browser", () => {
     bare.page.unmount()
   })
 
+  test("a host the page mounts with its fill, as after a client navigation, puts that fill", async () => {
+    runtime()
+    const { fill, resolve, promise } = deferredFill()
+    const state = { status: "pending", ppr: true, fill } as const
+    const Page = defineComponent(
+      () => () => h("main", null, [h(Hole, { of: { ...cart, interactive: false }, state })]),
+    )
+    const container = document.createElement("div")
+    container.innerHTML = await renderToString(createSSRApp(Page))
+    document.body.append(container)
+    const app = createSSRApp(Page)
+    app.mount(container)
+    await nextTick()
+    resolve({ html: "<p>cart 3</p>" })
+    await settle(promise)
+    expect(container.querySelector('[data-nifra-hole="cart"]')?.innerHTML).toBe("<p>cart 3</p>")
+    app.unmount()
+  })
+
   test("after a client navigation, a hole whose deferred data resolves renders it", async () => {
     // Both states are a `<p>`, so Vue patches the node in place (see the rejection case below).
     const note: HoleDefinition<{ readonly text: string }> = {
