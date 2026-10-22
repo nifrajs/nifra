@@ -526,6 +526,114 @@ describe("multipartBody malformed bodies", () => {
   })
 })
 
+// The runtimes' own parsers part ways on every case below, so one body was a different form, or
+// none, on each runtime. Found by scripts/check-runtime-differential.ts.
+describe("multipartBody reads a body as the Fetch standard's parser does", () => {
+  const part = (head: string, value: string) => `--${BOUNDARY}\r\n${head}\r\n\r\n${value}\r\n`
+  const field = (name: string, value: string) =>
+    part(`Content-Disposition: form-data; name="${name}"`, value)
+  const closing = `--${BOUNDARY}--\r\n`
+  const read = (body: string, type?: string) => echo().fetch(upload(ENCODER.encode(body), type))
+
+  test("a disposition in any other form than the one browsers write answers 400", async () => {
+    for (const head of [
+      "Content-Disposition: form-data",
+      'Content-Disposition: form-data; filename="a.txt"',
+      'Content-Disposition: FORM-DATA; name="a"',
+      'Content-Disposition: attachment; name="a"',
+      "Content-Disposition: form-data; name=a",
+      'Content-Disposition: form-data; NAME="a"',
+      'Content-Disposition: form-data; name = "a"',
+      'Content-Disposition: form-data; name="a"; size=3',
+      'Content-Disposition: form-data; name="a";',
+      "Content-Disposition: form-data; name*=utf-8''a",
+      "Content-Disposition: form-data; name=\"a\"; filename*=utf-8''a.txt",
+      'Content-Disposition: form-data; name="a\\"b"',
+      'Content-Disposition: form-data;\r\n name="a"',
+      'not a header\r\nContent-Disposition: form-data; name="a"',
+      'Bad Name: x\r\nContent-Disposition: form-data; name="a"',
+    ]) {
+      const response = await read(`${field("title", "t")}${part(head, "x")}${closing}`)
+      expect([head, ...(await errorOf(response))]).toEqual([
+        head,
+        400,
+        { ok: false, error: "invalid_multipart" },
+      ])
+    }
+  })
+
+  test("a part with no headers answers 400, whatever its content looks like", async () => {
+    const response = await read(
+      `--${BOUNDARY}\r\n\r\nContent-Disposition: form-data; name="a"\r\n\r\nx\r\n${closing}`,
+    )
+    expect(await errorOf(response)).toEqual([400, { ok: false, error: "invalid_multipart" }])
+  })
+
+  test("a body not framed by CRLF, or led by a preamble, answers 400", async () => {
+    for (const body of [
+      `${field("title", "t")}${closing}`.replaceAll("\r\n", "\n"),
+      `${field("title", "t").slice(0, -2)}\n${closing}`,
+      `${field("title", "t")}--${BOUNDARY}x\r\n${closing}`,
+      `${field("title", "t")}--${BOUNDARY} \r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n${closing}`,
+      `preamble\r\n${field("title", "t")}${closing}`,
+    ]) {
+      const response = await read(body)
+      expect([JSON.stringify(body), ...(await errorOf(response))]).toEqual([
+        JSON.stringify(body),
+        400,
+        { ok: false, error: "invalid_multipart" },
+      ])
+    }
+  })
+
+  test("names and values read the same on every runtime", async () => {
+    const body =
+      field("a%22b%0A", "1") +
+      field("é", "\ufeffbom") +
+      field("text", `x --${BOUNDARY} y\r\nnext line`) +
+      part(
+        'Content-Disposition: form-data; name="dup"\r\nContent-Disposition: form-data; name="last"',
+        "2",
+      ) +
+      `--${BOUNDARY}--\r\nepilogue ${field("ignored", "3")}`
+    const response = await read(body, `MULTIPART/FORM-DATA; BOUNDARY=${BOUNDARY}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      'a"b\n': "1",
+      é: "\ufeffbom",
+      text: `x --${BOUNDARY} y\r\nnext line`,
+      last: "2",
+    })
+  })
+
+  test("a file's type defaults to text/plain and an empty file name reads as file", async () => {
+    const app = server().post("/upload", { body: multipartBody(anyBody) }, async (c) => {
+      const out: Record<string, unknown> = {}
+      for (const [name, value] of Object.entries(c.body)) {
+        const file = value as File
+        out[name] = { name: file.name, type: file.type, text: await file.text() }
+      }
+      return out
+    })
+    const body =
+      part('Content-Disposition: form-data; name="plain"; filename="a.txt"', "one") +
+      part(
+        'Content-Disposition: form-data; name="typed"; filename="b.png"\r\nContent-Type: IMAGE/PNG ',
+        "two",
+      ) +
+      part('Content-Disposition: form-data; name="nameless"; filename=""', "three") +
+      part('Content-Disposition: form-data; name="empty"; filename=""', "") +
+      closing
+    const response = await app.fetch(upload(ENCODER.encode(body)))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      plain: { name: "a.txt", type: "text/plain", text: "one" },
+      typed: { name: "b.png", type: "image/png", text: "two" },
+      nameless: { name: "file", type: "text/plain", text: "three" },
+    })
+  })
+})
+
 describe("multipartBody closing delimiter", () => {
   const part = (name: string, value: string, boundary = BOUNDARY): string =>
     `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`

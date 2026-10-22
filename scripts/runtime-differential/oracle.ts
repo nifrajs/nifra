@@ -228,20 +228,6 @@ const aloneIn = (violation: Violation, outcomes: Outcomes, lane: LaneName) =>
 
 export const OPEN_FINDINGS: readonly Waiver[] = [
   {
-    id: "F5 multipart-platform-parser",
-    why:
-      "nifra hands a multipart body to the platform's own `Response.formData()`, and the parsers disagree " +
-      "on what is a form: a body delimited by bare LF, a part with no name, or a 70-character upper-case " +
-      "BOUNDARY= is parsed by some and refused by others (undici most often). One form answers 200, 413 or " +
-      "422 on one runtime and 400 invalid_multipart on another.",
-    matches: (violation, testCase, outcomes) =>
-      violation.kind === "difference" &&
-      testCase.route === "upload" &&
-      [...outcomes.values()].every(
-        (outcome) => outcome.kind === "response" && [200, 400, 413, 422].includes(outcome.status),
-      ),
-  },
-  {
     id: "F7 workerd-joins-cookies-with-comma",
     why:
       "Two Cookie headers reach a Worker joined by ', ' (the Fetch rule for repeated fields); Bun, Node " +
