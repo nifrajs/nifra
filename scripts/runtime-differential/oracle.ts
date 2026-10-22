@@ -247,20 +247,6 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       violation.kind === "server-error" && testCase.route === "rawJson",
   },
   {
-    id: "F4 deno-rebuilt-request-500",
-    why:
-      "On Deno a target with dot segments is resolved by rebuilding the Request (`new Request(url, req)`). " +
-      "The constructor refuses what the wire allows - TRACE, CONNECT, TRACK, or a lower-case `get` with a " +
-      "body - and the throw escapes app.fetch as the adapter's 500, where other runtimes route (404/405).",
-    matches: (violation, testCase, outcomes) =>
-      statusOf(outcomes, "deno") === 500 &&
-      needsResolving(testCase.request.target) &&
-      ((violation.kind === "server-error" &&
-        violation.lanes.length === 1 &&
-        violation.lanes[0] === "deno") ||
-        (violation.kind === "difference" && othersAgree(outcomes, "deno"))),
-  },
-  {
     id: "F5 multipart-platform-parser",
     why:
       "nifra hands a multipart body to the platform's own `Response.formData()`, and the parsers disagree " +

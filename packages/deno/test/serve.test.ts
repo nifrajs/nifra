@@ -631,6 +631,26 @@ Deno.test("a Host port past 65535 is refused, dot segments or not", async () => 
   }
 })
 
+// The `Request` constructor refuses a TRACE, CONNECT or TRACK, and a lower-case `get` with a body, so
+// rebuilding one to resolve its dot segments threw out of `fetch` and the adapter answered 500 where
+// Bun and Node route it. Found by scripts/check-runtime-differential.ts.
+Deno.test("a request no Request can be rebuilt from is routed on its resolved target", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const answers = []
+    for (const [method, target, body] of [
+      ["TRACE", "/users/../posts", undefined],
+      ["TRACK", "/./nowhere", undefined],
+      ["get", "/users/../posts", "{}"],
+    ] as const) {
+      answers.push((await rawExchange(running.port, method, target, body)).status)
+    }
+    assertEquals(answers, [405, 404, 405])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 const named: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
     version: 1,

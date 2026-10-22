@@ -70,6 +70,7 @@ import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
 import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
+  hasTrustedBodyFraming,
   markTransportCap,
   markTrustedBodyFraming,
   type RawBodyReaders,
@@ -640,8 +641,47 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
-/** `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it. */
-const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegments(req.url), req)
+/**
+ * `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it.
+ * `undefined` when the `Request` constructor refuses what the wire carried - a TRACE, CONNECT or TRACK,
+ * a lower-case `get` with a body - which {@link resolvedSource} routes instead.
+ */
+function withResolvedTarget(req: Request, url: string): Request | undefined {
+  let rebuilt: Request
+  try {
+    rebuilt = new Request(url, req)
+  } catch {
+    return undefined
+  }
+  // The same body, so the same framing: a runtime still delimited it.
+  if (hasTrustedBodyFraming(req)) markTrustedBodyFraming(rebuilt)
+  return rebuilt
+}
+
+/**
+ * A request no `Request` can be rebuilt from, as a source carrying its resolved URL: it is routed on that
+ * URL and gets the 404 or 405 the other runtimes give, where rebuilding it threw out of `fetch`. A
+ * handler that reads `c.req` gets the request as Deno delivered it.
+ */
+function resolvedSource(req: Request, url: string): RequestSource {
+  const source: RequestSource = {
+    method: req.method,
+    url,
+    get headers() {
+      return req.headers
+    },
+    header: (name) => headerOf(req, name),
+    get body() {
+      return req.body
+    },
+    arrayBuffer: () => req.arrayBuffer(),
+    json: () => req.json(),
+    bytes: () => req.bytes(),
+    request: req,
+  }
+  if (hasTrustedBodyFraming(req)) markTrustedBodyFraming(source)
+  return source
+}
 
 // A Host as RFC 9110 allows it: a reg-name or an IP literal, then an optional port. Deno builds
 // `Request.url` by appending the target to the Host as received, so `Host: x/admin#` turned a
@@ -3237,7 +3277,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
     if (rawRequestTargets) {
       if (invalidHost(req)) return jsonError(400, "invalid_host")
-      if (needsResolving(req.url)) req = withResolvedTarget(req)
+      if (needsResolving(req.url)) {
+        const url = resolveDotSegments(req.url)
+        const rebuilt = withResolvedTarget(req, url)
+        if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, url), platform)
+        req = rebuilt
+      }
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
@@ -3740,7 +3785,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (invalidHost(req)) {
         return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
       }
-      if (needsResolving(req.url)) req = withResolvedTarget(req)
+      if (needsResolving(req.url)) {
+        // A GET carrying a body cannot be rebuilt; `fetch` routes it as the ordinary request it is.
+        const rebuilt = withResolvedTarget(req, resolveDotSegments(req.url))
+        if (rebuilt === undefined) return WS_PASS
+        req = rebuilt
+      }
     }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
     platform = this.trustedPlatform(req, platform)
