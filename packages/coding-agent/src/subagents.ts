@@ -148,8 +148,6 @@ export class BoundedSubagentRunner {
         ok: false,
         error: "subagent abandoned-executor limit reached",
       }
-    if (++this.started.started > this.options.maxChildren)
-      return { id: spec.id, role: spec.role, ok: false, error: "subagent child limit exceeded" }
     if (this.options.depth > this.options.maxDepth)
       return { id: spec.id, role: spec.role, ok: false, error: "subagent depth limit exceeded" }
     if (spec.prompt.length === 0 || spec.prompt.length > 16_384)
@@ -223,6 +221,11 @@ export class BoundedSubagentRunner {
             error: "subagent workspace is not in an allowed root",
           }
       }
+      // A refused spec takes no slot. The slot is taken before a worktree is acquired, so callers
+      // past the ceiling never cost the host a workspace.
+      if (this.started.started >= this.options.maxChildren)
+        return { id: spec.id, role: spec.role, ok: false, error: "subagent child limit exceeded" }
+      this.started.started++
       const isolatedWorktree = this.options.workspace?.isolatedWorktree
       if (isolatedWorktree !== undefined) {
         // The deadline covers acquiring the workspace too. A lease that lands after it is released

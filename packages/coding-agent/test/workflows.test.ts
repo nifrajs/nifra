@@ -50,6 +50,32 @@ describe("bounded workflows", () => {
     expect(denied.error).toContain("limit")
   })
 
+  test("a refused spec takes no child slot", async () => {
+    const children = { started: 0 }
+    const runner = new BoundedSubagentRunner(
+      { run: async ({ spec }) => spec.role },
+      {
+        maxChildren: 1,
+        children,
+        allowedCapabilities: ["read"],
+        workspace: { root: process.cwd() },
+      },
+    )
+    const refused = await Promise.all([
+      runner.run({ id: "Bad id", role: "worker", prompt: "x" }),
+      runner.run({ id: "empty", role: "worker", prompt: "" }),
+      runner.run({ id: "slow", role: "worker", prompt: "x", timeoutMs: 0 }),
+      runner.run({ id: "writes", role: "worker", prompt: "x", capabilities: ["write"] }),
+      runner.run({ id: "outside", role: "worker", prompt: "x", cwd: "/" }),
+    ])
+    expect(refused.map((result) => result.ok)).toEqual([false, false, false, false, false])
+    expect(children.started).toBe(0)
+    expect(await runner.run({ id: "valid", role: "worker", prompt: "x" })).toMatchObject({
+      ok: true,
+    })
+    expect(children.started).toBe(1)
+  })
+
   test("a timeout covers workspace acquisition, and a late lease is released unused", async () => {
     const lease = Promise.withResolvers<{ cwd: string; cleanup: () => void }>()
     let ran = false
