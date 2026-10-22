@@ -77,6 +77,8 @@ function unwrap<P extends Props>(where: string, props: P): { [K in keyof P]: P[K
   const out: Record<string, TSchema> = {}
   // Object.entries → own enumerable string keys only (no prototype walk).
   for (const [key, schema] of Object.entries(props)) {
+    // Assigning this key to an ordinary object would replace its prototype instead of adding a field.
+    if (key === "__proto__") throw new TypeError(`${where}: "__proto__" cannot be a field name`)
     refuseFile(where, schema.jsonSchema)
     out[key] = schema.jsonSchema
   }

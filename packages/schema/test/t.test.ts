@@ -65,6 +65,14 @@ describe("composites", () => {
     expect((await validateStandard(opened, { name: "Ada", admin: true })).ok).toBe(true)
   })
 
+  test("__proto__ cannot be declared as a field of an object or a text-field record", () => {
+    const props: Record<string, ReturnType<typeof t.string>> = Object.create(null)
+    Object.defineProperty(props, "__proto__", { value: t.string(), enumerable: true })
+    props.id = t.string()
+    for (const build of [t.object, t.looseObject, t.query, t.cookies, t.headers])
+      expect(() => build(props)).toThrow('"__proto__" cannot be a field name')
+  })
+
   test("a nested failure carries its path", async () => {
     const r = await validateStandard(user, { name: 123, age: 36 })
     expect(r.ok).toBe(false)
