@@ -27,12 +27,19 @@ declare global {
 const NAVS = Number(process.env.NAVS ?? "1000")
 const ENGINES = (process.env.ENGINES ?? "chromium,firefox,webkit").split(",")
 const FRAMEWORK = process.env.FRAMEWORK ?? "react"
+const RUNTIME = process.env.PPR_RUNTIME ?? "bun"
 const twin: PprTwin = await import(
   FRAMEWORK === "react"
     ? "./app/server.ts"
     : `../../../../web-${FRAMEWORK}/test/fixtures/ppr-app/server.ts`
 )
-const app = await twin.startPprApp()
+if (RUNTIME !== "bun" && (RUNTIME !== "deno" || FRAMEWORK !== "react")) {
+  throw new Error(`PPR_RUNTIME=${RUNTIME} is not served for FRAMEWORK=${FRAMEWORK}`)
+}
+const app =
+  RUNTIME === "deno"
+    ? await (await import("./app/server.ts")).startPprAppOnDeno()
+    : await twin.startPprApp()
 const { origin } = app
 
 assert.deepEqual(
@@ -115,15 +122,32 @@ const filled = (page: Page, hole: string) =>
 const go = (page: Page, selector: string) =>
   page.evaluate((target) => document.querySelector<HTMLAnchorElement>(target)?.click(), selector)
 
-/** Wall time from `before` until the server aborts its next slow loader. Same process, same clock. */
+/** The server's counters: this process's own, or those of the Deno server through `/__probe`. */
+const serverProbe = async (): Promise<typeof probe & { readonly timeOrigin: number }> =>
+  RUNTIME === "deno"
+    ? (await fetch(`${origin}/__probe`)).json()
+    : { ...probe, timeOrigin: performance.timeOrigin }
+
+/** Releases the held hole loaders, in whichever process serves the app. */
+const release = async (): Promise<number> =>
+  RUNTIME === "deno"
+    ? (await fetch(`${origin}/__release`, { method: "POST" })).json()
+    : releaseHeld()
+
+/** Wall time from `before` until the server aborts its next slow loader. */
 async function abortLatency(before: number, aborted: number): Promise<number> {
   const deadline = performance.now() + 5000
-  while (probe.slowAborted === aborted) {
+  let state = await serverProbe()
+  while (state.slowAborted === aborted) {
     if (performance.now() > deadline)
-      throw new Error(`the slow loader was never aborted (${JSON.stringify(probe)})`)
+      throw new Error(`the slow loader was never aborted (${JSON.stringify(state)})`)
     await Bun.sleep(1)
+    state = await serverProbe()
   }
-  return (probe.abortedAt.at(-1) ?? Number.NaN) - before
+  // Epoch milliseconds on both sides, so a server in another process compares too.
+  return (
+    (state.abortedAt.at(-1) ?? Number.NaN) + state.timeOrigin - (before + performance.timeOrigin)
+  )
 }
 
 async function checkEngine(name: string, browser: Browser): Promise<Record<string, unknown>> {
@@ -157,11 +181,15 @@ async function checkEngine(name: string, browser: Browser): Promise<Record<strin
   await page.goto(`${origin}/p/1?slow=5000`, { waitUntil: "commit" })
   await routed(page)
   await filled(page, "greeting")
-  let aborted = probe.slowAborted
+  let aborted = (await serverProbe()).slowAborted
   let before = performance.now()
   await go(page, "#to-other")
   report.beaconAbortMs = Math.round(await abortLatency(before, aborted))
-  assert.equal(probe.cancels > 0, true, `${name}: the abort came through the cancel beacon`)
+  assert.equal(
+    (await serverProbe()).cancels > 0,
+    true,
+    `${name}: the abort came through the cancel beacon`,
+  )
   await page.waitForSelector("#other")
 
   step = "C"
@@ -171,7 +199,7 @@ async function checkEngine(name: string, browser: Browser): Promise<Record<strin
   await page.waitForFunction(() => document.querySelector("#greeting")?.textContent === "hello ada")
   await go(page, "#to-other")
   await page.waitForSelector("#other")
-  aborted = probe.slowAborted
+  aborted = (await serverProbe()).slowAborted
   await go(page, "#to-p2-slow")
   await page.waitForSelector("#title")
   await page.waitForFunction(() => document.querySelector("#greeting")?.textContent === "hello ada")
@@ -250,11 +278,15 @@ async function checkWholePaths(name: string, browser: Browser): Promise<Record<s
   const linked = await hover.newPage()
   await linked.goto(`${origin}/other`)
   await hydrated(linked)
-  const started = probe.slowStarted
+  const started = (await serverProbe()).slowStarted
   const prefetched = linked.waitForRequest((request) => request.url().includes("/p/2?slow=5000"))
   await linked.hover("#to-p2-slow")
   await (await prefetched).response()
-  assert.equal(probe.slowStarted, started, `${name}: a hover prefetch starts no hole`)
+  assert.equal(
+    (await serverProbe()).slowStarted,
+    started,
+    `${name}: a hover prefetch starts no hole`,
+  )
   await hover.close()
   return { engine: name, bot: "whole, hydrated", noScript: "fallbacks", prefetch: "no hole" }
 }
@@ -334,7 +366,7 @@ async function checkHoleOrders(name: string, browser: Browser): Promise<Record<s
     ),
     false,
   )
-  assert.equal(releaseHeld(), 1, `${name}: one held cart loader`)
+  assert.equal(await release(), 1, `${name}: one held cart loader`)
   await filled(after.page, "cart")
   await after.page.waitForFunction(() => document.querySelector("#cart")?.textContent === "cart 2")
   await after.page.click("#cart")
@@ -554,7 +586,7 @@ try {
     }
   }
   assert.deepEqual(
-    app.warnings.filter((w) => w.includes("leaky")).length,
+    (await (app.readWarnings?.() ?? app.warnings)).filter((w) => w.includes("leaky")).length,
     1,
     "one warning per route",
   )

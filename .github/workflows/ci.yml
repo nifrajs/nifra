@@ -225,9 +225,9 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Build @nifrajs/core and @nifrajs/web (Deno loads built dist)
-        # Their dist must exist for Deno's resolver; the live round trip imports @nifrajs/web.
-        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/web' build
+      - name: Build @nifrajs/core, @nifrajs/web and @nifrajs/middleware (Deno loads built dist)
+        # Their dist must exist for Deno's resolver; the live and partial prerendering tests import them.
+        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/web' --filter '@nifrajs/middleware' build
 
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
