@@ -1,0 +1,331 @@
+{
+  "packages/coding-agent/src/subagents.ts": [
+    {
+      "op": "condition->false",
+      "fn": "untilAborted",
+      "code": "if (signal.aborted) return stop()",
+      "from": "signal.aborted",
+      "reason": "run() throws before calling untilAborted when the signal is already aborted, so this branch is unreachable."
+    },
+    {
+      "op": "return undefined",
+      "fn": "untilAborted",
+      "code": "if (signal.aborted) return stop()",
+      "from": "return stop()",
+      "reason": "run() throws before calling untilAborted when the signal is already aborted, so this branch is unreachable."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "untilAborted",
+      "code": "signal.addEventListener(\"abort\", stop, { once: true })",
+      "from": "true",
+      "reason": "An AbortSignal fires abort at most once, so once has nothing to remove."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "else this.options.signal?.addEventListener(\"abort\", onAbort, { once: true })",
+      "from": "true",
+      "reason": "An AbortSignal fires abort at most once, so once has nothing to remove."
+    },
+    {
+      "op": "condition->false",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "...(cwd === undefined ? {} : { cwd }),",
+      "from": "cwd === undefined",
+      "reason": "Passes { cwd: undefined } instead of no key; executors read cwd and never test for the key."
+    },
+    {
+      "op": "condition->true",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (timeout !== undefined) clearTimeout(timeout)",
+      "from": "timeout !== undefined",
+      "reason": "clearTimeout(undefined) is a no-op."
+    },
+    {
+      "op": "condition->false",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (timeout !== undefined) clearTimeout(timeout)",
+      "from": "timeout !== undefined",
+      "reason": "A timer left running fires after the result is returned and aborts a controller nothing listens to."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (timeout !== undefined) clearTimeout(timeout)",
+      "from": "!==",
+      "reason": "A timer left running fires after the result is returned and aborts a controller nothing listens to."
+    },
+    {
+      "op": "delete statement",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (timeout !== undefined) clearTimeout(timeout)",
+      "from": "clearTimeout(timeout)",
+      "reason": "A timer left running fires after the result is returned and aborts a controller nothing listens to."
+    },
+    {
+      "op": "delete statement",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "this.options.signal?.removeEventListener(\"abort\", onAbort)",
+      "from": "this.options.signal?.removeEventListener(\"abort\", onAbort)",
+      "reason": "A listener left on the parent signal only aborts this run controller, which has already settled."
+    },
+    {
+      "op": "condition->true",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (executorDone !== undefined && !executorSettled)",
+      "from": "executorDone !== undefined && !executorSettled",
+      "reason": "Waits one extra turn before the abandonment check; the check itself is unchanged."
+    },
+    {
+      "op": "binary &&->||",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (executorDone !== undefined && !executorSettled)",
+      "from": "&&",
+      "reason": "Waits one extra turn before the abandonment check; the check itself is unchanged."
+    },
+    {
+      "op": "condition->true",
+      "fn": "BoundedSubagentRunner.run",
+      "code": "if (cleanup !== undefined) settled.then(() => cleanup()).catch(() => {})",
+      "from": "cleanup !== undefined",
+      "reason": "Calling an undefined cleanup throws inside the promise chain, which the catch swallows."
+    },
+    {
+      "op": "condition->false",
+      "fn": "physicalPath",
+      "code": "if (parent === existing) return resolve(path)",
+      "from": "parent === existing",
+      "reason": "realpath of the filesystem root never throws, so the root is never reached here."
+    },
+    {
+      "op": "return undefined",
+      "fn": "physicalPath",
+      "code": "if (parent === existing) return resolve(path)",
+      "from": "return resolve(path)",
+      "reason": "realpath of the filesystem root never throws, so the root is never reached here."
+    }
+  ],
+  "packages/core/src/server/response-contract-lane.ts": [
+    {
+      "op": "condition->true",
+      "fn": "projectorOf",
+      "code": "if (found === undefined) {",
+      "from": "found === undefined",
+      "reason": "Compiling the projector again on every call gives an equal projector; the cache only saves time."
+    },
+    {
+      "op": "delete statement",
+      "fn": "projectorOf",
+      "code": "projectors.set(node, found)",
+      "from": "projectors.set(node, found)",
+      "reason": "Without the cache entry the projector is compiled again on each call, to the same result."
+    },
+    {
+      "op": "condition->true",
+      "fn": "compileUnion",
+      "code": ": objects.length > 1",
+      "from": "objects.length > 1",
+      "reason": "With no object branch, compileDiscriminated([]) returns undefined, the same as the branch it replaces."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "compileUnion",
+      "code": ": objects.length > 1",
+      "from": ">",
+      "reason": "A single object branch is taken by the `objects.length === 1` arm above, so `>= 1` and `> 1` pick the same arm."
+    },
+    {
+      "op": "condition->true",
+      "fn": "hasHook",
+      "code": "if (depth > MAX_HOOK_SCAN_DEPTH) return true",
+      "from": "depth > MAX_HOOK_SCAN_DEPTH",
+      "reason": "The hook scan only decides whether the copying walk runs; the walk writes the same value, so answering yes more often costs time, not output."
+    },
+    {
+      "op": "condition->false",
+      "fn": "hasHook",
+      "code": "if (depth > MAX_HOOK_SCAN_DEPTH) return true",
+      "from": "depth > MAX_HOOK_SCAN_DEPTH",
+      "reason": "Without the depth cap the scan recurses further; a cyclic payload then overflows the stack in the scan instead of failing in JSON.stringify, and the response fails either way."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "hasHook",
+      "code": "if (depth > MAX_HOOK_SCAN_DEPTH) return true",
+      "from": ">",
+      "reason": "Moves the depth cap by one level; past the cap the copying walk takes over with the same result."
+    },
+    {
+      "op": "return undefined",
+      "fn": "hasHook",
+      "code": "if (depth > MAX_HOOK_SCAN_DEPTH) return true",
+      "from": "return true",
+      "reason": "Observable only for a toJSON hook nested more than 64 levels deep. Left untested by choice."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "hasHook",
+      "code": "if (depth > MAX_HOOK_SCAN_DEPTH) return true",
+      "from": "true",
+      "reason": "Observable only for a toJSON hook nested more than 64 levels deep. Left untested by choice."
+    },
+    {
+      "op": "condition->true",
+      "fn": "hasHook",
+      "code": "if (typeof hook === \"function\") return !(hook === DATE_TO_JSON && value instanceof Date)",
+      "from": "typeof hook === \"function\"",
+      "reason": "The hook scan only decides whether the copying walk runs; the walk writes the same value, so answering yes more often costs time, not output."
+    },
+    {
+      "op": "binary &&->||",
+      "fn": "hasHook",
+      "code": "if (typeof hook === \"function\") return !(hook === DATE_TO_JSON && value instanceof Date)",
+      "from": "&&",
+      "reason": "Observable only for a Date subclass with its own toJSON or a Date toJSON borrowed by another object. Left untested by choice."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "hasHook",
+      "code": "if (typeof hook === \"function\") return !(hook === DATE_TO_JSON && value instanceof Date)",
+      "from": "===",
+      "nth": 1,
+      "reason": "Observable only for a Date subclass with its own toJSON. Left untested by choice."
+    },
+    {
+      "op": "condition->false",
+      "fn": "hasHook",
+      "code": "if (Array.isArray(value)) {",
+      "from": "Array.isArray(value)",
+      "reason": "for-in over an array visits the same indices the indexed loop does."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "hasHook",
+      "code": "for (let i = 0; i < value.length; i++) {",
+      "from": "<",
+      "reason": "Reading one past the end gives undefined, which the object check skips."
+    },
+    {
+      "op": "condition->true",
+      "fn": "hasHook",
+      "code": "if (typeof item === \"object\" && item !== null && hasHook(item, depth + 1)) return true",
+      "from": "typeof item === \"object\" && item !== null && hasHook(item, depth + 1)",
+      "reason": "The hook scan only decides whether the copying walk runs; the walk writes the same value, so answering yes more often costs time, not output."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "hasHook",
+      "code": "if (typeof item === \"object\" && item !== null && hasHook(item, depth + 1)) return true",
+      "from": "+",
+      "reason": "The depth only feeds the cap; counting down disables it, with the cyclic-payload caveat of the cap removal."
+    },
+    {
+      "op": "return undefined",
+      "fn": "hasHook",
+      "code": "return false",
+      "from": "return false",
+      "reason": "undefined is as falsy as false to every caller."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "hasHook",
+      "code": "return false",
+      "from": "false",
+      "reason": "The hook scan only decides whether the copying walk runs; the walk writes the same value, so answering yes more often costs time, not output."
+    },
+    {
+      "op": "condition->true",
+      "fn": "hasHook",
+      "code": "if (typeof field === \"object\" && field !== null && hasHook(field, depth + 1)) return true",
+      "from": "typeof field === \"object\" && field !== null && hasHook(field, depth + 1)",
+      "reason": "The hook scan only decides whether the copying walk runs; the walk writes the same value, so answering yes more often costs time, not output."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "hasHook",
+      "code": "if (typeof field === \"object\" && field !== null && hasHook(field, depth + 1)) return true",
+      "from": "+",
+      "reason": "The depth only feeds the cap; counting down disables it, with the cyclic-payload caveat of the cap removal."
+    },
+    {
+      "op": "return undefined",
+      "fn": "hasHook",
+      "code": "return false",
+      "from": "return false",
+      "nth": 1,
+      "reason": "undefined is as falsy as false to every caller."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "hasHook",
+      "code": "return false",
+      "from": "false",
+      "nth": 1,
+      "reason": "The hook scan only decides whether the copying walk runs; the walk writes the same value, so answering yes more often costs time, not output."
+    },
+    {
+      "op": "condition->true",
+      "fn": "wireValueOf",
+      "code": "typeof value === \"object\" && value !== null && hasHook(value, 0)",
+      "from": "typeof value === \"object\" && value !== null && hasHook(value, 0)",
+      "reason": "The walk hands back a value with no hook unchanged, so walking every value costs time, not output."
+    },
+    {
+      "op": "condition->false",
+      "fn": "fieldsOf",
+      "code": "if (typeof Reflect.get(value, \"toJSON\") !== \"function\") return value",
+      "from": "typeof Reflect.get(value, \"toJSON\") !== \"function\"",
+      "reason": "Copying a hook-less value keeps every own enumerable field, which is all JSON.stringify writes."
+    },
+    {
+      "op": "condition->true",
+      "fn": "wireChildren",
+      "code": "if (written !== item) items ??= value.slice(0, i)",
+      "from": "written !== item",
+      "reason": "Copying the array before the first changed item holds the same items; only the allocation differs."
+    },
+    {
+      "op": "condition->true",
+      "fn": "validateContract",
+      "code": "const shown = mode === \"warn\" && before !== payload ? replace(before) : served",
+      "from": "mode === \"warn\" && before !== payload",
+      "reason": "replace(before) rebuilds the reply from the value that is sent anyway; only the copy differs."
+    },
+    {
+      "op": "binary &&->||",
+      "fn": "validateContract",
+      "code": "const shown = mode === \"warn\" && before !== payload ? replace(before) : served",
+      "from": "&&",
+      "reason": "replace(before) rebuilds the reply from the value that is sent anyway; only the copy differs."
+    },
+    {
+      "op": "condition->false",
+      "fn": "check",
+      "code": "logged === undefined ? quiet : { strip, report: logged },",
+      "from": "logged === undefined",
+      "reason": "With no report hook, { strip, report: undefined } behaves as the quiet policy."
+    },
+    {
+      "op": "condition->true",
+      "fn": "send",
+      "code": "if (!routes.has(definition))",
+      "from": "!routes.has(definition)",
+      "reason": "Scanning the catalog again on every report finds the same route; the map only saves time."
+    },
+    {
+      "op": "condition->true",
+      "fn": "send",
+      "code": "if (owned !== undefined) routes.set(owned, route)",
+      "from": "owned !== undefined",
+      "reason": "Observable only through a report on a host whose catalog holds a route without a contract. Left untested by choice."
+    },
+    {
+      "op": "condition->true",
+      "fn": "apply",
+      "code": "if (!hosts.includes(host)) hosts.push(host)",
+      "from": "!hosts.includes(host)",
+      "reason": "A host listed twice is scanned twice and yields the same routes."
+    }
+  ]
+}
