@@ -5992,6 +5992,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
       entry.schema?.body,
+      this.formOrigins,
     )
   }
 

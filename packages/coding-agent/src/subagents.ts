@@ -56,6 +56,12 @@ export interface SubagentAbandonment {
   readonly settled: Promise<void>
 }
 
+/** Children started, plus those still acquiring a workspace. Runners sharing one ledger are counted,
+ * and bounded by `maxChildren`, together. */
+export interface SubagentChildLedger {
+  started: number
+}
+
 /** Abandoned executors still running. Runners sharing one ledger are counted, and bounded by
  * `maxAbandoned`, together. */
 export interface SubagentAbandonmentLedger {
@@ -78,6 +84,8 @@ export interface SubagentRunnerOptions {
   readonly maxAbandoned?: number
   /** Where abandoned executors are counted. Default: a ledger of this runner's own. */
   readonly abandonment?: SubagentAbandonmentLedger
+  /** Where started children are counted for `maxChildren`. Default: a ledger of this runner's own. */
+  readonly children?: SubagentChildLedger
 }
 
 /** `work`'s outcome, or `stopped()` as soon as `signal` aborts, even when `work` ignores it. */
@@ -97,7 +105,7 @@ export class BoundedSubagentRunner {
     Pick<SubagentRunnerOptions, "maxChildren" | "maxDepth" | "depth">
   > &
     SubagentRunnerOptions
-  private children = 0
+  private readonly started: SubagentChildLedger
   private readonly ledger: SubagentAbandonmentLedger
 
   constructor(executor: SubagentExecutor, options: SubagentRunnerOptions = {}) {
@@ -109,6 +117,7 @@ export class BoundedSubagentRunner {
       depth: options.depth ?? 0,
     }
     this.ledger = options.abandonment ?? { abandoned: 0 }
+    this.started = options.children ?? { started: 0 }
     if (
       this.options.maxChildren < 1 ||
       this.options.maxDepth < 0 ||
@@ -139,8 +148,6 @@ export class BoundedSubagentRunner {
         ok: false,
         error: "subagent abandoned-executor limit reached",
       }
-    if (++this.children > this.options.maxChildren)
-      return { id: spec.id, role: spec.role, ok: false, error: "subagent child limit exceeded" }
     if (this.options.depth > this.options.maxDepth)
       return { id: spec.id, role: spec.role, ok: false, error: "subagent depth limit exceeded" }
     if (spec.prompt.length === 0 || spec.prompt.length > 16_384)
@@ -188,6 +195,8 @@ export class BoundedSubagentRunner {
     let cwd: string | undefined
     let executorDone: Promise<void> | undefined
     let executorSettled = false
+    let reserved = false
+    let lateLease: Promise<void> | undefined
     try {
       if (controller.signal.aborted) throw stopped()
       const requestedCwd =
@@ -214,6 +223,12 @@ export class BoundedSubagentRunner {
             error: "subagent workspace is not in an allowed root",
           }
       }
+      // A refused spec takes no slot. The slot is reserved before a worktree is acquired, so callers
+      // past the ceiling never cost the host a workspace, and kept only once the executor starts.
+      if (this.started.started >= this.options.maxChildren)
+        return { id: spec.id, role: spec.role, ok: false, error: "subagent child limit exceeded" }
+      this.started.started++
+      reserved = true
       const isolatedWorktree = this.options.workspace?.isolatedWorktree
       if (isolatedWorktree !== undefined) {
         // The deadline covers acquiring the workspace too. A lease that lands after it is released
@@ -222,7 +237,8 @@ export class BoundedSubagentRunner {
         try {
           workspace = await untilAborted(acquiring, controller.signal, stopped)
         } catch (error) {
-          if (controller.signal.aborted) acquiring.then((late) => late.cleanup?.()).catch(() => {})
+          if (controller.signal.aborted)
+            lateLease = acquiring.then((late) => late.cleanup?.()).catch(() => {})
           throw error
         }
       } else if (requestedCwd !== undefined) {
@@ -270,6 +286,15 @@ export class BoundedSubagentRunner {
     } finally {
       if (timeout !== undefined) clearTimeout(timeout)
       this.options.signal?.removeEventListener("abort", onAbort)
+      if (reserved && executorDone === undefined) {
+        // An acquisition still running past the deadline holds its slot until it ends.
+        const children = this.started
+        if (lateLease === undefined) children.started--
+        else
+          lateLease.then(() => {
+            children.started--
+          })
+      }
       const cleanup = workspace?.cleanup
       // An executor that honours the abort settles within a few ticks; give it one turn before
       // calling it abandoned.

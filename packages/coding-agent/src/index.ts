@@ -137,6 +137,7 @@ export {
   BoundedSubagentRunner,
   type SubagentAbandonment,
   type SubagentAbandonmentLedger,
+  type SubagentChildLedger,
   type SubagentExecutor,
   type SubagentResult,
   type SubagentRunnerOptions,
