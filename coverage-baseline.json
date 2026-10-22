@@ -447,6 +447,10 @@
     "functions": 100,
     "lines": 76.66666666666667
   },
+  "packages/core/src/file-type.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/idempotency-plugin.ts": {
     "functions": 100,
     "lines": 100
@@ -1522,10 +1526,6 @@
   "packages/ts-plugin/src/zones.ts": {
     "functions": 100,
     "lines": 90.71428571428571
-  },
-  "packages/uploads/src/detect.ts": {
-    "functions": 100,
-    "lines": 100
   },
   "packages/uploads/src/sign.ts": {
     "functions": 100,

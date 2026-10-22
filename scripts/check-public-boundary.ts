@@ -189,6 +189,7 @@ export async function runPublicBoundary(
     ["./data", coreExports, "@nifrajs/core"],
     ["./range", coreExports, "@nifrajs/core"],
     ["./static-file", coreExports, "@nifrajs/core"],
+    ["./file-type", coreExports, "@nifrajs/core"],
     ["./og", imageExports, "@nifrajs/image"],
   ] as const) {
     if (!(path in exportsMap)) failures.push(`${name}: missing public export ${path}`)
@@ -198,6 +199,7 @@ export async function runPublicBoundary(
     "packages/core/src/data.ts",
     "packages/core/src/range.ts",
     "packages/core/src/static-file.ts",
+    "packages/core/src/file-type.ts",
     "packages/image/src/og.ts",
   ]) {
     const source = await Bun.file(file).text()
