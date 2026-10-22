@@ -6,6 +6,7 @@
  */
 
 import {
+  assertCloseArgs,
   createWebSocketSender,
   exceedsPayloadCap,
   type NifraWebSocket,
@@ -103,7 +104,10 @@ function wrapBunSocket(
   )
   ws = {
     send,
-    close: (code, reason) => raw.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      raw.close(code, reason)
+    },
     get readyState() {
       return raw.readyState
     },

@@ -2905,6 +2905,30 @@ type WsServerCtor = new (options: { noServer: true; maxPayload?: number }) => Ws
  * `@types/ws` dependency here (the surface is structurally typed via {@link WsServer}/{@link WsSocket}). */
 const WS_MODULE_SPECIFIER = "ws"
 
+/** Node copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before `ws`
+ * sees it. `ws` marks the socket closing before it checks the code, so a refused close left the socket
+ * half-open: its later sends dropped and the peer's close never answered. */
+function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
+  if (code === undefined) {
+    if (reason !== undefined && reason !== "")
+      throw new RangeError("ws.close(): a reason needs a code")
+    return
+  }
+  if (
+    !Number.isInteger(code) ||
+    !(
+      (code >= 1000 && code <= 1003) ||
+      (code >= 1007 && code <= 1014) ||
+      (code >= 3000 && code <= 4999)
+    )
+  )
+    throw new RangeError(
+      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
+    )
+  if (reason !== undefined && Buffer.byteLength(reason) > 123)
+    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
+}
+
 /** Lazily build a noServer `ws` `WebSocketServer`, or `undefined` if `ws` isn't installed. */
 async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefined> {
   try {
@@ -3032,7 +3056,10 @@ function attachNodeWebSocket(
   }
   const nifra: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
-    close: (code, reason) => ws.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      ws.close(code, reason)
+    },
     get readyState() {
       return ws.readyState
     },

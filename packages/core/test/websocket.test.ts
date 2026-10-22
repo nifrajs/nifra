@@ -12,6 +12,7 @@ import {
 import { exceedsPayloadCap } from "../src/server/websocket.ts"
 // The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
 import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
+import { closeArgsAnswers, closeArgsRoute, FORBIDDEN_CLOSES } from "./ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "./ws-send-contract.ts"
 
 let running: RunningServer | undefined
@@ -297,6 +298,14 @@ describe("app.listen() WebSockets", () => {
       })
     })
   }
+
+  test("a close RFC 6455 forbids throws a RangeError and leaves the socket open", async () => {
+    running = closeArgsRoute(server().use(websocket())).listen(0, { hostname: "127.0.0.1" })
+    expect(await closeArgsAnswers(running.port)).toEqual({
+      answers: FORBIDDEN_CLOSES.map(() => "range"),
+      closed: { code: 4000, reason: "ok" },
+    })
+  })
 
   test("echo: open → welcome, message → echo", async () => {
     running = makeApp().listen(0, { hostname: "127.0.0.1" })
@@ -747,6 +756,20 @@ describe("attachWebSocket", () => {
       for (const l of this.listeners[type] ?? []) (l as (e: unknown) => void)(event)
     }
   }
+
+  test("a close RFC 6455 forbids throws a RangeError before the socket sees it", () => {
+    const socket = new FakeSocket()
+    const ws = attachWebSocket(socket, {}, undefined, {
+      openNow: true,
+      pubsub: new TopicRegistry(),
+    })
+    for (const [code, reason] of FORBIDDEN_CLOSES) {
+      expect(() => ws.close(code ?? undefined, reason ?? undefined)).toThrow(RangeError)
+    }
+    expect(socket.closedWith).toBeUndefined()
+    ws.close(1011, "é".repeat(61))
+    expect(socket.closedWith).toEqual({ code: 1011, reason: "é".repeat(61) })
+  })
 
   test("openNow fires open immediately; sets arraybuffer; send/close proxy", () => {
     const socket = new FakeSocket()

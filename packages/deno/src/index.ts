@@ -309,6 +309,29 @@ function exceedsPayloadCap(message: NifraWsData, cap: number): boolean {
   return false
 }
 
+/** Deno copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before
+ * `WebSocket.close` sees it, so the socket stays open. Deno sent such a code on the wire. */
+function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
+  if (code === undefined) {
+    if (reason !== undefined && reason !== "")
+      throw new RangeError("ws.close(): a reason needs a code")
+    return
+  }
+  if (
+    !Number.isInteger(code) ||
+    !(
+      (code >= 1000 && code <= 1003) ||
+      (code >= 1007 && code <= 1014) ||
+      (code >= 3000 && code <= 4999)
+    )
+  )
+    throw new RangeError(
+      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
+    )
+  if (reason !== undefined && exceedsPayloadCap(reason, 123))
+    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
+}
+
 function internalError(): Response {
   return new Response('{"ok":false,"error":"internal_error"}', {
     status: 500,
@@ -338,7 +361,10 @@ function attachDenoWebSocket(
   const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => socket.send(payload)
   const ws: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
-    close: (code, reason) => socket.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      socket.close(code, reason)
+    },
     get readyState() {
       return socket.readyState
     },

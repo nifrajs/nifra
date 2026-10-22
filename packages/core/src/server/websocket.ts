@@ -35,7 +35,9 @@ type WsMessageInput<Schema extends StandardSchemaV1 | undefined> = Schema extend
 export interface NifraWebSocket<Data = unknown> {
   /** Send a text (`string`) or binary (`ArrayBuffer`/typed-array) frame. No-op once closed. */
   send(data: string | ArrayBufferView | ArrayBuffer): void
-  /** Close the connection (optional code 1000-4999 + short reason). */
+  /** Close the connection, with an optional code an endpoint may send (1000-1003, 1007-1014,
+   * 3000-4999) and a reason of at most 123 UTF-8 bytes. Any other close throws a `RangeError`, and the
+   * socket stays open. */
   close(code?: number, reason?: string): void
   /** `WebSocket.readyState` (0 CONNECTING · 1 OPEN · 2 CLOSING · 3 CLOSED). */
   readonly readyState: number
@@ -316,7 +318,10 @@ export function attachWebSocket<
   )
   ws = {
     send,
-    close: (code, reason) => socket.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      socket.close(code, reason)
+    },
     get readyState() {
       return socket.readyState
     },
@@ -388,6 +393,34 @@ export function exceedsPayloadCap(
     if (bytes > cap) return true
   }
   return false
+}
+
+/**
+ * Refuse a close RFC 6455 forbids before the runtime sees it: a code outside 1000-1003, 1007-1014 and
+ * 3000-4999, a reason over 123 UTF-8 bytes, or a reason without a code. Runtimes disagreed on such a
+ * close - Bun and Deno sent it, Node's `ws` threw after marking the socket closing, which left it
+ * half-open, and workerd threw - so every adapter throws this `RangeError` first and the socket stays
+ * open.
+ */
+export function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
+  if (code === undefined) {
+    if (reason !== undefined && reason !== "")
+      throw new RangeError("ws.close(): a reason needs a code")
+    return
+  }
+  if (
+    !Number.isInteger(code) ||
+    !(
+      (code >= 1000 && code <= 1003) ||
+      (code >= 1007 && code <= 1014) ||
+      (code >= 3000 && code <= 4999)
+    )
+  )
+    throw new RangeError(
+      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
+    )
+  if (reason !== undefined && exceedsPayloadCap(reason, 123))
+    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
 }
 
 type WebSocketSendPayload = string | ArrayBufferView | ArrayBuffer

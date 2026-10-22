@@ -10,6 +10,11 @@ import {
   requestTargetApp,
   requestTargetMismatches,
 } from "../../core/test/request-target-matrix.ts"
+import {
+  closeArgsAnswers,
+  closeArgsRoute,
+  FORBIDDEN_CLOSES,
+} from "../../core/test/ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { serve } from "../src/index.ts"
 
@@ -335,6 +340,21 @@ Deno.test("wsMaxPayloadBytes counts UTF-8 bytes and sizes a message without copy
     )
   } finally {
     if (encode !== undefined) Object.defineProperty(TextEncoder.prototype, "encode", encode)
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a close RFC 6455 forbids throws a RangeError and leaves the socket open", async () => {
+  const running = await serve(closeArgsRoute(server().use(websocket())), {
+    hostname: "127.0.0.1",
+    port: 0,
+  })
+  try {
+    assertEquals(await closeArgsAnswers(running.port), {
+      answers: FORBIDDEN_CLOSES.map(() => "range"),
+      closed: { code: 4000, reason: "ok" },
+    })
+  } finally {
     await running.stop({ drainMs: 0 })
   }
 })
