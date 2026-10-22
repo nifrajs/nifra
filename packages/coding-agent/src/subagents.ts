@@ -363,7 +363,10 @@ async function physicalPath(path: string): Promise<string> {
   let existing = resolve(path)
   for (;;) {
     try {
-      return join(await realpath(existing), ...missing)
+      const real = await realpath(existing)
+      // Bun answers the drive root D:\ as "D:", which means the cwd on drive D (oven-sh/bun#45363);
+      // a root has no link to resolve, so it is kept as written.
+      return join(isAbsolute(real) ? real : existing, ...missing)
     } catch {
       const parent = dirname(existing)
       if (parent === existing) return resolve(path)
