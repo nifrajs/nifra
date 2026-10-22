@@ -34,7 +34,8 @@ const VANILLA = `import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
 
 // routes/hotels.tsx - a page keeps a route extension even with no JSX in it.
 export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
-  // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
+  // Interpolated values are escaped for where they land (text, attribute, URL); a string as a tag
+  // name or inside <script> throws. Wrap trusted markup in raw() to opt out deliberately.
   return html\`<ul>\${data.hotels.map((h) => html\`<li>\${h.name}</li>\`)}</ul>\`
 }
 
