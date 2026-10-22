@@ -51,6 +51,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C050": "Swap names a slot nothing declares",
   "NF-C051": "Slot content is not its slot() alone",
   "NF-C052": "Swap URL's page renders no such slot",
+  "NF-C053": "Partially prerendered page reads the request",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",

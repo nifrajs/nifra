@@ -273,6 +273,12 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Point the link or form at the page that renders the slot, or render the slot in that page.",
     docs: "/docs/islands",
   },
+  "NF-C053": {
+    why: "A page whose backend half exports shellLoader calls getContext() or tryGetContext(). Its shell is built once and served to every visitor, so the shell check refuses a page that reads the request.",
+    fix: "Read the request in a dynamic hole's loader, and render what uses it in that hole. The fix moves a read held in one const, and the one element that uses it, into a new hole.",
+    command: "nifra fix --code NF-C053",
+    docs: "/docs/partial-prerendering",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

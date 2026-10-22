@@ -296,6 +296,12 @@ Usage:
                                          and zone the other modules into frontend/, backend/ or shared/
                                          (--zones keeps them in place and lists them in package.json
                                          "nifra.zones"). Dry-run by default; --write applies.
+  nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server] [--json]
+                                         Experimental: add a partially prerendered hole to a route whose
+                                         backend half exports shellLoader - its definition and <Hole> in
+                                         the page, its loader and output schema in the backend half. A
+                                         Vue or Svelte page gets the code to paste; --server writes a
+                                         React server component for the hole.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
                                          by backend/app.ts. dev, build and check refresh them too;

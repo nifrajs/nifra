@@ -30,6 +30,7 @@ import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
 import { mergeAuthGapRule } from "./rules/merge-auth.ts"
 import { pageRules } from "./rules/pages.ts"
+import { pprRules } from "./rules/ppr.ts"
 import { routeStatementRule } from "./rules/route-statement.ts"
 import { routeRules } from "./rules/routes.ts"
 import { secretRules } from "./rules/secrets.ts"
@@ -499,6 +500,7 @@ export async function collectCheckDiagnostics(
     ...routeRules,
     contractVisibilityRule,
     ...pageRules,
+    ...pprRules,
     mergeAuthGapRule,
     routeStatementRule,
     ...zoneRules,

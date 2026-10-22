@@ -7190,6 +7190,10 @@ Regenerate `nifra-routes.d.ts` so `navigate({ to, search })` is typed by each ro
 
 Regenerate a committed `server-manifest.ts` from `routes/` without a full build.
 
+`nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server]`
+
+Experimental. Add a hole to a [partially prerendered](/docs/partial-prerendering) route: its definition, `boundaries` entry and `Hole` in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.
+
 `nifra openapi [--format json | yaml] [--path <prefix>]`
 
 The backend's OpenAPI document, including response types inferred at build time.
@@ -12891,6 +12895,16 @@ export default function Tea(props: { data: { title: string }; boundaries?: Bound
   )
 }
 ```
+
+`nifra scaffold hole <route> <name>` writes a hole into both halves:
+its definition, its `boundaries` entry and the `Hole` in a JSX page,
+and a loader with its output schema in the backend half. `--shared`,
+`--interactive` and `--timeout <ms>` shape it, and
+`--server` makes it show a new React server component. A Vue or Svelte page gets
+the code to paste. `nifra check` reports a page that calls
+`getContext()` or `tryGetContext()` (NF-C053), and
+`nifra fix --code NF-C053` moves a read held in one `const`, with the
+one element that uses it, into a new dynamic hole whose loader makes the read.
 
 The import check cannot see visitor data an app keeps in module state, such as a variable
 middleware writes. `checkShellCanaries` requests each path once with unique values

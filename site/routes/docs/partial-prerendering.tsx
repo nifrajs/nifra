@@ -334,6 +334,17 @@ export default function PartialPrerendering() {
       </p>
       <CodeBlock code={SOLID_PAGE} lang="tsx" />
       <p>
+        <code>nifra scaffold hole &lt;route&gt; &lt;name&gt;</code> writes a hole into both halves:
+        its definition, its <code>boundaries</code> entry and the <code>Hole</code> in a JSX page,
+        and a loader with its output schema in the backend half. <code>--shared</code>,{" "}
+        <code>--interactive</code> and <code>--timeout &lt;ms&gt;</code> shape it, and{" "}
+        <code>--server</code> makes it show a new React server component. A Vue or Svelte page gets
+        the code to paste. <code>nifra check</code> reports a page that calls{" "}
+        <code>getContext()</code> or <code>tryGetContext()</code> (NF-C053), and{" "}
+        <code>nifra fix --code NF-C053</code> moves a read held in one <code>const</code>, with the
+        one element that uses it, into a new dynamic hole whose loader makes the read.
+      </p>
+      <p>
         The import check cannot see visitor data an app keeps in module state, such as a variable
         middleware writes. <code>checkShellCanaries</code> requests each path once with unique values
         in a cookie, <code>Authorization</code>, a header and the query, and reports each value found
