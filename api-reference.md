@@ -1163,7 +1163,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SubagentAbandonmentLedger** _(interface)_ - `interface SubagentAbandonmentLedger`
   Abandoned executors still running. Runners sharing one ledger are counted, and bounded by `maxAbandoned`, together.
 - **SubagentChildLedger** _(interface)_ - `interface SubagentChildLedger`
-  Children started. Runners sharing one ledger are counted, and bounded by `maxChildren`, together.
+  Children started, plus those still acquiring a workspace. Runners sharing one ledger are counted, and bounded by `maxChildren`, together.
 - **SubagentExecutor** _(interface)_ - `interface SubagentExecutor`
 - **SubagentResult** _(interface)_ - `interface SubagentResult`
 - **SubagentRunnerOptions** _(interface)_ - `interface SubagentRunnerOptions`

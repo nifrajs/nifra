@@ -15417,7 +15417,7 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface SubagentChildLedger {\n    started: number;\n}",
-    "doc": "/** Children started. Runners sharing one ledger are counted, and bounded by `maxChildren`,\n * together. */"
+    "doc": "/** Children started, plus those still acquiring a workspace. Runners sharing one ledger are counted,\n * and bounded by `maxChildren`, together. */"
   },
   {
     "name": "SubagentExecutor",

@@ -80,6 +80,7 @@ describe("bounded workflows", () => {
     const lease = Promise.withResolvers<{ cwd: string; cleanup: () => void }>()
     let ran = false
     let released = 0
+    const children = { started: 0 }
     const runner = new BoundedSubagentRunner(
       {
         run: () => {
@@ -87,10 +88,16 @@ describe("bounded workflows", () => {
           return "ran"
         },
       },
-      { workspace: { root: process.cwd(), isolatedWorktree: () => lease.promise } },
+      {
+        maxChildren: 1,
+        children,
+        workspace: { root: process.cwd(), isolatedWorktree: () => lease.promise },
+      },
     )
     const result = await runner.run({ id: "slow", role: "worker", prompt: "x", timeoutMs: 10 })
     expect(result).toMatchObject({ ok: false, error: "subagent timed out" })
+    // The acquisition is still running, so it still holds its slot.
+    expect(children.started).toBe(1)
     const cleanedUp = Promise.withResolvers<void>()
     lease.resolve({
       cwd: process.cwd(),
@@ -102,6 +109,39 @@ describe("bounded workflows", () => {
     await cleanedUp.promise
     expect(released).toBe(1)
     expect(ran).toBe(false)
+    expect(await runner.run({ id: "next", role: "worker", prompt: "x" })).toMatchObject({
+      ok: true,
+    })
+    expect(children.started).toBe(1)
+  })
+
+  test("a child whose executor never starts gives its slot back", async () => {
+    const children = { started: 0 }
+    let lease = (): Promise<{ cwd: string }> => Promise.reject(new Error("no worktree"))
+    const runner = new BoundedSubagentRunner(
+      { run: async ({ spec }) => spec.role },
+      {
+        maxChildren: 1,
+        children,
+        workspace: { root: process.cwd(), isolatedWorktree: () => lease() },
+      },
+    )
+    expect(await runner.run({ id: "failed", role: "worker", prompt: "x" })).toMatchObject({
+      ok: false,
+      error: "no worktree",
+    })
+    expect(children.started).toBe(0)
+    lease = async () => ({ cwd: "/" })
+    expect(await runner.run({ id: "outside", role: "worker", prompt: "x" })).toMatchObject({
+      ok: false,
+      error: "isolated worktree escapes workspace policy",
+    })
+    expect(children.started).toBe(0)
+    lease = async () => ({ cwd: process.cwd() })
+    expect(await runner.run({ id: "valid", role: "worker", prompt: "x" })).toMatchObject({
+      ok: true,
+    })
+    expect(children.started).toBe(1)
   })
 
   test("a lease that fails after the timeout is dropped without an unhandled rejection", async () => {
