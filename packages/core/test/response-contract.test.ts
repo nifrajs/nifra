@@ -143,6 +143,177 @@ describe('responseContract: "enforce"', () => {
     expect(res.body).not.toContain("SECRET") // the detail goes to the logger, never to the caller
   })
 
+  // `JSON.stringify` writes what a `toJSON` hook returns, not the fields the validator was shown.
+  describe("a value with a toJSON hook", () => {
+    class Account {
+      id = "u1"
+      name = "Ada"
+      #passwordHash = "SECRET"
+      toJSON() {
+        return { id: this.id, name: this.name, passwordHash: this.#passwordHash }
+      }
+    }
+    class Price {
+      constructor(readonly cents: number) {}
+      toJSON() {
+        return (this.cents / 100).toFixed(2)
+      }
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: what these values write by toJSON is the declared row, which no static type can say.
+    const writesRow = (value: object): { id: string; name: string } => value as never
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrapper's toJSON writes the declared list, which no static type can say.
+    const writesTags = (value: object): string[] => value as never
+
+    test("is judged by what the hook writes, at the top, nested, and in a c.json reply", async () => {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce"))
+        .get("/me", { response: STRICT }, () => new Account())
+        .get("/list", { response: t.object({ users: t.array(STRICT) }) }, () => ({
+          users: [{ id: "u0", name: "Bo" }, new Account()],
+        }))
+        .get("/reply", { response: STRICT }, (c) => c.json(new Account()))
+      for (const path of ["/me", "/list", "/reply"]) {
+        const res = await app.fetch(new Request(`http://t${path}`))
+        expect(res.status).toBe(500)
+        expect(await res.text()).not.toContain("SECRET")
+      }
+    })
+
+    test("strip sends the declared fields of the value, never what its hook adds", async () => {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce", { extra: "strip" }))
+        .get("/me", { response: STRICT }, () => new Account())
+      expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
+        id: "u1",
+        name: "Ada",
+      })
+    })
+
+    test("strip keeps a declared field the hook writes from private state, at the top and nested", async () => {
+      class Member {
+        #id = "u1"
+        name = "Ada"
+        toJSON() {
+          return { id: this.#id, name: this.name, passwordHash: "SECRET" }
+        }
+      }
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce", { extra: "strip" }))
+        .get("/me", { response: STRICT }, () => writesRow(new Member()))
+        .get("/list", { response: t.object({ users: t.array(STRICT) }) }, () => ({
+          users: [writesRow(new Member())],
+        }))
+      const me = await app.fetch(new Request("http://t/me"))
+      expect(me.status).toBe(200)
+      expect(await me.json()).toEqual({ id: "u1", name: "Ada" })
+      const list = await app.fetch(new Request("http://t/list"))
+      expect(list.status).toBe(200)
+      expect(await list.json()).toEqual({ users: [{ id: "u1", name: "Ada" }] })
+    })
+
+    test("strip reports the fields a hook writes that were not sent", async () => {
+      const reports: ResponseContractReport[] = []
+      const app = server({ logger: silentLogger })
+        .use(
+          responseContract("enforce", {
+            extra: "strip",
+            onReport: (report) => void reports.push(report),
+          }),
+        )
+        .get("/me", { response: STRICT }, () => new Account())
+      expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
+        id: "u1",
+        name: "Ada",
+      })
+      expect(reports).toMatchObject([{ kind: "stripped", fields: ["passwordHash"] }])
+    })
+
+    test("a hook's result is written by its fields, never by a hook of its own", async () => {
+      class Wrapper {
+        constructor(readonly inner: object) {}
+        toJSON() {
+          return this.inner
+        }
+      }
+      // The serializer calls one hook per value: this writes the account's own fields, not its hook's.
+      expect(JSON.parse(JSON.stringify(new Wrapper(new Account())))).toEqual({
+        id: "u1",
+        name: "Ada",
+      })
+      for (const extra of ["reject", "strip"] as const) {
+        const app = server({ logger: silentLogger })
+          .use(responseContract("enforce", { extra }))
+          .get("/me", { response: STRICT }, () => writesRow(new Wrapper(new Account())))
+        const res = await app.fetch(new Request("http://t/me"))
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+      }
+      const tags = Object.assign(["a", "b"], { toJSON: () => "SECRET" })
+      const tagged = server({ logger: silentLogger })
+        .use(responseContract("enforce"))
+        .get("/tags", { response: t.object({ tags: t.array(t.string()) }) }, () => ({
+          tags: writesTags(new Wrapper(tags)),
+        }))
+      expect(await (await tagged.fetch(new Request("http://t/tags"))).json()).toEqual({
+        tags: ["a", "b"],
+      })
+    })
+
+    test("a hook that writes the declared shape passes, and its output is what is sent", async () => {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce"))
+        .get(
+          "/item",
+          { response: t.object({ id: t.string(), price: t.string(), at: t.date() }) },
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `Price` is written as the declared string by its toJSON, which no static type can say.
+          () => ({ id: "i1", price: new Price(1250), at: new Date(0) }) as never,
+        )
+      const res = await app.fetch(new Request("http://t/item"))
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        id: "i1",
+        price: "12.50",
+        at: "1970-01-01T00:00:00.000Z",
+      })
+    })
+
+    test("warn names what the hook adds and still sends it unchanged", async () => {
+      const { logger, records } = recorder()
+      const app = server({ logger })
+        .use(responseContract("warn"))
+        .get("/me", { response: STRICT }, () => new Account())
+      expect(await (await app.fetch(new Request("http://t/me"))).json()).toEqual({
+        id: "u1",
+        name: "Ada",
+        passwordHash: "SECRET",
+      })
+      const warned = records.find((r) => r.message === "response contract")
+      expect(String(warned?.detail)).toContain("passwordHash")
+    })
+
+    test("warn sends what it judged, even from a hook that writes something new each call", async () => {
+      let calls = 0
+      class Ticket {
+        toJSON() {
+          return { id: "u1", name: "Ada", [`extra${++calls}`]: true }
+        }
+      }
+      const { logger, records } = recorder()
+      const app = server({ logger })
+        .use(responseContract("warn"))
+        .get("/plain", { response: STRICT }, () => writesRow(new Ticket()))
+        .get("/status", { response: STRICT }, () => status(200, writesRow(new Ticket())))
+        .get("/reply", { response: STRICT }, (c) => c.json(writesRow(new Ticket())))
+      for (const path of ["/plain", "/status", "/reply"]) {
+        const body: object = await (await app.fetch(new Request(`http://t${path}`))).json()
+        const sent = Object.keys(body).find((key) => key.startsWith("extra"))
+        const warned = records.findLast((r) => r.message === "response contract")
+        expect(sent).toBeDefined()
+        expect(String(warned?.detail)).toContain(`${sent}:`)
+      }
+    })
+  })
+
   test("a conforming payload is untouched", async () => {
     const app = server()
       .use(responseContract("enforce"))
@@ -166,9 +337,14 @@ describe('responseContract: "enforce"', () => {
         { response: STRICT as never },
         () => new Response(null, { status: 302, headers: { location: "/" } }) as never,
       )
+      // A 2xx raw Response has a declared schema for its status, and is still not read.
+      .get("/raw", { response: STRICT }, () => new Response("raw bytes", { status: 200 }))
     const res = await app.fetch(new Request("http://t/redirect"))
     expect(res.status).toBe(302)
     expect(res.headers.get("location")).toBe("/")
+    const raw = await app.fetch(new Request("http://t/raw"))
+    expect(raw.status).toBe(200)
+    expect(await raw.text()).toBe("raw bytes")
   })
 
   test("a c.json reply is held to the contract like a returned value", async () => {
@@ -223,6 +399,42 @@ describe('responseContract: "enforce"', () => {
     const res = await app.fetch(new Request("http://t/missing"))
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("a checked status() result keeps its status and headers", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .post("/users", { response: STRIPPING }, () =>
+        status(201, LEAK, { headers: { "x-request": "r1" } }),
+      )
+      .get("/missing", { errors: { 404: STRIPPING } }, () =>
+        status(404, LEAK, { headers: { "x-request": "r2" } }),
+      )
+    const created = await app.fetch(new Request("http://t/users", { method: "POST" }))
+    expect(created.status).toBe(201)
+    expect(created.headers.get("x-request")).toBe("r1")
+    expect(await created.json()).toEqual({ id: "u1", name: "Ada" })
+    const missing = await app.fetch(new Request("http://t/missing"))
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get("x-request")).toBe("r2")
+    expect(await missing.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("a reply whose status has no declared schema is sent as it is", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/conflict", { errors: { 404: STRIPPING } }, () => status(409, LEAK))
+      .get("/teapot", { errors: { 404: STRIPPING } }, (c) => c.json(LEAK, 418))
+      .get("/ok", { errors: { 404: STRIPPING } }, () => LEAK)
+    for (const [path, code] of [
+      ["/conflict", 409],
+      ["/teapot", 418],
+      ["/ok", 200],
+    ] as const) {
+      const res = await app.fetch(new Request(`http://t${path}`))
+      expect(res.status).toBe(code)
+      expect(await res.json()).toEqual(LEAK)
+    }
   })
 })
 
@@ -375,6 +587,18 @@ describe('responseContract: extra "strip"', () => {
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ id: "u1", name: "Ada" })
     expect(res.body).not.toContain("SECRET")
+  })
+
+  test("a field declared as __proto__ is sent as a field, never set as the prototype", async () => {
+    const declared = JSON.parse(
+      '{"type":"object","additionalProperties":false,"properties":{"__proto__":{"type":"object","additionalProperties":false,"properties":{"role":{"type":"string"}}},"id":{"type":"string"}}}',
+    )
+    const app = strip("enforce").get("/me", { response: passthrough(declared) }, () =>
+      JSON.parse('{"__proto__":{"role":"user","admin":true},"id":"u1","secret":"SECRET"}'),
+    )
+    const res = await fetchJson(app, "/me")
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('{"__proto__":{"role":"user"},"id":"u1"}')
   })
 
   test("projects nested objects, arrays, records and a nullable union", async () => {

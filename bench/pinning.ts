@@ -1,5 +1,5 @@
 /**
- * CPU pinning for the HTTP matrices. `BENCH_SERVER_CPUS` and `BENCH_LOAD_CPUS` take taskset lists
+ * CPU pinning for the HTTP and SSR matrices. `BENCH_SERVER_CPUS` and `BENCH_LOAD_CPUS` take taskset lists
  * ("0,1", "2-3") and keep the server under test and the oha load generator on disjoint cores, so the
  * two stop trading one scheduler's time slices. Linux only; unset leaves every process unpinned.
  */

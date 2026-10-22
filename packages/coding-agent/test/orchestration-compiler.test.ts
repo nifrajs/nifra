@@ -242,6 +242,37 @@ describe("structural kinds", () => {
     const result = await run(compile(plan, catalog))
     expect(result.ok).toBe(false)
   })
+
+  test("the child ceiling counts every subagent a run starts, retries included", async () => {
+    let started = 0
+    const catalog = createStepCatalog({
+      child: {
+        kind: "subagent",
+        executor: {
+          run: () => {
+            started++
+            throw new Error("boom")
+          },
+        },
+        spec: () => ({ id: "kid-1", role: "impl", prompt: "do" }),
+      },
+    })
+    const plan: RunPlan = {
+      version: 1,
+      id: "p",
+      nodes: [
+        {
+          id: "r",
+          kind: "retry",
+          attempts: 3,
+          child: { id: "sa", kind: "subagent", step: "child" },
+        },
+      ],
+    }
+    const result = await run(compile(plan, catalog, { maxChildren: 2 }))
+    expect(result.ok).toBe(false)
+    expect(started).toBe(2)
+  })
 })
 
 describe("ceilings and authority fail closed before work", () => {
@@ -272,6 +303,51 @@ describe("ceilings and authority fail closed before work", () => {
     } catch (error) {
       expect((error as CompileError).code).toBe("E_MAX_NODES")
     }
+  })
+
+  test("more subagent nodes than the child ceiling are rejected, a branch counted by its larger arm", () => {
+    const subagents = mergeStepCatalogs(
+      catalog,
+      createStepCatalog({
+        child: {
+          kind: "subagent",
+          executor: { run: () => "ok" },
+          spec: (ctx) => ({ id: ctx.nodeId, role: "impl", prompt: "do" }),
+        },
+        gate: { kind: "branch", when: () => true },
+      }),
+    )
+    const kid = (id: string) => ({ id, kind: "subagent" as const, step: "child" })
+    const three: RunPlan = { version: 1, id: "p", nodes: [kid("a"), kid("b"), kid("c")] }
+    let refused: unknown
+    try {
+      compile(three, subagents, { maxChildren: 2 })
+    } catch (error) {
+      refused = error
+    }
+    expect(refused).toMatchObject({ code: "E_MAX_CHILDREN" })
+    const five: RunPlan = {
+      version: 1,
+      id: "p",
+      nodes: ["a", "b", "c", "d", "e"].map(kid),
+    }
+    expect(() => compile(five, subagents)).toThrow(/5 subagent nodes over the 4 ceiling/)
+    const branched: RunPlan = {
+      version: 1,
+      id: "p",
+      nodes: [
+        kid("a"),
+        {
+          id: "br",
+          kind: "branch",
+          step: "gate",
+          // biome-ignore lint/suspicious/noThenProperty: RunPlan branch nodes name their arms then/otherwise.
+          then: kid("b"),
+          otherwise: kid("c"),
+        },
+      ],
+    }
+    expect(() => compile(branched, subagents, { maxChildren: 2 })).not.toThrow()
   })
 
   test("depth ceiling is rejected", () => {

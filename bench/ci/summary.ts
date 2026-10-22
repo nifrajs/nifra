@@ -3,14 +3,32 @@
  * section, then the jobs that left no report.
  *
  *   bun run bench/ci/summary.ts bench-ci >> "$GITHUB_STEP_SUMMARY"
+ *   bun run bench/ci/summary.ts bench-ci --suites http,realworld   # the suites the workflow ran
  */
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderFootnote, renderHeadline, renderSection } from "./render.ts"
-import { type CiReport, parseCiReport, RUNTIMES, SUITES } from "./report.ts"
+import {
+  type CiReport,
+  parseCiReport,
+  RUNTIMES,
+  SUITE_RUNTIMES,
+  SUITES,
+  type Suite,
+} from "./report.ts"
 
-const dir = process.argv[2]
-if (dir === undefined) throw new Error("usage: bun run bench/ci/summary.ts <reports-dir>")
+const [dir, flag, list] = process.argv.slice(2)
+if (dir === undefined || (flag !== undefined && (flag !== "--suites" || list === undefined))) {
+  throw new Error("usage: bun run bench/ci/summary.ts <reports-dir> [--suites http,realworld,ssr]")
+}
+const expected: readonly Suite[] =
+  list === undefined
+    ? SUITES
+    : list.split(",").map((name) => {
+        const suite = SUITES.find((s) => s === name)
+        if (suite === undefined) throw new Error(`--suites takes ${SUITES.join(", ")}`)
+        return suite
+      })
 
 const reports: CiReport[] = readdirSync(dir)
   .filter((file) => file.endsWith(".json"))
@@ -24,10 +42,10 @@ const position = (r: CiReport): number =>
   SUITES.indexOf(r.suite) * RUNTIMES.length + RUNTIMES.indexOf(r.runtime)
 reports.sort((a, b) => position(a) - position(b))
 
-const missing = SUITES.flatMap((suite) =>
-  RUNTIMES.filter(
-    (runtime) => !reports.some((r) => r.suite === suite && r.runtime === runtime),
-  ).map((runtime) => `${suite}-${runtime}`),
+const missing = expected.flatMap((suite) =>
+  SUITE_RUNTIMES[suite]
+    .filter((runtime) => !reports.some((r) => r.suite === suite && r.runtime === runtime))
+    .map((runtime) => `${suite}-${runtime}`),
 )
 const widths = new Set(reports.map((r) => r.settings.maxCiWidthPts))
 

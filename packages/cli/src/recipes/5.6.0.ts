@@ -18,6 +18,7 @@ export const recipe: UpgradeRecipe = {
   importMoves: [
     { from: "@nifrajs/islets", to: "@nifrajs/web/islands" },
     { from: "@nifrajs/web/nano", to: "@nifrajs/web/islands" },
+    { from: "@nifrajs/uploads/detect", to: "@nifrajs/core/file-type" },
   ],
   retiredMarkers: [
     {
@@ -29,7 +30,13 @@ export const recipe: UpgradeRecipe = {
       instead: "nothing: NF-C023 is retired, so delete the comment",
     },
   ],
-  affects: ["@nifrajs/cli", "@nifrajs/islets", "@nifrajs/web", "@nifrajs/web-react"],
+  affects: [
+    "@nifrajs/cli",
+    "@nifrajs/islets",
+    "@nifrajs/uploads",
+    "@nifrajs/web",
+    "@nifrajs/web-react",
+  ],
   notes: [
     'Island hosts are any element with `data-island="<id>"`. `<nifra-island data-id>` markers are no longer mounted: rename `data-id` to `data-island`, `data-props` to `data-island-props`, `data-strategy` to `data-island-strategy` and `data-media` to `data-island-media`. The `@nifrajs/web-react` `<Island>` marker renders the new names; `@nifrajs/islets`\' `data-island-state` becomes `data-island-props`.',
     '`@nifrajs/islets`: `island("id", setup)` plus its own `mountIslands()` becomes `const id = bindIsland(setup)` and `mountIslands({ id })`; the setup still receives `{ root, state }` and returns its handlers, and gains `props` and `onDispose(fn)`. `islandState(value)` is `islandProps(value)`. `signal`, `computed`, `effect` and `batch` keep their shapes.',
@@ -38,5 +45,6 @@ export const recipe: UpgradeRecipe = {
     "`nifra check` adds NF-C047 (a `data-bind-*` name its `bindIsland` setup never declares) and NF-C048 (a binding no `bindIsland` host walks), and NF-C022 now checks the islands `bindList` key. NF-C021 and NF-C023 are retired; a `nifra.check.json` override of either no longer does anything.",
     "`nifra scaffold --variant stateful` emits a reactive island where it emitted the nano pattern.",
     "The server-component pipeline is certified on Vite 8.3.4: set `vite` to exactly 8.3.4. Until it matches, the plugin's guard stops the build and `nifra check` names the installed version.",
+    "`detectFileType`, `DETECTABLE_MIME_TYPES`, `FILE_TYPE_PREFIX_BYTES` and the `FileType` type are exported from `@nifrajs/core/file-type`, and `@nifrajs/uploads` no longer exports them. `@nifrajs/uploads/detect` imports are rewritten; import those names from `@nifrajs/core/file-type` where they came from `@nifrajs/uploads`. `@nifrajs/uploads` takes `@nifrajs/core` as a peer dependency.",
   ],
 }

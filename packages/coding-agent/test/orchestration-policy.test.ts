@@ -115,6 +115,41 @@ describe("OrchestrationHost policy admission", () => {
     }
   })
 
+  test("a submitted plan cannot reach a step needing a capability the policy does not allow", async () => {
+    const ran: string[] = []
+    const steps = createStepCatalog({
+      exec: { kind: "task", capabilities: ["network"], run: () => void ran.push("exec") },
+      read: { kind: "task", capabilities: ["filesystem"], run: () => void ran.push("read") },
+    })
+    const plan = (step: string) => ({
+      version: 1,
+      id: "p",
+      nodes: [{ id: "n", kind: "task", step }],
+    })
+    for (const host of [
+      new OrchestrationHost({ catalog: steps, policy: STRICT }),
+      // A limit wider than the policy does not widen it.
+      new OrchestrationHost({
+        catalog: steps,
+        policy: STRICT,
+        limits: { allowedCapabilities: ["filesystem", "network"] },
+      }),
+    ]) {
+      await expect(host.submit(plan("exec"))).rejects.toMatchObject({ code: "E_CAPABILITY" })
+      const run = await host.submit(plan("read"))
+      host.start(run)
+      expect((await host.settled(run)).status).toBe("succeeded")
+    }
+    // A limit narrower than the policy still holds.
+    const narrow = new OrchestrationHost({
+      catalog: steps,
+      policy: STRICT,
+      limits: { allowedCapabilities: [] },
+    })
+    await expect(narrow.submit(plan("read"))).rejects.toMatchObject({ code: "E_CAPABILITY" })
+    expect(ran).toEqual(["read", "read"])
+  })
+
   test("openBoundaryVector rejects an unknown run", () => {
     const host = new OrchestrationHost({ catalog, policy: STRICT })
     try {

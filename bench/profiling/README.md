@@ -56,6 +56,12 @@ Forced collection precedes every sample and follows the CPU measurement window; 
 diagnostic samples, not untouched production throughput. The CPU window includes process-wide
 background GC work. The loopback load generator runs in another process.
 
+`promise-audit.mjs <saved-fixture.js>` separately counts Node PROMISE init events, with request
+construction excluded and the await driver included. It includes null/JSON response controls;
+event counts are not exact allocation bytes or throughput. `core-ab.ts --cases=<names>` selects
+producer controls, including policy/async paths and generic/closed nested POST cases.
+See [the generic fastlane audit](FASTLANES-2026-10-22.md) for coverage and rejected experiments.
+
 CPU mode writes Chrome-compatible `.cpuprofile` files. Its top frames use weighted self time;
 idle/program frames and inspector control calls are excluded. A caller's allocation frame is not
 necessarily where all associated work executes. CPU sample percentages are attribution estimates,

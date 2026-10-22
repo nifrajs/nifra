@@ -61,6 +61,7 @@ bench/**/*.md
 !bench/profiling/OPTIMIZATIONS-2026-10-21.md
 !bench/profiling/ROUND2-2026-10-21.md
 !bench/profiling/PROTO-GUARD-2026-10-21.md
+!bench/profiling/FASTLANES-2026-10-22.md
 /plans
 
 # Local editor/agent tooling - machine-specific (absolute paths, local settings); never committed.
@@ -98,3 +99,6 @@ dv-*/
 /vite-split-*.png
 /docs/
 /.nifra-components-fixtures/
+
+# Output of scripts/mutate.ts (kill matrix, survivors, summary).
+/.mutation/

@@ -7,6 +7,61 @@ import { cors } from "../src/index.ts"
 const origin = (value: string) => ({ headers: { origin: value } })
 
 describe("cors", () => {
+  test("CORS preserves paired request hooks and their identity", async () => {
+    let webRequests = 0
+    let nodeRequests = 0
+    const seen = new WeakSet<object>()
+    const app = server()
+      .use(nodeDirect())
+      .use(cors())
+      .use({
+        onRequest() {
+          webRequests += 1
+          return undefined
+        },
+        onNodeRequest(request) {
+          nodeRequests += 1
+          seen.add(request)
+        },
+        onResponse(response) {
+          response.headers.set("x-paired", "yes")
+          return response
+        },
+        onNodeResponse(response, request) {
+          expect(seen.has(request)).toBe(true)
+          response.headers ??= {}
+          response.headers["x-paired"] = "yes"
+        },
+      })
+      .get("/", () => ({ ok: true }))
+    const web = await app.fetch(new Request("http://x/"))
+    expect(web.headers.get("x-paired")).toBe("yes")
+    expect(web.headers.get("access-control-allow-origin")).toBe("*")
+    const node = await app.resolveNode(new Request("http://x/"))
+    expect(node.kind).toBe("json")
+    if (node.kind !== "json") throw new Error("expected native JSON outcome")
+    expect(node.headers?.["x-paired"]).toBe("yes")
+    expect(node.headers?.["access-control-allow-origin"]).toBe("*")
+    expect(webRequests).toBe(1)
+    expect(nodeRequests).toBe(1)
+  })
+
+  test("a request rewrite still runs after CORS", async () => {
+    let rewrites = 0
+    const app = server()
+      .use(cors())
+      .onRequest((request) => {
+        rewrites += 1
+        return new Request(new URL("/after", request.url), request)
+      })
+      .get("/before", () => "wrong")
+      .get("/after", () => "right")
+    const response = await app.fetch(new Request("http://x/before"))
+    expect(await response.text()).toBe('"right"')
+    expect(response.headers.get("access-control-allow-origin")).toBe("*")
+    expect(rewrites).toBe(1)
+  })
+
   test("adds Allow-Origin: * by default", async () => {
     const app = server()
       .use(cors())

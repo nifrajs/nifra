@@ -1,18 +1,12 @@
 /**
- * `@nifrajs/uploads` - file-upload hardening, dependency-free + edge-safe.
+ * `@nifrajs/uploads` - file-upload hardening, edge-safe.
  *
- * - {@link detectFileType} - sniff the real type from magic bytes (not the client's `Content-Type`).
- * - {@link validateUpload} - size cap + magic-byte type allow-list. Pair with `@nifrajs/core`'s
- *   `c.boundedBody(maxBytes)` to also bound the read.
+ * - {@link validateUpload} - size cap + magic-byte type allow-list (the real type from the bytes, not
+ *   the client's `Content-Type`). Pair with `@nifrajs/core`'s `c.boundedBody(maxBytes)` to also bound
+ *   the read. The detection alone is `detectFileType` from `@nifrajs/core/file-type`.
  * - {@link signDownloadUrl} / {@link verifyDownloadUrl} - short-TTL, tamper-evident download URLs.
  * - {@link stripImageMetadata} - drop EXIF/GPS by re-encoding via any `@nifrajs/image` backend.
  */
-export {
-  DETECTABLE_MIME_TYPES,
-  detectFileType,
-  FILE_TYPE_PREFIX_BYTES,
-  type FileType,
-} from "./detect.ts"
 export {
   type SignDownloadUrlOptions,
   signDownloadUrl,

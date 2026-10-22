@@ -122,6 +122,13 @@ Nifra uses Bun's built-in test runner. Tests are defined under `test/` subdirect
 
 Write unit tests for any new features or bug fixes you contribute.
 
+To see whether the tests notice a change to the code, run mutation testing. It makes small deliberate breaks (a flipped comparison, a deleted statement) and runs the tests that import the file against each one; a break no test fails on is a survivor. Pull requests get the same report for their changed lines in the `Mutation` workflow's job summary. It is report-only.
+
+- Mutate the lines you changed: `bun scripts/mutate.ts --changed origin/main`
+- Mutate whole files: `bun scripts/mutate.ts --files packages/core/src/server/response-contract-lane.ts`
+
+A survivor that no test could ever observe goes in `mutation-equivalents.json` with the reason, so it is not reported again. `.mutation/survivors.json` holds each survivor of the last run as a ready entry.
+
 ---
 
 ## Changesets & Releases

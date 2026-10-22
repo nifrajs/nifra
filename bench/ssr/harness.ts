@@ -2,6 +2,7 @@
  * Shared SSR benchmark harness - oha load, hydration payload accounting, server lifecycle.
  * Used by bench/ssr/run.ts (and kept aligned with prerender-ttfb.ts methodology).
  */
+import { cpuListFromEnv, pinned } from "../pinning.ts"
 
 // Shares the HTTP bench's env knobs so ONE preset speeds both: `BENCH_DURATION_S=2 BENCH_WARMUP_S=1
 // BENCH_ROUNDS=1 …`. Defaults are the credible-numbers set used for the published tables.
@@ -15,6 +16,10 @@ export const SSR_BENCH_DURATION_S = envInt("BENCH_DURATION_S", 5)
 export const SSR_BENCH_WARMUP_S = envInt("BENCH_WARMUP_S", 3, 0)
 /** Interleaved rounds per table: every target is measured once per round, in a rotated order. */
 export const SSR_BENCH_ROUNDS = envInt("BENCH_ROUNDS", 5)
+/** Where round 0 starts in the rotation; a CI job advances it per run (bench/rounds.ts). */
+export const SSR_BENCH_ROUND_OFFSET = envInt("BENCH_ROUND_OFFSET", 0, 0)
+const SERVER_CPUS = cpuListFromEnv("BENCH_SERVER_CPUS")
+const LOAD_CPUS = cpuListFromEnv("BENCH_LOAD_CPUS")
 /** Extra requests before measuring ISR targets so oha hits a warm cache, not a cold render. */
 export const SSR_BENCH_ISR_WARMUP_REQUESTS = 500
 
@@ -171,7 +176,7 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
   const env = { ...process.env }
   delete env.NO_COLOR
   delete env.CLERK_NO_COLOR
-  const proc = Bun.spawn(["oha", ...ohaArgs(url, durationS)], {
+  const proc = Bun.spawn(pinned(["oha", ...ohaArgs(url, durationS)], LOAD_CPUS), {
     stdout: "pipe",
     stderr: "pipe",
     env,
@@ -345,7 +350,7 @@ export async function measureOnce(
   withPayload: boolean,
 ): Promise<SsrBenchMeasure & { readonly payload?: { raw: number; gzip: number } }> {
   const base = `http://${SSR_BENCH_HOST}:${target.port}/`
-  const proc = Bun.spawn([...target.serve], {
+  const proc = Bun.spawn(pinned(target.serve, SERVER_CPUS), {
     stdout: "ignore",
     stderr: "inherit",
     env: {
@@ -386,10 +391,10 @@ export function nodeVersion(): string {
   }
 }
 
-export function printResultRow(target: SsrBenchTarget, r: SsrBenchResult, ratio: string): void {
-  console.log(
+export function formatResultRow(target: SsrBenchTarget, r: SsrBenchResult, ratio: string): string {
+  return (
     `  ${target.name.padEnd(38)} [${target.runtime.padEnd(4)}]  ${r.rps.toLocaleString().padStart(7)} req/s   ` +
-      `p50 ${r.p50ms.toFixed(2).padStart(6)}ms   p99 ${r.p99ms.toFixed(2).padStart(7)}ms   ` +
-      `JS ${formatKb(r.payloadGzip).padStart(8)} gz   ${ratio}`,
+    `p50 ${r.p50ms.toFixed(2).padStart(6)}ms   p99 ${r.p99ms.toFixed(2).padStart(7)}ms   ` +
+    `JS ${formatKb(r.payloadGzip).padStart(8)} gz   ${ratio}`
   )
 }

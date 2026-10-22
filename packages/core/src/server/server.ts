@@ -5992,6 +5992,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
       entry.schema?.body,
+      this.formOrigins,
     )
   }
 
@@ -6364,7 +6365,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
-          (outcome) => this.finishContractOutcome(ctx, finalize, wrapResponse, outcome),
+          (outcome) => {
+            // The render runs outside the try below: a throw (a BigInt, a cycle) must still reach onError.
+            try {
+              return this.finishContractOutcome(ctx, finalize, wrapResponse, outcome)
+            } catch (err) {
+              return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+            }
+          },
           (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
         )
       }
@@ -6537,10 +6545,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // second continuation, while retaining the exact bounded-read, content-type, and poisoning
     // contracts shared by every body route.
     const validate = (parsed: unknown): MaybePromise<Response | ResponseResult | undefined> => {
-      const validation = bodySchema["~standard"].validate(parsed)
-      return validation instanceof Promise
-        ? validation.then((result) => this.applyLifecycleValidation(entry, result, ctx, "body"))
-        : this.applyLifecycleValidation(entry, validation, ctx, "body")
+      // Reject outside the parser's JSON catch so a custom validator throw reaches onError.
+      try {
+        const validation = bodySchema["~standard"].validate(parsed)
+        return validation instanceof Promise
+          ? validation.then((result) => this.applyLifecycleValidation(entry, result, ctx, "body"))
+          : this.applyLifecycleValidation(entry, validation, ctx, "body")
+      } catch (error) {
+        return Promise.reject(error)
+      }
     }
     return readBodyFramed(
       req,
@@ -6618,14 +6631,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
     // the portable/adapted source contract (those sources are never marked).
     const markFramed = (request: Request): void => markTrustedBodyFraming(request)
-    // The fused native lane bypasses `runMatched`, so the route's transport byte cap must be
+    // The direct native lanes bypass `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
-    // reads uncapped. The non-fused branches go through `fetchMatched` -> `runMatched`, which marks.
+    // reads uncapped. The fallback branches go through `fetchMatched` -> `runMatched`, which marks.
     const bodyLimit =
       entry.schema?.body === undefined || entry.program.authBeforeValidation
         ? entry.bodyLimit
         : undefined
-    const inner = fused
+    // The complete plan already preserves general validation, hooks, recovery, around, and ledgers.
+    // When native admission is safe, use it directly even if the route has no closed-shape fusion.
+    // Idempotency still needs runMatched's request preparation and is excluded from the table.
+    const inner: FusedWebRunner | undefined =
+      fused ??
+      (signal && budget
+        ? (source, params, search, activeSignal, activeBudget, platform, nativeContext) =>
+            entry.execution.run(
+              this,
+              entry,
+              source,
+              params,
+              search,
+              activeSignal,
+              activeBudget,
+              platform,
+              nativeContext,
+              this.finalizeResponse,
+              this.wrapWebResponse,
+            )
+        : undefined)
     const capped: FusedWebRunner | undefined =
       inner === undefined || bodyLimit === undefined
         ? inner
