@@ -6,10 +6,15 @@ import { reactAdapter } from "../src/index.ts"
 import { Hole, type HoleDefinition } from "../src/ppr.ts"
 
 // React writes `<link rel="preload" as="image">` ahead of a fragment's `<img>`; a hole's HTML
-// refuses `<link>`, so an ordinary image once turned the whole hole into its error frame.
+// refuses `<link>`, so an ordinary image once turned the whole hole into its error frame. A
+// responsive image's `srcSet` is checked candidate by candidate.
 type Photo = { readonly src: string }
 const image = (data: Photo): ReactNode =>
-  h("figure", null, h("img", { src: data.src, alt: "Product" }))
+  h(
+    "figure",
+    null,
+    h("img", { src: data.src, srcSet: `${data.src} 1x, ${data.src}?dpr=2 2x`, alt: "Product" }),
+  )
 const photo: HoleDefinition<Photo> & { readonly mode: "dynamic" } = {
   name: "photo",
   mode: "dynamic",
@@ -18,7 +23,7 @@ const photo: HoleDefinition<Photo> & { readonly mode: "dynamic" } = {
 }
 const gallery = { ...photo, name: "gallery", interactive: true }
 
-test("an image in a plain or an interactive hole fills it, with no resource hint in the frame", async () => {
+test("a responsive image in a plain or an interactive hole fills it, with no resource hint in the frame", async () => {
   const manifest: Manifest = {
     routes: [
       {
@@ -54,10 +59,10 @@ test("an image in a plain or an interactive hole fills it, with no resource hint
   const frame = (name: string): string =>
     new RegExp(`id="nifra-ppr:${name}">(.*?)</script>`).exec(html)?.[1] ?? ""
   expect(frame("photo")).toBe(
-    '{"v":1,"html":"<figure><img src=\\"/a.png\\" alt=\\"Product\\"/><\\/figure>"}',
+    '{"v":1,"html":"<figure><img src=\\"/a.png\\" srcSet=\\"/a.png 1x, /a.png?dpr=2 2x\\" alt=\\"Product\\"/><\\/figure>"}',
   )
   expect(frame("gallery")).toStartWith(
-    '{"v":1,"html":"<figure><img src=\\"/b.png\\" alt=\\"Product\\"/><\\/figure>","props":',
+    '{"v":1,"html":"<figure><img src=\\"/b.png\\" srcSet=\\"/b.png 1x, /b.png?dpr=2 2x\\" alt=\\"Product\\"/><\\/figure>","props":',
   )
 })
 

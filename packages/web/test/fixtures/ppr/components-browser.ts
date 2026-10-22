@@ -165,6 +165,7 @@ try {
     ).text()
     assert.match(whole, /<div data-nifra-hole="summary"[^>]*><section id="summary"/)
     assert.equal(whole.includes("PRIVATE_FIELD_31"), false)
+    if (react) assert.match(whole, /<img id="summary-image"[^>]*srcSet="\/basket\.png 1x/)
     for (const [name, type] of [
       ["chromium", chromium],
       ["firefox", firefox],

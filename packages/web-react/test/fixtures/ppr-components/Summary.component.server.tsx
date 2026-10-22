@@ -21,6 +21,13 @@ export const Summary = defineServerComponent({
       "section",
       { id: "summary", "data-view": MARKER },
       createElement("h2", { id: "summary-title" }, props.title),
+      // React writes a preload hint ahead of an image it renders without a document.
+      createElement("img", {
+        id: "summary-image",
+        src: "/basket.png",
+        srcSet: "/basket.png 1x, /basket@2x.png 2x",
+        alt: "",
+      }),
       createElement(Counter, { start: 0 }),
     ),
 })
