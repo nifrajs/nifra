@@ -1,39 +1,13 @@
 name: Partial prerendering
 
 # Experimental partial prerendering's server, adapter and browser checks, on macOS as well as Linux.
-# CI runs the server tests on Linux in every PR; this adds the browser engines and macOS when a change
-# can reach the PPR path: the web packages, the runtimes and middleware it streams through, its fixtures.
-# Each framework with a twin of the fixture app (`web-<name>/test/fixtures/ppr-app`) is a matrix leg.
+# CI runs the server, adapter and Node tests on Linux in every PR; this adds the browser engines and
+# macOS nightly, and on dispatch for a branch: installing the engines' Linux packages has run past
+# the job's 40 minutes on a slow package mirror. Each framework with a twin of the fixture app
+# (`web-<name>/test/fixtures/ppr-app`) is a matrix leg.
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/ppr.yml"
-      - "bun.lock"
-      - "packages/core/src/**"
-      - "packages/middleware/src/**"
-      - "packages/node/src/**"
-      - "packages/web/src/**"
-      - "packages/web/test/ppr-*.test.ts"
-      - "packages/web/test/fixtures/ppr/**"
-      - "packages/web/test-node/ppr.test.ts"
-      - "packages/web-*/src/**"
-      - "packages/web-*/test/ppr*.test.ts"
-      - "packages/web-*/test/fixtures/ppr-app/**"
-  pull_request:
-    paths:
-      - ".github/workflows/ppr.yml"
-      - "bun.lock"
-      - "packages/core/src/**"
-      - "packages/middleware/src/**"
-      - "packages/node/src/**"
-      - "packages/web/src/**"
-      - "packages/web/test/ppr-*.test.ts"
-      - "packages/web/test/fixtures/ppr/**"
-      - "packages/web/test-node/ppr.test.ts"
-      - "packages/web-*/src/**"
-      - "packages/web-*/test/ppr*.test.ts"
-      - "packages/web-*/test/fixtures/ppr-app/**"
+  schedule:
+    - cron: "23 4 * * *"
   workflow_dispatch:
 
 concurrency:
