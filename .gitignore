@@ -99,3 +99,6 @@ dv-*/
 /vite-split-*.png
 /docs/
 /.nifra-components-fixtures/
+
+# Output of scripts/mutate.ts (kill matrix, survivors, summary).
+/.mutation/
