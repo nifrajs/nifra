@@ -328,8 +328,9 @@ export const KNOWN_STDERR: readonly {
   readonly entry: RegExp
 }[] = [
   {
-    // Printed once per process, the first time a request's `signal` is read.
-    id: "F6 deno-legacy-abort-warning",
+    // Printed once per process, the first time a request's `signal` is read, unless Deno runs with
+    // `--unstable-no-legacy-abort`. nifra reads it to carry it over when it rebuilds a request.
+    id: "U10 deno-legacy-abort-notice",
     lane: "deno",
     entry: /^Deno\.serve: request\.signal aborts on successful responses \(legacy behavior\)/,
   },
