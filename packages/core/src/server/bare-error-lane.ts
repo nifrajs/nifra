@@ -17,9 +17,10 @@
  * which lane caught it. Both the generic bare lane and the fused body runner route here, so that
  * decision lives in exactly one place.
  */
-import { pathnameOf } from "./http.ts"
+import { isClientJsonError } from "./body.ts"
+import { pathnameOf, plainError } from "./http.ts"
 import type { Logger } from "./logger.ts"
-import { isResponseResult } from "./runtime-core.ts"
+import { isResponseResult, type ResponseResult } from "./runtime-core.ts"
 import type { CtxSet, RawContext } from "./server.ts"
 
 /** How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option. */
@@ -31,6 +32,7 @@ export type ErrorLogDetail = "full" | "message" | "none"
  *     Either renders through the same `finalize` a RETURNED one takes, with the request's `c.set`,
  *     so a thrown one means what the return means: a `Response` ships as built, plus the cookies the
  *     request queued (the set-session-then-`throw redirect()` pattern);
+ *   - a request body the app's own `c.req.json()` could not parse is the client's 400 `invalid_json`;
  *   - anything else is a real fault: logged once, then a bodyless 500 (never the caller's error text).
  *
  * `responseSet` and `logError` are injected rather than imported so this file keeps no runtime edge
@@ -43,11 +45,12 @@ export function renderBareError<T>(
   finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
   responseSet: (ctx: RawContext) => CtxSet,
   logError: (err: unknown, ctx: RawContext) => void,
-  internalError: () => T,
+  wrapResponse: (response: ResponseResult) => T,
 ): T {
   if (err instanceof Response || isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
+  if (isClientJsonError(err)) return wrapResponse(plainError(400, "invalid_json"))
   logError(err, ctx)
-  return internalError()
+  return wrapResponse(plainError(500, "internal_error"))
 }
 
 /**

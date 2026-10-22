@@ -71,6 +71,7 @@ import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
   hasTrustedBodyFraming,
+  isClientJsonError,
   markTransportCap,
   markTrustedBodyFraming,
   type RawBodyReaders,
@@ -5919,7 +5920,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       finalize,
       responseSet,
       (e, c) => this.logRequestError(e, c),
-      () => this.internalErrorResponse(wrapResponse),
+      wrapResponse,
     )
   }
 
@@ -6498,6 +6499,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (err instanceof Response || isResponseResult(err))
       return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, err)
     if (entry.onError.length === 0) {
+      if (isClientJsonError(err)) return wrapResponse(plainError(400, "invalid_json"))
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
       // (redacting) logger. Body-read failures and around-hook failures land here too.
       this.logRequestError(err, ctx)
@@ -6586,6 +6588,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return wrapResponse(plainError(500, "internal_error"))
       }
     }
+    if (isClientJsonError(err)) return wrapResponse(plainError(400, "invalid_json"))
     this.logRequestError(err, ctx)
     return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
   }

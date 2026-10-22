@@ -211,6 +211,23 @@ const TRANSPORT_CAPPED = new WeakSet<object>()
 
 const CAP_DECODER = new TextDecoder()
 
+// The SyntaxError a capped `json()` raised on the request's own bytes, kept as `Request.json()`
+// rejects so app code that catches it is unchanged. One the app lets escape is the client's 400.
+const CLIENT_JSON_ERRORS = new WeakSet<object>()
+
+/** True when `err` is a request body that a capped `c.req.json()` could not parse. */
+export const isClientJsonError = (err: unknown): boolean =>
+  err instanceof Error && CLIENT_JSON_ERRORS.has(err)
+
+function parseClientJson(bytes: Uint8Array): unknown {
+  try {
+    return JSON.parse(CAP_DECODER.decode(bytes))
+  } catch (error) {
+    if (error instanceof Error) CLIENT_JSON_ERRORS.add(error)
+    throw error
+  }
+}
+
 /** Key under which the dispatcher marks a source with its route's transport byte cap. */
 const TRANSPORT_CAP = Symbol("nifra.body.transportCap")
 
@@ -431,8 +448,7 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
   shadowed[RAW_BODY_READERS] = raw
   shadowed.arrayBuffer = () => cappedBytes().then(exactArrayBuffer)
   shadowed.bytes = () => cappedBytes().then((bytes) => bytes.slice())
-  shadowed.json = () =>
-    cappedBytes().then((bytes) => JSON.parse(CAP_DECODER.decode(bytes)) as unknown)
+  shadowed.json = () => cappedBytes().then(parseClientJson)
   shadowed.text = () => cappedBytes().then((bytes) => CAP_DECODER.decode(bytes))
   shadowed.blob = () =>
     cappedBytes().then(

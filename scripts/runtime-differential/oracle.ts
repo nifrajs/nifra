@@ -228,14 +228,6 @@ const aloneIn = (violation: Violation, outcomes: Outcomes, lane: LaneName) =>
 
 export const OPEN_FINDINGS: readonly Waiver[] = [
   {
-    id: "F3 handler-json-parse-500",
-    why:
-      "A handler that reads `await c.req.json()` itself (no body schema) and gets an empty or malformed " +
-      "body throws a SyntaxError, which the app answers 500 on every runtime. Client input, server status.",
-    matches: (violation, testCase) =>
-      violation.kind === "server-error" && testCase.route === "rawJson",
-  },
-  {
     id: "F5 multipart-platform-parser",
     why:
       "nifra hands a multipart body to the platform's own `Response.formData()`, and the parsers disagree " +
