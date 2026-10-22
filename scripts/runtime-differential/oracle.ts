@@ -306,15 +306,6 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       testCase.request.headers.filter(([name]) => name.toLowerCase() === "content-type").length > 1,
   },
   {
-    id: "F9 schema-json-refuses-bom",
-    why:
-      "A JSON body that starts with a UTF-8 BOM parses on Bun and workerd, and through `c.req.json()` on " +
-      "every runtime (Fetch's UTF-8 decode drops the BOM), but a body schema on Node and Deno answers 400 " +
-      "invalid_json: those lanes decode it themselves and keep the BOM.",
-    matches: (violation, testCase) =>
-      violation.kind === "difference" && testCase.request.body.startsWith("\ufeff"),
-  },
-  {
     id: "U4 workerd-waits-after-early-eof",
     why:
       "When a request's body ends early (the client half-closes inside its framing), local workerd keeps " +

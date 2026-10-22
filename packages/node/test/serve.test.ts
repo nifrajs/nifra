@@ -1125,6 +1125,24 @@ test("c.boundedJson on a bodyless GET returns invalid_json through the lean sour
   expect(await res.json()).toEqual({ ok: false, error: "invalid_json" })
 })
 
+// Fetch's `json()` drops a leading byte order mark; the lazy source's own decode kept it, so a body
+// Bun and workerd parse was refused here. Found by scripts/check-runtime-differential.ts.
+test("a JSON body led by a byte order mark parses as Fetch parses it", async () => {
+  const app = server()
+    .post("/named", { body: nameBody }, (c) => c.body)
+    .post("/bounded", (c) => c.boundedJson())
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const body = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"name":"Ada"}')])
+  for (const path of ["/named", "/bounded"]) {
+    const res = await fetch(`http://127.0.0.1:${running.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    })
+    expect([path, res.status, await res.json()]).toEqual([path, 200, { name: "Ada" }])
+  }
+})
+
 test("c.req.json() works through the lazy source on a POST", async () => {
   const app = server().post("/echo", (c) => c.req.json())
   running = await serve(app, { hostname: "127.0.0.1", port: 0 })

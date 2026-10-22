@@ -2087,11 +2087,18 @@ function detachedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
+// Fetch's `json()` decodes UTF-8 without a leading byte order mark; `Buffer#toString` keeps one, and
+// `JSON.parse` then refuses a body every other runtime parses.
+const utf8Text = (body: Buffer): string =>
+  body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf
+    ? body.toString("utf8", 3)
+    : body.toString("utf8")
+
 function parseJsonBytes(bytes: Uint8Array): unknown {
   const buffer = Buffer.isBuffer(bytes)
     ? bytes
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  return JSON.parse(buffer.toString("utf8")) as unknown
+  return JSON.parse(utf8Text(buffer)) as unknown
 }
 
 const bodyItself = (body: Buffer): Buffer => body
@@ -2099,7 +2106,7 @@ const bodyItself = (body: Buffer): Buffer => body
 const parsedWithLength = (
   body: Buffer,
 ): { readonly value: unknown; readonly byteLength: number } => ({
-  value: JSON.parse(body.toString("utf8")) as unknown,
+  value: JSON.parse(utf8Text(body)) as unknown,
   byteLength: body.byteLength,
 })
 
@@ -2197,13 +2204,13 @@ class LazyNodeRequestSource implements NodeRequestSource {
 
   json(): Promise<unknown> {
     if (this.requestValue !== undefined) return this.requestValue.json()
-    return this.readNodeBody().then((buffer) => JSON.parse(buffer.toString("utf8")) as unknown)
+    return this.readNodeBody().then((buffer) => JSON.parse(utf8Text(buffer)) as unknown)
   }
 
   jsonWithByteLength(): Promise<{ readonly value: unknown; readonly byteLength: number }> {
     if (this.requestValue !== undefined) {
       return this.requestValue.arrayBuffer().then((buffer) => ({
-        value: JSON.parse(Buffer.from(buffer).toString("utf8")) as unknown,
+        value: JSON.parse(utf8Text(Buffer.from(buffer))) as unknown,
         byteLength: buffer.byteLength,
       }))
     }

@@ -30,6 +30,10 @@ type FramedJsonSource = RequestSource & {
 
 const INVALID_JSON = (): ResponseResult => plainError(400, "invalid_json")
 
+// `Deno.serve`'s own `Request.json()` keeps a leading UTF-8 byte order mark that its `text()` and every
+// other runtime's `json()` drop, so it refuses a body they parse. Deno decodes the bytes itself below.
+const nativeJsonKeepsBom = "Deno" in globalThis
+
 /** Read a JSON source with the declared-length precheck, delivered-byte recheck, streaming cap, and
  * prototype-poisoning guard in one lane. */
 export function readBoundedJsonSource(
@@ -72,7 +76,7 @@ export function readBoundedJsonSource<T>(
         ? Promise.resolve(plainError(413, "payload_too_large"))
         : Promise.resolve(plainError(413, "payload_too_large")).then(onResult)
 
-    if (hasTrustedBodyFraming(req)) {
+    if (hasTrustedBodyFraming(req) && !nativeJsonKeepsBom) {
       return raw.json().then(
         (parsed) => {
           try {

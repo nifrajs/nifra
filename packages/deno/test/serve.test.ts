@@ -645,6 +645,28 @@ const named: StandardSchemaV1<unknown, { name: string }> = {
   },
 }
 
+// `Deno.serve`'s `Request.json()` keeps a leading byte order mark that every other runtime's drops, so a
+// body schema refused what Bun and workerd parse. Found by scripts/check-runtime-differential.ts.
+Deno.test("a JSON body led by a byte order mark parses through a schema and c.boundedJson", async () => {
+  const app = server()
+    .post("/named", { body: named }, (c) => c.body)
+    .post("/bounded", (c) => c.boundedJson())
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const body = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"name":"Ada"}')])
+    for (const path of ["/named", "/bounded"]) {
+      const res = await fetch(`http://127.0.0.1:${running.port}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      })
+      assertEquals([path, res.status, await res.json()], [path, 200, { name: "Ada" }])
+    }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 // Deno's own cache slot for a request's `Headers`, read so a release that renames it fails here.
 function headersCacheSlot(): symbol {
   const slot = Object.getOwnPropertySymbols(new Request("http://localhost/")).find(
