@@ -442,15 +442,39 @@ const detached: <T>(fn: () => T) => T =
 const served = (entry: ShellEntry): ShellEntry | Promise<never> =>
   entry.notFound === undefined ? entry : Promise.reject(entry.notFound)
 
+interface BuildDeadline {
+  readonly signal: AbortSignal
+  /**
+   * `work`, or the deadline's reason once it passes first: a loader that ignores its signal leaves no
+   * request waiting on it, and its late result reaches no one.
+   */
+  bound<T>(work: Promise<T>): Promise<T>
+  clear(): void
+}
+
 /**
- * `work`, or the abort's reason once `signal` aborts first: a loader that ignores its signal leaves
- * no request waiting on it, and its late result reaches no one.
+ * A build's deadline. One timer aborts the signal and fails the bound work, so a build registers no
+ * listener. Not `AbortSignal.timeout`: under a run of misses its timers would stay pending long after
+ * the builds settle.
  */
-const boundedBy = <T>(work: Promise<T>, signal: AbortSignal): Promise<T> =>
-  new Promise<T>((resolve, reject) => {
-    work.then(resolve, reject)
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true })
-  })
+const buildDeadline = (ms: number): BuildDeadline => {
+  const controller = new AbortController()
+  let expire: (reason: unknown) => void = () => {}
+  const timer = setTimeout(() => {
+    const reason = new DOMException("The operation timed out.", "TimeoutError")
+    controller.abort(reason)
+    expire(reason)
+  }, ms)
+  return {
+    signal: controller.signal,
+    bound: (work) =>
+      new Promise((resolve, reject) => {
+        expire = reject
+        work.then(resolve, reject)
+      }),
+    clear: () => clearTimeout(timer),
+  }
+}
 
 /** `read`, or a miss once `ms` pass: a shared store that stalls is answered by a build, not a wait. */
 const missAfter = <T>(read: Promise<T | undefined>, ms: number): Promise<T | undefined> => {
@@ -767,16 +791,9 @@ export function createPprServer(config: PprServerConfig): PprServer {
     // Read before the build starts, so a purge the shared store sees during it keeps it out.
     const fence: Promise<number | undefined> =
       shared === undefined ? Promise.resolve(undefined) : shared.fence().catch(() => undefined)
-    // Not `AbortSignal.timeout`: under a run of misses its timers would stay pending long after the
-    // builds settle.
-    const timeout = new AbortController()
-    const signal = timeout.signal
-    const timer = setTimeout(
-      () => timeout.abort(new DOMException("The operation timed out.", "TimeoutError")),
-      options.maxHoleTimeoutMs,
-    )
+    const deadline = buildDeadline(options.maxHoleTimeoutMs)
     const loading = detached(() =>
-      request.loadShell(signal).then(
+      request.loadShell(deadline.signal).then(
         async (data) =>
           finishShell(
             key,
@@ -803,7 +820,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
         },
       ),
     )
-    const building = boundedBy(loading, signal)
+    const building = deadline.bound(loading)
     builds.set(key, building)
     // The route's build is held until the loader itself ends: one that ignores its signal past the
     // deadline still counts, so it cannot leave room for unbounded replacements.
@@ -812,7 +829,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       () => leaveBuild(routeId),
     )
     const done = (): void => {
-      clearTimeout(timer)
+      deadline.clear()
       if (builds.get(key) === building) builds.delete(key)
     }
     building.then((entry) => {
@@ -1022,12 +1039,8 @@ export function createPprServer(config: PprServerConfig): PprServer {
     const startedAt = invalidations
     const fence: Promise<number | undefined> =
       shared === undefined ? Promise.resolve(undefined) : shared.fence().catch(() => undefined)
-    const timeout = new AbortController()
-    const signal = timeout.signal
-    const timer = setTimeout(
-      () => timeout.abort(new DOMException("The operation timed out.", "TimeoutError")),
-      options.maxHoleTimeoutMs,
-    )
+    const deadline = buildDeadline(options.maxHoleTimeoutMs)
+    const signal = deadline.signal
     // Keys count only when declared before the loader settles, as in a visitor's live load.
     const keys = new Set<string>()
     let declaring = true
@@ -1051,7 +1064,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
             .then((run) =>
               run.ok ? run.value : Promise.reject(run.error ?? new PprShellBusy(routeId)),
             )
-    const building = boundedBy(loading, signal)
+    const building = deadline.bound(loading)
     holeBuilds.set(key, building)
     // As for a shell: the route's build is held until the loader itself ends.
     const leave = (): void => {
@@ -1060,7 +1073,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
     }
     loading.then(leave, leave)
     const done = (): void => {
-      clearTimeout(timer)
+      deadline.clear()
       if (holeBuilds.get(key) === building) holeBuilds.delete(key)
     }
     building.then(
