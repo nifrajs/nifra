@@ -17,7 +17,7 @@
  * which lane caught it. Both the generic bare lane and the fused body runner route here, so that
  * decision lives in exactly one place.
  */
-import { isClientJsonError } from "./body.ts"
+import { clientBodyErrorCode } from "./body.ts"
 import { pathnameOf, plainError } from "./http.ts"
 import type { Logger } from "./logger.ts"
 import { isResponseResult, type ResponseResult } from "./runtime-core.ts"
@@ -32,7 +32,8 @@ export type ErrorLogDetail = "full" | "message" | "none"
  *     Either renders through the same `finalize` a RETURNED one takes, with the request's `c.set`,
  *     so a thrown one means what the return means: a `Response` ships as built, plus the cookies the
  *     request queued (the set-session-then-`throw redirect()` pattern);
- *   - a request body the app's own `c.req.json()` could not parse is the client's 400 `invalid_json`;
+ *   - a request body the app's own `c.req.json()` or `c.req.formData()` could not parse is the
+ *     client's 400 (`invalid_json`, `invalid_form`);
  *   - anything else is a real fault: logged once, then a bodyless 500 (never the caller's error text).
  *
  * `responseSet` and `logError` are injected rather than imported so this file keeps no runtime edge
@@ -48,7 +49,8 @@ export function renderBareError<T>(
   wrapResponse: (response: ResponseResult) => T,
 ): T {
   if (err instanceof Response || isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
-  if (isClientJsonError(err)) return wrapResponse(plainError(400, "invalid_json"))
+  const clientCode = clientBodyErrorCode(err)
+  if (clientCode !== undefined) return wrapResponse(plainError(400, clientCode))
   logError(err, ctx)
   return wrapResponse(plainError(500, "internal_error"))
 }

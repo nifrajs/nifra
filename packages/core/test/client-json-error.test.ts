@@ -95,3 +95,63 @@ describe("a request body the app's own c.req.json() cannot parse", () => {
     expect(logged).toEqual(["unhandled request error", "unhandled request error"])
   })
 })
+
+const form = (path: string, contentType: string, body: string) =>
+  new Request(`http://localhost${path}`, {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body,
+  })
+
+// A web action reading a form the client sent malformed was answered 500 on every runtime. Found by
+// scripts/check-runtime-differential.ts.
+describe("a request body the app's own c.req.formData() cannot parse", () => {
+  const unparseable: readonly (readonly [string, string])[] = [
+    ["multipart/form-data; boundary=x", "--x\r\nContent-Disposition: form-data\r\n\r\nno name"],
+    ["multipart/form-data; boundary=other", "--x--\r\n"],
+    ["multipart/form-data", "--x--\r\n"],
+    ["application/json", '{"a":1}'],
+  ]
+
+  test("is the client's 400 when it escapes the handler, and not logged as a fault", async () => {
+    const logged: string[] = []
+    const entries = async (c: { req: Request }) => [...(await c.req.formData()).keys()]
+    const app = server({ logger: loggerInto(logged) })
+      .post("/bare", async (c) => ({ keys: await entries(c) }))
+      .derive(() => ({ seen: true }))
+      .post("/program", async (c) => ({ keys: await entries(c), seen: c.seen }))
+    for (const path of ["/bare", "/program"]) {
+      for (const [type, body] of unparseable) {
+        expect({ type, ...(await answer(await app.fetch(form(path, type, body)))) }).toEqual({
+          type,
+          status: 400,
+          body: { ok: false, error: "invalid_form" },
+        })
+      }
+      const sent = form(
+        path,
+        "multipart/form-data; boundary=x",
+        '--x\r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n--x--\r\n',
+      )
+      expect((await answer(await app.fetch(sent))).body.keys).toEqual(["a"])
+      expect((await app.fetch(form(path, "application/x-www-form-urlencoded", "a=1"))).status).toBe(
+        200,
+      )
+    }
+    expect(logged).toEqual([])
+  })
+
+  test("still rejects with the TypeError Request.formData() rejects with", async () => {
+    const app = server().post("/catch", async (c) => {
+      try {
+        return { got: [...(await c.req.formData()).keys()] }
+      } catch (error) {
+        return { type: error instanceof TypeError }
+      }
+    })
+    expect(await answer(await app.fetch(form("/catch", "application/json", "{}")))).toEqual({
+      status: 200,
+      body: { type: true },
+    })
+  })
+})

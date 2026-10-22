@@ -211,21 +211,27 @@ const TRANSPORT_CAPPED = new WeakSet<object>()
 
 const CAP_DECODER = new TextDecoder()
 
-// The SyntaxError a capped `json()` raised on the request's own bytes, kept as `Request.json()`
-// rejects so app code that catches it is unchanged. One the app lets escape is the client's 400.
-const CLIENT_JSON_ERRORS = new WeakSet<object>()
+// The error a capped `json()` or `formData()` raised on the request's own bytes, kept as the
+// `Request` reader rejects so app code that catches it is unchanged, with the code it answers. One
+// the app lets escape is the client's 400.
+const CLIENT_BODY_ERRORS = new WeakMap<object, "invalid_json" | "invalid_form">()
 
-/** True when `err` is a request body that the capped `json()` reader could not parse. */
-export const isClientJsonError = (err: unknown): boolean =>
-  err instanceof Error && CLIENT_JSON_ERRORS.has(err)
+/** The 400 code for a request body a capped reader could not parse, or `undefined` for any other error. */
+export const clientBodyErrorCode = (err: unknown): "invalid_json" | "invalid_form" | undefined =>
+  err instanceof Error ? CLIENT_BODY_ERRORS.get(err) : undefined
 
 function parseClientJson(bytes: Uint8Array): unknown {
   try {
     return JSON.parse(CAP_DECODER.decode(bytes))
   } catch (error) {
-    if (error instanceof Error) CLIENT_JSON_ERRORS.add(error)
+    if (error instanceof Error) CLIENT_BODY_ERRORS.set(error, "invalid_json")
     throw error
   }
+}
+
+function clientFormError(error: unknown): never {
+  if (error instanceof Error) CLIENT_BODY_ERRORS.set(error, "invalid_form")
+  throw error
 }
 
 /** Key under which the dispatcher marks a source with its route's transport byte cap. */
@@ -461,7 +467,9 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
     cappedBytes().then((bytes) =>
       new Response(exactArrayBuffer(bytes), {
         headers: { "content-type": request.headers.get("content-type") ?? "" },
-      }).formData(),
+      })
+        .formData()
+        .catch(clientFormError),
     )
   // `clone()` must not mint an uncapped escape hatch: the clone gets the same cap.
   if (typeof request.clone === "function") {
