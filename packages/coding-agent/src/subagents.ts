@@ -56,6 +56,12 @@ export interface SubagentAbandonment {
   readonly settled: Promise<void>
 }
 
+/** Children started. Runners sharing one ledger are counted, and bounded by `maxChildren`,
+ * together. */
+export interface SubagentChildLedger {
+  started: number
+}
+
 /** Abandoned executors still running. Runners sharing one ledger are counted, and bounded by
  * `maxAbandoned`, together. */
 export interface SubagentAbandonmentLedger {
@@ -78,6 +84,8 @@ export interface SubagentRunnerOptions {
   readonly maxAbandoned?: number
   /** Where abandoned executors are counted. Default: a ledger of this runner's own. */
   readonly abandonment?: SubagentAbandonmentLedger
+  /** Where started children are counted for `maxChildren`. Default: a ledger of this runner's own. */
+  readonly children?: SubagentChildLedger
 }
 
 /** `work`'s outcome, or `stopped()` as soon as `signal` aborts, even when `work` ignores it. */
@@ -97,7 +105,7 @@ export class BoundedSubagentRunner {
     Pick<SubagentRunnerOptions, "maxChildren" | "maxDepth" | "depth">
   > &
     SubagentRunnerOptions
-  private children = 0
+  private readonly started: SubagentChildLedger
   private readonly ledger: SubagentAbandonmentLedger
 
   constructor(executor: SubagentExecutor, options: SubagentRunnerOptions = {}) {
@@ -109,6 +117,7 @@ export class BoundedSubagentRunner {
       depth: options.depth ?? 0,
     }
     this.ledger = options.abandonment ?? { abandoned: 0 }
+    this.started = options.children ?? { started: 0 }
     if (
       this.options.maxChildren < 1 ||
       this.options.maxDepth < 0 ||
@@ -139,7 +148,7 @@ export class BoundedSubagentRunner {
         ok: false,
         error: "subagent abandoned-executor limit reached",
       }
-    if (++this.children > this.options.maxChildren)
+    if (++this.started.started > this.options.maxChildren)
       return { id: spec.id, role: spec.role, ok: false, error: "subagent child limit exceeded" }
     if (this.options.depth > this.options.maxDepth)
       return { id: spec.id, role: spec.role, ok: false, error: "subagent depth limit exceeded" }

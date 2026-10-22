@@ -2231,7 +2231,7 @@
     "name": "BoundedSubagentRunner",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class BoundedSubagentRunner {\n    private readonly executor;\n    private readonly options;\n    private children;\n    private readonly ledger;\n    constructor(executor: SubagentExecutor, options?: SubagentRunnerOptions);\n    /** Executors this runner's ledger holds as abandoned and still running. */\n    get abandoned(): number;\n    run(spec: SubagentSpec): Promise<SubagentResult>;\n    runMany(specs: readonly SubagentSpec[], maxConcurrency?: number): Promise<readonly SubagentResult[]>;\n}",
+    "signature": "export declare class BoundedSubagentRunner {\n    private readonly executor;\n    private readonly options;\n    private readonly started;\n    private readonly ledger;\n    constructor(executor: SubagentExecutor, options?: SubagentRunnerOptions);\n    /** Executors this runner's ledger holds as abandoned and still running. */\n    get abandoned(): number;\n    run(spec: SubagentSpec): Promise<SubagentResult>;\n    runMany(specs: readonly SubagentSpec[], maxConcurrency?: number): Promise<readonly SubagentResult[]>;\n}",
     "doc": "/** Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget. */"
   },
   {
@@ -3550,7 +3550,7 @@
     "name": "CompileOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CompileOptions {\n    readonly catalog: StepCatalog;\n    readonly planDigest: string;\n    readonly artifactPort: ArtifactPort;\n    readonly limits?: OrchestrationLimits;\n    /** Called once a node's content-free effect key is derived (idempotent steps only). */\n    onNodeEffect?(nodeId: string, key: NodeEffectKey): void;\n    /** Called for each artifact ref a node produces through its port. */\n    collectArtifact?(nodeId: string, ref: ArtifactRef): void;\n    /** Called when a subagent node's run returns while its executor, which ignored the abort, keeps running. */\n    onSubagentAbandoned?(nodeId: string, abandonment: SubagentAbandonment): void;\n    /** Where abandoned subagent executors are counted for `maxAbandonedSubagents`. Default: one per compile. */\n    readonly subagentAbandonment?: SubagentAbandonmentLedger;\n}",
+    "signature": "export interface CompileOptions {\n    readonly catalog: StepCatalog;\n    readonly planDigest: string;\n    readonly artifactPort: ArtifactPort;\n    readonly limits?: OrchestrationLimits;\n    /** Called once a node's content-free effect key is derived (idempotent steps only). */\n    onNodeEffect?(nodeId: string, key: NodeEffectKey): void;\n    /** Called for each artifact ref a node produces through its port. */\n    collectArtifact?(nodeId: string, ref: ArtifactRef): void;\n    /** Called when a subagent node's run returns while its executor, which ignored the abort, keeps running. */\n    onSubagentAbandoned?(nodeId: string, abandonment: SubagentAbandonment): void;\n    /** Where abandoned subagent executors are counted for `maxAbandonedSubagents`. Default: one per compile. */\n    readonly subagentAbandonment?: SubagentAbandonmentLedger;\n    /** Where started subagents are counted for `maxChildren`. Default: one per compile. */\n    readonly subagentChildren?: SubagentChildLedger;\n}",
     "doc": "/** Wiring the compiler injects into every node closure. */"
   },
   {
@@ -10411,13 +10411,13 @@
     "name": "OrchestrationHostOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    /**\n     * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability\n     * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or\n     * approval requirement. A descriptor, plan, model, or extension cannot override it.\n     */\n    readonly policy?: HostPolicy;\n    /**\n     * Called when a subagent node's run returns while its executor, which ignored the abort, keeps\n     * running. `limits.maxAbandonedSubagents` bounds how many may run at once across all runs.\n     */\n    onSubagentAbandoned?(runId: string, nodeId: string, abandonment: SubagentAbandonment): void;\n    /**\n     * Called when a node fails, with what it threw or why a verify gate refused. Evidence and\n     * {@link RunResult} stay content-free, so this is the only place the text goes: mask anything\n     * sensitive before keeping it. A throw here is ignored.\n     */\n    onStepFailed?(runId: string, nodeId: string, failure: StepFailure): void;\n}"
+    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    /**\n     * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability\n     * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or\n     * approval requirement, and its capability allowlist bounds every catalog step a submitted plan\n     * resolves to, under any narrower `limits.allowedCapabilities`. A descriptor, plan, model, or\n     * extension cannot override it.\n     */\n    readonly policy?: HostPolicy;\n    /**\n     * Called when a subagent node's run returns while its executor, which ignored the abort, keeps\n     * running. `limits.maxAbandonedSubagents` bounds how many may run at once across all runs.\n     */\n    onSubagentAbandoned?(runId: string, nodeId: string, abandonment: SubagentAbandonment): void;\n    /**\n     * Called when a node fails, with what it threw or why a verify gate refused. Evidence and\n     * {@link RunResult} stay content-free, so this is the only place the text goes: mask anything\n     * sensitive before keeping it. A throw here is ignored.\n     */\n    onStepFailed?(runId: string, nodeId: string, failure: StepFailure): void;\n}"
   },
   {
     "name": "OrchestrationLimits",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface OrchestrationLimits {\n    /** Total nodes in the whole tree. Default 256. */\n    readonly maxNodes?: number;\n    /** Maximum structural nesting depth. Default 8. */\n    readonly maxDepth?: number;\n    /** Host concurrency ceiling for any parallel layer or node. Default: the child count. */\n    readonly maxParallel?: number;\n    /** Bounded-subagent child ceiling. Default 4. */\n    readonly maxChildren?: number;\n    /** Capability authority ceiling. `undefined` grants all; otherwise a step's needs must be a subset. */\n    readonly allowedCapabilities?: readonly string[];\n    /** Refuse a subagent node while this many abandoned subagent executors still run. Default: no bound. */\n    readonly maxAbandonedSubagents?: number;\n}",
+    "signature": "export interface OrchestrationLimits {\n    /** Total nodes in the whole tree. Default 256. */\n    readonly maxNodes?: number;\n    /** Maximum structural nesting depth. Default 8. */\n    readonly maxDepth?: number;\n    /** Host concurrency ceiling for any parallel layer or node. Default: the child count. */\n    readonly maxParallel?: number;\n    /** Subagents one run may start, a retry's attempts included. Default 4. */\n    readonly maxChildren?: number;\n    /** Capability authority ceiling. `undefined` grants all; otherwise a step's needs must be a subset. */\n    readonly allowedCapabilities?: readonly string[];\n    /** Refuse a subagent node while this many abandoned subagent executors still run. Default: no bound. */\n    readonly maxAbandonedSubagents?: number;\n}",
     "doc": "/** Host-owned ceilings. A plan can only tighten, never widen, these. */"
   },
   {
@@ -15413,6 +15413,13 @@
     "doc": "/** Abandoned executors still running. Runners sharing one ledger are counted, and bounded by\n * `maxAbandoned`, together. */"
   },
   {
+    "name": "SubagentChildLedger",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface SubagentChildLedger {\n    started: number;\n}",
+    "doc": "/** Children started. Runners sharing one ledger are counted, and bounded by `maxChildren`,\n * together. */"
+  },
+  {
     "name": "SubagentExecutor",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -15428,7 +15435,7 @@
     "name": "SubagentRunnerOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface SubagentRunnerOptions {\n    readonly maxChildren?: number;\n    readonly maxDepth?: number;\n    readonly depth?: number;\n    readonly signal?: AbortSignal;\n    readonly allowedCapabilities?: readonly string[];\n    readonly workspace?: SubagentWorkspacePolicy;\n    /**\n     * Called when a run returns while its executor keeps running: it timed out or was cancelled and\n     * ignored its abort signal. Use it to stop the executor another way, such as ending its process.\n     */\n    readonly onAbandoned?: (abandonment: SubagentAbandonment) => void;\n    /** Refuse new children while this many abandoned executors are still running. Default: no bound. */\n    readonly maxAbandoned?: number;\n    /** Where abandoned executors are counted. Default: a ledger of this runner's own. */\n    readonly abandonment?: SubagentAbandonmentLedger;\n}"
+    "signature": "export interface SubagentRunnerOptions {\n    readonly maxChildren?: number;\n    readonly maxDepth?: number;\n    readonly depth?: number;\n    readonly signal?: AbortSignal;\n    readonly allowedCapabilities?: readonly string[];\n    readonly workspace?: SubagentWorkspacePolicy;\n    /**\n     * Called when a run returns while its executor keeps running: it timed out or was cancelled and\n     * ignored its abort signal. Use it to stop the executor another way, such as ending its process.\n     */\n    readonly onAbandoned?: (abandonment: SubagentAbandonment) => void;\n    /** Refuse new children while this many abandoned executors are still running. Default: no bound. */\n    readonly maxAbandoned?: number;\n    /** Where abandoned executors are counted. Default: a ledger of this runner's own. */\n    readonly abandonment?: SubagentAbandonmentLedger;\n    /** Where started children are counted for `maxChildren`. Default: a ledger of this runner's own. */\n    readonly children?: SubagentChildLedger;\n}"
   },
   {
     "name": "SubagentSpec",

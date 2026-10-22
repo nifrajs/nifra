@@ -6,8 +6,8 @@
  * `branch` steps or, for a `subagent` node, onto a {@link BoundedSubagentRunner}. Effect-key
  * derivation and the artifact sink are wired into each leaf closure at compile time.
  *
- * All structural ceilings (node count, nesting depth, parallel breadth, pinned version, and the
- * capability authority ceiling) are enforced here, before a single node runs.
+ * All structural ceilings (node count, subagent count, nesting depth, parallel breadth, pinned
+ * version, and the capability authority ceiling) are enforced here, before a single node runs.
  */
 
 import type {
@@ -23,6 +23,7 @@ import {
   BoundedSubagentRunner,
   type SubagentAbandonment,
   type SubagentAbandonmentLedger,
+  type SubagentChildLedger,
 } from "../subagents.ts"
 import type { WorkflowContext, WorkflowStep } from "../workflows.ts"
 import { type CatalogStep, type StepCatalog, type StepRunContext, stepVersion } from "./catalog.ts"
@@ -48,7 +49,7 @@ export interface OrchestrationLimits {
   readonly maxDepth?: number
   /** Host concurrency ceiling for any parallel layer or node. Default: the child count. */
   readonly maxParallel?: number
-  /** Bounded-subagent child ceiling. Default 4. */
+  /** Subagents one run may start, a retry's attempts included. Default 4. */
   readonly maxChildren?: number
   /** Capability authority ceiling. `undefined` grants all; otherwise a step's needs must be a subset. */
   readonly allowedCapabilities?: readonly string[]
@@ -79,6 +80,8 @@ export interface CompileOptions {
   onSubagentAbandoned?(nodeId: string, abandonment: SubagentAbandonment): void
   /** Where abandoned subagent executors are counted for `maxAbandonedSubagents`. Default: one per compile. */
   readonly subagentAbandonment?: SubagentAbandonmentLedger
+  /** Where started subagents are counted for `maxChildren`. Default: one per compile. */
+  readonly subagentChildren?: SubagentChildLedger
 }
 
 /**
@@ -109,13 +112,42 @@ export function compileRunPlanLayers(
   const maxNodes = limits.maxNodes ?? DEFAULT_MAX_NODES
   if (total > maxNodes)
     throw new CompileError(`plan has ${total} nodes over the ${maxNodes} ceiling`, "E_MAX_NODES")
+  const children = plan.nodes.reduce((sum, node) => sum + countSubagents(node), 0)
+  const maxChildren = limits.maxChildren ?? DEFAULT_MAX_CHILDREN
+  if (children > maxChildren)
+    throw new CompileError(
+      `plan has ${children} subagent nodes over the ${maxChildren} ceiling`,
+      "E_MAX_CHILDREN",
+    )
 
   const layers = layerTopLevel(plan.nodes)
-  const wired: CompileOptions =
-    options.subagentAbandonment === undefined
-      ? { ...options, subagentAbandonment: { abandoned: 0 } }
-      : options
+  const wired: CompileOptions = {
+    ...options,
+    subagentAbandonment: options.subagentAbandonment ?? { abandoned: 0 },
+    subagentChildren: options.subagentChildren ?? { started: 0 },
+  }
   return layers.map((layer) => compileLayer(layer, wired, 1))
+}
+
+/** Subagent nodes one pass over the tree starts: a branch runs one arm. A retry's further attempts
+ * are counted as they start. */
+function countSubagents(node: RunNode): number {
+  switch (node.kind) {
+    case "sequence":
+    case "parallel":
+      return node.children.reduce((sum, child) => sum + countSubagents(child), 0)
+    case "retry":
+      return countSubagents(node.child)
+    case "branch":
+      return Math.max(
+        countSubagents(node.then),
+        node.otherwise ? countSubagents(node.otherwise) : 0,
+      )
+    case "subagent":
+      return 1
+    default:
+      return 0
+  }
 }
 
 /** Recursive node count over the whole tree. */
@@ -385,6 +417,7 @@ async function runSubagent(
     ...(options.subagentAbandonment !== undefined
       ? { abandonment: options.subagentAbandonment }
       : {}),
+    ...(options.subagentChildren !== undefined ? { children: options.subagentChildren } : {}),
     ...(options.onSubagentAbandoned !== undefined
       ? {
           onAbandoned: (abandonment: SubagentAbandonment) =>
