@@ -61,6 +61,7 @@ test("HTML policy rejects encoded URL/CSS execution and foreign parser-context e
     '<svg><animate attributeName="href" values="javascript:fixture()" /></svg>',
     '<img srcset="data:image/svg+xml,fixture">',
     '<img srcset="/a.png 1x, javascript:fixture() 2x">',
+    '<img srcset="/a.png, javascript:fixture() 2x">',
     '<img srcset="/a.png 1x,data:image/svg+xml,fixture 2x">',
     '<img srcset="/a.png,,&#x01;javascript:fixture()">',
     '<picture><source srcset="/a.avif (x, y) 1x, vbscript:fixture"></picture>',
