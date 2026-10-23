@@ -307,8 +307,8 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       "A field repeated with an empty member (`x:` and `x: 1`) is read two ways: Bun, Node and workerd " +
       "join it as ', 1', while Deno's `Headers` iteration drops the empty member (`get` does not). A " +
       "header schema or an echo of the value differs by runtime.",
-    matches: (violation, testCase) => {
-      if (violation.kind !== "difference") return false
+    matches: (violation, testCase, outcomes) => {
+      if (violation.kind !== "difference" || !othersAgree(outcomes, "deno")) return false
       const seen = new Map<string, number>()
       for (const [name] of testCase.request.headers)
         seen.set(name.toLowerCase(), (seen.get(name.toLowerCase()) ?? 0) + 1)

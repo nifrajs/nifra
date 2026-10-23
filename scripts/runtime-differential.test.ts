@@ -322,6 +322,27 @@ describe("judge", () => {
     expect(judge(otherRoute, read).violations[0]?.kind).toBe("difference")
   })
 
+  test("a repeated header with an empty member waits on U6 only where Deno alone differs", () => {
+    const repeated = caseOf(
+      get("/whoami", [
+        ["Host", "127.0.0.1"],
+        ["x-count", ""],
+        ["x-count", "1"],
+      ]),
+    )
+    const dropped = new Map<LaneName, Outcome>([
+      ["bun-serve", response(422, "{}")],
+      ["node", response(422, "{}")],
+      ["deno", response(200, '{"count":1}')],
+    ])
+    expect(judge(repeated, dropped)).toEqual({
+      violations: [],
+      excusedBy: ["U6 repeated-header-empty-member"],
+    })
+    const split = new Map<LaneName, Outcome>([...dropped, ["node", response(400, "{}")]])
+    expect(judge(repeated, split).violations[0]?.kind).toBe("difference")
+  })
+
   test("an exposed open finding is reported instead of excused", () => {
     const echoed = caseOf(
       get("/whoami", [
