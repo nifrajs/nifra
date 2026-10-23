@@ -17,6 +17,7 @@ import {
   closeArgsRoute,
   closeReportRoute,
   closeReports,
+  closeWithoutCode,
   FORBIDDEN_CLOSES,
   REPORT_CAP,
   SERVER_CLOSE_REPORTS,
@@ -313,6 +314,7 @@ describe("app.listen() WebSockets", () => {
       answers: FORBIDDEN_CLOSES.map(() => "range"),
       closed: { code: 4000, reason: "ok" },
     })
+    expect(await closeWithoutCode(running.port)).toEqual({ code: 1000, reason: "" })
   })
 
   test("close is given the server's own close when the server closed first", async () => {

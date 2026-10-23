@@ -362,8 +362,9 @@ function attachDenoWebSocket(
   // Deno's close event carries the peer's echo, without its reason; `close` is given the server's
   // own close when the server closed first, as on Bun.
   let sentClose: readonly [number, string] | undefined
-  const closeSocket = (code?: number, reason?: string): void => {
-    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+  // A close with no code is 1000 here as on Bun, whose close() cannot send one without a status.
+  const closeSocket = (code = 1000, reason?: string): void => {
+    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code, reason ?? ""]
     socket.close(code, reason)
   }
   const ws: NifraWs = {
