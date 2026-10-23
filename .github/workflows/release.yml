@@ -71,7 +71,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the proposed release
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -89,7 +89,7 @@ jobs:
           deno-version: 2.9.7
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 26.12.0
 
@@ -154,7 +154,7 @@ jobs:
       publish_sha: ${{ steps.release.outputs.publish_sha }}
     steps:
       - name: Checkout main for complete recovery metadata comparison
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -275,7 +275,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
@@ -297,7 +297,7 @@ jobs:
       # Only gitignored build output and the corpus gen:llms regenerates from it; everything else the
       # tarballs hold comes from the publish job's own checkout of the same merge.
       - name: Upload the built packages
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-packages
           path: |
@@ -318,7 +318,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           fetch-depth: 0
@@ -332,7 +332,7 @@ jobs:
 
       # `changeset publish` runs the npm on PATH, so this decides which npm publishes.
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 26.12.0
           registry-url: https://registry.npmjs.org
@@ -361,7 +361,7 @@ jobs:
         run: bun run release:check --merge
 
       - name: Download the built packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: release-packages
           path: packages
@@ -384,7 +384,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
@@ -422,7 +422,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
@@ -449,7 +449,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
