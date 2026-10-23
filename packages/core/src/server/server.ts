@@ -708,18 +708,17 @@ const invalidHost = (req: Request): boolean => {
   return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
 }
 
-/** A Host Bun misread: one it could not read, so it left the target unparsed, or one sent twice,
- * which it joins with ", " after building the URL on the first, so the app reads an authority the
- * request was not routed on (RFC 9112 section 3.2 answers 400). A request built in process (an
- * adapter's, a test's) keeps the URL its caller built, unless it pairs two Hosts with a URL on the
- * first, as Bun hands such a request over. */
+/** A Host the check above refuses that Bun served anyway: one it could not read, so it left the
+ * target unparsed, or one it built the URL on - sent twice (joined with ", ", the URL on the first;
+ * RFC 9112 section 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
+ * sub-delimiter (`a!b`). A request built in process (an adapter's, a test's) keeps the URL its caller
+ * built, unless that URL is the one Bun builds on its Host. */
 const misreadHost = (req: Request): boolean => {
   if (!invalidHost(req)) return false
   const routed = URL.parse(req.url)?.host
-  const [first, second] = headerOf(req, "host")!.split(", ")
   return (
     routed === undefined ||
-    (second !== undefined && URL.parse(`//${first}`, req.url)?.host === routed)
+    URL.parse(`//${headerOf(req, "host")!.split(", ")[0]}`, req.url)?.host === routed
   )
 }
 
@@ -3310,7 +3309,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     } else if (unparsedBunTargets && misreadHost(req)) {
       // Refused as Node and Deno refuse that Host: Bun left the target unparsed, so `/users/../admin`
-      // would be routed raw and the app's `new URL(req.url)` would throw, or routed on one of two.
+      // would be routed raw and the app's `new URL(req.url)` would throw, or routed on what Node and
+      // Deno refuse.
       return jsonError(400, "invalid_host")
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at

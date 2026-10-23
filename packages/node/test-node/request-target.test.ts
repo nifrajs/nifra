@@ -10,6 +10,7 @@ import { serve } from "@nifrajs/node"
 import {
   invalidHostMismatches,
   rawUpgradeStatus,
+  refusedHostMismatches,
   requestTargetApp,
   requestTargetMismatches,
 } from "../../core/test/request-target-matrix.ts"
@@ -19,6 +20,7 @@ test("a target with dot segments or a backslash routes the path it resolves to",
   try {
     assert.deepEqual(await requestTargetMismatches(running.port), [])
     assert.deepEqual(await invalidHostMismatches(running.port), [])
+    assert.deepEqual(await refusedHostMismatches(running.port), [])
   } finally {
     await running.stop({ drainMs: 0 })
   }

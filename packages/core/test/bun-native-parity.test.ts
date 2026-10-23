@@ -4,8 +4,10 @@ import { method as route } from "../src/server/methods.ts"
 import {
   INVALID_HOSTS,
   invalidHostMismatches,
+  PARSEABLE_INVALID_HOSTS,
   REPEATED_HOSTS,
   rawExchange,
+  refusedHostMismatches,
   requestTargetApp,
   requestTargetMismatches,
 } from "./request-target-matrix.ts"
@@ -319,6 +321,7 @@ describe("Bun-native route table agrees with the portable router", () => {
     try {
       expect(await requestTargetMismatches(instance.port)).toEqual([])
       expect(await invalidHostMismatches(instance.port)).toEqual([])
+      expect(await refusedHostMismatches(instance.port)).toEqual([])
     } finally {
       instance.stop(true)
     }
@@ -326,25 +329,25 @@ describe("Bun-native route table agrees with the portable router", () => {
 
   test("a request built in process keeps the URL its caller built, whatever its Host says", async () => {
     const app = requestTargetApp(server())
+    const hosts = [...INVALID_HOSTS, ...PARSEABLE_INVALID_HOSTS]
     const answers: unknown[] = []
-    for (const host of INVALID_HOSTS) {
+    for (const host of hosts) {
       const response = await app.fetch(new Request("http://localhost/url", { headers: { host } }))
       answers.push([host, response.status, await response.json()])
     }
-    expect(answers).toEqual(
-      INVALID_HOSTS.map((host) => [host, 200, { route: "GET /url", path: "/url" }]),
-    )
+    expect(answers).toEqual(hosts.map((host) => [host, 200, { route: "GET /url", path: "/url" }]))
   })
 
-  test("a request with two Host fields is refused on Bun's table and through fetch", async () => {
-    // Bun routes on the first Host and hands the app both, joined with ", ".
+  test("a Host sent twice or one Node and Deno refuse is refused on Bun's table and in fetch", async () => {
+    // Bun builds the URL on such a Host (on the first, joined with ", ", when it repeats).
     const app = requestTargetApp(server())
     expect(nativeKeys(app)).toEqual(expect.arrayContaining(["GET /posts", "GET /users/:id"]))
     const targets = ["/posts", "/users/7", "/url", "/missing"]
+    const refusedHosts = [...REPEATED_HOSTS, ...PARSEABLE_INVALID_HOSTS]
     const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const answers: unknown[] = []
-      for (const hosts of REPEATED_HOSTS) {
+      for (const hosts of refusedHosts) {
         for (const target of targets) {
           answers.push([
             hosts,
@@ -355,7 +358,7 @@ describe("Bun-native route table agrees with the portable router", () => {
       }
       const refused = { status: 400, body: '{"ok":false,"error":"invalid_host"}' }
       expect(answers).toEqual(
-        REPEATED_HOSTS.flatMap((hosts) => targets.map((target) => [hosts, target, refused])),
+        refusedHosts.flatMap((hosts) => targets.map((target) => [hosts, target, refused])),
       )
       expect(await rawExchange(instance.port, "GET", "/users/7")).toEqual({
         status: 200,
@@ -370,7 +373,7 @@ describe("Bun-native route table agrees with the portable router", () => {
     }
   })
 
-  test("a request built in process with two Hosts is refused only on a URL built on the first", async () => {
+  test("a request built in process is refused only on the URL Bun would build on its Host", async () => {
     const app = requestTargetApp(server())
     const twoHosts = (url: string) =>
       app.fetch(
@@ -384,6 +387,8 @@ describe("Bun-native route table agrees with the portable router", () => {
     const kept = await twoHosts("http://localhost/url")
     expect([kept.status, await kept.json()]).toEqual([200, { route: "GET /url", path: "/url" }])
     expect((await twoHosts("http://A.example:80/url")).status).toBe(400)
+    const encoded = new Request("http://a.example/url", { headers: { host: "%61.example" } })
+    expect((await app.fetch(encoded)).status).toBe(400)
   })
 
   test("generated route tables answer every probe the same on both lanes", async () => {

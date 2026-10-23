@@ -10,7 +10,12 @@ import {
   type WebSocketUpgradeOutcome,
 } from "../src/index.ts"
 import { websocket } from "../src/ws.ts"
-import { INVALID_HOSTS, REPEATED_HOSTS, rawUpgradeStatus } from "./request-target-matrix.ts"
+import {
+  INVALID_HOSTS,
+  PARSEABLE_INVALID_HOSTS,
+  REPEATED_HOSTS,
+  rawUpgradeStatus,
+} from "./request-target-matrix.ts"
 
 /**
  * A WebSocket handshake is a `GET`, so it runs the chain an HTTP `GET` registered at the same point
@@ -272,15 +277,16 @@ describe("a WebSocket handshake runs the route chain an HTTP GET runs", () => {
     expect(await rawUpgradeStatus(running.port, "/socket")).toBe(101)
   })
 
-  test("a handshake with two Host fields is refused, as HTTP refuses it", async () => {
-    // Bun routes on the first Host while `upgrade()` would read both from the header.
+  test("a handshake with a Host sent twice or one Node and Deno refuse is refused", async () => {
+    // Bun builds the URL on such a Host while `upgrade()` would read the header as sent.
     const app = base().ws("/socket", { upgrade: (c) => ({ host: c.req.headers.get("host") }) })
     running = app.listen(0, { hostname: "127.0.0.1" })
+    const refusedHosts = [...REPEATED_HOSTS, ...PARSEABLE_INVALID_HOSTS]
     const statuses: unknown[] = []
-    for (const hosts of REPEATED_HOSTS) {
+    for (const hosts of refusedHosts) {
       statuses.push([hosts, await rawUpgradeStatus(running.port, "/socket", {}, hosts)])
     }
-    expect(statuses).toEqual(REPEATED_HOSTS.map((hosts) => [hosts, 400]))
+    expect(statuses).toEqual(refusedHosts.map((hosts) => [hosts, 400]))
     expect(await rawUpgradeStatus(running.port, "/socket")).toBe(101)
   })
 

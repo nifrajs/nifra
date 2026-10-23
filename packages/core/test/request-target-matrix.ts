@@ -181,6 +181,34 @@ export const REPEATED_HOSTS: readonly (readonly string[])[] = [
   ["[::1]", "other.example"],
 ]
 
+/**
+ * A Host the authority check refuses that a URL parser builds on anyway: Node and Deno answer 400,
+ * and Bun, which builds the URL on it, has to as well. `%61.example` parses as `a.example`, so the
+ * header and the URL would name different authorities.
+ */
+export const PARSEABLE_INVALID_HOSTS: readonly string[] = [
+  "a!b",
+  "a.example,b.example",
+  "%61.example",
+  "a~b",
+]
+
+/** Each repeated or parseable invalid Host whose request was answered by anything but a 400. */
+export async function refusedHostMismatches(port: number): Promise<string[]> {
+  const mismatches: string[] = []
+  for (const host of [...REPEATED_HOSTS, ...PARSEABLE_INVALID_HOSTS]) {
+    for (const target of ["/posts", "/url"]) {
+      const answer = await rawExchange(port, "GET", target, undefined, host)
+      if (answer.status !== 400) {
+        mismatches.push(
+          `Host ${JSON.stringify(host)} ${target}: got ${answer.status} ${answer.body}`,
+        )
+      }
+    }
+  }
+  return mismatches
+}
+
 const INVALID_HOST_ANSWERS: Readonly<Record<string, string>> = {
   "/posts": JSON.stringify({ route: "GET /posts" }),
   "/users/../posts": JSON.stringify({ route: "GET /posts" }),
