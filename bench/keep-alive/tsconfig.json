@@ -1,0 +1,5 @@
+{
+  // The harness: DOM types for what it runs in the page. The apps are checked per framework.
+  "extends": "../../examples/tsconfig.app.json",
+  "include": ["*.ts"]
+}

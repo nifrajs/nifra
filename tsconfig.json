@@ -118,6 +118,7 @@
     // options (no JSX) do not apply to it.
     "examples/launch-video",
     "bench/ssr",
+    "bench/keep-alive",
     "bench/http/serve-deno.ts",
     "bench/http/serve-deno-static-headers.ts",
     "bench/http/worst-case/serve-deno.ts",

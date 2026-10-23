@@ -36,6 +36,7 @@ bun run bench:memory:update        # capture and update the local /benchmarks me
 bun run bench:ssr               # SSR throughput per UI runtime
 bun run bench:size              # server bundle size
 bun run bench:coldboot          # cold-start time
+bun run bench/keep-alive/run.ts # keepAlive restore, latency and memory (React + Svelte, Chromium)
 ```
 
 `bench:p99`, `bench:soak`, and `bench:coldboot` accept `NIFRA_PERF_GATE=1` to fail closed against

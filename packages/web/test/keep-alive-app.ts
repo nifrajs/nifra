@@ -9,6 +9,8 @@ export const HOLD_PATH = "/__test/hold-data"
 export const RELEASE_PATH = "/__test/release-data"
 export const LOGIN_PATH = "/__test/login"
 export const LOGOUT_PATH = "/__test/logout"
+/** `?ms=` delays every later data response by that many milliseconds. */
+export const LATENCY_PATH = "/__test/latency"
 
 /**
  * Serves a fixture app the way a build does: the generated client entry for its routes, bundled for
@@ -77,6 +79,7 @@ export async function serveApp(options: {
     return release
   }
   let releaseHeld = (): void => {}
+  let latency = 0
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -94,7 +97,12 @@ export async function serveApp(options: {
         releaseHeld()
         return new Response(null, { status: 204 })
       }
+      if (pathname === LATENCY_PATH) {
+        latency = Number(new URL(request.url).searchParams.get("ms") ?? 0)
+        return new Response(null, { status: 204 })
+      }
       if (request.headers.has(DATA_HEADER) && held !== undefined) await held
+      if (request.headers.has(DATA_HEADER) && latency > 0) await Bun.sleep(latency)
       return app.fetch(request)
     },
   })
