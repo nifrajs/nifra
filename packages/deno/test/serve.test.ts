@@ -16,6 +16,7 @@ import {
   closeArgsRoute,
   closeReportRoute,
   closeReports,
+  closeWithoutCode,
   FORBIDDEN_CLOSES,
   REPORT_CAP,
   SERVER_CLOSE_REPORTS,
@@ -359,6 +360,7 @@ Deno.test("a close RFC 6455 forbids throws a RangeError and leaves the socket op
       answers: FORBIDDEN_CLOSES.map(() => "range"),
       closed: { code: 4000, reason: "ok" },
     })
+    assertEquals(await closeWithoutCode(running.port), { code: 1000, reason: "" })
   } finally {
     await running.stop({ drainMs: 0 })
   }

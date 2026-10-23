@@ -35,9 +35,9 @@ type WsMessageInput<Schema extends StandardSchemaV1 | undefined> = Schema extend
 export interface NifraWebSocket<Data = unknown> {
   /** Send a text (`string`) or binary (`ArrayBuffer`/typed-array) frame. No-op once closed. */
   send(data: string | ArrayBufferView | ArrayBuffer): void
-  /** Close the connection, with an optional code an endpoint may send (1000-1003, 1007-1014,
-   * 3000-4999) and a reason of at most 123 UTF-8 bytes. Any other close throws a `RangeError`, and the
-   * socket stays open. */
+  /** Close the connection, with a code an endpoint may send (1000-1003, 1007-1014, 3000-4999;
+   * 1000 when none is given, on every runtime) and a reason of at most 123 UTF-8 bytes. Any other
+   * close throws a `RangeError`, and the socket stays open. */
   close(code?: number, reason?: string): void
   /** `WebSocket.readyState` (0 CONNECTING · 1 OPEN · 2 CLOSING · 3 CLOSED). */
   readonly readyState: number
@@ -322,8 +322,9 @@ export function attachWebSocket<
   // The runtime's close event carries the peer's echo, which may drop the reason; `close` is given
   // the server's own close when the server closed first, as on Bun.
   let sentClose: readonly [number, string] | undefined
-  const closeSocket = (code?: number, reason?: string): void => {
-    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+  // A close with no code is 1000 here as on Bun, whose close() cannot send one without a status.
+  const closeSocket = (code = 1000, reason?: string): void => {
+    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code, reason ?? ""]
     socket.close(code, reason)
   }
   ws = {

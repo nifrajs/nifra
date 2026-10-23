@@ -6396,7 +6396,7 @@ text (`string`) or binary (`ArrayBuffer`/typed-array)
 
 `close(code?, reason?)`
 
-close the connection
+close the connection; with no code it sends 1000, on every runtime
 
 `readyState`
 
