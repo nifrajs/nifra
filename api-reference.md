@@ -3203,6 +3203,18 @@ _No named exports (side-effect entrypoint)._
 - **toCatalogEntry** _(function)_ - `toCatalogEntry: <Input, Output>(tool: ToolContract<Input, Output>) => ToolCatalogEntry`
   Build the single descriptive projection shared by agent, MCP, and test adapters.
 
+### `@nifrajs/core/tool-cli`
+
+- **CliToolContract** _(type)_ - `type CliToolContract = ToolContract<any, any>`
+  A heterogeneous tool list. Each contract still validates its own input at execution.
+- **TOOL_CLI_EXIT** _(const)_ - `TOOL_CLI_EXIT: Readonly<{ ok: 0; failed: 1; usage: 2; refused: 3; }>`
+  Process exit codes {@link runToolCli} resolves to.
+- **ToolCliOptions** _(interface)_ - `interface ToolCliOptions`
+- **ToolCliStreams** _(interface)_ - `interface ToolCliStreams`
+  Where the CLI writes. `process.stdout` / `process.stderr` / `process.stdin` satisfy it.
+- **runToolCli** _(function)_ - `runToolCli: (tools: readonly CliToolContract[], argv: readonly string[], options: ToolCliOptions) => Promise<number>`
+  Run one command line against `tools`. Resolves to the exit code; it never throws for anything a user typed. `argv` excludes the runtime and script (`process.argv.slice(2)`).
+
 ### `@nifrajs/core/tool-contract`
 
 - **CreateToolBudgetOptions** _(interface)_ - `interface CreateToolBudgetOptions`
@@ -3979,9 +3991,28 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/mcp/react`
 
+- **BundleReactWidgetOptions** _(interface)_ - `interface BundleReactWidgetOptions`
 - **ReactWidgetOptions** _(interface)_ - `interface ReactWidgetOptions`
+- **bundleReactWidget** _(function)_ - `bundleReactWidget: (opts: BundleReactWidgetOptions) => Promise<string>`
+  Bundle a React component into a widget body: the mount point and one inline script that renders the component on every pushed `structuredContent`. Pass it to `defineMcpWidget({ html })`, which adds the document shell and the bridge. Run it at build time and ship the result as a file when the server…
 - **reactWidget** _(function)_ - `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>`
   Build a {@link McpWidget} from a React component. Async - it bundles the component at definition time (a one-time cost at server start); pass the result to `createMcpServer({ widgets })` / a tool's `widget`.
+
+### `@nifrajs/mcp/stdio`
+
+- **MAX_STDIO_MESSAGE_BYTES** _(const)_ - `MAX_STDIO_MESSAGE_BYTES: number`
+  Default cap on one message, in either direction, in UTF-8 bytes.
+- **ServeStdioOptions** _(interface)_ - `interface ServeStdioOptions`
+- **StdioConnection** _(interface)_ - `interface StdioConnection`
+- **StdioMessage** _(type)_ - `type StdioMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotification`
+  Anything one side of the connection may send.
+- **StdioOutput** _(interface)_ - `interface StdioOutput`
+  Where encoded lines go. `process.stdout` satisfies it.
+- **StdioTransportOptions** _(interface)_ - `interface StdioTransportOptions`
+- **runStdioTransport** _(function)_ - `runStdioTransport: (options: StdioTransportOptions) => Promise<void>`
+  Read newline-delimited JSON-RPC messages from `input` until it ends, dispatching each, then wait for every dispatched request to settle. Resolves once all responses are written.
+- **serveStdio** _(function)_ - `serveStdio: (server: McpServer, options?: ServeStdioOptions) => Promise<void>`
+  Serve `server`'s tools, resources and prompts over stdio until the input ends. One process is one session: request cancellation (`notifications/cancelled`) and progress notifications work as they do over HTTP.
 
 ### `@nifrajs/mcp/tool-contract`
 

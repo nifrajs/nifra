@@ -34,6 +34,20 @@ bun install
 bun run dev
 ```
 
+## As a library
+
+A tool that generates a nifra app can write the same starter without shelling out to the CLI.
+`create-nifra/scaffold` runs on Bun, Node and Deno, and importing it never starts the CLI:
+
+```ts
+import { scaffold } from "create-nifra/scaffold"
+
+const result = await scaffold({ target: "./my-api", template: "api" })
+```
+
+It takes the CLI's options (`template`, `framework`, `deployTarget`, `docker`, `ci`, `db`, `auth`,
+`force`, `link`) and refuses a non-empty directory unless `force` is set.
+
 MIT.
 
 ## For AI agents

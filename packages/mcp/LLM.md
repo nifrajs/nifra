@@ -10,11 +10,12 @@ Build MCP servers - and MCP Apps (interactive `ui://` widgets, SEP-1865) - for a
 
 ## Public entrypoints
 
-`@nifrajs/mcp` · `@nifrajs/mcp/agent-descriptor` · `@nifrajs/mcp/http` · `@nifrajs/mcp/protocol` · `@nifrajs/mcp/react` · `@nifrajs/mcp/tool-contract`
+`@nifrajs/mcp` · `@nifrajs/mcp/agent-descriptor` · `@nifrajs/mcp/http` · `@nifrajs/mcp/protocol` · `@nifrajs/mcp/react` · `@nifrajs/mcp/stdio` · `@nifrajs/mcp/tool-contract`
 
 ## Key exports
 
 - **bridgeScript** _(function)_ - `bridgeScript: () => string` · from `@nifrajs/mcp`
+- **bundleReactWidget** _(function)_ - `bundleReactWidget: (opts: BundleReactWidgetOptions) => Promise<string>` · from `@nifrajs/mcp/react`
 - **createMcpProtocolState** _(function)_ - `createMcpProtocolState: () => McpProtocolState` · from `@nifrajs/mcp`
 - **createMcpServer** _(function)_ - `createMcpServer: (opts: CreateMcpServerOptions) => McpServer` · from `@nifrajs/mcp`
 - **defineMcpTool** _(function)_ - `defineMcpTool: <S extends StandardSchemaV1 = UntypedArgs>(opts: DefineMcpToolOptions<S>) => McpTool` · from `@nifrajs/mcp`
@@ -27,9 +28,8 @@ Build MCP servers - and MCP Apps (interactive `ui://` widgets, SEP-1865) - for a
 - **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined` · from `@nifrajs/mcp`
 - **reactWidget** _(function)_ - `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>` · from `@nifrajs/mcp/react`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<R…` · from `@nifrajs/mcp`
-- **toMcpTool** _(function)_ - `toMcpTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions) => McpTool` · from `@nifrajs/mcp/tool-contract`
 
-_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
+_…and 53 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
 
 ## Footguns
 
