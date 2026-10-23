@@ -58,8 +58,9 @@ jobs:
 
       - name: Generated requests on every runtime
         env:
-          NIFRA_DIFFERENTIAL_RUNS: ${{ inputs.runs || 20000 }}
-          NIFRA_DIFFERENTIAL_WS_RUNS: ${{ inputs.ws_runs || 3000 }}
+          # By event, not `||`: a manual run's 0 skips that suite instead of falling back.
+          NIFRA_DIFFERENTIAL_RUNS: ${{ github.event_name == 'schedule' && 20000 || inputs.runs }}
+          NIFRA_DIFFERENTIAL_WS_RUNS: ${{ github.event_name == 'schedule' && 3000 || inputs.ws_runs }}
           NIFRA_DIFFERENTIAL_SEED: ${{ inputs.seed }}
           NIFRA_DIFFERENTIAL_MODE: ${{ matrix.mode }}
           NIFRA_DIFFERENTIAL_REPORT: runtime-differential-${{ matrix.mode }}.json
