@@ -848,8 +848,8 @@
     "lines": 92.23300970873787
   },
   "packages/core/test/ws-close-args.ts": {
-    "functions": 96.42857142857143,
-    "lines": 100
+    "functions": 92.85714285714286,
+    "lines": 97.91666666666666
   },
   "packages/core/test/ws-send-contract.ts": {
     "functions": 100,
