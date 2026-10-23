@@ -343,6 +343,29 @@ describe("judge", () => {
     expect(judge(repeated, split).violations[0]?.kind).toBe("difference")
   })
 
+  test("a leading empty Content-Type member waits on U18 only where workerd alone differs", () => {
+    const repeated = caseOf({
+      ...get("/items/-", [
+        ["Host", "127.0.0.1"],
+        ["Content-Type", ""],
+        ["Content-Type", "application/json"],
+      ]),
+      method: "PATCH",
+    })
+    const refused = response(415, '{"ok":false,"error":"unsupported_media_type"}')
+    const read = new Map<LaneName, Outcome>([
+      ["bun-serve", refused],
+      ["node", refused],
+      ["workerd", response(200, '{"id":"-","qty":0}')],
+    ])
+    expect(judge(repeated, read)).toEqual({
+      violations: [],
+      excusedBy: ["U18 workerd-drops-leading-empty-content-type"],
+    })
+    const split = new Map<LaneName, Outcome>([...read, ["node", response(400, "{}")]])
+    expect(judge(repeated, split).violations[0]?.kind).toBe("difference")
+  })
+
   test("an exposed open finding is reported instead of excused", () => {
     const echoed = caseOf(
       get("/whoami", [

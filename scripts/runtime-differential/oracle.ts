@@ -318,6 +318,21 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
     },
   },
   {
+    id: "U18 workerd-drops-leading-empty-content-type",
+    why:
+      "A Content-Type repeated with an empty first member (`Content-Type:` then `Content-Type: " +
+      "application/json`) reads as ', application/json' on Bun, Node and Deno, which is refused 415. " +
+      "workerd drops that leading empty member of Content-Type alone, not of another field nor a trailing " +
+      "one, so it reads the body as JSON.",
+    matches: (violation, testCase, outcomes) => {
+      if (violation.kind !== "difference" || !othersAgree(outcomes, "workerd")) return false
+      const types = testCase.request.headers.filter(
+        ([name]) => name.toLowerCase() === "content-type",
+      )
+      return types.length > 1 && types[0]?.[1].trim() === ""
+    },
+  },
+  {
     id: "U9 workerd-resolves-dot-segments-twice",
     why:
       "workerd resolves a raw `..` before the Worker's URL parser sees `%2e%2e`, so `/old/%2e%2e/..` " +
