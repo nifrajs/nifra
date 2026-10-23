@@ -82,12 +82,26 @@ export async function closeArgsAnswers(
   return { answers: messages, closed: await closed }
 }
 
-/** The closes `/report` is asked for. A close with no code is left out: Bun sends 1000 for it. */
-export const SERVER_CLOSES: readonly (readonly [number, string])[] = [
+/** How a client hears `ws.close()` with no code through `/close`. */
+export async function closeWithoutCode(port: number): Promise<{ code: number; reason: string }> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/close`)
+  const closed = new Promise<{ code: number; reason: string }>((resolve) =>
+    socket.addEventListener("close", (event) =>
+      resolve({ code: event.code, reason: event.reason }),
+    ),
+  )
+  await new Promise((resolve) => socket.addEventListener("open", resolve))
+  socket.send(JSON.stringify([null, null]))
+  return closed
+}
+
+/** The closes `/report` is asked for; `null` leaves the argument out, which closes with 1000. */
+export const SERVER_CLOSES: readonly (readonly [number | null, string | null])[] = [
   [4000, "bye"],
   [1001, "going away"],
   [3000, "é"],
   [1000, ""],
+  [null, null],
 ]
 
 /** The payload cap the `/report` app is built with. */
@@ -95,7 +109,7 @@ export const REPORT_CAP = 32
 
 /** What `close` is given for each of {@link SERVER_CLOSES}, then for a message over the cap. */
 export const SERVER_CLOSE_REPORTS: readonly string[] = [
-  ...SERVER_CLOSES.map(([code, reason]) => `${code} ${reason}`),
+  ...SERVER_CLOSES.map(([code, reason]) => `${code ?? 1000} ${reason ?? ""}`),
   "1009 message too large",
 ]
 
@@ -108,8 +122,8 @@ export function closeReportRoute<App extends CloseRoutable>(app: App): () => Pro
   let wake: (() => void) | undefined
   app.ws("/report", {
     message: (ws: ClosingSocket, data: unknown) => {
-      const [code, reason]: [number, string] = JSON.parse(String(data))
-      ws.close(code, reason)
+      const [code, reason]: [number | null, string | null] = JSON.parse(String(data))
+      ws.close(code ?? undefined, reason ?? undefined)
     },
     close: (_ws: ClosingSocket, code: number, reason: string) => {
       heard.push(`${code} ${reason}`)

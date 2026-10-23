@@ -3062,8 +3062,9 @@ function attachNodeWebSocket(
   // `ws` reports the peer's echo, without its reason, and 1006 after failing a message over its own
   // `maxPayload`; `close` is given the server's own close when the server closed first, as on Bun.
   let sentClose: readonly [number, string] | undefined
-  const closeSocket = (code?: number, reason?: string): void => {
-    if (sentClose === undefined && ws.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+  // A close with no code is 1000 here as on Bun, whose close() cannot send one without a status.
+  const closeSocket = (code = 1000, reason?: string): void => {
+    if (sentClose === undefined && ws.readyState <= 1) sentClose = [code, reason ?? ""]
     ws.close(code, reason)
   }
   const nifra: NifraWs = {

@@ -255,7 +255,8 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       "application/octet-stream on Deno and '' on workerd; workerd decodes a malformed `%A` and unescapes " +
       "`\\` in a filename; Bun accepts a quoted boundary holding a quote and Deno an unclosed multipart, " +
       "which the others refuse as invalid_form. Waived only where every lane answers the page or " +
-      "invalid_form and the pages differ in nothing but what the action read.",
+      "invalid_form and the pages differ in nothing but what the action read. It stays the runtime's " +
+      "parser by choice: a route that needs one form everywhere declares a `multipartBody` schema.",
     matches: (violation, testCase, outcomes) => {
       if (violation.kind !== "difference" || testCase.route !== "pageForm") return false
       const pages = new Set<string>()

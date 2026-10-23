@@ -10,6 +10,7 @@ import {
   closeArgsRoute,
   closeReportRoute,
   closeReports,
+  closeWithoutCode,
   FORBIDDEN_CLOSES,
   REPORT_CAP,
   SERVER_CLOSE_REPORTS,
@@ -25,6 +26,7 @@ test("a close RFC 6455 forbids throws a RangeError and leaves the socket open", 
       answers: FORBIDDEN_CLOSES.map(() => "range"),
       closed: { code: 4000, reason: "ok" },
     })
+    assert.deepEqual(await closeWithoutCode(running.port), { code: 1000, reason: "" })
   } finally {
     await running.stop({ drainMs: 50 })
   }

@@ -230,6 +230,13 @@ function scanFrom(
   return { at, empty }
 }
 
+declare const Deno: unknown
+
+// V8's TypedArray `indexOf` reads one element at a time (~0.6 ms a MiB on Node 26), where Buffer's is
+// native on Node and Bun. Deno's Buffer is a slower polyfill, and Workers have none by default.
+const bufferIndexOf =
+  typeof Deno === "undefined" && typeof Buffer === "function" ? Buffer.prototype.indexOf : undefined
+
 /**
  * Find the non-overlapping occurrences of `pattern` (which starts with a dash), stopping once the
  * count passes `limit`. Every `--boundary` is counted wherever it sits, which is at least what any
@@ -251,7 +258,7 @@ function scanDelimiters(
   let work = 0
   let i = 0
   while (i <= last) {
-    i = bytes.indexOf(DASH, i)
+    i = bufferIndexOf === undefined ? bytes.indexOf(DASH, i) : bufferIndexOf.call(bytes, DASH, i)
     if (i === -1 || i > last) break
     let k = 1
     while (k < size && bytes[i + k] === pattern[k]) k++
