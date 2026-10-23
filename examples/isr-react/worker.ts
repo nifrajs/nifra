@@ -6,9 +6,10 @@
  *
  * Build + run locally on real workerd (miniflare provides a local KV - no Cloudflare account needed):
  *   bun run examples/isr-react/build.ts
- *   (cd examples/isr-react && bunx wrangler dev)
+ *   (cd examples/isr-react && bunx wrangler dev --var ISR_STORE_SECRET:dev-isr-store-secret-not-for-production)
  *
- * The ONLY difference from server.ts is the store: MemoryCacheStore → KVCacheStore(env.ISR_CACHE).
+ * The ONLY difference from server.ts is the store: MemoryCacheStore → KVCacheStore(env.ISR_CACHE),
+ * which needs the `storeSecret` that signs the pages it holds.
  */
 // build.ts writes ./server-manifest.ts; this types its import before the first build.
 /// <reference types="@nifrajs/web/server-manifest" />
@@ -40,6 +41,8 @@ interface Env {
   readonly ISR_CACHE: KVNamespaceLike
   /** Shared secret for the on-demand purge endpoint. */
   readonly REVALIDATE_SECRET?: string
+  /** Signs every cached page, so a page anything else writes to the namespace is never served. */
+  readonly ISR_STORE_SECRET: string
 }
 
 /** Minimal shape of the Workers execution context - just `waitUntil`. */
@@ -62,7 +65,12 @@ export default {
       return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
 
-    const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
+    const isr = withISR(app, {
+      store,
+      storeSecret: env.ISR_STORE_SECRET,
+      revalidate: 60,
+      now: () => Date.now(),
+    })
     // Forward the platform: `waitUntil` lets the background regeneration of a stale page finish after
     // the response is returned; `env` threads the Workers bindings into loaders (`c.env`).
     const platform = { env, waitUntil: (p: Promise<unknown>) => ctx.waitUntil(p) }

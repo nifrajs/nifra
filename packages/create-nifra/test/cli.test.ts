@@ -142,13 +142,17 @@ describe("scaffold - templates", () => {
     }
   })
 
-  test("the ISR starter deploys no revalidation secret; only its local dev script sets one", async () => {
+  test("the ISR starter deploys no secret; only its local dev script sets them", async () => {
     const dir = await freshDir("isr-secret")
     await scaffold({ target: dir, template: "isr" })
     const toml = await readFile(join(dir, "wrangler.toml"), "utf8")
     expect(toml).not.toMatch(/^\s*REVALIDATE_SECRET\s*=/m)
+    expect(toml).not.toMatch(/^\s*ISR_STORE_SECRET\s*=/m)
     expect(toml).not.toMatch(/^\s*\[vars\]/m)
-    expect((await readPkg(dir)).scripts?.dev).toContain("--var REVALIDATE_SECRET:dev-secret")
+    const dev = (await readPkg(dir)).scripts?.dev
+    expect(dev).toContain("--var REVALIDATE_SECRET:dev-secret")
+    // withISR refuses a KV store without a page-signing secret of at least 32 characters.
+    expect(dev).toMatch(/--var ISR_STORE_SECRET:\S{32,}/)
   })
 
   test("a project name a platform would refuse is lowered to one it takes in deploy config", async () => {
