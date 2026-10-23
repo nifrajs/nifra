@@ -412,3 +412,23 @@ export async function assertIdentityDrops(browser: Browser, url: string): Promis
     await context.close()
   }
 }
+
+/**
+ * A page that does not keep alive, rendered by the server and hydrated first, in a development build
+ * (which reports a mismatch): the keep-alive root renders it on both sides alike.
+ */
+export async function assertUnkeptPageHydrates(
+  page: BrowserPage,
+  problems: readonly string[],
+  url: string,
+): Promise<void> {
+  await page.goto(`${url}/detail/1`)
+  await hydrated(page)
+  await follow(page, "/list/1")
+  await showing(page, "List 1")
+  await page.goBack()
+  await page.waitForFunction(() => document.querySelector(".detail")?.textContent === "Detail 1")
+  expect(
+    problems.filter((problem) => !problem.includes("NIFRA_KEEPALIVE_DIRECT_CHILD_CSS")),
+  ).toEqual([])
+}

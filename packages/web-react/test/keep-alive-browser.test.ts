@@ -7,6 +7,7 @@ import {
   assertIdentityDrops,
   assertKeepAliveMatrix,
   assertRestoreBeforeData,
+  assertUnkeptPageHydrates,
   installedEngines,
   openPage,
 } from "../../web/test/keep-alive-browser.ts"
@@ -55,6 +56,12 @@ for (const engine of engines) {
     test("a development build hydrates the kept page without a mismatch", async () => {
       const { page, problems } = await open()
       await assertKeepAliveMatrix(page, problems, app(development).url)
+      await page.close()
+    }, 30_000)
+
+    test("a page that does not keep alive hydrates in a keep-alive app", async () => {
+      const { page, problems } = await open()
+      await assertUnkeptPageHydrates(page, problems, app(development).url)
       await page.close()
     }, 30_000)
 

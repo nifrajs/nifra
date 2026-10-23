@@ -522,9 +522,10 @@ export function createPageRequestExecutor<Env = unknown>(
     layoutIds: readonly string[],
     routeId: string,
   ): { slots?: readonly number[] } => {
+    // Every page of a keep-alive app renders through the adapter's keep-alive root, wrappers or none,
+    // as the browser hydrates it.
     if (keepTable === undefined) return {}
-    const slots = slotDepths(keepTable, layoutIds, routeId)
-    return slots.length === 0 ? {} : { slots }
+    return { slots: slotDepths(keepTable, layoutIds, routeId) }
   }
 
   const preloadOf = (id: string): { preload?: readonly string[] } => {
