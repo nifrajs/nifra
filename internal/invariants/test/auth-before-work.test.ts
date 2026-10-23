@@ -328,8 +328,10 @@ const NOT_INTEGRATIONS: Readonly<Record<string, string>> = {
   "packages/web/src/internal/web-app.ts": "the web app's own server; covered by the web auth tests",
   "packages/web-preact/src/client.ts": "browser hydration",
   "packages/web-react/src/client.ts": "browser hydration",
+  "packages/web-react/src/keep-alive.ts": "browser hydration of a keep-alive app",
   "packages/web-solid/src/client.ts": "browser hydration",
   "packages/web-svelte/src/client.ts": "browser hydration",
+  "packages/web-svelte/src/keep-alive.ts": "browser hydration of a keep-alive app",
   "packages/web-vue/src/client.ts": "browser hydration",
 }
 

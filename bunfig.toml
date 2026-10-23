@@ -123,6 +123,14 @@ coveragePathIgnorePatterns = [
   # the opt-in built-checkout path of `scaffold-check.test.ts` (0% function, 11.54% line).
   "**/cli/test/headless-chrome.ts",
   "**/scripts/packed-tree.ts",
+  # The keep-alive browser suites' harness and fixtures, same reasoning, measured 2026-10-24:
+  # `keep-alive-browser.ts` (44.44% function, 74.57% line) runs most of its code in the page through
+  # `page.evaluate`, `keep-alive-app.ts` (85.71% function) answers control paths that a child-process
+  # server or the bench calls, and the fixtures' event handlers run only in the browser (50-57% function).
+  "**/web/test/keep-alive-browser.ts",
+  "**/web/test/keep-alive-app.ts",
+  "**/web-react/test/fixtures/keep-alive/**",
+  "**/web-svelte/test/fixtures/keep-alive/**",
   # The cli tests' dot-prefixed fixture roots (`.nifra-capability-fixtures-RFjrrM`,
   # `.nifra-levels-fixtures-2wAq0Q`, `.nifra-verification-golden-xNR6qa`): stub backends at 0-50%
   # function coverage under a directory name that is random per run. Same class as `cli/test/.tmp-*`.

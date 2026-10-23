@@ -631,6 +631,7 @@ const levelOf = (
   }
   const nodes: SlotNode[] = []
   for (const [key, group] of groups) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a group is created with its first member
     const head = group[0] as Member
     if (key === head.key) {
       nodes.push(
@@ -879,6 +880,7 @@ export function createSlotParking(): SlotParking {
           }
           const focus = slot.focus
           if (focus?.isConnected && page.contains(focus))
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: it held focus, so it is focusable; the call stays optional
             (focus as HTMLElement).focus?.({ preventScroll: true })
           page.dispatchEvent(new CustomEvent(PAGE_SHOW_EVENT, { bubbles: true }))
         }
@@ -949,8 +951,7 @@ const matches = (element: Element, selector: string): boolean => {
 // which the two wrappers between them now break.
 const breaksAround = (selector: string, parent: Element, tops: readonly Element[]): boolean => {
   const parts = compoundsOf(selector)
-  for (let i = 0; i < parts.length; i++) {
-    const { compound, before } = parts[i] as { compound: string; before: string }
+  for (const [i, { compound, before }] of parts.entries()) {
     const prefix = parts
       .slice(0, i)
       .map((part, j) => (j === 0 ? part.compound : `${part.before} ${part.compound}`))
@@ -993,6 +994,7 @@ const scanRules = (
       }
     } else if ("cssRules" in rule) {
       // @media, @supports, @layer and @container rules hold style rules of their own.
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a rule with cssRules is a grouping rule
       scanRules((rule as CSSGroupingRule).cssRules, parent, tops, source)
     }
   }
