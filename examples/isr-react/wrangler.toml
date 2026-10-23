@@ -19,5 +19,6 @@ id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 # answers 404 on /__nifra/revalidate. Locally, pass one with `--var` (see the README).
 
 # The ISR page-signing secret, at least 32 characters: withISR signs every page it writes to KV and
-# serves only pages that verify. Also a secret: `bunx wrangler secret put ISR_STORE_SECRET`; until
-# then the deployed worker answers 500. Locally, pass one with `--var` (see the README).
+# serves only pages that verify. Also a secret, generated at random:
+# `openssl rand -hex 32 | bunx wrangler secret put ISR_STORE_SECRET`; until then the deployed worker
+# answers 500. Locally, pass one with `--var` (see the README).

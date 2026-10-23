@@ -587,11 +587,13 @@ export interface ISROptions {
    * Signs every page written to `store` and checks the signature on every read, so whoever else can
    * write the store (another service on the same KV namespace, a leaked token) cannot hand visitors a
    * page this app did not render. Required for every store but a {@link MemoryCacheStore}, whose
-   * pages never leave the process and stay unsigned. At least 32 characters, the same in every
-   * process. A page whose signature is missing or wrong reads as a miss and renders again, so a new
-   * secret only empties the cache. It cannot stop a store writer from deleting pages, or from putting
-   * back an older page this app stored for the same key; that page keeps its age, so it serves stale
-   * and regenerates.
+   * pages never leave the process and stay unsigned. The same in every process, at least 32
+   * characters, and random: generate it, such as 32 random bytes as hex, since a guessable secret
+   * can be found from any signed page and then signs pages of its own. A page whose signature is
+   * missing or wrong reads as a miss and renders again, so a new secret only empties the cache. It
+   * cannot stop a store writer from deleting pages, or from putting back an older page this app
+   * stored for the same key. That page keeps its age: still within its freshness window, it is a hit
+   * until the window ends; past it, it serves stale and regenerates.
    */
   readonly storeSecret?: string
   /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated

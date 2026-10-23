@@ -53,6 +53,6 @@ deliberate single-instance deployment), and add authenticated/CSRF middleware to
 ```sh
 bunx wrangler kv namespace create ISR_CACHE   # paste the id into wrangler.toml
 bunx wrangler secret put REVALIDATE_SECRET     # set a real purge secret
-bunx wrangler secret put ISR_STORE_SECRET      # 32+ random characters that sign cached pages
+openssl rand -hex 32 | bunx wrangler secret put ISR_STORE_SECRET   # random; signs cached pages
 bun run build && bunx wrangler deploy
 ```

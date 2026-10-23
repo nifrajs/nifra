@@ -109,8 +109,9 @@ export default {
     if (new URL(req.url).pathname === "/__nifra/revalidate") {
       return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
-    // Signs every page it stores, so a page anyone else wrote to the namespace is never served.
-    const storeSecret = env.ISR_STORE_SECRET // \`wrangler secret put ISR_STORE_SECRET\`
+    // Signs every page it stores and serves only pages that verify. Generate the secret:
+    // \`openssl rand -hex 32 | wrangler secret put ISR_STORE_SECRET\`
+    const storeSecret = env.ISR_STORE_SECRET
     const isr = withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() })
     // waitUntil keeps the worker alive while a stale page regenerates behind the response.
     return isr(req, { env, waitUntil: (p) => ctx.waitUntil(p) })
@@ -133,7 +134,10 @@ import { revalidateEndpoint } from "@nifrajs/web"
 
 const cdn = cloudflareZone({ zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN })
 // The CDN stores the pages ISR would, tagged, for the route's \`revalidate\`; browsers revalidate.
-const handler = withCdn(withISR(app, { store, revalidate: 60, now: () => Date.now() }), { provider: cdn })
+const storeSecret = env.ISR_STORE_SECRET // signs the pages a shared store keeps
+const handler = withCdn(withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() }), {
+  provider: cdn,
+})
 // One purge reaches the origin store first, then the CDN: 200 done, 202 queued, 502 refused.
 const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cdn })`
 
@@ -161,7 +165,13 @@ export async function loader({ api, draft, params }: Route.LoaderArgs) {
 
 // 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.
 createWebApp({ adapter, manifest, clientEntry, api, draftSecret: env.DRAFT_SECRET })
-withISR(app, { store, revalidate: 60, now: () => Date.now(), draftSecret: env.DRAFT_SECRET })`
+withISR(app, {
+  store,
+  storeSecret: env.ISR_STORE_SECRET, // a shared store's page-signing secret
+  revalidate: 60,
+  now: () => Date.now(),
+  draftSecret: env.DRAFT_SECRET,
+})`
 
 const FONTS = `// fonts.css - a CLS-safe @font-face for a self-hosted font (the pipeline bundles + hashes it).
 import { fontFace } from "@nifrajs/web"
@@ -293,12 +303,15 @@ export default function Rendering() {
         Anything else that can write a shared store - another service on the same KV namespace, a
         leaked token - could put a page with its own script in front of every visitor. So over any
         store but <code>MemoryCacheStore</code>, <code>withISR</code> needs a{" "}
-        <code>storeSecret</code> (at least 32 characters, the same in every process) and refuses to
+        <code>storeSecret</code> (the same in every process, at least 32 characters, and generated
+        at random - <code>openssl rand -hex 32</code> - since a guessable one can be found from any
+        signed page) and refuses to
         start without one. Each page is stored with an HMAC-SHA-256 over its key, body, status,
         headers, tags and freshness, and a page whose signature is missing or wrong is a miss: it
         renders again and the signed render replaces it. A new secret only empties the cache. The
         signature cannot stop a store writer from deleting pages or putting back an older page the
-        app stored for the same URL; that page keeps its age, so it serves stale and regenerates.
+        app stored for the same URL. That page keeps its age: still within its freshness window, it
+        is a hit until the window ends; past it, it serves stale and regenerates.
       </p>
       <CodeBlock code={KV} />
       <p>

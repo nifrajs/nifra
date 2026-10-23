@@ -49,7 +49,7 @@ worker alive while a stale page regenerates behind the response.
 
 To deploy: create a KV namespace (`bunx wrangler kv namespace create ISR_CACHE`), paste its id into
 `wrangler.toml`, set the purge secret (`bunx wrangler secret put REVALIDATE_SECRET`) and the
-page-signing secret (`bunx wrangler secret put ISR_STORE_SECRET`, 32+ random characters), then
+page-signing secret (`openssl rand -hex 32 | bunx wrangler secret put ISR_STORE_SECRET`), then
 `bunx wrangler deploy`.
 
 ## How it works
