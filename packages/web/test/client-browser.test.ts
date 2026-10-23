@@ -372,15 +372,20 @@ function fakeEvent(
   }
 }
 
-// A minimal router stub for the blocker tests: records the paths it was asked to navigate.
-function makeRouter(): { readonly router: ClientRouter; readonly navigated: string[] } {
+// A minimal router stub for the blocker tests: records the paths it was asked to navigate. As the
+// router does, a navigation `loads` says will load publishes its pendingPath before its first await.
+function makeRouter(loads: (path: string) => boolean = () => false): {
+  readonly router: ClientRouter
+  readonly navigated: string[]
+} {
   const navigated: string[] = []
   let subscriber: (() => void) | undefined
-  const state = { pending: false }
+  const state: { pending: boolean; pendingPath?: string } = { pending: false }
   const router = {
     match: (path: string) => (path === "/outside" ? null : { routeId: path, params: {} }),
     navigate: async (path: string) => {
       navigated.push(path)
+      if (loads(path)) Object.assign(state, { pending: true, pendingPath: path })
       subscriber?.()
     },
     prefetch: async () => {},
@@ -737,6 +742,35 @@ test("programmatic navigation hard-loads unmatched paths but rejects cross-origi
   expect(fallback).toEqual(["/outside"])
   expect(historyCalls).toEqual([])
   stop()
+})
+
+test("a client-only search change keeps a partially prerendered first document's holes filling", async () => {
+  resetBrowser()
+  let leaves = 0
+  slot.__nifraPpr = Object.assign(() => {}, {
+    leave: () => {
+      leaves++
+    },
+  })
+  const { router, navigated } = makeRouter((path) => !path.includes("tab="))
+  const stop = installHistory(router)
+  try {
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/current?tab=specs")))
+    await Bun.sleep(0)
+    locationState.search = "?tab=reviews"
+    windowHub.emit("popstate", new Event("popstate"))
+    await Bun.sleep(0)
+    expect(navigated).toEqual(["/current?tab=specs", "/current?tab=reviews"])
+    expect(leaves).toBe(0)
+
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/docs")))
+    await Bun.sleep(0)
+    expect(navigated.at(-1)).toBe("/docs")
+    expect(leaves).toBe(1)
+  } finally {
+    stop()
+    delete slot.__nifraPpr
+  }
 })
 
 test("a page on a native webview's own scheme soft-navigates its links and navigate() calls", async () => {

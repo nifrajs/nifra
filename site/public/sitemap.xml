@@ -31,7 +31,7 @@
   <url><loc>https://nifra.dev/docs/capabilities</loc><lastmod>2026-10-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/causality</loc><lastmod>2026-10-05</lastmod></url>
   <url><loc>https://nifra.dev/docs/certification</loc><lastmod>2026-10-11</lastmod></url>
-  <url><loc>https://nifra.dev/docs/cli</loc><lastmod>2026-10-19</lastmod></url>
+  <url><loc>https://nifra.dev/docs/cli</loc><lastmod>2026-10-23</lastmod></url>
   <url><loc>https://nifra.dev/docs/comparison</loc><lastmod>2026-10-17</lastmod></url>
   <url><loc>https://nifra.dev/docs/content</loc><lastmod>2026-10-16</lastmod></url>
   <url><loc>https://nifra.dev/docs/contract</loc><lastmod>2026-10-21</lastmod></url>
@@ -52,7 +52,7 @@
   <url><loc>https://nifra.dev/docs/integrations</loc><lastmod>2026-10-05</lastmod></url>
   <url><loc>https://nifra.dev/docs/islands</loc><lastmod>2026-10-21</lastmod></url>
   <url><loc>https://nifra.dev/docs/keep-alive</loc><lastmod>2026-10-24</lastmod></url>
-  <url><loc>https://nifra.dev/docs/live</loc><lastmod>2026-10-21</lastmod></url>
+  <url><loc>https://nifra.dev/docs/live</loc><lastmod>2026-10-23</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-2</loc><lastmod>2026-10-05</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-3</loc><lastmod>2026-10-05</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-5</loc><lastmod>2026-10-13</lastmod></url>
@@ -61,13 +61,14 @@
   <url><loc>https://nifra.dev/docs/migrate-route-by-route</loc><lastmod>2026-10-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/mutations</loc><lastmod>2026-10-05</lastmod></url>
   <url><loc>https://nifra.dev/docs/observability</loc><lastmod>2026-10-05</lastmod></url>
+  <url><loc>https://nifra.dev/docs/partial-prerendering</loc><lastmod>2026-10-23</lastmod></url>
   <url><loc>https://nifra.dev/docs/plugins</loc><lastmod>2026-10-21</lastmod></url>
   <url><loc>https://nifra.dev/docs/query</loc><lastmod>2026-10-21</lastmod></url>
   <url><loc>https://nifra.dev/docs/rendering</loc><lastmod>2026-10-23</lastmod></url>
   <url><loc>https://nifra.dev/docs/routing</loc><lastmod>2026-10-20</lastmod></url>
   <url><loc>https://nifra.dev/docs/security</loc><lastmod>2026-10-22</lastmod></url>
   <url><loc>https://nifra.dev/docs/security-comparison</loc><lastmod>2026-10-05</lastmod></url>
-  <url><loc>https://nifra.dev/docs/server-components</loc><lastmod>2026-10-21</lastmod></url>
+  <url><loc>https://nifra.dev/docs/server-components</loc><lastmod>2026-10-23</lastmod></url>
   <url><loc>https://nifra.dev/docs/server-functions</loc><lastmod>2026-10-12</lastmod></url>
   <url><loc>https://nifra.dev/docs/streaming</loc><lastmod>2026-10-21</lastmod></url>
   <url><loc>https://nifra.dev/docs/structure</loc><lastmod>2026-10-19</lastmod></url>

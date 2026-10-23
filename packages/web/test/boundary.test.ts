@@ -21,6 +21,7 @@ const context = (): BoundaryRequestCtx => ({
   draft: false,
   search: { tab: "overview" },
   signal: new AbortController().signal,
+  live: () => {},
 })
 
 /** Run `body` with `console.error` captured, so a boundary failure's safe server-side report is asserted

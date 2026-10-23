@@ -247,6 +247,17 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
       'import { html } from "@nifrajs/web-vanilla"\nexport default () => html`<a href="/list" data-swap="replace:results">More</a>`\n',
       "utf8",
     )
+    // A partially prerendered page that reads the request, for NF-C053.
+    await writeFile(
+      join(root, "routes", "shell.tsx"),
+      'import { tryGetContext } from "@nifrajs/middleware/context-storage"\nexport default () => <p>{tryGetContext()?.request.url}</p>\n',
+      "utf8",
+    )
+    await writeFile(
+      join(root, "routes", "shell.backend.ts"),
+      "export const shellLoader = () => ({})\n",
+      "utf8",
+    )
 
     const result = await collectCheckResult(root, { lintsOnly: true })
     const codes = new Set(result.structuredDiagnostics?.map((finding) => finding.code))
@@ -266,6 +277,7 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
       "NF-C050",
       "NF-C051",
       "NF-C052",
+      "NF-C053",
     ]) {
       expect(codes.has(code)).toBe(true)
     }

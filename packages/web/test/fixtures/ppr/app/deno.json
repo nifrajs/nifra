@@ -1,0 +1,4 @@
+{
+  "nodeModulesDir": "manual",
+  "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "react" }
+}

@@ -34,6 +34,9 @@ bun run bench:memory:update        # capture and update the local /benchmarks me
 
 # Other axes
 bun run bench:ssr               # SSR throughput per UI runtime
+bun run bench:ppr               # partial prerendering's server cost and TTFB, with its gates
+bun run bench:ppr:gzip          # the same with compression() on
+bun run bench:ppr:saturation    # every loader reading a backend pushed past its capacity
 bun run bench:size              # server bundle size
 bun run bench:coldboot          # cold-start time
 bun run bench/keep-alive/run.ts # keepAlive restore, latency and memory (React + Svelte, Chromium)

@@ -1,0 +1,22 @@
+{
+  // Built by the coordinated compiler, with Vite's types, outside the DOM-free root program.
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ESNext", "DOM"],
+    "allowImportingTsExtensions": true,
+    "types": ["bun", "vite/client"],
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "jsx": "preserve"
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  // It imports the route table the browser check writes before it builds.
+  "exclude": ["entry.client.ts"]
+}

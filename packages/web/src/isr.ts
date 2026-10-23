@@ -110,6 +110,10 @@ export function serializeISRTags(tags: readonly string[]): string | undefined {
 /** What a `revalidateTags` function is given: the URL and route params only, both already public. */
 export interface RevalidateTagsInput {
   readonly params: Readonly<Record<string, string>>
+  /**
+   * The request's URL. On a partially prerendered route and its shared holes, the shell's: the
+   * configured origin, the path and the declared variations, never the visitor's Host or other query.
+   */
   readonly url: URL
 }
 

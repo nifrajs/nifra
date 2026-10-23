@@ -1,6 +1,14 @@
 import { createClientRouter } from "@nifrajs/web/client"
 import { mountRouter } from "../../src/client.ts"
-import { A, B, KeepAliveLayout, RepeatedLayout, TransitionLayout } from "./slot-chain.ts"
+import {
+  A,
+  B,
+  Inner,
+  KeepAliveLayout,
+  Outer,
+  RepeatedLayout,
+  TransitionLayout,
+} from "./slot-chain.ts"
 
 const query = new URLSearchParams(location.search)
 const Layout = query.has("transition")
@@ -19,7 +27,9 @@ const router = createClientRouter({
 })
 mountRouter({
   router,
-  routes: { a: [Layout, A], b: [Layout, B] },
+  routes: query.has("nested")
+    ? { a: [Outer, Inner, A], b: [Outer, Inner, B] }
+    : { a: [Layout, A], b: [Layout, B] },
   container: document.getElementById("root"),
 })
 Reflect.set(globalThis, "fixture", {

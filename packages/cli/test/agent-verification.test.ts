@@ -266,7 +266,7 @@ describe("agent verification surfaces", () => {
       listFixRecipes()
         .filter((recipe) => recipe.onlyWhenNamed === true)
         .map((recipe) => recipe.id),
-    ).toEqual(["contracts.snapshot", "layout.migrate"])
+    ).toEqual(["contracts.snapshot", "ppr.read-to-hole", "layout.migrate"])
     expect(listFixRecipes().map((recipe) => recipe.id)).toEqual([
       "security.timing-safe-equal",
       "manifest.sync",
@@ -275,6 +275,7 @@ describe("agent verification surfaces", () => {
       "workspace-dist.rebuild",
       "imports.moved-export",
       "route.split",
+      "ppr.read-to-hole",
       "layout.migrate",
       "schemas.draft",
       "client.reserved-segment",

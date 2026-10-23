@@ -2125,7 +2125,7 @@
     "name": "Boundary",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type Boundary<Data, UI> = StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | InterceptBoundary<Data, UI>;",
+    "signature": "export type Boundary<Data, UI> = StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | SharedBoundary<Data, UI> | InterceptBoundary<Data, UI>;",
     "doc": "/** A discriminated union: the `mode` selects the context type accepted by `load`. */"
   },
   {
@@ -2169,10 +2169,24 @@
     "doc": "/** The two boundary families a host pauses on. */"
   },
   {
+    "name": "BoundaryLoaderEntry",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BoundaryLoaderEntry {\n    readonly load: NonNullable<BoundaryRegistration[\"load\"]>;\n    /** The boundary data's output schema. Required whenever `load` returns data. */\n    readonly output?: StandardSchemaV1;\n    /**\n     * A `shared` boundary's freshness in seconds, required for one and refused for any other: an older\n     * entry is served while one rebuild runs. Write the entry inline, so the build can find it.\n     */\n    readonly revalidate?: number;\n    /** A `shared` boundary's tags, as a route's `revalidateTags`: purging one drops its entries. */\n    readonly revalidateTags?: RevalidateTags;\n}",
+    "doc": "/** A boundary's server loader, declared in the route's backend half under `boundaryLoaders`. */"
+  },
+  {
+    "name": "BoundaryLoadersOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BoundaryLoadersOf<Frontend, Backend> = unknown extends Frontend ? Readonly<Record<string, BoundaryLoaderEntry>> : string extends BoundaryNameOf<DeclaredBoundaryOf<Frontend>> ? Readonly<Record<string, BoundaryLoaderEntry>> : {\n    readonly [Declared in DeclaredBoundaryOf<Frontend> as BoundaryNameOf<Declared>]?: LoaderEntryOf<Declared>;\n} & (Backend extends {\n    readonly shellLoader: unknown;\n} ? {\n    readonly [Declared in DeclaredBoundaryOf<Frontend> as HoleNameOf<Declared>]: LoaderEntryOf<Declared>;\n} : unknown);",
+    "doc": "/**\n * The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry\n * names a boundary the page declares, and a route with a `shellLoader` needs one for each hole.\n * Unchecked when TypeScript cannot read the page (`.svelte`, `.vue`) or its boundary names are not\n * literal types, which `as const` on each boundary gives.\n */"
+  },
+  {
     "name": "BoundaryMode",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type BoundaryMode = \"static\" | \"dynamic\" | {\n    readonly intercept: string;\n};"
+    "signature": "export type BoundaryMode = \"static\" | \"dynamic\" | \"shared\" | {\n    readonly intercept: string;\n};"
   },
   {
     "name": "BoundaryOp",
@@ -2185,7 +2199,7 @@
     "name": "BoundaryRegistration",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
+    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: SharedHoleCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
   },
   {
     "name": "BoundaryRejection",
@@ -2198,14 +2212,14 @@
     "name": "BoundaryRequestCtx",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BoundaryRequestCtx {\n    readonly request: Request;\n    readonly params: Readonly<Record<string, string>>;\n    readonly api: unknown;\n    readonly env: unknown;\n    readonly draft: boolean;\n    readonly search: Readonly<Record<string, unknown>>;\n    readonly signal: AbortSignal;\n}",
+    "signature": "export interface BoundaryRequestCtx {\n    readonly request: Request;\n    readonly params: Readonly<Record<string, string>>;\n    readonly api: unknown;\n    readonly env: unknown;\n    readonly draft: boolean;\n    readonly search: Readonly<Record<string, unknown>>;\n    readonly signal: AbortSignal;\n    /**\n     * Declare what this hole's data depends on, as keys in the cache-tag charset. In a live load of a\n     * partially prerendered page the hole reloads when one of them changes; elsewhere it does nothing.\n     */\n    readonly live: (...keys: string[]) => void;\n}",
     "doc": "/** Request-scoped inputs available to dynamic and intercepting boundaries. */"
   },
   {
     "name": "BoundaryState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n    /** While an intercept boundary holds a target: the result of the last action posted to that target,\n     * which the page's own `actionData` never sees. Only on a `\"ready\"` state. */\n    readonly actionData?: unknown;\n    /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */\n    readonly live?: unknown;\n}",
+    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n    /** While an intercept boundary holds a target: the result of the last action posted to that target,\n     * which the page's own `actionData` never sees. Only on a `\"ready\"` state. */\n    readonly actionData?: unknown;\n    /** Set on a hole of a partially prerendered shell: the adapter renders an opaque host the PPR\n     * runtime fills, not the boundary's content. */\n    readonly ppr?: true;\n    /** On a hole the client reloads as a host: its frame, the server's HTML plus props when it\n     * hydrates, usually deferred. */\n    readonly fill?: unknown;\n    /** A live load kept this hole: the client shows the copy it holds. */\n    readonly kept?: true;\n    /** Opaque: which live load the target's data came from (`@nifrajs/web/live-client`). */\n    readonly live?: unknown;\n}",
     "doc": "/** Serializable boundary state passed to the adapter's render seam. */"
   },
   {
@@ -2615,6 +2629,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface CachedResponse {\n    /** The rendered document (UTF-8 HTML, fully buffered). */\n    readonly body: string;\n    readonly status: number;\n    /** Response headers to replay (e.g. `content-type`). */\n    readonly headers: Readonly<Record<string, string>>;\n    /** When this entry was stored, via the injected clock (ms epoch). */\n    readonly storedAt: number;\n    /** Freshness window (ms): `now - storedAt >= revalidate` ⇒ stale (serve it, regenerate behind it). */\n    readonly revalidate: number;\n    /** Public, bounded invalidation labels. A tag purge makes matching entries miss immediately. */\n    readonly tags?: readonly string[];\n    /** The store's {@link CacheStore.fence} as the render behind this entry began. A store that keeps\n     * purge order skips the write when this key or one of its tags was purged after it. */\n    readonly fence?: number | undefined;\n}",
     "doc": "/** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */"
+  },
+  {
+    "name": "CanaryCarrier",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type CanaryCarrier = \"cookie\" | \"authorization\" | \"header\" | \"query\";",
+    "doc": "/** Where a canary value went into the request whose shell carried it. */"
   },
   {
     "name": "CapabilityAccess",
@@ -3579,6 +3600,12 @@
     "signature": "export interface CompileSchemaOptions {\n    /** Type-only import of the source schema, relative to the generated module. */\n    readonly source: string;\n    readonly exportName: string;\n}"
   },
   {
+    "name": "CompileShellsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CompileShellsOptions {\n    readonly routesDir: string;\n    readonly manifest: Manifest;\n    /** The deployment the record is for: the server refuses a record made for another one. */\n    readonly deployment: string;\n    /** True for a module (absolute path, `/` separators) whose code reads the visitor's request. */\n    readonly requestScoped: (moduleId: string) => boolean;\n    /** Called for each route that fails; the route is left out of the record. Default: rethrow. */\n    readonly onFailure?: (routeId: string, error: unknown) => void;\n    /** Bun plugins the server build uses for route files, such as `svelteBunPlugin(\"ssr\")`. */\n    readonly plugins?: readonly import(\"bun\").BunPlugin[];\n}"
+  },
+  {
     "name": "CompiledComponentModule",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -4262,7 +4289,7 @@
     "name": "CreateWebAppOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface CreateWebAppOptions<Env = unknown> {\n    readonly serverComponents?: import(\"../server-components/types.js\").ServerComponentRuntime;\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** Cache production module imports and layout preparation, never request data. Defaults to NODE_ENV === \"production\"; disable for a mutable manifest. */\n    readonly cacheRouteModules?: boolean;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /**\n     * Resolve a fresh CSP nonce for each document request. The value is applied to every\n     * framework-owned executable script; return `undefined` to keep the default nonce-free output.\n     * Nonce-bearing documents are marked `private, no-store` so the request-specific value is not\n     * replayed by browser, CDN, or ISR caches. The resolver does not declare a CSP header because the\n     * policy's allowed sources are app-specific.\n     */\n    readonly nonce?: NonceResolver<Env>;\n    /**\n     * A hash-based Content-Security-Policy from `createCspPolicy`, instead of `nonce`. A document then\n     * carries a nonce only when it needs one (it `defer()`s a value, or `meta` names the nonce in\n     * `unsafeInlineScript`); every other page is nonce-free, gets the same CSP header on every request,\n     * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.\n     */\n    readonly csp?: CspPolicy;\n    /**\n     * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and\n     * the rest of {@link ServerOptions}.\n     *\n     * Needed because the `Server` is constructed in here, so a caller has no other way to reach its\n     * constructor: a page app could set no request timeout and no capacity gate, which are exactly the\n     * two knobs a production readiness check looks for. An SSR app wants them MORE than a backend does -\n     * a render is slow and allocation-heavy, so a burst that a JSON API would absorb is the one that\n     * exhausts the pod.\n     *\n     * Applies to the whole app, {@link mounts} and the {@link api} auto-mount included: the capacity gate\n     * sits at the fetch entry, ahead of the request hooks those are dispatched from.\n     */\n    readonly server?: ServerOptions;\n    /**\n     * Runs against the app BEFORE any page route is registered - the seam for `securityHeaders()`,\n     * `requestId()`, `logger()`, a rate limit, or anything else applied with `use`.\n     *\n     * ```ts\n     * createWebApp({\n     *   …,\n     *   use: (app) => {\n     *     app.use(securityHeaders())\n     *     app.use(requestId())\n     *   },\n     * })\n     * ```\n     *\n     * A callback rather than an array because `use` is overloaded - `Middleware`, `IdentityPlugin`,\n     * `ContextPlugin` - and only the real call site instantiates the right overload. The return value\n     * is ignored: this is for cross-cutting concerns, not for declaring routes (declare those on the\n     * returned app, where they get their types).\n     *\n     * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and\n     * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every\n     * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards would\n     * bind them to no page, and outside production it throws (`HOOK_AFTER_PAGES`). `requestId()` is\n     * exactly that case: it is a `derive`, so applied late it would leave every page without\n     * `c.requestId`. A `group()` is its own scope and stays allowed. Route assurance evidence is order-scoped the same\n     * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`\n     * even though it does still set it.\n     *\n     * `onRequest`/`onResponse` (and the response header/body hooks) are app-global arrays read at\n     * request time, so those alone DO work when added late. Using this seam for everything avoids\n     * having to remember which is which.\n     *\n     * Runs ahead of the {@link mounts} / {@link api} request hooks, so an `onRequest` middleware guards\n     * a mounted auth handler too.\n     *\n     * A `ContextPlugin` applied here takes runtime effect but cannot widen the declared return type of\n     * this function, so `c.requestId` is not typed on routes you declare afterwards. Named plugins are\n     * idempotent, so `app.use(requestId())` on the returned app recovers the TYPE without applying the\n     * plugin a second time.\n     */\n    readonly use?: (app: ReturnType<typeof server<Env>>) => void;\n    /** Injected into each loader's `ctx.api` - typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; given an {@link apiPrefix}, `createWebApp` also serves\n     * that backend over HTTP there: a request whose pathname starts with the prefix is dispatched before\n     * page routing with the same `env`/`waitUntil` platform context, and the backend's `Response` is\n     * returned untouched. The mount runs in `nifra dev` too. Without `apiPrefix` the backend is\n     * loader-only.\n     *\n     * **Request-scoped loader calls.** While a page renders, its loaders, actions and boundaries get a\n     * `ctx.api` bound to that request's platform identity: a backend handler reached through it sees the\n     * visitor's `c.clientIp` (derived under this app's `server.clientIp` trust declaration), `c.env` and\n     * `c.waitUntil`, so a per-caller rate limit or audit field keys on the real visitor. `c.clientIp` is\n     * the supported way to read the caller - identity travels in the platform, so rebuilding a `Request`\n     * does not lose it. Headers do NOT travel: the page request's `cookie` and `authorization` are never\n     * copied, so a loader call is anonymous unless the loader passes headers on the call itself. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is mounted at, such as `\"/api\"`. A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Unset or `\"\"`, nothing is\n     * mounted: the app serves pages only and `api` stays a loader-only `ctx.api`. Mounting is also a\n     * no-op when `api` does not expose the symbol mount.\n     *\n     * A page file under the prefix (`routes/api/report.tsx`) could never render - the backend answers\n     * first and its 404 is final - so `createWebApp` throws, naming the file. The same holds for every\n     * other pre-route mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the\n     * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that\n     * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its\n     * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on\n     * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404\n     * silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:\n     * leave it off to pass the full path through. `opaque` states why a mount whose routes nifra cannot\n     * read (better-auth's handler) is outside assurance; it is then listed as a known gap, with any\n     * routes it declares reported as declared.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: MountableApp<Env>;\n        readonly stripPrefix?: boolean;\n        readonly priority?: number;\n        readonly fallbackOn?: 404;\n        readonly opaque?: MountOptions<Env>[\"opaque\"];\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /**\n     * Live data refresh, from `live()` in `@nifrajs/web/live`. Loaders declare keys with `ctx.live()`;\n     * the app answers live loads at the runtime's load endpoint. Omit and nothing live is loaded.\n     */\n    readonly live?: LiveRuntimeHandle;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) - the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`, the server manifest's\n     * `copyChunks`). A production client build moves copy tables (`@nifrajs/i18n/copy`) into one chunk per\n     * locale; each page lists them for the browser and preloads its own. Omit ⇒ tables keep their values. */\n    readonly copyChunks?: Readonly<Record<string, string>>;\n    /**\n     * The app's locale routing, `defineI18nRouting()` from `@nifrajs/i18n/routing`, registered once:\n     * export it as `i18n` from `backend/framework.ts`. Every document then takes its locale from the\n     * URL: `<html lang dir>` from the registry unless the route's meta sets `lang`, a `Content-Language`\n     * header, and the locale each adapter's `useLocale()` and `<I18nProvider>` read. A route under a\n     * `[lang]` or `[[lang]]` directory is checked with its `matchSegment()` before any middleware: an\n     * unserved locale, or a page missing from it, is a 404, and a non-canonical prefix (`/en/x` when the\n     * default is unprefixed) redirects with a 308.\n     */\n    readonly i18n?: WebAppI18n;\n    /**\n     * Activation policy for framework-owned stylesheet links (default `\"blocking\"`). `\"deferred\"`\n     * emits `media=\"print\"` links; the generated client waits for them and switches them to `all` before\n     * mounting. Pair with an aggregate Vite stylesheet (`cssCodeSplit: false`) to prevent lazy-prefetch\n     * CSS insertion. Non-hydrated pages always keep their stylesheet links blocking.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Handed over as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker, unless the\n     * target carries a query string, which renders on demand as a hard request does. A set over\n     * 4 KB of JSON is served once from `/__nifra/prerendered.json?v=<version>`, cacheable for good, and\n     * pages hand over only that URL; `prerenderRoutes` writes the file into a static output. */\n    readonly prerenderedPaths?: readonly string[];\n    /**\n     * Pages a self-hosted build prerendered, answered from their file instead of rendered. `nifra build\n     * --target bun|node` wires this from its prerender pass. The page is served from the page route,\n     * so `use` middleware and every request hook run first; a request with a query string, a navigation\n     * data or component request, or a draft-mode visitor renders on demand as before. Ignored with\n     * {@link nonce}, whose documents need a nonce minted for their request.\n     */\n    readonly prerenderedPages?: PrerenderedPages;\n    /**\n     * Which pages and files each host serves, from `createHostPolicy()`. Evaluated before everything\n     * else the app answers (prerendered pages, mounts, the API, every page) and, in a `nifra build`\n     * server entry, before its static files too. A refused path answers the policy's refusal.\n     */\n    readonly hostPolicy?: HostPolicy;\n    /**\n     * Which cookies say who is signed in, for an app with a `keepAlive` route. A response that changes\n     * or deletes one rotates the readable identity epoch cookie, and every tab drops the pages it kept\n     * for the previous visitor. The session cookies of `@nifrajs/auth`, Better Auth and Auth.js count\n     * under their default names; name any other in `identityCookies`. Development reports, once per\n     * name, an `HttpOnly` cookie that changes and is in neither list (`NIFRA_KEEPALIVE_IDENTITY_COOKIE`).\n     */\n    readonly keepAlive?: KeepAliveServerOptions;\n    /**\n     * The files the build emitted, by request path: `buildAssets` from the generated server manifest.\n     * A {@link hostPolicy} rule's `buildAssets` token matches exactly these. `nifra dev` serves the\n     * client bundle and `public/` ahead of the app, so the app's own check never sees them there.\n     */\n    readonly buildAssets?: BuildAssetSet;\n    /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:\n     * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the\n     * team - unreleased feature names, internal hostnames, and \"don't touch X yet\" notes live there\n     * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */\n    readonly publishLocalGuidelines?: boolean;\n    /** Serve `/llms.txt` and `/llms-full.txt`: the page routes, and the backend routes when the backend\n     * is mounted over HTTP at {@link apiPrefix}, with their request and response schemas in the full\n     * text. **Off by default**: both are public and unauthenticated, and they list every route, admin\n     * and internal ones included. Turn it on for an app whose whole surface you would publish. */\n    readonly llmsTxt?: boolean;\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** In-memory reference cache for explicitly `static` boundary values. It never persists payloads\n     * across processes; operated/durable cache implementations stay outside the public framework. */\n    readonly staticBoundaryCache?: import(\"../boundary.js\").StaticBoundaryCache;\n    /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow. A failure a boundary answers is also written to the\n     * server's `logger` (under its `errorLogDetail`) whether or not this is set, exactly as an unhandled\n     * error is. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
+    "signature": "export interface CreateWebAppOptions<Env = unknown> {\n    readonly serverComponents?: import(\"../server-components/types.js\").ServerComponentRuntime;\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** Cache production module imports and layout preparation, never request data. Defaults to NODE_ENV === \"production\"; disable for a mutable manifest. */\n    readonly cacheRouteModules?: boolean;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /**\n     * Resolve a fresh CSP nonce for each document request. The value is applied to every\n     * framework-owned executable script; return `undefined` to keep the default nonce-free output.\n     * Nonce-bearing documents are marked `private, no-store` so the request-specific value is not\n     * replayed by browser, CDN, or ISR caches. The resolver does not declare a CSP header because the\n     * policy's allowed sources are app-specific.\n     */\n    readonly nonce?: NonceResolver<Env>;\n    /**\n     * A hash-based Content-Security-Policy from `createCspPolicy`, instead of `nonce`. A document then\n     * carries a nonce only when it needs one (it `defer()`s a value, or `meta` names the nonce in\n     * `unsafeInlineScript`); every other page is nonce-free, gets the same CSP header on every request,\n     * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.\n     */\n    readonly csp?: CspPolicy;\n    /** Experimental and unstable: features whose API may change in any release. */\n    readonly experimental?: {\n        /**\n         * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend\n         * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary\n         * as it settles. Needs `csp` (hashes), not `nonce`.\n         */\n        readonly ppr?: PprSetup;\n    };\n    /**\n     * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and\n     * the rest of {@link ServerOptions}.\n     *\n     * Needed because the `Server` is constructed in here, so a caller has no other way to reach its\n     * constructor: a page app could set no request timeout and no capacity gate, which are exactly the\n     * two knobs a production readiness check looks for. An SSR app wants them MORE than a backend does -\n     * a render is slow and allocation-heavy, so a burst that a JSON API would absorb is the one that\n     * exhausts the pod.\n     *\n     * Applies to the whole app, {@link mounts} and the {@link api} auto-mount included: the capacity gate\n     * sits at the fetch entry, ahead of the request hooks those are dispatched from.\n     */\n    readonly server?: ServerOptions;\n    /**\n     * Runs against the app BEFORE any page route is registered - the seam for `securityHeaders()`,\n     * `requestId()`, `logger()`, a rate limit, or anything else applied with `use`.\n     *\n     * ```ts\n     * createWebApp({\n     *   …,\n     *   use: (app) => {\n     *     app.use(securityHeaders())\n     *     app.use(requestId())\n     *   },\n     * })\n     * ```\n     *\n     * A callback rather than an array because `use` is overloaded - `Middleware`, `IdentityPlugin`,\n     * `ContextPlugin` - and only the real call site instantiates the right overload. The return value\n     * is ignored: this is for cross-cutting concerns, not for declaring routes (declare those on the\n     * returned app, where they get their types).\n     *\n     * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and\n     * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every\n     * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards would\n     * bind them to no page, and outside production it throws (`HOOK_AFTER_PAGES`). `requestId()` is\n     * exactly that case: it is a `derive`, so applied late it would leave every page without\n     * `c.requestId`. A `group()` is its own scope and stays allowed. Route assurance evidence is order-scoped the same\n     * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`\n     * even though it does still set it.\n     *\n     * `onRequest`/`onResponse` (and the response header/body hooks) are app-global arrays read at\n     * request time, so those alone DO work when added late. Using this seam for everything avoids\n     * having to remember which is which.\n     *\n     * Runs ahead of the {@link mounts} / {@link api} request hooks, so an `onRequest` middleware guards\n     * a mounted auth handler too.\n     *\n     * A `ContextPlugin` applied here takes runtime effect but cannot widen the declared return type of\n     * this function, so `c.requestId` is not typed on routes you declare afterwards. Named plugins are\n     * idempotent, so `app.use(requestId())` on the returned app recovers the TYPE without applying the\n     * plugin a second time.\n     */\n    readonly use?: (app: ReturnType<typeof server<Env>>) => void;\n    /** Injected into each loader's `ctx.api` - typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; given an {@link apiPrefix}, `createWebApp` also serves\n     * that backend over HTTP there: a request whose pathname starts with the prefix is dispatched before\n     * page routing with the same `env`/`waitUntil` platform context, and the backend's `Response` is\n     * returned untouched. The mount runs in `nifra dev` too. Without `apiPrefix` the backend is\n     * loader-only.\n     *\n     * **Request-scoped loader calls.** While a page renders, its loaders, actions and boundaries get a\n     * `ctx.api` bound to that request's platform identity: a backend handler reached through it sees the\n     * visitor's `c.clientIp` (derived under this app's `server.clientIp` trust declaration), `c.env` and\n     * `c.waitUntil`, so a per-caller rate limit or audit field keys on the real visitor. `c.clientIp` is\n     * the supported way to read the caller - identity travels in the platform, so rebuilding a `Request`\n     * does not lose it. Headers do NOT travel: the page request's `cookie` and `authorization` are never\n     * copied, so a loader call is anonymous unless the loader passes headers on the call itself. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is mounted at, such as `\"/api\"`. A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Unset or `\"\"`, nothing is\n     * mounted: the app serves pages only and `api` stays a loader-only `ctx.api`. Mounting is also a\n     * no-op when `api` does not expose the symbol mount.\n     *\n     * A page file under the prefix (`routes/api/report.tsx`) could never render - the backend answers\n     * first and its 404 is final - so `createWebApp` throws, naming the file. The same holds for every\n     * other pre-route mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the\n     * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that\n     * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its\n     * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on\n     * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404\n     * silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:\n     * leave it off to pass the full path through. `opaque` states why a mount whose routes nifra cannot\n     * read (better-auth's handler) is outside assurance; it is then listed as a known gap, with any\n     * routes it declares reported as declared.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: MountableApp<Env>;\n        readonly stripPrefix?: boolean;\n        readonly priority?: number;\n        readonly fallbackOn?: 404;\n        readonly opaque?: MountOptions<Env>[\"opaque\"];\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /**\n     * Live data refresh, from `live()` in `@nifrajs/web/live`. Loaders declare keys with `ctx.live()`;\n     * the app answers live loads at the runtime's load endpoint. Omit and nothing live is loaded.\n     */\n    readonly live?: LiveRuntimeHandle;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) - the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /** Locale key -> copy chunk URL (`buildClient`'s `BuildManifest.copyChunks`, the server manifest's\n     * `copyChunks`). A production client build moves copy tables (`@nifrajs/i18n/copy`) into one chunk per\n     * locale; each page lists them for the browser and preloads its own. Omit ⇒ tables keep their values. */\n    readonly copyChunks?: Readonly<Record<string, string>>;\n    /**\n     * The app's locale routing, `defineI18nRouting()` from `@nifrajs/i18n/routing`, registered once:\n     * export it as `i18n` from `backend/framework.ts`. Every document then takes its locale from the\n     * URL: `<html lang dir>` from the registry unless the route's meta sets `lang`, a `Content-Language`\n     * header, and the locale each adapter's `useLocale()` and `<I18nProvider>` read. A route under a\n     * `[lang]` or `[[lang]]` directory is checked with its `matchSegment()` before any middleware: an\n     * unserved locale, or a page missing from it, is a 404, and a non-canonical prefix (`/en/x` when the\n     * default is unprefixed) redirects with a 308.\n     */\n    readonly i18n?: WebAppI18n;\n    /**\n     * Activation policy for framework-owned stylesheet links (default `\"blocking\"`). `\"deferred\"`\n     * emits `media=\"print\"` links; the generated client waits for them and switches them to `all` before\n     * mounting. Pair with an aggregate Vite stylesheet (`cssCodeSplit: false`) to prevent lazy-prefetch\n     * CSS insertion. Non-hydrated pages always keep their stylesheet links blocking.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Handed over as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker, unless the\n     * target carries a query string, which renders on demand as a hard request does. A set over\n     * 4 KB of JSON is served once from `/__nifra/prerendered.json?v=<version>`, cacheable for good, and\n     * pages hand over only that URL; `prerenderRoutes` writes the file into a static output. */\n    readonly prerenderedPaths?: readonly string[];\n    /**\n     * Pages a self-hosted build prerendered, answered from their file instead of rendered. `nifra build\n     * --target bun|node` wires this from its prerender pass. The page is served from the page route,\n     * so `use` middleware and every request hook run first; a request with a query string, a navigation\n     * data or component request, or a draft-mode visitor renders on demand as before. Ignored with\n     * {@link nonce}, whose documents need a nonce minted for their request.\n     */\n    readonly prerenderedPages?: PrerenderedPages;\n    /**\n     * Which pages and files each host serves, from `createHostPolicy()`. Evaluated before everything\n     * else the app answers (prerendered pages, mounts, the API, every page) and, in a `nifra build`\n     * server entry, before its static files too. A refused path answers the policy's refusal.\n     */\n    readonly hostPolicy?: HostPolicy;\n    /**\n     * Which cookies say who is signed in, for an app with a `keepAlive` route. A response that changes\n     * or deletes one rotates the readable identity epoch cookie, and every tab drops the pages it kept\n     * for the previous visitor. The session cookies of `@nifrajs/auth`, Better Auth and Auth.js count\n     * under their default names; name any other in `identityCookies`. Development reports, once per\n     * name, an `HttpOnly` cookie that changes and is in neither list (`NIFRA_KEEPALIVE_IDENTITY_COOKIE`).\n     */\n    readonly keepAlive?: KeepAliveServerOptions;\n    /**\n     * The files the build emitted, by request path: `buildAssets` from the generated server manifest.\n     * A {@link hostPolicy} rule's `buildAssets` token matches exactly these. `nifra dev` serves the\n     * client bundle and `public/` ahead of the app, so the app's own check never sees them there.\n     */\n    readonly buildAssets?: BuildAssetSet;\n    /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:\n     * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the\n     * team - unreleased feature names, internal hostnames, and \"don't touch X yet\" notes live there\n     * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */\n    readonly publishLocalGuidelines?: boolean;\n    /** Serve `/llms.txt` and `/llms-full.txt`: the page routes, and the backend routes when the backend\n     * is mounted over HTTP at {@link apiPrefix}, with their request and response schemas in the full\n     * text. **Off by default**: both are public and unauthenticated, and they list every route, admin\n     * and internal ones included. Turn it on for an app whose whole surface you would publish. */\n    readonly llmsTxt?: boolean;\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** In-memory reference cache for explicitly `static` boundary values. It never persists payloads\n     * across processes; operated/durable cache implementations stay outside the public framework. */\n    readonly staticBoundaryCache?: import(\"../boundary.js\").StaticBoundaryCache;\n    /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow. A failure a boundary answers is also written to the\n     * server's `logger` (under its `errorLogDetail`) whether or not this is set, exactly as an unhandled\n     * error is. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
   },
   {
     "name": "CronError",
@@ -5489,7 +5516,7 @@
     "name": "DynamicBoundary",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>;\n};"
+    "signature": "export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>;\n    /** Experimental, partial prerendering: the hole ships its props and hydrates. Default `false`. */\n    readonly interactive?: boolean;\n    /** Experimental, partial prerendering: the hole's deadline in milliseconds. Default 5000. */\n    readonly timeout?: number;\n};"
   },
   {
     "name": "DynamicBoundaryBatch",
@@ -6259,8 +6286,8 @@
     "name": "FetchRouteData",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}, read?: DataText) => Promise<unknown>;",
-    "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). `read` is the {@link DataText} of the data on screen, which a custom\n * transport may ignore. */"
+    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}, purpose?: \"prefetch\", hosts?: readonly string[], read?: DataText) => Promise<unknown>;",
+    "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). `purpose` is `\"prefetch\"` when no navigation is waiting on the result.\n * `hosts` names the holes of the page on screen whose hosts reload in place\n * ({@link HOLE_FILL_HEADER}). `read` is the {@link DataText} of the data on screen, which a custom\n * transport may ignore. */"
   },
   {
     "name": "FetchTransportOptions",
@@ -6765,6 +6792,107 @@
     "package": "@nifrajs/otel",
     "signature": "export declare class Histogram {\n    readonly name: string;\n    readonly help: string;\n    private readonly series;\n    private readonly buckets;\n    constructor(name: string, help: string, buckets: readonly number[]);\n    observe(value: number, labels?: Labels): void;\n    render(): string;\n}",
     "doc": "/** Latency-style distribution over fixed buckets (seconds). Renders Prometheus cumulative buckets. */"
+  },
+  {
+    "name": "Hole",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function Hole<Data>(props: HoleProps<Data>): ComponentChildren;",
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Preact never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * When the page reloads, after an action or a live change, the host takes the new fill in place: an\n * interactive root re-renders with the new props and keeps its state. After a client navigation the\n * hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "Hole",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function Hole<Data>(props: HoleProps<Data>): ReactNode;",
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host React never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.\n * When the page reloads, after an action or a live change, the host takes the new fill in place: an\n * interactive root re-renders with the new props and keeps its state. After a client navigation the\n * hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "Hole",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function Hole<Data>(props: HoleProps<Data>): JSX.Element;",
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Solid never fills: the PPR runtime puts the server's\n * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. When the\n * page reloads, after an action or a live change, the same host takes the new fill in place: an\n * interactive root gets the new props through its store and keeps its state. After a client\n * navigation the hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "Hole",
+    "kind": "const",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare const Hole: new <Data>(props: HoleProps<Data> & {} & import(\"vue\").VNodeProps & import(\"vue\").AllowedComponentProps & import(\"vue\").ComponentCustomProps) => import(\"vue\").CreateComponentPublicInstanceWithMixins<HoleProps<Data> & {}, {}, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, import(\"vue\").PublicProps, {}, false, {}, HoleSlots, {}, {}, string, {}, any, import(\"vue\").ComponentProvideOptions, {\n    P: {};\n    B: {};\n    D: {};\n    C: {};\n    M: {};\n    Defaults: {};\n}, HoleProps<Data> & {}, {}, {}, {}, {}, {}>;",
+    "doc": "/**\n * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.\n *\n * In a shared shell the hole is an empty host Vue never fills or diffs: the PPR runtime puts the\n * server's HTML into it, and an interactive hole then hydrates as its own app from the frame's props.\n * When the page reloads, after an action or a live change, the host takes the new fill in place: an\n * interactive app re-renders with the new props and keeps its state. After a client navigation the\n * hole renders like any streamed boundary.\n */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    readonly render: (data: Data) => ComponentChildren;\n    readonly fallback?: ComponentChildren;\n    readonly interactive?: boolean;\n}",
+    "doc": "/** The fields of a route's boundary declaration a hole renders from. */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    readonly render: (data: Data) => ReactNode;\n    readonly fallback?: ReactNode;\n    readonly interactive?: boolean;\n}",
+    "doc": "/** The fields of a route's boundary declaration a hole renders from. */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-solid",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    readonly render: (data: Data) => JSX.Element;\n    readonly fallback?: () => JSX.Element;\n    readonly interactive?: boolean;\n}",
+    "doc": "/**\n * The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX\n * evaluated at import is one DOM node, so every place that shows it would take it from the last.\n */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface HoleDefinition<Data> {\n  readonly name: string\n  readonly render: (data: Data) => SvelteUI\n  readonly fallback?: SvelteUI\n  readonly interactive?: boolean\n}",
+    "doc": "/** The fields of a route's boundary declaration a hole renders from. */"
+  },
+  {
+    "name": "HoleDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface HoleDefinition<Data> {\n    readonly name: string;\n    render(data: Data): VNodeChild;\n    readonly fallback?: VNodeChild;\n    readonly interactive?: boolean;\n}",
+    "doc": "/**\n * The fields of a route's boundary declaration a hole renders from: `h()` output, not templates.\n * `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.\n */"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n    /** Shown when the hole's loader failed. Default: nothing. */\n    readonly error?: ComponentChildren;\n}"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n    /** Shown when the hole's loader failed. Default: nothing. */\n    readonly error?: ReactNode;\n}"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-solid",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n    /** Shown when the hole's loader failed. Default: nothing. */\n    readonly error?: JSX.Element;\n}"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface HoleProps<Data> {\n  of: HoleDefinition<Data>\n  state: HoleState | undefined\n  /** Shown when the hole's loader failed. Default: nothing. */\n  error?: Snippet\n}",
+    "doc": "/** Hand-written types for `Hole.svelte`, as for `Await.svelte`. */"
+  },
+  {
+    "name": "HoleProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface HoleProps<Data> {\n    readonly of: HoleDefinition<Data>;\n    readonly state: HoleState | undefined;\n}"
+  },
+  {
+    "name": "HoleState",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface HoleState {\n  readonly status: \"unresolved\" | \"pending\" | \"ready\" | \"error\"\n  readonly data?: unknown\n  readonly ppr?: true\n  readonly fill?: unknown\n}",
+    "doc": "/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and\n * `fill` that host's refill when the page reloads. */"
   },
   {
     "name": "HookKind",
@@ -10723,10 +10851,23 @@
     "doc": "/** Dispatched on a page's element once it is back in the document. */"
   },
   {
+    "name": "PPR_DEFAULTS",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const PPR_DEFAULTS: ResolvedPprOptions;"
+  },
+  {
     "name": "PREDICTION_LAB_SEED",
     "kind": "const",
     "package": "@nifrajs/testing",
     "signature": "export declare const PREDICTION_LAB_SEED = 1347568964;"
+  },
+  {
+    "name": "PREFETCH_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const PREFETCH_HEADER = \"x-nifra-prefetch\";",
+    "doc": "/**\n * Sent beside {@link DATA_HEADER} by a prefetch. A partially prerendered route answers it with its\n * shell data and starts no hole: nothing could cancel that work if the link is never followed.\n */"
   },
   {
     "name": "PRE_HYDRATION_GUARD",
@@ -11102,6 +11243,40 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface PoweredByOptions {\n    /** Header name. Default `\"x-powered-by\"`. */\n    readonly header?: string;\n    /** Header value. Default `\"Nifra\"`. */\n    readonly value?: string;\n    /** Do not overwrite an existing header by default. */\n    readonly respectExisting?: boolean;\n}"
+  },
+  {
+    "name": "PprConfig",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PprConfig {\n    /** From `compileShells` for this deployment; `\"unchecked-development\"` is refused in production. */\n    readonly shellChecks: ShellCheckRecord | \"unchecked-development\";\n    /** Overrides for the defaults in `PPR_DEFAULTS`. */\n    readonly options?: PprOptions;\n    /**\n     * The deployment's public origin, such as `https://shop.example`, given to `shellLoader` and to the\n     * shell's `meta` as `origin`. Without it both get `\"\"`: a shell is shared, so no visitor's Host\n     * header may supply it.\n     */\n    readonly origin?: string;\n    /**\n     * A store the app's processes share, such as `new KVCacheStore(env.SHELLS)`, behind each process's\n     * own shells and shared hole frames: a process that has not built one reads it from here. Needs\n     * `storeSecret` and checked shells. A route whose tags the store cannot drop keeps its entries\n     * in-process.\n     */\n    readonly store?: CacheStore;\n    /**\n     * Signs every entry written to `store`, so a store other services can write cannot hand visitors\n     * a page this app did not build. At least 32 characters, the same in every process.\n     */\n    readonly storeSecret?: string;\n    /**\n     * The platform's name for this deployment, such as a commit or a version id. Shells are already\n     * kept apart by the client build and by each route's checked shell code; this adds to that.\n     */\n    readonly deployment?: string;\n}"
+  },
+  {
+    "name": "PprOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PprOptions {\n    /** A hole's deadline when its boundary sets no `timeout`. */\n    readonly holeTimeoutMs?: number;\n    /** The largest `timeout` a boundary may set, and the cap on a route's total deadline. */\n    readonly maxHoleTimeoutMs?: number;\n    /** Added to the largest hole timeout to give the route's total deadline. */\n    readonly totalDeadlineSlackMs?: number;\n    /** Dynamic plus shared boundaries one PPR route may declare. */\n    readonly maxHolesPerRoute?: number;\n    /** Shell entries one route may keep in the memory store. */\n    readonly shellEntriesPerRoute?: number;\n    /**\n     * Bytes every shell entry in the memory store may hold together: its document, an estimate of the\n     * heap its loader data holds, and its key. An entry over the whole budget is served but not kept.\n     */\n    readonly shellStoreBytes?: number;\n    /** How long a `notFound()` shell is cached. */\n    readonly notFoundTtlSeconds?: number;\n    /** Shell builds one route may run at once; requests over it get the blocking render. */\n    readonly shellBuildConcurrency?: number;\n    /**\n     * Once the store is full, requests one shell key must see before its shell is built and may push\n     * an older one out. The ones before stream the page whole, each hole as it settles, so a path\n     * visited once cannot evict a popular one. While the store has room, every key builds at once.\n     */\n    readonly shellAfterRequests?: number;\n    /** A failing rebuild keeps serving the stale shell for `revalidate` times this... */\n    readonly staleOnErrorFactor?: number;\n    /** ...but never longer than this. */\n    readonly maxStaleOnErrorSeconds?: number;\n    /** Requests that get the blocking render instead of a stream: a user-agent pattern or a predicate. */\n    readonly blockingFor?: RegExp | ((request: Request) => boolean);\n    /** Abandoned invocations at which one boundary stops being admitted. */\n    readonly boundaryAbandonedTrip?: number;\n    /** Abandoned invocations per process at which boundaries holding any stop being admitted. */\n    readonly processAbandonedTrip?: number;\n    /** Abandoned invocations per process at which no hole is admitted. */\n    readonly admissionStop?: number;\n    /** How long after its abort a still-pending invocation counts as abandoned. */\n    readonly abandonGraceMs?: number;\n    /** PPR responses per process with hole loaders still running. */\n    readonly maxHoleWork?: number;\n    /** How long after the total deadline an undrained stream is kept before it is aborted. */\n    readonly writeGraceMs?: number;\n    /** Unsent bytes one response may queue. */\n    readonly maxUnsentBytesPerResponse?: number;\n    /** Unsent bytes every PPR response in the process may queue together. */\n    readonly maxUnsentBytes?: number;\n    /** Serialized size of one hole frame. */\n    readonly frameBytes?: number;\n    /** The shell is padded to at least this many bytes; Safari holds back smaller first chunks. */\n    readonly minShellBytes?: number;\n    /**\n     * When hole HTML is checked for script, handlers and other escapes before it is framed:\n     * `\"always\"`, or `\"development\"` only. The check costs about 20 us per KB of hole HTML; turn it off\n     * in production only when a strict CSP already blocks inline script.\n     */\n    readonly holeHtmlValidation?: \"always\" | \"development\";\n    /**\n     * Whether a page left with holes pending posts a cancel beacon, so their loaders stop before their\n     * deadline. Off by default on Cloudflare Workers, where the beacon reaches another isolate.\n     */\n    readonly cancelBeacon?: boolean;\n    /**\n     * How long a process serves a shell or shared hole it wrote to or read from the shared store before\n     * reading it there again, so a purge another process made reaches this one. 0 reads it every time.\n     */\n    readonly sharedRecheckMs?: number;\n}",
+    "doc": "/** Overrides for {@link PPR_DEFAULTS}. Every field is optional; an omitted one keeps its default. */"
+  },
+  {
+    "name": "PprSetup",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PprSetup {\n    readonly [PPR_SETUP]: (environment: PprEnvironment) => PprIntegration;\n}",
+    "doc": "/** What `partialPrerendering()` returns for `createWebApp({ experimental: { ppr } })`. */"
+  },
+  {
+    "name": "PprShells",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PprShells {\n    /**\n     * Drop every shell and shared hole frame whose `revalidateTags` listed `tag`, here and in the\n     * shared store; a build of either running now is not kept.\n     */\n    invalidateTag(tag: string): Promise<void>;\n    stats(): PprStats;\n}",
+    "doc": "/** One app's shell cache. */"
+  },
+  {
+    "name": "PprStats",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PprStats = PprServerStats;",
+    "doc": "/** Admission, shedding and unsent-byte counters of one app's partially prerendered responses. */"
   },
   {
     "name": "PredictedExecutionResult",
@@ -12265,7 +12440,7 @@
     "name": "RenderAdapter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the\n     * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data); a\n     * document that sends a policy keeps the nonce only when the returned HTML carries it. Return\n     * `undefined` when the render suspended on something only `renderToStream` waits for (React's\n     * `use` or `lazy` inside `<Suspense>`): the page is then streamed instead.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): string | undefined | Promise<string | undefined>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n    /**\n     * Set when a render can produce markup that belongs outside the app root. Every render is then\n     * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.\n     */\n    readonly documentParts?: boolean;\n    /**\n     * Render the chain and return only the HTML of the slot named `name`, or `undefined` when the\n     * render has no such slot. Called for an {@link SWAP_HEADER} request; an adapter without it, or a\n     * render without the slot, answers with the whole document, which the client loads normally.\n     */\n    renderSlot?(chain: readonly unknown[], props: RenderProps, name: string): string | undefined | Promise<string | undefined>;\n}",
+    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Render the chain to a complete HTML string when no content is deferred. `options.nonce` is the\n     * document's CSP nonce, for any inline script the renderer emits (Solid's hydration data); a\n     * document that sends a policy keeps the nonce only when the returned HTML carries it. Return\n     * `undefined` when the render suspended on something only `renderToStream` waits for (React's\n     * `use` or `lazy` inside `<Suspense>`): the page is then streamed instead.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): string | undefined | Promise<string | undefined>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n    /**\n     * Render one piece of UI (a boundary's `render` result or `fallback`) to an HTML string on its own,\n     * outside the route chain. `ui` produces it: call it inside the render, since a framework whose\n     * markup is made as it is evaluated (Solid) needs its render context there. `idPrefix` namespaces\n     * any ids the framework generates, so two fragments rendered separately never collide. Required for\n     * partial prerendering; optional otherwise.\n     */\n    renderFragment?(ui: () => unknown, options: {\n        readonly idPrefix?: string;\n    }): string | Promise<string>;\n    /**\n     * Set when a render can produce markup that belongs outside the app root. Every render is then\n     * passed `options.parts` to fill; an adapter without it never is, and pays nothing for the seam.\n     */\n    readonly documentParts?: boolean;\n    /**\n     * Render the chain and return only the HTML of the slot named `name`, or `undefined` when the\n     * render has no such slot. Called for an {@link SWAP_HEADER} request; an adapter without it, or a\n     * render without the slot, answers with the whole document, which the client loads normally.\n     */\n    renderSlot?(chain: readonly unknown[], props: RenderProps, name: string): string | undefined | Promise<string | undefined>;\n}",
     "doc": "/**\n * The seam every render adapter implements. New adapters should prove these invariants with\n * `assertRenderAdapterConformance`; framework-specific behavior remains locally tested.\n */"
   },
   {
@@ -12359,6 +12534,13 @@
     "kind": "interface",
     "package": "@nifrajs/agent-app",
     "signature": "export interface RepairRequiredView extends EventViewBase {\n    readonly kind: \"repair.required\";\n    readonly turnId?: string;\n    readonly taskId: string;\n    readonly verification: \"check\" | \"assure\" | \"test\";\n    readonly capabilities: readonly string[];\n}"
+  },
+  {
+    "name": "RepeatedPrefix",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface RepeatedPrefix {\n    /** Bytes the producer sends again in later responses and never changes. */\n    readonly source: Uint8Array;\n    /** How many of `source`'s leading bytes the chunk starts with. */\n    readonly length: number;\n}",
+    "doc": "/** What {@link markRepeatedPrefix} recorded for a chunk. */"
   },
   {
     "name": "ReplayBackend",
@@ -12836,7 +13018,7 @@
     "name": "RevalidateTagsInput",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RevalidateTagsInput {\n    readonly params: Readonly<Record<string, string>>;\n    readonly url: URL;\n}",
+    "signature": "export interface RevalidateTagsInput {\n    readonly params: Readonly<Record<string, string>>;\n    /**\n     * The request's URL. On a partially prerendered route and its shared holes, the shell's: the\n     * configured origin, the path and the declared variations, never the visitor's Host or other query.\n     */\n    readonly url: URL;\n}",
     "doc": "/** What a `revalidateTags` function is given: the URL and route params only, both already public. */"
   },
   {
@@ -13307,7 +13489,7 @@
     "name": "RouteModule",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    /** Layout loader that must run before actions and is not retained across the action's render. */\n    readonly gate?: boolean;\n    readonly action?: Action;\n    /**\n     * Backend half only: which browser origins may POST to {@link action}. When omitted, a request\n     * whose `Origin` is another site's is refused with 403 before middleware, gates or the action run;\n     * requests without an `Origin` (non-browser clients) pass. An array allows exactly those origins\n     * (and refuses a request without one); a function decides, receiving `null` when there is none.\n     * Use it for a callback a third party posts to, such as an identity provider's `form_post`.\n     * `Origin` is browser-enforced, not authentication: keep the action's own auth checks.\n     */\n    readonly allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    /**\n     * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live\n     * refresh) fresh data. By default a reload keeps the identity of every part of `data` and the layouts'\n     * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer\n     * that memoizes on identity skips it. Opt out for a page whose code compares `data` against its value\n     * from before the reload, or whose rows re-render whatever their identity, which then pay the\n     * comparison for nothing. Client-only.\n     */\n    readonly shareData?: boolean;\n    /**\n     * Keep this page mounted after the visitor leaves it, so back and forward show it again as it was\n     * left: its component state, form fields, inner scroll offsets and focus. At most three pages are\n     * kept per tab, each for at most 10 minutes; a kept page is shown again only by a back or forward to\n     * its own history entry, and its data reloads in place. A sign-in or sign-out drops every kept page.\n     * Client-only.\n     */\n    readonly keepAlive?: true | KeepAliveOptions;\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the\n     * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`\n     * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -\n     * a root status page renders alone and an `_error` inside its layouts without their data, with the\n     * same status. `false` always renders them that way, and runs no layout loader for them.\n     */\n    readonly inLayouts?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /**\n     * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or\n     * a function of the route's params and URL (`({ params }) => [\\`product:${params.id}\\`]`) for tags\n     * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.\n     */\n    readonly revalidateTags?: RevalidateTags;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
+    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    /** Layout loader that must run before actions and is not retained across the action's render. */\n    readonly gate?: boolean;\n    readonly action?: Action;\n    /**\n     * Backend half only: which browser origins may POST to {@link action}. When omitted, a request\n     * whose `Origin` is another site's is refused with 403 before middleware, gates or the action run;\n     * requests without an `Origin` (non-browser clients) pass. An array allows exactly those origins\n     * (and refuses a request without one); a function decides, receiving `null` when there is none.\n     * Use it for a callback a third party posts to, such as an identity provider's `form_post`.\n     * `Origin` is browser-enforced, not authentication: keep the action's own auth checks.\n     */\n    readonly allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /**\n     * Experimental, backend half only: the loader of a partially prerendered page's shared shell. It\n     * receives no request, so its output is the same for every visitor and the shell is cached.\n     */\n    readonly shellLoader?: (ctx: ShellCtx) => unknown;\n    /** Experimental, backend half only: the schema of what {@link shellLoader} returns. */\n    readonly shellOutput?: StandardSchemaV1;\n    /**\n     * Experimental, backend half only: query parameters that select a different shell, each with its\n     * closed set of values (`{ search: { color: [\"red\", \"blue\"] } }`). Any other parameter, or a value\n     * outside its set, builds the default shell; holes still read the whole query.\n     */\n    readonly shellVariations?: ShellVariations;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    /**\n     * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live\n     * refresh) fresh data. By default a reload keeps the identity of every part of `data` and the layouts'\n     * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer\n     * that memoizes on identity skips it. Opt out for a page whose code compares `data` against its value\n     * from before the reload, or whose rows re-render whatever their identity, which then pay the\n     * comparison for nothing. Client-only.\n     */\n    readonly shareData?: boolean;\n    /**\n     * Keep this page mounted after the visitor leaves it, so back and forward show it again as it was\n     * left: its component state, form fields, inner scroll offsets and focus. At most three pages are\n     * kept per tab, each for at most 10 minutes; a kept page is shown again only by a back or forward to\n     * its own history entry, and its data reloads in place. A sign-in or sign-out drops every kept page.\n     * Client-only.\n     */\n    readonly keepAlive?: true | KeepAliveOptions;\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the\n     * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`\n     * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -\n     * a root status page renders alone and an `_error` inside its layouts without their data, with the\n     * same status. `false` always renders them that way, and runs no layout loader for them.\n     */\n    readonly inLayouts?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /**\n     * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or\n     * a function of the route's params and URL (`({ params }) => [\\`product:${params.id}\\`]`) for tags\n     * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.\n     */\n    readonly revalidateTags?: RevalidateTags;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
     "doc": "/** A route module - the default component + optional loader / action / meta. */"
   },
   {
@@ -14591,14 +14773,14 @@
     "name": "ServerComponentRuntime",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerComponentRuntime {\n    owns(routeId: string): boolean;\n    capabilities(routeId: string): readonly string[];\n    classify(request: Request, routeId: string): import(\"./protocol.js\").ComponentRequest | undefined;\n    execute(routeId: string, context: ServerComponentContext, selection?: import(\"./protocol.js\").ComponentRequest, nonce?: string): Promise<ComponentState>;\n    response(state: ComponentState, selection: import(\"./protocol.js\").ComponentRequest): Response;\n    failure(error: unknown): Response;\n}",
+    "signature": "export interface ServerComponentRuntime {\n    owns(routeId: string): boolean;\n    capabilities(routeId: string): readonly string[];\n    classify(request: Request, routeId: string): import(\"./protocol.js\").ComponentRequest | undefined;\n    execute(routeId: string, context: ServerComponentContext, selection?: import(\"./protocol.js\").ComponentRequest, nonce?: string): Promise<ComponentState>;\n    response(state: ComponentState, selection: import(\"./protocol.js\").ComponentRequest): Response;\n    failure(error: unknown): Response;\n    /** Whether the route's partially prerendered holes may show server components. */\n    hosts?(routeId: string): boolean;\n    /** Render `component` as the route's hole `key`, with the hole loader's output as its input. */\n    hole?(routeId: string, component: object, key: string, input: unknown, context: ServerComponentContext): Promise<ComponentRecord>;\n}",
     "doc": "/** Optional seam passed to createWebApp; disabled applications have no runtime import of this feature. */"
   },
   {
     "name": "ServerComponentsOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerComponentsOptions {\n    readonly build: string;\n    readonly adapter: ServerComponentRenderAdapter;\n    readonly owners: Readonly<Record<string, ComponentOwner>>;\n    readonly capabilities?: readonly CapabilityDefinition[];\n    readonly assets?: readonly string[];\n}"
+    "signature": "export interface ServerComponentsOptions {\n    readonly build: string;\n    readonly adapter: ServerComponentRenderAdapter;\n    readonly owners: Readonly<Record<string, ComponentOwner>>;\n    /**\n     * Experimental: route id to the server components its partially prerendered holes may show, each\n     * through `serverHole`. A route is an owner or hosts holes, never both.\n     */\n    readonly holes?: Readonly<Record<string, ComponentHoles>>;\n    readonly capabilities?: readonly CapabilityDefinition[];\n    readonly assets?: readonly string[];\n}"
   },
   {
     "name": "ServerComponentsPluginOptions",
@@ -14916,6 +15098,20 @@
     "doc": "/** Options for {@link shapeRows}. */"
   },
   {
+    "name": "SharedBoundary",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"shared\";\n    readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>;\n    /** The hole ships its props and hydrates. Default `false`. */\n    readonly interactive?: boolean;\n    /** How long a visitor waits for a build in milliseconds, then gets the error slot. Default 5000. */\n    readonly timeout?: number;\n};",
+    "doc": "/**\n * Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell\n * from a request-free context and cached on its own `revalidate`, then written right after the shell.\n * Its loader entry in `boundaryLoaders` needs `revalidate`.\n */"
+  },
+  {
+    "name": "SharedHoleCtx",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface SharedHoleCtx extends ShellCtx {\n    readonly live: (...keys: string[]) => void;\n}",
+    "doc": "/**\n * Experimental: what a shared hole's loader receives. The keys it declares are kept with the built\n * entry and watched for every visitor it serves; a change reloads the hole, which the shared entry\n * answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.\n */"
+  },
+  {
     "name": "SharedKey",
     "kind": "type",
     "package": "@nifrajs/content",
@@ -14935,6 +15131,38 @@
     "package": "@nifrajs/middleware",
     "signature": "export type ShedReason = \"inflight\" | \"loop-lag\" | \"queue-timeout\" | \"policy\" | \"cancelled\";",
     "doc": "/**\n * Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/core/budget` bounds\n * request *duration*; neither stops a healthy instance from accepting more *concurrent* work than it\n * can finish. This gate admits on live capacity evidence - in-flight count + event-loop lag - briefly\n * queues at the edge, and sheds the rest with `429` + `Retry-After`, so p99 stays bounded under load\n * instead of collapsing.\n *\n * Public mechanics (in-flight + loop lag) know nothing about tenants. An application-supplied {@link AdmissionPolicy}\n * hook layers tenant priority and reserved capacity on top without leaking\n * those concerns into the OSS core.\n *\n * Wire it as the server's `admission` option (NOT an `onRequest` hook - a hook disables the native\n * route table). Off by default: when unset, the request path is untouched.\n */"
+  },
+  {
+    "name": "ShellCanaryFinding",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ShellCanaryFinding {\n    readonly path: string;\n    readonly via: CanaryCarrier;\n    /** The shared hole whose frame carried it; absent when the shell did. */\n    readonly hole?: string;\n}"
+  },
+  {
+    "name": "ShellCanaryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ShellCanaryOptions {\n    /** The origin the requests are made against. Default `http://canary.invalid`. */\n    readonly origin?: string;\n}"
+  },
+  {
+    "name": "ShellCheckError",
+    "kind": "class",
+    "package": "@nifrajs/web",
+    "signature": "export declare class ShellCheckError extends Error {\n    readonly routeId: string;\n    readonly chain: readonly string[];\n    readonly name = \"ShellCheckError\";\n    constructor(routeId: string, chain: readonly string[]);\n}"
+  },
+  {
+    "name": "ShellCheckRecord",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ShellCheckRecord {\n    readonly v: 1;\n    readonly deployment: string;\n    /** Route id to the sha256 of the checked shell bundle. */\n    readonly routes: Readonly<Record<string, string>>;\n    /** Route id to the shared holes whose loaders were checked in that bundle: only these are stored. */\n    readonly sharedHoles?: Readonly<Record<string, readonly string[]>>;\n}",
+    "doc": "/**\n * Which routes passed the shell check for one deployment. The server shares a shell only for a route\n * listed here under its own deployment; anything else renders blocking (fail closed).\n */"
+  },
+  {
+    "name": "ShellCtx",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ShellCtx {\n    /** `\"shell\"`: built on demand at runtime, under the same rules as a build. */\n    readonly phase: \"build\" | \"shell\";\n    /** The deployment's origin from config, never from a Host header. */\n    readonly origin?: string;\n    /** Decoded params, as the route pattern matched them. */\n    readonly params: Readonly<Record<string, string>>;\n    readonly locale: string | undefined;\n    /** The route's declared `shellVariations` this request selected: declared keys and values only. */\n    readonly variations: Readonly<Record<string, string>>;\n    /** Aborts on the shell build deadline, never on one visitor's disconnect. */\n    readonly signal: AbortSignal;\n    /** The in-process api, unbound to any request: build-safe calls only, as in a prerender. */\n    readonly api: unknown;\n}",
+    "doc": "/**\n * Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or\n * search: the shell is shared by every visitor whose URL maps to the same params and locale.\n */"
   },
   {
     "name": "ShouldRevalidate",
@@ -15703,6 +15931,13 @@
     "kind": "interface",
     "package": "@nifrajs/client",
     "signature": "export interface Subscription {\n    /** Stop the subscription: aborts the live stream and cancels any pending reconnect. */\n    close(): void;\n}"
+  },
+  {
+    "name": "SvelteUI",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface SvelteUI {\n    readonly component: Component<Record<string, unknown>>;\n    readonly props: Record<string, unknown>;\n}",
+    "doc": "/**\n * What a Svelte boundary's `render` and `fallback` return: a component and the props it renders with.\n * Svelte components compile from files, so a hole's output is this pair instead of a node.\n */"
   },
   {
     "name": "SvgMarkupRules",
@@ -17806,6 +18041,13 @@
     "doc": "/**\n * Check a route's success or status-specific error payload. Plain `status()` results retain their\n * status while enforcement replaces only the body with the validator's output. A `c.json(...)`\n * reply is held to the contract through the value it was built from (`jsonReply`). Any other raw\n * `Response` remains an explicit transport escape hatch because inspecting it would consume\n * streams or alter redirects; assurance/static checks must govern that path separately.\n */"
   },
   {
+    "name": "checkShellCanaries",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function checkShellCanaries(app: {\n    fetch(request: Request): Response | Promise<Response>;\n}, paths: readonly string[], options?: ShellCanaryOptions): Promise<readonly ShellCanaryFinding[]>;",
+    "doc": "/**\n * The canary check. Each path is requested through the app's own middleware and gates with a\n * unique value in a cookie, an `Authorization` header, a custom header and the query, until a\n * response carries a shell (`shellAfterRequests` decides which request builds it) and a built frame\n * for each shared hole, and those are scanned for every value the path's requests carried. It\n * catches visitor data the app keeps in module state, which no import check sees. Run it against a\n * fresh app before it serves traffic: a shell or frame already cached was built without the canaries.\n */"
+  },
+  {
     "name": "checkSlotCss",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -18037,6 +18279,13 @@
     "doc": "/** Generate a typed module with static validation code. Run at build time, then import its export at runtime. */"
   },
   {
+    "name": "compileShells",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function compileShells(options: CompileShellsOptions): Promise<ShellCheckRecord>;",
+    "doc": "/**\n * Bundle each route's shell (its page and layout modules, its backend `shellLoader`, and nothing else)\n * and refuse it when the emitted code reaches a request-scoped module. A module counts only\n * when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose\n * backend half has no `shellLoader` are skipped. Bun only.\n */"
+  },
+  {
     "name": "compileVue",
     "kind": "function",
     "package": "@nifrajs/web-vue",
@@ -18130,7 +18379,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function compression(options?: CompressionOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
-    "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs\n * on every nifra runtime including the edge; gzip is the one encoding `CompressionStream`\n * guarantees everywhere, so brotli isn't offered.\n *\n * Built on the portable `onResponseBody` tier for framework-serialized bytes, with a stream-safe raw\n * fallback for handler-returned/proxied Responses. The common JSON path stays on Node's direct\n * writer; raw streams are compressed incrementally without being fully buffered.\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible\n * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds\n * `Vary: Accept-Encoding` to every response it would compress for a gzip-accepting client, the\n * identity one sent to any other client included.\n *\n * **Security (BREACH).** Compression makes the response length depend on its content, so a response\n * that mixes a secret with attacker-reflected input leaks the secret through the compressed size\n * (the BREACH class of attacks). This applies to any HTTP compression, not this middleware\n * specifically. Nifra's own CSRF tokens are HMAC-signed per session and safe to compress, but if a\n * response body reflects request input **and** carries a per-request secret, exclude that route via\n * `compressible`/route scoping, or split the secret and the reflection into separate responses.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
+    "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs\n * on every nifra runtime including the edge; gzip is the one encoding `CompressionStream`\n * guarantees everywhere, so brotli isn't offered.\n *\n * Built on the portable `onResponseBody` tier for framework-serialized bytes, with a stream-safe raw\n * fallback for handler-returned/proxied Responses. The common JSON path stays on Node's direct\n * writer; raw streams are compressed incrementally without being fully buffered.\n *\n * On Cloudflare Workers it does nothing: the runtime gzips any body sent with `Content-Encoding:\n * gzip` again, and the platform compresses responses for clients that accept it.\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible\n * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds\n * `Vary: Accept-Encoding` to every response it would compress for a gzip-accepting client, the\n * identity one sent to any other client included.\n *\n * **Security (BREACH).** Compression makes the response length depend on its content, so a response\n * that mixes a secret with attacker-reflected input leaks the secret through the compressed size\n * (the BREACH class of attacks). This applies to any HTTP compression, not this middleware\n * specifically. Nifra's own CSRF tokens are HMAC-signed per session and safe to compress, but if a\n * response body reflects request input **and** carries a per-request secret, exclude that route via\n * `compressible`/route scoping, or split the secret and the reflection into separate responses.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
   },
   {
     "name": "computeEffectDigest",
@@ -19272,6 +19521,13 @@
     "signature": "export declare function defineServerComponent<Input, Props, View>(definition: ServerComponentDefinition<Input, Props, View>, reference?: string): ServerComponent<Input, Props, View>;"
   },
   {
+    "name": "defineShellLoader",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const defineShellLoader: <Data>(loader: (ctx: ShellCtx) => Data | Promise<Data>) => ((ctx: ShellCtx) => Data | Promise<Data>);",
+    "doc": "/** Types a backend half's `shellLoader` from its context; returns it unchanged. */"
+  },
+  {
     "name": "defineTool",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -20266,6 +20522,13 @@
     "doc": "/**\n * Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200`\n * (the process is serving). Readiness runs each `check` and returns `200 { status: \"ok\", checks }`\n * when all pass, or `503 { status: \"error\", checks }` when any fail (a thrown check counts as failed).\n * Both are `Cache-Control: no-store`.\n *\n * Apply it **before** auth guards so the endpoints stay public (`beforeHandle` is order-scoped):\n *\n * ```ts\n * app.use(healthcheck({ checks: { db: () => db.ping() } })).use(bearer({ verify }))\n * ```\n */"
   },
   {
+    "name": "holeComponents",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function holeComponents(client: ComponentClientAdapter | undefined): void;",
+    "doc": "/**\n * Experimental: how the client islands inside partially prerendered holes that show server\n * components mount, as the adapter's component client, such as `vueComponentClient({ islands })`;\n * `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a\n * hole shows its error slot.\n */"
+  },
+  {
     "name": "hotUpdateNeedsReload",
     "kind": "const",
     "package": "@nifrajs/web-preact",
@@ -20771,6 +21034,12 @@
     "doc": "/** Whether a bare specifier names one of {@link SERVER_PACKAGES} or a database driver entry. */"
   },
   {
+    "name": "isSvelteUI",
+    "kind": "const",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare const isSvelteUI: (value: unknown) => value is SvelteUI;"
+  },
+  {
     "name": "isTerminalApprovalState",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
@@ -21011,6 +21280,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function markIdempotencySafeToRetry(context: object): void;",
     "doc": "/**\n * Opt a concrete 5xx response into releasing its idempotency reservation, but only while the\n * request-local effect scope still proves that no owned effect began.\n */"
+  },
+  {
+    "name": "markRepeatedPrefix",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markRepeatedPrefix(chunk: Uint8Array, source: Uint8Array, length: number): void;",
+    "doc": "/**\n * Record that `chunk` starts with the first `length` bytes of `source`: bytes its producer sends again\n * in later responses and never changes, such as a cached page shell. A response observer that\n * transforms streamed bodies may keep its work on those bytes, keyed by `source`, and reuse it. It must\n * check that the chunk still holds them, since a later reader may have written into the chunk.\n */"
   },
   {
     "name": "markResidentBody",
@@ -21648,6 +21924,13 @@
     "doc": "/** Parse inertly and reject executable content before it can reach a live document. */"
   },
   {
+    "name": "parseComponentRecord",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseComponentRecord(value: unknown): ComponentRecord;",
+    "doc": "/** A record that arrives alone, as a partially prerendered hole's does, checked as a state's are. */"
+  },
+  {
     "name": "parseComponentState",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -21963,6 +22246,13 @@
     "doc": "/**\n * Validate a `zones` setting. `source` names where it came from in the error. Folders and files are\n * plain app-relative paths (a trailing `/**` is accepted and dropped); any other glob is refused, so\n * a pattern can never match less than its author meant without saying so. One path under two sides\n * is refused; a path nested in another's folder is not, since the most specific one decides.\n */"
   },
   {
+    "name": "partialPrerendering",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function partialPrerendering(config: PprConfig): PprSetup;",
+    "doc": "/**\n * Experimental: partial prerendering for `createWebApp({ experimental: { ppr } })`. Options are\n * checked here, at startup; each app the value is given to gets its own shell cache.\n */"
+  },
+  {
     "name": "pathTag",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -22083,6 +22373,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function poweredBy(options?: PoweredByOptions): Middleware;",
     "doc": "/**\n * Opt-in `X-Powered-By` style header. Nifra does not emit this by default; use it only when you want a\n * public framework/product marker.\n */"
+  },
+  {
+    "name": "pprShells",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function pprShells(app: object): PprShells;",
+    "doc": "/**\n * The shell cache of an app made with `experimental.ppr`. Pass it in `createInvalidator`'s\n * `dataCaches` so a purge by tag also drops the shells built from the purged data.\n */"
   },
   {
     "name": "preRouteMountPaths",
@@ -22725,6 +23022,13 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function renderWorkGraphText(result: ProjectWorkGraphResult): string;"
+  },
+  {
+    "name": "repeatedPrefixOf",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const repeatedPrefixOf: (chunk: Uint8Array) => RepeatedPrefix | undefined;",
+    "doc": "/** The repeated prefix {@link markRepeatedPrefix} recorded for `chunk`, if any. */"
   },
   {
     "name": "replacedRequestOf",
@@ -23627,6 +23931,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function serverFunctions(namespace: string, module: ServerFnModule): IdentityPlugin;",
     "doc": "/**\n * Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.\n *\n *     import * as todos from \"./actions/todos.fn\"\n *     app.use(serverFunctions(\"todos\", todos))   // -> POST /_nifra/fn/todos/addTodo\n *\n * The namespace is explicit rather than derived from the file path: a path-derived one would put the\n * build machine's layout in a public URL, and this keeps the route readable in logs and greppable in\n * the codebase. Phase 2's transform supplies it automatically from the file's location in the project.\n *\n * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.\n */"
+  },
+  {
+    "name": "serverHole",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function serverHole<Input, Props, View>(component: ServerComponent<Input, Props, View>): (data: Input) => never;",
+    "doc": "/**\n * A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its\n * input. The page's app lists the component under `createServerComponents({ holes })` for the route.\n * The hole cannot be `interactive`; its client islands are.\n */"
+  },
+  {
+    "name": "serverHoleComponent",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const serverHoleComponent: (render: unknown) => object | undefined;",
+    "doc": "/** The server component a hole's `render` names, or `undefined` for an ordinary `render`. */"
   },
   {
     "name": "serviceWorkerRegistration",
@@ -24587,6 +24905,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function typedSSEStream<Event>(stream: SSEStream): TypedSSEStream<Event>;",
     "doc": "/** Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out. */"
+  },
+  {
+    "name": "ui",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function ui<Props extends Record<string, unknown>>(component: Component<Props>, ...props: Record<string, never> extends Props ? [props?: Props] : [props: Props]): SvelteUI;",
+    "doc": "/** Experimental: `component` rendered with `props`, for a partially prerendered hole. */"
   },
   {
     "name": "uiResourceMeta",

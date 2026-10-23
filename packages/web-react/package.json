@@ -26,6 +26,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./client": {
       "bun": "./src/client.ts",
       "types": "./dist/client.d.ts",
@@ -157,9 +162,10 @@
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-rsc": "0.5.35",
+    "happy-dom": "20.14.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@vitejs/plugin-rsc": "0.5.35",
     "react-server-dom-webpack": "19.3.1",
     "vite": "8.3.4"
   },

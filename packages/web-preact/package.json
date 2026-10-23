@@ -36,6 +36,11 @@
       "types": "./dist/await.d.ts",
       "default": "./dist/await.js"
     },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./fetcher": {
       "bun": "./src/fetcher.ts",
       "types": "./dist/fetcher.d.ts",
@@ -111,6 +116,7 @@
     "preact": "^10.19.0 || ^11.0.0"
   },
   "devDependencies": {
+    "happy-dom": "20.14.6",
     "preact": "^11.0.1"
   },
   "repository": {

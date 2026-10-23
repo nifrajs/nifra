@@ -4,6 +4,7 @@ import type { RenderAdapter } from "@nifrajs/web"
  * `renderToReadableStream`; the layout-chain fold is in `./compose`. Client hydration lives in
  * `@nifrajs/web-react/client`. React's JSX is Bun-native - no build plugin needed.
  */
+import type { ReactNode } from "react"
 import { compose } from "./compose.ts"
 import { reactDomServer } from "./react-dom-server.ts"
 import { explainRenderError } from "./render-error.ts"
@@ -12,6 +13,11 @@ import { slottedChain } from "./slot.ts"
 // The marker opening a Suspense boundary the server gave up on. Markup can't forge it: React escapes
 // text, and a comment only comes from React itself or `dangerouslySetInnerHTML`.
 const CLIENT_RENDERED_BOUNDARY = "<!--$!-->"
+// The resource hints React writes ahead of markup rendered without a document, such as an image's
+// `<link rel="preload" as="image">`. A hole's HTML is checked like a server component's, which
+// refuses `<link>`, and a hint is no part of what the hole shows. React escapes `<` and `>` in
+// attribute values, so each tag ends at its first `>`.
+const LEADING_PRELOADS = /^(?:<link rel="(?:preload|modulepreload)"[^<>]*\/>)+/
 
 // React error 426, minified in production: a component suspended with no Suspense boundary above it.
 const suspendedSynchronously = (error: unknown): boolean =>
@@ -45,6 +51,18 @@ export const reactAdapter: RenderAdapter = {
       throw explainRenderError(error)
     }
     return html.includes(CLIENT_RENDERED_BOUNDARY) ? undefined : html
+  },
+  // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
+  // with the page's, which the client root it hydrates into repeats.
+  async renderFragment(ui, options) {
+    const { renderToString } = await reactDomServer()
+    try {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns React output; the seam erases it to unknown.
+      const html = renderToString(ui() as ReactNode, { identifierPrefix: options.idPrefix ?? "" })
+      return html.replace(LEADING_PRELOADS, "")
+    } catch (error) {
+      throw explainRenderError(error)
+    }
   },
   async renderToStream(chain, props, options) {
     // Resolves a Web `ReadableStream<Uint8Array>` once the shell is renderable; Suspense

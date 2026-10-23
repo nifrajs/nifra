@@ -178,15 +178,23 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
   // A restored page's reload: its kept data, unrequested, when it needs no reload; otherwise the
   // response shared onto the kept data, so what did not change keeps the identity it has on screen.
   // A reload that fails shows the kept data instead of loading the page as a document.
-  const fetchData: FetchRouteData = async (path, match, signal, navigation, read) => {
+  const fetchData: FetchRouteData = async (
+    path,
+    match,
+    signal,
+    navigation,
+    purpose,
+    hosts,
+    read,
+  ) => {
     const restore = reloading
     if (restore === undefined || restore.path !== path) {
-      return base(path, match, signal, navigation, read)
+      return base(path, match, signal, navigation, purpose, hosts, read)
     }
     if (!restore.reload) return envelopeOf(restore.kept)
     let payload: unknown
     try {
-      payload = await base(path, match, signal, navigation, read)
+      payload = await base(path, match, signal, navigation, purpose, hosts, read)
     } catch (error) {
       if (signal?.aborted === true || hasRedirect(error)) throw error
       return envelopeOf(restore.kept)

@@ -1,0 +1,17 @@
+{
+  // React, Preact and Solid routes need JSX, Preact's and Solid's files by pragma; the Svelte and Vue
+  // routes' component files are compiled by the bench server.
+  "extends": "../../examples/tsconfig.react.json",
+  "include": [
+    "*.ts",
+    "shared/**/*.ts",
+    "react/**/*.ts",
+    "react/**/*.tsx",
+    "preact/**/*.ts",
+    "preact/**/*.tsx",
+    "solid/**/*.ts",
+    "solid/**/*.tsx",
+    "svelte/**/*.ts",
+    "vue/**/*.ts"
+  ]
+}

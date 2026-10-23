@@ -28,7 +28,7 @@ import type { ReactNode } from "react"
 /** The slice of `react-dom/server` this adapter uses. Typed locally so the dynamic import (which Bun
  * resolves to an absolute path string) stays strict - no `any` crosses the boundary. */
 export interface ReactDomServer {
-  renderToString(node: ReactNode): string
+  renderToString(node: ReactNode, options?: { readonly identifierPrefix?: string }): string
   renderToReadableStream(
     node: ReactNode,
     options?: { readonly nonce?: string },
