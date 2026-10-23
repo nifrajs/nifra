@@ -5,13 +5,15 @@ import type { DocumentParts, RenderAdapter } from "@nifrajs/web"
  * fold is in `./compose`. Client hydration lives in `@nifrajs/web-vue/client`. Uses Vue render functions
  * (`h`), so no SFC compiler / build plugin is needed (contrast `@nifrajs/web-solid`).
  */
-import { createSSRApp, defineComponent } from "vue"
+import { createSSRApp, defineComponent, type VNodeChild } from "vue"
 import {
   renderToWebStream,
   type SSRContext,
   renderToString as vueRenderToString,
 } from "vue/server-renderer"
 import { compose } from "./compose.ts"
+import { freshVNode } from "./fresh-vnode.ts"
+import { holeApp } from "./hole-app.ts"
 
 const ID_TARGET = /^#([A-Za-z][\w-]*)$/
 
@@ -87,6 +89,18 @@ export const vueAdapter: RenderAdapter = {
     return vueRenderToString(rootApp(chain, props), context).then((html) =>
       placeTeleports(html, context.teleports, options?.parts),
     )
+  },
+  // A partially prerendered hole's HTML: rendered as its own app, its `useId`s prefixed so they never
+  // collide with the page's, which the client app it hydrates into repeats.
+  async renderFragment(ui, options) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Vue output; the seam erases it to unknown.
+    const app = holeApp(freshVNode(ui() as VNodeChild), options.idPrefix)
+    const context: SSRContext = {}
+    const html = await vueRenderToString(app, context)
+    if (context.teleports !== undefined && Object.keys(context.teleports).length > 0) {
+      devWarn("<Teleport> content in a partially prerendered hole renders on the client only.")
+    }
+    return html
   },
   renderToStream(chain, props) {
     // A root component renders the composed chain; createSSRApp + renderToWebStream stream it as a

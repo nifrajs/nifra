@@ -91,6 +91,9 @@ export interface LiveQueryKeys {
   readonly dev?: true
 }
 
+/** The owner a hole of a partially prerendered page is in its page's live frame. */
+export const holeOwner = (hole: string, routeId: string): string => `B:${hole}:${routeId}`
+
 /** `createWebApp` reads the runtime through this symbol, so it is not public API on the object. */
 export const LIVE_ATTACH: unique symbol = Symbol.for("nifra.web.live.attach")
 

@@ -32,6 +32,9 @@ const EXT: Record<Framework, string> = {
   vanilla: "tsx",
 }
 
+/** The page file extension a framework's routes use. */
+export const pageExtension = (framework: Framework): string => EXT[framework]
+
 /** Derive the framework from a `clientModule` like `@nifrajs/web-react/client`. Defaults to react. */
 export function frameworkFromClientModule(clientModule: string | undefined): Framework {
   const m = /@nifrajs\/web-(react|preact|solid|vue|svelte|vanilla)\b/.exec(clientModule ?? "")

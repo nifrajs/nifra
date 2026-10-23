@@ -191,6 +191,34 @@ registerFixRecipe({
 })
 
 registerFixRecipe({
+  id: "ppr.read-to-hole",
+  description:
+    "Move a partially prerendered page's request read into a new dynamic hole: the read becomes the hole's loader, and the element that shows it the hole's render.",
+  onlyWhenNamed: true,
+  verify: "nifra check",
+  async apply(root, diagnostic) {
+    const file = diagnostic.file
+    if (file === undefined || (await resolveInsideProject(root, file)) === undefined) return []
+    const { loadApp } = await import("./load.ts")
+    const { backendFileOf, frameworkFromClientModule } = await import("./scaffold.ts")
+    const framework = frameworkFromClientModule((await loadApp(root)).framework.clientModule)
+    const { routeTypeScript } = await import("./scaffold-hole.ts")
+    const loaded = await routeTypeScript(root, [file, backendFileOf(file)])
+    if (loaded.unsupported !== undefined) throw loaded.unsupported
+    if (loaded.compiler === undefined)
+      throw new Error(
+        "[nifra] the hole fix places each edit through the page's syntax tree, so it needs TypeScript - run `bun add -d typescript`, then rerun the fix",
+      )
+    try {
+      const { moveReadToHole } = await import("./ppr-read-fix.ts")
+      return await moveReadToHole(root, file, diagnostic.line, framework, loaded.compiler)
+    } finally {
+      await loaded.session?.close()
+    }
+  },
+})
+
+registerFixRecipe({
   id: "layout.migrate",
   description:
     "Move the app onto the frontend/backend layout, as `nifra migrate layout --write` does.",

@@ -335,6 +335,23 @@ export function installHistory(
   type ViewTransitionDocument = Document & {
     startViewTransition?: (cb: () => unknown) => ViewTransition
   }
+  // A navigation that loads takes the page from a partially prerendered first document, which then
+  // stops filling its holes and cancels the ones still loading on the server. `navigate` publishes
+  // its `pendingPath` before its first await; a client-only search change, or a boundary already
+  // showing its target, loads nothing, so the holes still pending keep filling.
+  const navigateFrom = (routePath: string, from: string): Promise<void> => {
+    const run = router.navigate(routePath).catch((error) => leave(error, from))
+    const ppr: unknown = Reflect.get(globalThis, "__nifraPpr")
+    if (
+      router.snapshot().pendingPath === routePath &&
+      typeof ppr === "function" &&
+      "leave" in ppr &&
+      typeof ppr.leave === "function"
+    )
+      ppr.leave()
+    return run
+  }
+
   const transition = (run: () => Promise<void>): void => {
     const doc = document as ViewTransitionDocument
     if (typeof doc.startViewTransition !== "function") {
@@ -425,7 +442,7 @@ export function installHistory(
     here = url.pathname + url.search + url.hash
     expected = routePath
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    transition(() => router.navigate(routePath).catch((error) => leave(error, path)))
+    transition(() => navigateFrom(routePath, path))
     settle()
   }
 
@@ -582,7 +599,7 @@ export function installHistory(
     pendingScroll = { pos: scrollOf(history.state) }
     const routePath = location.pathname + location.search
     expected = routePath
-    transition(() => router.navigate(routePath).catch((error) => leave(error, dest)))
+    transition(() => navigateFrom(routePath, dest))
     settle()
   }
 

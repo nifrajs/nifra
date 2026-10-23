@@ -238,7 +238,7 @@ export async function serverComponentsConfig(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The shared compiler guards implement Vite hooks; the shim differs only in optional hook metadata.
     viteAssetUrlGuard(guards) as Plugin,
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The shared compiler guards implement Vite hooks; the shim differs only in optional hook metadata.
-    viteZoneGuard(guards) as Plugin,
+    viteZoneGuard({ ...guards, componentReferences: true }) as Plugin,
     ...(options.plugins ?? []),
     proof,
   ]
