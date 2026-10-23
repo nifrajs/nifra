@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
+import { childProcessEnv } from "@nifrajs/agent-protocol"
 import { readBoundedText } from "./process.ts"
 
 export interface IsolatedExtensionWorkerOptions {
@@ -111,7 +112,7 @@ export class IsolatedExtensionWorker {
       {
         cwd: this.options.cwd,
         env: {
-          ...filteredEnv(),
+          ...childProcessEnv({ env: process.env, platform: process.platform }),
           NIFRA_EXTENSION_TOKEN: this.token,
           NIFRA_EXTENSION_MAX_MESSAGE_BYTES: String(this.options.maxMessageBytes),
           NIFRA_EXTENSION_EXPOSE_ERROR_STACKS: this.options.exposeErrorStacks === true ? "1" : "0",
@@ -346,50 +347,4 @@ function workerError(message: WorkerMessage): Error {
   const error = new Error(message.error ?? "isolated extension worker failed")
   if (message.stack !== undefined) error.stack = message.stack
   return error
-}
-
-function filteredEnv(): Record<string, string> {
-  const result: Record<string, string> = {}
-  const names = [
-    "PATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "TERM",
-    ...(process.platform === "win32"
-      ? [
-          "SystemRoot",
-          "WINDIR",
-          "TEMP",
-          "TMP",
-          "USERPROFILE",
-          "LOCALAPPDATA",
-          "APPDATA",
-          "COMSPEC",
-          "PATHEXT",
-          "BUN_INSTALL",
-          "HOMEDRIVE",
-          "HOMEPATH",
-          "USERNAME",
-          "USERDOMAIN",
-          "ProgramData",
-          "ProgramFiles",
-          "ProgramFiles(x86)",
-        ]
-      : []),
-  ]
-  for (const name of names) {
-    const value = readEnv(name)
-    if (value !== undefined) result[name] = value
-  }
-  return result
-}
-
-function readEnv(name: string): string | undefined {
-  const exact = process.env[name]
-  if (exact !== undefined || process.platform !== "win32") return exact
-  const key = Object.keys(process.env).find(
-    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
-  )
-  return key === undefined ? undefined : process.env[key]
 }

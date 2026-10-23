@@ -1,0 +1,75 @@
+name: Runtime differential
+
+# The pull-request job in ci.yml replays one fixed seed. This explores: a fresh seed every night, a
+# budget fifty times larger for requests and WebSocket sessions, and both NODE_ENV modes. A failure prints each distinct violation
+# shrunk to a minimal request with a `--replay` command; the JSON report keeps every signature.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Generated requests per mode
+        type: number
+        default: 20000
+      ws_runs:
+        description: Generated WebSocket sessions per mode
+        type: number
+        default: 3000
+      seed:
+        description: fast-check seed (empty for a fresh one)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  explore:
+    name: explore (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [production, development]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.12.0
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Generated requests on every runtime
+        env:
+          # By event, not `||`: a manual run's 0 skips that suite instead of falling back.
+          NIFRA_DIFFERENTIAL_RUNS: ${{ github.event_name == 'schedule' && 20000 || inputs.runs }}
+          NIFRA_DIFFERENTIAL_WS_RUNS: ${{ github.event_name == 'schedule' && 3000 || inputs.ws_runs }}
+          NIFRA_DIFFERENTIAL_SEED: ${{ inputs.seed }}
+          NIFRA_DIFFERENTIAL_MODE: ${{ matrix.mode }}
+          NIFRA_DIFFERENTIAL_REPORT: runtime-differential-${{ matrix.mode }}.json
+        run: bun run check:runtime-differential
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: runtime-differential-${{ matrix.mode }}
+          path: runtime-differential-${{ matrix.mode }}.json
+          if-no-files-found: ignore

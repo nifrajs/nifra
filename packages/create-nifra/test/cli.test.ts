@@ -161,6 +161,8 @@ describe("scaffold - templates", () => {
     expect(await readFile(join(dir, "wrangler.toml"), "utf8")).toContain('name = "my-site-v2"')
     expect(githubDeployWorkflow("cloudflare", "My_Site.v2")).toContain("--project-name=my-site-v2")
     expect(githubDeployWorkflow("deno", "My_Site.v2")).toContain("project: my-site-v2")
+    // A trailing run of separators, dashes among them, leaves no trailing "-".
+    expect(githubDeployWorkflow("deno", "Site._--")).toContain("project: site\n")
     const docked = await freshDir("Dock_App")
     await scaffold({ target: docked, template: "site", deployTarget: "bun", docker: true })
     const pkg = await readPkg(docked)

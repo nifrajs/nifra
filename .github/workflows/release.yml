@@ -19,7 +19,9 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-  workflow_run:
+  # Only prove-release reads this event, and only for a push-event CI run on this repository's main; it
+  # takes no artifact or PR-controlled value from the triggering run.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: [CI]
     branches: [main]
     types: [completed]
@@ -69,14 +71,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout the proposed release
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
           no-cache: true
 
       # The release plan runs the Deno and Node gates; the same pins as the ci.yml jobs that run them.
@@ -86,7 +89,7 @@ jobs:
           deno-version: 2.9.7
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 26.12.0
 
@@ -151,7 +154,7 @@ jobs:
       publish_sha: ${{ steps.release.outputs.publish_sha }}
     steps:
       - name: Checkout main for complete recovery metadata comparison
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -253,10 +256,12 @@ jobs:
           fi
 
           echo "Validated release ${MERGE_SHA} for publication from ${PUBLISH_SHA}."
-          echo "is_release=true" >> "$GITHUB_OUTPUT"
-          echo "release_base_sha=$release_base_sha" >> "$GITHUB_OUTPUT"
-          echo "merge_sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
-          echo "publish_sha=$PUBLISH_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "is_release=true"
+            echo "release_base_sha=$release_base_sha"
+            echo "merge_sha=$MERGE_SHA"
+            echo "publish_sha=$PUBLISH_SHA"
+          } >> "$GITHUB_OUTPUT"
 
   # The build runs third-party compilers and bundlers, so it runs here, without the identity npm
   # trusts, and hands the publish job only its output.
@@ -270,7 +275,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
@@ -278,7 +283,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
           no-cache: true
 
       - name: Install
@@ -292,7 +297,7 @@ jobs:
       # Only gitignored build output and the corpus gen:llms regenerates from it; everything else the
       # tarballs hold comes from the publish job's own checkout of the same merge.
       - name: Upload the built packages
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-packages
           path: |
@@ -313,20 +318,21 @@ jobs:
       id-token: write
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
           no-cache: true
 
       # `changeset publish` runs the npm on PATH, so this decides which npm publishes.
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 26.12.0
           registry-url: https://registry.npmjs.org
@@ -355,7 +361,7 @@ jobs:
         run: bun run release:check --merge
 
       - name: Download the built packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: release-packages
           path: packages
@@ -378,7 +384,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
@@ -386,7 +392,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
           no-cache: true
 
       - name: Publish the version's GitHub release
@@ -416,7 +422,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
           persist-credentials: false
@@ -424,7 +430,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
           no-cache: true
 
       # npm can take minutes to serve a new version everywhere; a version it does not serve yet is
@@ -443,14 +449,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout the validated merge
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prove-release.outputs.publish_sha }}
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
           no-cache: true
 
       - name: Install
@@ -465,6 +472,7 @@ jobs:
       - name: Wait for npm to serve the published versions
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2016 # the single-quoted argument is JavaScript with template literals
           specs="$(bun -e 'for (const file of new Bun.Glob("packages/*/package.json").scanSync()) { const pkg = await Bun.file(file).json(); if (!pkg.private) console.log(`${pkg.name}@${pkg.version}`) }')"
           for attempt in $(seq 1 30); do
             missing=()
@@ -517,7 +525,7 @@ jobs:
       - name: Probe production site
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 20); do
+          for _ in $(seq 1 20); do
             if home="$(curl --fail --silent --show-error https://nifra.dev/)" &&
               [[ "$home" == *"<title>Nifra - "* ]] &&
               [[ "$(curl --fail --silent --show-error https://nifra.dev/assets/deployment.txt)" == "$DEPLOYMENT" ]]; then

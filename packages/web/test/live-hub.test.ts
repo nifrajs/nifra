@@ -362,7 +362,13 @@ test("an event while a watch installs is reported in ready.stale, and ready prec
     release = resolve
   })
   const r = await rig({
-    ring: (ring) => ({ ...ring, open: async (token, now) => ring.open(token, (await gate, now)) }),
+    ring: (ring) => ({
+      ...ring,
+      open: async (token, now) => {
+        await gate
+        return ring.open(token, now)
+      },
+    }),
   })
   const ws = connect(r)
   const grant = await grantFor(r, ws, { "P:a": ["post:1"] })
@@ -386,7 +392,13 @@ test("a lower or repeated gen is ignored, and a newer watch supersedes one still
     release = resolve
   })
   const r = await rig({
-    ring: (ring) => ({ ...ring, open: async (token, now) => ring.open(token, (await gate, now)) }),
+    ring: (ring) => ({
+      ...ring,
+      open: async (token, now) => {
+        await gate
+        return ring.open(token, now)
+      },
+    }),
   })
   const ws = connect(r)
   const grant = await grantFor(r, ws, { "P:a": ["post:1"] })
@@ -871,7 +883,13 @@ test("a socket closed while its watch installed stays closed and unsubscribed", 
     release = resolve
   })
   const r = await rig({
-    ring: (ring) => ({ ...ring, open: async (token, now) => ring.open(token, (await gate, now)) }),
+    ring: (ring) => ({
+      ...ring,
+      open: async (token, now) => {
+        await gate
+        return ring.open(token, now)
+      },
+    }),
   })
   const ws = connect(r)
   const installing = watch(r, ws, 1, [await grantFor(r, ws, { "P:a": ["post:1"] })])
@@ -889,7 +907,13 @@ test("a revocation that lands while a watch installs is honored", async () => {
     release = resolve
   })
   const r = await rig({
-    ring: (ring) => ({ ...ring, open: async (token, now) => ring.open(token, (await gate, now)) }),
+    ring: (ring) => ({
+      ...ring,
+      open: async (token, now) => {
+        await gate
+        return ring.open(token, now)
+      },
+    }),
   })
   const ws = connect(r)
   const installing = watch(r, ws, 1, [await grantFor(r, ws, { "P:a": ["post:1"] })])

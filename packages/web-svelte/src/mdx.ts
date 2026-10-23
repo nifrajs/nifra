@@ -1,4 +1,9 @@
-import { normalizeFilePath, portablePath, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import {
+  normalizeFilePath,
+  portablePath,
+  requirePeer,
+  rewriteSsrImports,
+} from "@nifrajs/web/plugins/kit"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
@@ -28,14 +33,10 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
   return {
     name: `nifra-svelte-mdx-${generate}`,
     async setup(build) {
-      let mdsvexCompile: Mdsvex["compile"]
-      try {
-        mdsvexCompile = ((await import(MDSVEX_MODULE)) as Mdsvex).compile
-      } catch {
-        throw new Error(
-          "@nifrajs/web-svelte/mdx: compiling `.mdx` for Svelte needs the `mdsvex` package - install it (`bun add mdsvex`).",
-        )
-      }
+      const { compile: mdsvexCompile } = await requirePeer<Mdsvex>(MDSVEX_MODULE, {
+        feature: "Svelte MDX support",
+        install: "bun add mdsvex",
+      })
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
         const path = normalizeFilePath(args.path)
         // 1. Markdown/MDX → Svelte source (mdsvex). `extensions` must include `.mdx` or mdsvex skips the

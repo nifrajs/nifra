@@ -28,6 +28,10 @@
       "bun": "./src/agent-files.ts",
       "types": "./dist/agent-files.d.ts",
       "default": "./dist/agent-files.js"
+    },
+    "./scaffold": {
+      "types": "./dist/scaffold/project.d.ts",
+      "default": "./dist/scaffold/project.js"
     }
   },
   "files": [

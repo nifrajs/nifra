@@ -239,21 +239,30 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Bun's prototype-guard cursor stack, selected at load and dead elsewhere: bare 36,811 -> 36,880 B,
   // idempotency 41,247 -> 41,328, effect-ledger 38,832 -> 38,921, mcp 37,065 -> 37,143, sse 37,664 ->
   // 37,756 (Bun 1.4.2); +0.1 KiB on the five caps it crosses.
-  "nifra-bare": 36.1,
+  // The fixes the runtime differential found (body read failures, the standard multipart parser,
+  // ws.close() argument checks and close reports, JSON byte-order marks, unparseable Hosts): bare
+  // 36,838 -> 37,308 B, idempotency 41,285 -> 41,752, effect-ledger 38,871 -> 39,355, mcp 37,105 ->
+  // 37,581, sse 37,715 -> 38,197, valibot 37,838 -> 38,317, typebox-form 67,023 -> 68,149 (Bun 1.4.3).
+  // An HTTP/1.0 request with no Host served as localhost on Bun, its target resolved: bare
+  // 37,345 -> 37,422 B, effect-ledger 39,393 -> 39,454, mcp 37,617 -> 37,689, valibot 38,354 ->
+  // 38,413, typebox-form 68,184 -> 68,264 (Bun 1.4.3); +0.1 KiB on the five caps it crosses.
+  "nifra-bare": 36.6,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
   // Hook-handed responses held single-use (onResponse replacement, onRequest answer): idempotency
   // 41,108 -> 41,198 B, effect-ledger 38,706 -> 38,789, sse 37,535 -> 37,615, mcp 36,934 -> 37,035,
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
-  "nifra-idempotency": 40.4,
-  "nifra-effect-ledger": 38.1,
-  "nifra-mcp": 36.3,
+  // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
+  // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
+  "nifra-idempotency": 40.9,
+  "nifra-effect-ledger": 38.6,
+  "nifra-mcp": 36.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 36.9,
-  "nifra-valibot": 37.0,
+  "nifra-sse": 37.4,
+  "nifra-valibot": 37.6,
   "nifra-typebox-t": 62.5,
-  "nifra-typebox-form": 66.3,
+  "nifra-typebox-form": 66.7,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

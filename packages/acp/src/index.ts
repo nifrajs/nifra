@@ -13,6 +13,8 @@ import {
   boundAgentText,
   boundAgentValue,
   type CreateSessionInput,
+  childProcessBaseEnv,
+  childProcessEnv,
   createAgentEventStream,
   isAgentExtensionEventType,
   type ReloadResult,
@@ -946,55 +948,13 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bnvapi-[A-Za-z0-9_-]{20,}/g,
 ]
 
-const BASE_ENV = [
-  "PATH",
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "TERM",
-  "USER",
-  "LOGNAME",
-  "SHELL",
-  "TMPDIR",
-  ...(process.platform === "win32"
-    ? [
-        "SystemRoot",
-        "WINDIR",
-        "TEMP",
-        "TMP",
-        "USERPROFILE",
-        "LOCALAPPDATA",
-        "APPDATA",
-        "COMSPEC",
-        "PATHEXT",
-        "HOMEDRIVE",
-        "HOMEPATH",
-        "USERNAME",
-        "ProgramData",
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-      ]
-    : []),
-]
+const ACP_ENV = ["USER", "LOGNAME", "SHELL", "TMPDIR"]
+const BASE_ENV = [...childProcessBaseEnv(process.platform), ...ACP_ENV]
 
 function filteredEnv(
   values: Readonly<Record<string, string | undefined>> | undefined,
 ): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const name of new Set([...BASE_ENV, ...Object.keys(values ?? {})])) {
-    const value = values !== undefined && Object.hasOwn(values, name) ? values[name] : readEnv(name)
-    if (value !== undefined) result[name] = value
-  }
-  return result
-}
-
-function readEnv(name: string): string | undefined {
-  const exact = process.env[name]
-  if (exact !== undefined || process.platform !== "win32") return exact
-  const key = Object.keys(process.env).find(
-    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
-  )
-  return key === undefined ? undefined : process.env[key]
+  return childProcessEnv({ env: process.env, platform: process.platform, names: ACP_ENV, values })
 }
 
 /** Masks the values handed to the agent (the base set aside) and common credential shapes. */

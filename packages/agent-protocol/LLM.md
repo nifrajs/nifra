@@ -21,15 +21,15 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **boundAgentText** _(function)_ - `boundAgentText: (text: string, maxChars?: number) => string` · from `@nifrajs/agent-protocol`
 - **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown` · from `@nifrajs/agent-protocol`
 - **checkAgentBackend** _(function)_ - `checkAgentBackend: (options: AgentBackendConformanceOptions) => Promise<AgentBackendConformanceReport>` · from `@nifrajs/agent-protocol/conformance`
+- **childProcessBaseEnv** _(function)_ - `childProcessBaseEnv: (platform: string) => readonly string[]` · from `@nifrajs/agent-protocol`
+- **childProcessEnv** _(function)_ - `childProcessEnv: (input: ChildProcessEnvInput) => Record<string, string>` · from `@nifrajs/agent-protocol`
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean` · from `@nifrajs/agent-protocol`
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean` · from `@nifrajs/agent-protocol`
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream` · from `@nifrajs/agent-protocol`
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string` · from `@nifrajs/agent-protocol`
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent` · from `@nifrajs/agent-protocol`
-- **isAgentExtensionEventType** _(function)_ - `isAgentExtensionEventType: (type: unknown) => type is AgentExtensionEventType` · from `@nifrajs/agent-protocol`
-- **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean` · from `@nifrajs/agent-protocol`
 
-_…and 113 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 116 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

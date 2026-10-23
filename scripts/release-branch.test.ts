@@ -109,6 +109,7 @@ test("release verification runs one job per plan group, and one check passes onl
   )
   expect(workflow).toHaveProperty(
     ["jobs", "verify-release-pr", "concurrency", "group"],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression
     expect.stringContaining("-${{ matrix.group }}"),
   )
   expect(workflow).toHaveProperty(["jobs", "release-verification", "name"], "release-verification")

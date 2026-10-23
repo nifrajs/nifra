@@ -11,6 +11,15 @@ import type { CtxSet, RequestSource } from "./server.ts"
 /** A handler returns a `Response` (used as-is) or any value (serialized to JSON). */
 export type HandlerResult = Response | unknown
 
+/**
+ * The Content-Type the runtime's own `Response.json` writes, which every JSON nifra renders on the Web
+ * lanes carries too, so a handler's JSON and the framework's envelopes (built with `Response.json`)
+ * agree on one runtime. Bun adds `;charset=utf-8`; Deno, workerd and undici do not. Named rather than
+ * probed: workerd forbids `Response.json()` while a module loads.
+ */
+export const JSON_CONTENT_TYPE =
+  "Bun" in globalThis ? "application/json;charset=utf-8" : "application/json"
+
 export const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
 export const CONTEXT_SET = Symbol("nifra.context.set")
 export const CONTEXT_SEARCH = Symbol("nifra.context.search")
@@ -178,7 +187,7 @@ export function status(
     toResponse(): Response {
       const headers: Record<string, string> = { ...init?.headers }
       if (body === undefined) return new Response(null, { status: code, headers })
-      headers["content-type"] ??= "application/json;charset=utf-8"
+      headers["content-type"] ??= JSON_CONTENT_TYPE
       return new Response(JSON.stringify(body), { status: code, headers })
     },
   } as StatusResponse<number, unknown>
