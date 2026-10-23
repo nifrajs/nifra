@@ -715,18 +715,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     routeId: string,
     shown: LoadedRouteData,
     loaded: LoadedRouteData,
-  ): LoadedRouteData =>
-    loaded.terminalRouteId !== undefined || routeHooks[routeId]?.shareData === false
-      ? loaded
-      : {
-          ...loaded,
-          data: shareData(shown.data, loaded.data),
-          layoutData: shareData(shown.layoutData, loaded.layoutData),
-          serverComponents: shareData(shown.serverComponents, loaded.serverComponents),
-          ...(loaded.boundaries === undefined
-            ? {}
-            : { boundaries: shareData(shown.boundaries, loaded.boundaries) }),
-        }
+  ): LoadedRouteData => {
+    if (loaded.terminalRouteId !== undefined || routeHooks[routeId]?.shareData === false)
+      return loaded
+    // Parsed JSON is a tree; a client loader/custom transport can return cyclic or aliased data.
+    const plainJson = loaded.text !== undefined && routeHooks[routeId]?.clientLoader === undefined
+    return {
+      ...loaded,
+      data: shareData(shown.data, loaded.data, plainJson),
+      layoutData: shareData(shown.layoutData, loaded.layoutData, plainJson),
+      serverComponents: shareData(shown.serverComponents, loaded.serverComponents, plainJson),
+      ...(loaded.boundaries === undefined
+        ? {}
+        : { boundaries: shareData(shown.boundaries, loaded.boundaries, plainJson) }),
+    }
+  }
   /**
    * Apply a client loader without making the server loader eager. The thunk is memoized per navigation
    * (or per hydration), so a hook can call it repeatedly without duplicate requests. The returned

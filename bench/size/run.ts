@@ -272,7 +272,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
   // A revalidation keeps the identity of what it did not change (the sharing walk, and the same
   // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3).
-  "nifra-web-client": 18.4,
+  // Non-tree client-data fallback and sampled row-ID indexing: 19,205 B (Bun 1.4.4).
+  "nifra-web-client": 18.8,
   "nifra-i18n": 4.3,
 }
 

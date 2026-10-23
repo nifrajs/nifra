@@ -1,0 +1,53 @@
+import { defineComponent, h, KeepAlive, ref, Transition } from "vue"
+
+const page = (name: string) =>
+  defineComponent({
+    name,
+    props: ["data", "actionData", "pending", "layoutData", "boundaries"],
+    setup(props) {
+      const count = ref(0)
+      return () =>
+        h(
+          "button",
+          { id: "counter", onClick: () => count.value++ },
+          `${name}:${count.value}${props.data === null ? "" : `:${props.data}`}`,
+        )
+    },
+  })
+export const A = page("A")
+export const B = page("B")
+export const KeepAliveLayout = defineComponent({
+  props: ["data", "boundaries"],
+  setup(_props, { slots }) {
+    return () =>
+      h("main", null, h(KeepAlive, { include: "A,B" }, { default: () => slots.default?.() }))
+  },
+})
+
+export const TransitionLayout = defineComponent({
+  props: ["data", "boundaries"],
+  setup(_props, { slots }) {
+    return () =>
+      h(
+        "main",
+        null,
+        h(
+          Transition,
+          {
+            mode: "out-in",
+            css: false,
+            onLeave: (_element: Element, done: () => void) =>
+              Reflect.set(globalThis, "leaveDone", done),
+          },
+          { default: () => slots.default?.() },
+        ),
+      )
+  },
+})
+
+export const RepeatedLayout = defineComponent({
+  props: ["data", "boundaries"],
+  setup(_props, { slots }) {
+    return () => h("main", null, [slots.default?.(), slots.default?.()])
+  },
+})

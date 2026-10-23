@@ -220,6 +220,74 @@ describe("a reload shares what it did not change", () => {
     expect(serverRuns).toBe(2)
     expect(r.snapshot().data).toBe(first)
   })
+
+  test("a cyclic clientLoader result reloads without changing its graph", async () => {
+    type Node = { revision: number; self?: Node }
+    let revision = 0
+    const r = createClientRouter({
+      patterns,
+      initial: onList(),
+      routeHooks: {
+        list: {
+          clientLoader: () => {
+            const node: Node = { revision: ++revision }
+            node.self = node
+            return node
+          },
+        },
+      },
+    })
+    await r.navigate("/list")
+    await r.invalidate()
+    const data = r.snapshot().data
+    expect(data).toMatchObject({ revision: 2 })
+    expect(Reflect.get(Object(data), "self")).toBe(data)
+    expect(r.snapshot().pending).toBe(false)
+  })
+
+  test("a clientLoader can introduce a back-reference inside a new subtree", async () => {
+    type Node = { child: { parent: Node } | null }
+    let runs = 0
+    const r = createClientRouter({
+      patterns,
+      initial: onList(),
+      routeHooks: {
+        list: {
+          clientLoader: () => {
+            const node: Node = { child: null }
+            if (++runs > 1) node.child = { parent: node }
+            return node
+          },
+        },
+      },
+    })
+    await r.navigate("/list")
+    await r.invalidate()
+    const data = r.snapshot().data
+    expect(Reflect.get(Object(Reflect.get(Object(data), "child")), "parent")).toBe(data)
+  })
+
+  test("a clientLoader's symbol metadata updates and can be removed", async () => {
+    const revisionKey = Symbol("revision")
+    let revision = 0
+    const r = createClientRouter({
+      patterns,
+      initial: onList(),
+      routeHooks: {
+        list: {
+          clientLoader: () => {
+            revision++
+            return revision < 3 ? { title: "List", [revisionKey]: revision } : { title: "List" }
+          },
+        },
+      },
+    })
+    await r.navigate("/list")
+    await r.invalidate()
+    expect(Reflect.get(Object(r.snapshot().data), revisionKey)).toBe(2)
+    await r.invalidate()
+    expect(Object.hasOwn(Object(r.snapshot().data), revisionKey)).toBe(false)
+  })
 })
 
 describe("a reload's request", () => {
