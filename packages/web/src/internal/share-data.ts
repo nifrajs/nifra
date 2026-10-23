@@ -24,8 +24,9 @@ export function shareData(prev: unknown, next: unknown): unknown {
     let same = prev.length === next.length
     let byId: Map<unknown, unknown> | undefined
     let kept = 0
-    for (let i = 0; i < next.length; i++) {
-      const item: unknown = next[i]
+    let i = 0
+    // `for...of` rather than a counted loop: the walk stops at the end of `next` whatever `i` does.
+    for (const item of next) {
       let old: unknown = prev[i]
       const id = isPlain(item) ? item.id : undefined
       if (id !== undefined && !(isPlain(old) && old.id === id)) {
@@ -40,6 +41,7 @@ export function shareData(prev: unknown, next: unknown): unknown {
       if (value === old) kept++
       else if (i === 31 && kept === 0) return next
       if (value !== prev[i]) same = false
+      i++
     }
     return same ? prev : out
   }

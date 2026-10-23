@@ -167,8 +167,9 @@ export default function Data() {
         component state: a Solid <code>&lt;For&gt;</code> keeps the row, a memoized React or Preact row
         and a Vue child component skip their render, and a Svelte or Solid effect on <code>data</code>{" "}
         runs again only when the reload changed it. Dates compare by time, rows with an{" "}
-        <code>id</code> pair by it, and a response with the same text as the one on screen is not parsed
-        again. A page whose code compares <code>data</code> with its value from before a reload exports{" "}
+        <code>id</code> pair by it, and the built-in transport does not parse again a plain JSON
+        response with the same text as the one on screen (a response with deferred parts is always
+        parsed). A page whose code compares <code>data</code> with its value from before a reload exports{" "}
         <code>shareData = false</code> and gets fresh data on every reload.
       </p>
       <CodeBlock code={ACTION} lang="ts" />
