@@ -10,6 +10,7 @@ import { serveFixture } from "../../web/test/share-browser.ts"
 import { vueAdapter } from "../src/index.ts"
 import {
   A,
+  CountingLayout,
   Inner,
   KeepAliveLayout,
   Outer,
@@ -185,6 +186,44 @@ test.skipIf(chrome === undefined)(
       expect(await page.evaluate("document.getElementById('root').textContent")).toBe(
         "Outer:1Inner:1B:0",
       )
+      expect(page.errors.slice(errorAt)).toEqual([])
+    } finally {
+      fixture.stop()
+    }
+  },
+  30_000,
+)
+
+test.skipIf(chrome === undefined)(
+  "a layout that re-rendered on its own between router renders is still skipped by the next one",
+  async () => {
+    if (page === undefined) throw new Error("[test] no browser")
+    const markup = await vueAdapter.renderToString?.([CountingLayout, A], {
+      data: null,
+      pending: false,
+      params: {},
+      path: "/a",
+      search: {},
+    })
+    const fixture = await serveFixture({
+      entry: join(import.meta.dir, "fixtures/slot-client.ts"),
+      markup: markup ?? "",
+    })
+    try {
+      const errorAt = page.errors.length
+      await page.goto(`${fixture.url}?counting`)
+      await page.evaluate(settled)
+      await page.evaluate("fixture.invalidate()")
+      await page.evaluate(settled)
+      await page.evaluate("layoutTick()")
+      await page.evaluate(settled)
+      const before = await page.evaluate("layoutRenders")
+      await page.evaluate("fixture.setData('updated'); fixture.invalidate()")
+      await page.evaluate(settled)
+      expect(await page.evaluate("document.getElementById('counter').textContent")).toBe(
+        "A:0:updated",
+      )
+      expect(await page.evaluate("layoutRenders")).toBe(before)
       expect(page.errors.slice(errorAt)).toEqual([])
     } finally {
       fixture.stop()

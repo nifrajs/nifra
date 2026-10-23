@@ -275,7 +275,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // leave hook runs only for a navigation that loads: 18,368 -> 18,436 B (Bun 1.4.3).
   // A revalidation keeps the identity of what it did not change (the sharing walk, and the same
   // response text reusing the page unparsed, sampled row-ID indexing and the non-tree fallback):
-  // 18,436 -> 19,431 B (Bun 1.4.4).
+  // 18,436 -> 19,387 B; parsed JSON skipping the symbol-key check: 19,431 B (Bun 1.4.4).
   // `identityChanged()`, which drops kept pages on a token sign-in or sign-out in every tab:
   // 19,431 -> 19,550 B (Bun 1.4.4).
   "nifra-web-client": 19.1,

@@ -3,6 +3,7 @@ import { mountRouter } from "../../src/client.ts"
 import {
   A,
   B,
+  CountingLayout,
   Inner,
   KeepAliveLayout,
   Outer,
@@ -15,7 +16,9 @@ const Layout = query.has("transition")
   ? TransitionLayout
   : query.has("repeated")
     ? RepeatedLayout
-    : KeepAliveLayout
+    : query.has("counting")
+      ? CountingLayout
+      : KeepAliveLayout
 let data: string | null = null
 const router = createClientRouter({
   patterns: [
