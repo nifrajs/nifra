@@ -126,4 +126,25 @@ describe("postcssBunPlugin - config loading + errors", () => {
       load({ path: new URL("./fixtures/broken.css", import.meta.url).pathname }),
     ).rejects.toThrow(/\[nifra\/web\] failed to process .*broken\.css: Unclosed block/)
   })
+
+  // The repo installs neither peer; a workspace that does has nothing to name.
+  const installed = (name: string): boolean => {
+    try {
+      Bun.resolveSync(name, import.meta.dir)
+      return true
+    } catch {
+      return false
+    }
+  }
+  test.skipIf(installed("postcss") || installed("postcss-load-config"))(
+    "without a processor or a plugin list, the uninstalled peers are named",
+    async () => {
+      const path = new URL("./fixtures/plain.css", import.meta.url).pathname
+      await expect(setupPlugin("dom", {})({ path })).rejects.toThrow("bun add -d postcss")
+      const { postcss } = stubProcessor(".a{color:red}")
+      await expect(setupPlugin("dom", { postcss })({ path })).rejects.toThrow(
+        "bun add -d postcss-load-config",
+      )
+    },
+  )
 })

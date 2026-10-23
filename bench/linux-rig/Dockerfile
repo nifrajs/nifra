@@ -8,10 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The tools below are linux aarch64 release files, each checked against its published SHA-256.
 
-# bun (match host 1.4.3)
+# bun (match host 1.4.4)
 RUN curl -fsSL -o /tmp/bun.zip \
-    https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-aarch64.zip \
-    && echo "efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21  /tmp/bun.zip" | sha256sum -c - \
+    https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-aarch64.zip \
+    && echo "baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e  /tmp/bun.zip" | sha256sum -c - \
     && unzip -q /tmp/bun.zip -d /tmp \
     && install -m 0755 /tmp/bun-linux-aarch64/bun /usr/local/bin/bun \
     && ln -sf bun /usr/local/bin/bunx \

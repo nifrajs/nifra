@@ -293,3 +293,97 @@ describe("importOpenAPI - inventory import", () => {
     ).toThrow(/exceeds limit/)
   })
 })
+
+describe("importOpenAPI - refusals and warnings", () => {
+  const doc = (paths: Record<string, unknown>) => ({ openapi: "3.1.0", info: {}, paths })
+  const ok = { responses: { "200": {} } }
+  const idParam = { name: "id", in: "path", required: true }
+
+  test("refuses a path template Nifra cannot represent", () => {
+    for (const [path, message] of [
+      ["/x/}{", "unparseable path template /x/}{"],
+      ["/x/{id}}", "unparseable path template /x/{id}}"],
+      ["/x/a{id}", "path template /x/a{id} is not representable in Nifra"],
+      ["/x/{id}/{id}", "duplicate path parameter id on /x/{id}/{id}"],
+    ] as const)
+      expect(() => importOpenAPI(doc({ [path]: { parameters: [idParam], get: ok } }))).toThrow(
+        new OpenAPIImportError(message),
+      )
+  })
+
+  test("refuses a malformed path item, operation or parameter", () => {
+    for (const [paths, message] of [
+      [{ "/x": "item" }, "path item /x must be an object"],
+      [{ "/x": { $ref: "#/x" } }, "path item $refs must be inlined before import"],
+      [{ "/x": { get: "op" } }, "operation get /x must be an object"],
+      [{ "/x": { get: { ...ok, parameters: [{ name: "", in: "query" }] } } }, "non-empty name"],
+      [{ "/x": { get: { ...ok, parameters: [{ name: "q" }] } } }, "parameter q needs an 'in'"],
+      [{ "/x/{id}": { get: ok } }, "path parameter id is not declared on GET /x/:id"],
+      [{ "/x": { parameters: [idParam], get: ok } }, "declared path parameter id is not in /x"],
+      [
+        { "/x": { get: { ...ok, requestBody: "body" } } },
+        "requestBody on GET /x must be an object",
+      ],
+      [{ "/x": { get: { responses: { "600": {} } } } }, "invalid response status 600 on GET /x"],
+      [
+        { "/x": { get: { responses: { "200": null } } } },
+        "response 200 on GET /x must be an object",
+      ],
+    ] as const)
+      expect(() => importOpenAPI(doc(paths))).toThrow(message)
+  })
+
+  test("skips cookie parameters and does not inventory headers, with a warning each", () => {
+    const inventory = importOpenAPI(
+      doc({
+        "/x": {
+          get: {
+            ...ok,
+            parameters: [
+              { name: "session", in: "cookie" },
+              { name: "x-trace", in: "header" },
+            ],
+          },
+        },
+      }),
+    )
+    expect(inventory.warnings).toEqual([
+      "GET /x: 'cookie' parameter 'session' skipped",
+      "GET /x: header parameters are not inventoried",
+    ])
+    expect(inventory.routes[0]?.query).toEqual([])
+  })
+
+  test("diff reports request body and response status drift", () => {
+    const actual = roundtrip()
+    const edit = (path: string, change: Partial<ImportedApiInventory["routes"][number]>) => ({
+      ...actual,
+      routes: actual.routes.map((route) => (route.path === path ? { ...route, ...change } : route)),
+    })
+    const items = actual.routes.find((route) => route.path === "/items")
+    expect(items?.hasBody).toBe(true)
+    expect(diffOpenApiInventory(edit("/items", { hasBody: false }), actual)).toEqual([
+      { route: "POST /items", message: "unexpected request body" },
+    ])
+    expect(diffOpenApiInventory(actual, edit("/items", { hasBody: false }))).toEqual([
+      { route: "POST /items", message: "request body lost" },
+    ])
+    expect(
+      diffOpenApiInventory(
+        edit("/items", { requestBodyRequired: !items?.requestBodyRequired }),
+        actual,
+      ),
+    ).toEqual([{ route: "POST /items", message: "request body required flag flipped" }])
+    expect(
+      diffOpenApiInventory(edit("/items", { responseStatuses: ["200", "418"] }), actual),
+    ).toEqual([
+      { route: "POST /items", message: "response status 418 lost" },
+      ...(items?.responseStatuses ?? [])
+        .filter((status) => status !== "200")
+        .map((status) => ({
+          route: "POST /items",
+          message: `unexpected response status ${status}`,
+        })),
+    ])
+  })
+})

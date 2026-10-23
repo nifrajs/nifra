@@ -472,6 +472,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **BoundedTransportRead** _(type)_ - `type BoundedTransportRead = | { readonly ok: true; readonly bytes: Uint8Array } | { readonly ok: false; readonly reason: "too-large" | "read-error"; readonly error?: unknown }`
 - **CURSOR_BEFORE_ALL** _(const)_ - `CURSOR_BEFORE_ALL: -1`
   Sentinel cursor meaning "before any record". A fresh subscription passes this or `undefined`.
+- **ChildProcessEnvInput** _(interface)_ - `interface ChildProcessEnvInput`
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
 - **CursorResume** _(type)_ - `type CursorResume<T> = CursorResumeOk<T> | CursorResyncRequired`
 - **CursorResumeOk** _(interface)_ - `interface CursorResumeOk<T>`
@@ -554,6 +555,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Bound text for one event field: NUL becomes U+FFFD and text past `maxChars` is cut, ending in a truncation marker, never between the halves of a surrogate pair.
 - **boundAgentValue** _(function)_ - `boundAgentValue: (value: unknown) => unknown`
   A copy of a JSON-like value that fits an event's `input`, `output`, or `details`, for display only: the tool, model, or store keeps the full value. Strings are cut with a truncation marker (and their NULs replaced); arrays keep their first items and end with a marker string; objects keep their firs…
+- **childProcessBaseEnv** _(function)_ - `childProcessBaseEnv: (platform: string) => readonly string[]`
+  What a spawned process needs to start on `platform`. None of it is a credential.
+- **childProcessEnv** _(function)_ - `childProcessEnv: (input: ChildProcessEnvInput) => Record<string, string>`
+  The environment for a spawned process: the {@link childProcessBaseEnv} names and `names`, read from `env`, with `values` over them. A name with no value is left out.
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
   True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed.
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`

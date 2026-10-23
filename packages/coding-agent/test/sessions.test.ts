@@ -33,6 +33,30 @@ describe("sessions and compaction", () => {
     ])
   })
 
+  test("keeps token counts while redacting token values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-agent-session-"))
+    roots.push(root)
+    const store = new FileSessionStore({ root })
+    await store.append("main", "context.usage", {
+      usedTokens: 10,
+      max_output_tokens: 4096,
+      authToken: "abc",
+      sessionTokens: ["abc"],
+      token: 123456,
+      secretTokens: 123456,
+      apiKeyTokens: 42,
+    })
+    expect((await store.read("main"))[0]?.payload).toEqual({
+      usedTokens: 10,
+      max_output_tokens: 4096,
+      authToken: "[redacted]",
+      sessionTokens: "[redacted]",
+      token: "[redacted]",
+      secretTokens: "[redacted]",
+      apiKeyTokens: "[redacted]",
+    })
+  })
+
   test("automatically compacts while retaining pinned evidence", () => {
     const context = new ContextWindow({ maxTokens: 256, keepRecent: 2, maxSummaryChars: 512 })
     context.append({ kind: "verification.completed", content: "must remain", pinned: true })

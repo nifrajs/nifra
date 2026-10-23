@@ -248,6 +248,71 @@ describe("end-to-end tracer", () => {
     }
   })
 
+  test("walks every composite kind and keeps each artifact a step puts", async () => {
+    const catalog = createStepCatalog({
+      "two.artifacts": {
+        kind: "task",
+        run: async (ctx) => {
+          for (const size of [8, 16])
+            await ctx.artifact.put(new Uint8Array(size), {
+              planDigest: ctx.planDigest,
+              nodeId: ctx.nodeId,
+              kind: "tool_output",
+            })
+        },
+      },
+      "verify.report": { kind: "verify", run: () => ({ ok: true }) },
+      "plan.step": { kind: "task", run: (ctx) => ctx.set(ctx.nodeId, "planned") },
+      gate: { kind: "branch", when: () => false },
+    })
+    const plan: RunPlan = {
+      version: 1,
+      id: "composite",
+      nodes: [
+        {
+          id: "seq",
+          kind: "sequence",
+          children: [
+            { id: "art", kind: "task", step: "two.artifacts" },
+            { id: "check", kind: "verify", step: "verify.report" },
+          ],
+        },
+        {
+          id: "par",
+          kind: "parallel",
+          dependsOn: ["seq"],
+          children: [
+            { id: "p1", kind: "task", step: "plan.step" },
+            { id: "p2", kind: "task", step: "plan.step" },
+          ],
+        },
+        {
+          id: "again",
+          kind: "retry",
+          attempts: 2,
+          dependsOn: ["par"],
+          child: { id: "r1", kind: "task", step: "plan.step" },
+        },
+        {
+          id: "br",
+          kind: "branch",
+          step: "gate",
+          dependsOn: ["again"],
+          // biome-ignore lint/suspicious/noThenProperty: RunPlan branch nodes name their arms then/otherwise.
+          then: { id: "yes", kind: "task", step: "plan.step" },
+          otherwise: { id: "no", kind: "task", step: "plan.step" },
+        },
+      ],
+    }
+    const trace = await runTrace(plan, { runId: "composite", catalog })
+    expect(trace.ok).toBe(true)
+    const started = trace.evidence.filter((e) => e.status === "started").map((e) => e.nodeId)
+    expect(started).toEqual(expect.arrayContaining(["art", "check", "p1", "p2", "r1", "no"]))
+    expect(started).not.toContain("yes")
+    const art = trace.evidence.find((e) => e.nodeId === "art" && e.status === "completed")
+    expect(art?.artifacts?.map((ref) => ref.bytes)).toEqual([8, 16])
+  })
+
   test("orders a DAG deterministically by dependency then id", async () => {
     const plan: RunPlan = {
       version: 1,

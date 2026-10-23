@@ -98,6 +98,13 @@ const STAGED_BESIDE = ".nifra\\"
 /** Remove a staging file that may already be gone. */
 const discardStaged = (path: string): Promise<void> => unlink(path).catch(() => {})
 
+/**
+ * `path` with its directories resolved. The object itself is held to a plain file by `lstat` instead:
+ * another put's rename can replace it mid-call, and Bun 1.4.4 on Linux then fails `realpath` ENOENT.
+ */
+const realParentPath = async (path: string): Promise<string> =>
+  join(await realpath(dirname(path)), basename(path))
+
 // Windows refuses a rename onto a file while another rename replaces it or a reader holds it open
 // (EPERM, EACCES, EBUSY). Two puts of one key race there, so the rename is retried briefly.
 const WINDOWS_RENAME_BUSY: ReadonlySet<unknown> = new Set(["EPERM", "EACCES", "EBUSY"])
@@ -387,7 +394,7 @@ export class FileStorage implements StorageAdapter {
         lstat(path),
         lstat(base),
         realpath(base),
-        realpath(path),
+        realParentPath(path),
       ])
       const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
       const targetChanged =
@@ -443,7 +450,7 @@ export class FileStorage implements StorageAdapter {
         lstat(path),
         lstat(base),
         realpath(base),
-        realpath(path),
+        realParentPath(path),
       ])
       const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
       const escaped = resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)

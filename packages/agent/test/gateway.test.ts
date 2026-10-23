@@ -1,7 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import {
+  createStructuredOutputParser,
   FakeModelGateway,
   MODEL_GATEWAY_ERROR_CODES,
+  ModelGatewayFailureError,
+  parseModelGatewayResult,
   ReplayModelGateway,
   runModelGateway,
   structuredOutputParser,
@@ -238,5 +241,130 @@ describe("model gateway", () => {
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.error.code).toBe(code)
     }
+  })
+})
+
+describe("model gateway result parsing", () => {
+  test("a leaf result with an odd shape becomes a code, never the raw value", () => {
+    expect(parseModelGatewayResult("ok")).toEqual({ ok: false, error: { code: "internal" } })
+    expect(parseModelGatewayResult({ ok: false, error: { code: "timeout" }, trace: "x" })).toEqual({
+      ok: false,
+      error: { code: "malformed_output" },
+    })
+    expect(parseModelGatewayResult({ ok: false, error: { code: "timeout", detail: "x" } })).toEqual(
+      { ok: false, error: { code: "internal" } },
+    )
+    expect(
+      parseModelGatewayResult({ ok: false, error: new ModelGatewayFailureError("cancelled") }),
+    ).toEqual({ ok: false, error: { code: "cancelled" } })
+    expect(parseModelGatewayResult({ ok: true, output: 1, extra: true })).toEqual({
+      ok: false,
+      error: { code: "malformed_output" },
+    })
+    expect(parseModelGatewayResult({ ok: true })).toEqual({
+      ok: false,
+      error: { code: "malformed_output" },
+    })
+    expect(parseModelGatewayResult({ ok: true, output: 1, usage: { inputTokens: -1 } })).toEqual({
+      ok: false,
+      error: { code: "malformed_output" },
+    })
+    expect(parseModelGatewayResult({ ok: true, output: 1, usage: "many" })).toEqual({
+      ok: false,
+      error: { code: "malformed_output" },
+    })
+    expect(
+      parseModelGatewayResult({ ok: true, output: 1, usage: { inputTokens: 3, outputTokens: 4 } }),
+    ).toEqual({ ok: true, output: 1, usage: { inputTokens: 3, outputTokens: 4 } })
+  })
+
+  test("a Standard Schema parser turns an invalid output into malformed_output", async () => {
+    const parser = createStructuredOutputParser({
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value: unknown) =>
+          typeof value === "string" ? { value } : { issues: [{ message: "not a string" }] },
+      },
+    })
+    const run = (output: unknown) =>
+      runModelGateway(
+        new FakeModelGateway({ responses: [success(output)] }),
+        { input: {}, parser },
+        { routes: ["a"], retryableCodes: [] },
+      )
+    const good = await run("answer")
+    expect(good.ok ? good.output : good.error.code).toBe("answer")
+    const bad = await run(42)
+    expect(bad.ok ? "ok" : bad.error.code).toBe("malformed_output")
+  })
+})
+
+describe("model gateway policy checks", () => {
+  const gateway = () => new FakeModelGateway({ responses: [success("x")] })
+
+  test("refuses a gateway without complete and a policy out of bounds", async () => {
+    await expect(
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed gateway, to prove the runtime refuses what the type already would.
+      runModelGateway({} as never, { input: {} }, { routes: ["a"], retryableCodes: [] }),
+    ).rejects.toThrow("model gateway must implement complete")
+    const refused: [Parameters<typeof runModelGateway>[2], string][] = [
+      [{ routes: [], retryableCodes: [] }, "policy requires bounded routes"],
+      [{ routes: ["a", "a"], retryableCodes: [] }, "routes must be unique"],
+      [{ routes: ["a"], retryableCodes: [], budget: { maxAttempts: 0 } }, "maxAttempts is invalid"],
+      [
+        { routes: ["a"], retryableCodes: [], budget: { maxAttempts: 1, maxInputTokens: -1 } },
+        "maxInputTokens is invalid",
+      ],
+      [
+        { routes: ["a"], retryableCodes: [], budget: { maxAttempts: 1, maxOutputTokens: 1.5 } },
+        "maxOutputTokens is invalid",
+      ],
+      [{ routes: ["a"], retryableCodes: [], maxAttempts: 0 }, "policy maxAttempts is invalid"],
+      [{ routes: ["a"], retryableCodes: [], deadlineAt: 0 }, "deadlineAt is invalid"],
+    ]
+    for (const [policy, message] of refused)
+      await expect(runModelGateway(gateway(), { input: {} }, policy)).rejects.toThrow(message)
+  })
+
+  test("a route outside the policy is denied before any attempt", async () => {
+    const fake = gateway()
+    const result = await runModelGateway(
+      fake,
+      { input: {}, routeId: "elsewhere" },
+      { routes: ["a"], retryableCodes: [] },
+    )
+    expect(result.ok ? "ok" : result.error.code).toBe("policy_denied")
+    expect(result.attempts).toBe(0)
+    expect(fake.calls).toBe(0)
+  })
+
+  test("an answer that spends past the token budget is denied", async () => {
+    const result = await runModelGateway(
+      new FakeModelGateway({ responses: [{ ok: true, output: "x", usage: { outputTokens: 50 } }] }),
+      { input: {} },
+      { routes: ["a"], retryableCodes: [], budget: { maxAttempts: 1, maxOutputTokens: 10 } },
+    )
+    expect(result.ok ? "ok" : result.error.code).toBe("policy_denied")
+    expect(result.evidence.at(-2)).toMatchObject({ outcome: "failed", code: "policy_denied" })
+  })
+
+  test("fake and replay gateways refuse more responses than attempts can use", () => {
+    const responses = Array.from({ length: 513 }, () => success("x"))
+    expect(() => new FakeModelGateway({ responses })).toThrow(
+      "fake gateway responses are unbounded",
+    )
+    expect(() => new ReplayModelGateway({ replayId: "replay-1", responses })).toThrow(
+      "replay gateway responses are unbounded",
+    )
+    const replay = new ReplayModelGateway({ replayId: "replay-1", responses: [success("x")] })
+    expect(replay.calls).toBe(0)
+    replay.complete({
+      routeId: "a",
+      input: {},
+      signal: new AbortController().signal,
+      envelope: { attempt: 1, attemptsRemaining: 0 },
+    })
+    expect(replay.calls).toBe(1)
   })
 })

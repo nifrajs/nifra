@@ -223,3 +223,60 @@ describe("self-healing and UI extension seams", () => {
     }
   })
 })
+
+describe("self-healing controller bounds", () => {
+  const proposal = {
+    id: "tool-repair",
+    reason: "tool failed",
+    stage: () => ({ version: 2 }),
+    verify: () => true,
+    rollback: () => undefined,
+  }
+
+  test("maxAttempts must be between 1 and 8", () => {
+    expect(() => new SelfHealingController({ maxAttempts: 0 })).toThrow(
+      "healing: maxAttempts must be between 1 and 8",
+    )
+  })
+
+  test("refuses a malformed id and an untrusted capability before staging", async () => {
+    const events: unknown[] = []
+    const controller = new SelfHealingController({ onEvent: (event) => void events.push(event) })
+    expect(await controller.repair({ ...proposal, id: "Not An Id" })).toEqual({
+      ok: false,
+      attempts: 0,
+      error: "invalid repair id",
+    })
+    expect(await controller.repair({ ...proposal, capabilities: ["network"] })).toEqual({
+      ok: false,
+      attempts: 0,
+      error: "untrusted capability: network",
+    })
+    expect(events).toEqual([{ type: "repair.denied", id: "tool-repair", capability: "network" }])
+  })
+
+  test("a verified repair succeeds on its first attempt", async () => {
+    expect(
+      await new SelfHealingController({ trustedCapabilities: ["write"] }).repair({
+        ...proposal,
+        capabilities: ["write"],
+        monitor: () => true,
+      }),
+    ).toEqual({ ok: true, attempts: 1 })
+  })
+
+  test("a rollback that fails is reported with the repair's error", async () => {
+    const result = await new SelfHealingController({ maxAttempts: 1 }).repair({
+      ...proposal,
+      verify: () => false,
+      rollback: () => {
+        throw new Error("disk full")
+      },
+    })
+    expect(result).toEqual({
+      ok: false,
+      attempts: 1,
+      error: "repair verification failed; rollback failed: disk full",
+    })
+  })
+})

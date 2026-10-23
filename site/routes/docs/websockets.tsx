@@ -434,9 +434,10 @@ export default function WebSockets() {
         <code>server({"{ wsMaxPayloadBytes }"})</code> caps one inbound message (default{" "}
         <code>maxBodyBytes</code>, 1 MB): a socket that sends more is closed with <code>1009</code>{" "}
         and the message never reaches your handler. Bun and Node refuse it while it arrives. When a
-        message passes Bun's own frame limit (the largest cap on the listener, below), Bun drops the
-        connection without a close frame, so the client sees <code>1006</code>; your{" "}
-        <code>close</code> handler still gets <code>1009</code>, as on every other runtime. Deno's{" "}
+        message passes Bun's own frame limit (the largest cap on the listener, below), Bun up to 1.4.3
+        drops the connection without a close frame, so the client sees <code>1006</code>, and Bun
+        1.4.4 sends <code>1009</code>; your <code>close</code> handler gets <code>1009</code> either
+        way, as on every other runtime. Deno's{" "}
         <code>Deno.upgradeWebSocket</code> takes no size limit, so Deno receives each message whole
         (up to its own limit, 64 MiB on Deno 2.9) before nifra can check it: the cap still keeps the
         message from your handler, but it does not bound the memory Deno spent receiving it. Where that
