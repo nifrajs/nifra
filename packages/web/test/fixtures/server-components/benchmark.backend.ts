@@ -10,8 +10,8 @@ import {
 export function componentBenchmark<Props>(
   runtime: ServerComponentRuntime,
   adapter: ServerComponentRenderAdapter,
-  Summary: ServerComponent<{}, Props>,
-  Child: ServerComponent<{}, Props>,
+  Summary: ServerComponent<unknown, Props>,
+  Child: ServerComponent<unknown, Props>,
   build: string,
 ) {
   async function run(enabled: boolean, refresh: boolean) {

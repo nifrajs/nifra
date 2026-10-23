@@ -513,10 +513,12 @@ describe("NF-C036 route path the static scan cannot read", () => {
 
   test("names the expression, as information", async () => {
     const findings = await scanPaths(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a route file's own template literal, written as source text
       backend(['  .get("/plain", list)', "  .get(`${PREFIX}/users`, list)"]),
     )
     expect(findings).toHaveLength(1)
     expect(findings[0]).toMatchObject({ severity: "info", file: "backend.ts", line: 4 })
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the finding quotes the route's template literal
     expect(findings[0]?.message).toContain("GET `${PREFIX}/users`")
     expect(findings[0]?.message).toContain("as const")
   })
@@ -525,6 +527,7 @@ describe("NF-C036 route path the static scan cannot read", () => {
     const findings = await scanPaths(
       backend([
         "  // nifra-expect NF-C036: the prefix comes from deploy config",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a route file's own template literal, written as source text
         "  .get(`${PREFIX}/users`, list)",
       ]),
     )
@@ -533,6 +536,7 @@ describe("NF-C036 route path the static scan cannot read", () => {
 
   test("information needs no reason after the code", async () => {
     const findings = await scanPaths(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a route file's own template literal, written as source text
       backend(["  // nifra-expect NF-C036", "  .get(`${PREFIX}/users`, list)"]),
     )
     expect(findings).toEqual([])

@@ -341,7 +341,6 @@ const CLI_VERSION = "5.5.1"
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
 const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
 
-// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Trusted application configuration supplies native Vite plugins; the pinned pipeline validates their hooks.
 const asComponentPlugins = (
   value: readonly unknown[],
 ): NonNullable<
