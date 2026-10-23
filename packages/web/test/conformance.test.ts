@@ -142,4 +142,41 @@ describe("assertRenderAdapterConformance", () => {
       ),
     ).rejects.toMatchObject({ check: "hydration head", cause: expect.any(Error) })
   })
+
+  test("a deferred fixture needs only the markers, and other buffered or stream faults are named", async () => {
+    const deferred = { ...fixture, deferred: true }
+    await expect(
+      assertRenderAdapterConformance(
+        adapter({ renderToString: (chain, props) => `<!--deferred-->${htmlFor(chain, props)}` }),
+        deferred,
+      ),
+    ).resolves.toBeUndefined()
+    await expect(
+      assertRenderAdapterConformance(adapter({ renderToString: () => "OUTER only" }), deferred),
+    ).rejects.toMatchObject({ check: "buffered render" })
+    await expect(
+      assertRenderAdapterConformance(
+        adapter({ renderToString: () => Promise.reject(new Error("buffer")) }),
+        fixture,
+      ),
+    ).rejects.toMatchObject({ check: "buffered render", cause: expect.any(Error) })
+    await expect(
+      assertRenderAdapterConformance(
+        adapter({ hydrationHead: (() => 1) as unknown as RenderAdapter["hydrationHead"] }),
+        fixture,
+      ),
+    ).rejects.toMatchObject({ check: "hydration head" })
+    const erroring = adapter({
+      renderToStream: () =>
+        new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("stream reset"))
+          },
+        }),
+    })
+    await expect(assertRenderAdapterConformance(erroring, fixture)).rejects.toMatchObject({
+      check: "page stream",
+      cause: expect.any(Error),
+    })
+  })
 })

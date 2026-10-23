@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   assertDataAdapterConformance,
+  DataAdapterConformanceError,
   type DataAdapterConformanceTarget,
   runDataAdapterConformance,
 } from "../src/data-conformance.ts"
@@ -145,5 +146,72 @@ describe("data adapter conformance", () => {
       check: "transaction-rollback",
       message: "transaction-rollback conformance check failed",
     })
+  })
+
+  test("isolation, rollback and sharing each fail on a leak, a dirty rollback or split state", async () => {
+    const failing = async (
+      broken: Partial<DataAdapterConformanceTarget<Handle, Row, Snapshot>>,
+    ): Promise<string[]> => {
+      const report = await runDataAdapterConformance({ ...target(), ...broken })
+      return Object.entries(report.checks)
+        .filter(([, status]) => status === "fail")
+        .map(([check]) => check)
+    }
+    const everyRow = (adapter: Handle) => [...adapter.state.values()].flat()
+    expect(await failing({ read: async (adapter) => everyRow(adapter) })).toContain("rls-isolation")
+    expect(
+      await failing({
+        read: async (adapter, scope) =>
+          scope.token.endsWith("right")
+            ? everyRow(adapter)
+            : (adapter.state.get(scope.token) ?? []),
+      }),
+    ).toContain("rls-isolation")
+    expect(
+      await failing({
+        transaction: async (adapter, scope, run) =>
+          run({
+            write: async (row) => {
+              adapter.state.set(scope.token, [...(adapter.state.get(scope.token) ?? []), row])
+            },
+          }),
+      }),
+    ).toContain("transaction-rollback")
+    expect(
+      await failing({ createAdapter: async () => ({ state: new Map<string, Row[]>() }) }),
+    ).toEqual(["multi-instance"])
+  })
+
+  test("a target that cannot start or close fails, and the assertion names each failure", async () => {
+    const closed: string[] = []
+    const report = await runDataAdapterConformance({
+      ...target(),
+      close: async (adapter) => {
+        closed.push(adapter === undefined ? "none" : "adapter")
+        throw new Error("pool already closed")
+      },
+    })
+    expect(closed).toEqual(["adapter", "adapter"])
+    expect(report.failures).toEqual([
+      { check: "multi-instance", message: "adapter cleanup failed" },
+    ])
+    const unstarted = await runDataAdapterConformance({
+      ...target(),
+      createAdapter: async () => {
+        throw new Error("connect ECONNREFUSED")
+      },
+    })
+    expect(unstarted.failures).toEqual([
+      { check: "multi-instance", message: "multi-instance conformance check failed" },
+    ])
+    const error = await assertDataAdapterConformance({
+      ...target(),
+      page: async () => ({ items: [] }),
+    }).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(DataAdapterConformanceError)
+    expect((error as DataAdapterConformanceError).message).toBe(
+      "data adapter conformance failed: pagination: pagination conformance check failed",
+    )
+    expect((error as DataAdapterConformanceError).report.checks.pagination).toBe("fail")
   })
 })
