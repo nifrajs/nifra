@@ -182,6 +182,7 @@ describe("isolated extension worker calls", () => {
 describe("isolated extension worker environment", () => {
   test("on Windows the worker keeps the Windows names", async () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")
+    const systemRoot = process.env.SystemRoot
     process.env.SystemRoot = "C:\\Windows"
     try {
       await withWorker({ modulePath: await moduleFile("env.ts", tools) }, async (worker) => {
@@ -194,7 +195,8 @@ describe("isolated extension worker environment", () => {
       })
     } finally {
       if (platform !== undefined) Object.defineProperty(process, "platform", platform)
-      delete process.env.SystemRoot
+      if (systemRoot === undefined) delete process.env.SystemRoot
+      else process.env.SystemRoot = systemRoot
     }
   })
 })

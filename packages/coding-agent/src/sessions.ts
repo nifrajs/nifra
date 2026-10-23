@@ -562,13 +562,15 @@ function retainEntries(
 }
 
 const SECRET_KEY = /(?:secret|token|password|passwd|authorization|api[-_]?key|private[-_]?key)/i
-// A number under a plural `tokens` key is a usage count (`usedTokens`, `maxOutputTokens`), not a credential.
-const TOKEN_COUNT_KEY = /tokens/i
+
+/** A number under a plural `tokens` key is a usage count (`usedTokens`), unless the rest names a secret. */
+function namesSecret(key: string, value: unknown): boolean {
+  return SECRET_KEY.test(typeof value === "number" ? key.replace(/tokens/gi, "") : key)
+}
 
 function redactValue(value: unknown, key = "", depth = 0): unknown {
   if (depth > 5) return "[depth-limited]"
-  if (SECRET_KEY.test(key) && !(typeof value === "number" && TOKEN_COUNT_KEY.test(key)))
-    return "[redacted]"
+  if (namesSecret(key, value)) return "[redacted]"
   if (typeof value === "string")
     return value.length > 16_384 ? `${value.slice(0, 16_384)}…[truncated]` : value
   if (Array.isArray(value))

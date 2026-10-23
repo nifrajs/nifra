@@ -43,6 +43,8 @@ describe("sessions and compaction", () => {
       authToken: "abc",
       sessionTokens: ["abc"],
       token: 123456,
+      secretTokens: 123456,
+      apiKeyTokens: 42,
     })
     expect((await store.read("main"))[0]?.payload).toEqual({
       usedTokens: 10,
@@ -50,6 +52,8 @@ describe("sessions and compaction", () => {
       authToken: "[redacted]",
       sessionTokens: "[redacted]",
       token: "[redacted]",
+      secretTokens: "[redacted]",
+      apiKeyTokens: "[redacted]",
     })
   })
 
