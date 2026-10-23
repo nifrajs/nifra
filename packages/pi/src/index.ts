@@ -10,6 +10,8 @@ import {
   boundAgentText,
   boundAgentValue,
   type CreateSessionInput,
+  childProcessBaseEnv,
+  childProcessEnv,
   createAgentEventStream,
   isAgentEvent,
   type ReloadResult,
@@ -995,54 +997,17 @@ const PI_PROVIDER_ENV = [
 ]
 
 // What Pi needs to run at all. None of it is a credential, so a diagnostic keeps these values.
-const PI_BASE_ENV = [
-  "PATH",
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "TERM",
-  ...(process.platform === "win32"
-    ? [
-        "SystemRoot",
-        "WINDIR",
-        "TEMP",
-        "TMP",
-        "USERPROFILE",
-        "LOCALAPPDATA",
-        "APPDATA",
-        "COMSPEC",
-        "PATHEXT",
-        "BUN_INSTALL",
-        "HOMEDRIVE",
-        "HOMEPATH",
-        "USERNAME",
-        "USERDOMAIN",
-        "ProgramData",
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-      ]
-    : []),
-]
+const PI_BASE_ENV = childProcessBaseEnv(process.platform)
 
 function filteredEnv(
   values: Readonly<Record<string, string | undefined>> | undefined,
 ): Record<string, string> {
-  const result: Record<string, string> = {}
-  const names = new Set([...PI_BASE_ENV, ...PI_PROVIDER_ENV, ...Object.keys(values ?? {})])
-  for (const name of names) {
-    const value = values !== undefined && Object.hasOwn(values, name) ? values[name] : readEnv(name)
-    if (value !== undefined) result[name] = value
-  }
-  return result
-}
-
-function readEnv(name: string): string | undefined {
-  const exact = process.env[name]
-  if (exact !== undefined || process.platform !== "win32") return exact
-  const key = Object.keys(process.env).find(
-    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
-  )
-  return key === undefined ? undefined : process.env[key]
+  return childProcessEnv({
+    env: process.env,
+    platform: process.platform,
+    names: PI_PROVIDER_ENV,
+    values,
+  })
 }
 
 function failedStream(error: unknown): AgentEventStream {

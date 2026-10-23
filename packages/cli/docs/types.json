@@ -3293,6 +3293,12 @@
     "signature": "export interface CheckRule {\n    readonly code: string;\n    readonly title: string;\n    scan(ctx: RuleContext): Promise<readonly Diagnostic[]>;\n}"
   },
   {
+    "name": "ChildProcessEnvInput",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface ChildProcessEnvInput {\n    /** The host's environment, usually `process.env`. */\n    readonly env: Readonly<Record<string, string | undefined>>;\n    /** The host's platform, usually `process.platform`. */\n    readonly platform: string;\n    /** Names read from `env` besides the base set. */\n    readonly names?: readonly string[];\n    /** Values that win over `env`. A name set to `undefined` here is left out. */\n    readonly values?: Readonly<Record<string, string | undefined>> | undefined;\n}"
+  },
+  {
     "name": "ChildVectorTracker",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
@@ -17541,6 +17547,20 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function checkTrajectoryInvariants(result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions): readonly TrajectoryInvariantResult[];"
+  },
+  {
+    "name": "childProcessBaseEnv",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function childProcessBaseEnv(platform: string): readonly string[];",
+    "doc": "/** What a spawned process needs to start on `platform`. None of it is a credential. */"
+  },
+  {
+    "name": "childProcessEnv",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function childProcessEnv(input: ChildProcessEnvInput): Record<string, string>;",
+    "doc": "/**\n * The environment for a spawned process: the {@link childProcessBaseEnv} names and `names`, read\n * from `env`, with `values` over them. A name with no value is left out.\n */"
   },
   {
     "name": "classificationAtLeast",

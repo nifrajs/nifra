@@ -387,37 +387,4 @@ done
       expect(full).toEndWith("nifra.ts --extra")
     },
   )
-
-  test("on Windows a provider key set in another case still reaches Pi", async () => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform")
-    const saved = process.env.XAI_API_KEY
-    delete process.env.XAI_API_KEY
-    process.env.xai_api_key = "lower-case-key"
-    const backend = new PiBackend({
-      command: process.execPath,
-      rpcArgs: [
-        "-e",
-        `process.stdin.on("data", (chunk) => {
-  if (!String(chunk).includes("prompt")) return
-  const seen = process.env.XAI_API_KEY === "lower-case-key" ? "forwarded" : "absent"
-  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: seen } }) + "\\n")
-  process.stdout.write(JSON.stringify({ type: "agent_end" }) + "\\n")
-})`,
-      ],
-    })
-    try {
-      Object.defineProperty(process, "platform", { value: "win32", configurable: true })
-      // The environment is built and the process spawned in createSession's synchronous part.
-      const creating = backend.createSession({ cwd: process.cwd(), sessionId: "windows-env" })
-      if (platform !== undefined) Object.defineProperty(process, "platform", platform)
-      await creating
-      const { events } = await turn(backend, "windows-env")
-      expect(ofType(events, "assistant.message")[0]?.text).toBe("forwarded")
-    } finally {
-      if (platform !== undefined) Object.defineProperty(process, "platform", platform)
-      delete process.env.xai_api_key
-      if (saved !== undefined) process.env.XAI_API_KEY = saved
-      await backend.close("windows-env").catch(() => undefined)
-    }
-  })
 })

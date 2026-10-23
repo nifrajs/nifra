@@ -12,8 +12,8 @@
     "lines": 94.84029484029483
   },
   "packages/acp/src/index.ts": {
-    "functions": 96,
-    "lines": 93.95465994962217
+    "functions": 97.26027397260275,
+    "lines": 96.42384105960264
   },
   "packages/ag-ui/src/index.ts": {
     "functions": 97.72727272727273,
@@ -37,9 +37,13 @@
   },
   "packages/agent-protocol/src/index.ts": {
     "functions": 100,
-    "lines": 96.7816091954023
+    "lines": 96.78899082568807
   },
   "packages/agent-protocol/src/orchestration.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/agent-protocol/src/process-env.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -248,8 +252,8 @@
     "lines": 100
   },
   "packages/coding-agent/src/isolated.ts": {
-    "functions": 96.15384615384616,
-    "lines": 96.16724738675958
+    "functions": 95.65217391304348,
+    "lines": 95.54655870445345
   },
   "packages/coding-agent/src/native.ts": {
     "functions": 98.0392156862745,
@@ -413,7 +417,7 @@
   },
   "packages/core/src/durable-approval.ts": {
     "functions": 95.23809523809523,
-    "lines": 94.24083769633508
+    "lines": 93.717277486911
   },
   "packages/core/src/durable-effect.ts": {
     "functions": 100,
@@ -1413,7 +1417,7 @@
   },
   "packages/pi/src/index.ts": {
     "functions": 100,
-    "lines": 94.40715883668904
+    "lines": 96.3953488372093
   },
   "packages/pi/src/rpc-write.ts": {
     "functions": 100,
