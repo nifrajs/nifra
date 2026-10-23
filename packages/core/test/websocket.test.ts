@@ -1116,7 +1116,18 @@ describe("attachWebSocket", () => {
 
   test("exceedsPayloadCap counts UTF-8 bytes at every boundary", () => {
     const encoded = (text: string) => new TextEncoder().encode(text).byteLength
-    for (const text of ["", "abc", "é", "€", "😀", "aé€😀", "€".repeat(5), "😀".repeat(3)]) {
+    const lone = ["\ud800", "\udc00", "a\ud800b", "\udc00\ud800", "😀\ud800", "\ud800".repeat(61)]
+    for (const text of [
+      "",
+      "abc",
+      "é",
+      "€",
+      "😀",
+      "aé€😀",
+      "€".repeat(5),
+      "😀".repeat(3),
+      ...lone,
+    ]) {
       const bytes = encoded(text)
       expect(exceedsPayloadCap(text, bytes)).toBe(false)
       if (bytes > 0) expect(exceedsPayloadCap(text, bytes - 1)).toBe(true)

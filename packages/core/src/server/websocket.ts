@@ -388,7 +388,8 @@ export function attachWebSocket<
 const WS_MESSAGE_DECODER = new TextDecoder()
 
 /** Whether a message is over `cap` UTF-8 bytes, without encoding a text one: each UTF-16 unit takes
- * 1-3 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. */
+ * 1-3 bytes (a surrogate pair 4 for its 2, a lone surrogate the 3 of U+FFFD), so only a length
+ * between those bounds is counted. */
 export function exceedsPayloadCap(
   message: string | ArrayBuffer | Uint8Array,
   cap: number,
@@ -400,7 +401,10 @@ export function exceedsPayloadCap(
   let bytes = 0
   for (let i = 0; i < units; i++) {
     const unit = message.charCodeAt(i)
-    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
+    if (unit >= 0xd800 && unit <= 0xdbff && (message.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4
+      i++
+    } else bytes += unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3
     if (bytes > cap) return true
   }
   return false
