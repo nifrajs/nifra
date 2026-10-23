@@ -415,9 +415,11 @@ export interface RouteModule {
   readonly searchClientKeys?: readonly string[]
   /**
    * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live
-   * refresh) fresh data. By default a reload keeps the identity of every part of `data` and the layouts'
+   * refresh) fresh data. By default a reload keeps the identity of the parts of `data` and the layouts'
    * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer
-   * that memoizes on identity skips it. Opt out for a page whose code compares `data` against its value
+   * that memoizes on identity skips it. Not every unchanged row, though: an array whose first 32
+   * elements all changed is taken whole, later unchanged elements included, so code that needs a row's
+   * identity must not count on it. Opt out for a page whose code compares `data` against its value
    * from before the reload, or whose rows re-render whatever their identity, which then pay the
    * comparison for nothing. Client-only.
    */
