@@ -109,8 +109,8 @@
   //  - packages/web-solid: frontend code needing DOM lib + Solid JSX; typechecked by
   //    packages/web-solid/tsconfig.json (see scripts/typecheck.ts).
   //  - the web examples: each is typechecked by its own examples/<name>/tsconfig.json.
-  //  - packages/web/src/client.ts: the browser navigation layer (DOM); typechecked by
-  //    packages/web/tsconfig.json. The rest of @nifrajs/web stays DOM-free here.
+  //  - packages/web/src/client.ts and keep-alive.ts: the browser navigation layer (DOM); typechecked
+  //    by packages/web/tsconfig.json. The rest of @nifrajs/web stays DOM-free here.
   "exclude": [
     "node_modules",
     "dist",
@@ -125,6 +125,8 @@
     "site",
     "packages/deno",
     "packages/web/src/client.ts",
+    "packages/web/src/keep-alive.ts",
+    "packages/web/test/keep-alive.test.ts",
     "packages/webmcp",
     "packages/web/src/islands.ts",
     "packages/web/src/nano.ts",

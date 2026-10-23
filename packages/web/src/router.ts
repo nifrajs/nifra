@@ -164,6 +164,21 @@ export interface RouterState {
   readonly intercepted?: Intercepted
   /** Opaque: which live load the page data on screen came from (`@nifrajs/web/live-client`). */
   readonly live?: unknown
+  /** The page instance on screen, when the app keeps pages alive (`@nifrajs/web/keep-alive`). */
+  readonly instance?: string | undefined
+  /** Pages kept mounted and hidden, least recently shown first. Absent when none is kept. */
+  readonly kept?: readonly KeptPage[] | undefined
+  /** This publish showed a kept page again. */
+  readonly restored?: boolean | undefined
+  /** A page shown again is reloading its data in place: not a navigation, so `pending` stays false. */
+  readonly revalidating?: boolean | undefined
+}
+
+/** A page kept mounted while its history entry is not the one on screen. */
+export interface KeptPage {
+  readonly instance: string
+  /** Its last settled state, which it renders from while hidden. */
+  readonly state: RouterState
 }
 
 /** Which intercept boundary is open, and the page underneath it. */
@@ -508,6 +523,9 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     read,
   )
 }
+
+/** The router's own transport, which a `fetchData` override may layer over. */
+export { defaultFetchData as fetchRouteData }
 
 /**
  * Create the agnostic router store. `navigate` is guarded by a monotonic generation so that when

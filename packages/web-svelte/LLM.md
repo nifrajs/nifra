@@ -10,13 +10,15 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 
 ## Public entrypoints
 
-`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/keep-alive` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
 
 ## Key exports
 
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary` · from `@nifrajs/web-svelte/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-svelte/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-svelte/client`
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void` · from `@nifrajs/web-svelte/keep-alive`
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void` · from `@nifrajs/web-svelte/keep-alive`
 - **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/web-svelte/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-svelte/fetcher`
 - **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/plugin`
@@ -26,10 +28,8 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 - **svelteSvgComponentBunPlugin** _(function)_ - `svelteSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/svg`
 - **svgToSvelte** _(function)_ - `svgToSvelte: (xml: string) => string` · from `@nifrajs/web-svelte/svg`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>` · from `@nifrajs/web-svelte/router`
-- **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
-- **useFetchers** _(function)_ - `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
 
-_…and 26 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 30 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

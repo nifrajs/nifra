@@ -24,6 +24,7 @@ import type {
   PageLocales,
   RenderAdapter,
   RenderProps,
+  RenderStreamOptions,
 } from "../render-seam.ts"
 import {
   ACTION_GLOBAL,
@@ -178,6 +179,9 @@ export interface RenderPageOptions {
    * deferred, the response is that slot's HTML alone; otherwise the whole document.
    */
   readonly swapSlot?: string
+  /** Chain indices the adapter renders inside the slot wrappers of a kept page (`keepAlive`), so the
+   * browser can keep the page this document shows without remounting it. */
+  readonly slots?: readonly number[]
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
    * is ignored (the document is always HTML) and the ISR freshness header is applied after these,
    * so neither can be overridden from here. */
@@ -271,6 +275,17 @@ export function renderPage(options: RenderPageInput): MaybePromise<Response> {
   const page = renderPageResult(options)
   return page instanceof Promise ? page.then((p) => p.toResponse()) : page.toResponse()
 }
+
+// Every option of an adapter call, for a render with slot wrappers (only a keep-alive app's).
+const streamOptions = (
+  nonce: string | undefined,
+  parts: DocumentParts | undefined,
+  slots: readonly number[],
+): RenderStreamOptions => ({
+  ...(nonce === undefined ? {} : { nonce }),
+  ...(parts === undefined ? {} : { parts }),
+  slots,
+})
 
 export function renderPageResult(options: RenderPageInput): MaybePromise<RenderedPage> {
   const { csp } = options
@@ -564,6 +579,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   }
 
   const { swapSlot, ...documentOptions } = options
+  const slots = options.slots
   if (swapSlot !== undefined && allDeferred.length === 0 && adapter.renderSlot !== undefined) {
     const slotPage = (slotHtml: string | undefined): MaybePromise<RenderedPage> =>
       slotHtml === undefined
@@ -594,6 +610,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       streamNonce,
       streamNonce === nonce ? nonceAttr : ` nonce="${escapeAttr(streamNonce ?? "")}"`,
       options.signal,
+      options.slots,
     ).then((response) => new ResponseRenderedPage(response))
   const last = chain[chain.length - 1]
   const leaf = isWeakKey(last) ? last : undefined
@@ -619,15 +636,17 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       return streamed(renderNonce)
     }
     const out =
-      parts !== undefined
-        ? adapter.renderToString(
-            chain,
-            renderProps,
-            renderNonce === undefined ? { parts } : { nonce: renderNonce, parts },
-          )
-        : renderNonce === undefined
-          ? adapter.renderToString(chain, renderProps)
-          : adapter.renderToString(chain, renderProps, { nonce: renderNonce })
+      slots !== undefined
+        ? adapter.renderToString(chain, renderProps, streamOptions(renderNonce, parts, slots))
+        : parts !== undefined
+          ? adapter.renderToString(
+              chain,
+              renderProps,
+              renderNonce === undefined ? { parts } : { nonce: renderNonce, parts },
+            )
+          : renderNonce === undefined
+            ? adapter.renderToString(chain, renderProps)
+            : adapter.renderToString(chain, renderProps, { nonce: renderNonce })
     const page = (bodyHtml: string | undefined): MaybePromise<RenderedPage> => {
       if (bodyHtml === undefined) {
         // The render suspended on something only the streaming renderer waits for (React's `use`
@@ -667,6 +686,7 @@ async function renderStreamedPage(
   nonce: string | undefined,
   nonceAttr: string,
   signal: AbortSignal | undefined,
+  slots: readonly number[] | undefined,
 ): Promise<Response> {
   // Streaming path - required for `defer()` (progressive `<Await>` resolution) and used by any adapter
   // that doesn't implement `renderToString`. Awaiting `renderToStream` resolves on shell-readiness
@@ -676,15 +696,17 @@ async function renderStreamedPage(
   const closeRoot = enc.encode(closeRootHtml)
   const tail = enc.encode(tailHtml)
   const appStream =
-    parts !== undefined
-      ? await adapter.renderToStream(
-          chain,
-          renderProps,
-          nonce === undefined ? { parts } : { nonce, parts },
-        )
-      : nonce === undefined
-        ? await adapter.renderToStream(chain, renderProps)
-        : await adapter.renderToStream(chain, renderProps, { nonce })
+    slots !== undefined
+      ? await adapter.renderToStream(chain, renderProps, streamOptions(nonce, parts, slots))
+      : parts !== undefined
+        ? await adapter.renderToStream(
+            chain,
+            renderProps,
+            nonce === undefined ? { parts } : { nonce, parts },
+          )
+        : nonce === undefined
+          ? await adapter.renderToStream(chain, renderProps)
+          : await adapter.renderToStream(chain, renderProps, { nonce })
   // After the render: an adapter fills its document parts before handing back the stream.
   const shell = enc.encode(shellOf())
   const body = streamDocument(

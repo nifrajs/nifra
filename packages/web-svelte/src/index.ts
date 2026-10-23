@@ -82,6 +82,89 @@ const loadChain = (): Component<ChainProps> | Promise<Component<ChainProps>> => 
   return chainPromise
 }
 
+/** What `KeepAlive.svelte` takes on the server: the one page the document renders, as a tree. */
+type KeepAliveProps = {
+  readonly initial: unknown
+  readonly tree: readonly unknown[]
+  readonly mount: unknown
+}
+let keepAliveComponent: Component<KeepAliveProps> | undefined
+let keepAlivePromise: Promise<Component<KeepAliveProps>> | undefined
+/** `KeepAlive.svelte`, the root of an app with a `keepAlive` route, loaded as `Chain` is. */
+const loadKeepAlive = (): Component<KeepAliveProps> | Promise<Component<KeepAliveProps>> => {
+  if (keepAliveComponent !== undefined) return keepAliveComponent
+  const load = ssrModuleLoader()
+  keepAlivePromise ??= (
+    load !== undefined
+      ? Promise.all([load(`${import.meta.dirname}/KeepAlive.svelte`), load("svelte/server")]).then(
+          ([mod, server]) => {
+            render = (server as { render: typeof runtimeRender }).render
+            return (mod as { default: Component<KeepAliveProps> }).default
+          },
+        )
+      : import("./KeepAlive.svelte").then((m) => m.default as Component<KeepAliveProps>)
+  ).then((c) => {
+    keepAliveComponent = c
+    return c
+  })
+  return keepAlivePromise
+}
+
+const noRef = (): (() => void) => () => {}
+
+/**
+ * The props of the keep-alive root for one server render: the chain as a single path of slot nodes,
+ * the entries at `slots` inside the slot wrappers, which is what the browser's first render builds.
+ */
+function keptProps(
+  chain: readonly unknown[],
+  props: RenderProps,
+  slots: readonly number[],
+): KeepAliveProps {
+  const state = { routeId: "", params: {}, path: "", data: props.data, pending: false }
+  const page = chain.length - 1
+  let node: Record<string, unknown> = {
+    key: "\0page",
+    depth: page,
+    state,
+    hidden: false,
+    wrapped: slots.includes(page),
+  }
+  for (let depth = page - 1; depth >= 0; depth--) {
+    node = {
+      key: `\0layout${depth}`,
+      depth,
+      state,
+      hidden: false,
+      wrapped: slots.includes(depth),
+      children: [node],
+    }
+  }
+  const tree = [node]
+  return {
+    initial: state,
+    tree,
+    mount: {
+      tree: () => tree,
+      propsOf: () => props,
+      chainOf: () => chain,
+      entry: noRef,
+      page: noRef,
+      after: () => {},
+    },
+  }
+}
+
+function keptBodyOf(
+  KeepAlive: Component<KeepAliveProps>,
+  props: KeepAliveProps,
+  options: RenderStreamOptions,
+): string {
+  const out = render(KeepAlive, { props })
+  if (options.parts !== undefined) options.parts.head += out.head
+  return out.body
+}
+
 // Svelte SSR yields a complete HTML string; the seam wants a stream, so emit it as one chunk.
 function oneChunk(html: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(html)
@@ -114,6 +197,13 @@ export const svelteAdapter: RenderAdapter = {
   // The seam allows `string | Promise<string>`, so the first render can resolve `Chain` while every
   // render after it stays a plain synchronous call - see `loadChain`.
   renderToString(chain, props, options) {
+    if (options?.slots !== undefined) {
+      const KeepAlive = loadKeepAlive()
+      const props$ = keptProps(chain, props, options.slots)
+      return KeepAlive instanceof Promise
+        ? KeepAlive.then((K) => keptBodyOf(K, props$, options))
+        : keptBodyOf(KeepAlive, props$, options)
+    }
     const Chain = loadChain()
     const props$ = { chain, props, data: props.data, layoutData: props.layoutData }
     return Chain instanceof Promise
@@ -123,6 +213,13 @@ export const svelteAdapter: RenderAdapter = {
   renderToStream(chain, props, options) {
     // `Chain` folds the layout chain (page innermost gets `props`; layouts wrap via their `children`
     // snippet). Svelte's `render` returns { head, body }; the body goes into #root.
+    if (options?.slots !== undefined) {
+      const KeepAlive = loadKeepAlive()
+      const props$ = keptProps(chain, props, options.slots)
+      return KeepAlive instanceof Promise
+        ? KeepAlive.then((K) => oneChunk(keptBodyOf(K, props$, options)))
+        : oneChunk(keptBodyOf(KeepAlive, props$, options))
+    }
     const Chain = loadChain()
     const props$ = { chain, props, data: props.data, layoutData: props.layoutData }
     return Chain instanceof Promise

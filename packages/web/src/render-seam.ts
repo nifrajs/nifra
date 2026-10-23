@@ -135,6 +135,13 @@ export interface RenderStreamOptions {
   readonly nonce?: string
   /** Present only for an adapter that sets {@link RenderAdapter.documentParts}. */
   readonly parts?: DocumentParts
+  /**
+   * Chain indices to render inside the two slot wrappers a kept page needs (`keepAlive`), each
+   * `<div data-nifra-entry style="display:contents"><div data-nifra-page style="display:contents">`
+   * around that chain entry, so the browser's keep-alive view hydrates the same markup. Present only
+   * in an app with a `keepAlive` route; an adapter without keep-alive support ignores it.
+   */
+  readonly slots?: readonly number[]
 }
 
 /**

@@ -10,7 +10,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 
 ## Public entrypoints
 
-`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
+`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/keep-alive` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
 - **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined` · from `@nifrajs/web-react/server-components/guard`
 
-_…and 73 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 75 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

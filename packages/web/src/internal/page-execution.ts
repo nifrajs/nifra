@@ -47,6 +47,7 @@ import {
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
+import { keepAliveTable, slotDepths } from "./keep-alive-table.ts"
 import type { LiveEnvelope, LiveFinish, LiveLoad, LiveRouteMatch } from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
 import {
@@ -513,6 +514,18 @@ export function createPageRequestExecutor<Env = unknown>(
     options.draftSecret === undefined
       ? Promise.resolve(false)
       : isDraftEnabled(req, options.draftSecret)
+
+  // Where the browser's keep-alive view puts slot wrappers, so the document it hydrates has them:
+  // nothing outside an app with a `keepAlive` route.
+  const keepTable = keepAliveTable(manifest)
+  const slotsFor = (
+    layoutIds: readonly string[],
+    routeId: string,
+  ): { slots?: readonly number[] } => {
+    if (keepTable === undefined) return {}
+    const slots = slotDepths(keepTable, layoutIds, routeId)
+    return slots.length === 0 ? {} : { slots }
+  }
 
   const preloadOf = (id: string): { preload?: readonly string[] } => {
     const chunks = options.routePreload?.[id]
@@ -1131,6 +1144,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ...copyOption,
       ...localeOption(req),
       ...titleOption,
+      ...slotsFor(layoutIds, routeId),
     }
     if (chain === undefined) return renderPageResult(statusPage)
     try {
@@ -1289,6 +1303,7 @@ export function createPageRequestExecutor<Env = unknown>(
       if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
       const swapSlot = swapSlotOf(req)
       if (swapSlot !== undefined) page.swapSlot = swapSlot
+      if (keepTable !== undefined) Object.assign(page, slotsFor(route.layoutIds, route.id))
       if (layoutData !== undefined) page.layoutData = layoutData
       if (boundaryStates !== undefined) page.boundaries = boundaryStates
       if (responseHeaders !== undefined) page.headers = responseHeaders
@@ -2031,6 +2046,7 @@ export function createPageRequestExecutor<Env = unknown>(
           ...cspOption,
           ...titleOption,
           ...swapOption(c.req),
+          ...slotsFor(route.layoutIds, route.id),
         }
         if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
         return renderPageResult(page)
