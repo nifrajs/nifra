@@ -59,10 +59,11 @@ export function isDeployTarget(value: string): value is DeployTarget {
  * `my_app`, or `my.app`.
  */
 export function deployName(name: string): string {
+  // The collapse leaves at most one trailing "-", so `-$` suffices; `-+$` backtracks on long dash runs.
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-+$/, "")
+    .replace(/-$/, "")
 }
 
 /** The `deploy` script for `target`, or `undefined` when there is none. */
