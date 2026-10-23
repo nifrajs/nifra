@@ -112,19 +112,23 @@ export interface RawAnswer {
   readonly body: string
 }
 
+/** One `Host` line per value, so a list sends the field repeated. */
+const hostLines = (host: string | readonly string[]): string[] =>
+  (typeof host === "string" ? [host] : host).map((value) => `Host: ${value}`)
+
 /** Send one request with `target` on the request line, byte for byte, and read the answer. */
 export function rawExchange(
   port: number,
   method: string,
   target: string,
   body?: string,
-  host = "127.0.0.1",
+  host: string | readonly string[] = "127.0.0.1",
 ): Promise<RawAnswer> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     const chunks: Buffer[] = []
     socket.on("connect", () => {
-      const head = [`${method} ${target} HTTP/1.1`, `Host: ${host}`, "Connection: close"]
+      const head = [`${method} ${target} HTTP/1.1`, ...hostLines(host), "Connection: close"]
       if (body !== undefined) {
         head.push("Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`)
       }
@@ -163,6 +167,20 @@ export const INVALID_HOSTS: readonly string[] = [
   "",
 ]
 
+/**
+ * Host sent more than once, which RFC 9112 section 3.2 answers 400. Joined into one header, the app
+ * would read an authority the request was not routed on: Bun routes on the first value.
+ */
+export const REPEATED_HOSTS: readonly (readonly string[])[] = [
+  ["127.0.0.1", "other.example"],
+  ["127.0.0.1", "127.0.0.1"],
+  ["127.0.0.1", "other.example", "third.example"],
+  ["127.0.0.1", ""],
+  ["", "127.0.0.1"],
+  ["LOCALHOST:80", "other.example"],
+  ["[::1]", "other.example"],
+]
+
 const INVALID_HOST_ANSWERS: Readonly<Record<string, string>> = {
   "/posts": JSON.stringify({ route: "GET /posts" }),
   "/users/../posts": JSON.stringify({ route: "GET /posts" }),
@@ -192,7 +210,7 @@ export function rawUpgradeStatus(
   port: number,
   target: string,
   headers: Readonly<Record<string, string>> = {},
-  host = "127.0.0.1",
+  host: string | readonly string[] = "127.0.0.1",
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
@@ -201,7 +219,7 @@ export function rawUpgradeStatus(
       socket.write(
         [
           `GET ${target} HTTP/1.1`,
-          `Host: ${host}`,
+          ...hostLines(host),
           "Connection: Upgrade",
           "Upgrade: websocket",
           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",

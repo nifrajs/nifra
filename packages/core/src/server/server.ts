@@ -708,9 +708,20 @@ const invalidHost = (req: Request): boolean => {
   return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
 }
 
-/** A Host Bun could not read, so it left the target unparsed. A request built in process (an
- * adapter's, a test's) carries the URL its caller built, whatever its Host header says. */
-const leftUnparsed = (req: Request): boolean => invalidHost(req) && !URL.canParse(req.url)
+/** A Host Bun misread: one it could not read, so it left the target unparsed, or one sent twice,
+ * which it joins with ", " after building the URL on the first, so the app reads an authority the
+ * request was not routed on (RFC 9112 section 3.2 answers 400). A request built in process (an
+ * adapter's, a test's) keeps the URL its caller built, unless it pairs two Hosts with a URL on the
+ * first, as Bun hands such a request over. */
+const misreadHost = (req: Request): boolean => {
+  if (!invalidHost(req)) return false
+  const routed = URL.parse(req.url)?.host
+  const [first, second] = headerOf(req, "host")!.split(", ")
+  return (
+    routed === undefined ||
+    (second !== undefined && URL.parse(`//${first}`, req.url)?.host === routed)
+  )
+}
 
 function normalizeMountPrefix(path: string): string {
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
@@ -3297,9 +3308,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, url), platform)
         req = rebuilt
       }
-    } else if (unparsedBunTargets && leftUnparsed(req)) {
+    } else if (unparsedBunTargets && misreadHost(req)) {
       // Refused as Node and Deno refuse that Host: Bun left the target unparsed, so `/users/../admin`
-      // would be routed raw and the app's `new URL(req.url)` would throw.
+      // would be routed raw and the app's `new URL(req.url)` would throw, or routed on one of two.
       return jsonError(400, "invalid_host")
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
@@ -3809,7 +3820,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (rebuilt === undefined) return WS_PASS
         req = rebuilt
       }
-    } else if (unparsedBunTargets && leftUnparsed(req)) {
+    } else if (unparsedBunTargets && misreadHost(req)) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
@@ -6928,9 +6939,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         peer,
         fallback,
       )
-      // The table never passes through `fetch`, so it refuses the Host Bun could not parse there too.
+      // The table never passes through `fetch`, so it refuses the Host Bun misread there too.
       tableAt(path, pattern.segments)[method as Method] = (request, server) =>
-        leftUnparsed(request) ? jsonError(400, "invalid_host") : handler(request, server)
+        misreadHost(request) ? jsonError(400, "invalid_host") : handler(request, server)
       count += 1
       if (paramNames.length > 0) {
         below.add(pattern.segments.length + method)

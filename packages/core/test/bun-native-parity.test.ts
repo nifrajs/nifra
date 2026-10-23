@@ -4,6 +4,8 @@ import { method as route } from "../src/server/methods.ts"
 import {
   INVALID_HOSTS,
   invalidHostMismatches,
+  REPEATED_HOSTS,
+  rawExchange,
   requestTargetApp,
   requestTargetMismatches,
 } from "./request-target-matrix.ts"
@@ -332,6 +334,56 @@ describe("Bun-native route table agrees with the portable router", () => {
     expect(answers).toEqual(
       INVALID_HOSTS.map((host) => [host, 200, { route: "GET /url", path: "/url" }]),
     )
+  })
+
+  test("a request with two Host fields is refused on Bun's table and through fetch", async () => {
+    // Bun routes on the first Host and hands the app both, joined with ", ".
+    const app = requestTargetApp(server())
+    expect(nativeKeys(app)).toEqual(expect.arrayContaining(["GET /posts", "GET /users/:id"]))
+    const targets = ["/posts", "/users/7", "/url", "/missing"]
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const answers: unknown[] = []
+      for (const hosts of REPEATED_HOSTS) {
+        for (const target of targets) {
+          answers.push([
+            hosts,
+            target,
+            await rawExchange(instance.port, "GET", target, undefined, hosts),
+          ])
+        }
+      }
+      const refused = { status: 400, body: '{"ok":false,"error":"invalid_host"}' }
+      expect(answers).toEqual(
+        REPEATED_HOSTS.flatMap((hosts) => targets.map((target) => [hosts, target, refused])),
+      )
+      expect(await rawExchange(instance.port, "GET", "/users/7")).toEqual({
+        status: 200,
+        body: '{"route":"GET /users/:id","id":"7"}',
+      })
+      expect(await rawExchange(instance.port, "GET", "/posts", undefined, "LOCALHOST:80")).toEqual({
+        status: 200,
+        body: '{"route":"GET /posts"}',
+      })
+    } finally {
+      instance.stop(true)
+    }
+  })
+
+  test("a request built in process with two Hosts is refused only on a URL built on the first", async () => {
+    const app = requestTargetApp(server())
+    const twoHosts = (url: string) =>
+      app.fetch(
+        new Request(url, {
+          headers: [
+            ["host", "a.example"],
+            ["host", "b.example"],
+          ],
+        }),
+      )
+    const kept = await twoHosts("http://localhost/url")
+    expect([kept.status, await kept.json()]).toEqual([200, { route: "GET /url", path: "/url" }])
+    expect((await twoHosts("http://A.example:80/url")).status).toBe(400)
   })
 
   test("generated route tables answer every probe the same on both lanes", async () => {

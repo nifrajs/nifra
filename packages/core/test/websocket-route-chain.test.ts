@@ -10,7 +10,7 @@ import {
   type WebSocketUpgradeOutcome,
 } from "../src/index.ts"
 import { websocket } from "../src/ws.ts"
-import { INVALID_HOSTS, rawUpgradeStatus } from "./request-target-matrix.ts"
+import { INVALID_HOSTS, REPEATED_HOSTS, rawUpgradeStatus } from "./request-target-matrix.ts"
 
 /**
  * A WebSocket handshake is a `GET`, so it runs the chain an HTTP `GET` registered at the same point
@@ -269,6 +269,18 @@ describe("a WebSocket handshake runs the route chain an HTTP GET runs", () => {
         status: 400,
       })
     }
+    expect(await rawUpgradeStatus(running.port, "/socket")).toBe(101)
+  })
+
+  test("a handshake with two Host fields is refused, as HTTP refuses it", async () => {
+    // Bun routes on the first Host while `upgrade()` would read both from the header.
+    const app = base().ws("/socket", { upgrade: (c) => ({ host: c.req.headers.get("host") }) })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    const statuses: unknown[] = []
+    for (const hosts of REPEATED_HOSTS) {
+      statuses.push([hosts, await rawUpgradeStatus(running.port, "/socket", {}, hosts)])
+    }
+    expect(statuses).toEqual(REPEATED_HOSTS.map((hosts) => [hosts, 400]))
     expect(await rawUpgradeStatus(running.port, "/socket")).toBe(101)
   })
 

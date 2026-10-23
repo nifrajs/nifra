@@ -250,7 +250,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Hook-handed responses held single-use (onResponse replacement, onRequest answer): idempotency
   // 41,108 -> 41,198 B, effect-ledger 38,706 -> 38,789, sse 37,535 -> 37,615, mcp 36,934 -> 37,035,
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
-  "nifra-idempotency": 40.8,
+  // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
+  // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
+  "nifra-idempotency": 40.9,
   "nifra-effect-ledger": 38.5,
   "nifra-mcp": 36.8,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
