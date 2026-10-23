@@ -1118,7 +1118,7 @@ describe("KVCacheStore", () => {
     expect(await new KVCacheStore(new FakeKV()).get("/nope")).toBeUndefined()
   })
 
-  test("delete leaves a marker that reads as a miss and refuses a render begun before it", async () => {
+  test("a path purge reads as a miss and refuses a render begun before it", async () => {
     const kv = new FakeKV()
     const store = new KVCacheStore(kv)
     await store.set("/p", entry("x"))
@@ -1131,6 +1131,124 @@ describe("KVCacheStore", () => {
     expect((await store.get("/p"))?.body).toBe("fresh")
     // The fence is the store's business, not the page's.
     expect(kv.store.get("/p")).not.toContain("fence")
+  })
+
+  describe("purges between locations", () => {
+    // KV as Cloudflare runs it: a location reads its own copy, sees its own writes at once and other
+    // locations' writes only after `sync`; the last write wins.
+    class KVLocation implements KVNamespaceLike {
+      private readonly seen = new Map<string, string>()
+      private readonly origin: Map<string, string>
+      constructor(origin: Map<string, string>) {
+        this.origin = origin
+      }
+      get(key: string): Promise<string | null> {
+        return Promise.resolve(this.seen.get(key) ?? null)
+      }
+      put(key: string, value: string): Promise<void> {
+        this.origin.set(key, value)
+        this.seen.set(key, value)
+        return Promise.resolve()
+      }
+      delete(key: string): Promise<void> {
+        this.origin.delete(key)
+        this.seen.delete(key)
+        return Promise.resolve()
+      }
+      sync(): void {
+        this.seen.clear()
+        for (const [key, value] of this.origin) this.seen.set(key, value)
+      }
+    }
+
+    const race = async (purge: (store: KVCacheStore) => Promise<void>) => {
+      const origin = new Map<string, string>()
+      const purging = new KVLocation(origin)
+      const rebuilding = new KVLocation(origin)
+      const there = new KVCacheStore(purging)
+      const here = new KVCacheStore(rebuilding)
+      await there.set("/p", { ...entry("v1"), tags: ["post"] })
+      rebuilding.sync()
+      const fence = here.fence()
+      await purge(there)
+      await here.set("/p", { ...entry("v1"), tags: ["post"], fence })
+      purging.sync()
+      rebuilding.sync()
+      const missed = [await there.get("/p"), await here.get("/p")]
+      await here.set("/p", { ...entry("v2"), tags: ["post"], fence: here.fence() })
+      purging.sync()
+      return { missed, next: (await there.get("/p"))?.body }
+    }
+
+    test("a page another location rebuilt before a path purge reached it reads as a miss once it does", async () => {
+      expect(await race((store) => store.delete("/p"))).toEqual({
+        missed: [undefined, undefined],
+        next: "v2",
+      })
+    })
+
+    test("a page another location rebuilt before a tag purge reached it reads as a miss once it does", async () => {
+      expect(await race((store) => store.invalidateTag("post"))).toEqual({
+        missed: [undefined, undefined],
+        next: "v2",
+      })
+    })
+  })
+
+  test("a read asks for the page and its path epoch together", async () => {
+    const requested: string[] = []
+    const held: Array<() => void> = []
+    const kv: KVNamespaceLike = {
+      get: (key) => {
+        requested.push(key)
+        return new Promise((resolve) => held.push(() => resolve(null)))
+      },
+      put: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    }
+    const reading = new KVCacheStore(kv).get("/p")
+    for (let turn = 0; turn < 10 && requested.length < 2; turn++) await Promise.resolve()
+    expect(requested).toEqual(["/p", "__nifra_isr_path_v1:/p"])
+    for (const release of held) release()
+    expect(await reading).toBeUndefined()
+  })
+
+  test("a page key too long for the prefix keeps its path epoch under a digest", async () => {
+    const kv = new FakeKV()
+    const store = new KVCacheStore(kv)
+    const long = `/${"é".repeat(250)}`
+    const ascii = `/${"a".repeat(300)}`
+    for (const key of [long, ascii]) {
+      await store.set(key, entry("x"))
+      await store.delete(key)
+      expect(await store.get(key)).toBeUndefined()
+      await store.set(key, { ...entry("y"), fence: store.fence() })
+      expect((await store.get(key))?.body).toBe("y")
+    }
+    const epochKeys = kv.puts.map(({ key }) => key).filter((key) => key.startsWith("__nifra"))
+    expect(epochKeys).toEqual([
+      expect.stringMatching(/^__nifra_isr_path_v1#[0-9a-f]{64}$/),
+      `__nifra_isr_path_v1:${ascii}`,
+    ])
+    expect(epochKeys.every((key) => new TextEncoder().encode(key).byteLength <= 512)).toBe(true)
+  })
+
+  test("a path epoch outlives every page stored under the epoch it replaced", async () => {
+    const kv = new FakeKV()
+    await new KVCacheStore(kv, { expirationTtl: 86_400 }).delete("/p")
+    expect(kv.puts.at(-1)?.key).toBe("__nifra_isr_path_v1:/p")
+    expect(kv.puts.at(-1)?.ttl).toBe(172_800)
+    await new KVCacheStore(kv).delete("/q")
+    expect(kv.puts.at(-1)?.ttl).toBeUndefined()
+  })
+
+  test("a page stored before path epochs reads as current until its path is purged", async () => {
+    const kv = new FakeKV()
+    const store = new KVCacheStore(kv)
+    kv.store.set("/p", JSON.stringify(entry("old")))
+    expect((await store.get("/p"))?.body).toBe("old")
+    await store.delete("/p")
+    expect(await store.get("/p")).toBeUndefined()
   })
 
   describe("purge order across clocks", () => {
