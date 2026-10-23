@@ -129,7 +129,7 @@ describe("prerenderRoutes", () => {
     ])
   })
 
-  test("emits a static _data.json next to index.html (JSON data-mode) for soft-nav [Phase 2.3]", async () => {
+  test("emits a static _data.json next to index.html (JSON data-mode) for soft-nav", async () => {
     const { app, dataUrls } = fakeApp(200, "<html>x</html>", '{"user":{"id":"7"}}')
     const result = await prerenderRoutes({
       app,
