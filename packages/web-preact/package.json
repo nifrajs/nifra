@@ -116,7 +116,7 @@
     "preact": "^10.19.0 || ^11.0.0"
   },
   "devDependencies": {
-    "happy-dom": "20.14.6",
+    "happy-dom": "21.0.4",
     "preact": "^11.0.1"
   },
   "repository": {

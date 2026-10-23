@@ -158,7 +158,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
-    "happy-dom": "20.14.6",
+    "happy-dom": "21.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-server-dom-webpack": "19.3.1",
