@@ -7,6 +7,8 @@ import { DATA_HEADER } from "../src/router.ts"
 
 export const HOLD_PATH = "/__test/hold-data"
 export const RELEASE_PATH = "/__test/release-data"
+export const LOGIN_PATH = "/__test/login"
+export const LOGOUT_PATH = "/__test/logout"
 
 /**
  * Serves a fixture app the way a build does: the generated client entry for its routes, bundled for
@@ -47,7 +49,22 @@ export async function serveApp(options: {
   } finally {
     rmSync(entryPath, { force: true })
   }
-  const app = createWebApp({ adapter: options.adapter, manifest, clientEntry: "/entry.js" })
+  const app = createWebApp({
+    adapter: options.adapter,
+    manifest,
+    clientEntry: "/entry.js",
+    // A session cookie the identity epoch knows by name, set and cleared through the app.
+    use: (web) =>
+      web
+        .get(LOGIN_PATH, (c) => {
+          c.set.cookie("nifra_session", crypto.randomUUID(), { secure: false, path: "/" })
+          return "in"
+        })
+        .get(LOGOUT_PATH, (c) => {
+          c.set.deleteCookie("nifra_session", { path: "/" })
+          return "out"
+        }),
+  })
   let held: Promise<void> | undefined
   const hold = (): (() => void) => {
     let release = (): void => {}

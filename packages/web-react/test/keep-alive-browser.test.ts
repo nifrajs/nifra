@@ -4,6 +4,7 @@ import { serveApp } from "../../web/test/keep-alive-app.ts"
 import {
   assertBranchLayouts,
   assertDirectChildCssDiagnostic,
+  assertIdentityDrops,
   assertKeepAliveMatrix,
   assertRestoreBeforeData,
   installedEngines,
@@ -67,6 +68,11 @@ for (const engine of engines) {
       const { page, problems } = await open()
       await assertBranchLayouts(page, problems, app(production).url)
       await page.close()
+    }, 30_000)
+
+    test("a sign-in or sign-out drops kept pages, in this tab and the others", async () => {
+      if (browser === undefined) throw new Error("[test] no browser")
+      await assertIdentityDrops(browser, app(production).url)
     }, 30_000)
 
     test("a development build reports CSS the slot wrappers stop matching", async () => {

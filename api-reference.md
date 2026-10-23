@@ -5196,6 +5196,8 @@ _No named exports (side-effect entrypoint)._
   Response header carrying bounded route tags into {@link withISR}.
 - **ISR_STATUS_HEADER** _(const)_ - `ISR_STATUS_HEADER: "x-nifra-isr"`
   Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served + regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests.
+- **IdentityEpochContext** _(interface)_ - `interface IdentityEpochContext`
+  The response-cookie surface {@link rotateIdentityEpoch} needs: nifra's handler context.
 - **InertScriptType** _(type)_ - `type InertScriptType = "application/ld+json" | "application/json"`
   One `<script>` element a route contributes to `<head>` - for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **InfiniteData** _(interface)_ - `interface InfiniteData<T, P>`
@@ -5214,6 +5216,8 @@ _No named exports (side-effect entrypoint)._
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **KeepAliveOptions** _(interface)_ - `interface KeepAliveOptions`
   A page's `keepAlive` export as an object.
+- **KeepAliveServerOptions** _(interface)_ - `interface KeepAliveServerOptions`
+  `createWebApp`'s `keepAlive` option: which cookies say who is signed in.
 - **KeptPage** _(interface)_ - `interface KeptPage`
   A page kept mounted while its history entry is not the one on screen.
 - **LAYOUT_DATA_GLOBAL** _(const)_ - `LAYOUT_DATA_GLOBAL: "__NIFRA_LAYOUT_DATA__"`
@@ -5513,6 +5517,8 @@ _No named exports (side-effect entrypoint)._
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
+- **rotateIdentityEpoch** _(function)_ - `rotateIdentityEpoch: (c: IdentityEpochContext) => void`
+  Rotate the identity epoch from a flow that changes who is signed in without changing a cookie `createWebApp` watches - say, a session kept server-side under a cookie whose value stays the same. Every tab then drops the pages it kept alive for the previous visitor.
 - **sanitizeHtml** _(function)_ - `sanitizeHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
   Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.
 - **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
@@ -5942,6 +5948,8 @@ _No named exports (side-effect entrypoint)._
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
 - **formatBuildLog** _(function)_ - `formatBuildLog: (log: unknown, root?: string) => string`
   One bundler log as `file:line:column: message`, the source line it points at underneath. Bun's `BuildMessage`/`ResolveMessage` carry the place in `position`, which their `String()` drops: a failed build said "Could not resolve: ./db" without naming the module that imported it.
+- **isConsoleDiagnostic** _(function)_ - `isConsoleDiagnostic: (message: string) => boolean`
+  True when a console `message` reports a catalog failure that is only ever logged, never thrown.
 - **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
   True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`

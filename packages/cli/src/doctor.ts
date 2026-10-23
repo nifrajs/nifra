@@ -16,10 +16,11 @@
  * therefore also covers `*.test.ts`/`*.spec.ts`, which `nifra check` skips - `tsc` compiles them, so an
  * undeclared import there fails a clean `bun install --frozen-lockfile` build just the same.
  */
-import type { Dirent } from "node:fs"
+import { type Dirent, existsSync } from "node:fs"
 import { readdir, realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { discoverRoutes } from "@nifrajs/web/fs"
 import {
   collectIdentityParity,
   displayPath,
@@ -222,6 +223,13 @@ export interface DoctorResult {
    * Advisory (never folded into `ok`). `lock` is the lockfile, relative to the project.
    */
   readonly staleLinkLocks?: { readonly lock: string; readonly entries: readonly StaleLinkLock[] }
+  /**
+   * Route files that export `keepAlive` in an app where nothing names its sign-in cookie: no
+   * `@nifrajs/auth`, Better Auth or Auth.js dependency, no `identityCookies`, `rotateIdentityEpoch()`
+   * or `identityChanged()`. A sign-out there may leave the previous visitor's kept pages. Advisory
+   * (never folded into `ok`).
+   */
+  readonly keepAliveIdentity?: { readonly routes: readonly string[] }
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /** The explicit source boundary used by the dependency scan. */
@@ -855,6 +863,28 @@ async function inferDependencyFix(
 }
 
 /** Run doctor against the project at `cwd`: diff source imports vs declared deps. */
+// Packages whose session cookies the identity epoch knows by their default names.
+const KNOWN_AUTH_PACKAGES = [
+  "@nifrajs/auth",
+  "@nifrajs/authjs",
+  "better-auth",
+  "@auth/core",
+  "next-auth",
+]
+const IDENTITY_SIGNAL = /\b(?:identityCookies\s*:|rotateIdentityEpoch\s*\(|identityChanged\s*\()/
+
+function keepAliveRoutes(cwd: string): readonly string[] {
+  const routesDir = join(cwd, "routes")
+  if (!existsSync(routesDir)) return []
+  try {
+    return discoverRoutes(routesDir)
+      .routes.filter((route) => route.keepAlive === true)
+      .map((route) => `routes/${route.file}`)
+  } catch {
+    return []
+  }
+}
+
 export async function collectDoctorResult(
   cwd: string,
   opts: { readonly target?: string; readonly strict?: boolean; readonly cliVersion?: string } = {},
@@ -867,6 +897,7 @@ export async function collectDoctorResult(
 
   const findings: DoctorFinding[] = []
   const manifestLists: ManifestList[] = []
+  let identitySignal = false
   // A standalone app owns its tests, so they remain in the declaration check. A workspace root owns
   // the published package source while its root devDependencies intentionally own shared tests,
   // benchmarks, and scaffold copy-surfaces. Keep that boundary explicit instead of reporting a
@@ -898,6 +929,7 @@ export async function collectDoctorResult(
         findings.push({ file: f.file, line: f.line, package: f.snippet })
       }
       manifestLists.push(...manifestListsIn(rel, content))
+      if (!identitySignal && IDENTITY_SIGNAL.test(content)) identitySignal = true
     },
     { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
@@ -918,6 +950,10 @@ export async function collectDoctorResult(
   const lockDir = bunLockDir(cwd)
   const linkLocks = lockDir === undefined ? [] : staleLinkLocks(lockDir)
   const handBuilt = handBuiltManifests(cwd, manifestLists)
+  const unnamedIdentity =
+    identitySignal || KNOWN_AUTH_PACKAGES.some((name) => dependencySpec(pkg, name) !== undefined)
+      ? []
+      : keepAliveRoutes(cwd)
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
@@ -937,6 +973,7 @@ export async function collectDoctorResult(
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
     ...(versionDrift !== undefined ? { versionDrift } : {}),
     ...(handBuilt.length > 0 ? { handBuiltManifests: handBuilt } : {}),
+    ...(unnamedIdentity.length > 0 ? { keepAliveIdentity: { routes: unnamedIdentity } } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(lockDir !== undefined && linkLocks.length > 0
       ? {
@@ -1143,6 +1180,12 @@ export function doctorReport(result: DoctorResult, cliVersion?: string): string[
   }
   for (const finding of result.handBuiltManifests ?? []) {
     lines.push(`⚠ ${handBuiltManifestMessage(finding)}\n`)
+  }
+  if (result.keepAliveIdentity !== undefined) {
+    lines.push(
+      `⚠ ${result.keepAliveIdentity.routes.join(", ")} keep pages alive, and nothing names this app's sign-in cookie (no @nifrajs/auth, Better Auth or Auth.js, no identityCookies): a sign-out may leave the previous visitor's pages one back away`,
+      "      fix: name the session cookie in createWebApp({ keepAlive: { identityCookies } }), or call identityChanged() from @nifrajs/web/client for token auth - /docs/keep-alive#sign-in\n",
+    )
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
   // release even when the CLI running doctor matches the project.

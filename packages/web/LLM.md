@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 
-_…and 768 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 772 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 
@@ -39,4 +39,5 @@ _…and 768 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) f
 - `PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.
 - `trustHtml(value)` is an explicit raw-HTML escape hatch, **not a sanitizer**. Use escaped text for untrusted values; pass request/CMS/markdown HTML through a maintained allowlist sanitizer with `sanitizeHtml(value, sanitizer)` before rendering.
 - A `_layout.backend.ts` **loader is not a guard**: a client navigation can skip it and an action below it runs without it. Refuse access in that file's `middleware`, or export `gate = true` (runs on every request and before every action, ahead of the page loader). Development warns when a layout loader without `gate` refuses a request; `nifra check` reports it as NF-C042.
+- **Keep-alive and sign-in:** a `keepAlive` page stays mounted for the visitor who saw it. A response that changes or deletes a session cookie rotates the identity epoch and every tab drops its kept pages - but only for `@nifrajs/auth`, Better Auth and Auth.js cookies by their default names. Name any other in `createWebApp({ keepAlive: { identityCookies } })`, call `rotateIdentityEpoch(c)` from a custom flow, or `identityChanged()` (`@nifrajs/web/client`) for token auth. Development reports an unknown changing `HttpOnly` cookie as `NIFRA_KEEPALIVE_IDENTITY_COOKIE`. See `/docs/keep-alive#sign-in`.
 - `ctx.set.headers` from a loader or action reaches **only the rendered document** - not a `redirect()`, a status or error page, or a navigation data response. `ctx.set.cookie()` rides every outcome and makes it `cache-control: private, no-store`. Write before the loader returns: a write from a deferred promise throws. A prerendered page is a static file and serves neither.

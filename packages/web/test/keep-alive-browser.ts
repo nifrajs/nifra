@@ -3,6 +3,7 @@ import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { join } from "node:path"
 import { findChrome } from "../../cli/test/headless-chrome.ts"
+import { LOGIN_PATH, LOGOUT_PATH } from "./keep-alive-app.ts"
 
 /**
  * The keep-alive browser matrix, shared by every adapter's fixture app. Each fixture renders the same
@@ -30,8 +31,13 @@ export interface BrowserPage {
   close(): Promise<void>
 }
 
-interface Browser {
+interface PageOpener {
   newPage(options?: { readonly viewport?: { width: number; height: number } }): Promise<BrowserPage>
+}
+interface Browser extends PageOpener {
+  newContext(options?: {
+    readonly viewport?: { width: number; height: number }
+  }): Promise<PageOpener & { close(): Promise<void> }>
   close(): Promise<void>
 }
 
@@ -82,7 +88,7 @@ export async function installedEngines(): Promise<
 }
 
 /** A page that records every console error and warning, and every uncaught error. */
-export async function openPage(browser: Browser): Promise<{
+export async function openPage(browser: PageOpener): Promise<{
   readonly page: BrowserPage
   readonly problems: string[]
 }> {
@@ -354,4 +360,55 @@ export async function assertDirectChildCssDiagnostic(
   const reports = problems.filter((problem) => problem.includes("NIFRA_KEEPALIVE_DIRECT_CHILD_CSS"))
   expect(reports).toHaveLength(1)
   expect(reports[0]).toContain("#main > .list-page")
+}
+
+/**
+ * K3: a sign-in rotates the identity epoch, and a restore that reads a new epoch shows a fresh page;
+ * a sign-out in another tab drops this tab's kept pages at once, over `BroadcastChannel`.
+ */
+export async function assertIdentityDrops(browser: Browser, url: string): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 800, height: 400 } })
+  try {
+    const first = await openPage(context)
+    const { page } = first
+    const keepList = async (): Promise<void> => {
+      await page.goto(`${url}/list/1`)
+      await hydrated(page)
+      await page.evaluate(() => {
+        Reflect.set(window, "__kept", document.querySelector(".list-page"))
+        document.querySelector<HTMLButtonElement>(".count")?.click()
+      })
+      await page.waitForFunction(() => document.querySelector(".count")?.textContent === "count 1")
+      await follow(page, "/detail/1")
+      await page.waitForFunction(() => document.querySelector(".detail") !== null)
+      // The kept page's outer wrapper stays where the page goes back.
+      expect(
+        await page.evaluate(() => document.querySelectorAll("[data-nifra-entry]").length),
+      ).toBe(1)
+    }
+
+    await keepList()
+    await page.evaluate((path) => fetch(path), LOGIN_PATH)
+    await page.goBack()
+    await showing(page, "List 1")
+    expect(
+      await page.evaluate(() => ({
+        same: document.querySelector(".list-page") === Reflect.get(window, "__kept"),
+        count: document.querySelector(".count")?.textContent,
+      })),
+    ).toEqual({ same: false, count: "count 0" })
+
+    await keepList()
+    const second = await openPage(context)
+    await second.page.goto(`${url}/list/2`)
+    await hydrated(second.page)
+    await second.page.evaluate((path) => fetch(path), LOGOUT_PATH)
+    // The second tab notices the new epoch when its next navigation settles, and tells the others.
+    await follow(second.page, "/detail/1")
+    await second.page.waitForFunction(() => document.querySelector(".detail") !== null)
+    await page.waitForFunction(() => document.querySelectorAll("[data-nifra-entry]").length === 0)
+    expect([...first.problems, ...second.problems]).toEqual([])
+  } finally {
+    await context.close()
+  }
 }

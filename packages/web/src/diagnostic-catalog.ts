@@ -17,6 +17,8 @@ interface CatalogEntry {
   readonly fix: string
   readonly docsAnchor: string
   readonly options?: readonly FixOption[]
+  /** Reported by a console warning, not thrown: the dev feed records the warning as an entry. */
+  readonly console?: true
 }
 
 /**
@@ -192,6 +194,52 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     docsAnchor: "errors#cdn-purge-failed",
   },
   {
+    code: "NIFRA_KEEPALIVE_IDENTITY_COOKIE",
+    match: (_n, m) => m.includes("NIFRA_KEEPALIVE_IDENTITY_COOKIE"),
+    console: true,
+    cause:
+      "The app keeps pages alive, and a response changed an HttpOnly cookie nifra does not know as a sign-in cookie. If that cookie says who is signed in, a sign-in or sign-out through it leaves the previous visitor's kept pages in every tab, and back shows them.",
+    fix: "Name the cookie in createWebApp({ keepAlive: { identityCookies } }) if it carries the session, or in keepAlive.ignoreCookies if it does not.",
+    docsAnchor: "errors#keepalive-identity-cookie",
+    options: [
+      {
+        label: "It is the session cookie",
+        fix: 'Add it to createWebApp({ keepAlive: { identityCookies: ["<name>"] } }): a response that changes or deletes it rotates the identity epoch, and every tab drops its kept pages.',
+      },
+      {
+        label: "It says nothing about the visitor",
+        fix: 'Add it to createWebApp({ keepAlive: { ignoreCookies: ["<name>"] } }) so development stops reporting it.',
+      },
+      {
+        label: "Identity lives in a token",
+        fix: "When the session is a bearer token in client storage, call identityChanged() from @nifrajs/web/client at sign-in and sign-out; it drops kept pages in every tab.",
+      },
+    ],
+  },
+  {
+    code: "NIFRA_KEEPALIVE_DIRECT_CHILD_CSS",
+    match: (_n, m) => m.includes("NIFRA_KEEPALIVE_DIRECT_CHILD_CSS"),
+    console: true,
+    cause:
+      "A keepAlive page renders inside two display:contents wrappers, so a selector that reached its top-level element as a direct child (or by its position among siblings) no longer matches it.",
+    fix: "Rewrite the selector the message names: a descendant combinator, the wrapper as the parent, or a class on the page's root element.",
+    docsAnchor: "errors#keepalive-direct-child-css",
+    options: [
+      {
+        label: "Use a descendant combinator",
+        fix: "Write `main section` instead of `main > section`: the wrappers sit between the two.",
+      },
+      {
+        label: "Target the wrapper",
+        fix: "Write `[data-nifra-page] > section`: the inner wrapper is the page's parent while it is shown.",
+      },
+      {
+        label: "Put a class on the page root",
+        fix: "Give the page's root element a class and select it directly, instead of by its parent or its position.",
+      },
+    ],
+  },
+  {
     code: "NIFRA_SCHEMA_PARSE",
     match: (n, m) =>
       n === "SchemaError" ||
@@ -214,6 +262,11 @@ const HYDRATION_MESSAGES: readonly RegExp[] = [
   /caused by the SSR'd HTML/,
   /Minified React error #(?:418|423|425)\b/,
 ]
+
+/** True when a console `message` reports a catalog failure that is only ever logged, never thrown. */
+export function isConsoleDiagnostic(message: string): boolean {
+  return DIAGNOSTIC_CATALOG.some((entry) => entry.console === true && entry.match("", message))
+}
 
 /** True when `message` is a framework's report of a server/browser render mismatch. */
 export function isHydrationMismatch(message: string): boolean {

@@ -243,6 +243,43 @@ export default function Errors() {
 
       <FixPrompts code="NIFRA_CDN_PURGE_FAILED" />
 
+      <h2>Keep-alive</h2>
+
+      <h3 id="keepalive-identity-cookie">NIFRA_KEEPALIVE_IDENTITY_COOKIE</h3>
+      <p>
+        The app keeps pages alive, and a response changed or deleted an <code>HttpOnly</code> cookie
+        Nifra does not know as a sign-in cookie. If that cookie says who is signed in, a sign-in or
+        sign-out through it leaves the previous visitor's kept pages in every tab, and back shows
+        them. Development reports each cookie name once.
+      </p>
+      <p>
+        <strong>Fix:</strong> name the cookie in{" "}
+        <code>createWebApp(&#123; keepAlive: &#123; identityCookies &#125; &#125;)</code> if it
+        carries the session, or in <code>keepAlive.ignoreCookies</code> if it does not. When the
+        session is a token in client storage, call <code>identityChanged()</code> from{" "}
+        <code>@nifrajs/web/client</code> at sign-in and sign-out. See{" "}
+        <a href="/docs/keep-alive#sign-in">keep-alive and sign-in</a>.
+      </p>
+
+      <FixPrompts code="NIFRA_KEEPALIVE_IDENTITY_COOKIE" />
+
+      <h3 id="keepalive-direct-child-css">NIFRA_KEEPALIVE_DIRECT_CHILD_CSS</h3>
+      <p>
+        A <code>keepAlive</code> page renders inside two <code>display:contents</code> wrappers, so a
+        selector that reached its root element as a direct child of the layout (
+        <code>main &gt; section</code>), by its position among siblings (<code>:first-child</code>,{" "}
+        <code>:nth-child()</code>), or through <code>:has(&gt; ...)</code> on the layout no longer
+        matches it. Development checks the page's same-origin stylesheets the first time it is shown
+        and reports each selector once.
+      </p>
+      <p>
+        <strong>Fix:</strong> use a descendant combinator (<code>main section</code>), target the
+        wrapper (<code>[data-nifra-page] &gt; section</code>), or give the page's root element a class
+        and select that.
+      </p>
+
+      <FixPrompts code="NIFRA_KEEPALIVE_DIRECT_CHILD_CSS" />
+
       <h2 id="nifra-expect">Silencing a nifra check finding</h2>
       <p>
         <code>nifra check</code> names each finding with an <code>NF-</code> code;{" "}
