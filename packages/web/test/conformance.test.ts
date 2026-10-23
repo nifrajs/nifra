@@ -162,6 +162,7 @@ describe("assertRenderAdapterConformance", () => {
     ).rejects.toMatchObject({ check: "buffered render", cause: expect.any(Error) })
     await expect(
       assertRenderAdapterConformance(
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed head, to prove the runtime refuses what the type already would.
         adapter({ hydrationHead: (() => 1) as unknown as RenderAdapter["hydrationHead"] }),
         fixture,
       ),

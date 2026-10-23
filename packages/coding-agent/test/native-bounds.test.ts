@@ -278,11 +278,11 @@ describe("native gateway model port", () => {
     tools: [],
     signal: new AbortController().signal,
   })
-  const portFor = (output: unknown, routeId?: string) =>
+  const portFor = (output: unknown, route: { readonly routeId?: string } = {}) =>
     createNativeGatewayModelPort({
       gateway: new FakeModelGateway({ responses: [{ ok: true, output }] }),
       policy: { routes: ["primary"], retryableCodes: [] },
-      ...(routeId === undefined ? {} : { routeId }),
+      ...route,
     })
 
   test("passes a text or a tool response through", async () => {
@@ -291,9 +291,10 @@ describe("native gateway model port", () => {
       text: "hello",
     })
     expect(
-      await portFor({ type: "tool", name: "read", input: { path: "a.ts" } }, "primary").complete(
-        request(),
-      ),
+      await portFor(
+        { type: "tool", name: "read", input: { path: "a.ts" } },
+        { routeId: "primary" },
+      ).complete(request()),
     ).toEqual({ type: "tool", name: "read", input: { path: "a.ts" } })
   })
 

@@ -50,14 +50,14 @@ async function turn(
   backend: PiBackend,
   sessionId: string,
   message = "hello",
-  signal?: AbortSignal,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<{ events: AgentEvent[]; error?: unknown }> {
   const events: AgentEvent[] = []
   try {
     for await (const event of backend.send({
       sessionId,
       message,
-      ...(signal === undefined ? {} : { signal }),
+      ...options,
     }))
       events.push(event)
     return { events }
@@ -281,7 +281,7 @@ describe("Pi session lifecycle", () => {
   test("a reload while a turn runs is refused, and an abort signal stops the turn", () =>
     withPi(fakePi([]), {}, async (backend, id) => {
       const controller = new AbortController()
-      const running = turn(backend, id, "hello", controller.signal)
+      const running = turn(backend, id, "hello", { signal: controller.signal })
       expect(await backend.reload(id)).toMatchObject({ error: { code: "SESSION_BUSY" } })
       controller.abort()
       const { events, error } = await running

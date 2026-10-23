@@ -22,7 +22,10 @@ interface MountRequest {
 type MountHandler = (request: MountRequest, response: ServerResponse) => unknown
 
 /** A bare handler exposing the native-mount seam: `x-mount` picks what the mount does. */
-function mountedApp(handlers: Record<string, MountHandler>, rest: Record<string, unknown> = {}) {
+function mountedApp(
+  handlers: Record<string, MountHandler>,
+  rest: Record<string, unknown> = {},
+): FetchHandler & Record<symbol, unknown> {
   return {
     fetch: () => new Response("web", { status: 200 }),
     ...rest,
@@ -33,7 +36,7 @@ function mountedApp(handlers: Record<string, MountHandler>, rest: Record<string,
       if (handler === undefined) return undefined
       return { handler, path: "/api", stripPrefix: source.header("x-strip") === "1" }
     },
-  } as unknown as FetchHandler
+  }
 }
 
 async function served(app: FetchHandler, options: Record<string, unknown> = {}): Promise<string> {
@@ -114,7 +117,7 @@ describe("native mount dispatch", () => {
     for (const [path, text] of [
       ["/sync", "sync outcome"],
       ["/async", "async outcome"],
-    ]) {
+    ] as const) {
       const response = await fetch(`${base}${path}`, { headers })
       expect([response.status, await response.text()]).toEqual([201, text])
     }
@@ -145,12 +148,12 @@ describe("native mount dispatch", () => {
   })
 
   test("an install seam that throws still serves the app", async () => {
-    const app = {
+    const app: FetchHandler & Record<symbol, unknown> = {
       fetch: () => new Response("served"),
       [INSTALL_NODE_DIRECT]() {
         throw new Error("already frozen")
       },
-    } as unknown as FetchHandler
+    }
     const base = await served(app)
     expect(await (await fetch(`${base}/`)).text()).toBe("served")
   })
@@ -168,9 +171,9 @@ describe("Host authority and protocol policy", () => {
       socket.on("end", () => resolve(received))
       socket.write(`GET /host HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
     })
-  const originApp = {
+  const originApp: FetchHandler = {
     fetch: (request: Request) => new Response(new URL(request.url).host),
-  } as FetchHandler
+  }
 
   test("a bracketed IPv6 Host is normalized, and a malformed one is a 400", async () => {
     await served(originApp)

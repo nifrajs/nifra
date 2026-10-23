@@ -164,7 +164,8 @@ describe("coding agent RPC session methods", () => {
       const created: { id: string } = await (await call("session.create")).json()
       const snapshot = await call("session.snapshot")
       expect(snapshot.status).toBe(200)
-      expect(((await snapshot.json()) as { id: string }).id).toBe(created.id)
+      const snapshotted: { id: string } = await snapshot.json()
+      expect(snapshotted.id).toBe(created.id)
       expect(await errorOf(await call("session.events", { limit: 0 }))).toEqual({
         status: 422,
         code: "invalid_history_limit",
@@ -210,7 +211,8 @@ describe("coding agent RPC approval methods", () => {
         capability: "deploy",
       })
       expect(offered.status).toBe(201)
-      expect(((await offered.json()) as { id: string }).id).toBe("chosen-id")
+      const approval: { id: string } = await offered.json()
+      expect(approval.id).toBe("chosen-id")
       expect(await errorOf(await call("approval.resolve", { approvalId: "chosen-id" }))).toEqual({
         status: 422,
         code: "invalid_approval",
@@ -279,7 +281,7 @@ describe("coding agent RPC extension methods", () => {
     )
     const extensions = new ExtensionHost({ cwd, roots: ["workflow.ts"] })
     const runWorkflow = extensions.runWorkflow.bind(extensions)
-    const limits: { maxSteps?: number; maxDepth?: number }[] = []
+    const limits: { maxSteps: number | undefined; maxDepth: number | undefined }[] = []
     extensions.runWorkflow = (name, options) => {
       limits.push({ maxSteps: options?.maxSteps, maxDepth: options?.maxDepth })
       return runWorkflow(name, options)

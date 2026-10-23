@@ -43,8 +43,13 @@ class ScriptBackend implements AgentBackend {
     const payloads = this.turns[this.messages.length] ?? []
     this.messages.push(input.message)
     const events = payloads.map(
-      (payload) =>
-        ({ version: 1, sessionId, seq: this.sequence++, at: Date.now(), ...payload }) as AgentEvent,
+      (payload): AgentEvent => ({
+        version: 1,
+        sessionId,
+        seq: this.sequence++,
+        at: Date.now(),
+        ...payload,
+      }),
     )
     return (async function* () {
       yield* events
@@ -261,6 +266,7 @@ describe("coding agent host lifecycle", () => {
       () =>
         new CodingAgentHost({
           backend: new ScriptBackend([]),
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed check, to prove the runtime refuses what the type already would.
           extensionEvents: { "x-acme.note": "yes" as unknown as () => boolean },
         }),
     ).toThrow("the check for x-acme.note must be a function")

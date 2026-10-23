@@ -33,6 +33,7 @@ describe("server component failure envelope", () => {
 describe("server component definition", () => {
   test("a definition without authorize or load is refused", () => {
     expect(() =>
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed definition, to prove the runtime refuses what the type already would.
       defineServerComponent({ load: () => ({}), view: () => null } as unknown as Parameters<
         typeof defineServerComponent
       >[0]),

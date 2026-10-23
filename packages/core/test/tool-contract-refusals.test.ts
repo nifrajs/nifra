@@ -110,6 +110,7 @@ describe("tool contract definition refusals", () => {
   ]
   for (const [label, options, message] of cases) {
     test(`refuses an invalid ${label}`, () => {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed options, to prove the runtime refuses what the type already would.
       expect(() => defineTool(options as Parameters<typeof defineTool>[0])).toThrow(message)
     })
   }
@@ -189,6 +190,7 @@ describe("tool idempotency admission refusals", () => {
       idempotency: { scope: "request", key: () => "order-1" },
       execute: () => {
         executions += 1
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed output, to prove the runtime refuses what the type already would.
         return { ok: "yes" } as unknown as { ok: boolean }
       },
     })
@@ -298,7 +300,13 @@ describe("tool input JSON Schema", () => {
       "~standard": {
         version: 1,
         vendor: "opaque",
-        validate: (value) => ({ value: value as { name: string } }),
+        validate: (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          "name" in value &&
+          typeof value.name === "string"
+            ? { value: { name: value.name } }
+            : { issues: [{ message: "name must be a string" }] },
       },
     }
     expect(toolInputJsonSchema(defineTool({ ...base, input: opaque }))).toEqual({
@@ -321,6 +329,7 @@ describe("tool adapter conformance refusals", () => {
 
   test("refuses an adapter without a call function", async () => {
     await expect(
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed adapter, to prove the runtime refuses what the type already would.
       runToolContractConformance({ name: "none" } as unknown as ToolAdapter, options),
     ).rejects.toThrow("tool conformance: adapter must be callable")
   })
@@ -348,12 +357,7 @@ describe("tool adapter conformance refusals", () => {
   test("refuses an adapter that runs a dry run for real", async () => {
     await expect(
       runToolContractConformance(
-        adapterFor((value, call) =>
-          executeTool(approved, value, {
-            capabilities: call?.capabilities ?? [],
-            ...(call?.approval === undefined ? {} : { approval: call.approval }),
-          }),
-        ),
+        adapterFor((value, call) => executeTool(approved, value, { ...call, dryRun: false })),
         options,
       ),
     ).rejects.toThrow("tool conformance: dry-run failed")

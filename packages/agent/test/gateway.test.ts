@@ -305,6 +305,7 @@ describe("model gateway policy checks", () => {
 
   test("refuses a gateway without complete and a policy out of bounds", async () => {
     await expect(
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed gateway, to prove the runtime refuses what the type already would.
       runModelGateway({} as never, { input: {} }, { routes: ["a"], retryableCodes: [] }),
     ).rejects.toThrow("model gateway must implement complete")
     const refused: [Parameters<typeof runModelGateway>[2], string][] = [
@@ -361,8 +362,9 @@ describe("model gateway policy checks", () => {
     replay.complete({
       routeId: "a",
       input: {},
+      signal: new AbortController().signal,
       envelope: { attempt: 1, attemptsRemaining: 0 },
-    } as never)
+    })
     expect(replay.calls).toBe(1)
   })
 })

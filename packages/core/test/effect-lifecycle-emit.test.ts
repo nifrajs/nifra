@@ -27,13 +27,13 @@ describe("effect trace parents", () => {
 })
 
 describe("effect lifecycle emission", () => {
-  const base: EmitEffectLifecycleInput = {
+  const base = {
     effectId: "effect-1",
     capability: "orders.write",
     stage: "execution",
     phase: "failed",
     at: 5,
-  }
+  } satisfies EmitEffectLifecycleInput
 
   function emitted(input: EmitEffectLifecycleInput): EffectLifecycleEvent[] {
     const events: EffectLifecycleEvent[] = []
@@ -49,6 +49,7 @@ describe("effect lifecycle emission", () => {
       { ...base, attempt: 0 },
       { ...base, attempt: 1.5 },
       { ...base, errorCode: "Bad Code" },
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed code, to prove the runtime refuses what the type already would.
       { ...base, errorCode: 7 as unknown as string },
     ])
       expect(emitted(input)).toEqual([])

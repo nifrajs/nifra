@@ -208,10 +208,11 @@ describe("data adapter conformance", () => {
       ...target(),
       page: async () => ({ items: [] }),
     }).catch((caught: unknown) => caught)
-    expect(error).toBeInstanceOf(DataAdapterConformanceError)
-    expect((error as DataAdapterConformanceError).message).toBe(
+    if (!(error instanceof DataAdapterConformanceError))
+      throw new Error("expected a conformance error")
+    expect(error.message).toBe(
       "data adapter conformance failed: pagination: pagination conformance check failed",
     )
-    expect((error as DataAdapterConformanceError).report.checks.pagination).toBe("fail")
+    expect(error.report.checks.pagination).toBe("fail")
   })
 })

@@ -220,6 +220,7 @@ test("an effect that reports no commit is dead-lettered", async () => {
   const proofs = new MemoryIdempotencyProofStore()
   await store.enqueue(makeDispatch())
   const machine = new RunRecoveryMachine({ store, clock, leaseMs: 10, proofStore: proofs })
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed outcome, to prove the runtime refuses what the type already would.
   const result = await machine.process(async () => ({ committed: false }) as never)
   expect(result.deadLettered).toBe(1)
   expect(store.deadLetters()[0]?.code).toBe("idempotency_required")

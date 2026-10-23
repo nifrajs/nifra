@@ -100,6 +100,7 @@ describe("agent eval suite definition", () => {
       [[verdict(1), verdict(2)], "case 'case' scored rubric 'quality' twice"],
     ] as const) {
       const suite = suiteOf({
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed verdicts, to prove the runtime refuses what the type already would.
         cases: [{ id: "case", evaluate: () => produced as unknown as RubricVerdict[] }],
       })
       await expect(suite.run()).rejects.toThrow(`agent eval: ${message}`)

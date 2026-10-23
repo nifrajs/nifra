@@ -15,26 +15,29 @@ type Readers = {
   readonly arrayBuffer?: () => Promise<ArrayBuffer>
 }
 
-const source = (headers: Record<string, string>, readers: Readers = {}): RequestSource =>
-  ({
-    method: "POST",
-    url: "http://test/",
-    headers: new Headers(headers),
-    body: null,
-    json: async () => ({}),
-    arrayBuffer: async () => new ArrayBuffer(0),
-    ...readers,
-  }) as unknown as RequestSource
+const source = (
+  headers: Record<string, string>,
+  readers: Readers = {},
+): RequestSource & Readers => ({
+  method: "POST",
+  url: "http://test/",
+  headers: new Headers(headers),
+  body: null,
+  json: async () => ({}),
+  arrayBuffer: async () => new ArrayBuffer(0),
+  ...readers,
+})
 
 async function answer(value: unknown): Promise<unknown> {
   const settled = await value
   if (!isResponseResult(settled)) return settled
   const response = settled.toResponse()
-  return [response.status, ((await response.json()) as { error: string }).error]
+  const body: { error: string } = await response.json()
+  return [response.status, body.error]
 }
 
 const reject = () => Promise.reject(new Error("socket reset"))
-const poisoned = () => JSON.parse('{"__proto__": {"admin": true}}') as unknown
+const poisoned = (): unknown => JSON.parse('{"__proto__": {"admin": true}}')
 const bytesOf = (text: string) => new TextEncoder().encode(text)
 
 /** Read once directly and once through the continuation form, which must agree. */
@@ -45,7 +48,7 @@ async function both(src: () => RequestSource, maxBytes = 64): Promise<unknown[]>
     maxBytes,
     "reject",
     (result) => answer(result),
-    (error) => ["error", (error as Error).message],
+    (error) => ["error", String(error)],
   )
   return [direct, continued]
 }
@@ -113,7 +116,12 @@ describe("bounded JSON source readers", () => {
   })
 
   test("the arrayBuffer reader rechecks, parses and refuses a failed read", async () => {
-    const buffer = (text: string) => async () => bytesOf(text).buffer as ArrayBuffer
+    const buffer = (text: string) => async () => {
+      const bytes = bytesOf(text)
+      const copy = new ArrayBuffer(bytes.byteLength)
+      new Uint8Array(copy).set(bytes)
+      return copy
+    }
     const over = () => source({ "content-length": "2" }, { arrayBuffer: buffer('{"a":1}') })
     expect(await both(over)).toEqual([
       [413, "payload_too_large"],
@@ -153,9 +161,9 @@ describe("framed body schema reader", () => {
       "reject",
       () => "parsed",
       () => "response",
-      (error) => `error: ${(error as Error).message}`,
+      (error) => `error: ${String(error)}`,
       schema,
     )
-    expect(outcome).toBe("error: reader crashed")
+    expect(outcome).toBe("error: Error: reader crashed")
   })
 })

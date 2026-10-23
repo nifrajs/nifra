@@ -13,7 +13,7 @@ describe("static header records", () => {
   })
 
   test("a request-owned __proto__ name among several is stored as an own property", () => {
-    const own = JSON.parse('{"__proto__": "a", "x-request-id": "r1"}') as Record<string, string>
+    const own: Record<string, string> = JSON.parse('{"__proto__": "a", "x-request-id": "r1"}')
     const merged = mergeStaticHeaderRecord({ "x-team": "core" }, own, true)
     expect(Object.hasOwn(merged, "__proto__")).toBe(true)
     expect(Object.getPrototypeOf(merged)).toBe(Object.prototype)

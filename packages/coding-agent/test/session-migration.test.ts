@@ -200,7 +200,7 @@ describe("legacy session migration refusals", () => {
     const [first] = (await readFile(join(target, "session-1.jsonl"), "utf8"))
       .trim()
       .split("\n")
-      .map((text) => JSON.parse(text) as Record<string, unknown>)
+      .map((text): Record<string, unknown> => JSON.parse(text))
     if (first === undefined) throw new Error("the migration wrote no evidence")
     const cases: [unknown, string][] = [
       [null, "record must be an object"],

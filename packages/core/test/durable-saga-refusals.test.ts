@@ -6,6 +6,8 @@ import {
   reconcileSagas,
   reconcileSagasPage,
   SagaAmbiguousStepError,
+  type SagaDefinition,
+  type SagaReconciliationFinding,
   type SagaRecord,
   SagaResolutionError,
   SagaStepNotCommittedError,
@@ -15,16 +17,19 @@ import {
 
 type Compensators = { reserve: { id: string }; ship: { id: string } }
 
-const step = (name: string, state: SagaStepRecord["state"], extra: Partial<SagaStepRecord> = {}) =>
-  ({
-    name,
-    effectId: `${name}-effect`,
-    compensationEffectId: `${name}-undo`,
-    state,
-    compensationArgs: { id: name },
-    attempts: 0,
-    ...extra,
-  }) as SagaStepRecord
+const step = (
+  name: string,
+  state: SagaStepRecord["state"],
+  extra: Partial<SagaStepRecord> = {},
+): SagaStepRecord => ({
+  name,
+  effectId: `${name}-effect`,
+  compensationEffectId: `${name}-undo`,
+  state,
+  compensationArgs: { id: name },
+  attempts: 0,
+  ...extra,
+})
 
 const record = (sagaId: string, extra: Partial<SagaRecord> = {}): SagaRecord => ({
   sagaId,
@@ -38,12 +43,14 @@ const record = (sagaId: string, extra: Partial<SagaRecord> = {}): SagaRecord => 
   ...extra,
 })
 
-const orders = (compensators: Partial<Record<keyof Compensators, () => unknown>> = {}) =>
+type OrderCompensators = SagaDefinition<Record<string, never>, Compensators>["compensators"]
+
+const orders = (compensators: Partial<OrderCompensators> = {}) =>
   defineSaga<Record<string, never>, Compensators>({
     name: "orders",
     async run() {},
     compensators: { reserve: async () => {}, ship: async () => {}, ...compensators },
-  } as Parameters<typeof defineSaga<Record<string, never>, Compensators>>[0])
+  })
 
 function seeded(...records: SagaRecord[]) {
   const store = new MemorySagaStore()
@@ -67,6 +74,7 @@ describe("saga definition refusals", () => {
   ]
   for (const [label, definition, message] of cases) {
     test(`refuses an invalid ${label}`, () => {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed definition, to prove the runtime refuses what the type already would.
       expect(() => defineSaga(definition as Parameters<typeof defineSaga>[0])).toThrow(message)
     })
   }
@@ -87,11 +95,13 @@ describe("saga definition refusals", () => {
 
 describe("saga engine refuses a malformed stored record", () => {
   const cases: readonly [string, Partial<SagaRecord>, string][] = [
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a deliberately unknown stored state, which the engine must refuse.
     ["an unknown state", { state: "paused" as SagaRecord["state"] }, "invalid record"],
     ["an owner without a lease", { owner: "owner-1" }, "an owner without a lease"],
     ["an update before creation", { createdAt: 5, updatedAt: 4 }, "updatedAt precedes createdAt"],
     [
       "a step in an unknown state",
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a deliberately unknown stored step state, which the engine must refuse.
       { steps: [step("reserve", "paused" as SagaStepRecord["state"])] },
       "invalid step record",
     ],
@@ -120,6 +130,7 @@ describe("saga run refusals", () => {
     const noExecute = defineSaga<Record<string, never>, Compensators>({
       name: "orders",
       async run(saga) {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed executor, to prove the runtime refuses what the type already would.
         await saga.step("reserve", { id: "r" }, "run" as unknown as () => Promise<string>)
       },
       compensators: { reserve: async () => {}, ship: async () => {} },
@@ -130,6 +141,7 @@ describe("saga run refusals", () => {
     const noCompensator = defineSaga<Record<string, never>, { reserve: { id: string } }>({
       name: "orders",
       async run(saga) {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a step name with no compensator, which the type already refuses and the runtime must too.
         await (saga.step as (name: string, args: unknown, run: () => unknown) => unknown)(
           "ship",
           { id: "s" },
@@ -293,6 +305,7 @@ describe("saga ambiguity resolution refusals", () => {
   test("refuses a malformed resolution", async () => {
     const { engine } = ambiguous()
     await expect(
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: deliberately malformed resolution, to prove the runtime refuses what the type already would.
       engine.resolveAmbiguity(orders(), "review", null as unknown as never),
     ).rejects.toThrow("saga resolution must be an object")
     await expect(
@@ -300,6 +313,7 @@ describe("saga ambiguity resolution refusals", () => {
         kind: "compensation",
         step: "pack",
         effectId: "pack-undo",
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed outcome, to prove the runtime refuses what the type already would.
         outcome: "committed" as "compensated",
       }),
     ).rejects.toThrow("saga resolution kind or outcome is invalid")
@@ -387,7 +401,7 @@ describe("saga reconciliation", () => {
       compareAndSet: () => false,
       list: () => store.list(),
     }
-    const expected = [
+    const expected: SagaReconciliationFinding[] = [
       {
         sagaId: "undoing",
         state: "compensating",

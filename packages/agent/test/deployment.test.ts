@@ -4,29 +4,34 @@ import {
   type AgentDeploymentAdapter,
   assertDeploymentAuthorityMonotonic,
   createDeploymentAuthority,
+  type DeploymentCapabilityReport,
   DeploymentError,
   parseDeploymentCapabilityReport,
   parseDeploymentPlan,
 } from "../src/index.ts"
 
+function reportFor(id = "local"): DeploymentCapabilityReport {
+  return {
+    schemaVersion: 1,
+    adapterId: id,
+    capabilities: {
+      runtime: "local",
+      network: "none",
+      filesystem: "workspace",
+      process: "child",
+      secrets: "none",
+      workspace: { mode: "scoped", maxBytes: 10_000_000 },
+      cancellation: "cooperative",
+      hostileCodeIsolation: "none",
+    },
+    limitations: ["not-a-sandbox"],
+  }
+}
+
 function referenceAdapter(id = "local"): AgentDeploymentAdapter {
   return {
     id,
-    capabilityReport: () => ({
-      schemaVersion: 1 as const,
-      adapterId: id,
-      capabilities: {
-        runtime: "local" as const,
-        network: "none" as const,
-        filesystem: "workspace" as const,
-        process: "child" as const,
-        secrets: "none" as const,
-        workspace: { mode: "scoped" as const, maxBytes: 10_000_000 },
-        cancellation: "cooperative" as const,
-        hostileCodeIsolation: "none" as const,
-      },
-      limitations: ["not-a-sandbox"],
-    }),
+    capabilityReport: () => reportFor(id),
     prepare: ({ plan }: { plan: { deploymentId: string } }) => ({
       deploymentId: plan.deploymentId,
       state: "prepared" as const,
@@ -208,7 +213,7 @@ describe("deployment contract refusals", () => {
   })
 
   test("a capability report with an unknown class or bad limitations is invalid", () => {
-    const report = referenceAdapter().capabilityReport()
+    const report = reportFor()
     for (const broken of [
       "report",
       { ...report, limitations: ["not a token"] },
@@ -230,6 +235,7 @@ describe("deployment contract refusals", () => {
       code(() =>
         assertDeploymentAuthorityMonotonic(authority, {
           ...authority,
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately malformed mode, to prove the runtime refuses what the type already would.
           cancellation: "always" as never,
         }),
       ),
@@ -257,13 +263,9 @@ describe("deployment contract refusals", () => {
 
 describe("deployment lifecycle refusals", () => {
   const authority = () => createDeploymentAuthority({ workspaceMaxBytes: 1024 * 1024 })
-  const deploy = (adapter: Partial<AgentDeploymentAdapter> = {}, options = {}) =>
-    new AgentDeployment(
-      { ...referenceAdapter(), ...adapter } as AgentDeploymentAdapter,
-      authority(),
-      undefined,
-      options,
-    )
+  // Overrides are untyped: several cases inject callbacks that answer out of shape.
+  const deploy = (adapter: object = {}, options = {}) =>
+    new AgentDeployment(Object.assign(referenceAdapter(), adapter), authority(), undefined, options)
   const fails = async (run: Promise<unknown>) => {
     try {
       await run
@@ -287,25 +289,25 @@ describe("deployment lifecycle refusals", () => {
 
   test("a report for another adapter is refused at prepare", async () => {
     const deployment = deploy({
-      capabilityReport: () => ({ ...referenceAdapter().capabilityReport(), adapterId: "other" }),
+      capabilityReport: () => ({ ...reportFor(), adapterId: "other" }),
     })
     expect(await fails(deployment.prepare({ deploymentId: "run-1" }))).toBe("invalid_capabilities")
   })
 
   test("a plan beyond the adapter or the authority is refused at prepare", async () => {
-    const tight = (plan: object, adapter: Partial<AgentDeploymentAdapter> = {}, options = {}) =>
+    const tight = (plan: object, adapter: object = {}, options = {}) =>
       fails(deploy(adapter, options).prepare({ deploymentId: "run-1", ...plan }))
     expect(await tight({ hostileCode: true })).toBe("hostile_code_requires_isolation")
-    const isolated = {
+    const isolated: Partial<AgentDeploymentAdapter> = {
       capabilityReport: () => {
-        const report = referenceAdapter().capabilityReport()
+        const report = reportFor()
         return { ...report, capabilities: { ...report.capabilities, hostileCodeIsolation: "os" } }
       },
-    } as Partial<AgentDeploymentAdapter>
+    }
     expect(
       await fails(
         new AgentDeployment(
-          { ...referenceAdapter(), ...isolated } as AgentDeploymentAdapter,
+          Object.assign(referenceAdapter(), isolated),
           createDeploymentAuthority({ workspaceMaxBytes: 1024, hostileCodeIsolation: "os" }),
         ).prepare({ deploymentId: "run-1", hostileCode: true }),
       ),
@@ -319,12 +321,12 @@ describe("deployment lifecycle refusals", () => {
         ).prepare({ deploymentId: "run-1", workspaceMaxBytes: 100 }),
       ),
     ).toBe("authority_expanded")
-    const cancellable = {
+    const cancellable: Partial<AgentDeploymentAdapter> = {
       capabilityReport: () => {
-        const report = referenceAdapter().capabilityReport()
+        const report = reportFor()
         return { ...report, capabilities: { ...report.capabilities, cancellation: "none" } }
       },
-    } as Partial<AgentDeploymentAdapter>
+    }
     expect(await tight({}, cancellable)).toBe("capability_denied")
     expect(
       await fails(
@@ -350,7 +352,7 @@ describe("deployment lifecycle refusals", () => {
         }).prepare({ deploymentId: "run-1" }),
       ),
     ).toBe("malformed_callback")
-    const started = async (adapter: Partial<AgentDeploymentAdapter>) => {
+    const started = async (adapter: object) => {
       const deployment = deploy(adapter)
       await deployment.prepare({ deploymentId: "run-1" })
       return deployment
@@ -361,7 +363,7 @@ describe("deployment lifecycle refusals", () => {
         (await started({ start: () => ({ deploymentId: "run-1", state: "prepared" }) })).start(),
       ),
     ).toBe("malformed_callback")
-    const running = async (adapter: Partial<AgentDeploymentAdapter>) => {
+    const running = async (adapter: object) => {
       const deployment = await started(adapter)
       await deployment.start()
       return deployment
