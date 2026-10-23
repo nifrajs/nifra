@@ -80,6 +80,8 @@ jobs:
           - suite: ${{ (inputs.skip_ssr || github.event_name == 'pull_request') && 'ssr' || 'none' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -134,10 +136,13 @@ jobs:
         run: bun test bench/ci bench/rounds.test.ts bench/ssr/matrix.test.ts bench/ssr/section.test.ts
 
       - name: Measure
+        env:
+          SUITE: ${{ matrix.suite }}
+          RUNTIME: ${{ matrix.runtime }}
         run: >-
-          bun run bench/ci/run.ts --suite ${{ matrix.suite }} --runtime ${{ matrix.runtime }}
+          bun run bench/ci/run.ts --suite "$SUITE" --runtime "$RUNTIME"
           --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --max-ci-width "$MAX_CI_WIDTH" --pin
-          --out bench-ci/${{ matrix.suite }}-${{ matrix.runtime }}.json
+          --out "bench-ci/$SUITE-$RUNTIME.json"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -156,6 +161,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:

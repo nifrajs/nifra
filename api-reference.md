@@ -3275,7 +3275,7 @@ _No named exports (side-effect entrypoint)._
 
 - **SignatureEncoding** _(type)_ - `type SignatureEncoding = "hex" | "base64" | "base64url"`
 - **VerifyWebhookOptions** _(interface)_ - `interface VerifyWebhookOptions`
-- **WebhookFailureReason** _(type)_ - `type WebhookFailureReason = | "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance" | "malformed_signature" | "payload_too_large" | "invalid_content_length"`
+- **WebhookFailureReason** _(type)_ - `type WebhookFailureReason = | "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance" | "malformed_signature" | "payload_too_large" | "invalid_content_length" | "invalid_body"`
 - **WebhookProvider** _(type)_ - `type WebhookProvider = "stripe" | "github" | "generic"`
 - **WebhookResult** _(type)_ - `type WebhookResult = | { readonly ok: true; readonly payload: string } | { readonly ok: false; readonly reason: WebhookFailureReason }`
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.

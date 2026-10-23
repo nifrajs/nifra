@@ -7,9 +7,19 @@ import {
   invalidHostMismatches,
   rawExchange,
   rawUpgradeStatus,
+  refusedHostMismatches,
   requestTargetApp,
   requestTargetMismatches,
 } from "../../core/test/request-target-matrix.ts"
+import {
+  closeArgsAnswers,
+  closeArgsRoute,
+  closeReportRoute,
+  closeReports,
+  FORBIDDEN_CLOSES,
+  REPORT_CAP,
+  SERVER_CLOSE_REPORTS,
+} from "../../core/test/ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { serve } from "../src/index.ts"
 
@@ -339,6 +349,32 @@ Deno.test("wsMaxPayloadBytes counts UTF-8 bytes and sizes a message without copy
   }
 })
 
+Deno.test("a close RFC 6455 forbids throws a RangeError and leaves the socket open", async () => {
+  const running = await serve(closeArgsRoute(server().use(websocket())), {
+    hostname: "127.0.0.1",
+    port: 0,
+  })
+  try {
+    assertEquals(await closeArgsAnswers(running.port), {
+      answers: FORBIDDEN_CLOSES.map(() => "range"),
+      closed: { code: 4000, reason: "ok" },
+    })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("close is given the server's own close when the server closed first", async () => {
+  const app = server({ wsMaxPayloadBytes: REPORT_CAP }).use(websocket())
+  const next = closeReportRoute(app)
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  try {
+    assertEquals(await closeReports(running.port, next), [...SERVER_CLOSE_REPORTS])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 Deno.test("a socket registered after a guard refuses a handshake without credentials", async () => {
   const app = server()
     .use(websocket())
@@ -408,7 +444,7 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
     assertEquals(res.headers.get("x-sec"), "nosniff")
     assertEquals(res.headers.get("x-status-seen"), "200")
     assertEquals(res.headers.get("x-multi"), "one, two")
-    assertEquals(res.headers.get("content-type"), "application/json;charset=utf-8")
+    assertEquals(res.headers.get("content-type"), "application/json")
     const body = await res.text()
     assertEquals(res.headers.get("x-body-len"), String(body.length))
     assertEquals(JSON.parse(body), { ok: true })
@@ -587,6 +623,7 @@ Deno.test("a target with dot segments or a backslash routes the path it resolves
   const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
   try {
     assertEquals(await requestTargetMismatches(running.port), [])
+    assertEquals(await requestTargetMismatches(running.port, true), [])
   } finally {
     await running.stop({ drainMs: 0 })
   }
@@ -598,12 +635,55 @@ Deno.test("a Host that is not an authority never steers the routed path", async 
   const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
   try {
     assertEquals(await invalidHostMismatches(running.port), [])
+    assertEquals(await refusedHostMismatches(running.port), [])
     const refused = await rawExchange(running.port, "GET", "/posts", undefined, "x/users/7#")
     assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
     for (const host of ["127.0.0.1:8080", "[::1]:80", "my_svc.local"]) {
       const served = await rawExchange(running.port, "GET", "/posts", undefined, host)
       assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
     }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
+// adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
+Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    for (const target of ["/posts", "/users/../posts"]) {
+      const refused = await rawExchange(running.port, "GET", target, undefined, "127.0.0.1:99999")
+      assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+    }
+    const served = await rawExchange(
+      running.port,
+      "GET",
+      "/users/../posts",
+      undefined,
+      "127.0.0.1:65535",
+    )
+    assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// The `Request` constructor refuses a TRACE, CONNECT or TRACK, and a lower-case `get` with a body, so
+// rebuilding one to resolve its dot segments threw out of `fetch` and the adapter answered 500 where
+// Bun and Node route it. Found by scripts/check-runtime-differential.ts.
+Deno.test("a request no Request can be rebuilt from is routed on its resolved target", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const answers = []
+    for (const [method, target, body] of [
+      ["TRACE", "/users/../posts", undefined],
+      ["TRACK", "/./nowhere", undefined],
+      ["get", "/users/../posts", "{}"],
+    ] as const) {
+      answers.push((await rawExchange(running.port, method, target, body)).status)
+    }
+    assertEquals(answers, [405, 404, 405])
   } finally {
     await running.stop({ drainMs: 0 })
   }
@@ -622,6 +702,65 @@ const named: StandardSchemaV1<unknown, { name: string }> = {
         : { issues: [{ message: "expected { name: string }" }] },
   },
 }
+
+// `Deno.serve`'s `Request.json()` keeps a leading byte order mark that every other runtime's drops, so a
+// body schema refused what Bun and workerd parse. Found by scripts/check-runtime-differential.ts.
+Deno.test("a JSON body led by a byte order mark parses through a schema and c.boundedJson", async () => {
+  const app = server()
+    .post("/named", { body: named }, (c) => c.body)
+    .post("/bounded", (c) => c.boundedJson())
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const body = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"name":"Ada"}')])
+    for (const path of ["/named", "/bounded"]) {
+      const res = await fetch(`http://127.0.0.1:${running.port}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      })
+      assertEquals([path, res.status, await res.json()], [path, 200, { name: "Ada" }])
+    }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// The framework's own 404 and 422 said `application/json;charset=utf-8`, Bun's spelling baked into core,
+// while a handler's JSON and a 405 said Deno's `application/json`. Found by
+// scripts/check-runtime-differential.ts.
+Deno.test("a handler's JSON and the framework's envelopes carry the Content-Type Response.json writes", async () => {
+  const app = server()
+    .get("/ok", () => ({ ok: true }))
+    .post("/users", { body: named }, (c) => c.body)
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const base = `http://127.0.0.1:${running.port}`
+    const answers = [
+      await fetch(`${base}/ok`),
+      await fetch(`${base}/missing`),
+      await fetch(`${base}/ok`, { method: "DELETE" }),
+      await fetch(`${base}/users`, {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json" },
+      }),
+    ]
+    const types = []
+    for (const answer of answers) {
+      types.push([answer.status, answer.headers.get("content-type")])
+      await answer.body?.cancel()
+    }
+    const native = Response.json(0).headers.get("content-type")
+    assertEquals(types, [
+      [200, native],
+      [404, native],
+      [405, native],
+      [422, native],
+    ])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
 
 // Deno's own cache slot for a request's `Headers`, read so a release that renames it fails here.
 function headersCacheSlot(): symbol {

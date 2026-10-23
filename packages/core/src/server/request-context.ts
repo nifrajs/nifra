@@ -433,9 +433,7 @@ async function readBoundedBodyOrThrow(
 ): Promise<Uint8Array> {
   const r = await readBoundedBytes(req, maxBytes ?? maxBodyBytes)
   if (r.ok) return r.bytes
-  throw r.status === 413
-    ? plainError(413, "payload_too_large")
-    : plainError(400, "invalid_content_length")
+  throw plainError(r.status, r.error)
 }
 
 /** Backs `c.boundedJson`: `readBoundedJsonSource`, throwing its flat 400/413 on failure. */

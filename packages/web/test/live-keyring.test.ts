@@ -425,13 +425,15 @@ test("derived subkeys are cached per kid, least recently used out, at most 1,024
 test("a forged token never takes a cache slot: real subkeys stay cached past any number of forgeries", async () => {
   const keyring = await ring()
   const real = must(await keyring.seal(input(), NOW))
-  // The secret id is public in every token; the forger lacks only the secret itself.
+  const sealed = Uint8Array.from(atob(real.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
+    c.charCodeAt(0),
+  )
+  // The secret id is public in every token; the forger lacks only the secret itself. The real
+  // token's own process id bytes are skipped: with them the forgery is the real token, which opens.
+  const own = new DataView(sealed.buffer).getUint16(10)
   const forged = Array.from({ length: 1100 }, (_, n) => {
-    const bytes = Uint8Array.from(atob(real.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
-      c.charCodeAt(0),
-    )
-    bytes[10] = n >> 8
-    bytes[11] = n & 0xff
+    const bytes = sealed.slice()
+    new DataView(bytes.buffer).setUint16(10, n < own ? n : n + 1)
     return toBase64Url(bytes)
   })
   const derive = spyOn(crypto.subtle, "deriveKey")

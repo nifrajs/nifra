@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import {
   buildManifest,
   createWebApp,
+  defer,
   type Manifest,
   type RenderAdapter,
   redirect,
@@ -382,6 +383,42 @@ describe("boundary-answered failures reach the server log", () => {
     await app.fetch(new Request("http://x/boom"))
     expect(entries).toHaveLength(1)
     expect(entries[0]?.fields).toEqual({ method: "GET", path: "/boom", name: "Error" })
+  })
+
+  test("a rejected defer() is written to the server log, never the console", async () => {
+    const { entries, logger } = capture()
+    const manifest: Manifest = {
+      routes: [
+        {
+          id: "feed",
+          pattern: "/feed",
+          layoutIds: [],
+          file: "feed.tsx",
+          load: async () => ({
+            default: "page",
+            loader: () => ({ items: defer(Promise.reject(new Error("feed down"))) }),
+          }),
+        },
+      ],
+      layouts: {},
+    }
+    const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", server: { logger } })
+    const consoleError = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const page = await app.fetch(new Request("http://x/feed"))
+      expect(await page.text()).toContain("deferred_error")
+      const data = await app.fetch(
+        new Request("http://x/feed", { headers: { "x-nifra-data": "1" } }),
+      )
+      expect(await data.text()).toContain("deferred_error")
+      expect(consoleError).not.toHaveBeenCalled()
+    } finally {
+      consoleError.mockRestore()
+    }
+    expect(entries.map((entry) => [entry.fields?.path, entry.fields?.detail])).toEqual([
+      ["/feed", "feed down"],
+      ["/feed", "feed down"],
+    ])
   })
 
   test("without a boundary the server logs the error once, not twice", async () => {

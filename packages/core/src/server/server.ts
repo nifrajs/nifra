@@ -70,6 +70,8 @@ import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
 import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
+  clientBodyErrorCode,
+  hasTrustedBodyFraming,
   markTransportCap,
   markTrustedBodyFraming,
   type RawBodyReaders,
@@ -640,18 +642,98 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
-/** `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it. */
-const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegments(req.url), req)
+/**
+ * Bun parses the target only when it can read the Host. Otherwise `Request.url` is the target as sent:
+ * relative for a Host with a space or a byte past ASCII or for no Host at all, the raw authority
+ * for a port past 65535, and `new URL(req.url)` throws in the app. So Bun is held to the Host check
+ * Deno runs.
+ */
+const unparsedBunTargets = typeof Bun !== "undefined"
+
+/**
+ * `req` as Bun or workerd would have delivered it: the same request, its URL resolved as they parse it.
+ * `undefined` when the `Request` constructor refuses what the wire carried - a TRACE, CONNECT or TRACK,
+ * a lower-case `get` with a body - which {@link resolvedSource} routes instead.
+ */
+function withResolvedTarget(req: Request, url: string): Request | undefined {
+  let rebuilt: Request
+  try {
+    rebuilt = new Request(url, req)
+  } catch {
+    return undefined
+  }
+  // The same body, so the same framing: a runtime still delimited it.
+  if (hasTrustedBodyFraming(req)) markTrustedBodyFraming(rebuilt)
+  return rebuilt
+}
+
+/**
+ * A request no `Request` can be rebuilt from, as a source carrying its resolved URL: it is routed on that
+ * URL and gets the 404 or 405 the other runtimes give, where rebuilding it threw out of `fetch`. A
+ * handler that reads `c.req` gets the request as Deno delivered it.
+ */
+function resolvedSource(req: Request, url: string): RequestSource {
+  const source: RequestSource = {
+    method: req.method,
+    url,
+    get headers() {
+      return req.headers
+    },
+    header: (name) => headerOf(req, name),
+    get body() {
+      return req.body
+    },
+    arrayBuffer: () => req.arrayBuffer(),
+    json: () => req.json(),
+    bytes: () => req.bytes(),
+    request: req,
+  }
+  if (hasTrustedBodyFraming(req)) markTrustedBodyFraming(source)
+  return source
+}
 
 // A Host as RFC 9110 allows it: a reg-name or an IP literal, then an optional port. Deno builds
 // `Request.url` by appending the target to the Host as received, so `Host: x/admin#` turned a
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
-const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::\d{1,5})?$/i
+const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
-// `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every header.
-const invalidHost = (req: Request): boolean => {
+// A port past 65535, or an IPv6 literal no URL parser takes (`[1:2]`), is refused as Node refuses it:
+// no URL can be built on either, so resolving a dot segment against one threw out of `fetch`.
+const invalidHost = (host: string): boolean => {
+  const authority = HOST_AUTHORITY.exec(host)
+  if (authority === null) return true
+  if (authority[1] !== undefined && Number(authority[1]) > 65_535) return true
+  return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
+}
+
+/**
+ * What a request is routed on in place of `req.url`, before anything reads it: `true` refuses its
+ * Host (400), a URL replaces the target, `false` keeps it. Deno hands the target over as sent, so
+ * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
+ * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
+ * `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every
+ * header.
+ */
+const requestTarget = (req: Request): string | boolean => {
+  if (!rawRequestTargets && !unparsedBunTargets) return false
   const host = headerOf(req, "host")
-  return host !== null && !HOST_AUTHORITY.test(host)
+  if (host !== null && invalidHost(host)) {
+    if (rawRequestTargets) return true
+    // Bun served it anyway: it could not read the Host, so it left the target unparsed, or it
+    // built the URL on it - sent twice (joined with ", ", the URL on the first; RFC 9112 section
+    // 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
+    // sub-delimiter (`a!b`). A request built in process keeps the URL its caller built, unless Bun
+    // would have built it so.
+    const routed = URL.parse(req.url)?.host
+    return routed === undefined || URL.parse(`//${host.split(", ")[0]}`, req.url)?.host === routed
+  }
+  if (rawRequestTargets) return needsResolving(req.url) && resolveDotSegments(req.url)
+  // A request built in process carries an absolute URL whatever its headers say.
+  return (
+    host === null &&
+    req.url.charCodeAt(0) === 47 /* / */ &&
+    resolveDotSegments(`http://localhost${req.url}`)
+  )
 }
 
 function normalizeMountPrefix(path: string): string {
@@ -3231,9 +3313,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    if (rawRequestTargets) {
-      if (invalidHost(req)) return jsonError(400, "invalid_host")
-      if (needsResolving(req.url)) req = withResolvedTarget(req)
+    const target = requestTarget(req)
+    if (target === true) return jsonError(400, "invalid_host")
+    if (target !== false) {
+      const rebuilt = withResolvedTarget(req, target)
+      if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, target), platform)
+      req = rebuilt
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
@@ -3732,11 +3817,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
-    if (rawRequestTargets) {
-      if (invalidHost(req)) {
-        return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
-      }
-      if (needsResolving(req.url)) req = withResolvedTarget(req)
+    const target = requestTarget(req)
+    if (target === true) {
+      return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
+    }
+    if (target !== false) {
+      // A GET carrying a body cannot be rebuilt; `fetch` routes it as the ordinary request it is.
+      const rebuilt = withResolvedTarget(req, target)
+      if (rebuilt === undefined) return WS_PASS
+      req = rebuilt
     }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
     platform = this.trustedPlatform(req, platform)
@@ -5856,7 +5945,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       finalize,
       responseSet,
       (e, c) => this.logRequestError(e, c),
-      () => this.internalErrorResponse(wrapResponse),
+      wrapResponse,
     )
   }
 
@@ -6435,6 +6524,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (err instanceof Response || isResponseResult(err))
       return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, err)
     if (entry.onError.length === 0) {
+      const clientCode = clientBodyErrorCode(err)
+      if (clientCode !== undefined) return wrapResponse(plainError(400, clientCode))
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
       // (redacting) logger. Body-read failures and around-hook failures land here too.
       this.logRequestError(err, ctx)
@@ -6523,6 +6614,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return wrapResponse(plainError(500, "internal_error"))
       }
     }
+    const clientCode = clientBodyErrorCode(err)
+    if (clientCode !== undefined) return wrapResponse(plainError(400, clientCode))
     this.logRequestError(err, ctx)
     return fallback === undefined ? wrapResponse(plainError(500, "internal_error")) : fallback()
   }
@@ -6841,7 +6934,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       const paramNames = pattern.paramNames
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
-      tableAt(path, pattern.segments)[method as Method] = this.compileBunNativeHandler(
+      const handler = this.compileBunNativeHandler(
         entry,
         paramNames,
         fused,
@@ -6850,6 +6943,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         peer,
         fallback,
       )
+      // The table matched the target as sent; one `fetch` refuses or rewrites goes through it.
+      tableAt(path, pattern.segments)[method as Method] = (request, server) =>
+        requestTarget(request) ? fallback(request, server) : handler(request, server)
       count += 1
       if (paramNames.length > 0) {
         below.add(pattern.segments.length + method)
