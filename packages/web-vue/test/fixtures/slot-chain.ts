@@ -51,3 +51,24 @@ export const RepeatedLayout = defineComponent({
     return () => h("main", null, [slots.default?.(), slots.default?.()])
   },
 })
+
+// Two nested layouts that count their renders, for the render-skipping test.
+const renders: Record<string, number> = {}
+Reflect.set(globalThis, "renders", renders)
+const counted = (name: string) =>
+  defineComponent({
+    name,
+    props: ["data", "boundaries"],
+    setup(_props, { slots }) {
+      const count = ref(0)
+      return () => {
+        renders[name] = (renders[name] ?? 0) + 1
+        return h("section", null, [
+          h("button", { class: name, onClick: () => count.value++ }, `${name}:${count.value}`),
+          slots.default?.(),
+        ])
+      }
+    },
+  })
+export const Outer = counted("Outer")
+export const Inner = counted("Inner")

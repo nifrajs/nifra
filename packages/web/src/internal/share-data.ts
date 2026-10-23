@@ -36,27 +36,25 @@ export function shareData(prev: unknown, next: unknown, plainJson = false): unkn
   if (Object.is(prev, next)) return prev
   if (!plainJson && !isTree(next, new Set(), 0)) return next
   try {
-    return share(prev, next, 0)
+    return share(prev, next, 0, plainJson)
   } catch (error) {
     if (error === TOO_DEEP) return next
     throw error
   }
 }
 
-function share(prev: unknown, next: unknown, depth: number): unknown {
+// Client loaders can attach metadata that an enumerable-string-key copy would lose. Parsed JSON has
+// no symbol keys, and the check would cost a third of a reload that changed one row.
+const hasSymbols = (a: object, b: object): boolean =>
+  Object.getOwnPropertySymbols(a).length > 0 || Object.getOwnPropertySymbols(b).length > 0
+
+function share(prev: unknown, next: unknown, depth: number, json: boolean): unknown {
   if (Object.is(prev, next)) return prev
-  if (prev instanceof Date && next instanceof Date)
-    return prev.getTime() === next.getTime() ? prev : next
-  if (!(Array.isArray(prev) && Array.isArray(next)) && !(isPlain(prev) && isPlain(next)))
-    return next
-  // Client loaders can attach metadata that an enumerable-string-key copy would lose.
-  if (
-    Object.getOwnPropertySymbols(prev).length > 0 ||
-    Object.getOwnPropertySymbols(next).length > 0
-  )
-    return next
-  if (depth >= 128) throw TOO_DEEP
-  if (Array.isArray(prev) && Array.isArray(next)) {
+  if (prev instanceof Date)
+    return next instanceof Date && prev.getTime() === next.getTime() ? prev : next
+  if (Array.isArray(next)) {
+    if (!Array.isArray(prev) || (!json && hasSymbols(prev, next))) return next
+    if (depth >= 128) throw TOO_DEEP
     const out: unknown[] = []
     let same = prev.length === next.length
     let byId: Map<unknown, unknown> | undefined
@@ -99,7 +97,7 @@ function share(prev: unknown, next: unknown, depth: number): unknown {
         }
         old = byId.get(id)
       }
-      const value = share(old, item, depth + 1)
+      const value = share(old, item, depth + 1, json)
       out.push(value)
       if (value === old) kept++
       else if (i === 31 && kept === 0) return next
@@ -108,19 +106,18 @@ function share(prev: unknown, next: unknown, depth: number): unknown {
     }
     return same ? prev : out
   }
-  if (isPlain(prev) && isPlain(next)) {
-    const keys = Object.keys(next)
-    let same = keys.length === Object.keys(prev).length
-    const out: Record<string, unknown> = {}
-    for (const key of keys) {
-      // A parsed payload can own a `__proto__` key, which a copy would turn into its prototype.
-      if (key === "__proto__") return next
-      const old = prev[key]
-      const value = share(old, next[key], depth + 1)
-      if (value !== old || (old === undefined && !Object.hasOwn(prev, key))) same = false
-      out[key] = value
-    }
-    return same ? prev : out
+  if (!isPlain(prev) || !isPlain(next) || (!json && hasSymbols(prev, next))) return next
+  if (depth >= 128) throw TOO_DEEP
+  const keys = Object.keys(next)
+  let same = keys.length === Object.keys(prev).length
+  const out: Record<string, unknown> = {}
+  for (const key of keys) {
+    // A parsed payload can own a `__proto__` key, which a copy would turn into its prototype.
+    if (key === "__proto__") return next
+    const old = prev[key]
+    const value = share(old, next[key], depth + 1, json)
+    if (value !== old || (old === undefined && !Object.hasOwn(prev, key))) same = false
+    out[key] = value
   }
-  return next
+  return same ? prev : out
 }

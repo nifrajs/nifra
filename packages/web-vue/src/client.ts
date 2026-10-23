@@ -10,18 +10,19 @@ import {
   type Component,
   computed,
   createSSRApp,
-  createVNode,
   defineComponent,
-  Fragment,
   h,
+  type InjectionKey,
+  inject,
   onScopeDispose,
   provide,
+  type Ref,
   shallowRef,
   type VNode,
 } from "vue"
 import { compose, pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
-import { PROPS_KEY, SEARCH_KEY } from "./route-context.ts"
+import { RouteContextProvider } from "./route-context.ts"
 import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own module, re-exported here so nifra's client
@@ -63,72 +64,67 @@ export const hydrationAssuranceHook = Object.freeze({
   runtimeIdentity: (): object => createSSRApp,
 })
 
-// Keep actual route vnodes in slots: KeepAlive/Transition must see the page/layout, not a shared
-// routing component. For an unchanged layout chain, a fragment block patches the mounted route
-// components directly; stable slots let Vue skip layouts whose own props did not change.
-type ChainBlock = VNode & { dynamicChildren: VNode[] | null }
-function chainRenderer(): (chain: readonly unknown[], props: RenderProps) => VNode {
-  let previous: VNode[] = []
-  let block: ChainBlock | undefined
-  let slots: { child: VNode; render: () => VNode; uses: number }[] = []
-  return (chain, props) => {
-    const last = chain.length - 1
-    const stable =
-      previous.length === chain.length &&
-      slots.every((slot) => slot.uses <= 1) &&
-      previous.every(
-        (node, i) =>
-          node.type === chain[i] &&
-          node.component !== null &&
-          node.component.isMounted &&
-          !node.component.isUnmounted &&
-          (i === last ||
-            (node.props?.data === (props.layoutData?.[i] ?? null) &&
-              node.props?.boundaries === props.boundaries)),
-      )
-    const nodes: VNode[] = []
-    let child = pageNode(chain[last], props)
-    // FULL_PROPS: block patching must still compare the page's props (data, pending, actionData…).
-    child.patchFlag = 16
-    nodes[last] = child
-    let sharedPrefix = 0
-    while (sharedPrefix < last && previous[sharedPrefix]?.type === chain[sharedPrefix])
-      sharedPrefix++
-    slots = slots.slice(0, sharedPrefix)
-    for (let i = last - 1; i >= 0; i--) {
-      let slot = slots[i]
-      if (slot === undefined) {
-        const held = {
-          child,
-          uses: 0,
-          render: (): VNode => {
-            held.uses++
-            return held.child
-          },
+type View = { readonly chain: readonly unknown[]; readonly props: RenderProps }
+const VIEW_KEY: InjectionKey<Readonly<Ref<View>>> = Symbol("nifra.web-vue.view")
+const NO_VIEW: View = { chain: [], props: { data: null } }
+
+const nameOf = (component: object): string | undefined => {
+  const name: unknown =
+    Reflect.get(component, "name") ||
+    Reflect.get(component, "displayName") ||
+    Reflect.get(component, "__name")
+  return typeof name === "string" && name !== "" ? name : undefined
+}
+
+// One level of the chain as `compose` builds it, one wrapper component per chain component and named
+// after it: a `KeepAlive` or `Transition` in a layout sees the page or layout below change, and
+// `include` matches its name. The wrapper follows the view on its own, and hands its layout the
+// level below as a STABLE slot while that stays the same component, so a reload that kept the data
+// (the router shares what it did not change) re-renders a layout only for a prop of its own that
+// moved, and the page only for one of its own, such as `pending`.
+const levels = new WeakMap<object, Component>()
+// The key of a chain entry that is no component, such as a route module that failed to load.
+const NOT_A_COMPONENT = {}
+const levelOf = (component: unknown): Component => {
+  const key =
+    (typeof component === "object" && component !== null) || typeof component === "function"
+      ? component
+      : NOT_A_COMPONENT
+  const held = levels.get(key)
+  if (held !== undefined) return held
+  const level = defineComponent({
+    name: (key === NOT_A_COMPONENT ? undefined : nameOf(key)) ?? "NifraLevel",
+    props: { depth: { type: Number, required: true } },
+    setup(props) {
+      const view = inject(VIEW_KEY)
+      let below: Component | undefined
+      let shown: VNode | undefined
+      const slot = (): VNode | undefined =>
+        below === undefined ? undefined : h(below, { depth: props.depth + 1 })
+      return () => {
+        const { chain, props: route } = view?.value ?? NO_VIEW
+        // Held by a `KeepAlive`, or by a `Transition` until it has left, while another component
+        // has its place: it shows what it last showed.
+        if (chain[props.depth] !== component && shown !== undefined) return shown
+        if (props.depth === chain.length - 1) {
+          shown = pageNode(component, route)
+          return shown
         }
-        slot = slots[i] = held
+        const next = levelOf(chain[props.depth + 1])
+        const stable = next === below
+        below = next
+        shown = h(
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
+          component as Component,
+          { data: route.layoutData?.[props.depth] ?? null, boundaries: route.boundaries },
+          { default: slot, $stable: stable },
+        )
+        return shown
       }
-      slot.child = child
-      // A slot rendered more than once owns multiple component instances; patch it hierarchically.
-      if (!stable) slot.uses = 0
-      child = h(
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: chain entries are the route modules' default Vue component exports
-        chain[i] as Component,
-        { data: props.layoutData?.[i] ?? null, boundaries: props.boundaries },
-        { default: slot.render, $stable: stable },
-      )
-      nodes[i] = child
-    }
-    // 64 is Vue's STABLE_FRAGMENT patch flag. On a chain change (or an unmounted child held by a
-    // transition/boundary), use normal hierarchical patching so slot consumers own the switch.
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue creates dynamicChildren on every vnode; its public VNode type omits this block-patching field
-    const next = createVNode(Fragment, null, [child], 64) as ChainBlock
-    if (block !== undefined) block.dynamicChildren = stable ? [...previous].reverse() : null
-    next.dynamicChildren = stable ? [...nodes].reverse() : null
-    previous = nodes
-    block = next
-    return next
-  }
+    },
+  })
+  levels.set(key, level)
+  return level
 }
 
 /**
@@ -146,16 +142,20 @@ export function mountRouter(options: MountRouterOptions): void {
         state.value = router.snapshot()
       })
       onScopeDispose(unsubscribe)
-      const props = computed(() => routeProps(state.value, searchSchemas, matchChains))
-      // The provider in server compose renders a fragment around the chain. Provide its same
-      // context here so this fragment can also carry Vue's block optimization, without extra DOM.
-      provide(PROPS_KEY, props)
-      provide(
-        SEARCH_KEY,
-        computed(() => props.value.search ?? {}),
+      const view = computed(
+        (): View => ({
+          chain: routes[state.value.routeId] ?? [],
+          props: routeProps(state.value, searchSchemas, matchChains),
+        }),
       )
-      const render = chainRenderer()
-      return () => render(routes[state.value.routeId] ?? [], props.value)
+      provide(VIEW_KEY, view)
+      // The same host markup `compose` renders, so it hydrates the server's chain as it is.
+      return () =>
+        h(
+          RouteContextProvider,
+          { value: view.value.props },
+          { default: () => h(levelOf(view.value.chain[0]), { depth: 0 }) },
+        )
     },
   })
   const app = createSSRApp(Root)
