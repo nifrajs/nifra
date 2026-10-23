@@ -231,7 +231,9 @@ export function createDifferentialApp(options: DifferentialAppOptions = {}) {
     upgrade: (c) => {
       const token = c.req.headers.get("x-ws-token")
       if (token === "throw") throw new Error(INTERNAL_SENTINEL)
-      if (token !== "ok") return new Response("unauthorized", { status: 401 })
+      // Both ways a guard refuses a handshake: a Response, and the status() a handler returns.
+      if (token === null) return new Response("unauthorized", { status: 401 })
+      if (token !== "ok") return status(403, { error: "bad_token" })
       return { caller: c.caller }
     },
     open: (ws) => ws.send(`hello:${ws.data.caller}`),
