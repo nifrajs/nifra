@@ -3234,6 +3234,40 @@ describe("scanInterpolatedSql", () => {
     expect(scan("registry.run(`task-${name}`)")).toBe(0)
   })
 
+  test("Svelte's unshadowed $state.raw rune is not a SQL sink", () => {
+    for (const file of ["Router.svelte", "store.svelte.ts", "store.svelte.js"]) {
+      expect(scanInterpolatedSql(file, "let snapshot = $state.raw(router.snapshot())", ts)).toEqual(
+        [],
+      )
+      expect(
+        scanInterpolatedSql(file, "function state(value) { return $state.raw(value) }", ts),
+      ).toEqual([])
+      expect(scanInterpolatedSql(file, "db.raw(statement)", ts)).toHaveLength(1)
+      expect(
+        scanInterpolatedSql(file, "const $state = db; $state.raw(statement)", ts),
+      ).toHaveLength(1)
+      expect(
+        scanInterpolatedSql(file, "function run($state) { return $state.raw(statement) }", ts),
+      ).toHaveLength(1)
+      for (const declaration of [
+        'import $state from "driver"',
+        'import * as $state from "driver"',
+        'import { db as $state } from "driver"',
+      ]) {
+        expect(scanInterpolatedSql(file, `${declaration}; $state.raw(statement)`, ts)).toHaveLength(
+          1,
+        )
+      }
+      for (const source of [
+        "try { throw db } catch ($state) { $state.raw(statement) }",
+        "for (const $state of dbs) $state.raw(statement)",
+        'import $state = require("driver"); $state.raw(statement)',
+      ])
+        expect(scanInterpolatedSql(file, source, ts)).toHaveLength(1)
+    }
+    expect(scan("$state.raw(statement)")).toBe(1)
+  })
+
   test("flags the named escape hatches even without a keyword", () => {
     // Their whole purpose is to take a statement as text; a substitution in one is the exact thing the
     // name is warning about.

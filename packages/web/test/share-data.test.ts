@@ -161,6 +161,56 @@ describe("shareData", () => {
     expect(shared.flags).toBe(prev.flags)
   })
 
+  test("cyclic arrays and deeply nested data fall back to the fresh graph", () => {
+    const prev: unknown[] = []
+    prev.push(prev)
+    const next: unknown[] = []
+    next.push(next)
+    expect(shareData(prev, next)).toBe(next)
+    const text = '{"child":'.repeat(512) + "1" + "}".repeat(512)
+    const deep = JSON.parse(text)
+    expect(shareData(JSON.parse(text), deep)).toBe(deep)
+  })
+
+  test("a cycle beyond the array bailout keeps its original back-reference", () => {
+    const prev = { items: rows(40) }
+    const next: { items: unknown[] } = { items: rows(40, (i) => `changed ${i}`) }
+    next.items.push(next)
+    expect(shareData(prev, next)).toBe(next)
+  })
+
+  test("symbol metadata on nested objects and arrays is kept or removed without losing siblings", () => {
+    const key = Symbol("metadata")
+    const prev = {
+      stable: { value: 1 },
+      nested: { [key]: 1 },
+      items: Object.assign([1], { [key]: 1 }),
+    }
+    const next = {
+      stable: { value: 1 },
+      nested: { [key]: 2 },
+      items: Object.assign([1], { [key]: 2 }),
+    }
+    const shared = shareData(prev, next)
+    expect(shared.stable).toBe(prev.stable)
+    expect(shared.nested).toBe(next.nested)
+    expect(shared.items).toBe(next.items)
+    const removed = shareData(shared.items, [1])
+    expect(Object.hasOwn(removed, key)).toBe(false)
+  })
+
+  test("sampled IDs pair rows from anywhere in a long list, including mixed ID types", () => {
+    const prev = Array.from({ length: 128 }, (_, i) => ({
+      id: i % 2 === 0 ? `row-${i}` : i,
+      label: `row ${i}`,
+    }))
+    const next = fresh(prev).reverse()
+    const shared = shareData(prev, next)
+    for (let i = 0; i < shared.length; i++) expect(shared[i]).toBe(prev[prev.length - i - 1])
+    const replaced = next.map((row, i) => ({ ...row, id: i + 1000 }))
+    expect(shareData(prev, replaced)).toBe(replaced)
+  })
+
   test("primitives and a change of type take the new value", () => {
     expect(shareData(1, 2)).toBe(2)
     expect(shareData(Number.NaN, Number.NaN)).toBeNaN()

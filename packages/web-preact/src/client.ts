@@ -83,17 +83,25 @@ const levelAt = (depth: number): VNode<{ readonly depth: number }> => {
 // One level of the chain as `compose` builds it, memoized on its own props: a reload that kept the data
 // (the router shares what it did not change) re-renders a layout or the page only for a prop of its own
 // that moved, such as the page's `pending`.
-function Level({ depth }: { readonly depth: number }): ComponentChildren {
+function Level({ depth, ...overrides }: { readonly depth: number }): ComponentChildren {
   const { chain, props } = useContext(ChainContext)
   // A class component (an `_error` boundary) renders through the memo's wrapper all the same.
   if (depth === chain.length - 1)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain holds the route's modules' default exports, its last entry the page component
-    return h(memoPage(chain[depth] as FunctionComponent<RenderProps>), props)
+    return h(memoPage(chain[depth] as FunctionComponent<RenderProps>), {
+      ...props,
+      ...overrides,
+    })
   return h(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
     memoLayout(chain[depth] as FunctionComponent<LayoutProps>),
-    { data: props.layoutData?.[depth] ?? null, boundaries: props.boundaries },
-    levelAt(depth + 1),
+    // Layouts may clone their child with extra props, including `children`, just as in SSR compose.
+    {
+      data: props.layoutData?.[depth] ?? null,
+      boundaries: props.boundaries,
+      children: levelAt(depth + 1),
+      ...overrides,
+    },
   )
 }
 

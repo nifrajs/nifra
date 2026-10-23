@@ -328,15 +328,6 @@
       "reason": "A host listed twice is scanned twice and yields the same routes."
     }
   ],
-  "packages/web-vue/src/client.ts": [
-    {
-      "op": "flip boolean",
-      "fn": "<module>",
-      "code": "props: { depth: { type: Number, required: true } },",
-      "from": "true",
-      "reason": "Every Level is created with a depth; required only adds a development warning."
-    }
-  ],
   "packages/web/src/internal/share-data.ts": [
     {
       "op": "condition->false",
@@ -347,14 +338,14 @@
     },
     {
       "op": "condition->true",
-      "fn": "shareData",
-      "code": "if (byId === undefined) {",
-      "from": "byId === undefined",
+      "fn": "share",
+      "code": "if (byId === undefined || (i >= 32 && !completeIndex)) {",
+      "from": "byId === undefined || (i >= 32 && !completeIndex)",
       "reason": "Rebuilding the id map from the same prev gives the same map; only the cost changes."
     },
     {
       "op": "x++->x--",
-      "fn": "shareData",
+      "fn": "share",
       "code": "if (value === old) kept++",
       "from": "kept++",
       "reason": "Only whether kept is zero is read, and kept-- leaves it non-zero exactly when kept++ does."
