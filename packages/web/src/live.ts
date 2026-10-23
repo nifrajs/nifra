@@ -1018,7 +1018,7 @@ function parseBody(text: string): LoadBody | undefined {
   const { path, sid, frame, mode, retain = [], grants = [], fill = [] } = value
   if (typeof path !== "string" || typeof sid !== "string" || !SID_PATTERN.test(sid))
     return undefined
-  // Phase 2 serves the page frame; boundary frames arrive with the client's frame support.
+  // Only the page frame is served; boundary frames arrive with the client's frame support.
   if (frame !== PAGE_FRAME || (mode !== "load" && mode !== "renew")) return undefined
   if (!isStringList(retain, MAX_RETAIN, MAX_OWNER_CHARS)) return undefined
   if (!isStringList(grants, MAX_GRANTS, MAX_GRANT_CHARS)) return undefined
