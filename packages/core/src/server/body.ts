@@ -21,6 +21,7 @@ interface BodySource {
 export interface RawBodyReaders {
   readonly headers: Pick<Headers, "get">
   readonly body: ReadableStream<Uint8Array> | null
+  readonly bodyUsed?: boolean
   arrayBuffer(): Promise<ArrayBuffer>
   /** Runtime-native exact-byte reader, when the request implementation exposes one. */
   bytes?(): Promise<Uint8Array>
@@ -403,6 +404,9 @@ function requestBodyReaders(request: Request): RawBodyReaders {
           ? bodyDescriptor.get.call(request)
           : (bodyDescriptor?.value ?? null)
       ) as ReadableStream<Uint8Array> | null
+    },
+    get bodyUsed() {
+      return request.bodyUsed
     },
     arrayBuffer: request.arrayBuffer.bind(request),
     json: request.json.bind(request),

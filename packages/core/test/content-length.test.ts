@@ -10,6 +10,7 @@ import {
   markTrustedBodyFraming,
   parseContentLength,
   RAW_BODY_READERS,
+  rawBodySourceOf,
   readBoundedBytes,
 } from "../src/server/body.ts"
 
@@ -251,6 +252,26 @@ describe("readBoundedBytes - the cap holds on real bytes (GHSA-rv63-4mwf-qqc2 cl
     await spent.text()
     const locked = sized()
     locked.body?.getReader()
+    for (const request of [spent, locked])
+      await expect(readBoundedBytes(request, CAP)).rejects.toThrow(TypeError)
+  })
+
+  test("a transport-capped client body a raw reader already read or locked keeps its rejection", async () => {
+    const capped = () => {
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-length": "4" },
+        body: "abcd",
+      })
+      markTrustedBodyFraming(request)
+      markTransportCap(request, CAP)
+      applyTransportCap(request, request)
+      return request
+    }
+    const spent = capped()
+    await new Response(rawBodySourceOf(spent).body).text()
+    const locked = capped()
+    rawBodySourceOf(locked).body?.getReader()
     for (const request of [spent, locked])
       await expect(readBoundedBytes(request, CAP)).rejects.toThrow(TypeError)
   })
