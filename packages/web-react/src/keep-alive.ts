@@ -41,6 +41,7 @@ export * from "./client.ts"
 
 /** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */
 export interface KeepAliveMountOptions extends MountRouterOptions {
+  readonly router: KeepAliveRouter
   readonly keepAlive: KeepAliveTable
 }
 
@@ -167,8 +168,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   const hydrated = router.snapshot()
   const parking = createSlotParking()
   let committed: readonly SlotNode[] | undefined
-  const keep = router as Partial<KeepAliveRouter>
-  keep.beforePublish?.((next) => parking.before(slotTree(next, matchChains, table, committed)))
+  router.beforePublish((next) => parking.before(slotTree(next, matchChains, table, committed)))
 
   const props = new WeakMap<RouterState, RenderProps>()
   const propsOf = (state: RouterState): RenderProps => {
@@ -208,6 +208,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   }
   const onRecoverableError = assuranceError()
   hydrateRoot(
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
     container as Element,
     createElement(Router),
     ...(onRecoverableError === undefined ? [] : [{ onRecoverableError }]),
@@ -218,7 +219,8 @@ function assuranceError(): ((error: unknown, info?: unknown) => void) | undefine
   const value = Reflect.get(globalThis, Symbol.for("nifra.hydration.assurance"))
   if (typeof value !== "object" || value === null) return undefined
   const callback: unknown = Reflect.get(value, "onRecoverableError")
-  return typeof callback === "function"
-    ? (callback as (error: unknown, info?: unknown) => void)
-    : undefined
+  if (typeof callback !== "function") return undefined
+  return (error, info) => {
+    Reflect.apply(callback, undefined, [error, info])
+  }
 }

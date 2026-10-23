@@ -105,7 +105,10 @@ const instrument = (): void => {
     dataEnd: (path) => {
       const entries = performance
         .getEntriesByType("resource")
-        .filter((entry) => new URL(entry.name).pathname === path) as PerformanceResourceTiming[]
+        .filter(
+          (entry): entry is PerformanceResourceTiming =>
+            entry instanceof PerformanceResourceTiming && new URL(entry.name).pathname === path,
+        )
       performance.clearResourceTimings()
       return entries.at(-1)?.responseEnd ?? null
     },
@@ -119,20 +122,16 @@ const call = <K extends keyof Bench>(
   ...args: Parameters<Bench[K]>
 ): Promise<Awaited<ReturnType<Bench[K]>>> =>
   page.evaluate(
-    ([name, rest]) => {
-      const bench = (window as unknown as { __bench: Record<string, (...a: unknown[]) => unknown> })
-        .__bench
-      return bench[name as string]?.(...(rest as unknown[]))
-    },
-    [method, args] as const,
-  ) as Promise<Awaited<ReturnType<Bench[K]>>>
+    ({ name, rest }) =>
+      Reflect.apply(Reflect.get(Reflect.get(window, "__bench"), name), undefined, rest),
+    { name: method, rest: args },
+  )
 
 const median = (values: readonly number[]): number => {
   const sorted = [...values].sort((a, b) => a - b)
   const middle = sorted.length >> 1
-  return sorted.length % 2 === 1
-    ? (sorted[middle] as number)
-    : ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2
+  const at = (index: number): number => sorted[index] ?? Number.NaN
+  return sorted.length % 2 === 1 ? at(middle) : (at(middle - 1) + at(middle)) / 2
 }
 
 async function serve(renderer: Renderer): Promise<{ url: string; stop(): void }> {
@@ -148,7 +147,7 @@ async function serve(renderer: Renderer): Promise<{ url: string; stop(): void }>
     text += new TextDecoder().decode(value)
   }
   reader.releaseLock()
-  const { url } = JSON.parse(text.slice(0, text.indexOf("\n"))) as { url: string }
+  const { url }: { url: string } = JSON.parse(text.slice(0, text.indexOf("\n")))
   return { url, stop: () => child.kill() }
 }
 
@@ -285,12 +284,8 @@ async function memory(browser: Browser, urls: Record<Renderer, string>): Promise
         await page.waitForTimeout(100)
         const cdp = await page.context().newCDPSession(page)
         for (let i = 0; i < 3; i++) await cdp.send("HeapProfiler.collectGarbage")
-        const heap = (await cdp.send("Runtime.getHeapUsage")) as {
-          usedSize: number
-          embedderHeapUsedSize?: number
-          backingStorageSize?: number
-        }
-        const dom = (await cdp.send("Memory.getDOMCounters")) as { nodes: number }
+        const heap = await cdp.send("Runtime.getHeapUsage")
+        const dom = await cdp.send("Memory.getDOMCounters")
         samples[route]?.push({
           heap: heap.usedSize + (heap.backingStorageSize ?? 0) + (heap.embedderHeapUsedSize ?? 0),
           nodes: dom.nodes,

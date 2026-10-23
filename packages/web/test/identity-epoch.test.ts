@@ -191,7 +191,7 @@ describe("the identity epoch hook", () => {
 })
 
 const adapter: RenderAdapter = {
-  renderToStream: () => new Response("<p>page</p>").body as ReadableStream<Uint8Array>,
+  renderToStream: () => new Blob(["<p>page</p>"]).stream(),
   hydrationHead: () => "",
 }
 const manifestOf = (keepAlive: boolean) =>

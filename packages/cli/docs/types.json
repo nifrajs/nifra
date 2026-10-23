@@ -7965,14 +7965,14 @@
     "name": "KeepAliveMountOptions",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly keepAlive: KeepAliveTable;\n}",
+    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
     "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */"
   },
   {
     "name": "KeepAliveMountOptions",
     "kind": "interface",
     "package": "@nifrajs/web-svelte",
-    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly keepAlive: KeepAliveTable;\n}",
+    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
     "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */"
   },
   {

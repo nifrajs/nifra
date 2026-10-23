@@ -281,11 +281,12 @@ const streamOptions = (
   nonce: string | undefined,
   parts: DocumentParts | undefined,
   slots: readonly number[],
-): RenderStreamOptions => ({
-  ...(nonce === undefined ? {} : { nonce }),
-  ...(parts === undefined ? {} : { parts }),
-  slots,
-})
+): RenderStreamOptions => {
+  const options: { -readonly [K in keyof RenderStreamOptions]: RenderStreamOptions[K] } = { slots }
+  if (nonce !== undefined) options.nonce = nonce
+  if (parts !== undefined) options.parts = parts
+  return options
+}
 
 export function renderPageResult(options: RenderPageInput): MaybePromise<RenderedPage> {
   const { csp } = options

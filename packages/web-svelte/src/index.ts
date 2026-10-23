@@ -98,11 +98,16 @@ const loadKeepAlive = (): Component<KeepAliveProps> | Promise<Component<KeepAliv
     load !== undefined
       ? Promise.all([load(`${import.meta.dirname}/KeepAlive.svelte`), load("svelte/server")]).then(
           ([mod, server]) => {
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the dev server loaded `svelte/server`, whose `render` is the runtime's
             render = (server as { render: typeof runtimeRender }).render
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the dev server compiled KeepAlive.svelte, whose default export is the component
             return (mod as { default: Component<KeepAliveProps> }).default
           },
         )
-      : import("./KeepAlive.svelte").then((m) => m.default as Component<KeepAliveProps>)
+      : import("./KeepAlive.svelte").then(
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: KeepAlive.svelte declares exactly these props
+          (m) => m.default as Component<KeepAliveProps>,
+        )
   ).then((c) => {
     keepAliveComponent = c
     return c

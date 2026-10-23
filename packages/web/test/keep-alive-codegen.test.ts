@@ -91,16 +91,16 @@ const recordingAdapter = (
     seen.push(streamOptions)
     return `<p>slots ${JSON.stringify(streamOptions?.slots ?? null)}</p>`
   }
-  return {
+  const adapter: RenderAdapter & { readonly seen: (RenderStreamOptions | undefined)[] } = {
     seen,
     hydrationHead: () => "",
-    ...(options.documentParts === true ? { documentParts: true } : {}),
+    documentParts: options.documentParts === true,
     renderToStream: async (_chain, _props, streamOptions) =>
-      new Response(html(streamOptions)).body as ReadableStream<Uint8Array>,
-    ...(mode === "string"
-      ? { renderToString: (_chain, _props, streamOptions) => html(streamOptions) }
-      : {}),
+      new Blob([html(streamOptions)]).stream(),
   }
+  return mode === "string"
+    ? { ...adapter, renderToString: (_chain, _props, streamOptions) => html(streamOptions) }
+    : adapter
 }
 
 const backendHalf: Pick<RouteModule, "action" | "actionOutput"> = {
@@ -130,12 +130,8 @@ test("a keepAlive app's server render passes the wrapped depths, on every render
     for (const nonce of [undefined, () => "n0nce"]) {
       for (const documentParts of [false, true]) {
         const adapter = recordingAdapter(mode, { documentParts })
-        const app = createWebApp({
-          adapter,
-          manifest: serverManifest(),
-          clientEntry: "/c.js",
-          ...(nonce === undefined ? {} : { nonce }),
-        })
+        const base = { adapter, manifest: serverManifest(), clientEntry: "/c.js" }
+        const app = createWebApp(nonce === undefined ? base : { ...base, nonce })
         const shop = await (await app.fetch(new Request("http://x/shop/a"))).text()
         expect(shop).toContain("<p>slots [1,2]</p>")
         const list = await (await app.fetch(new Request("http://x/list"))).text()

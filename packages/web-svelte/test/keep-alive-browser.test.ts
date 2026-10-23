@@ -32,7 +32,7 @@ const serve = async (mode: "production" | "development"): Promise<Served> => {
     text += new TextDecoder().decode(value)
   }
   reader.releaseLock()
-  const { url } = JSON.parse(text.slice(0, text.indexOf("\n"))) as { url: string }
+  const { url }: { url: string } = JSON.parse(text.slice(0, text.indexOf("\n")))
   return {
     url,
     holdData: async () => {

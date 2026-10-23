@@ -5,7 +5,7 @@ export const keepAlive = true
 
 type Data = { readonly id: string; readonly items: readonly { id: number; label: string }[] }
 const ticks = (): Record<string, number> => {
-  const held = Reflect.get(globalThis, "__ticks") as Record<string, number> | undefined
+  const held: Record<string, number> | undefined = Reflect.get(globalThis, "__ticks")
   if (held !== undefined) return held
   const fresh: Record<string, number> = {}
   Reflect.set(globalThis, "__ticks", fresh)

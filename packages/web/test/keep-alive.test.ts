@@ -64,12 +64,17 @@ class FakeChannel {
   close(): void {}
 }
 
-const globals = globalThis as unknown as Record<string, unknown>
 const saved = {
-  history: globals.history,
-  document: globals.document,
-  BroadcastChannel: globals.BroadcastChannel,
+  history: Reflect.get(globalThis, "history"),
+  document: Reflect.get(globalThis, "document"),
+  BroadcastChannel: Reflect.get(globalThis, "BroadcastChannel"),
 }
+// The value at `path` inside `value`, or undefined where a step is not an object.
+const at = (value: unknown, ...path: string[]): unknown =>
+  path.reduce<unknown>(
+    (step, key) => (typeof step === "object" && step !== null ? Reflect.get(step, key) : undefined),
+    value,
+  )
 let fakeHistory: FakeHistory
 let fakeDocument: {
   cookie: string
@@ -80,15 +85,13 @@ let fakeDocument: {
 beforeEach(() => {
   fakeHistory = new FakeHistory()
   fakeDocument = { cookie: "", visibilityState: "visible", activeElement: null, styleSheets: [] }
-  globals.history = fakeHistory
-  globals.document = fakeDocument
-  globals.BroadcastChannel = FakeChannel
+  Reflect.set(globalThis, "history", fakeHistory)
+  Reflect.set(globalThis, "document", fakeDocument)
+  Reflect.set(globalThis, "BroadcastChannel", FakeChannel)
   FakeChannel.open = []
 })
 afterEach(() => {
-  globals.history = saved.history
-  globals.document = saved.document
-  globals.BroadcastChannel = saved.BroadcastChannel
+  for (const [name, value] of Object.entries(saved)) Reflect.set(globalThis, name, value)
 })
 
 // ---- the router under the layer -----------------------------------------------------------------
@@ -213,14 +216,17 @@ const setup = (
   const fake = fakeRouter(initial)
   const drops: [KeepAliveDropReason, readonly string[]][] = []
   const hooks = options.hooks ?? { list: { keepAlive: true }, item: { keepAlive: true } }
-  const client = keepAliveClient({
+  const clientOptions: {
+    -readonly [K in keyof KeepAliveClientOptions]: KeepAliveClientOptions[K]
+  } = {
     table: { routes: Object.keys(hooks), layouts: options.layouts ?? ["shop/_layout"] },
     routeHooks: hooks,
     matchChains: options.chains ?? CHAINS,
-    ...(options.max === undefined ? {} : { max: options.max }),
-    ...(options.fetchData === undefined ? {} : { fetchData: options.fetchData }),
     onDrop: (reason, instances) => drops.push([reason, instances]),
-  })
+  }
+  if (options.max !== undefined) clientOptions.max = options.max
+  if (options.fetchData !== undefined) clientOptions.fetchData = options.fetchData
+  const client = keepAliveClient(clientOptions)
   const router = client.attach(fake.inner)
   return {
     router,
@@ -256,7 +262,7 @@ describe("keepAliveClient", () => {
     expect(fakeHistory.entries[0]?.nifraInstance).toBe(first)
 
     push(state("detail", "/detail"))
-    expect(router.snapshot().kept).toEqual([{ instance: first as string, state: list }])
+    expect(router.snapshot().kept).toEqual([{ instance: String(first), state: list }])
     expect(router.snapshot().instance).not.toBe(first)
 
     fakeHistory.go(-1)
@@ -402,9 +408,7 @@ describe("keepAliveClient", () => {
     const kept = state("list", "/list/1", {
       data: { rows: [{ id: 1 }], title: "a" },
       layoutData: [{ nav: [1] }, { side: [2] }],
-      boundaries: { modal: { data: { x: 1 } } } as unknown as NonNullable<
-        RouterState["boundaries"]
-      >,
+      boundaries: { modal: { name: "modal", mode: "static", status: "ready", data: { x: 1 } } },
     })
     let respond: () => unknown = () => ({})
     const { router, push, fake, client } = setup(kept, {
@@ -421,20 +425,15 @@ describe("keepAliveClient", () => {
       data: { rows: [{ id: 1 }], title: "b" },
       layoutData: [{ nav: [1] }, { side: [3] }],
       retained: [1],
-      boundaries: { modal: { data: { x: 1 } } },
+      boundaries: { modal: { name: "modal", mode: "static", status: "ready", data: { x: 1 } } },
     })
-    const shared = (await client.fetchData("/list/1", match)) as {
-      data: { rows: unknown; title: string }
-      layoutData: unknown[]
-      boundaries: unknown
-    }
-    const keptData = kept.data as { rows: unknown }
-    expect(shared.data.rows).toBe(keptData.rows)
-    expect(shared.data.title).toBe("b")
-    expect(shared.layoutData[0]).toBe(kept.layoutData?.[0])
+    const shared = await client.fetchData("/list/1", match)
+    expect(at(shared, "data", "rows")).toBe(at(kept.data, "rows"))
+    expect(at(shared, "data", "title")).toBe("b")
+    expect(at(shared, "layoutData", "0")).toBe(kept.layoutData?.[0])
     // A retained layout keeps the value the server skipped sending, untouched.
-    expect(shared.layoutData[1]).toEqual({ side: [3] })
-    expect(shared.boundaries).toBe(kept.boundaries)
+    expect(at(shared, "layoutData", "1")).toEqual({ side: [3] })
+    expect(at(shared, "boundaries")).toBe(kept.boundaries)
 
     respond = () => ({ v: 1, data: null, status: 404 })
     expect(await client.fetchData("/list/1", match)).toEqual({ v: 1, data: null, status: 404 })
@@ -473,10 +472,8 @@ describe("keepAliveClient", () => {
     const release = fake.hold()
     fakeHistory.go(-1)
     const restoring = router.navigate("/list/1")
-    const payload = (await client.fetchData("/list/1", { routeId: "list", params: {} })) as {
-      data: unknown
-    }
-    expect(payload.data).not.toBe(kept.data)
+    const payload = await client.fetchData("/list/1", { routeId: "list", params: {} })
+    expect(at(payload, "data")).not.toBe(kept.data)
     release()
     await restoring
   })
@@ -560,9 +557,9 @@ describe("keepAliveClient", () => {
     fakeHistory.push()
     fake.publish(state("detail", "/detail", { pending: true, pendingPath: "/detail" }))
     expect(router.snapshot().instance).toBeUndefined()
-    expect(router.snapshot().kept?.map((page) => page.instance)).toEqual([first as string])
+    expect(router.snapshot().kept?.map((page) => page.instance)).toEqual([String(first)])
     fake.publish(state("detail", "/detail"))
-    expect(router.snapshot().kept?.map((page) => page.instance)).toEqual([first as string])
+    expect(router.snapshot().kept?.map((page) => page.instance)).toEqual([String(first)])
     expect(router.snapshot().instance).toBeString()
   })
 
@@ -753,10 +750,10 @@ describe("slotTree", () => {
     }
     const first = slotTree(active, CHAINS, table)
     const again = slotTree(active, CHAINS, table, first)
-    expect(again[0]).toBe(first[0] as SlotNode)
+    expect(again[0]).toBe(first[0])
     const moved = slotTree({ ...active, instance: "3:d" }, CHAINS, table, first)
     expect(moved[0]).not.toBe(first[0])
-    expect(moved[0]?.children?.[0]).toBe(first[0]?.children?.[0] as SlotNode)
+    expect(moved[0]?.children?.[0]).toBe(first[0]?.children?.[0])
   })
 
   test("the loading view has its own key, and a route without a chain is its own leaf", () => {
@@ -843,7 +840,7 @@ class FakeElement {
     this.parent = null
   }
   contains(node: unknown): boolean {
-    for (let at = node as FakeElement | null; at !== null; at = at.parent)
+    for (let at = node instanceof FakeElement ? node : null; at !== null; at = at.parent)
       if (at === this) return true
     return false
   }
@@ -877,6 +874,8 @@ class FakeElement {
   }
 }
 
+// biome-ignore lint/plugin/noChainedTypeAssertions: a FakeElement is not an Element, only a stand-in for one
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: it implements every member slot parking and the CSS check read or call
 const asElement = (element: FakeElement): Element => element as unknown as Element
 
 describe("createSlotParking", () => {
@@ -955,12 +954,12 @@ describe("checkSlotCss", () => {
   class FakeStyleRule {
     constructor(readonly selectorText: string) {}
   }
-  const savedRule = globals.CSSStyleRule
+  const savedRule = Reflect.get(globalThis, "CSSStyleRule")
   beforeEach(() => {
-    globals.CSSStyleRule = FakeStyleRule
+    Reflect.set(globalThis, "CSSStyleRule", FakeStyleRule)
   })
   afterEach(() => {
-    globals.CSSStyleRule = savedRule
+    Reflect.set(globalThis, "CSSStyleRule", savedRule)
   })
 
   const layout = () => {

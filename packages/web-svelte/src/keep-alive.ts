@@ -24,6 +24,7 @@ export { onPageHide, onPageShow } from "./router.ts"
 
 /** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */
 export interface KeepAliveMountOptions extends MountRouterOptions {
+  readonly router: KeepAliveRouter
   readonly keepAlive: KeepAliveTable
 }
 
@@ -50,9 +51,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   setMountedRouter(router)
   const parking = createSlotParking()
   let committed: readonly SlotNode[] | undefined
-  ;(router as Partial<KeepAliveRouter>).beforePublish?.((next) =>
-    parking.before(slotTree(next, matchChains, table, committed)),
-  )
+  router.beforePublish((next) => parking.before(slotTree(next, matchChains, table, committed)))
   const props = new WeakMap<RouterState, RenderProps>()
   const mount: KeepAliveMount = {
     tree: (state, previous) => slotTree(state, matchChains, table, previous),
@@ -76,6 +75,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   const originalWarn = console.warn
   if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
   try {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
     svelteHydrate(KeepAlive, { target: container as Element, props: { router, mount } })
   } finally {
     if (warning !== undefined) console.warn = originalWarn
@@ -91,24 +91,28 @@ const propsFor = (
   const path = state.intercepted?.pagePath ?? state.path
   const q = path.indexOf("?")
   const matchChain = matchChains[state.routeId]
-  return {
+  const props: { -readonly [K in keyof RenderProps]: RenderProps[K] } = {
     data: state.data,
-    ...(state.layoutData === undefined ? {} : { layoutData: state.layoutData }),
-    ...(state.serverComponents === undefined ? {} : { serverComponents: state.serverComponents }),
     actionData: state.actionData,
     pending: state.pending,
     params: state.params,
     path,
     search: searchOfChain(searchSchemas?.[state.routeId] ?? [], q === -1 ? "" : path.slice(q)),
-    ...(state.submission ? { submission: state.submission } : {}),
-    ...(state.boundaries === undefined ? {} : { boundaries: state.boundaries }),
-    ...(matchChain === undefined ? {} : { matchChain }),
   }
+  if (state.layoutData !== undefined) props.layoutData = state.layoutData
+  if (state.serverComponents !== undefined) props.serverComponents = state.serverComponents
+  if (state.submission) props.submission = state.submission
+  if (state.boundaries !== undefined) props.boundaries = state.boundaries
+  if (matchChain !== undefined) props.matchChain = matchChain
+  return props
 }
 
 function assuranceWarning(): ((message: string) => void) | undefined {
   const value = Reflect.get(globalThis, Symbol.for("nifra.hydration.assurance"))
   if (typeof value !== "object" || value === null) return undefined
   const callback: unknown = Reflect.get(value, "onWarning")
-  return typeof callback === "function" ? (callback as (message: string) => void) : undefined
+  if (typeof callback !== "function") return undefined
+  return (message) => {
+    Reflect.apply(callback, undefined, [message])
+  }
 }

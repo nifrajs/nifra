@@ -452,7 +452,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     onIdentityChange(identityDrop)
     if (typeof addEventListener === "function") {
       addEventListener("pagehide", (event) => {
-        if ((event as PageTransitionEvent).persisted) dropKept("pagehide")
+        if ("persisted" in event && event.persisted === true) dropKept("pagehide")
       })
       addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") checkEpoch()
@@ -522,17 +522,22 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
 }
 
 const hasRedirect = (error: unknown): boolean =>
-  typeof (error as { redirectTo?: unknown } | null | undefined)?.redirectTo === "string"
+  typeof error === "object" &&
+  error !== null &&
+  typeof Reflect.get(error, "redirectTo") === "string"
 
 /** A route data envelope that publishes exactly `state`'s data. */
-const envelopeOf = (state: RouterState): unknown => ({
-  v: 1,
-  data: state.data,
-  layoutData: state.layoutData,
-  ...(state.boundaries === undefined ? {} : { boundaries: state.boundaries }),
-  serverComponents: state.serverComponents,
-  live: state.live,
-})
+const envelopeOf = (state: RouterState): unknown => {
+  const envelope: Record<string, unknown> = {
+    v: 1,
+    data: state.data,
+    layoutData: state.layoutData,
+    serverComponents: state.serverComponents,
+    live: state.live,
+  }
+  if (state.boundaries !== undefined) envelope.boundaries = state.boundaries
+  return envelope
+}
 
 /** `payload` with every part equal to what `kept` shows replaced by that part. A layout the server
  * skipped (`retained`) takes the value on screen, as on any navigation. */
@@ -624,7 +629,7 @@ const levelOf = (
 ): SlotNode[] => {
   const groups = new Map<string, Member[]>()
   for (const member of members) {
-    const key = depth < member.layouts.length ? (member.layouts[depth] as string) : member.key
+    const key = member.layouts[depth] ?? member.key
     const group = groups.get(key)
     if (group === undefined) groups.set(key, [member])
     else group.push(member)

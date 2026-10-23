@@ -173,7 +173,7 @@ export async function assertKeepAliveMatrix(
   await follow(page, "/list/2")
   await showing(page, "List 2")
   const hidden = await page.evaluate(() => {
-    const kept = Reflect.get(window, "__kept") as Element
+    const kept: Element = Reflect.get(window, "__kept")
     return {
       connected: kept.isConnected,
       param: kept.getAttribute("data-param"),
@@ -186,15 +186,11 @@ export async function assertKeepAliveMatrix(
   expect(hidden).toMatchObject({ connected: false, param: "1", visible: "false", titles: 1 })
   // The hidden page's interval stays still while the page on screen ticks ten times.
   const ticks = (instance: string): Promise<number> =>
-    page.evaluate(
-      (id) => (Reflect.get(window, "__ticks") as Record<string, number>)[id] ?? 0,
-      instance,
-    )
+    page.evaluate((id) => Number(Reflect.get(window, "__ticks")?.[id] ?? 0), instance)
   const hiddenTicks = await ticks(hidden.instance)
   const activeTicks = await ticks(hidden.active)
   await page.waitForFunction(
-    ([id, from]) =>
-      ((Reflect.get(window, "__ticks") as Record<string, number>)[id] ?? 0) >= from + 10,
+    ([id, from]) => Number(Reflect.get(window, "__ticks")?.[id] ?? 0) >= from + 10,
     [hidden.active, activeTicks] as const,
   )
   expect(await ticks(hidden.instance)).toBe(hiddenTicks)
@@ -247,7 +243,7 @@ export async function assertKeepAliveMatrix(
   // The restored page's interval runs again.
   const restoredTicks = await ticks(hidden.instance)
   await page.waitForFunction(
-    ([id, from]) => ((Reflect.get(window, "__ticks") as Record<string, number>)[id] ?? 0) > from,
+    ([id, from]) => Number(Reflect.get(window, "__ticks")?.[id] ?? 0) > from,
     [hidden.instance, restoredTicks] as const,
   )
   // A development build also reports the fixture's direct-child rule (D10), asserted on its own.
