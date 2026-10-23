@@ -630,10 +630,18 @@ describe("mountA2A request checks", () => {
     })
   })
 
-  test("framing refuses bad or oversized JSON, and a body that fails to read is a parse error", async () => {
+  test("bad JSON and a body that fails to read are parse errors, and an oversized body is a 413", async () => {
     const { app, callPost } = captureApp()
     mountA2A(app, { agent: definition(), card: cardInfo, maxBodyBytes: 64, ports: ports() })
-    expect((await callPost(post("not json"))).status).toBe(400)
+    const parseError = {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: A2A_ERROR_CODES.parseError, message: "parse_error" },
+    }
+    for (const body of ["not json", '{"__proto__":{"admin":true}}']) {
+      const response = await callPost(post(body))
+      expect([response.status, await response.json()]).toEqual([200, parseError])
+    }
     expect((await callPost(post(JSON.stringify({ pad: "x".repeat(256) })))).status).toBe(413)
     const init: RequestInit & { readonly duplex: "half" } = {
       method: "POST",

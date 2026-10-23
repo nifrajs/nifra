@@ -8,8 +8,8 @@
     "lines": 100
   },
   "packages/a2a/src/index.ts": {
-    "functions": 94.73684210526315,
-    "lines": 94.76309226932669
+    "functions": 94.87179487179486,
+    "lines": 94.84029484029483
   },
   "packages/acp/src/index.ts": {
     "functions": 96,
@@ -337,7 +337,7 @@
   },
   "packages/coding-agent/src/sessions.ts": {
     "functions": 94,
-    "lines": 90.12048192771084
+    "lines": 90.16786570743405
   },
   "packages/coding-agent/src/subagents.ts": {
     "functions": 96.29629629629629,
@@ -413,7 +413,7 @@
   },
   "packages/core/src/durable-approval.ts": {
     "functions": 95.23809523809523,
-    "lines": 93.717277486911
+    "lines": 94.24083769633508
   },
   "packages/core/src/durable-effect.ts": {
     "functions": 100,
@@ -1749,7 +1749,7 @@
   },
   "packages/web-solid/src/mdx.ts": {
     "functions": 100,
-    "lines": 88.88888888888889
+    "lines": 100
   },
   "packages/web-solid/src/plugin.ts": {
     "functions": 100,
@@ -1781,7 +1781,7 @@
   },
   "packages/web-svelte/src/mdx.ts": {
     "functions": 100,
-    "lines": 91.30434782608695
+    "lines": 100
   },
   "packages/web-svelte/src/plugin.ts": {
     "functions": 100,

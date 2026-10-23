@@ -200,7 +200,10 @@ export function mountA2A<
           .then((response) => boundJsonResponse(response, maxOutputBytes, id))
           .catch(() => rpcErrorResponse(id, A2A_ERROR_CODES.internalError, "internal_error"))
       },
-      (rejection) => render(rejection),
+      (rejection) =>
+        isInvalidJson(rejection)
+          ? rpcErrorResponse(null, A2A_ERROR_CODES.parseError, "parse_error")
+          : render(rejection),
       () => rpcErrorResponse(null, A2A_ERROR_CODES.parseError, "parse_error"),
     ).catch(() => rpcErrorResponse(null, A2A_ERROR_CODES.internalError, "internal_error")),
   )
@@ -646,6 +649,12 @@ async function boundJsonResponse(
 function assertOutputLimit(value: number): void {
   if (!Number.isSafeInteger(value) || value < 1024 || value > MAX_OUTPUT_BYTES)
     throw new RangeError(`A2A maxOutputBytes must be between 1024 and ${MAX_OUTPUT_BYTES}`)
+}
+
+/** The framing lane refuses unparseable or proto-poisoned JSON as a plain 400; JSON-RPC calls it -32700. */
+function isInvalidJson(rejection: Response | ResponseResult): boolean {
+  if (rejection instanceof Response || rejection.plain?.status !== 400) return false
+  return asRecord(rejection.plain.body)?.error === "invalid_json"
 }
 
 function render(response: Response | ResponseResult): Response {

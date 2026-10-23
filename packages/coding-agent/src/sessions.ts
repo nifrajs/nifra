@@ -561,9 +561,13 @@ function retainEntries(
   return retained
 }
 
+const SECRET_KEY = /(?:secret|token|password|passwd|authorization|api[-_]?key|private[-_]?key)/i
+// A number under a plural `tokens` key is a usage count (`usedTokens`, `maxOutputTokens`), not a credential.
+const TOKEN_COUNT_KEY = /tokens/i
+
 function redactValue(value: unknown, key = "", depth = 0): unknown {
   if (depth > 5) return "[depth-limited]"
-  if (/(?:secret|token|password|passwd|authorization|api[-_]?key|private[-_]?key)/i.test(key))
+  if (SECRET_KEY.test(key) && !(typeof value === "number" && TOKEN_COUNT_KEY.test(key)))
     return "[redacted]"
   if (typeof value === "string")
     return value.length > 16_384 ? `${value.slice(0, 16_384)}…[truncated]` : value

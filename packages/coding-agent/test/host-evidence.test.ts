@@ -145,10 +145,9 @@ describe("coding agent host evidence", () => {
 
       const entries = await store.read(session.id)
       expect(evidence(entries, "plan.updated")).toEqual([{ turnId, entries: 2, completed: 1 }])
-      // The store redacts `*Tokens` keys by name, so only the shape is checked here.
-      expect(
-        evidence(entries, "context.usage").map((payload) => Object.keys(payload ?? {})),
-      ).toEqual([["turnId", "usedTokens", "windowTokens"]])
+      expect(evidence(entries, "context.usage")).toEqual([
+        { turnId, usedTokens: 10, windowTokens: 100 },
+      ])
       expect(evidence(entries, "tool.delta")).toEqual([{ turnId, callId }])
       expect(evidence(entries, "memory.compacted")).toEqual([
         { before: 10, after: 5, reason: "manual" },
