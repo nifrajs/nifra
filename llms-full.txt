@@ -1612,8 +1612,10 @@ loader **revalidates** (no full reload); with JS disabled the native form POST r
 
 A reload of the page on screen (an action's revalidation, `invalidate()`, a live
 refresh, a fetcher loading its path again) keeps every part of `data` and the
-layouts' data that it did not change as the same object. An unchanged row keeps its DOM and
-component state: a Solid `<For>` keeps the row, a memoized React or Preact row
+layouts' data that it did not change as the same object, with one bound: an array none of
+whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
+stops comparing early. A row kept this way keeps its DOM and component state: a Solid
+`<For>` keeps the row, a memoized React or Preact row
 and a Vue child component skip their render, and a Svelte or Solid effect on `data`
 runs again only when the reload changed it. Dates compare by time, rows with an
 `id` pair by it, and the built-in transport does not parse again a plain JSON
