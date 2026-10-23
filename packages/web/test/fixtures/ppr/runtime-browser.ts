@@ -11,7 +11,11 @@ declare global {
   interface Window {
     __violations: string[]
     __fills: number
-    __nifraPpr: { get(name: string): unknown; leave(): void }
+    __nifraPpr: {
+      get(name: string): unknown
+      leave(): void
+      put(name: string, frame: unknown, host: Element | null): void
+    }
     __pwnedScript?: unknown
     __pwnedHandler?: unknown
     __tampered?: unknown
@@ -207,11 +211,23 @@ async function checkEngine(name: string, browser: Browser): Promise<Report> {
   // 4. Trusted Types enforced (engines that implement it): fills still work through the named policy.
   const supportsTT = await page.evaluate(() => "trustedTypes" in window)
   await page.goto(`${origin}/tt`)
-  const tt = await page.evaluate(() => ({
-    a: document.querySelector('[data-nifra-hole="a"]')?.innerHTML,
-    violations: window.__violations,
-  }))
+  const tt = await page.evaluate(() => {
+    const host = (hole: string) => document.querySelector(`[data-nifra-hole="${hole}"]`)
+    const main = document.querySelector("main")
+    // `put` under the policy reaches only a host of the hole it names.
+    window.__nifraPpr.put("a", { html: "<i>stray</i>" }, main)
+    window.__nifraPpr.put("a", { html: "<i>stray</i>" }, host("b"))
+    window.__nifraPpr.put("b", { html: '<p id="b-put">put</p>' }, host("b"))
+    return {
+      a: host("a")?.innerHTML,
+      b: host("b")?.innerHTML,
+      stray: main?.querySelector(":scope > i") !== null,
+      violations: window.__violations,
+    }
+  })
   assert.equal(tt.a, '<p id="a-ok">A</p>', `${name}: fills work with Trusted Types enforced`)
+  assert.equal(tt.b, '<p id="b-put">put</p>', `${name}: put refills its own hole's host`)
+  assert.equal(tt.stray, false, `${name}: put refuses an element that is not the hole's host`)
   assert.deepEqual(tt.violations, [])
   report.trustedTypes = supportsTT ? "enforced, ok" : "not implemented by engine, ok"
 

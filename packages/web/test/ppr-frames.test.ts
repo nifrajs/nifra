@@ -210,4 +210,32 @@ describe("PPR runtime", () => {
     expect(PPR_RUNTIME.includes("nonce")).toBe(false)
     expect(() => new Function(PPR_RUNTIME)).not.toThrow()
   })
+
+  test("put writes only into a host of the hole it names", () => {
+    const element = (hole: string | null) => {
+      const attributes = new Map<string, string>()
+      if (hole !== null) attributes.set("data-nifra-hole", hole)
+      return {
+        innerHTML: "",
+        getAttribute: (name: string) => attributes.get(name) ?? null,
+        setAttribute: (name: string, value: string) => {
+          attributes.set(name, value)
+        },
+        removeAttribute: (name: string) => {
+          attributes.delete(name)
+        },
+      }
+    }
+    const page: { __nifraPpr?: { put(name: string, frame: unknown, host: unknown): void } } = {}
+    new Function("window", "document", PPR_RUNTIME)(page, {})
+    const put = (host: unknown) => page.__nifraPpr?.put("cart", { html: "<b>2</b>" }, host)
+    const [cart, other, body] = [element("cart"), element("recs"), element(null)]
+    put(other)
+    put(body)
+    put(undefined)
+    expect([other.innerHTML, body.innerHTML]).toEqual(["", ""])
+    put(cart)
+    expect(cart.innerHTML).toBe("<b>2</b>")
+    expect(cart.getAttribute("data-nifra-filled")).toBe("")
+  })
 })

@@ -100,6 +100,16 @@ describe("PPR app: requests that are not a streamed document", () => {
     expect(html.includes("evil.example")).toBe(false)
   })
 
+  test("a shell's tags read the shell's own URL, never the request's Host or undeclared query", async () => {
+    const before = probe.tagUrls.length
+    await (
+      await fetch(`${app.origin}/p/61?utm=tag-canary&color=red`, {
+        headers: { host: "evil.example" },
+      })
+    ).text()
+    expect(probe.tagUrls.slice(before)).toEqual(["https://shop.example/p/61?color=red"])
+  })
+
   test("a gate layout refuses before the shell, and its data reaches no PPR response", async () => {
     const refused = await fetch(`${app.origin}/members/3`)
     expect(refused.status).toBe(401)

@@ -1745,7 +1745,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
 
     async invalidateTag(tag) {
       invalidations++
-      if (builds.size > 0) invalidatedAt.set(tag, invalidations)
+      if (builds.size > 0 || holeBuilds.size > 0) invalidatedAt.set(tag, invalidations)
       for (const [key, entry] of settled) if (entry.tags.includes(tag)) evict(key)
       await shared?.invalidateTag?.(tag)
     },

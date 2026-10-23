@@ -333,6 +333,44 @@ describe("PPR shared holes", () => {
     expect(counts.shells).toBe(2)
   })
 
+  test("a purge that lands while only its own rebuild runs keeps that rebuild out", async () => {
+    const time = clock()
+    const counts: Counts = { shells: 0 }
+    const paused = gate()
+    let price = 10
+    let loads = 0
+    const hole = shared(
+      "price",
+      async () => {
+        loads++
+        const read = price
+        if (loads === 2) await paused.promise
+        return { amount: read }
+      },
+      { revalidate: 10, revalidateTags: ["price:1"] },
+    )
+    const server = createPprServer(config({ now: time.now }))
+    await (await server.respond(pprRequest([hole], { counts }))).text()
+    time.advance(11_000)
+    const rebuilds: Promise<unknown>[] = []
+    await (
+      await server.respond(
+        pprRequest([hole], { counts, waitUntil: (promise) => rebuilds.push(promise) }),
+      )
+    ).text()
+    // The rebuild read the old price; the change and its purge land before it settles.
+    price = 20
+    await server.invalidateTag("price:1")
+    paused.release()
+    await Promise.allSettled(rebuilds)
+    const after = await (await server.respond(pprRequest([hole], { counts }))).text()
+    expect(counts.shells).toBe(1)
+    expect(loads).toBe(3)
+    expect(frameJson(after, "price")).toMatchObject({
+      html: '<p data-prefix="nifra-price-">price:{"amount":20}</p>',
+    })
+  })
+
   test("a failed build is never stored: the stale frame stays, and retries back off", async () => {
     const time = clock()
     const errors = spyOn(console, "error").mockImplementation(() => {})

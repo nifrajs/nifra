@@ -428,6 +428,20 @@ export default function PartialPrerendering() {
         cache such as <code>withISR</code> never stores the route's response, however it rendered.
       </p>
       <p>
+        Before a hole's HTML is framed, the server checks the markup a component may have inserted
+        unescaped (<code>dangerouslySetInnerHTML</code>, <code>{"{@html}"}</code>,{" "}
+        <code>v-html</code>): no <code>script</code>, <code>iframe</code>, <code>object</code>,{" "}
+        <code>embed</code>, <code>style</code>, <code>link</code>, <code>meta</code>,{" "}
+        <code>base</code> or <code>template</code> element, no <code>on*</code> handler or{" "}
+        <code>srcdoc</code>, and no <code>javascript:</code>, <code>vbscript:</code> or{" "}
+        <code>data:</code> URL. A hole that fails it renders its error state, and the failure is
+        logged with the route and hole names only. The check costs about 20 us per KB of hole HTML.{" "}
+        <code>holeHtmlValidation: "development"</code> skips it in production for per-visitor holes;
+        set that only when the app's CSP already blocks inline scripts and handlers, since without
+        the check only the CSP stops unescaped markup from running as script. Shared holes and
+        server components are always checked.
+      </p>
+      <p>
         A shell older than <code>revalidate</code> is served while one rebuild runs; a failing
         rebuild keeps the old one for up to ten times <code>revalidate</code>, at most a day. A shell
         loader's <code>notFound()</code> is remembered for 60 seconds. A shell or shared hole build
@@ -633,8 +647,15 @@ export default function PartialPrerendering() {
       <h2>Invalidation and metrics</h2>
       <p>
         <code>pprShells(app)</code> is the app's shell cache. Give it to{" "}
-        <code>createInvalidator</code> as a data cache, so a purge by tag also drops the shells
-        built from the purged data; a shell build already running when the purge lands is not kept.
+        <code>createInvalidator</code> as a data cache, so a purge by tag also drops the shells and
+        shared hole frames built from the purged data; a shell or shared hole build already running
+        when the purge lands is not kept.
+      </p>
+      <p>
+        A <code>revalidateTags</code> function on the route or on a shared hole is given the shell's
+        URL, not the visitor's: the configured <code>origin</code> (<code>http://shell.invalid</code>{" "}
+        without one), the path and the declared variations, and no other query. Tags are read once
+        per build and kept with the entry, so they can only follow what keys it.
       </p>
       <CodeBlock code={INVALIDATE} lang="ts" />
     </div>

@@ -1,5 +1,6 @@
 const abortedAt: number[] = []
 const shellVariations: Readonly<Record<string, string>> = {}
+const tagUrls: string[] = []
 
 /** Server-side counters the browser checks read through `/__probe`. One process, one test run. */
 export const probe = {
@@ -11,6 +12,7 @@ export const probe = {
   cancels: 0,
   shellOrigin: "",
   shellVariations,
+  tagUrls,
 }
 
 const abortWaiters: Array<() => void> = []

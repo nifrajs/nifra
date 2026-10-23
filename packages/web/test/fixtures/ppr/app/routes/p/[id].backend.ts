@@ -17,7 +17,10 @@ export const shellLoader = async (ctx: {
 export const shellOutput = t.object({ title: t.string() })
 export const shellVariations = { search: { color: ["red", "blue"] } }
 export const revalidate = 60
-export const revalidateTags = ["catalog"]
+export const revalidateTags = ({ url }: { readonly url: URL }) => {
+  probe.tagUrls.push(url.href)
+  return ["catalog"]
+}
 
 const abortable = (signal: AbortSignal, ms: number): Promise<{ at: number }> =>
   new Promise((resolve, reject) => {

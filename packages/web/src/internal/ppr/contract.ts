@@ -160,8 +160,9 @@ export interface PprServer {
   /** Abort the response that printed `token`. Unknown tokens do nothing. */
   cancel(token: string): boolean
   /**
-   * Drop every shell carrying `tag`. A build that started before the call is not stored when it
-   * finishes, so a shell built from data read before the purge never outlives it.
+   * Drop every shell and shared hole frame carrying `tag`. A build of either that started before the
+   * call is not stored when it finishes, so an entry built from data read before the purge never
+   * outlives it.
    */
   invalidateTag(tag: string): Promise<void>
   stats(): PprServerStats

@@ -13014,6 +13014,19 @@ A hole cannot redirect or set a status: the shell's status and headers are alrea
 hole whose loader returns or throws a redirect or a status renders its error state. A page
 cache such as `withISR` never stores the route's response, however it rendered.
 
+Before a hole's HTML is framed, the server checks the markup a component may have inserted
+unescaped (`dangerouslySetInnerHTML`, `{@html}`,
+`v-html`): no `script`, `iframe`, `object`,
+`embed`, `style`, `link`, `meta`,
+`base` or `template` element, no `on*` handler or
+`srcdoc`, and no `javascript:`, `vbscript:` or
+`data:` URL. A hole that fails it renders its error state, and the failure is
+logged with the route and hole names only. The check costs about 20 us per KB of hole HTML.
+`holeHtmlValidation: "development"` skips it in production for per-visitor holes;
+set that only when the app's CSP already blocks inline scripts and handlers, since without
+the check only the CSP stops unescaped markup from running as script. Shared holes and
+server components are always checked.
+
 A shell older than `revalidate` is served while one rebuild runs; a failing
 rebuild keeps the old one for up to ten times `revalidate`, at most a day. A shell
 loader's `notFound()` is remembered for 60 seconds. A shell or shared hole build
@@ -13309,8 +13322,14 @@ partialPrerendering({
 ### Invalidation and metrics
 
 `pprShells(app)` is the app's shell cache. Give it to
-`createInvalidator` as a data cache, so a purge by tag also drops the shells
-built from the purged data; a shell build already running when the purge lands is not kept.
+`createInvalidator` as a data cache, so a purge by tag also drops the shells and
+shared hole frames built from the purged data; a shell or shared hole build already running
+when the purge lands is not kept.
+
+A `revalidateTags` function on the route or on a shared hole is given the shell's
+URL, not the visitor's: the configured `origin` (`http://shell.invalid`
+without one), the path and the declared variations, and no other query. Tags are read once
+per build and kept with the entry, so they can only follow what keys it.
 
 ```ts
 // doc-check: skip - continues the server snippet above (`app`) with an app-owned `store`.

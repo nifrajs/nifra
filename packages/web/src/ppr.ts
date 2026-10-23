@@ -127,8 +127,8 @@ export type PprStats = PprServerStats
 /** One app's shell cache. */
 export interface PprShells {
   /**
-   * Drop every shell whose route listed `tag` in `revalidateTags`, here and in the shared store; a
-   * build running now is not kept.
+   * Drop every shell and shared hole frame whose `revalidateTags` listed `tag`, here and in the
+   * shared store; a build of either running now is not kept.
    */
   invalidateTag(tag: string): Promise<void>
   stats(): PprStats

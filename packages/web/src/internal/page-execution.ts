@@ -1650,6 +1650,14 @@ export function createPageRequestExecutor<Env = unknown>(
     const variations =
       options.ppr?.variationsOf(mod.shellVariations, urlPartsFor(c.req).search) ?? {}
     const shellSearch = options.ppr?.variationQuery(variations) ?? ""
+    // What a shared entry's tags read: its key's parts, never the Host or an undeclared query, which
+    // the first visitor of a key could set so a later purge misses the entry.
+    const shellUrl = (): URL => {
+      const url = new URL(shellOrigin ?? "http://shell.invalid")
+      url.pathname = path
+      url.search = shellSearch
+      return url
+    }
     // The unbound `api`: a shell is built for every visitor, so no visitor's platform reaches it.
     const shellContext: Omit<ShellCtx, "signal"> =
       shellOrigin === undefined
@@ -1669,15 +1677,11 @@ export function createPageRequestExecutor<Env = unknown>(
       tags: () =>
         mod.revalidateTags === undefined
           ? []
-          : routeTags(mod.revalidateTags, { params, url: new URL(c.req.url) }, route.id),
+          : routeTags(mod.revalidateTags, { params, url: shellUrl() }, route.id),
       holeTags: (hole) =>
         hole.revalidateTags === undefined
           ? []
-          : routeTags(
-              hole.revalidateTags,
-              { params, url: new URL(c.req.url) },
-              `${route.id}#${hole.name}`,
-            ),
+          : routeTags(hole.revalidateTags, { params, url: shellUrl() }, `${route.id}#${hole.name}`),
       loadShell: async (signal) => shellLoader({ ...shellContext, signal }),
       renderShellDocument: async (shellData, states) => {
         const statics = boundaries.some((boundary) => boundary.mode === "static")

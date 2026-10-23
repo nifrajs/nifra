@@ -11097,7 +11097,7 @@
     "name": "PprShells",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface PprShells {\n    /**\n     * Drop every shell whose route listed `tag` in `revalidateTags`, here and in the shared store; a\n     * build running now is not kept.\n     */\n    invalidateTag(tag: string): Promise<void>;\n    stats(): PprStats;\n}",
+    "signature": "export interface PprShells {\n    /**\n     * Drop every shell and shared hole frame whose `revalidateTags` listed `tag`, here and in the\n     * shared store; a build of either running now is not kept.\n     */\n    invalidateTag(tag: string): Promise<void>;\n    stats(): PprStats;\n}",
     "doc": "/** One app's shell cache. */"
   },
   {
@@ -12847,7 +12847,7 @@
     "name": "RevalidateTagsInput",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RevalidateTagsInput {\n    readonly params: Readonly<Record<string, string>>;\n    readonly url: URL;\n}",
+    "signature": "export interface RevalidateTagsInput {\n    readonly params: Readonly<Record<string, string>>;\n    /**\n     * The request's URL. On a partially prerendered route and its shared holes, the shell's: the\n     * configured origin, the path and the declared variations, never the visitor's Host or other query.\n     */\n    readonly url: URL;\n}",
     "doc": "/** What a `revalidateTags` function is given: the URL and route params only, both already public. */"
   },
   {
