@@ -79,7 +79,7 @@ jobs:
             runtime: deno
           - suite: ${{ (inputs.skip_ssr || github.event_name == 'pull_request') && 'ssr' || 'none' }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -87,7 +87,7 @@ jobs:
         with:
           bun-version: 1.4.3
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 26.12.0
 
@@ -144,7 +144,7 @@ jobs:
           --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --max-ci-width "$MAX_CI_WIDTH" --pin
           --out "bench-ci/$SUITE-$RUNTIME.json"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: bench-${{ matrix.suite }}-${{ matrix.runtime }}
           path: |
@@ -160,7 +160,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -168,7 +168,7 @@ jobs:
         with:
           bun-version: 1.4.3
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: bench-*
           path: bench-ci
