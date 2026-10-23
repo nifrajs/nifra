@@ -30,6 +30,7 @@ import { INVALIDATION, type InvalidationOp, invalidationOf } from "./invalidatio
 import { LIVE_ATTACH, type LiveAttachment, type LiveRuntimeHandle } from "./live-contract.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./page-execution.ts"
+import { PPR_SERVER, PPR_SETUP, type PprSetup } from "./ppr/contract.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import type { RevalidateResult } from "./render-document.ts"
 import { requestPattern } from "./route-path.ts"
@@ -104,6 +105,15 @@ export interface CreateWebAppOptions<Env = unknown> {
    * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.
    */
   readonly csp?: CspPolicy
+  /** Experimental and unstable: features whose API may change in any release. */
+  readonly experimental?: {
+    /**
+     * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
+     * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
+     * as it settles. Needs `csp` (hashes), not `nonce`.
+     */
+    readonly ppr?: PprSetup
+  }
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -452,9 +462,10 @@ export function createWebApp<Env = unknown>(
   options.use?.(app)
   if (options.serverComponents !== undefined) {
     const runtime = options.serverComponents
+    // A route whose holes show server components is one visitor's too.
     const match = createMatcher(
       manifest.routes
-        .filter((route) => runtime.owns(route.id))
+        .filter((route) => runtime.owns(route.id) || runtime.hosts?.(route.id) === true)
         .map((route) => ({ routeId: route.id, pattern: route.pattern })),
     )
     const privateRoute = (request: Request): boolean =>
@@ -574,6 +585,14 @@ export function createWebApp<Env = unknown>(
   const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
+  const ppr = options.experimental?.ppr?.[PPR_SETUP]({
+    adapter,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: partial prerendering lists its scripts by hash only under an app's own policy.
+    ...(options.csp === undefined ? {} : { csp: options.csp }),
+    // The content-hashed entry changes with every client build; the store is per process.
+    deployment: clientEntry,
+    perRequestNonce: options.nonce !== undefined,
+  })
   const pageExecutor = createPageRequestExecutor<Env>({
     ...(options.cacheRouteModules === undefined
       ? {}
@@ -621,9 +640,17 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: the executor takes a route's shell path only when partial prerendering is set up.
+    ...(ppr === undefined ? {} : { ppr }),
     invalidate,
     liveLoadOf: liveAttachment?.loadOf,
   })
+  if (ppr !== undefined) {
+    Object.defineProperty(app, PPR_SERVER, { value: ppr.server })
+    app.register("POST", ppr.cancelPath, undefined, (c: { readonly req: Request }) =>
+      ppr.cancel(c.req),
+    )
+  }
 
   // A nonce app's documents authorize their scripts per request, which a file rendered once cannot.
   const prerendered =
@@ -638,7 +665,8 @@ export function createWebApp<Env = unknown>(
     app.register(
       "GET",
       pattern,
-      options.serverComponents?.owns(route.id)
+      options.serverComponents?.owns(route.id) ||
+        options.serverComponents?.hosts?.(route.id) === true
         ? { capabilities: options.serverComponents.capabilities(route.id) }
         : undefined,
       prerendered === undefined ? render : prerendered(render),

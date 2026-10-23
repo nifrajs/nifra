@@ -1,0 +1,61 @@
+name: Partial prerendering
+
+# Experimental partial prerendering's server, adapter and browser checks, on macOS as well as Linux.
+# CI runs the server, adapter and Node tests on Linux in every PR; this adds the browser engines and
+# macOS nightly, and on dispatch for a branch: installing the engines' Linux packages has run past
+# the job's 40 minutes on a slow package mirror. Each framework with a twin of the fixture app
+# (`web-<name>/test/fixtures/ppr-app`) is a matrix leg.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ppr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ppr:
+    name: ppr (${{ matrix.framework }}, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        framework: [react, svelte, preact, vue, solid]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.12.0
+      - run: bun install --frozen-lockfile
+      # The Node test loads the built packages, as an installed Node app does.
+      - run: bun run build
+      - name: Server, cache, admission and React adapter tests
+        if: matrix.framework == 'react'
+        run: bun test test/ppr
+        working-directory: packages/web
+      - name: Both Node lanes, with and without compression
+        if: matrix.framework == 'react'
+        run: node --test packages/web/test-node/ppr.test.ts
+      - name: Adapter tests
+        if: matrix.framework != 'react'
+        run: bun test test/ppr
+        working-directory: packages/web-${{ matrix.framework }}
+      - name: Install required browser engines
+        run: node packages/web/node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
+      - name: App in Chromium, Firefox and WebKit
+        run: bun packages/web/test/fixtures/ppr/app-browser.ts
+        env:
+          FRAMEWORK: ${{ matrix.framework }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright

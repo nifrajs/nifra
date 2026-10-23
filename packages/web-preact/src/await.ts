@@ -27,11 +27,16 @@ export interface AwaitProps<T> {
 
 // Catches the rejection `readDeferred` throws when the deferred rejects → renders `errorFallback`. A
 // class is required (error boundaries have no hook form). Local so `<Await>` is self-contained.
-class AwaitBoundary extends Component<
-  { fallback: (error: unknown) => ComponentChildren; children?: ComponentChildren },
-  { caught: boolean; error: unknown }
-> {
-  override state: { caught: boolean; error: unknown } = { caught: false, error: undefined }
+type AwaitBoundaryProps = {
+  fallback: (error: unknown) => ComponentChildren
+  children?: ComponentChildren
+}
+
+class AwaitBoundary extends Component<AwaitBoundaryProps, { caught: boolean; error: unknown }> {
+  constructor(props: AwaitBoundaryProps) {
+    super(props)
+    this.state = { caught: false, error: undefined }
+  }
   static override getDerivedStateFromError(error: unknown): { caught: boolean; error: unknown } {
     return { caught: true, error }
   }

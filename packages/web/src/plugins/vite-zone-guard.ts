@@ -33,6 +33,12 @@ export interface ViteZoneGuardOptions {
   readonly generatedFiles?: readonly string[]
   /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
   readonly publicEnvPrefix?: string
+  /**
+   * The coordinated compiler runs in this build and replaces each plain browser import of a
+   * `*.component.server.*` file with the component's reference, so such an import may resolve. Its
+   * file is still refused if it is ever loaded into the browser build.
+   */
+  readonly componentReferences?: boolean
 }
 
 /** Zones whose code runs in a browser, so may read only public environment variables. */
@@ -223,10 +229,17 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       if (!isClient(this, resolveOptions?.ssr)) return null
       const importerFile = withoutQuery(importer)
       if (!isAbsolute(importerFile)) return null
+      // The compiler replaces a plain import of a component with its reference; a query form such as
+      // `?raw` would ship the file itself.
+      const referenced = options.componentReferences === true && withoutQuery(source) === source
+      const denial = (classification: Classification, specifier?: string) =>
+        referenced && classification.zone === "component"
+          ? undefined
+          : browserDenial(classification, specifier)
       if (source.startsWith(".")) {
         const target = resolve(dirname(importerFile), withoutQuery(source))
         if (isFile(target)) {
-          const reason = browserDenial(classifier.classify(target))
+          const reason = denial(classifier.classify(target))
           if (reason !== undefined) refuse(this, target, reason, importerFile)
         }
         return null
@@ -240,7 +253,7 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       const resolved = await this.resolve(source, importer, { ...resolveOptions, skipSelf: true })
       const target = resolved === null || resolved.external ? undefined : withoutQuery(resolved.id)
       if (target !== undefined && isAbsolute(target) && isFile(target)) {
-        const reason = browserDenial(classifier.classify(target, source), source)
+        const reason = denial(classifier.classify(target, source), source)
         if (reason !== undefined) refuse(this, target, reason, importerFile)
       }
       return null

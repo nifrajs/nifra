@@ -10,4 +10,6 @@ Keep client-loader reloads safe for cyclic, deeply nested and symbol-bearing dat
 
 Preserve layout-injected child props in React and Preact and page caching and leave transitions in Vue while retaining unchanged-data render skipping.
 
+Vue keeps patching an unchanged layout chain in place after a layout re-renders on its own between router renders.
+
 Recognize Svelte's unshadowed `$state.raw()` rune without weakening SQL checks for shadowed or imported database bindings.

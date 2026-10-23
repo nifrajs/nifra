@@ -109,8 +109,9 @@ function chainRenderer(): (chain: readonly unknown[], props: RenderProps) => VNo
         slot = slots[i] = held
       }
       slot.child = child
-      // A slot rendered more than once owns multiple component instances; patch it hierarchically.
-      if (!stable) slot.uses = 0
+      // A slot rendered more than once owns multiple component instances; patch it hierarchically. The
+      // count restarts on every router render, so a layout's own re-renders between them never add up.
+      slot.uses = 0
       child = h(
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: chain entries are the route modules' default Vue component exports
         chain[i] as Component,

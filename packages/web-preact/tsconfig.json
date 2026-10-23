@@ -4,8 +4,12 @@
     // Frontend adapter: needs DOM types (client hydrate casts the container to `Element`).
     // Excluded from the root typecheck; checked via the `typecheck` script.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    // The partial prerendering fixture's routes are Preact JSX.
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
+      "@nifrajs/web-preact/ppr": ["./src/ppr.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
       "@nifrajs/core/mount": ["../core/src/mount.ts"],
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"],

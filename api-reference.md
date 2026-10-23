@@ -426,7 +426,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventType** _(type)_ - `type AgentEventType`
 - **AgentExtensionEvent** _(interface)_ - `interface AgentExtensionEvent`
   A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.
-- **AgentExtensionEventType** _(type)_ - `type AgentExtensionEventType = `x-${string}``
+- **AgentExtensionEventType** _(type)_ - `` type AgentExtensionEventType = `x-${string}` ``
   The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64 characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
 - **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 - **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
@@ -1608,7 +1608,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
-- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+- **JoinRoutePath** _(type)_ - `` type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}` ``
   Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
@@ -2309,7 +2309,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/edge-kit`
 
-- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string>; /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
+- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string>; _cookies?: string[] }`
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
@@ -2792,6 +2792,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
+- **RepeatedPrefix** _(interface)_ - `interface RepeatedPrefix`
+  What {@link markRepeatedPrefix} recorded for a chunk.
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
@@ -2802,6 +2804,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ResponseObserverRuntime** _(interface)_ - `interface ResponseObserverRuntime`
 - **ResponseObserverServer** _(type)_ - `type ResponseObserverServer<S extends AnyServer> = S & import("./server/response-observer-runtime.ts").ResponseObserverMethods`
   A server shape with the opt-in response observation methods installed.
+- **markRepeatedPrefix** _(function)_ - `markRepeatedPrefix: (chunk: Uint8Array, source: Uint8Array, length: number) => void`
+  Record that `chunk` starts with the first `length` bytes of `source`: bytes its producer sends again in later responses and never changes, such as a cached page shell. A response observer that transforms streamed bodies may keep its work on those bytes, keyed by `source`, and reuse it. It must chec…
+- **repeatedPrefixOf** _(const)_ - `repeatedPrefixOf: (chunk: Uint8Array) => RepeatedPrefix | undefined`
+  The repeated prefix {@link markRepeatedPrefix} recorded for `chunk`, if any.
 - **responseObserver** _(function)_ - `responseObserver: () => ResponseObserverPlugin`
   Enable the response observation methods on a server.
 - **withResponseObserver** _(function)_ - `withResponseObserver: <T extends object>(middleware: T) => T`
@@ -2899,7 +2905,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
-- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+- **JoinRoutePath** _(type)_ - `` type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}` ``
   Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
@@ -3653,7 +3659,7 @@ _No named exports (side-effect entrypoint)._
 - **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions<K extends string = string>`
 - **LocalizeOptions** _(interface)_ - `interface LocalizeOptions`
 - **LocalizedRouter** _(interface)_ - `interface LocalizedRouter<K extends string = string>`
-- **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string>`
+- **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string> = | { readonly kind: "ok"; readonly locale: K } | { readonly kind: "not-found" } | { readonly kind: "redirect"; readonly location: string }`
   What a `[lang]` segment value means for the request.
 - **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath<K extends string = string>`
   A pathname with its locale prefix removed (or not, when it carries none).
@@ -4166,7 +4172,7 @@ _No named exports (side-effect entrypoint)._
 - **AdmissionSnapshot** _(interface)_ - `interface AdmissionSnapshot`
 - **ApiKeyStaticOptions** _(interface)_ - `interface ApiKeyStaticOptions`
 - **ApiKeyVerifyOptions** _(interface)_ - `interface ApiKeyVerifyOptions<P>`
-- **AuthPlugin** _(type)_ - `type AuthPlugin<P>`
+- **AuthPlugin** _(type)_ - `type AuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null; requirePrincipal(request: Request): P }`
   A token-auth plugin (`bearer` / `apiKey`). Apply it with `app.use(auth)` - it rejects unauthorized requests to **routes defined after it** with `401` (unless `optional`). Read the verified principal inside a handler/loader via {@link AuthPlugin.principal} (nullable) or {@link AuthPlugin.requirePrin…
 - **BasicAuthPlugin** _(type)_ - `type BasicAuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null; requirePrincipal(request: Request): P }`
 - **BasicAuthStaticOptions** _(interface)_ - `interface BasicAuthStaticOptions<P = string>`
@@ -4690,7 +4696,7 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/storage
 
-- **BeaconingStorageAdapter** _(type)_ - `type BeaconingStorageAdapter<A extends StorageAdapter = StorageAdapter> = A & { /** * A view bound to a request context: every operation announces its capability first, and fails * closed when the route did not declare …`
+- **BeaconingStorageAdapter** _(type)_ - `type BeaconingStorageAdapter<A extends StorageAdapter = StorageAdapter> = A & { for(context: object): A }`
   A storage adapter that can be bound to a request context.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies.
@@ -4797,7 +4803,7 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
-- **ComparisonCode** _(type)_ - `type ComparisonCode`
+- **ComparisonCode** _(type)_ - `type ComparisonCode = | "equal" | "improved" | "tolerated" | "regressed" | "missing" | "added" | "incomparable"`
 - **ContractAuthContext** _(type)_ - `type ContractAuthContext = "authenticated" | "unauthenticated"`
 - **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
@@ -5116,12 +5122,16 @@ _No named exports (side-effect entrypoint)._
   A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **Boundary** _(type)_ - `type Boundary<Data, UI> = | StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | InterceptBoundary<Data, UI>`
+- **Boundary** _(type)_ - `type Boundary<Data, UI> = | StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | SharedBoundary<Data, UI> | InterceptBoundary<Data, UI>`
   A discriminated union: the `mode` selects the context type accepted by `load`.
 - **BoundaryDescriptor** _(interface)_ - `interface BoundaryDescriptor`
   Neutral manifest descriptor: no framework component crosses the web core boundary.
 - **BoundaryError** _(interface)_ - `interface BoundaryError`
-- **BoundaryMode** _(type)_ - `type BoundaryMode = "static" | "dynamic" | { readonly intercept: string }`
+- **BoundaryLoaderEntry** _(interface)_ - `interface BoundaryLoaderEntry`
+  A boundary's server loader, declared in the route's backend half under `boundaryLoaders`.
+- **BoundaryLoadersOf** _(type)_ - `type BoundaryLoadersOf<Frontend, Backend>`
+  The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry names a boundary the page declares, and a route with a `shellLoader` needs one for each hole. Unchecked when TypeScript cannot read the page (`.svelte`, `.vue`) or its boundary names are not literal type…
+- **BoundaryMode** _(type)_ - `type BoundaryMode = "static" | "dynamic" | "shared" | { readonly intercept: string }`
 - **BoundaryRegistration** _(type)_ - `type BoundaryRegistration`
 - **BoundaryRequestCtx** _(interface)_ - `interface BoundaryRequestCtx`
   Request-scoped inputs available to dynamic and intercepting boundaries.
@@ -5187,12 +5197,12 @@ _No named exports (side-effect entrypoint)._
   Markup a render produced for outside the app root, which an adapter that sets {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render settles: `renderToString` resolving, or `renderToStream` returning its stream.
 - **DraftCookieControls** _(interface)_ - `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
-- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic"; readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic"; readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string; readonly retain: readonly number[] }, read?: DataText, ) => Promise<unknown>`
-  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `read` is the {@link DataText} of the data on screen, which a custom transport may ignore.
+- **FetchRouteData** _(type)_ - `type FetchRouteData`
+  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result. `hosts` names the holes of the page on screen whose hosts reload in place ({@link HOLE_FILL_HEADER}). `read`…
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`
@@ -5320,6 +5330,8 @@ _No named exports (side-effect entrypoint)._
   One URL pattern a nested `_404` answers when no route matches it.
 - **OpenGraphInput** _(interface)_ - `interface OpenGraphInput`
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
+- **PREFETCH_HEADER** _(const)_ - `PREFETCH_HEADER: "x-nifra-prefetch"`
+  Sent beside {@link DATA_HEADER} by a prefetch. A partially prerendered route answers it with its shell data and starts no hole: nothing could cancel that work if the link is never followed.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`
   Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
 - **PageLocale** _(interface)_ - `interface PageLocale`
@@ -5409,6 +5421,12 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
+- **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
+  Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
+- **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
+  Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
+- **ShellCtx** _(interface)_ - `interface ShellCtx`
+  Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
   A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
 - **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
@@ -5626,7 +5644,7 @@ _No named exports (side-effect entrypoint)._
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
   One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
-- **SecretRule** _(type)_ - `type SecretRule`
+- **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
@@ -5883,7 +5901,7 @@ _No named exports (side-effect entrypoint)._
 - **DEV_TOKEN_HEADER** _(const)_ - `DEV_TOKEN_HEADER: "x-nifra-dev-token"`
   Request header carrying the agent token from the discovery record.
 - **DevEntrySource** _(type)_ - `type DevEntrySource = "server" | "browser"`
-- **DevErrorCategory** _(type)_ - `type DevErrorCategory`
+- **DevErrorCategory** _(type)_ - `type DevErrorCategory = | "ssr" | "page" | "api" | "build" | "browser" | "hydration" | "process"`
 - **DevErrorEntry** _(interface)_ - `interface DevErrorEntry`
 - **DevErrorsQuery** _(interface)_ - `interface DevErrorsQuery`
 - **DevErrorsResult** _(interface)_ - `interface DevErrorsResult`
@@ -6095,7 +6113,7 @@ _No named exports (side-effect entrypoint)._
   The node surface `bindList` uses; an `Element` has it.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
-- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T>; /** Fetch the current key again; once disposed, nothing. */ refetch(): void; /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
+- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T>; refetch(): void; dispose(): void }`
   Call it to read the current state (tracking, like a signal).
 - **ResourceState** _(type)_ - `type ResourceState<T>`
   An async value's state. `status` narrows `value` and `error`, so no branch can be skipped.
@@ -6331,6 +6349,41 @@ _No named exports (side-effect entrypoint)._
 - **viteServerFnStub** _(function)_ - `viteServerFnStub: () => ServerFnStubPlugin`
   Replace every `*.fn` module with its client stubs.
 
+### `@nifrajs/web/ppr`
+
+- **CanaryCarrier** _(type)_ - `type CanaryCarrier = "cookie" | "authorization" | "header" | "query"`
+  Where a canary value went into the request whose shell carried it.
+- **CompileShellsOptions** _(interface)_ - `interface CompileShellsOptions`
+- **PPR_DEFAULTS** _(const)_ - `PPR_DEFAULTS: ResolvedPprOptions`
+- **PprConfig** _(interface)_ - `interface PprConfig`
+- **PprOptions** _(interface)_ - `interface PprOptions`
+  Overrides for {@link PPR_DEFAULTS}. Every field is optional; an omitted one keeps its default.
+- **PprSetup** _(interface)_ - `interface PprSetup`
+  What `partialPrerendering()` returns for `createWebApp({ experimental: { ppr } })`.
+- **PprShells** _(interface)_ - `interface PprShells`
+  One app's shell cache.
+- **PprStats** _(type)_ - `type PprStats = PprServerStats`
+  Admission, shedding and unsent-byte counters of one app's partially prerendered responses.
+- **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
+  Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
+- **ShellCanaryFinding** _(interface)_ - `interface ShellCanaryFinding`
+- **ShellCanaryOptions** _(interface)_ - `interface ShellCanaryOptions`
+- **ShellCheckError** _(class)_ - `class ShellCheckError`
+- **ShellCheckRecord** _(interface)_ - `interface ShellCheckRecord`
+  Which routes passed the shell check for one deployment. The server shares a shell only for a route listed here under its own deployment; anything else renders blocking (fail closed).
+- **ShellCtx** _(interface)_ - `interface ShellCtx`
+  Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
+- **checkShellCanaries** _(function)_ - `checkShellCanaries: (app: { fetch(request: Request): Response | Promise<Response>; }, paths: readonly string[], options?: ShellCanaryOptions) => Promise<readonly ShellCanaryFinding[]>`
+  The canary check. Each path is requested through the app's own middleware and gates with a unique value in a cookie, an `Authorization` header, a custom header and the query, until a response carries a shell (`shellAfterRequests` decides which request builds it) and a built frame for each shared ho…
+- **compileShells** _(function)_ - `compileShells: (options: CompileShellsOptions) => Promise<ShellCheckRecord>`
+  Bundle each route's shell (its page and layout modules, its backend `shellLoader`, and nothing else) and refuse it when the emitted code reaches a request-scoped module. A module counts only when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose backend h…
+- **defineShellLoader** _(const)_ - `defineShellLoader: <Data>(loader: (ctx: ShellCtx) => Data | Promise<Data>) => ((ctx: ShellCtx) => Data | Promise<Data>)`
+  Types a backend half's `shellLoader` from its context; returns it unchanged.
+- **partialPrerendering** _(function)_ - `partialPrerendering: (config: PprConfig) => PprSetup`
+  Experimental: partial prerendering for `createWebApp({ experimental: { ppr } })`. Options are checked here, at startup; each app the value is given to gets its own shell cache.
+- **pprShells** _(function)_ - `pprShells: (app: object) => PprShells`
+  The shell cache of an app made with `experimental.ppr`. Pass it in `createInvalidator`'s `dataCaches` so a purge by tag also drops the shells built from the purged data.
+
 ### `@nifrajs/web/pwa-manifest`
 
 - **ManifestDir** _(type)_ - `type ManifestDir = "ltr" | "rtl" | "auto"`
@@ -6463,11 +6516,20 @@ _No named exports (side-effect entrypoint)._
 - **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
   Optional router integration; imported only by opted-in application entries.
+- **holeComponents** _(function)_ - `holeComponents: (client: ComponentClientAdapter | undefined) => void`
+  Experimental: how the client islands inside partially prerendered holes that show server components mount, as the adapter's component client, such as `vueComponentClient({ islands })`; `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a hole shows its er…
 - **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
 - **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
 - **refreshAfterComponentMutation** _(function)_ - `refreshAfterComponentMutation: <T extends { readonly ok: boolean; }>(mutation: Promise<T>, controller: ComponentController, instances: readonly string[]) => Promise<T>`
   Refresh only after the existing mutation transport reports success.
 - **resolveComponentRecord** _(function)_ - `resolveComponentRecord: <Input>(state: ComponentState, component: Pick<ServerComponent<Input>, "reference" | "input">, key: ComponentKey, input: NoInfer<Input>, parent?: string | null) => ComponentRecord`
+
+### `@nifrajs/web/server-components/hole`
+
+- **serverHole** _(function)_ - `serverHole: <Input, Props, View>(component: ServerComponent<Input, Props, View>) => (data: Input) => never`
+  A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its input. The page's app lists the component under `createServerComponents({ holes })` for the route. The hole cannot be `interactive`; its client islands are.
+- **serverHoleComponent** _(const)_ - `serverHoleComponent: (render: unknown) => object | undefined`
+  The server component a hole's `render` names, or `undefined` for an ordinary `render`.
 
 ### `@nifrajs/web/server-components/islands`
 
@@ -6523,6 +6585,8 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web/server-components/state`
 
 - **componentToken** _(function)_ - `componentToken: (value: unknown) => value is string`
+- **parseComponentRecord** _(function)_ - `parseComponentRecord: (value: unknown) => ComponentRecord`
+  A record that arrives alone, as a partially prerendered hole's does, checked as a state's are.
 - **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
 
 ### `@nifrajs/web/server-components/stream`
@@ -6558,7 +6622,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ReportWebVitalsOptions** _(interface)_ - `interface ReportWebVitalsOptions`
   How {@link reportWebVitals} reports.
-- **WebVitalsMetric** _(type)_ - `type WebVitalsMetric`
+- **WebVitalsMetric** _(type)_ - `type WebVitalsMetric = MetricType & { readonly route: string | undefined }`
   One measurement from `web-vitals` - `name` is `"LCP"`, `"INP"`, `"CLS"`, `"FCP"` or `"TTFB"`, with its `value`, `rating` (`"good"`, `"needs-improvement"` or `"poor"`), `delta` since the last report and an `id` unique to the measurement - plus the route it belongs to.
 - **reportWebVitals** _(function)_ - `reportWebVitals: (report: (metric: WebVitalsMetric) => void, options?: ReportWebVitalsOptions) => () => void`
   Report the page's Core Web Vitals to `report`, each with the route it belongs to. A metric is reported once its value is final - FCP and TTFB as soon as they are known, LCP at the first interaction or when the page is hidden, CLS and INP when the page is hidden - unless `reportAllChanges` asks for …
@@ -6596,10 +6660,10 @@ _No named exports (side-effect entrypoint)._
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
   One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
 - **SecretFinding** _(interface)_ - `interface SecretFinding`
-- **SecretRule** _(type)_ - `type SecretRule`
+- **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **SecretScanFile** _(interface)_ - `interface SecretScanFile`
 - **SecretScanInput** _(interface)_ - `interface SecretScanInput`
-- **Zone** _(type)_ - `type Zone`
+- **Zone** _(type)_ - `type Zone = | "route-frontend" | "route-backend" | "frontend" | "backend" | "shared" | "fn" | "component" | "generated" | "library"`
 - **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
 - **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
 - **ZoneConfig** _(interface)_ - `interface ZoneConfig`
@@ -6700,6 +6764,14 @@ _No named exports (side-effect entrypoint)._
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => VNode`
   Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
+
+### `@nifrajs/web-preact/ppr`
+
+- **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren`
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
 
 ### `@nifrajs/web-preact/query`
 
@@ -6832,6 +6904,14 @@ _No named exports (side-effect entrypoint)._
 - **Island** _(function)_ - `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode`
   Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes the attribute value and the client reads the decoded `dataset.islandProps`.
 - **IslandProps** _(interface)_ - `interface IslandProps`
+
+### `@nifrajs/web-react/ppr`
+
+- **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode`
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
 
 ### `@nifrajs/web-react/query`
 
@@ -7044,6 +7124,14 @@ _No named exports (side-effect entrypoint)._
 - **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
   Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
 
+### `@nifrajs/web-solid/ppr`
+
+- **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => JSX.Element`
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX evaluated at import is one DOM node, so every place that shows it would take it from the last.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
+
 ### `@nifrajs/web-solid/query`
 
 - **CreateQueryResult** _(interface)_ - `interface CreateQueryResult<T>`
@@ -7114,7 +7202,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/fetcher`
 
-- **FetcherStore** _(type)_ - `type FetcherStore`
+- **FetcherStore** _(type)_ - `type FetcherStore = Readable<FetcherState> & { readonly load: (path: string) => Promise<void>; readonly submit: (action: string, body: NonNullable<RequestInit["body"]>) => Promise<void> }`
   A fetcher store: a `Readable<FetcherState>` (read via `$`) plus imperative `load`/`submit`.
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void`
   Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use.
@@ -7160,9 +7248,17 @@ _No named exports (side-effect entrypoint)._
 - **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }`
   The same hot-patch boundary as the Bun pipeline's, in the shape `@sveltejs/vite-plugin-svelte` takes:
 
+### `@nifrajs/web-svelte/ppr`
+
+- **SvelteUI** _(interface)_ - `interface SvelteUI`
+  What a Svelte boundary's `render` and `fallback` return: a component and the props it renders with. Svelte components compile from files, so a hole's output is this pair instead of a node.
+- **isSvelteUI** _(const)_ - `isSvelteUI: (value: unknown) => value is SvelteUI`
+- **ui** _(function)_ - `ui: <Props extends Record<string, unknown>>(component: Component<Props>, ...props: Record<string, never> extends Props ? [props?: Props] : [props: Props]) => SvelteUI`
+  Experimental: `component` rendered with `props`, for a partially prerendered hole.
+
 ### `@nifrajs/web-svelte/query`
 
-- **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { /** Force a refetch (ignores `staleTime`). */ readonly refetch: () => Promise<T> }`
+- **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { readonly refetch: () => Promise<T> }`
   A query store: a `Readable<QueryState<T>>` (read via `$`) plus `refetch`.
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryStore<T>`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
@@ -7298,6 +7394,14 @@ _No named exports (side-effect entrypoint)._
   Compile a `.vue` SFC's `<style>` blocks to a single CSS string (scoped selectors rewritten to `[data-v-<id>]` when `scoped`). Returns `""` for a style-less SFC. The matching scope attribute is baked into the markup by {@link compileVue}.
 - **vueBunPlugin** _(function)_ - `vueBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
   The `.vue` compiler Bun plugin. `"dom"` → client-hydratable output; `"ssr"` → server render. On the `"dom"` build, a SFC's `<style>` CSS is emitted as a virtual `?vue-css` module that `Bun.build`'s CSS bundler folds into the app stylesheet (served as a `<link>`). The `"ssr"` build emits no CSS - th…
+
+### `@nifrajs/web-vue/ppr`
+
+- **Hole** _(const)_ - `Hole: new <Data>(props: HoleProps<Data> & {} & import("vue").VNodeProps & import("vue").AllowedComponentProps & import("vue").ComponentCustomProps) => import("vue").CreateComponentPublicInstanceWithMixins<HoleProps<Data…`
+  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+- **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
+  The fields of a route's boundary declaration a hole renders from: `h()` output, not templates. `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.
+- **HoleProps** _(interface)_ - `interface HoleProps<Data>`
 
 ### `@nifrajs/web-vue/query`
 
@@ -7441,7 +7545,7 @@ _No named exports (side-effect entrypoint)._
   The config a scaffold writes: every scaffold declares the CLI, so its launch is unpinned.
 - **MCP_JSON_PATH** _(const)_ - `MCP_JSON_PATH: ".mcp.json"`
   The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it.
-- **MCP_SERVER_ARGS** _(const)_ - `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
+- **MCP_SERVER_ARGS** _(const)_ - ``MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]``
 - **MCP_SERVER_ARGS_INSTALLED** _(const)_ - `MCP_SERVER_ARGS_INSTALLED: readonly ["@nifrajs/cli", "mcp"]`
   The launch args for a project that declares `@nifrajs/cli`: unpinned, so `bunx` runs its install.
 - **MCP_SERVER_COMMAND** _(const)_ - `MCP_SERVER_COMMAND: "bunx"`
@@ -7515,7 +7619,7 @@ _No named exports (side-effect entrypoint)._
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
-- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+- **JoinRoutePath** _(type)_ - `` type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}` ``
   Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`

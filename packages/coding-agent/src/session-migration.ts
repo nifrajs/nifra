@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs"
 import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises"
-import { basename, join, resolve } from "node:path"
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { sessionFileStem } from "./sessions.ts"
 
 /** Version of the evidence-only legacy session file format. */
@@ -119,11 +119,7 @@ export async function migrateLegacySession(
   const maxSourceBytes = options.maxSourceBytes ?? MAX_SOURCE_BYTES
   if (!Number.isSafeInteger(maxSourceBytes) || maxSourceBytes < 1)
     throw new SessionMigrationError("invalid_options", "maxSourceBytes must be positive")
-  if (
-    sourceRoot === targetRoot ||
-    isWithin(sourceRoot, targetRoot) ||
-    isWithin(targetRoot, sourceRoot)
-  )
+  if (isWithin(sourceRoot, targetRoot) || isWithin(targetRoot, sourceRoot))
     throw new SessionMigrationError(
       "overlapping_roots",
       "sourceRoot and targetRoot must be separate directories",
@@ -395,8 +391,9 @@ function isNotFound(error: unknown): boolean {
 }
 
 function isWithin(parent: string, child: string): boolean {
-  const prefix = parent.endsWith("/") ? parent : `${parent}/`
-  return child.startsWith(prefix)
+  const path = relative(parent, child)
+  // On Windows a path on another drive has no relative form, so `relative` returns it absolute.
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
 }
 
 function assertNotAborted(signal?: AbortSignal): void {

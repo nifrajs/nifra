@@ -1,13 +1,22 @@
 import { createClientRouter } from "@nifrajs/web/client"
 import { mountRouter } from "../../src/client.ts"
-import { A, B, KeepAliveLayout, RepeatedLayout, TransitionLayout } from "./slot-chain.ts"
+import {
+  A,
+  B,
+  CountingLayout,
+  KeepAliveLayout,
+  RepeatedLayout,
+  TransitionLayout,
+} from "./slot-chain.ts"
 
 const query = new URLSearchParams(location.search)
 const Layout = query.has("transition")
   ? TransitionLayout
   : query.has("repeated")
     ? RepeatedLayout
-    : KeepAliveLayout
+    : query.has("counting")
+      ? CountingLayout
+      : KeepAliveLayout
 let data: string | null = null
 const router = createClientRouter({
   patterns: [

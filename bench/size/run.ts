@@ -273,7 +273,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A revalidation keeps the identity of what it did not change (the sharing walk, and the same
   // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3).
   // Non-tree client-data fallback and sampled row-ID indexing: 19,205 B (Bun 1.4.4).
-  "nifra-web-client": 18.8,
+  // Partial prerendering's prefetch marker and its leave hook on navigation: 18,265 -> 18,368 B.
+  // A reload asks for the fill of each hole host on screen, a server component's included, and the
+  // leave hook runs only for a navigation that loads: 18,368 -> 18,436 B (Bun 1.4.3).
+  // Both of the above together: 19,387 B (Bun 1.4.4).
+  "nifra-web-client": 19.0,
   "nifra-i18n": 4.3,
 }
 

@@ -51,3 +51,20 @@ export const RepeatedLayout = defineComponent({
     return () => h("main", null, [slots.default?.(), slots.default?.()])
   },
 })
+
+// Counts its renders in `layoutRenders`; `layoutTick()` re-renders it on its own.
+export const CountingLayout = defineComponent({
+  props: ["data", "boundaries"],
+  setup(_props, { slots }) {
+    const tick = ref(0)
+    Reflect.set(globalThis, "layoutTick", () => tick.value++)
+    return () => {
+      Reflect.set(
+        globalThis,
+        "layoutRenders",
+        Number(Reflect.get(globalThis, "layoutRenders") ?? 0) + 1,
+      )
+      return h("main", { "data-tick": tick.value }, slots.default?.())
+    }
+  },
+})

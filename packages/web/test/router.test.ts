@@ -370,12 +370,18 @@ describe("createClientRouter", () => {
     })
     r.subscribe(() => seenPending.push(r.snapshot().pending))
     // Only `tab` (declared client-only) changed → publish the new URL, keep the data, never fetch.
-    await r.navigate("/reports?tab=b")
+    const clientOnly = r.navigate("/reports?tab=b")
+    // installHistory reads this right after the call to decide whether the page leaves its first
+    // document: a navigation that loads names its path before its first await, this one never does.
+    expect(r.snapshot().pendingPath).toBeUndefined()
+    await clientOnly
     expect(fetches).toBe(0)
     expect(seenPending).toEqual([false]) // no pending flash - it is a synchronous re-render
     expect(r.snapshot()).toMatchObject({ path: "/reports?tab=b", data: "D", pending: false })
     // A loader-affecting key (`page`) DOES revalidate, even though `tab` is client-only.
-    await r.navigate("/reports?tab=b&page=2")
+    const loading = r.navigate("/reports?tab=b&page=2")
+    expect(r.snapshot().pendingPath).toBe("/reports?tab=b&page=2")
+    await loading
     expect(fetches).toBe(1)
     expect(r.snapshot()).toMatchObject({ path: "/reports?tab=b&page=2", data: "FRESH" })
   })
@@ -853,6 +859,27 @@ describe("createClientRouter", () => {
     expect(r.snapshot().data).toEqual({ id: "7" })
     await r.navigate("/users/7")
     expect(fetches).toBe(2) // one-shot: the cached entry was consumed, so this refetches
+  })
+
+  test("a prefetch says so, and a payload with partially prerendered holes is not kept", async () => {
+    const calls: Array<string | null> = []
+    const realFetch = globalThis.fetch
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router calls it with (url, init) only.
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      calls.push(new Headers(init?.headers).get("x-nifra-prefetch"))
+      const cart = { name: "cart", mode: "dynamic", status: "pending", ppr: true }
+      return new Response(JSON.stringify({ v: 1, data: { id: "7" }, boundaries: { cart } }), {
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial })
+      await r.prefetch("/users/7")
+      await r.navigate("/users/7")
+      expect(calls).toEqual(["1", null])
+    } finally {
+      globalThis.fetch = realFetch
+    }
   })
 
   test("prefetch is a no-op when already cached or unmatched", async () => {
@@ -1811,5 +1838,51 @@ describe("fetchers (concurrent)", () => {
     } finally {
       globalThis.fetch = realFetch
     }
+  })
+})
+
+describe("a page whose holes are hosts a partially prerendered document filled", () => {
+  test("an action's revalidation and an invalidation reload them as fills; a navigation does not", async () => {
+    const sent: unknown[] = []
+    const hosts = {
+      cart: {
+        name: "cart",
+        mode: "dynamic" as const,
+        status: "pending" as const,
+        ppr: true as const,
+      },
+    }
+    const r = createClientRouter({
+      patterns: [{ routeId: "p", pattern: "/p/:id" }],
+      initial: {
+        routeId: "p",
+        params: { id: "1" },
+        path: "/p/1",
+        data: null,
+        pending: false,
+        boundaries: hosts,
+      },
+      fetchData: async (_path, _match, _signal, _navigation, _purpose, names) => {
+        sent.push(names)
+        return { v: 1, data: null, boundaries: hosts }
+      },
+    })
+    const spy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async () =>
+          new Response(JSON.stringify({ added: true }), {
+            headers: { "content-type": "application/json" },
+          }),
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    try {
+      await r.submit("/p/1", new URLSearchParams({ op: "add" }))
+      await r.invalidate()
+      await r.navigate("/p/2")
+    } finally {
+      spy.mockRestore()
+    }
+    expect(sent).toEqual([["cart"], ["cart"], undefined])
   })
 })

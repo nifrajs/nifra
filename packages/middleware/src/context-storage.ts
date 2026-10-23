@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import type { Context, Middleware } from "@nifrajs/core/server"
 
-const storage = new AsyncLocalStorage<Context>()
+// Created on first use: a module with no top-level work is dropped from a bundle that imports it
+// without calling it, which is how a partially prerendered shell's import check tells the two apart.
+let storage: AsyncLocalStorage<Context> | undefined
 
 /**
  * Store the current nifra `Context` in `AsyncLocalStorage` for helpers that run away from the handler
@@ -14,6 +16,7 @@ export function contextStorage(): Middleware {
   return {
     name: "context-storage",
     around(context, next) {
+      storage ??= new AsyncLocalStorage<Context>()
       return storage.run(context, next)
     },
   }
@@ -24,7 +27,7 @@ export function getContext<C extends Context = Context>(): C {
   const context = tryGetContext<C>()
   if (context === undefined) {
     throw new Error(
-      "contextStorage: no active context. Add app.use(contextStorage()) before the route and call getContext() during that request.",
+      "contextStorage: no active context. Add app.use(contextStorage()) before the route and call getContext() during that request. A partially prerendered shell is built outside every request: read the request in a dynamic boundary's loader instead.",
     )
   }
   return context
@@ -32,5 +35,5 @@ export function getContext<C extends Context = Context>(): C {
 
 /** Return the current request context, or `undefined` outside a context-storage request. */
 export function tryGetContext<C extends Context = Context>(): C | undefined {
-  return storage.getStore() as C | undefined
+  return storage?.getStore() as C | undefined
 }

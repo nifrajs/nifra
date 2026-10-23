@@ -5,7 +5,7 @@
  * Bun-plugin in `@nifrajs/web-solid/plugin`.
  */
 import type { RenderAdapter } from "@nifrajs/web"
-import { sharedConfig } from "solid-js"
+import { type JSX, sharedConfig } from "solid-js"
 import {
   generateHydrationScript,
   renderToStream as solidRenderToStream,
@@ -64,6 +64,28 @@ export const solidAdapter: RenderAdapter = {
     return options?.nonce === undefined
       ? solidRenderToString(app)
       : solidRenderToString(app, { nonce: options.nonce })
+  },
+  // A partially prerendered hole's HTML: its own root under `renderId`, so its hydration keys and
+  // `createUniqueId`s never collide with the page's, and its JSX runs inside the render that keys it.
+  // Without a prefix (a fallback, never hydrated) it carries no hydration keys at all.
+  renderFragment(ui, options) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Solid output; the seam erases it to unknown.
+    const view = () => ui() as JSX.Element
+    // `renderToString` leaves its context in Solid's shared config; a page mid-render keeps its own.
+    const page = sharedConfig.context
+    try {
+      return options.idPrefix === undefined
+        ? solidRenderToString(() => {
+            // On the root context, so nodes resolved after `view` returns are unkeyed too.
+            if (sharedConfig.context !== undefined)
+              Reflect.set(sharedConfig.context, "noHydrate", true)
+            return view()
+          })
+        : solidRenderToString(view, { renderId: options.idPrefix })
+    } finally {
+      // Unset included: `context` is an optional property.
+      Reflect.set(sharedConfig, "context", page)
+    }
   },
   renderToStream(chain, props, options) {
     // Solid's `renderToStream` streams `Uint8Array` chunks into a Web `WritableStream` via

@@ -450,6 +450,24 @@
     "code": "import { Hono } from \"hono\"\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nconst legacy = new Hono()\nlegacy.get(\"/users\", (c) => c.json({ source: \"hono\", users: [] }))\nlegacy.post(\"/users\", async (c) => c.json(await c.req.json()))\n\nexport const app = server()\n  // The wildcard is a literal mount prefix, not a typed Nifra route.\n  .mountFetch(\"/legacy/*\", legacy.fetch, { stripPrefix: true })\n  // Typed routes take precedence, so move one route out of Hono at a time.\n  .get(\"/legacy/users/:id\", (c) => ({ id: c.params.id, source: \"nifra\" }))\n  .post(\n    \"/users\",\n    { body: t.object({ name: t.string() }) },\n    (c) => ({ id: crypto.randomUUID(), name: c.body.name }),\n  )"
   },
   {
+    "name": "BACKEND",
+    "topic": "Nifra - Partial prerendering (experimental)",
+    "slug": "partial-prerendering",
+    "code": "import { t } from \"@nifrajs/schema\"\nimport type { BoundaryRequestCtx } from \"@nifrajs/web\"\nimport { defineShellLoader } from \"@nifrajs/web/ppr\"\nimport type { Route } from \"./+types/[id]\"\n\nconst titles: Readonly<Record<string, string>> = { \"1\": \"Sencha\", \"2\": \"Hojicha\" }\nconst cartCount = (request: Request): number => (request.headers.has(\"cookie\") ? 2 : 0)\n\n// The shell: no request, no cookies. It is built once and shared by every visitor.\nexport const shellLoader = defineShellLoader(async ({ params }) => ({\n  title: titles[params.id ?? \"\"] ?? \"Tea\",\n}))\nexport const shellOutput = t.object({ title: t.string() })\nexport const revalidate = 60\nexport const revalidateTags = [\"catalog\"]\nexport const shellVariations = { search: { size: [\"50g\", \"100g\"] } }\n\n// The holes: each runs per request, under its own deadline.\nexport const boundaryLoaders = {\n  cart: {\n    load: (ctx: BoundaryRequestCtx) => ({ count: cartCount(ctx.request) }),\n    output: t.object({ count: t.number() }),\n  },\n} satisfies Route.BoundaryLoaders"
+  },
+  {
+    "name": "SERVER",
+    "topic": "Nifra - Partial prerendering (experimental)",
+    "slug": "partial-prerendering",
+    "code": "import { createCspPolicy, createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { compileShells, partialPrerendering } from \"@nifrajs/web/ppr\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nconst routesDir = \"./routes\"\nconst manifest = discoverRoutes(routesDir)\n// The content-hashed client entry from your build; a shell check record is valid for it only.\nconst clientEntry = \"/assets/entry-4c5ndncr.js\"\n\n// Fails a route whose shell reaches a module that reads the visitor. That route renders whole.\nconst shellChecks = await compileShells({\n  routesDir,\n  manifest,\n  deployment: clientEntry,\n  requestScoped: (file) => file.endsWith(\"/lib/session.ts\"),\n  onFailure: (routeId, error) => console.warn(routeId, error),\n})\n\nexport const app = createWebApp({\n  adapter: reactAdapter,\n  manifest,\n  clientEntry,\n  // Hashes, not a nonce: a shell is one document for every visitor.\n  csp: createCspPolicy({\n    header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,\n  }),\n  experimental: {\n    ppr: partialPrerendering({ shellChecks, origin: \"https://shop.example\" }),\n  },\n})"
+  },
+  {
+    "name": "SHARED_BACKEND",
+    "topic": "Nifra - Partial prerendering (experimental)",
+    "slug": "partial-prerendering",
+    "code": "import { t } from \"@nifrajs/schema\"\nimport type { ShellCtx } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\nconst prices: Readonly<Record<string, string>> = { \"1\": \"$12.00\", \"2\": \"$9.50\" }\n\nexport const boundaryLoaders = {\n  // Inline, with revalidate: the build checks this loader with the shell, so its frame is stored.\n  price: {\n    load: async ({ params }: ShellCtx) => ({ amount: prices[params.id ?? \"\"] ?? \"-\" }),\n    output: t.object({ amount: t.string() }),\n    revalidate: 10,\n    revalidateTags: ({ params }) => [`price:${params.id}`],\n  },\n} satisfies Route.BoundaryLoaders"
+  },
+  {
     "name": "CACHING",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

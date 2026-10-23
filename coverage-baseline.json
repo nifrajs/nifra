@@ -1895,6 +1895,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web-vue/test/fixtures/slot-chain.ts": {
+    "functions": 81.25,
+    "lines": 98.30508474576271
+  },
   "packages/web/src/backend-only.ts": {
     "functions": 100,
     "lines": 100

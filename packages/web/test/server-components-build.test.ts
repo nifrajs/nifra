@@ -127,6 +127,34 @@ test("a dependency reading import.meta.env gets only the public values from the 
   }
 }, 30000)
 
+test("an import that names a server component's file with its extension gets the reference", async () => {
+  const { root, build } = await envFixture({
+    "Note.component.server.ts": [
+      'import { t } from "@nifrajs/schema"',
+      'import { defineServerComponent } from "@nifrajs/web/server-components"',
+      "export const Note = defineServerComponent({",
+      "  input: t.object({}),",
+      "  props: t.object({}),",
+      "  authorize() {},",
+      '  load: () => ({ secret: "component-only-7c41" }),',
+      "  view: () => null,",
+      "})",
+    ].join("\n"),
+    "entry.frontend.ts":
+      'import { Note } from "./Note.component.server.ts"; document.body.textContent = String(Note)',
+  })
+  try {
+    const result = await build()
+    const assets = resolve(result.outDir, "assets")
+    let shipped = ""
+    for (const file of await readdir(assets))
+      shipped += await readFile(resolve(assets, file), "utf8")
+    expect(shipped).not.toContain("component-only-7c41")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30000)
+
 test("the secret scan knows values that exist only in the app's .env files", async () => {
   const { root, build } = await envFixture({
     ".env.production": "API_TOKEN=tok-9f8e7d6c5b4a3z2y1x\n",
