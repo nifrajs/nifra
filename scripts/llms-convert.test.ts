@@ -16,14 +16,17 @@ describe("doc consts", () => {
       "page.tsx",
       [
         'const BASE = "nifra check"',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'const STEPS = [`${BASE} --json`, "nifra fix --code NF-C030"].join("\\n")',
         'const BOTH = BASE + " && " + STEPS',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "const ESCAPED = `a \\` b \\${c}`",
         "const meta = docsMeta()",
       ].join("\n"),
     )
     expect(values.get("STEPS")).toBe("nifra check --json\nnifra fix --code NF-C030")
     expect(values.get("BOTH")).toBe("nifra check && nifra check --json\nnifra fix --code NF-C030")
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the escaped interpolation the converter keeps literal
     expect(values.get("ESCAPED")).toBe("a ` b ${c}")
     expect(unresolved.get("meta")).toBe("CallExpression is not a string the page can show")
   })

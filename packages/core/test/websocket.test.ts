@@ -12,6 +12,16 @@ import {
 import { exceedsPayloadCap } from "../src/server/websocket.ts"
 // The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
 import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
+import {
+  closeArgsAnswers,
+  closeArgsRoute,
+  closeReportRoute,
+  closeReports,
+  closeWithoutCode,
+  FORBIDDEN_CLOSES,
+  REPORT_CAP,
+  SERVER_CLOSE_REPORTS,
+} from "./ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "./ws-send-contract.ts"
 
 let running: RunningServer | undefined
@@ -297,6 +307,22 @@ describe("app.listen() WebSockets", () => {
       })
     })
   }
+
+  test("a close RFC 6455 forbids throws a RangeError and leaves the socket open", async () => {
+    running = closeArgsRoute(server().use(websocket())).listen(0, { hostname: "127.0.0.1" })
+    expect(await closeArgsAnswers(running.port)).toEqual({
+      answers: FORBIDDEN_CLOSES.map(() => "range"),
+      closed: { code: 4000, reason: "ok" },
+    })
+    expect(await closeWithoutCode(running.port)).toEqual({ code: 1000, reason: "" })
+  })
+
+  test("close is given the server's own close when the server closed first", async () => {
+    const app = server({ wsMaxPayloadBytes: REPORT_CAP }).use(websocket())
+    const next = closeReportRoute(app)
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    expect(await closeReports(running.port, next)).toEqual([...SERVER_CLOSE_REPORTS])
+  })
 
   test("echo: open → welcome, message → echo", async () => {
     running = makeApp().listen(0, { hostname: "127.0.0.1" })
@@ -748,6 +774,48 @@ describe("attachWebSocket", () => {
     }
   }
 
+  test("a close RFC 6455 forbids throws a RangeError before the socket sees it", () => {
+    const socket = new FakeSocket()
+    const ws = attachWebSocket(socket, {}, undefined, {
+      openNow: true,
+      pubsub: new TopicRegistry(),
+    })
+    for (const [code, reason] of FORBIDDEN_CLOSES) {
+      expect(() => ws.close(code ?? undefined, reason ?? undefined)).toThrow(RangeError)
+    }
+    expect(socket.closedWith).toBeUndefined()
+    ws.close(1011, "é".repeat(61))
+    expect(socket.closedWith).toEqual({ code: 1011, reason: "é".repeat(61) })
+  })
+
+  test("close is given the server's own close, not the peer's echo of it", () => {
+    const heard: string[] = []
+    const attach = (maxPayloadBytes?: number) => {
+      const socket = new FakeSocket()
+      const handler: WebSocketHandler = {
+        close: (_ws, code, reason) => {
+          heard.push(`${code} ${reason}`)
+        },
+      }
+      const ws = attachWebSocket(socket, handler, undefined, {
+        openNow: true,
+        pubsub: new TopicRegistry(),
+        maxPayloadBytes,
+      })
+      return { socket, ws }
+    }
+    const closing = attach()
+    closing.ws.close(4000, "bye")
+    // A runtime's close event carries the peer's echo, which repeats the code alone.
+    closing.socket.fire("close", { code: 4000, reason: "" })
+    const peer = attach()
+    peer.socket.fire("close", { code: 4001, reason: "peer" })
+    const capped = attach(4)
+    capped.socket.fire("message", { data: "12345" })
+    capped.socket.fire("close", { code: 1009, reason: "" })
+    expect(heard).toEqual(["4000 bye", "4001 peer", "1009 message too large"])
+  })
+
   test("openNow fires open immediately; sets arraybuffer; send/close proxy", () => {
     const socket = new FakeSocket()
     let opened = false
@@ -1050,7 +1118,18 @@ describe("attachWebSocket", () => {
 
   test("exceedsPayloadCap counts UTF-8 bytes at every boundary", () => {
     const encoded = (text: string) => new TextEncoder().encode(text).byteLength
-    for (const text of ["", "abc", "é", "€", "😀", "aé€😀", "€".repeat(5), "😀".repeat(3)]) {
+    const lone = ["\ud800", "\udc00", "a\ud800b", "\udc00\ud800", "😀\ud800", "\ud800".repeat(61)]
+    for (const text of [
+      "",
+      "abc",
+      "é",
+      "€",
+      "😀",
+      "aé€😀",
+      "€".repeat(5),
+      "😀".repeat(3),
+      ...lone,
+    ]) {
       const bytes = encoded(text)
       expect(exceedsPayloadCap(text, bytes)).toBe(false)
       if (bytes > 0) expect(exceedsPayloadCap(text, bytes - 1)).toBe(true)

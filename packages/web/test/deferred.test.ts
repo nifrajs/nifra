@@ -271,6 +271,27 @@ test("ndjsonStream: a value giving up on the request's abort is not logged, a re
   }
 })
 
+test("ndjsonStream: a throwing error log still streams the opaque code and reaches the console", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const lines = await readLines(
+      ndjsonStream(
+        {},
+        [{ id: 0, promise: rejection("upstream failed") }],
+        undefined,
+        undefined,
+        () => {
+          throw new Error("logger down")
+        },
+      ),
+    )
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{}, { i: 0, e: "deferred_error" }])
+    expect(String(errors.mock.calls[0]?.[1])).toContain("upstream failed")
+  } finally {
+    errors.mockRestore()
+  }
+})
+
 describe("parseNdjsonData (client soft-nav transport)", () => {
   // Build an NDJSON stream from explicit text chunks (with optional delay) to drive the parser.
   const streamOf = (

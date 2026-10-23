@@ -2156,6 +2156,26 @@ broken. A store that also implements `fence()` keeps a purge that lands while a
 page renders from being undone when that render stores the page it built from the old data;
 both built-in stores do.
 
+Workers KV is eventually consistent: a purge is usually seen at once where it was made and
+reaches other locations as their copies expire, which Cloudflare puts at up to 60 seconds or
+more. Until then those locations serve the old page. A page one of them rebuilt from the old
+data in that time reads as a miss once the purge arrives, so a purge by path or by tag is
+delayed by propagation, never lost. For a purge that every location honors at the same
+moment, use a store with a strongly consistent backend, such as a Durable Object.
+
+Anything else that can write a shared store - another service on the same KV namespace, a
+leaked token - could put a page with its own script in front of every visitor. So over any
+store but `MemoryCacheStore`, `withISR` needs a
+`storeSecret` (the same in every process, at least 32 characters, and generated
+at random - `openssl rand -hex 32` - since a guessable one can be found from any
+signed page) and refuses to
+start without one. Each page is stored with an HMAC-SHA-256 over its key, body, status,
+headers, tags and freshness, and a page whose signature is missing or wrong is a miss: it
+renders again and the signed render replaces it. A new secret only empties the cache. The
+signature cannot stop a store writer from deleting pages or putting back an older page the
+app stored for the same URL. That page keeps its age: still within its freshness window, it
+is a hit until the window ends; past it, it serves stale and regenerates.
+
 ```ts
 // doc-check: skip - Workers entry: `Env`/`ExecutionContext` globals + your `app` from server.ts.
 // worker.ts - production uses a SHARED store so the cache + purges hold across instances.
@@ -2167,7 +2187,10 @@ export default {
     if (new URL(req.url).pathname === "/__nifra/revalidate") {
       return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
-    const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
+    // Signs every page it stores and serves only pages that verify. Generate the secret:
+    // `openssl rand -hex 32 | wrangler secret put ISR_STORE_SECRET`
+    const storeSecret = env.ISR_STORE_SECRET
+    const isr = withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() })
     // waitUntil keeps the worker alive while a stale page regenerates behind the response.
     return isr(req, { env, waitUntil: (p) => ctx.waitUntil(p) })
   },
@@ -2178,7 +2201,8 @@ A store outage never fails a page. A read that throws, rejects, or outlives
 `storeTimeoutMs` is a miss and the page renders; a failed write still returns the
 rendered page; a failed background regeneration keeps the stale entry. Each failure goes to
 `onStoreError(error, { op })`, which by default logs one line per operation
-per minute without the cache key. Set `storeTimeoutMs` for a network store, so a
+per minute without the cache key; a page that fails its signature check is reported with op
+`"verify"`. Set `storeTimeoutMs` for a network store, so a
 hung connection costs a miss rather than the request.
 
 ### On-demand revalidation
@@ -2251,7 +2275,10 @@ import { revalidateEndpoint } from "@nifrajs/web"
 
 const cdn = cloudflareZone({ zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN })
 // The CDN stores the pages ISR would, tagged, for the route's `revalidate`; browsers revalidate.
-const handler = withCdn(withISR(app, { store, revalidate: 60, now: () => Date.now() }), { provider: cdn })
+const storeSecret = env.ISR_STORE_SECRET // signs the pages a shared store keeps
+const handler = withCdn(withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() }), {
+  provider: cdn,
+})
 // One purge reaches the origin store first, then the CDN: 200 done, 202 queued, 502 refused.
 const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cdn })
 ```
@@ -2327,7 +2354,13 @@ export async function loader({ api, draft, params }: Route.LoaderArgs) {
 
 // 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.
 createWebApp({ adapter, manifest, clientEntry, api, draftSecret: env.DRAFT_SECRET })
-withISR(app, { store, revalidate: 60, now: () => Date.now(), draftSecret: env.DRAFT_SECRET })
+withISR(app, {
+  store,
+  storeSecret: env.ISR_STORE_SECRET, // a shared store's page-signing secret
+  revalidate: 60,
+  now: () => Date.now(),
+  draftSecret: env.DRAFT_SECRET,
+})
 ```
 
 ### Fonts
@@ -3075,7 +3108,8 @@ import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
 
 // routes/hotels.tsx - a page keeps a route extension even with no JSX in it.
 export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
-  // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
+  // Interpolated values are escaped for where they land (text, attribute, URL); a string as a tag
+  // name or inside <script> throws. Wrap trusted markup in raw() to opt out deliberately.
   return html`<ul>${data.hotels.map((h) => html`<li>${h.name}</li>`)}</ul>`
 }
 
@@ -6362,7 +6396,7 @@ text (`string`) or binary (`ArrayBuffer`/typed-array)
 
 `close(code?, reason?)`
 
-close the connection
+close the connection; with no code it sends 1000, on every runtime
 
 `readyState`
 
@@ -15775,6 +15809,19 @@ await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful s
 await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
 
+## Client disconnect and `c.req.signal`
+
+`Deno.serve` aborts a request's `signal` when the client goes away and, by default, also once a
+response has been sent in full. Deno prints a one-time notice about that default when it finishes
+the response to a request whose `signal` was read. nifra reads it when it rebuilds a request (a
+mounted app, a path with `.` or `..` segments, an idempotent route), so `c.req.signal` and
+`fetch(c.req)` still follow a client that hangs up. To have the signal abort only on a disconnect,
+and no notice, run Deno with `--unstable-no-legacy-abort`:
+
+```sh
+deno run --allow-net --unstable-no-legacy-abort main.ts
+```
+
 ## What you get for free
 
 The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) and body-size
@@ -18136,6 +18183,15 @@ Vanilla is the render adapter an agent gets right on the first try. It ships no 
 Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
 
 To refresh one region from a link or GET form without a full reload, render it with `slot(name, content)` inside a `data-swap-slot="<name>"` element and mark the link or form `data-swap="replace:<name>"` or `"append:<name>"`; the page then answers a swap request with that slot alone, and `enableSwap` from `@nifrajs/web/islands/swap` puts it in place. POST forms submit natively, and a swapped slot runs under the current page's Content-Security-Policy. See [Refresh part of the page](https://nifra.dev/docs/islands).
+
+## Escaping
+
+`html` writes each interpolated value for the place it lands, read from the template's own text:
+
+- In text and in a quoted attribute value, it is HTML-escaped.
+- An unquoted attribute value (`class=${name}`) is quoted for you, so a space in the value cannot start another attribute.
+- A `javascript:` or `vbscript:` URL that begins an `href`, `src`, `action` or other URL attribute is written as `about:invalid`.
+- No escaping makes a string safe as a tag name, inside `<script>` or `<style>`, or in an `on*` handler or `srcdoc` value, so a string or nested template throws there. An attribute name takes only a plain name with no value (`<input ${checked ? "checked" : ""}>`), or a suffix after `data-` or `aria-`. Numbers and booleans fill any of these, and `raw()` is the explicit opt-out for trusted text.
 
 Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
 

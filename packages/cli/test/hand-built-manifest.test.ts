@@ -40,6 +40,7 @@ describe("a hand-built route manifest", () => {
     expect(
       manifestListsIn("a.ts", call('Object.keys(import.meta.glob("./routes/**/*.tsx"))')),
     ).toEqual([{ file: "a.ts", line: 3, source: "glob", entries: ["./routes/**/*.tsx"] }])
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: source text the manifest check reads, not an interpolation here
     for (const opaque of ["files", '[...files, "index.tsx"]', "[`${name}.tsx`]", "discover()"])
       expect(manifestListsIn("a.ts", call(opaque))).toEqual([])
     expect(

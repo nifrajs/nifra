@@ -164,6 +164,11 @@ const GATES = Object.freeze([
     "Run `bun run check:workerd` and fix the real Workers runtime contract failure.",
   ),
   gate(
+    "runtime-differential",
+    [["run", "check:runtime-differential"]],
+    "Run `bun run check:runtime-differential` and replay the printed shrunk case; fix the runtime or adapter that answered differently, or document the difference in scripts/runtime-differential/oracle.ts.",
+  ),
+  gate(
     "pipeline-parity",
     [["run", "check:pipeline-parity"]],
     "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
@@ -253,6 +258,7 @@ const RELEASE_PLAN = Object.freeze([
   "cross-runtime-deno",
   "cross-runtime-node",
   "workerd",
+  "runtime-differential",
   "pipeline-parity",
   "leak-matrix",
   "verification-parity",
@@ -293,7 +299,13 @@ const RELEASE_GROUPS: Readonly<Record<string, readonly string[]>> = Object.freez
     "edge-startup",
   ],
   packages: ["build", "publish", "consumer", "cold-start"],
-  runtimes: ["build", "cross-runtime-deno", "cross-runtime-node", "workerd"],
+  runtimes: [
+    "build",
+    "cross-runtime-deno",
+    "cross-runtime-node",
+    "workerd",
+    "runtime-differential",
+  ],
   pipelines: ["build", "pipeline-parity", "leak-matrix"],
   "server-components": [
     "build",

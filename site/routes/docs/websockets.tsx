@@ -262,7 +262,7 @@ export default function WebSockets() {
             <td>
               <code>close(code?, reason?)</code>
             </td>
-            <td>close the connection</td>
+            <td>close the connection; with no code it sends 1000, on every runtime</td>
           </tr>
           <tr>
             <td>

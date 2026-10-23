@@ -12,6 +12,8 @@ on:
       - "mutation-equivalents.json"
       - ".github/workflows/mutation.yml"
 
+permissions: {}
+
 concurrency:
   group: mutation-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -28,6 +30,7 @@ jobs:
         with:
           # The changed lines are diffed against the merge base with origin/main.
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:

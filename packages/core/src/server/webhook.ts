@@ -48,6 +48,7 @@ export type WebhookFailureReason =
   | "malformed_signature"
   | "payload_too_large"
   | "invalid_content_length"
+  | "invalid_body"
 
 /** Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`. */
 export type WebhookResult =
@@ -193,10 +194,7 @@ export async function verifyWebhook(
 
   const read = await readBoundedBytes(req, maxBytes)
   if (!read.ok) {
-    return {
-      ok: false,
-      reason: read.status === 413 ? "payload_too_large" : "invalid_content_length",
-    }
+    return { ok: false, reason: read.error }
   }
   const payload = new TextDecoder().decode(read.bytes)
 

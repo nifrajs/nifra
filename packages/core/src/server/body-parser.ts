@@ -210,11 +210,7 @@ export function bodyParser<Schema extends StandardSchemaV1>(
         : inner(source, contentType, maxBodyBytes, protoPoisoning)
     }
     const body = await readBoundedBytes(source, maxBodyBytes)
-    if (!body.ok) {
-      return body.status === 413
-        ? plainError(413, "payload_too_large")
-        : plainError(400, "invalid_content_length")
-    }
+    if (!body.ok) return plainError(body.status, body.error)
     try {
       const value = await parse(body.bytes, { mediaType, contentType })
       settle(value, protoPoisoning)

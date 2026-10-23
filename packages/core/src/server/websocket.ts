@@ -18,7 +18,7 @@ import type {
 import { validateStandard } from "../schema/standard.ts"
 import { decodeTransportFrame, type TransportCodecRegistry } from "../transport-codec.ts"
 import { guardDecodedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
-import { isResponseResult } from "./runtime-core.ts"
+import { isResponseResult, type StatusResponse } from "./runtime-core.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -35,7 +35,9 @@ type WsMessageInput<Schema extends StandardSchemaV1 | undefined> = Schema extend
 export interface NifraWebSocket<Data = unknown> {
   /** Send a text (`string`) or binary (`ArrayBuffer`/typed-array) frame. No-op once closed. */
   send(data: string | ArrayBufferView | ArrayBuffer): void
-  /** Close the connection (optional code 1000-4999 + short reason). */
+  /** Close the connection, with a code an endpoint may send (1000-1003, 1007-1014, 3000-4999;
+   * 1000 when none is given, on every runtime) and a reason of at most 123 UTF-8 bytes. Any other
+   * close throws a `RangeError`, and the socket stays open. */
   close(code?: number, reason?: string): void
   /** `WebSocket.readyState` (0 CONNECTING · 1 OPEN · 2 CLOSING · 3 CLOSED). */
   readonly readyState: number
@@ -170,7 +172,7 @@ export interface WebSocketHandler<
    * `data: undefined`. A thrown `Response` rejects with it; any other throw goes to the route's
    * `onError` hooks, then a flat 500.
    */
-  upgrade?(c: WebSocketContext<Env> & Extra): MaybePromise<Data | Response>
+  upgrade?(c: WebSocketContext<Env> & Extra): MaybePromise<Data | Response | StatusResponse>
   /**
    * Contract-first messages: a Standard Schema (`t`, zod, valibot, …) validating each **inbound** frame.
    * Text frames are parsed as JSON first. When set, `message` receives the validated, typed value; a
@@ -211,6 +213,9 @@ export interface WebSocketHandler<
     issues: ReadonlyArray<StandardIssue>,
     raw: WebSocketData,
   ): MaybePromise<void>
+  /** The connection closed. `code` and `reason` are the server's own close when it closed first
+   * (`ws.close()`, or 1009 for a message over the cap), the peer's when the peer did, and 1006 when
+   * the connection dropped without a close frame. */
   close?(ws: NifraWebSocket<Data>, code: number, reason: string): MaybePromise<void>
   error?(ws: NifraWebSocket<Data>, error: unknown): MaybePromise<void>
 }
@@ -314,9 +319,20 @@ export function attachWebSocket<
     handler.transport,
     reportError,
   )
+  // The runtime's close event carries the peer's echo, which may drop the reason; `close` is given
+  // the server's own close when the server closed first, as on Bun.
+  let sentClose: readonly [number, string] | undefined
+  // A close with no code is 1000 here as on Bun, whose close() cannot send one without a status.
+  const closeSocket = (code = 1000, reason?: string): void => {
+    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code, reason ?? ""]
+    socket.close(code, reason)
+  }
   ws = {
     send,
-    close: (code, reason) => socket.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      closeSocket(code, reason)
+    },
     get readyState() {
       return socket.readyState
     },
@@ -342,7 +358,7 @@ export function attachWebSocket<
     // The runtime hands over each message whole, so this bounds what reaches the handler, not what
     // the runtime buffered to deliver it.
     if (maxPayloadBytes !== undefined && exceedsPayloadCap(payload, maxPayloadBytes)) {
-      socket.close(1009, "message too large")
+      closeSocket(1009, "message too large")
       return
     }
     safe(() =>
@@ -357,7 +373,8 @@ export function attachWebSocket<
     "close",
     (event: { readonly code?: number; readonly reason?: string }) => {
       pubsub.unsubscribeAll(ws) // drop topic subscriptions so the registry never holds a dead socket
-      safe(() => handler.close?.(ws, event.code ?? 1005, event.reason ?? ""))
+      const [code, reason] = sentClose ?? [event.code ?? 1005, event.reason ?? ""]
+      safe(() => handler.close?.(ws, code, reason))
     },
   )
   socket.addEventListener("error", (event: unknown) => reportError(event))
@@ -372,7 +389,8 @@ export function attachWebSocket<
 const WS_MESSAGE_DECODER = new TextDecoder()
 
 /** Whether a message is over `cap` UTF-8 bytes, without encoding a text one: each UTF-16 unit takes
- * 1-3 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. */
+ * 1-3 bytes (a surrogate pair 4 for its 2, a lone surrogate the 3 of U+FFFD), so only a length
+ * between those bounds is counted. */
 export function exceedsPayloadCap(
   message: string | ArrayBuffer | Uint8Array,
   cap: number,
@@ -384,10 +402,41 @@ export function exceedsPayloadCap(
   let bytes = 0
   for (let i = 0; i < units; i++) {
     const unit = message.charCodeAt(i)
-    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
+    if (unit >= 0xd800 && unit <= 0xdbff && (message.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4
+      i++
+    } else bytes += unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3
     if (bytes > cap) return true
   }
   return false
+}
+
+/**
+ * Refuse a close RFC 6455 forbids before the runtime sees it: a code outside 1000-1003, 1007-1014 and
+ * 3000-4999, a reason over 123 UTF-8 bytes, or a reason without a code. Runtimes disagreed on such a
+ * close - Bun and Deno sent it, Node's `ws` threw after marking the socket closing, which left it
+ * half-open, and workerd threw - so every adapter throws this `RangeError` first and the socket stays
+ * open.
+ */
+export function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
+  if (code === undefined) {
+    if (reason !== undefined && reason !== "")
+      throw new RangeError("ws.close(): a reason needs a code")
+    return
+  }
+  if (
+    !Number.isInteger(code) ||
+    !(
+      (code >= 1000 && code <= 1003) ||
+      (code >= 1007 && code <= 1014) ||
+      (code >= 3000 && code <= 4999)
+    )
+  )
+    throw new RangeError(
+      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
+    )
+  if (reason !== undefined && exceedsPayloadCap(reason, 123))
+    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
 }
 
 type WebSocketSendPayload = string | ArrayBufferView | ArrayBuffer
