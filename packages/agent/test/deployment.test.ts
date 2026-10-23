@@ -6,6 +6,7 @@ import {
   createDeploymentAuthority,
   DeploymentError,
   parseDeploymentCapabilityReport,
+  parseDeploymentPlan,
 } from "../src/index.ts"
 
 function referenceAdapter(id = "local"): AgentDeploymentAdapter {
@@ -176,5 +177,210 @@ describe("deployment lifecycle ordering", () => {
       "hostile_code_requires_isolation",
       "invalid_plan",
     ])
+  })
+})
+
+describe("deployment contract refusals", () => {
+  const code = (run: () => unknown): string | undefined => {
+    try {
+      run()
+    } catch (error) {
+      return error instanceof DeploymentError ? error.code : "not-a-deployment-error"
+    }
+    return undefined
+  }
+
+  test("a plan with a stray field or an unbounded value is invalid", () => {
+    for (const plan of [
+      null,
+      { deploymentId: "run-1", extra: true },
+      { deploymentId: "not a token" },
+      { deploymentId: "run-1", hostileCode: "yes" },
+      { deploymentId: "run-1", workspaceMaxBytes: -1 },
+      { deploymentId: "run-1", deadlineAt: "soon" },
+      { deploymentId: "run-1", deadlineAt: 0 },
+    ])
+      expect(code(() => parseDeploymentPlan(plan))).toBe("invalid_plan")
+    expect(parseDeploymentPlan({ deploymentId: "run-1", deadlineAt: 5 })).toEqual({
+      deploymentId: "run-1",
+      deadlineAt: 5,
+    })
+  })
+
+  test("a capability report with an unknown class or bad limitations is invalid", () => {
+    const report = referenceAdapter().capabilityReport()
+    for (const broken of [
+      "report",
+      { ...report, limitations: ["not a token"] },
+      { ...report, capabilities: { ...report.capabilities, runtime: "mars" } },
+    ])
+      expect(code(() => parseDeploymentCapabilityReport(broken))).toBe("invalid_capabilities")
+  })
+
+  test("a child authority may only narrow its parent's", () => {
+    const authority = {
+      workspaceMaxBytes: 100,
+      cancellation: "cooperative",
+      hostileCodeIsolation: "none",
+    } as const
+    expect(code(() => createDeploymentAuthority({ workspaceMaxBytes: 1, deadlineAt: 0 }))).toBe(
+      "authority_expanded",
+    )
+    expect(
+      code(() =>
+        assertDeploymentAuthorityMonotonic(authority, {
+          ...authority,
+          cancellation: "always" as never,
+        }),
+      ),
+    ).toBe("authority_expanded")
+    const widened: [Parameters<typeof assertDeploymentAuthorityMonotonic>[0], object][] = [
+      [{ ...authority, deadlineAt: 10 }, {}],
+      [{ ...authority, cancellation: "none" }, { cancellation: "cooperative" }],
+      [{ ...authority }, { cancellation: "forced" }],
+      [{ ...authority }, { hostileCodeIsolation: "os" }],
+    ]
+    for (const [parent, change] of widened)
+      expect(
+        code(() => assertDeploymentAuthorityMonotonic(parent, { ...authority, ...change })),
+      ).toBe("authority_expanded")
+    expect(
+      code(() =>
+        assertDeploymentAuthorityMonotonic(
+          { ...authority, deadlineAt: 10 },
+          { ...authority, deadlineAt: 5 },
+        ),
+      ),
+    ).toBeUndefined()
+  })
+})
+
+describe("deployment lifecycle refusals", () => {
+  const authority = () => createDeploymentAuthority({ workspaceMaxBytes: 1024 * 1024 })
+  const deploy = (adapter: Partial<AgentDeploymentAdapter> = {}, options = {}) =>
+    new AgentDeployment(
+      { ...referenceAdapter(), ...adapter } as AgentDeploymentAdapter,
+      authority(),
+      undefined,
+      options,
+    )
+  const fails = async (run: Promise<unknown>) => {
+    try {
+      await run
+    } catch (error) {
+      return error instanceof DeploymentError ? error.code : "not-a-deployment-error"
+    }
+    return undefined
+  }
+
+  test("each step out of order is an invalid transition", async () => {
+    const deployment = deploy()
+    expect(await fails(deployment.start())).toBe("invalid_transition")
+    expect(await fails(deployment.inspect())).toBe("invalid_transition")
+    expect(await fails(deployment.cancel())).toBe("invalid_transition")
+    expect(deployment.evidenceRecords.map((record) => record.kind)).toEqual([
+      "failed",
+      "failed",
+      "failed",
+    ])
+  })
+
+  test("a report for another adapter is refused at prepare", async () => {
+    const deployment = deploy({
+      capabilityReport: () => ({ ...referenceAdapter().capabilityReport(), adapterId: "other" }),
+    })
+    expect(await fails(deployment.prepare({ deploymentId: "run-1" }))).toBe("invalid_capabilities")
+  })
+
+  test("a plan beyond the adapter or the authority is refused at prepare", async () => {
+    const tight = (plan: object, adapter: Partial<AgentDeploymentAdapter> = {}, options = {}) =>
+      fails(deploy(adapter, options).prepare({ deploymentId: "run-1", ...plan }))
+    expect(await tight({ hostileCode: true })).toBe("hostile_code_requires_isolation")
+    const isolated = {
+      capabilityReport: () => {
+        const report = referenceAdapter().capabilityReport()
+        return { ...report, capabilities: { ...report.capabilities, hostileCodeIsolation: "os" } }
+      },
+    } as Partial<AgentDeploymentAdapter>
+    expect(
+      await fails(
+        new AgentDeployment(
+          { ...referenceAdapter(), ...isolated } as AgentDeploymentAdapter,
+          createDeploymentAuthority({ workspaceMaxBytes: 1024, hostileCodeIsolation: "os" }),
+        ).prepare({ deploymentId: "run-1", hostileCode: true }),
+      ),
+    ).toBe("hostile_code_requires_isolation")
+    expect(await tight({ workspaceMaxBytes: 20_000_000 })).toBe("capability_denied")
+    expect(
+      await fails(
+        new AgentDeployment(
+          referenceAdapter(),
+          createDeploymentAuthority({ workspaceMaxBytes: 10 }),
+        ).prepare({ deploymentId: "run-1", workspaceMaxBytes: 100 }),
+      ),
+    ).toBe("authority_expanded")
+    const cancellable = {
+      capabilityReport: () => {
+        const report = referenceAdapter().capabilityReport()
+        return { ...report, capabilities: { ...report.capabilities, cancellation: "none" } }
+      },
+    } as Partial<AgentDeploymentAdapter>
+    expect(await tight({}, cancellable)).toBe("capability_denied")
+    expect(
+      await fails(
+        new AgentDeployment(
+          referenceAdapter(),
+          createDeploymentAuthority({ workspaceMaxBytes: 1024, deadlineAt: 100 }),
+        ).prepare({ deploymentId: "run-1", deadlineAt: 200 }),
+      ),
+    ).toBe("authority_expanded")
+  })
+
+  test("an adapter that throws or answers out of shape fails its step", async () => {
+    const boom = () => {
+      throw new Error("adapter crashed")
+    }
+    expect(await fails(deploy({ prepare: boom }).prepare({ deploymentId: "run-1" }))).toBe(
+      "adapter_error",
+    )
+    expect(
+      await fails(
+        deploy({
+          prepare: () => ({ deploymentId: "run-1", state: "prepared", preparedRef: "not a ref" }),
+        }).prepare({ deploymentId: "run-1" }),
+      ),
+    ).toBe("malformed_callback")
+    const started = async (adapter: Partial<AgentDeploymentAdapter>) => {
+      const deployment = deploy(adapter)
+      await deployment.prepare({ deploymentId: "run-1" })
+      return deployment
+    }
+    expect(await fails((await started({ start: boom })).start())).toBe("adapter_error")
+    expect(
+      await fails(
+        (await started({ start: () => ({ deploymentId: "run-1", state: "prepared" }) })).start(),
+      ),
+    ).toBe("malformed_callback")
+    const running = async (adapter: Partial<AgentDeploymentAdapter>) => {
+      const deployment = await started(adapter)
+      await deployment.start()
+      return deployment
+    }
+    expect(
+      await fails(
+        (
+          await running({ inspect: () => ({ deploymentId: "run-1", state: "exploded" }) })
+        ).inspect(),
+      ),
+    ).toBe("malformed_callback")
+    expect(
+      await fails((await running({ inspect: () => ({ deploymentId: "run-1" }) })).inspect()),
+    ).toBe("malformed_callback")
+    expect(await fails((await running({ cancel: boom })).cancel())).toBe("adapter_error")
+    expect(
+      await fails(
+        (await running({ cancel: () => ({ deploymentId: "run-1", state: "disposed" }) })).cancel(),
+      ),
+    ).toBe("malformed_callback")
   })
 })
