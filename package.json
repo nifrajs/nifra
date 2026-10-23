@@ -159,7 +159,7 @@
     "@nifrajs/pi": "workspace:*",
     "@nifrajs/testing": "workspace:*",
     "@nifrajs/web": "workspace:*",
-    "@types/bun": "^1.4.3",
+    "@types/bun": "^1.4.4",
     "@types/express": "^5.0.6",
     "@upstash/context7-mcp": "4.4.4",
     "drizzle-kit": "^0.31.10",
