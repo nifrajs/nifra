@@ -67,7 +67,9 @@ test("release workflow verifies release PRs and never invokes Version Packages a
     "utf8",
   )
   expect(workflow).toContain("startsWith(github.event.pull_request.head.ref, 'release/')")
-  expect(workflow).toContain("github.event_name != 'pull_request' && 'publish'")
+  expect(workflow).toContain(
+    "github.event_name != 'pull_request' && github.event_name != 'merge_group' && 'publish'",
+  )
   expect(workflow).toContain("queue: max")
   expect(workflow).toContain('.name == "release-verification"')
   expect(workflow).toContain("bun run release:check")
@@ -401,6 +403,14 @@ test.skipIf(process.platform === "win32")(
   },
 )
 
+// main merges through a merge queue: a workflow behind a required check that skips merge_group never
+// reports that check there, and the queue stalls until it times out.
+test("the workflows behind main's required checks run in the merge queue", () => {
+  for (const name of ["ci.yml", "codeql.yml", "release.yml"]) {
+    expect(Bun.YAML.parse(workflowText(name))).toHaveProperty(["on", "merge_group"])
+  }
+})
+
 const SITE_GATE = "Require main and its passing push CI"
 const CI_PASSED =
   '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"'
@@ -409,10 +419,10 @@ test("site.yml deploys main by hand, in release.yml's publish queue, with deploy
   const site: unknown = Bun.YAML.parse(workflowText("site.yml"))
   expect(site).toHaveProperty(["on"], { workflow_dispatch: null })
   expect(site).toHaveProperty(["permissions"], { contents: "read" })
-  // The group release.yml evaluates to for every run but a pull request's.
+  // The group release.yml evaluates to for every run but a pull request's or a merge queue's.
   expect(Bun.YAML.parse(workflowText("release.yml"))).toHaveProperty(
     ["concurrency", "group"],
-    `release-\${{ github.event_name != 'pull_request' && 'publish' || github.run_id }}`,
+    `release-\${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && 'publish' || github.run_id }}`,
   )
   expect(site).toHaveProperty(["concurrency"], {
     group: "release-publish",
