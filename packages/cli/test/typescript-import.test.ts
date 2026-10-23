@@ -403,9 +403,11 @@ test("the TypeScript 7 check follows imports into modules outside its scanned se
       "frontend/helper.js":
         'import { readFileSync } from "node:fs"\nexport const help = () => readFileSync\n',
       "backend/tables.js":
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'import { prefix } from "./prefix.js"\nexport const TABLE = `${prefix}users`\n',
       "backend/prefix.js": 'export const prefix = "app_"\n',
       "backend/db.ts":
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'import { TABLE } from "./tables.js"\nexport const all = (db: { query(sql: string): unknown }) => db.query(`SELECT * FROM ${TABLE}`)\n',
     }
     for (const [file, content] of Object.entries(files)) await writeFile(join(root, file), content)

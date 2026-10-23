@@ -35,6 +35,7 @@ export function fixtureRouter(controller: ComponentController, state: ComponentS
       router.submit("/", new URLSearchParams({ fail: fail ? "yes" : "no" })),
     switchScope: async () => {
       await invalidateComponentScope()
+      // biome-ignore lint/suspicious/noDocumentCookie: the browser fixture sets the cookie its next request carries
       document.cookie = "fixture-subject=B; Path=/; SameSite=Lax"
       await router.invalidate()
     },
