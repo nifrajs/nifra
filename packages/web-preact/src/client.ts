@@ -50,7 +50,7 @@ const ChainContext = createContext<{
 }>({ chain: [], props: { data: null } })
 type LayoutProps = {
   readonly data: unknown
-  readonly boundaries?: BoundaryStates
+  readonly boundaries?: BoundaryStates | undefined
   readonly children?: ComponentChildren
 }
 // One `memo` per component, so its type stays the same across renders.
@@ -85,16 +85,14 @@ const levelAt = (depth: number): VNode<{ readonly depth: number }> => {
 // that moved, such as the page's `pending`.
 function Level({ depth }: { readonly depth: number }): ComponentChildren {
   const { chain, props } = useContext(ChainContext)
-  if (chain[depth] === undefined) return null
   // A class component (an `_error` boundary) renders through the memo's wrapper all the same.
   if (depth === chain.length - 1)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain holds the route's modules' default exports, its last entry the page component
     return h(memoPage(chain[depth] as FunctionComponent<RenderProps>), props)
-  const data = props.layoutData?.[depth] ?? null
   return h(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
     memoLayout(chain[depth] as FunctionComponent<LayoutProps>),
-    props.boundaries === undefined ? { data } : { data, boundaries: props.boundaries },
+    { data: props.layoutData?.[depth] ?? null, boundaries: props.boundaries },
     levelAt(depth + 1),
   )
 }

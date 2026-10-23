@@ -39,6 +39,8 @@ describe("shareData", () => {
     const shared = at(shareData(prev, later))
     expect(shared).toBe(at(later))
     expect(shared).toEqual(new Date("2026-01-01T00:00:01.000Z"))
+    // A Date replaced by another kind of value takes the new value.
+    expect(shareData({ at: new Date(0) }, { at: "soon" })).toEqual({ at: "soon" })
   })
 
   test("class instances, Maps, promises and prototype-less objects come from the new payload", () => {
@@ -84,6 +86,9 @@ describe("shareData", () => {
     expect(Object.keys(swapped)).toEqual(["a", "c"])
     // Inherited names read the prototype's member on the old object, never an equal value.
     expect(shareData({ a: 1 }, { constructor: 1 })).toEqual({ constructor: 1 })
+    // A key both hold as undefined is unchanged.
+    const holey = { a: 1, b: undefined }
+    expect(shareData(holey, { a: 1, b: undefined })).toBe(holey)
   })
 
   test("rows with an id match by id on a prepend and a reorder", () => {
@@ -97,6 +102,21 @@ describe("shareData", () => {
     const again = shareData(prev, reordered)
     expect(again).not.toBe(prev)
     for (let i = 0; i < 50; i++) expect(again[i]).toBe(prev[49 - i])
+  })
+
+  test("a removed last row shortens the array", () => {
+    const prev = rows(3)
+    const shared = shareData(prev, fresh(rows(2)))
+    expect(shared).toHaveLength(2)
+    expect(shared[1]).toBe(prev[1])
+  })
+
+  test("null elements sit beside rows with an id", () => {
+    const prev = [null, { id: 1, label: "a" }]
+    expect(shareData(prev, fresh(prev))).toBe(prev)
+    const swapped = shareData(prev, [{ id: 1, label: "a" }, null])
+    expect(swapped[0]).toBe(prev[1])
+    expect(swapped[1]).toBeNull()
   })
 
   test("rows without an id match by position", () => {
@@ -124,6 +144,13 @@ describe("shareData", () => {
     expect(walked[31]).toBe(prev[31])
     expect(walked[99]).toBe(prev[99])
     expect(walked[0]?.tags).toBe(prev[0]?.tags)
+
+    // So does one kept earlier, when the 32nd element changed.
+    const keptEarly = fresh(rows(100, (i) => (i === 5 ? `row ${i}` : `row ${i} r2`)))
+    const early = shareData(prev, keptEarly)
+    expect(early).not.toBe(keptEarly)
+    expect(early[5]).toBe(prev[5])
+    expect(early[99]?.tags).toBe(prev[99]?.tags)
   })
 
   test("arrays of primitives and nested arrays share by content", () => {

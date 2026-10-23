@@ -78,13 +78,11 @@ const Level = defineComponent({
     return () => {
       const { chain, props: route } = view?.value ?? { chain: [], props: { data: null } }
       const component = chain[props.depth]
-      if (component === undefined) return null
       if (props.depth === chain.length - 1) return pageNode(component, route)
-      const data = route.layoutData?.[props.depth] ?? null
       return h(
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
         component as Component,
-        route.boundaries === undefined ? { data } : { data, boundaries: route.boundaries },
+        { data: route.layoutData?.[props.depth] ?? null, boundaries: route.boundaries },
         { default: () => h(Level, { depth: props.depth + 1 }), $stable: true },
       )
     }

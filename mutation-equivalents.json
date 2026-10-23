@@ -327,5 +327,60 @@
       "from": "!hosts.includes(host)",
       "reason": "A host listed twice is scanned twice and yields the same routes."
     }
+  ],
+  "packages/web-vue/src/client.ts": [
+    {
+      "op": "flip boolean",
+      "fn": "<module>",
+      "code": "props: { depth: { type: Number, required: true } },",
+      "from": "true",
+      "reason": "Every Level is created with a depth; required only adds a development warning."
+    }
+  ],
+  "packages/web/src/internal/share-data.ts": [
+    {
+      "op": "condition->false",
+      "fn": "shareData",
+      "code": "if (Object.is(prev, next)) return prev",
+      "from": "Object.is(prev, next)",
+      "reason": "A fast path: the walk returns prev for an identical plain object or array, and next, the same value, for anything else."
+    },
+    {
+      "op": "condition->true",
+      "fn": "shareData",
+      "code": "if (byId === undefined) {",
+      "from": "byId === undefined",
+      "reason": "Rebuilding the id map from the same prev gives the same map; only the cost changes."
+    },
+    {
+      "op": "x++->x--",
+      "fn": "shareData",
+      "code": "if (value === old) kept++",
+      "from": "kept++",
+      "reason": "Only whether kept is zero is read, and kept-- leaves it non-zero exactly when kept++ does."
+    }
+  ],
+  "packages/web/src/router.ts": [
+    {
+      "op": "condition->false",
+      "fn": "reloadActive",
+      "code": "const shown = rematched ? undefined : (shownPage ?? state)",
+      "from": "rematched",
+      "reason": "Sharing with a status page keeps only parts equal in content, so the published data equals the reload, and a status page carries no response text for the same-text reuse to match."
+    },
+    {
+      "op": "condition->false",
+      "fn": "shareShown",
+      "code": "...(loaded.boundaries === undefined",
+      "from": "loaded.boundaries === undefined",
+      "reason": "Passes boundaries: undefined instead of no key; dataFields and cachePut both treat an undefined boundaries as absent."
+    },
+    {
+      "op": "delete statement",
+      "fn": "reloadActive",
+      "code": "cachePut(pagePath, reloaded)",
+      "from": "cachePut(pagePath, reloaded)",
+      "reason": "Cache entries are only marked stale and their keys only pick which fetchers invalidate() refreshes; a fetcher's own load already caches the path it shows."
+    }
   ]
 }

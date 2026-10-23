@@ -9,9 +9,10 @@ const isPlain = (value: unknown): value is Record<string, unknown> =>
  *
  * Plain objects and arrays compare by content and Dates by time (a revived `t.date()` field is a new
  * `Date` on every parse); anything else, such as a class instance, a `Map`, a promise or an object
- * without a prototype, is taken from `next`. An array element with an `id` pairs with the old element of that `id` before the one at its
- * index, so a prepend or a reorder still keeps every unchanged row. An array whose first 32 elements
- * keep nothing is taken from `next` whole: a reload that changed every row stops walking early.
+ * without a prototype, is taken from `next`. An array element with an `id` pairs with the old element
+ * of that `id` before the one at its index, so a prepend or a reorder still keeps every unchanged row.
+ * An array whose first 32 elements keep nothing is taken from `next` whole: a reload that changed every
+ * row stops walking early.
  */
 export function shareData<T>(prev: unknown, next: T): T
 export function shareData(prev: unknown, next: unknown): unknown {

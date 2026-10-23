@@ -156,6 +156,32 @@ describe("a reload shares what it did not change", () => {
     expect(r.snapshot().boundaries?.photo?.data).toBe(held)
   })
 
+  test("a page an action redirected to shares its next reload", async () => {
+    answer(() => new Response(null, { headers: { "x-nifra-redirect": "/list" } }))
+    const r = createClientRouter({
+      patterns,
+      initial: onList(),
+      fetchData: async (path) => (path === "/list" ? listEnvelope() : { user: { id: 7 } }),
+    })
+    await r.navigate("/users/7")
+    await r.submit("/users/7", new URLSearchParams())
+    const landed = r.snapshot()
+    expect(landed.path).toBe("/list")
+    await r.invalidate()
+    expect(r.snapshot().data).toBe(landed.data)
+  })
+
+  test("a status page on screen reloads as its URL's route", async () => {
+    const r = createClientRouter({
+      patterns,
+      initial: { routeId: "_404", params: {}, path: "/list", data: null, pending: false },
+      fetchData: async () => listEnvelope(),
+    })
+    await r.invalidate()
+    expect(r.snapshot().routeId).toBe("list")
+    expect(r.snapshot().data).toEqual(listData())
+  })
+
   test("a shareData = false route gets fresh data", async () => {
     const r = createClientRouter({
       patterns,
@@ -193,6 +219,32 @@ describe("a reload shares what it did not change", () => {
     await r.invalidate()
     expect(serverRuns).toBe(2)
     expect(r.snapshot().data).toBe(first)
+  })
+})
+
+describe("a reload's request", () => {
+  test("a reload offers the server no layout data to keep: every layout loader runs again", async () => {
+    const navigations: unknown[] = []
+    const r = createClientRouter({
+      patterns,
+      initial: onList(),
+      fetchData: async (path, _match, _signal, navigation) => {
+        navigations.push(navigation)
+        return path === "/list" ? listEnvelope() : { user: { id: 7 } }
+      },
+    })
+    const viewer = r.fetcher("viewer")
+    await viewer.load("/users/7")
+    await viewer.load("/users/7")
+    await r.invalidate()
+    expect(navigations).toEqual([undefined, undefined, undefined])
+  })
+
+  test("the default transport aborts with the navigation", async () => {
+    const fetched = answer(() => Response.json(listEnvelope()))
+    const r = createClientRouter({ patterns, initial: onList(null) })
+    await r.navigate("/list")
+    expect(fetched.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
   })
 })
 
