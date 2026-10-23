@@ -126,6 +126,7 @@ function routeTypesStandIn(name: string): string {
   )
   return [
     'import type { LoaderArgs as Args, OutputOf, RouteActionReturn, RouteLoaderReturn } from "@nifrajs/client"',
+    'import type { BoundaryLoadersOf } from "@nifrajs/web"',
     'type Backend = typeof import("../sample")',
     "export namespace Route {",
     `  export type Params = { ${own.join("; ")} } & Record<string, string>`,
@@ -136,6 +137,7 @@ function routeTypesStandIn(name: string): string {
     "  export type Loader = (args: LoaderArgs) => RouteLoaderReturn<Backend>",
     "  export type Action = (args: ActionArgs) => RouteActionReturn<Backend>",
     "  export type ComponentProps = { readonly data: LoaderData; readonly actionData?: ActionData; readonly params: Params }",
+    "  export type BoundaryLoaders = BoundaryLoadersOf<unknown, Backend>",
     "}",
     "",
   ].join("\n")

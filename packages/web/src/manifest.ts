@@ -12,7 +12,14 @@ import {
   paramConstraint,
 } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
-import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
+import type {
+  BoundaryDescriptor,
+  BoundaryRegistration,
+  BoundaryRequestCtx,
+  SharedHoleCtx,
+  ShellCtx,
+  StaticCtx,
+} from "./boundary.ts"
 import { guardChannel, outputGuard } from "./internal/output-guard.ts"
 import type { RevalidateTags } from "./isr.ts"
 
@@ -362,6 +369,19 @@ export interface RouteModule {
   readonly loaderOutput?: StandardSchemaV1
   /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */
   readonly actionOutput?: StandardSchemaV1
+  /**
+   * Experimental, backend half only: the loader of a partially prerendered page's shared shell. It
+   * receives no request, so its output is the same for every visitor and the shell is cached.
+   */
+  readonly shellLoader?: (ctx: ShellCtx) => unknown
+  /** Experimental, backend half only: the schema of what {@link shellLoader} returns. */
+  readonly shellOutput?: StandardSchemaV1
+  /**
+   * Experimental, backend half only: query parameters that select a different shell, each with its
+   * closed set of values (`{ search: { color: ["red", "blue"] } }`). Any other parameter, or a value
+   * outside its set, builds the default shell; holes still read the whole query.
+   */
+  readonly shellVariations?: ShellVariations
   /** Optional client-only loader. It runs after hydration and on client navigations. */
   readonly clientLoader?: ClientLoader
   /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
@@ -471,7 +491,57 @@ export interface BoundaryLoaderEntry {
   readonly load: NonNullable<BoundaryRegistration["load"]>
   /** The boundary data's output schema. Required whenever `load` returns data. */
   readonly output?: StandardSchemaV1
+  /**
+   * A `shared` boundary's freshness in seconds, required for one and refused for any other: an older
+   * entry is served while one rebuild runs. Write the entry inline, so the build can find it.
+   */
+  readonly revalidate?: number
+  /** A `shared` boundary's tags, as a route's `revalidateTags`: purging one drops its entries. */
+  readonly revalidateTags?: RevalidateTags
 }
+
+type DeclaredBoundaryOf<Frontend> = Frontend extends {
+  readonly boundaries: readonly (infer Declared)[]
+}
+  ? Declared
+  : never
+type BoundaryNameOf<Declared> = Declared extends { readonly name: infer Name extends string }
+  ? Name
+  : never
+// A hole needs an entry unless the page gives it a `load` of its own.
+type HoleNameOf<Declared> = Declared extends { readonly load: (...args: never[]) => unknown }
+  ? never
+  : Declared extends { readonly mode: "dynamic" | "shared" }
+    ? BoundaryNameOf<Declared>
+    : never
+type LoaderEntryOf<Declared> = Declared extends { readonly mode: "shared" }
+  ? Omit<BoundaryLoaderEntry, "load" | "revalidate"> & {
+      readonly load: (ctx: SharedHoleCtx) => unknown
+      readonly revalidate: number
+    }
+  : Omit<BoundaryLoaderEntry, "load" | "revalidate" | "revalidateTags"> & {
+      readonly load: (
+        ctx: Declared extends { readonly mode: "static" } ? StaticCtx : BoundaryRequestCtx,
+      ) => unknown
+    }
+
+/**
+ * The `boundaryLoaders` a backend half may export, from the module types of both halves: an entry
+ * names a boundary the page declares, and a route with a `shellLoader` needs one for each hole.
+ * Unchecked when TypeScript cannot read the page (`.svelte`, `.vue`) or its boundary names are not
+ * literal types, which `as const` on each boundary gives.
+ */
+export type BoundaryLoadersOf<Frontend, Backend> = unknown extends Frontend
+  ? Readonly<Record<string, BoundaryLoaderEntry>>
+  : string extends BoundaryNameOf<DeclaredBoundaryOf<Frontend>>
+    ? Readonly<Record<string, BoundaryLoaderEntry>>
+    : {
+        readonly [Declared in DeclaredBoundaryOf<Frontend> as BoundaryNameOf<Declared>]?: LoaderEntryOf<Declared>
+      } & (Backend extends { readonly shellLoader: unknown }
+        ? {
+            readonly [Declared in DeclaredBoundaryOf<Frontend> as HoleNameOf<Declared>]: LoaderEntryOf<Declared>
+          }
+        : unknown)
 
 /** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
  *
@@ -653,6 +723,93 @@ export const FRONTEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "ssr",
 ])
 
+/** Query parameters that select a shell variant, each with its closed set of values. */
+export interface ShellVariations {
+  readonly search?: Readonly<Record<string, readonly string[]>>
+}
+
+const VARIATION_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+const MAX_VARIATION_KEYS = 8
+const MAX_VARIATION_VALUES = 32
+const MAX_VARIATION_VALUE_LENGTH = 128
+
+/** A closed, small set, so no client can mint unbounded shell keys. */
+function assertShellVariations(backend: string, value: unknown): void {
+  const fail = (why: string): never => {
+    throw routeError(`"${backend}" exports shellVariations ${why}`)
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    fail("that is not an object")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked just above to be a non-null object that is not an array.
+  const record = value as Readonly<Record<string, unknown>>
+  for (const key of Object.keys(record))
+    if (key !== "search") fail(`with "${key}"; only "search" is read`)
+  const search = record.search
+  if (search === undefined) return
+  if (typeof search !== "object" || search === null || Array.isArray(search))
+    fail("whose search is not an object of value lists")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked just above to be a non-null object that is not an array.
+  const entries = Object.entries(search as Readonly<Record<string, unknown>>)
+  if (entries.length > MAX_VARIATION_KEYS) fail(`with more than ${MAX_VARIATION_KEYS} parameters`)
+  for (const [name, values] of entries) {
+    if (!VARIATION_NAME.test(name))
+      fail(`with a parameter name "${name}" outside ${VARIATION_NAME.source}`)
+    if (!Array.isArray(values) || values.length === 0 || values.length > MAX_VARIATION_VALUES)
+      fail(`whose "${name}" is not a list of 1 to ${MAX_VARIATION_VALUES} values`)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked just above to be an array.
+    const list = values as readonly unknown[]
+    if (
+      new Set(list).size !== list.length ||
+      list.some(
+        (item) =>
+          typeof item !== "string" || item.length === 0 || item.length > MAX_VARIATION_VALUE_LENGTH,
+      )
+    )
+      fail(
+        `whose "${name}" values are not distinct strings of 1 to ${MAX_VARIATION_VALUE_LENGTH} characters`,
+      )
+  }
+}
+
+// A year: past it, an entry may as well never refresh.
+const MAX_SHARED_REVALIDATE_SECONDS = 365 * 24 * 60 * 60
+
+/** A `shared` boundary's entry carries its own freshness; any other boundary's carries none. */
+function assertSharedEntry(
+  backend: string,
+  name: string,
+  shared: boolean,
+  entry: { readonly revalidate?: unknown; readonly revalidateTags?: unknown },
+): void {
+  const key = `boundaryLoaders["${name}"]`
+  if (!shared) {
+    if (entry.revalidate !== undefined || entry.revalidateTags !== undefined) {
+      throw routeError(
+        `${key} in "${backend}" has revalidate or revalidateTags, which only a shared boundary's entry takes`,
+      )
+    }
+    return
+  }
+  const { revalidate, revalidateTags } = entry
+  if (
+    typeof revalidate !== "number" ||
+    !Number.isInteger(revalidate) ||
+    revalidate < 1 ||
+    revalidate > MAX_SHARED_REVALIDATE_SECONDS
+  ) {
+    throw routeError(
+      `${key} in "${backend}" is for a shared boundary, so it needs revalidate: a whole number of seconds from 1 to ${MAX_SHARED_REVALIDATE_SECONDS}`,
+    )
+  }
+  if (
+    revalidateTags !== undefined &&
+    typeof revalidateTags !== "function" &&
+    !(Array.isArray(revalidateTags) && revalidateTags.every((tag) => typeof tag === "string"))
+  ) {
+    throw routeError(`${key}.revalidateTags in "${backend}" must be a list of tags or a function`)
+  }
+}
+
 /** Exports only the server or the build reads. They live in the route's `x.backend.ts`. */
 export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "loader",
@@ -670,6 +827,9 @@ export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "gate",
   "shouldRevalidate",
   "allowedOrigins",
+  "shellLoader",
+  "shellOutput",
+  "shellVariations",
 ])
 
 const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)
@@ -737,6 +897,12 @@ export function mergeRouteHalves(
   const cached = mergedHalves.get(front)
   if (cached !== undefined && cached.back === back) return cached.module
   assertFrontendHalf(file, front as unknown as Readonly<Record<string, unknown>>)
+  const shared = front.boundaries?.find((boundary) => boundary.mode === "shared")
+  if (shared !== undefined && back?.shellLoader === undefined) {
+    throw routeError(
+      `boundary "${shared.name}" in "${file}" is shared, which only a partially prerendered page has: its backend half must export shellLoader`,
+    )
+  }
   if (back === undefined || backend === undefined) {
     mergedHalves.set(front, { back, module: front })
     return front
@@ -749,12 +915,30 @@ export function mergeRouteHalves(
     action,
     loaderOutput,
     actionOutput,
+    shellLoader,
+    shellOutput,
     ...server
   } = back
-  const guarded: { loader?: unknown; action?: unknown } = {}
+  if (shellLoader !== undefined && loader !== undefined) {
+    throw routeError(
+      `"${backend}" exports both shellLoader and loader. A partially prerendered page's per-visitor data comes from its dynamic boundaries' loaders`,
+    )
+  }
+  if (server.shellVariations !== undefined) {
+    if (shellLoader === undefined)
+      throw routeError(`"${backend}" exports shellVariations but no shellLoader for them to vary`)
+    assertShellVariations(backend, server.shellVariations)
+  }
+  if (shellLoader !== undefined && server.prerender === true) {
+    throw routeError(
+      `"${backend}" exports shellLoader with prerender = true. A page with no per-visitor part needs no shellLoader`,
+    )
+  }
+  const guarded: { loader?: unknown; action?: unknown; shellLoader?: unknown } = {}
   for (const [name, fn, schema, schemaName] of [
     ["loader", loader, loaderOutput, "loaderOutput"],
     ["action", action, actionOutput, "actionOutput"],
+    ["shellLoader", shellLoader, shellOutput, "shellOutput"],
   ] as const) {
     if (fn === undefined) {
       if (schema !== undefined) {
@@ -777,11 +961,20 @@ export function mergeRouteHalves(
       throw routeError(`"${backend}" exports boundaryLoaders that is not an object of loaders`)
     }
     const loaders = boundaryLoaders as Readonly<
-      Record<string, { readonly load?: unknown; readonly output?: unknown }>
+      Record<
+        string,
+        {
+          readonly load?: unknown
+          readonly output?: unknown
+          readonly revalidate?: unknown
+          readonly revalidateTags?: unknown
+        }
+      >
     >
-    const declared = new Set((front.boundaries ?? []).map((boundary) => boundary.name))
+    const declared = new Map((front.boundaries ?? []).map((boundary) => [boundary.name, boundary]))
     for (const [name, entry] of Object.entries(loaders)) {
-      if (!declared.has(name)) {
+      const boundary = declared.get(name)
+      if (boundary === undefined) {
         throw routeError(
           `"${backend}" has boundaryLoaders["${name}"], but "${file}" declares no boundary named "${name}"`,
         )
@@ -789,6 +982,7 @@ export function mergeRouteHalves(
       if (typeof entry?.load !== "function") {
         throw routeError(`boundaryLoaders["${name}"].load in "${backend}" must be a function`)
       }
+      assertSharedEntry(backend, name, boundary.mode === "shared", entry)
     }
     boundaries = front.boundaries?.map((boundary) => {
       const entry = loaders[boundary.name]
@@ -802,7 +996,16 @@ export function mergeRouteHalves(
             : outputGuard(entry.output, `"${backend}"`, `${key}.output`),
         missing: `${key}.output in "${backend}"`,
       })
-      return { ...boundary, load } as BoundaryRegistration
+      const merged =
+        boundary.mode === "shared"
+          ? {
+              ...boundary,
+              load,
+              revalidate: entry.revalidate,
+              revalidateTags: entry.revalidateTags,
+            }
+          : { ...boundary, load }
+      return merged as BoundaryRegistration
     })
   }
   const module = {

@@ -98,6 +98,12 @@ export interface ComponentOwner {
   readonly scope: "anonymous" | ((ctx: ServerComponentContext) => string | Promise<string>)
 }
 
+/** Experimental: the server components a partially prerendered route's holes may show. */
+export interface ComponentHoles {
+  readonly components: readonly ServerComponentHandle[]
+  readonly capabilities?: readonly string[]
+}
+
 export interface ServerComponentHandle {
   readonly reference?: string
   readonly input: StandardSchemaV1
@@ -135,4 +141,14 @@ export interface ServerComponentRuntime {
   ): Promise<ComponentState>
   response(state: ComponentState, selection: import("./protocol.ts").ComponentRequest): Response
   failure(error: unknown): Response
+  /** Whether the route's partially prerendered holes may show server components. */
+  hosts?(routeId: string): boolean
+  /** Render `component` as the route's hole `key`, with the hole loader's output as its input. */
+  hole?(
+    routeId: string,
+    component: object,
+    key: string,
+    input: unknown,
+    context: ServerComponentContext,
+  ): Promise<ComponentRecord>
 }

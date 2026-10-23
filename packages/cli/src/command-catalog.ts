@@ -30,6 +30,7 @@ import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
 import type { RouteTypesReport } from "./route-types.ts"
+import type { HoleScaffoldResult } from "./scaffold-hole.ts"
 import type { SmokeReport } from "./smoke.ts"
 import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
@@ -369,6 +370,19 @@ interface MigrateInput {
   readonly write?: boolean | undefined
   /** `migrate layout`: list the folders modules would leave in package.json zones instead. */
   readonly zones?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+/** `scaffold hole <route> <name>`: the parser admits only the `hole` kind. */
+interface ScaffoldInput {
+  readonly kind: "hole"
+  readonly route: string
+  readonly name: string
+  readonly shared?: boolean | undefined
+  readonly interactive?: boolean | undefined
+  readonly timeout?: number | undefined
+  readonly server?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -745,6 +759,43 @@ const FIX_SCHEMA = input<FixInput>(
     return {
       code: optionalString(raw.code, "code"),
       ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const SCAFFOLD_SCHEMA = input<ScaffoldInput>(
+  objectSchema(
+    {
+      kind: { type: "string", enum: ["hole"] },
+      route: { type: "string" },
+      name: { type: "string" },
+      shared: { type: "boolean" },
+      interactive: { type: "boolean" },
+      timeout: { type: "integer" },
+      server: { type: "boolean" },
+      json: { type: "boolean" },
+      dir: { type: "string" },
+    },
+    ["kind", "route", "name"],
+  ),
+  (value) => {
+    const raw = withDir(record(value))
+    if (raw.kind !== "hole")
+      throw new TypeError("scaffold what: `nifra scaffold hole <route> <name>`")
+    const route = optionalString(raw.route, "route")
+    const name = optionalString(raw.name, "name")
+    if (route === undefined || name === undefined)
+      throw new TypeError(
+        "`nifra scaffold hole <route> <name>` needs the route and the hole's name",
+      )
+    const timeout = optionalNumber(raw.timeout, "timeout")
+    return {
+      kind: "hole",
+      route,
+      name,
+      ...parseBooleanFlags(raw, ["shared", "interactive", "server", "json"]),
+      ...(timeout === undefined ? {} : { timeout }),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1604,6 +1655,80 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
   success: (out) => out.ok,
 }
 
+const scaffoldSpec: CommandSpec<ScaffoldInput, HoleScaffoldResult> = {
+  name: "scaffold",
+  summary:
+    "Add a partially prerendered hole to a route (`scaffold hole <route> <name>`): its definition and `<Hole>` in the page, its loader in the backend half.",
+  input: SCAFFOLD_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      page: { type: "string" },
+      backend: { type: "string" },
+      changed: { type: "array" },
+      snippets: { type: "array" },
+      next: { type: "array" },
+      reason: { type: "string" },
+    },
+    required: ["ok", "page", "backend", "changed", "snippets", "next"],
+  }),
+  transports: ["cli"],
+  stability: "experimental",
+  argv: {
+    positionals: ["kind", "route", "name"],
+    flags: [
+      { name: "shared", field: "shared", type: "boolean" },
+      { name: "interactive", field: "interactive", type: "boolean" },
+      { name: "timeout", field: "timeout", type: "number" },
+      { name: "server", field: "server", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const dir = resolve(ctx.cwd, value.dir ?? ".")
+    const app =
+      ctx.loadApp !== undefined && value.dir === undefined
+        ? await ctx.loadApp()
+        : await import("./load.ts").then(({ loadApp }) => loadApp(dir))
+    const { frameworkFromClientModule } = await import("./scaffold.ts")
+    const { holeRouteFiles, routeTypeScript, scaffoldHole } = await import("./scaffold-hole.ts")
+    const framework = frameworkFromClientModule(app.framework.clientModule)
+    const { page, backend } = holeRouteFiles(value.route, framework)
+    const loaded = await routeTypeScript(dir, [page, backend])
+    if (loaded.unsupported !== undefined) throw loaded.unsupported
+    if (loaded.compiler === undefined)
+      throw new Error(
+        "[nifra] scaffold hole places each edit through the route's syntax tree, so it needs TypeScript - run `bun add -d typescript`, then rerun it",
+      )
+    try {
+      return await scaffoldHole(
+        dir,
+        value.route,
+        value.name,
+        framework,
+        {
+          shared: value.shared,
+          interactive: value.interactive,
+          timeout: value.timeout,
+          server: value.server,
+        },
+        loaded.compiler,
+      )
+    } finally {
+      await loaded.session?.close()
+    }
+  },
+  render: (out) => [
+    out.ok ? `✓ hole scaffolded on ${out.page}` : `✖ ${out.reason ?? "not scaffolded"}`,
+    ...out.changed.map((file) => `  edit  ${file}`),
+    ...out.snippets.flatMap((snippet) => [`  paste into ${snippet.file}:`, "", snippet.code, ""]),
+    ...out.next.map((step) => `  next  ${step}`),
+  ],
+  success: (out) => out.ok,
+}
+
 const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
   name: "target",
   summary:
@@ -2069,6 +2194,7 @@ export const commandSpecs = Object.freeze([
   doctorSpec,
   fixSpec,
   migrateSpec,
+  scaffoldSpec,
   targetSpec,
   typesSpec,
   schemasSpec,
