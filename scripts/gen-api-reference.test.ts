@@ -60,7 +60,7 @@ const signatures = (): { readonly kind: string; readonly text: string | undefine
 
 test("a code span outruns the backticks inside it and pads one at an edge", () => {
   expect(codeSpan("type A = string")).toBe("`type A = string`")
-  expect(codeSpan("type A = `x-${string}`")).toBe("`` type A = `x-${string}` ``")
+  expect(codeSpan("type A = `x-a`")).toBe("`` type A = `x-a` ``")
   expect(codeSpan("a ``b`` c")).toBe("```a ``b`` c```")
 })
 

@@ -146,7 +146,7 @@
   "devDependencies": {
     "@babel/types": "7.29.7",
     "@types/babel__core": "^7.20.5",
-    "happy-dom": "20.14.6",
+    "happy-dom": "21.0.4",
     "solid-js": "^1.9.3"
   },
   "repository": {
