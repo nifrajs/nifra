@@ -71,6 +71,7 @@ test("scans safely, writes only with --write semantics, and skips generated dire
 
 test("a className in a template literal, string, comment, regex or JSX text is not an attribute", () => {
   const source = [
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
     'const html = `<div className="flex">${`<p className="p-4">`}</div>`',
     "const quoted = '<div className=\"flex\">'",
     '// <div className="flex">',
