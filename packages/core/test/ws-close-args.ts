@@ -195,7 +195,8 @@ function rawReport(port: number, message: string): Promise<void> {
         pending = pending.subarray(2 + length)
       }
     })
-    // Bun drops the connection for a message over the cap, which a client may see as a reset.
+    // Bun up to 1.4.3 drops the connection for a message over the cap, which a client may see as a
+    // reset.
     socket.on("error", () => {})
     socket.on("close", () => resolve())
   })

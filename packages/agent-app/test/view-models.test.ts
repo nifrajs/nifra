@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import {
+  type AgentEventView,
   type BoundaryStateView,
   boundaryCommands,
   boundaryIsStale,
@@ -7,7 +8,10 @@ import {
   toEventView,
   toEvidenceTimelineView,
   toFaultInjectionViews,
+  toHandoffView,
+  toRegistryCapabilityView,
   toRunStudioView,
+  toRunView,
   virtualizeEvidenceRows,
 } from "../src/view-models.ts"
 
@@ -215,4 +219,250 @@ test("reasoning, plan, and usage events project to counts", () => {
     usedTokens: 5,
     estimated: true,
   })
+})
+
+test("every protocol event kind projects to ids and counts, never its content", () => {
+  const base = { version: 1, sessionId: "s", seq: 3, at: 7 } as const
+  const view = { seq: 3, at: 7 }
+  const snapshot = {
+    version: 1,
+    id: "s",
+    backend: "native",
+    cwd: "/secret/path",
+    status: "running",
+    createdAt: 1,
+    updatedAt: 2,
+    lastSeq: 3,
+    extensionRevision: "rev-2",
+    capabilities: ["read"],
+  } as const
+  const cases: [Parameters<typeof toEventView>[0], AgentEventView][] = [
+    [
+      { ...base, type: "session.updated", snapshot },
+      {
+        ...view,
+        kind: "session.updated",
+        session: {
+          id: "s",
+          backend: "native",
+          status: "running",
+          createdAt: 1,
+          updatedAt: 2,
+          lastSeq: 3,
+          extensionRevision: "rev-2",
+          capabilities: ["read"],
+        },
+      },
+    ],
+    [
+      { ...base, type: "turn.started", turnId: "t", prompt: "secret prompt" },
+      { ...view, kind: "turn.started", turnId: "t" },
+    ],
+    [
+      { ...base, type: "tool.started", turnId: "t", callId: "c", name: "read", input: { a: 1 } },
+      { ...view, kind: "tool.started", turnId: "t", callId: "c", name: "read", hasInput: true },
+    ],
+    [
+      { ...base, type: "tool.delta", turnId: "t", callId: "c", text: "secret" },
+      { ...view, kind: "tool.delta", turnId: "t", callId: "c", chars: 6 },
+    ],
+    [
+      {
+        ...base,
+        type: "tool.completed",
+        turnId: "t",
+        callId: "c",
+        name: "read",
+        ok: false,
+        error: { code: "TOOL_FAILED", message: "secret" },
+      },
+      {
+        ...view,
+        kind: "tool.completed",
+        turnId: "t",
+        callId: "c",
+        name: "read",
+        ok: false,
+        errorCode: "TOOL_FAILED",
+      },
+    ],
+    [
+      {
+        ...base,
+        type: "approval.required",
+        turnId: "t",
+        approvalId: "a",
+        action: "deploy",
+        capability: "deploy",
+      },
+      {
+        ...view,
+        kind: "approval.required",
+        turnId: "t",
+        approvalId: "a",
+        action: "deploy",
+        capability: "deploy",
+      },
+    ],
+    [
+      { ...base, type: "approval.resolved", turnId: "t", approvalId: "a", approved: true },
+      { ...view, kind: "approval.resolved", approvalId: "a", approved: true, turnId: "t" },
+    ],
+    [
+      {
+        ...base,
+        type: "repair.required",
+        turnId: "t",
+        task: {
+          id: "r",
+          verification: "check",
+          cwd: "/secret",
+          reason: "secret",
+          capabilities: ["write"],
+        },
+      },
+      {
+        ...view,
+        kind: "repair.required",
+        taskId: "r",
+        verification: "check",
+        capabilities: ["write"],
+        turnId: "t",
+      },
+    ],
+    [
+      { ...base, type: "verification.completed", name: "test", ok: true },
+      { ...view, kind: "verification.completed", name: "test", ok: true },
+    ],
+    [
+      { ...base, type: "memory.compacted", before: 9, after: 4, reason: "threshold" },
+      { ...view, kind: "memory.compacted", before: 9, after: 4, reason: "threshold" },
+    ],
+    [
+      {
+        ...base,
+        type: "extension.reloaded",
+        revision: "r2",
+        loaded: ["a", "b"],
+        disabled: ["c"],
+        rolledBack: false,
+      },
+      {
+        ...view,
+        kind: "extension.reloaded",
+        revision: "r2",
+        loadedCount: 2,
+        disabledCount: 1,
+        rolledBack: false,
+      },
+    ],
+    [
+      {
+        ...base,
+        type: "session.failed",
+        error: { code: "MODEL_FAILED", message: "secret" },
+        recoverable: true,
+      },
+      { ...view, kind: "session.failed", errorCode: "MODEL_FAILED", recoverable: true },
+    ],
+    [
+      { ...base, type: "session.stopped", reason: "done" },
+      { ...view, kind: "session.stopped" },
+    ],
+  ]
+  for (const [event, expected] of cases) {
+    const projected = toEventView(event)
+    expect(projected).toEqual(expected)
+    expect(JSON.stringify(projected)).not.toContain("secret")
+  }
+})
+
+test("run and handoff views keep progress and routing, never the handoff reason", () => {
+  expect(
+    toRunView({
+      version: 1,
+      runId: "run-1",
+      plan: { id: "plan-1", digest, nodeCount: 4 },
+      state: "failed",
+      cursor: 7,
+      counters: { total: 4, completed: 2, failed: 1 },
+      updatedAt: 99,
+      failureCode: "node_failed",
+    }),
+  ).toEqual({
+    runId: "run-1",
+    planId: "plan-1",
+    planDigest: digest,
+    nodeCount: 4,
+    state: "failed",
+    cursor: 7,
+    total: 4,
+    completed: 2,
+    failed: 1,
+    updatedAt: 99,
+    failureCode: "node_failed",
+  })
+  expect(
+    toHandoffView({
+      version: 1,
+      runId: "run-1",
+      nodeId: "node-1",
+      seq: 3,
+      from: "planner",
+      to: "coder",
+      status: "accepted",
+      reason: "secret reason",
+    }),
+  ).toEqual({
+    runId: "run-1",
+    nodeId: "node-1",
+    seq: 3,
+    from: "planner",
+    to: "coder",
+    status: "accepted",
+  })
+})
+
+test("a registry descriptor projects to its identity card or to nothing", () => {
+  const descriptor = {
+    kind: "tool",
+    name: "read_file",
+    version: "1.0.0",
+    schemaDigest: digest,
+    requiredCapabilities: ["read"],
+    approval: { kind: "threshold", level: 2 },
+    retry: "idempotent",
+    idempotency: "request",
+    isolation: "process",
+    description: "secret instructions",
+    inputSchema: { secret: true },
+  }
+  expect(toRegistryCapabilityView(descriptor)).toEqual({
+    kind: "tool",
+    name: "read_file",
+    version: "1.0.0",
+    schemaDigest: digest,
+    requiredCapabilities: ["read"],
+    approval: "threshold",
+    approvalLevel: 2,
+    retry: "idempotent",
+    idempotency: "request",
+    isolation: "process",
+  })
+  expect(toRegistryCapabilityView({ ...descriptor, approval: { kind: "required" } })).toMatchObject(
+    { approval: "required" },
+  )
+  for (const broken of [
+    null,
+    [],
+    { ...descriptor, kind: "plugin" },
+    { ...descriptor, name: "" },
+    { ...descriptor, schemaDigest: "abc" },
+    { ...descriptor, requiredCapabilities: [1] },
+    { ...descriptor, retry: "always" },
+    { ...descriptor, isolation: "vm" },
+    { ...descriptor, approval: "required" },
+    { ...descriptor, approval: { kind: "threshold", level: 1.5 } },
+  ])
+    expect(toRegistryCapabilityView(broken)).toBeUndefined()
 })

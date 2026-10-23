@@ -582,3 +582,129 @@ describe("mountA2A", () => {
     expect(JSON.stringify(await response.json())).toContain(answer)
   })
 })
+
+describe("mountA2A request checks", () => {
+  const post = (body: string) =>
+    new Request("http://local/a2a", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    })
+
+  test("a method that is not a string is an invalid request", async () => {
+    const { app, callPost } = captureApp()
+    mountA2A(app, { agent: definition(), card: cardInfo, ports: ports() })
+    const response = await callPost(post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: 5 })))
+    expect(await response.json()).toMatchObject({
+      error: { code: A2A_ERROR_CODES.invalidRequest, message: "invalid_request" },
+    })
+  })
+
+  test("SendMessage refuses a missing message, a bad task id, and a resume without a task", async () => {
+    const { app, callPost } = captureApp()
+    mountA2A(app, { agent: definition(), card: cardInfo, ports: ports() })
+    const resume = { continuation: { kind: "approval", effectId: "effect-1" } }
+    const cases: [unknown, string][] = [
+      [{}, "invalid_params"],
+      [message([], { taskId: "../escape" }), "invalid_task_id"],
+      [message([], { metadata: { resume } }), "task_id_required"],
+    ]
+    for (const [params, expected] of cases) {
+      expect(await (await callPost(rpc("SendMessage", params))).json()).toMatchObject({
+        error: { code: A2A_ERROR_CODES.invalidParams, message: expected },
+      })
+    }
+    const unknown = await callPost(
+      rpc("SendMessage", message([], { taskId: "task-unknown", metadata: { resume } })),
+    )
+    expect(await unknown.json()).toMatchObject({
+      error: { code: A2A_ERROR_CODES.taskNotFound, message: "task_not_resumable" },
+    })
+  })
+
+  test("GetTask without an id is invalid params", async () => {
+    const { app, callPost } = captureApp()
+    mountA2A(app, { agent: definition(), card: cardInfo, ports: ports() })
+    expect(await (await callPost(rpc("GetTask", {}))).json()).toMatchObject({
+      error: { code: A2A_ERROR_CODES.invalidParams, message: "invalid_params" },
+    })
+  })
+
+  test("bad JSON and a body that fails to read are parse errors, and an oversized body is a 413", async () => {
+    const { app, callPost } = captureApp()
+    mountA2A(app, { agent: definition(), card: cardInfo, maxBodyBytes: 64, ports: ports() })
+    const parseError = {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: A2A_ERROR_CODES.parseError, message: "parse_error" },
+    }
+    for (const body of ["not json", '{"__proto__":{"admin":true}}']) {
+      const response = await callPost(post(body))
+      expect([response.status, await response.json()]).toEqual([200, parseError])
+    }
+    expect((await callPost(post(JSON.stringify({ pad: "x".repeat(256) })))).status).toBe(413)
+    const init: RequestInit & { readonly duplex: "half" } = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        pull(controller) {
+          controller.error(new Error("connection reset"))
+        },
+      }),
+      duplex: "half",
+    }
+    const parse = await callPost(new Request("http://local/a2a", init))
+    expect(await parse.json()).toMatchObject({
+      error: { code: A2A_ERROR_CODES.parseError, message: "parse_error" },
+    })
+  })
+
+  test("maxOutputBytes is range-checked when the mount is made", () => {
+    const { app } = captureApp()
+    expect(() =>
+      mountA2A(app, { agent: definition(), card: cardInfo, maxOutputBytes: 10, ports: ports() }),
+    ).toThrow("A2A maxOutputBytes must be between 1024")
+  })
+
+  test("GetTask projects a stored completed task and a suspended one", async () => {
+    type Task = { result: { task: { id: string; status: { state: string }; metadata: object } } }
+    const taskOf = async (response: Response) => {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the mount answers SendMessage and GetTask in this envelope; a missing task fails the read and the id check.
+      const task = ((await response.json()) as Task).result.task
+      expect(typeof task.id).toBe("string")
+      return task
+    }
+    const store = new MemoryAgentStateStore()
+    const completed = captureApp()
+    mountA2A(completed.app, { agent: definition(), card: cardInfo, ports: ports({ state: store }) })
+    const sent = await taskOf(
+      await completed.callPost(
+        rpc("SendMessage", message([], { metadata: { input: { prompt: "hey" } } })),
+      ),
+    )
+    const done = await taskOf(await completed.callPost(rpc("GetTask", { id: sent.id })))
+    expect(done).toMatchObject({
+      id: sent.id,
+      status: { state: "TASK_STATE_COMPLETED" },
+    })
+
+    const suspended = captureApp()
+    mountA2A(suspended.app, {
+      agent: definition([approvalTool]),
+      card: cardInfo,
+      ports: ports({
+        state: store,
+        model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "y" }),
+        capabilities: ["reference.approve"],
+      }),
+    })
+    const waiting = await taskOf(
+      await suspended.callPost(
+        rpc("SendMessage", message([], { metadata: { input: { prompt: "go" } } })),
+      ),
+    )
+    const stored = await taskOf(await suspended.callPost(rpc("GetTask", { id: waiting.id })))
+    expect(stored.status.state).toBe("TASK_STATE_INPUT_REQUIRED")
+    expect(stored.metadata).toHaveProperty("continuation")
+  })
+})

@@ -119,3 +119,83 @@ describe("createAuthClient", () => {
     }
   })
 })
+
+describe("createAuthClient navigation edges", () => {
+  async function withWindow(
+    location: Record<string, unknown>,
+    run: (navigated: string[]) => Promise<void>,
+  ): Promise<void> {
+    const navigated: string[] = []
+    const previous = Reflect.get(globalThis, "window")
+    Reflect.set(globalThis, "window", {
+      location: { assign: (url: string) => navigated.push(url), ...location },
+    })
+    try {
+      await run(navigated)
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(globalThis, "window")
+      else Reflect.set(globalThis, "window", previous)
+    }
+  }
+  const page = { href: "https://app.example.com/page", origin: "https://app.example.com" }
+  const answering = (signIn: () => Response, signOut: () => Response = () => new Response("ok")) =>
+    Object.assign(
+      async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = String(input)
+        if (url.endsWith("/csrf")) return json({ csrfToken: "tok" })
+        if (url.includes("/signin/")) {
+          if (!init?.body?.toString().includes("callbackUrl=")) throw new Error("no callback")
+          return signIn()
+        }
+        return signOut()
+      },
+      { preconnect: fetch.preconnect },
+    )
+
+  test("signIn defaults the callback to this page and refuses an answer without a URL", () =>
+    withWindow(page, async (navigated) => {
+      const seen: string[] = []
+      const stub = Object.assign(
+        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          if (String(input).endsWith("/csrf")) return json({ csrfToken: "tok" })
+          seen.push(init?.body?.toString() ?? "")
+          return json({ url: "http://[" })
+        },
+        { preconnect: fetch.preconnect },
+      )
+      await createAuthClient({ fetch: stub }).signIn("github")
+      expect(seen[0]).toContain(`callbackUrl=${encodeURIComponent(page.href)}`)
+      // An answer that is not a URL at all falls back to the home path.
+      expect(navigated).toEqual(["/"])
+      await expect(
+        createAuthClient({ fetch: answering(() => json({})) }).signIn("github"),
+      ).rejects.toThrow("signIn failed (HTTP 200)")
+    }))
+
+  test("signOut keeps a same-origin absolute callback and refuses a malformed one", () =>
+    withWindow(page, async (navigated) => {
+      const client = createAuthClient({ fetch: answering(() => json({})) })
+      await client.signOut({ callbackUrl: "https://app.example.com/bye" })
+      await client.signOut({ callbackUrl: "/a\\b" })
+      await client.signOut({ callbackUrl: "http://[" })
+      expect(navigated).toEqual(["https://app.example.com/bye", "https://app.example.com/a/b", "/"])
+    }))
+
+  test("a failed signOut throws, and a page that cannot navigate is refused", async () => {
+    await withWindow(page, async () => {
+      await expect(
+        createAuthClient({
+          fetch: answering(
+            () => json({}),
+            () => new Response("down", { status: 503 }),
+          ),
+        }).signOut(),
+      ).rejects.toThrow("signOut failed (HTTP 503)")
+    })
+    await withWindow({ ...page, assign: undefined }, async () => {
+      await expect(
+        createAuthClient({ fetch: answering(() => json({})) }).signOut(),
+      ).rejects.toThrow("navigation needs a browser page")
+    })
+  })
+})
