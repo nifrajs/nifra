@@ -23,6 +23,8 @@ export async function serveApp(options: {
   readonly clientModule: string
   readonly plugins?: readonly BunPlugin[]
   readonly mode?: "production" | "development"
+  /** More compile-time constants for the client bundle. */
+  readonly define?: Readonly<Record<string, string>>
 }): Promise<{
   readonly url: string
   readonly stop: () => void
@@ -43,7 +45,10 @@ export async function serveApp(options: {
       entrypoints: [entryPath],
       target: "browser",
       conditions: ["bun", "browser"],
-      define: { "process.env.NODE_ENV": JSON.stringify(options.mode ?? "production") },
+      define: {
+        "process.env.NODE_ENV": JSON.stringify(options.mode ?? "production"),
+        ...options.define,
+      },
       plugins: [...(options.plugins ?? [])],
     })
     if (!built.success) throw new Error(built.logs.map(String).join("\n"))

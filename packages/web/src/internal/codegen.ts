@@ -86,6 +86,9 @@ export interface LiveClientEntry {
 const KEEP_ALIVE_ADAPTERS: readonly string[] = [
   "@nifrajs/web-react/client",
   "@nifrajs/web-svelte/client",
+  "@nifrajs/web-preact/client",
+  "@nifrajs/web-solid/client",
+  "@nifrajs/web-vue/client",
 ]
 
 export function generateClientEntry(
@@ -96,7 +99,7 @@ export function generateClientEntry(
   const keep = keepAliveTable(manifest)
   if (keep !== undefined && !KEEP_ALIVE_ADAPTERS.includes(options.clientModule)) {
     throw new Error(
-      `[nifra/web] ${keep.routes.map((id) => `"${id}"`).join(", ")} export keepAlive, which needs the React or Svelte adapter (@nifrajs/web-react or @nifrajs/web-svelte); this app's client module is ${jsStringLiteral(options.clientModule)}. Remove the keepAlive export or switch the adapter.`,
+      `[nifra/web] ${keep.routes.map((id) => `"${id}"`).join(", ")} export keepAlive, which needs the React, Preact, Solid, Svelte or Vue adapter; this app's client module is ${jsStringLiteral(options.clientModule)}. Remove the keepAlive export or switch the adapter.`,
     )
   }
   // A keep-alive app mounts through the adapter's keep-alive module, which re-exports its client.

@@ -39,8 +39,10 @@ import {
   type ShallowRef,
   shallowRef,
 } from "vue"
+import { PAGE_KEY } from "./page-visibility.ts"
 import { PROPS_KEY, SEARCH_KEY } from "./route-context.ts"
 
+export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search + a stable fallback ref for a `useSearch` used outside a nifra route tree.
@@ -136,16 +138,19 @@ export function useNavigate(): NavigateFunction {
  * predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click,
  * `useNavigate`, or a browser back/forward) is intercepted, `blocker.value.state` becomes `"blocked"`
  * and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or `reset()` to stay.
- * It also arms the browser's native "Leave site?" prompt on tab close / reload. Idle on the server and
- * before hydration.
+ * It also arms the browser's native "Leave site?" prompt on tab close / reload. Idle on the server,
+ * before hydration, and while a `keepAlive` page is hidden.
  *
  * `setup` runs once, so to track a CHANGING flag pass a function - `useBlocker(() => form.isDirty)` -
  * not a bare `ref` (which would be truthy and always block). A constant boolean is fine as-is.
  */
 export function useBlocker(shouldBlock: boolean | BlockerFunction): Readonly<ShallowRef<Blocker>> {
   const blocker = shallowRef<Blocker>(IDLE_BLOCKER)
+  const page = inject(PAGE_KEY, undefined)
   const unregister = registerBlocker(
-    (args) => (typeof shouldBlock === "function" ? shouldBlock(args) : shouldBlock),
+    (args) =>
+      page?.hidden.value !== true &&
+      (typeof shouldBlock === "function" ? shouldBlock(args) : shouldBlock),
     (next) => {
       blocker.value = next
     },

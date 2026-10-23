@@ -67,9 +67,9 @@ test("a live keepAlive app layers keep-alive over the live transport", () => {
 
 test("an adapter without keep-alive support fails the build and names the routes", () => {
   expect(() =>
-    generateClientEntry(kept(), { clientModule: "@nifrajs/web-vue/client", resolve }),
+    generateClientEntry(kept(), { clientModule: "@nifrajs/web-vanilla/client", resolve }),
   ).toThrow(
-    /"list", "shop\/\[item\]" export keepAlive, which needs the React or Svelte adapter .* "@nifrajs\/web-vue\/client"/,
+    /"list", "shop\/\[item\]" export keepAlive, which needs the React, Preact, Solid, Svelte or Vue adapter; .* "@nifrajs\/web-vanilla\/client"/,
   )
 })
 

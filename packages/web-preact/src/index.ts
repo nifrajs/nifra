@@ -8,6 +8,7 @@ import type { RenderAdapter } from "@nifrajs/web"
  */
 import { compose } from "./compose.ts"
 import { preactRenderToStream, preactRenderToString } from "./preact-render.ts"
+import { slottedChain } from "./slot.ts"
 
 const ISLAND_RUNTIME_OPEN = "<script>(function(){"
 const ISLAND_RUNTIME_OPEN_BYTES = new TextEncoder().encode(ISLAND_RUNTIME_OPEN)
@@ -73,20 +74,24 @@ export const preactAdapter: RenderAdapter = {
   // runtime SSR - see ./preact-render). Once loaded, return the string directly so renderPage can use
   // its synchronous buffered fast path on every subsequent request. A render that suspends is handed
   // back (`undefined`) to be streamed, where the boundary resolves.
-  renderToString(chain, props) {
+  renderToString(chain, props, options) {
+    const tree = compose(
+      options?.slots === undefined ? chain : slottedChain(chain, options.slots),
+      props,
+    )
     const loaded = preactRenderToString()
     if (loaded instanceof Promise) {
-      return loaded.then(({ renderToString }) =>
-        renderUnlessSuspended(renderToString, compose(chain, props)),
-      )
+      return loaded.then(({ renderToString }) => renderUnlessSuspended(renderToString, tree))
     }
-    return renderUnlessSuspended(loaded.renderToString, compose(chain, props))
+    return renderUnlessSuspended(loaded.renderToString, tree)
   },
   async renderToStream(chain, props, options) {
     // `renderToReadableStream` yields a Web ReadableStream<Uint8Array>; <Suspense> boundaries
     // (preact/compat) stream as they resolve, mirroring the React adapter.
     const { renderToReadableStream } = await preactRenderToStream()
-    const stream = renderToReadableStream(compose(chain, props))
+    const stream = renderToReadableStream(
+      compose(options?.slots === undefined ? chain : slottedChain(chain, options.slots), props),
+    )
     return options?.nonce === undefined ? stream : withIslandRuntimeNonce(stream, options.nonce)
   },
   // Preact reconciles against the existing DOM on hydrate (like React), so there's no per-document

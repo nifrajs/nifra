@@ -19,7 +19,7 @@ export interface BrowserPage {
   click(selector: string): Promise<void>
   evaluate<T, A = undefined>(fn: (arg: A) => T | Promise<T>, arg?: A): Promise<T>
   waitForFunction<A = undefined>(
-    fn: (arg: A) => unknown,
+    fn: ((arg: A) => unknown) | string,
     arg?: A,
     options?: { readonly timeout?: number },
   ): Promise<unknown>
@@ -358,11 +358,19 @@ export async function assertDirectChildCssDiagnostic(
   expect(reports[0]).toContain("#main > .list-page")
 }
 
+// The kept pages in the document's tab: each one's outer slot wrapper stays where the page goes back.
+const slotWrappers = (): number => document.querySelectorAll("[data-nifra-entry]").length
+
 /**
  * K3: a sign-in rotates the identity epoch, and a restore that reads a new epoch shows a fresh page;
- * a sign-out in another tab drops this tab's kept pages at once, over `BroadcastChannel`.
+ * a sign-out in another tab drops this tab's kept pages at once, over `BroadcastChannel`. `keptPages`
+ * counts them in the page, for an adapter that renders no slot wrappers.
  */
-export async function assertIdentityDrops(browser: Browser, url: string): Promise<void> {
+export async function assertIdentityDrops(
+  browser: Browser,
+  url: string,
+  keptPages: () => number = slotWrappers,
+): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 800, height: 400 } })
   try {
     const first = await openPage(context)
@@ -377,10 +385,7 @@ export async function assertIdentityDrops(browser: Browser, url: string): Promis
       await page.waitForFunction(() => document.querySelector(".count")?.textContent === "count 1")
       await follow(page, "/detail/1")
       await page.waitForFunction(() => document.querySelector(".detail") !== null)
-      // The kept page's outer wrapper stays where the page goes back.
-      expect(
-        await page.evaluate(() => document.querySelectorAll("[data-nifra-entry]").length),
-      ).toBe(1)
+      expect(await page.evaluate(keptPages)).toBe(1)
     }
 
     await keepList()
@@ -402,7 +407,8 @@ export async function assertIdentityDrops(browser: Browser, url: string): Promis
     // The second tab notices the new epoch when its next navigation settles, and tells the others.
     await follow(second.page, "/detail/1")
     await second.page.waitForFunction(() => document.querySelector(".detail") !== null)
-    await page.waitForFunction(() => document.querySelectorAll("[data-nifra-entry]").length === 0)
+    // An expression, which the browser compiles outside the page's content security policy.
+    await page.waitForFunction(`(${String(keptPages)})() === 0`)
     expect([...first.problems, ...second.problems]).toEqual([])
   } finally {
     await context.close()

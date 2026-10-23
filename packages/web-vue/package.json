@@ -32,6 +32,11 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./keep-alive": {
+      "bun": "./src/keep-alive.ts",
+      "types": "./dist/keep-alive.d.ts",
+      "default": "./dist/keep-alive.js"
+    },
     "./plugin": {
       "bun": "./src/plugin.ts",
       "types": "./dist/plugin.d.ts",

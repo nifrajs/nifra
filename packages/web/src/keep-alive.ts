@@ -784,6 +784,36 @@ const scrollOffsets = (page: Element): (readonly [Element, number, number])[] =>
   return offsets
 }
 
+/** What a page showed as it was hidden, put back by {@link PageView.restore}. */
+export interface PageView {
+  /** Put back the inner scroll offsets and the focus, once the page is in the document again. */
+  restore(): void
+}
+
+/**
+ * Note the inner scroll offsets of a page's top-level `elements` and the element inside them that has
+ * focus, while they are still laid out. For an adapter whose framework takes a hidden page out of the
+ * document itself (Vue's `KeepAlive`), in place of {@link createSlotParking}.
+ */
+export function rememberView(elements: readonly Element[]): PageView {
+  const offsets = elements.flatMap(scrollOffsets)
+  const focused = typeof document === "undefined" ? null : document.activeElement
+  const focus =
+    focused !== null && elements.some((element) => element.contains(focused)) ? focused : undefined
+  return {
+    restore() {
+      for (const [element, top, left] of offsets) {
+        if (!element.isConnected) continue
+        element.scrollTop = top
+        element.scrollLeft = left
+      }
+      if (focus?.isConnected)
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: it held focus, so it is focusable; the call stays optional
+        (focus as HTMLElement).focus?.({ preventScroll: true })
+    },
+  }
+}
+
 const wrappedNodes = (nodes: readonly SlotNode[], into: SlotNode[] = []): SlotNode[] => {
   for (const node of nodes) {
     if (node.wrapped) into.push(node)

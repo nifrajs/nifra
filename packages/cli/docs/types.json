@@ -7989,7 +7989,21 @@
   {
     "name": "KeepAliveMountOptions",
     "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
+    "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */"
+  },
+  {
+    "name": "KeepAliveMountOptions",
+    "kind": "interface",
     "package": "@nifrajs/web-react",
+    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
+    "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */"
+  },
+  {
+    "name": "KeepAliveMountOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-solid",
     "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
     "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */"
   },
@@ -7999,6 +8013,13 @@
     "package": "@nifrajs/web-svelte",
     "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
     "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */"
+  },
+  {
+    "name": "KeepAliveMountOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface KeepAliveMountOptions extends MountRouterOptions {\n    readonly router: KeepAliveRouter;\n    readonly keepAlive: KeepAliveTable;\n}",
+    "doc": "/** `mountRouter`'s options in a keep-alive app: the generated entry adds which slots are kept. */"
   },
   {
     "name": "KeepAliveNavigateOptions",
@@ -10768,6 +10789,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface PageLocales {\n    /** The default locale's key. */\n    readonly default: string;\n    /** Every served locale, in registry order. */\n    readonly locales: readonly PageLocale[];\n}",
     "doc": "/** The served locales, handed to the client so it names a page's locale from its path the way the\n * server does. */"
+  },
+  {
+    "name": "PageView",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PageView {\n    /** Put back the inner scroll offsets and the focus, once the page is in the document again. */\n    restore(): void;\n}",
+    "doc": "/** What a page showed as it was hidden, put back by {@link PageView.restore}. */"
   },
   {
     "name": "PagedStorageAdapter",
@@ -21477,9 +21505,44 @@
   {
     "name": "onPageHide",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function onPageHide(callback: () => void): void;",
+    "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page, before it leaves the document. The page keeps running while it is hidden: pause its timers,\n * sockets and media here. A hook: call it unconditionally while rendering. A no-op outside a kept page.\n */"
+  },
+  {
+    "name": "onPageHide",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function onPageHide(callback: () => void): void;",
+    "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page, before it leaves the document. The page keeps running while it is hidden: pause its timers,\n * sockets and media here. Call it while the component sets up; it is removed with the component. A\n * no-op outside a kept page.\n */"
+  },
+  {
+    "name": "onPageHide",
+    "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function onPageHide(callback: () => void): () => void;",
     "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it\n * while the component initializes; returns its removal. A no-op outside a kept page.\n */"
+  },
+  {
+    "name": "onPageHide",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function onPageHide(callback: () => void): void;",
+    "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page, before it leaves the document (Vue's `onDeactivated` runs after). The page keeps running while\n * it is hidden: pause its timers, sockets and media here. Call it in `setup`; it is removed with the\n * component. A no-op outside a kept page.\n */"
+  },
+  {
+    "name": "onPageShow",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function onPageShow(callback: () => void): void;",
+    "doc": "/** Run `callback` each time the `keepAlive` page this component renders in is shown again. A hook. */"
+  },
+  {
+    "name": "onPageShow",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function onPageShow(callback: () => void): void;",
+    "doc": "/** Run `callback` each time the `keepAlive` page this component renders in is shown again. */"
   },
   {
     "name": "onPageShow",
@@ -21487,6 +21550,13 @@
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function onPageShow(callback: () => void): () => void;",
     "doc": "/** Run `callback` each time the `keepAlive` page this component renders in is shown again. */"
+  },
+  {
+    "name": "onPageShow",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function onPageShow(callback: () => void): void;",
+    "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is shown again, once it is\n * back in the document with its scroll and focus. Unlike Vue's `onActivated`, not when it first mounts.\n */"
   },
   {
     "name": "openGraph",
@@ -22658,6 +22728,13 @@
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function rejected(reason?: AuthenticationFailureReason, response?: Response | ResponseResult): AuthenticationFailure;"
+  },
+  {
+    "name": "rememberView",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function rememberView(elements: readonly Element[]): PageView;",
+    "doc": "/**\n * Note the inner scroll offsets of a page's top-level `elements` and the element inside them that has\n * focus, while they are still laid out. For an adapter whose framework takes a hidden page out of the\n * document itself (Vue's `KeepAlive`), in place of {@link createSlotParking}.\n */"
   },
   {
     "name": "removeDevServerRecord",
@@ -24668,7 +24745,7 @@
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker;",
-    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate\n * `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation\n * (an anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state` becomes\n * `\"blocked\"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or\n * `reset()` to stay put. It also arms the browser's native \"Leave site?\" prompt on tab close / reload.\n * Idle (never blocks) on the server and before hydration.\n */"
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate\n * `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation\n * (an anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state` becomes\n * `\"blocked\"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or\n * `reset()` to stay put. It also arms the browser's native \"Leave site?\" prompt on tab close / reload.\n * Idle (never blocks) on the server, before hydration, and while a `keepAlive` page is hidden.\n */"
   },
   {
     "name": "useBlocker",
@@ -24682,7 +24759,7 @@
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Accessor<Blocker>;",
-    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click,\n * `useNavigate`, or a browser back/forward) is intercepted, `blocker().state` becomes `\"blocked\"` and\n * `proceed`/`reset` go live - show a dialog and call `proceed()` to continue or `reset()` to stay put.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server and\n * before hydration.\n *\n * The component body runs once, so to track a CHANGING flag pass a function -\n * `useBlocker(() => isDirty())` - not a bare signal accessor's current value. A constant boolean is fine.\n */"
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click,\n * `useNavigate`, or a browser back/forward) is intercepted, `blocker().state` becomes `\"blocked\"` and\n * `proceed`/`reset` go live - show a dialog and call `proceed()` to continue or `reset()` to stay put.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server,\n * before hydration, and while a `keepAlive` page is hidden.\n *\n * The component body runs once, so to track a CHANGING flag pass a function -\n * `useBlocker(() => isDirty())` - not a bare signal accessor's current value. A constant boolean is fine.\n */"
   },
   {
     "name": "useBlocker",
@@ -24696,7 +24773,7 @@
     "kind": "function",
     "package": "@nifrajs/web-vue",
     "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Readonly<ShallowRef<Blocker>>;",
-    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click,\n * `useNavigate`, or a browser back/forward) is intercepted, `blocker.value.state` becomes `\"blocked\"`\n * and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or `reset()` to stay.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server and\n * before hydration.\n *\n * `setup` runs once, so to track a CHANGING flag pass a function - `useBlocker(() => form.isDirty)` -\n * not a bare `ref` (which would be truthy and always block). A constant boolean is fine as-is.\n */"
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click,\n * `useNavigate`, or a browser back/forward) is intercepted, `blocker.value.state` becomes `\"blocked\"`\n * and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or `reset()` to stay.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server,\n * before hydration, and while a `keepAlive` page is hidden.\n *\n * `setup` runs once, so to track a CHANGING flag pass a function - `useBlocker(() => form.isDirty)` -\n * not a bare `ref` (which would be truthy and always block). A constant boolean is fine as-is.\n */"
   },
   {
     "name": "useCapability",
@@ -24911,9 +24988,30 @@
   {
     "name": "usePageVisibility",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function usePageVisibility(): boolean;",
+    "doc": "/**\n * Whether the page this component renders in is on screen. `false` while it is kept hidden behind\n * another page, where its effects keep running: pause timers and listeners on it. Always `true` on the\n * server and on a page that does not keep alive.\n */"
+  },
+  {
+    "name": "usePageVisibility",
+    "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function usePageVisibility(): boolean;",
     "doc": "/**\n * Whether the page this component renders in is on screen. `false` while it is kept hidden behind\n * another page; its effects have cleaned up by then (`Activity`), and run again when it is shown.\n * Always `true` on the server and on a page that does not keep alive.\n */"
+  },
+  {
+    "name": "usePageVisibility",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function usePageVisibility(): Accessor<boolean>;",
+    "doc": "/**\n * Whether the page this component renders in is on screen, as an accessor: `false` while it is kept\n * hidden behind another page, where it keeps running. Always `true` on the server and on a page that\n * does not keep alive.\n */"
+  },
+  {
+    "name": "usePageVisibility",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function usePageVisibility(): Readonly<Ref<boolean>>;",
+    "doc": "/**\n * Whether the page this component renders in is on screen, as a ref: `false` while it is kept hidden\n * behind another page, where it keeps running. Always `true` on the server and on a page that does not\n * keep alive.\n */"
   },
   {
     "name": "useParams",

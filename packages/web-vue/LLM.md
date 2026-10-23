@@ -10,7 +10,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 
 ## Public entrypoints
 
-`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/server-components` · `@nifrajs/web-vue/server-components/client` · `@nifrajs/web-vue/server-components/outlet` · `@nifrajs/web-vue/svg`
+`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/keep-alive` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/server-components` · `@nifrajs/web-vue/server-components/client` · `@nifrajs/web-vue/server-components/outlet` · `@nifrajs/web-vue/svg`
 
 ## Key exports
 
@@ -21,15 +21,15 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-vue/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-vue/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-vue/keep-alive`
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void` · from `@nifrajs/web-vue/keep-alive`
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-vue/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
 - **svgToVueSfc** _(function)_ - `svgToVueSfc: (xml: string) => string` · from `@nifrajs/web-vue/svg`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>` · from `@nifrajs/web-vue/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-vue/fetcher`
-- **useFetchers** _(function)_ - `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>` · from `@nifrajs/web-vue/fetcher`
-- **useLocale** _(function)_ - `useLocale: () => ComputedRef<string>` · from `@nifrajs/web-vue/i18n`
 
-_…and 30 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 34 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

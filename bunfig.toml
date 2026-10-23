@@ -97,6 +97,10 @@ coveragePathIgnorePatterns = [
   # reactive scope; Preact/React register in an effect, so this file can't clear the floor without a
   # browser. Exclude it from the per-file gate (same rationale as web-react/query.ts); the tests still run.
   "**/web-preact/src/router.ts",
+  # `@nifrajs/web-preact/router`'s visibility hooks (`page-visibility.ts`, 85.71% function, 81.48% line,
+  # measured 2026-10-24) are the same class: `onPageHide` / `onPageShow` register in a layout effect,
+  # which bun:test never commits. The keep-alive browser suite runs them in three engines.
+  "**/web-preact/src/page-visibility.ts",
   # `core/src/binary.ts` is excluded for a DIFFERENT reason than everything above: not code this
   # harness cannot reach, but a measurement this reporter gets wrong. Bun 1.3.14 attributes the
   # file's hits to the last 14 LINES rather than to the lines that ran. Three measurements, all
@@ -131,6 +135,9 @@ coveragePathIgnorePatterns = [
   "**/web/test/keep-alive-app.ts",
   "**/web-react/test/fixtures/keep-alive/**",
   "**/web-svelte/test/fixtures/keep-alive/**",
+  "**/web-preact/test/fixtures/keep-alive/**",
+  "**/web-solid/test/fixtures/keep-alive/**",
+  "**/web-vue/test/fixtures/keep-alive/**",
   # The cli tests' dot-prefixed fixture roots (`.nifra-capability-fixtures-RFjrrM`,
   # `.nifra-levels-fixtures-2wAq0Q`, `.nifra-verification-golden-xNR6qa`): stub backends at 0-50%
   # function coverage under a directory name that is random per run. Same class as `cli/test/.tmp-*`.

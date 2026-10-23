@@ -4,14 +4,15 @@
  * hydration lives in `@nifrajs/web-solid/client` (Solid's browser build), and the Solid Babel
  * Bun-plugin in `@nifrajs/web-solid/plugin`.
  */
-import type { RenderAdapter } from "@nifrajs/web"
-import { sharedConfig } from "solid-js"
+import type { RenderAdapter, RenderProps, RenderStreamOptions, RouterState } from "@nifrajs/web"
+import { type JSX, sharedConfig } from "solid-js"
 import {
   generateHydrationScript,
   renderToStream as solidRenderToStream,
   renderToString as solidRenderToString,
 } from "solid-js/web"
 import { compose } from "./compose.ts"
+import { documentTree, KeepAliveView } from "./keep-alive-view.ts"
 
 const HYDRATION_HEAD = generateHydrationScript()
 
@@ -52,6 +53,27 @@ function redactingErrors<T>(app: () => T): () => T {
   }
 }
 
+const noRef = (): undefined => undefined
+
+/** The chain as the browser's keep-alive view renders it, in an app with a `keepAlive` route. */
+function documentView(chain: readonly unknown[], props: RenderProps, slots: readonly number[]) {
+  const state: RouterState = { routeId: "", params: {}, path: "", data: props.data, pending: false }
+  const tree = documentTree(chain, state, slots)
+  return (): JSX.Element =>
+    KeepAliveView({
+      tree: () => tree,
+      state: () => state,
+      mount: { propsOf: () => props, chainOf: () => chain, entry: noRef, page: noRef },
+    })
+}
+
+const appOf = (chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions) =>
+  redactingErrors(
+    options?.slots === undefined
+      ? compose(chain, props)
+      : documentView(chain, props, options.slots),
+  )
+
 /** The Solid server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const solidAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). Solid's
@@ -60,7 +82,7 @@ export const solidAdapter: RenderAdapter = {
   // streaming machinery - the heaviest of the five renderers on Bun. A page that defer()s/Suspends
   // takes `renderToStream` below (progressive resolution needs it).
   renderToString(chain, props, options) {
-    const app = redactingErrors(compose(chain, props))
+    const app = appOf(chain, props, options)
     return options?.nonce === undefined
       ? solidRenderToString(app)
       : solidRenderToString(app, { nonce: options.nonce })
@@ -72,7 +94,7 @@ export const solidAdapter: RenderAdapter = {
     // <head>) seeds client hydration. A render failure errors `ts.readable`, which `renderPage`
     // surfaces on the response body. The nonce reaches the resource and boundary scripts Solid streams.
     const ts = new TransformStream<Uint8Array, Uint8Array>()
-    const app = redactingErrors(compose(chain, props))
+    const app = appOf(chain, props, options)
     const stream =
       options?.nonce === undefined
         ? solidRenderToStream(app)
