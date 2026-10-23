@@ -320,6 +320,9 @@ describe("Bun-native route table agrees with the portable router", () => {
     const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
       expect(await requestTargetMismatches(instance.port)).toEqual([])
+      // HTTP/1.0 may leave the Host out: Bun then hands the target over as sent and matched its
+      // table on it, so `/users/..` reached `/users/:id` with the id `..`.
+      expect(await requestTargetMismatches(instance.port, true)).toEqual([])
       expect(await invalidHostMismatches(instance.port)).toEqual([])
       expect(await refusedHostMismatches(instance.port)).toEqual([])
     } finally {

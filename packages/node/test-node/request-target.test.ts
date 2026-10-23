@@ -19,6 +19,7 @@ test("a target with dot segments or a backslash routes the path it resolves to",
   const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
   try {
     assert.deepEqual(await requestTargetMismatches(running.port), [])
+    assert.deepEqual(await requestTargetMismatches(running.port, true), [])
     assert.deepEqual(await invalidHostMismatches(running.port), [])
     assert.deepEqual(await refusedHostMismatches(running.port), [])
   } finally {

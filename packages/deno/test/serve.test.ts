@@ -623,6 +623,7 @@ Deno.test("a target with dot segments or a backslash routes the path it resolves
   const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
   try {
     assertEquals(await requestTargetMismatches(running.port), [])
+    assertEquals(await requestTargetMismatches(running.port, true), [])
   } finally {
     await running.stop({ drainMs: 0 })
   }

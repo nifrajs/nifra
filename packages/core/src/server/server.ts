@@ -644,8 +644,9 @@ const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "un
 
 /**
  * Bun parses the target only when it can read the Host. Otherwise `Request.url` is the target as sent:
- * relative for a Host with a space or a byte past ASCII, the raw authority for a port past 65535, and
- * `new URL(req.url)` throws in the app. So Bun is held to the Host check Deno runs.
+ * relative for a Host with a space or a byte past ASCII or for no Host at all, the raw authority
+ * for a port past 65535, and `new URL(req.url)` throws in the app. So Bun is held to the Host check
+ * Deno runs.
  */
 const unparsedBunTargets = typeof Bun !== "undefined"
 
@@ -696,29 +697,42 @@ function resolvedSource(req: Request, url: string): RequestSource {
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
 const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
-// `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every header.
 // A port past 65535, or an IPv6 literal no URL parser takes (`[1:2]`), is refused as Node refuses it:
 // no URL can be built on either, so resolving a dot segment against one threw out of `fetch`.
-const invalidHost = (req: Request): boolean => {
-  const host = headerOf(req, "host")
-  if (host === null) return false
+const invalidHost = (host: string): boolean => {
   const authority = HOST_AUTHORITY.exec(host)
   if (authority === null) return true
   if (authority[1] !== undefined && Number(authority[1]) > 65_535) return true
   return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
 }
 
-/** A Host the check above refuses that Bun served anyway: one it could not read, so it left the
- * target unparsed, or one it built the URL on - sent twice (joined with ", ", the URL on the first;
- * RFC 9112 section 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
- * sub-delimiter (`a!b`). A request built in process (an adapter's, a test's) keeps the URL its caller
- * built, unless that URL is the one Bun builds on its Host. */
-const misreadHost = (req: Request): boolean => {
-  if (!invalidHost(req)) return false
-  const routed = URL.parse(req.url)?.host
+/**
+ * What a request is routed on in place of `req.url`, before anything reads it: `true` refuses its
+ * Host (400), a URL replaces the target, `false` keeps it. Deno hands the target over as sent, so
+ * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
+ * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
+ * `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every
+ * header.
+ */
+const requestTarget = (req: Request): string | boolean => {
+  if (!rawRequestTargets && !unparsedBunTargets) return false
+  const host = headerOf(req, "host")
+  if (host !== null && invalidHost(host)) {
+    if (rawRequestTargets) return true
+    // Bun served it anyway: it could not read the Host, so it left the target unparsed, or it
+    // built the URL on it - sent twice (joined with ", ", the URL on the first; RFC 9112 section
+    // 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
+    // sub-delimiter (`a!b`). A request built in process keeps the URL its caller built, unless Bun
+    // would have built it so.
+    const routed = URL.parse(req.url)?.host
+    return routed === undefined || URL.parse(`//${host.split(", ")[0]}`, req.url)?.host === routed
+  }
+  if (rawRequestTargets) return needsResolving(req.url) && resolveDotSegments(req.url)
+  // A request built in process carries an absolute URL whatever its headers say.
   return (
-    routed === undefined ||
-    URL.parse(`//${headerOf(req, "host")!.split(", ")[0]}`, req.url)?.host === routed
+    host === null &&
+    req.url.charCodeAt(0) === 47 /* / */ &&
+    resolveDotSegments(`http://localhost${req.url}`)
   )
 }
 
@@ -3299,19 +3313,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    if (rawRequestTargets) {
-      if (invalidHost(req)) return jsonError(400, "invalid_host")
-      if (needsResolving(req.url)) {
-        const url = resolveDotSegments(req.url)
-        const rebuilt = withResolvedTarget(req, url)
-        if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, url), platform)
-        req = rebuilt
-      }
-    } else if (unparsedBunTargets && misreadHost(req)) {
-      // Refused as Node and Deno refuse that Host: Bun left the target unparsed, so `/users/../admin`
-      // would be routed raw and the app's `new URL(req.url)` would throw, or routed on what Node and
-      // Deno refuse.
-      return jsonError(400, "invalid_host")
+    const target = requestTarget(req)
+    if (target === true) return jsonError(400, "invalid_host")
+    if (target !== false) {
+      const rebuilt = withResolvedTarget(req, target)
+      if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, target), platform)
+      req = rebuilt
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
@@ -3810,18 +3817,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
-    if (rawRequestTargets) {
-      if (invalidHost(req)) {
-        return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
-      }
-      if (needsResolving(req.url)) {
-        // A GET carrying a body cannot be rebuilt; `fetch` routes it as the ordinary request it is.
-        const rebuilt = withResolvedTarget(req, resolveDotSegments(req.url))
-        if (rebuilt === undefined) return WS_PASS
-        req = rebuilt
-      }
-    } else if (unparsedBunTargets && misreadHost(req)) {
+    const target = requestTarget(req)
+    if (target === true) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
+    }
+    if (target !== false) {
+      // A GET carrying a body cannot be rebuilt; `fetch` routes it as the ordinary request it is.
+      const rebuilt = withResolvedTarget(req, target)
+      if (rebuilt === undefined) return WS_PASS
+      req = rebuilt
     }
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
     platform = this.trustedPlatform(req, platform)
@@ -6939,9 +6943,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         peer,
         fallback,
       )
-      // The table never passes through `fetch`, so it refuses the Host Bun misread there too.
+      // The table matched the target as sent; one `fetch` refuses or rewrites goes through it.
       tableAt(path, pattern.segments)[method as Method] = (request, server) =>
-        misreadHost(request) ? jsonError(400, "invalid_host") : handler(request, server)
+        requestTarget(request) ? fallback(request, server) : handler(request, server)
       count += 1
       if (paramNames.length > 0) {
         below.add(pattern.segments.length + method)

@@ -54,6 +54,8 @@ export interface RequestTargetCase {
 }
 
 export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
+  // A handler that parses `c.req.url` gets a URL it can parse.
+  { method: "GET", target: "/url", answer: { route: "GET /url", path: "/url" } },
   { method: "GET", target: "/users/..", answer: { route: "GET /" } },
   { method: "DELETE", target: "/users/..", answer: { route: "DELETE /" } },
   { method: "GET", target: "/users/../posts", answer: { route: "GET /posts" } },
@@ -116,19 +118,23 @@ export interface RawAnswer {
 const hostLines = (host: string | readonly string[]): string[] =>
   (typeof host === "string" ? [host] : host).map((value) => `Host: ${value}`)
 
-/** Send one request with `target` on the request line, byte for byte, and read the answer. */
+/**
+ * Send one request with `target` on the request line, byte for byte, and read the answer. An empty
+ * `host` list sends no Host, which only HTTP/1.0 allows.
+ */
 export function rawExchange(
   port: number,
   method: string,
   target: string,
   body?: string,
   host: string | readonly string[] = "127.0.0.1",
+  version = "1.1",
 ): Promise<RawAnswer> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     const chunks: Buffer[] = []
     socket.on("connect", () => {
-      const head = [`${method} ${target} HTTP/1.1`, ...hostLines(host), "Connection: close"]
+      const head = [`${method} ${target} HTTP/${version}`, ...hostLines(host), "Connection: close"]
       if (body !== undefined) {
         head.push("Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`)
       }
@@ -291,10 +297,12 @@ function parseResponse(text: string): RawAnswer {
 }
 
 /** Every case whose answer differs from the matrix, one line each. Empty when all agree. */
-export async function requestTargetMismatches(port: number): Promise<string[]> {
+export async function requestTargetMismatches(port: number, hostless = false): Promise<string[]> {
   const mismatches: string[] = []
   for (const { method, target, body, answer } of REQUEST_TARGET_CASES) {
-    const got = await rawExchange(port, method, target, body)
+    const got = hostless
+      ? await rawExchange(port, method, target, body, [], "1.0")
+      : await rawExchange(port, method, target, body)
     const expected = JSON.stringify(answer)
     if (got.status !== 200 || got.body !== expected) {
       mismatches.push(`${method} ${target}: got ${got.status} ${got.body}, expected ${expected}`)
