@@ -802,6 +802,66 @@ test("a page hidden while its components hydrate mounts them again once it is sh
   ])
 })
 
+// An adapter whose first `prepare` waits until `release`, so a test can park a page mid-hydration.
+function gatedAdapter(adapter: ComponentClientAdapter) {
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let held = true
+  const gated: ComponentClientAdapter = {
+    ...adapter,
+    prepare: async (...args) => {
+      if (held) {
+        held = false
+        await gate
+      }
+      return adapter.prepare(...args)
+    },
+  }
+  return { gated, release: () => release() }
+}
+
+test("a page dropped while hidden mid-hydration releases what it parked", async () => {
+  const { trace, adapter } = hostAdapter()
+  const { gated, release } = gatedAdapter(adapter)
+  const host = outletHost("a")
+  const controller = new ComponentController({ state: state(), adapter: gated })
+  const mounting = controller.mount(host, "instance_1")
+  await Bun.sleep(0)
+  controller.park(page(host))
+  release()
+  await mounting
+  await controller.dispose()
+  controller.unpark(page(host))
+  expect(trace).toEqual([])
+})
+
+test("a page shown again whose component its state no longer holds reports the failed mount", async () => {
+  const { trace, adapter } = hostAdapter()
+  const { gated, release } = gatedAdapter(adapter)
+  const host = outletHost("a")
+  const errors: string[] = []
+  const controller = new ComponentController({
+    state: state(),
+    adapter: gated,
+    onError: (code) => errors.push(code),
+  })
+  try {
+    const mounting = controller.mount(host, "instance_1")
+    await Bun.sleep(0)
+    controller.park(page(host))
+    release()
+    await mounting
+    await controller.adopt(empty())
+    controller.unpark(page(host))
+    await Bun.sleep(0)
+    expect([errors, trace]).toEqual([["component_failed"], []])
+  } finally {
+    await controller.dispose()
+  }
+})
+
 test("a scope change releases parked components with the rest", async () => {
   const { trace, adapter } = hostAdapter()
   const host = outletHost("a")
