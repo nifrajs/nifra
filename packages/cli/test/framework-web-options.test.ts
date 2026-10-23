@@ -872,6 +872,7 @@ describe("NF-C040", () => {
         "routes/_layout.tsx": [
           'import type { MetaArgs } from "@nifrajs/web"',
           "export const meta = ({ data }: MetaArgs) => ({",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: the generated route module's own template literal
           "  title: `${(data as { title: string }).title} | Site`,",
           "})",
           "export default () => null",

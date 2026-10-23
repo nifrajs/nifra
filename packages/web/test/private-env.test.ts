@@ -45,6 +45,7 @@ describe("privateEnvReads", () => {
       'const h = Deno.env?.get?.("PUBLIC_H")',
       'const i = Deno.env.get?.("SECRET_I")',
       "const j = process.env?.[name]",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the scanned module's own template literal, written as source text
       "const k = `${process.env?.['SECRET_K']}`",
       "// process.env?.['IN_COMMENT']",
       `const l = 'process.env?.["IN_STRING"]'`,

@@ -610,7 +610,7 @@ export function routeTableToJson(rows: readonly RouteTableEntry[]): {
         methods: r.methods,
         ...(r.file !== undefined ? { file: r.file } : {}),
         ...(r.kind === "api" ? { autoMounted: r.autoMounted === true } : {}),
-        // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: `--json` rows gain the key only where it is true, so existing consumers see no change.
+        // `--json` rows gain the key only where it is true, so existing consumers see no change.
         ...(r.inProcessOnly === true ? { inProcessOnly: true } : {}),
         ...(client === undefined
           ? {}
