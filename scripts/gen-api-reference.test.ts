@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test"
 import ts from "typescript"
-import { apiReferenceDrift, assertSane, generateApiReference } from "./gen-api-reference.ts"
+import {
+  apiReferenceDrift,
+  assertSane,
+  codeSpan,
+  generateApiReference,
+} from "./gen-api-reference.ts"
 
 let generated: string | undefined
 const reference = (): string => {
@@ -37,10 +42,40 @@ const showsBody = (signature: string): boolean => {
   return signature.startsWith(" = ", at)
 }
 
+// Each export line's kind and the signature its code span shows, read off the line as CommonMark reads
+// it; `undefined` when the span does not close at the end of the line.
+const signatures = (): { readonly kind: string; readonly text: string | undefined }[] =>
+  Array.from(reference().matchAll(/^- \*\*[^*]+\*\* _\((\w+)\)_ - (`+)(.*)$/gm), (line) => {
+    const [, kind = "", fence = "", rest = ""] = line
+    const inner = rest.endsWith(fence) ? rest.slice(0, -fence.length) : undefined
+    const closesEarly = (inner?.match(/`+/g) ?? []).some((run) => run.length === fence.length)
+    const text =
+      inner === undefined || closesEarly
+        ? undefined
+        : inner.startsWith(" ") && inner.endsWith(" ") && inner.trim() !== ""
+          ? inner.slice(1, -1)
+          : inner
+    return { kind, text }
+  })
+
+test("a code span outruns the backticks inside it and pads one at an edge", () => {
+  expect(codeSpan("type A = string")).toBe("`type A = string`")
+  expect(codeSpan("type A = `x-${string}`")).toBe("`` type A = `x-${string}` ``")
+  expect(codeSpan("a ``b`` c")).toBe("```a ``b`` c```")
+})
+
+test("every signature's code span closes at the end of its line, and no comment is in it", () => {
+  const lines = signatures()
+  expect(lines.length).toBeGreaterThan(1000)
+  expect(lines.filter(({ text }) => text === undefined)).toEqual([])
+  expect(lines.filter(({ text }) => text?.includes("/*"))).toEqual([])
+}, 60_000)
+
 test("every type signature shown whole parses as TypeScript", () => {
   const broken: string[] = []
-  // A signature cut at the length cap ends in an ellipsis and is not meant to parse.
-  for (const [, signature = ""] of reference().matchAll(/_\(type\)_ - `(type [^`]*[^…`])`$/gm)) {
+  for (const { kind, text: signature } of signatures()) {
+    // A signature cut at the length cap ends in an ellipsis and is not meant to parse.
+    if (kind !== "type" || signature === undefined || signature.endsWith("…")) continue
     if (!showsBody(signature)) continue
     const { diagnostics = [] } = ts.transpileModule(signature, { reportDiagnostics: true })
     if (diagnostics.length > 0) broken.push(signature)
