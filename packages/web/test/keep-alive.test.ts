@@ -15,7 +15,7 @@ import {
 } from "../src/keep-alive.ts"
 import { buildManifest, type ClientRouteHooks, type RouteModule } from "../src/manifest.ts"
 import type { MatchChain } from "../src/render-seam.ts"
-import type { ClientRouter, Fetcher, RouteMatch, RouterState } from "../src/router.ts"
+import type { ClientRouter, DataText, Fetcher, RouteMatch, RouterState } from "../src/router.ts"
 
 // ---- a browser stand-in: history entries, the cookie jar and other tabs -------------------------
 
@@ -411,8 +411,12 @@ describe("keepAliveClient", () => {
       boundaries: { modal: { name: "modal", mode: "static", status: "ready", data: { x: 1 } } },
     })
     let respond: () => unknown = () => ({})
+    let seen: readonly unknown[] = []
     const { router, push, fake, client } = setup(kept, {
-      fetchData: async () => respond(),
+      fetchData: async (...args) => {
+        seen = args
+        return respond()
+      },
     })
     const match: RouteMatch = { routeId: "list", params: {} }
     push(state("detail", "/detail"))
@@ -458,6 +462,14 @@ describe("keepAliveClient", () => {
     // Another path goes straight to the transport.
     respond = () => "other"
     expect(await client.fetchData("/detail", match)).toBe("other")
+    // The transport gets every argument, and its answer for a response text the path already shows
+    // (the `read` object itself) comes back unshared.
+    const read: DataText = { previous: "{}" }
+    respond = () => read
+    expect(
+      await client.fetchData("/list/1", match, undefined, undefined, "prefetch", ["h"], read),
+    ).toBe(read)
+    expect(seen.slice(4)).toEqual(["prefetch", ["h"], read])
     release()
     await restoring
   })

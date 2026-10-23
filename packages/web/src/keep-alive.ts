@@ -199,9 +199,16 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       if (signal?.aborted === true || hasRedirect(error)) throw error
       return envelopeOf(restore.kept)
     }
-    return routeHooks[restore.kept.routeId]?.shareData === false
-      ? payload
-      : sharedOnto(restore.kept, payload)
+    const hooks = routeHooks[restore.kept.routeId]
+    // `read` itself answers a reload whose response text is what the path shows, which the router
+    // keeps unparsed.
+    if (payload === read || hooks?.shareData === false) return payload
+    // The router's transport records the text of a plain JSON response, a tree with no symbol keys.
+    return sharedOnto(
+      restore.kept,
+      payload,
+      read?.text !== undefined && hooks?.clientLoader === undefined,
+    )
   }
 
   const attach = (inner: ClientRouter): KeepAliveRouter => {
@@ -549,20 +556,20 @@ const envelopeOf = (state: RouterState): unknown => {
 
 /** `payload` with every part equal to what `kept` shows replaced by that part. A layout the server
  * skipped (`retained`) takes the value on screen, as on any navigation. */
-const sharedOnto = (kept: RouterState, payload: unknown): unknown => {
-  if (!isRouteDataEnvelope(payload)) return shareData(kept.data, payload)
+const sharedOnto = (kept: RouterState, payload: unknown, plainJson: boolean): unknown => {
+  if (!isRouteDataEnvelope(payload)) return shareData(kept.data, payload, plainJson)
   if (payload.status !== undefined) return payload
   const retained = new Set(payload.retained ?? [])
   return {
     ...payload,
-    data: shareData(kept.data, payload.data),
+    data: shareData(kept.data, payload.data, plainJson),
     layoutData: payload.layoutData?.map((value, index) =>
-      retained.has(index) ? value : shareData(kept.layoutData?.[index], value),
+      retained.has(index) ? value : shareData(kept.layoutData?.[index], value, plainJson),
     ),
     ...(payload.boundaries === undefined
       ? {}
-      : { boundaries: shareData(kept.boundaries, payload.boundaries) }),
-    serverComponents: shareData(kept.serverComponents, payload.serverComponents),
+      : { boundaries: shareData(kept.boundaries, payload.boundaries, plainJson) }),
+    serverComponents: shareData(kept.serverComponents, payload.serverComponents, plainJson),
   }
 }
 
