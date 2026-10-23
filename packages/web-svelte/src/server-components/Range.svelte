@@ -12,7 +12,7 @@
     if (controller === undefined && clientAdapter === undefined) throw new Error("component_contract")
     active = controller ?? new ComponentController({ state, adapter: clientAdapter! })
     void active.mount(host, instance).catch(() => active?.reportError("component_failed"))
-    return () => { if (active !== undefined) void (controller === undefined ? active.dispose() : active.unmount(instance)) }
+    return () => { if (active !== undefined) void (controller === undefined ? active.dispose() : active.unmount(instance, host)) }
   })
   $effect(() => { const next = state; if (active !== undefined) void active.adopt(next).catch(() => active?.reportError("component_failed")) })
 </script>

@@ -24,6 +24,7 @@ import { bindScope } from "./internal/island-bindings.ts"
 import { mountIsland } from "./internal/island-mount.ts"
 import { owned } from "./internal/island-owner.ts"
 import { type Signal, signal } from "./internal/island-signals.ts"
+import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./internal/page-events.ts"
 
 export {
   type IslandStrategy,
@@ -78,6 +79,37 @@ export type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandC
  */
 export function defineIsland<P = unknown>(enhancer: IslandEnhancer<P>): IslandEnhancer<P> {
   return enhancer
+}
+
+const onPage = (type: string, el: Element, callback: () => void): (() => void) => {
+  if (typeof document === "undefined") return () => {}
+  const listener = (event: Event): void => {
+    if (event.target instanceof Node && event.target.contains(el)) callback()
+  }
+  document.addEventListener(type, listener)
+  return () => document.removeEventListener(type, listener)
+}
+
+/**
+ * Run `callback` each time the `keepAlive` page `el` renders in is hidden behind another page, just
+ * before it leaves the document. An island in a kept page stays mounted, and its timers and window
+ * listeners keep running, while the page is hidden: pause them here. Returns its removal - hand it back
+ * as part of the enhancer's cleanup. Never runs outside a kept page.
+ *
+ *   const clock = defineIsland((el) => {
+ *     let timer = setInterval(tick, 1000)
+ *     const hide = onPageHide(el, () => clearInterval(timer))
+ *     const show = onPageShow(el, () => { timer = setInterval(tick, 1000) })
+ *     return () => { hide(); show(); clearInterval(timer) }
+ *   })
+ */
+export function onPageHide(el: Element, callback: () => void): () => void {
+  return onPage(PAGE_HIDE_EVENT, el, callback)
+}
+
+/** Run `callback` each time the `keepAlive` page `el` renders in is shown again; returns its removal. */
+export function onPageShow(el: Element, callback: () => void): () => void {
+  return onPage(PAGE_SHOW_EVENT, el, callback)
 }
 
 /** What a `bindIsland` setup receives. */

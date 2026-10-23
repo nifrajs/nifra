@@ -20,7 +20,7 @@ import { setMountedRouter } from "./fetcher.ts"
 import KeepAlive from "./KeepAlive.svelte"
 
 export * from "./client.ts"
-export { onPageHide, onPageShow } from "./router.ts"
+export { onPageHide, onPageShow, usePageVisibility } from "./router.ts"
 
 /** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */
 export interface KeepAliveMountOptions extends MountRouterOptions {

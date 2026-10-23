@@ -6132,6 +6132,10 @@ _No named exports (side-effect entrypoint)._
   The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted attribute (`data-island-props="${...}"`): unquoted, a space in the JSON ends the value and the rest parses as attributes.
 - **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: { readonly root?: ParentNode; }) => () => void`
   Find every `[data-island]` element under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that is already mounted, is left alone, so calling again after a soft navigation mounts only new hosts. An en…
+- **onPageHide** _(function)_ - `onPageHide: (el: Element, callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page `el` renders in is hidden behind another page, just before it leaves the document. An island in a kept page stays mounted, and its timers and window listeners keep running, while the page is hidden: pause them here. Returns its removal - hand it back as…
+- **onPageShow** _(function)_ - `onPageShow: (el: Element, callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page `el` renders in is shown again; returns its removal.
 - **resource** _(function)_ - `resource: <K, T>(source: () => K, fetcher: (key: K, abort: AbortSignal) => Promise<T>) => Resource<T>`
   An async value keyed by `source`. `source` runs tracked, so a write to any signal it reads starts a new fetch; `fetcher` runs untracked with that key, so nothing it reads (before or after an `await`) is a dependency. A newer fetch aborts the older one and only the newest result lands. Inside an isl…
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
@@ -6170,9 +6174,9 @@ _No named exports (side-effect entrypoint)._
 - **KeepAliveTable** _(interface)_ - `interface KeepAliveTable`
   What the server and the browser both read to place the slot wrappers.
 - **PAGE_HIDE_EVENT** _(const)_ - `PAGE_HIDE_EVENT: "nifra:pagehide"`
-  Dispatched on a page's element just before it leaves the document.
+  Dispatched on a kept page's element as the router hides it (`keepAlive`), while it is still in the document and before the router's subscribers see the state that hides it.
 - **PAGE_SHOW_EVENT** _(const)_ - `PAGE_SHOW_EVENT: "nifra:pageshow"`
-  Dispatched on a page's element once it is back in the document.
+  Dispatched on a kept page's element once it is shown again.
 - **PageView** _(interface)_ - `interface PageView`
   What a page showed as it was hidden, put back by {@link PageView.restore}.
 - **SlotNode** _(interface)_ - `interface SlotNode`
@@ -6519,7 +6523,7 @@ _No named exports (side-effect entrypoint)._
 - **ServerComponent** _(interface)_ - `interface ServerComponent<Input = unknown, Props = unknown, View = unknown>`
 - **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
-  Optional router integration; imported only by opted-in application entries.
+  Optional router integration; imported only by opted-in application entries. The components of a `keepAlive` page are parked while it is hidden, so navigation leaves them as they are.
 - **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
 - **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
 - **refreshAfterComponentMutation** _(function)_ - `refreshAfterComponentMutation: <T extends { readonly ok: boolean; }>(mutation: Promise<T>, controller: ComponentController, instances: readonly string[]) => Promise<T>`
@@ -7291,6 +7295,8 @@ _No named exports (side-effect entrypoint)._
   Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
   Run `callback` each time the `keepAlive` page this component renders in is shown again.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
+  Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
 
 ### `@nifrajs/web-svelte/mdx`
 
@@ -7334,6 +7340,8 @@ _No named exports (side-effect entrypoint)._
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as an accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismat…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
+  Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
 

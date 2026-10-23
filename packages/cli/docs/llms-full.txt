@@ -11642,9 +11642,9 @@ import type { KeepAliveOptions } from "@nifrajs/web"
 export const keepAlive: KeepAliveOptions = { revalidate: false, maxAge: 60_000 }
 ```
 
-`keepAlive` works with the React adapter (React 19.2 or later, for
-`<Activity>`) and the Svelte adapter. A build with another adapter fails and
-names the routes that export it.
+`keepAlive` works with the React (19.2 or later, for
+`<Activity>`), Preact, Solid, Svelte and Vue adapters. A build with another
+adapter fails and names the routes that export it.
 
 ### When a page is kept, and when it comes back
 
@@ -11667,6 +11667,11 @@ longer than ten minutes, or the route's `maxAge`.
 -
 Going back and then following a link drops the pages ahead of it, as the browser drops
 those history entries.
+
+-
+A page left with a [route open in a modal](/docs/routing#modal-routes) over
+it is kept with the modal. Back to that entry shows the page and opens the modal over it
+again.
 
 ### Fresh data
 
@@ -11695,8 +11700,9 @@ export default function Dashboard() {
 }
 ```
 
-A Svelte page keeps running while it is hidden. Pause timers, sockets and media with
-`onPageHide` and resume them with `onPageShow`:
+A Preact, Solid, Svelte or Vue page keeps running while it is hidden. Pause timers, sockets
+and media with `onPageHide` and resume them with `onPageShow`, from
+each adapter's `/router`:
 
 ```svelte
 <script>
@@ -11709,15 +11715,79 @@ A Svelte page keeps running while it is hidden. Pause timers, sockets and media 
 </script>
 ```
 
-Any framework's code can listen for the `nifra:pagehide` and
-`nifra:pageshow` events, which bubble from the page.
+```vue
+<script setup lang="ts">
+import { onPageHide, onPageShow } from "@nifrajs/web-vue/router"
+const socket = connect()
+onPageHide(() => socket.pause())
+onPageShow(() => socket.resume())
+</script>
+```
+
+Adapter
+
+`usePageVisibility()`
+
+`onPageHide` / `onPageShow`
+
+React
+a boolean
+effects, which hiding cleans up
+
+Preact
+a boolean
+hooks
+
+Solid
+an accessor
+run in a component, removed with it
+
+Svelte
+a getter
+run as the component initializes, return their removal
+
+Vue
+a ref
+
+run in `setup`; `onActivated` / `onDeactivated` also
+run
+
+A `useBlocker` in a hidden page blocks nothing. Any code can listen for the
+`nifra:pagehide` and `nifra:pageshow` events, which bubble from the
+page. An island inside a kept page stays mounted with it; its enhancer pauses with
+`onPageHide` and `onPageShow` from `@nifrajs/web/islands`:
+
+```ts
+import { defineIsland, onPageHide, onPageShow } from "@nifrajs/web/islands"
+
+export const clock = defineIsland((el) => {
+  const tick = () => {
+    el.textContent = new Date().toLocaleTimeString()
+  }
+  let timer = setInterval(tick, 1000)
+  const hide = onPageHide(el, () => clearInterval(timer))
+  const show = onPageShow(el, () => {
+    timer = setInterval(tick, 1000)
+  })
+  return () => {
+    hide()
+    show()
+    clearInterval(timer)
+  }
+})
+```
+
+The [server components](/docs/server-components) of a kept page stay mounted too.
+With `bindComponentRouter` installed, navigation leaves them alone while the page
+is hidden, and the reload of a page that comes back updates them.
 
 ### CSS around a kept page
 
 A kept page renders inside two `display:contents` elements,
 `[data-nifra-entry]` and `[data-nifra-page]`; so does a layout below
-which the routes' layouts differ. They take no box, but a selector that reached the page's
-root as a direct child, or by its position among siblings, stops matching:
+which the routes' layouts differ. Vue, whose `<KeepAlive>` moves the page
+itself, renders neither. They take no box, but a selector that reached the page's root as a
+direct child, or by its position among siblings, stops matching:
 
 ```text
 /* Stops matching: the wrappers sit between main and the page's root */
@@ -11791,9 +11861,6 @@ A document the browser puts in its back/forward cache drops its kept pages first
 cached document never carries them.
 
 ### Limits
-
--
-A page with an intercepted route open (a modal over it) is not kept.
 
 -
 A route with a `clientLoader` runs it again when the page comes back, even with

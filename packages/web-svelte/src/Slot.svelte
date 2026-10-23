@@ -5,8 +5,8 @@
   A wrapped node renders inside the two slot wrappers; the inner one is the element the DOM half takes
   out of the document while the node is hidden. Its page keeps running there, so a wrapped node also
   provides the routing context of its own state - a hidden page never reads another page's params - and
-  the visibility callbacks `onPageHide` / `onPageShow` register with (the key strings are kept in sync
-  with router.ts).
+  its visibility, which `useBlocker` reads and the callbacks `onPageHide` / `onPageShow` register with
+  (the key strings are kept in sync with router.ts).
 -->
 <script>
   import { setContext, untrack } from "svelte"
@@ -27,7 +27,7 @@
     setContext("@nifrajs/web-svelte:search", () => props.search ?? {})
     const hide = new Set()
     const show = new Set()
-    setContext("@nifrajs/web-svelte:visibility", { hide, show })
+    setContext("@nifrajs/web-svelte:visibility", { hidden: () => node.hidden, hide, show })
     // svelte-ignore state_referenced_locally
     let hidden = node.hidden
     $effect(() => {

@@ -94,7 +94,7 @@ const ComponentOutlet = defineComponent({
       if (controller !== undefined)
         void (props.controller === undefined
           ? controller.dispose()
-          : controller.unmount(mounted.instance))
+          : controller.unmount(mounted.instance, host ?? undefined))
     })
     return () =>
       h("nifra-component", {

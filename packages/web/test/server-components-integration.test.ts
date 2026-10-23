@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
+import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "../src/internal/page-events.ts"
 import type { ClientRouter, RouterState } from "../src/router.ts"
 import {
   type ComponentClientAdapter,
@@ -89,6 +90,14 @@ class ObservedController extends ComponentController {
     this.trace.push(`refresh:${instance}`)
     return true
   }
+  override park(page: Node): void {
+    this.trace.push(`park:${String(Reflect.get(page, "name"))}`)
+    super.park(page)
+  }
+  override unpark(page: Node): void {
+    this.trace.push(`unpark:${String(Reflect.get(page, "name"))}`)
+    super.unpark(page)
+  }
   override async invalidateScope(): Promise<void> {
     this.trace.push("invalidate")
     if (this.failInvalidation) throw new Error("native teardown failed")
@@ -146,6 +155,52 @@ test("router transitions cancel pending owners, adopt verified data and report i
   } finally {
     await controller.dispose()
     for (const item of saved) componentControllers.add(item)
+  }
+})
+
+test("the router binding parks the components of a kept page from its page events", () => {
+  const saved = [...componentControllers]
+  componentControllers.clear()
+  const globals = {
+    document: Reflect.get(globalThis, "document"),
+    Node: Reflect.get(globalThis, "Node"),
+  }
+  class FakeNode {
+    constructor(readonly name: string) {}
+    contains(): boolean {
+      return false
+    }
+  }
+  const listeners = new Map<string, Set<(event: Event) => void>>()
+  Reflect.set(globalThis, "Node", FakeNode)
+  Reflect.set(globalThis, "document", {
+    addEventListener: (type: string, listener: (event: Event) => void) => {
+      listeners.set(type, (listeners.get(type) ?? new Set()).add(listener))
+    },
+    removeEventListener: (type: string, listener: (event: Event) => void) => {
+      listeners.get(type)?.delete(listener)
+    },
+  })
+  const fire = (type: string, target: unknown): void => {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the binding reads only `type` and `target` off a page event
+    for (const listener of [...(listeners.get(type) ?? [])])
+      listener({ type, target } as unknown as Event)
+  }
+  const controller = new ObservedController({ state: initial, adapter })
+  const value: RouterState = { routeId: "owner", data: null, params: {}, path: "/", pending: false }
+  try {
+    const stop = bindComponentRouter({ snapshot: () => value, subscribe: () => () => {} })
+    fire(PAGE_HIDE_EVENT, new FakeNode("list"))
+    fire(PAGE_SHOW_EVENT, new FakeNode("list"))
+    fire(PAGE_HIDE_EVENT, null)
+    stop()
+    fire(PAGE_HIDE_EVENT, new FakeNode("detail"))
+    expect(controller.trace).toEqual(["park:list", "unpark:list"])
+  } finally {
+    componentControllers.clear()
+    for (const item of saved) componentControllers.add(item)
+    Reflect.set(globalThis, "document", globals.document)
+    Reflect.set(globalThis, "Node", globals.Node)
   }
 })
 

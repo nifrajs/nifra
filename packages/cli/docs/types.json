@@ -3607,7 +3607,7 @@
     "name": "ComponentController",
     "kind": "class",
     "package": "@nifrajs/web",
-    "signature": "export declare class ComponentController {\n    #private;\n    get state(): ComponentState;\n    reportError(code: string): void;\n    constructor(options: ComponentControllerOptions);\n    mount(host: Element, instance: string, fresh?: boolean): Promise<void>;\n    whenReady(instance: string): Promise<void>;\n    refresh(instance: string, ownerUrl?: string): Promise<boolean>;\n    /** Abort networking immediately while retaining the tree until verified navigation arrives. */\n    cancelPending(): void;\n    adopt(state: ComponentState, ownerUrl?: string): Promise<void>;\n    unmount(instance: string): Promise<void>;\n    invalidateScope(): Promise<void>;\n    navigate(): Promise<void>;\n    dispose(): Promise<void>;\n}"
+    "signature": "export declare class ComponentController {\n    #private;\n    get state(): ComponentState;\n    reportError(code: string): void;\n    constructor(options: ComponentControllerOptions);\n    mount(host: Element, instance: string, fresh?: boolean): Promise<void>;\n    whenReady(instance: string): Promise<void>;\n    refresh(instance: string, ownerUrl?: string): Promise<boolean>;\n    /** Abort networking immediately while retaining the tree until verified navigation arrives. */\n    cancelPending(): void;\n    /**\n     * Set aside the components inside `page`, a `keepAlive` page the router hides: their pending work is\n     * cancelled, and navigation neither updates nor unmounts them until `unpark` takes them back.\n     * `bindComponentRouter` calls it on the page events.\n     */\n    park(page: Node): void;\n    /** Take back the components `park` set aside inside `page`, which is shown again. */\n    unpark(page: Node): void;\n    adopt(state: ComponentState, ownerUrl?: string): Promise<void>;\n    /** Unmount `instance`; an outlet passes its `host`, which tells a parked page's instance apart. */\n    unmount(instance: string, host?: Element): Promise<void>;\n    invalidateScope(): Promise<void>;\n    navigate(): Promise<void>;\n    dispose(): Promise<void>;\n}"
   },
   {
     "name": "ComponentControllerOptions",
@@ -10734,14 +10734,14 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const PAGE_HIDE_EVENT = \"nifra:pagehide\";",
-    "doc": "/** Dispatched on a page's element just before it leaves the document. */"
+    "doc": "/** Dispatched on a kept page's element as the router hides it (`keepAlive`), while it is still in the\n * document and before the router's subscribers see the state that hides it. */"
   },
   {
     "name": "PAGE_SHOW_EVENT",
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const PAGE_SHOW_EVENT = \"nifra:pageshow\";",
-    "doc": "/** Dispatched on a page's element once it is back in the document. */"
+    "doc": "/** Dispatched on a kept page's element once it is shown again. */"
   },
   {
     "name": "PREDICTION_LAB_SEED",
@@ -17396,7 +17396,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function bindComponentRouter(router: Pick<ClientRouter, \"snapshot\" | \"subscribe\">): () => void;",
-    "doc": "/** Optional router integration; imported only by opted-in application entries. */"
+    "doc": "/**\n * Optional router integration; imported only by opted-in application entries. The components of a\n * `keepAlive` page are parked while it is hidden, so navigation leaves them as they are.\n */"
   },
   {
     "name": "bindIsland",
@@ -21505,6 +21505,13 @@
   {
     "name": "onPageHide",
     "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function onPageHide(el: Element, callback: () => void): () => void;",
+    "doc": "/**\n * Run `callback` each time the `keepAlive` page `el` renders in is hidden behind another page, just\n * before it leaves the document. An island in a kept page stays mounted, and its timers and window\n * listeners keep running, while the page is hidden: pause them here. Returns its removal - hand it back\n * as part of the enhancer's cleanup. Never runs outside a kept page.\n *\n *   const clock = defineIsland((el) => {\n *     let timer = setInterval(tick, 1000)\n *     const hide = onPageHide(el, () => clearInterval(timer))\n *     const show = onPageShow(el, () => { timer = setInterval(tick, 1000) })\n *     return () => { hide(); show(); clearInterval(timer) }\n *   })\n */"
+  },
+  {
+    "name": "onPageHide",
+    "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function onPageHide(callback: () => void): void;",
     "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page, before it leaves the document. The page keeps running while it is hidden: pause its timers,\n * sockets and media here. A hook: call it unconditionally while rendering. A no-op outside a kept page.\n */"
@@ -21529,6 +21536,13 @@
     "package": "@nifrajs/web-vue",
     "signature": "export declare function onPageHide(callback: () => void): void;",
     "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page, before it leaves the document (Vue's `onDeactivated` runs after). The page keeps running while\n * it is hidden: pause its timers, sockets and media here. Call it in `setup`; it is removed with the\n * component. A no-op outside a kept page.\n */"
+  },
+  {
+    "name": "onPageShow",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function onPageShow(el: Element, callback: () => void): () => void;",
+    "doc": "/** Run `callback` each time the `keepAlive` page `el` renders in is shown again; returns its removal. */"
   },
   {
     "name": "onPageShow",
@@ -25005,6 +25019,13 @@
     "package": "@nifrajs/web-solid",
     "signature": "export declare function usePageVisibility(): Accessor<boolean>;",
     "doc": "/**\n * Whether the page this component renders in is on screen, as an accessor: `false` while it is kept\n * hidden behind another page, where it keeps running. Always `true` on the server and on a page that\n * does not keep alive.\n */"
+  },
+  {
+    "name": "usePageVisibility",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function usePageVisibility(): () => boolean;",
+    "doc": "/**\n * Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden\n * behind another page, where it keeps running. Always `true` on the server and on a page that does not\n * keep alive. Call it while the component initializes; read it in markup or a `$derived`.\n */"
   },
   {
     "name": "usePageVisibility",

@@ -139,6 +139,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
         // Shown again before Vue hid it: it never left the document.
         entry.view = undefined
         for (const callback of [...entry.slot.show]) callback()
+        dispatch(elementsOf(entry.instance.subTree), PAGE_SHOW_EVENT)
       }
     }
   })

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import type { BoundaryState } from "../src/boundary.ts"
 import { identityChanged, onIdentityChange } from "../src/identity.ts"
 import { keepAliveTable, slotDepths } from "../src/internal/keep-alive-table.ts"
 import {
@@ -15,7 +16,14 @@ import {
 } from "../src/keep-alive.ts"
 import { buildManifest, type ClientRouteHooks, type RouteModule } from "../src/manifest.ts"
 import type { MatchChain } from "../src/render-seam.ts"
-import type { ClientRouter, Fetcher, RouteMatch, RouterState } from "../src/router.ts"
+import {
+  type ClientRouter,
+  createClientRouter,
+  type Fetcher,
+  type FetchRouteData,
+  type RouteMatch,
+  type RouterState,
+} from "../src/router.ts"
 
 // ---- a browser stand-in: history entries, the cookie jar and other tabs -------------------------
 
@@ -295,12 +303,135 @@ describe("keepAliveClient", () => {
     expect(router.snapshot().kept).toBeUndefined()
   })
 
-  test("only a page whose route exports keepAlive, settled and not intercepted, is kept", () => {
-    const { router, push } = setup(state("detail", "/detail"))
-    push(state("list", "/list/1", { intercepted: { boundary: "b", pagePath: "/list/1" } }))
+  test("only a settled page whose route exports keepAlive is kept", () => {
+    const { router, push, fake } = setup(state("detail", "/detail"))
+    push(state("detail", "/detail/2"))
     expect(router.snapshot().kept).toBeUndefined()
+    push(state("list", "/list/1"))
+    fakeHistory.push()
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/detail" })
+    expect(router.snapshot().kept).toBeUndefined()
+  })
+
+  test("a page left with a boundary open is kept with it, and back to that entry opens it again", async () => {
+    const photo: BoundaryState = {
+      name: "photo",
+      mode: { intercept: "/photo/[id]" },
+      status: "ready",
+      data: { photo: 3 },
+    }
+    const modal = state("list", "/photo/3", {
+      intercepted: { boundary: "photo", pagePath: "/list/1" },
+      boundaries: { photo },
+    })
+    const { router, push, fake } = setup(state("list", "/list/1"))
+    const first = router.snapshot().instance
+    // Opening the boundary does not leave the page; leaving it then keeps both.
+    push(modal)
+    expect(router.snapshot().instance).toBe(first)
+    expect(fakeHistory.entries[1]?.nifraInstance).toBe(first)
     push(state("detail", "/detail"))
-    expect(router.snapshot().kept).toBeUndefined()
+    expect(router.snapshot().kept).toEqual([{ instance: String(first), state: modal }])
+
+    const step = fake.hold()
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/photo/3")
+    expect(router.snapshot()).toMatchObject({ instance: first, path: "/photo/3", restored: true })
+    expect(router.snapshot().intercepted).toEqual(modal.intercepted)
+    // The router loads the page under the boundary first; on its own it is not what was left.
+    expect(fake.navigations).toEqual(["/list/1"])
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/list/1" })
+    fake.publish(state("list", "/list/1", { data: { fresh: "page" } }))
+    expect(router.snapshot()).toMatchObject({ path: "/photo/3", restored: true })
+    step()
+    // Then the target, which the router opens in the boundary over that page.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(fake.navigations).toEqual(["/list/1", "/photo/3"])
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/photo/3" })
+    expect(router.snapshot().restored).toBe(true)
+    const reopened = { ...modal, data: { fresh: "page" } }
+    fake.publish(reopened)
+    await restoring
+    expect(router.snapshot()).toMatchObject({ instance: first, data: { fresh: "page" } })
+    expect(router.snapshot().intercepted).toEqual(modal.intercepted)
+    expect(router.snapshot().restored).toBeUndefined()
+  })
+
+  test("a kept boundary's target reloads shared onto what it showed, or shows that unrequested", async () => {
+    const photo: BoundaryState = {
+      name: "photo",
+      mode: { intercept: "/photo/[id]" },
+      status: "ready",
+      data: { tags: [1] },
+    }
+    const modal = state("list", "/photo/3", {
+      data: { rows: [1] },
+      intercepted: { boundary: "photo", pagePath: "/list/1" },
+      boundaries: { photo },
+    })
+    const requests: string[] = []
+    let respond = (path: string): unknown => ({ v: 1, data: { path } })
+    const once = async (revalidate: boolean, check: (client: Setup["client"]) => Promise<void>) => {
+      const { router, push, fake, client } = setup(state("list", "/list/1"), {
+        hooks: { list: { keepAlive: { revalidate } } },
+        fetchData: async (path) => {
+          requests.push(path)
+          return respond(path)
+        },
+      })
+      push(modal)
+      push(state("detail", "/detail"))
+      const release = fake.hold()
+      fakeHistory.go(-1)
+      const restoring = router.navigate("/photo/3")
+      await check(client)
+      release()
+      await restoring
+    }
+    const match: RouteMatch = { routeId: "photo", params: {} }
+
+    await once(false, async (client) => {
+      expect(await client.fetchData("/list/1", match)).toMatchObject({ v: 1, data: modal.data })
+      expect(await client.fetchData("/photo/3", match)).toEqual({
+        v: 1,
+        data: photo.data,
+        live: undefined,
+      })
+      expect(requests).toEqual([])
+    })
+    await once(true, async (client) => {
+      respond = () => ({ v: 1, data: { tags: [1] } })
+      expect(at(await client.fetchData("/photo/3", match), "data")).toBe(photo.data)
+      respond = () => ({ tags: [1] })
+      expect(await client.fetchData("/photo/3", match)).toBe(photo.data)
+      respond = () => ({ v: 1, data: null, status: 404 })
+      expect(await client.fetchData("/photo/3", match)).toEqual({ v: 1, data: null, status: 404 })
+      respond = () => {
+        throw new Error("offline")
+      }
+      expect(await client.fetchData("/photo/3", match)).toEqual({
+        v: 1,
+        data: photo.data,
+        live: undefined,
+      })
+    })
+    expect(requests).toEqual(["/photo/3", "/photo/3", "/photo/3", "/photo/3"])
+  })
+
+  test("a modal restore that the router does not answer on the page ends there", async () => {
+    const modal = state("list", "/photo/3", {
+      intercepted: { boundary: "photo", pagePath: "/list/1" },
+    })
+    const { router, push, fake } = setup(state("list", "/list/1"))
+    push(modal)
+    push(state("detail", "/detail"))
+    fakeHistory.go(-1)
+    // The page's reload settles without a publish: the router is still on the page being left.
+    await router.navigate("/photo/3")
+    expect(fake.navigations).toEqual(["/list/1"])
+    push(state("detail", "/detail/2"))
+    expect(router.snapshot().restored).toBeUndefined()
   })
 
   test("a link to a kept page's path renders a fresh page", async () => {
@@ -693,6 +824,84 @@ describe("keepAliveClient", () => {
 
 // ---- the view tree -------------------------------------------------------------------------------
 
+describe("keepAliveClient over the client router", () => {
+  const photoBoundary = { name: "photo", mode: { intercept: "/photos/:id" } } as const
+  const unresolved = { photo: { ...photoBoundary, status: "unresolved" } } as const
+  // Answers each data request with what was asked for and how often; the page as the envelope a
+  // server sends, its intercept boundary unresolved.
+  const served = () => {
+    const calls: string[] = []
+    const fetchData: FetchRouteData = async (path, match) => {
+      calls.push(path)
+      const n = calls.filter((call) => call === path).length
+      return match.routeId === "index"
+        ? { v: 1, data: { from: path, n }, boundaries: unresolved }
+        : { from: path, n }
+    }
+    return { calls, fetchData }
+  }
+
+  test("back to a page left with its boundary open shows both again, then reloads both", async () => {
+    const server = served()
+    const routeHooks: Record<string, ClientRouteHooks> = {
+      index: { keepAlive: true, boundaries: [photoBoundary] },
+    }
+    const keep = keepAliveClient({
+      table: { routes: ["index"], layouts: [] },
+      routeHooks,
+      matchChains: { index: chain("index"), photo: chain("photo"), about: chain("about") },
+      fetchData: server.fetchData,
+    })
+    const router = keep.attach(
+      createClientRouter({
+        patterns: [
+          { routeId: "index", pattern: "/" },
+          { routeId: "photo", pattern: "/photos/:id" },
+          { routeId: "about", pattern: "/about" },
+        ],
+        initial: {
+          routeId: "index",
+          params: {},
+          path: "/",
+          data: { from: "/", n: 0 },
+          boundaries: unresolved,
+          pending: false,
+        },
+        fetchData: keep.fetchData,
+        routeHooks,
+      }),
+    )
+    const first = router.snapshot().instance
+    fakeHistory.push()
+    await router.navigate("/photos/1")
+    const open = router.snapshot()
+    expect(open).toMatchObject({ path: "/photos/1", instance: first })
+    expect(open.intercepted).toEqual({ boundary: "photo", pagePath: "/" })
+    fakeHistory.push()
+    await router.navigate("/about")
+    expect(router.snapshot().routeId).toBe("about")
+    expect(router.snapshot().kept?.map((page) => [page.instance, page.state.path])).toEqual([
+      [String(first), "/photos/1"],
+    ])
+
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/photos/1")
+    expect(router.snapshot()).toMatchObject({ path: "/photos/1", instance: first, restored: true })
+    expect(router.snapshot().boundaries?.photo?.data).toEqual({ from: "/photos/1", n: 1 })
+    await restoring
+    const back = router.snapshot()
+    expect(back).toMatchObject({ routeId: "index", path: "/photos/1", instance: first })
+    expect(back.intercepted).toEqual({ boundary: "photo", pagePath: "/" })
+    expect(back.restored).toBeUndefined()
+    expect(back.data).toEqual({ from: "/", n: 1 })
+    expect(back.boundaries?.photo).toMatchObject({
+      status: "ready",
+      data: { from: "/photos/1", n: 2 },
+    })
+    expect(server.calls).toEqual(["/photos/1", "/about", "/", "/photos/1"])
+  })
+})
+
 describe("slotTree", () => {
   const table = { routes: ["list", "item"], layouts: ["shop/_layout"] }
   const kept = (instance: string, routeId: string, path: string) => ({
@@ -905,6 +1114,8 @@ describe("createSlotParking", () => {
     page.scrollLeft = 5
     fakeDocument.activeElement = input
     parking.before([node("k", true)])
+    // Before the router publishes what hides it, while the page is still in the document.
+    expect([page.events, entry.children]).toEqual([[PAGE_HIDE_EVENT], [page]])
     // React detaches refs inside a hidden Activity: the page stays known.
     parking.page("k")(null)
     parking.after([node("k", true)])
@@ -920,6 +1131,22 @@ describe("createSlotParking", () => {
     parking.after([node("k", false)])
     expect([inner.scrollTop, page.scrollLeft, input.focused]).toEqual([40, 5, 1])
     expect(page.events).toEqual([PAGE_HIDE_EVENT, PAGE_SHOW_EVENT])
+  })
+
+  test("a slot shown again before it was parked is told so before the render", () => {
+    const entry = new FakeElement("DIV")
+    const page = new FakeElement("DIV")
+    new FakeElement("HTML").append(entry.append(page))
+    const parking = createSlotParking()
+    parking.entry("k")(asElement(entry))
+    parking.page("k")(asElement(page))
+    parking.after([node("k", false)])
+    parking.before([node("k", true)])
+    parking.before([node("k", true)])
+    parking.before([node("k", false)])
+    expect(page.events).toEqual([PAGE_HIDE_EVENT, PAGE_SHOW_EVENT])
+    parking.after([node("k", false)])
+    expect([page.events, entry.children]).toEqual([[PAGE_HIDE_EVENT, PAGE_SHOW_EVENT], [page]])
   })
 
   test("a slot hidden in the same render that hides it remembers its offsets then", () => {

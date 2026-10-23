@@ -432,6 +432,12 @@
     "code": "import { batch, computed, effect, signal, untrack } from \"@nifrajs/web/islands\"\n\n// A signal is read by calling it and written with .set. Reads inside an effect or computed subscribe.\nconst price = signal(20)\nconst quantity = signal(1)\nconst total = computed(() => price() * quantity())\n\nconst stop = effect(() => console.log(\"total\", total(), \"at\", untrack(price)))\nbatch(() => {\n  price.set(25)\n  quantity.set((n) => n + 1)\n}) // the effect runs once, after both writes: logs \"total 50 at 25\"\nstop()"
   },
   {
+    "name": "ISLAND",
+    "topic": "Nifra - Keep-alive",
+    "slug": "keep-alive",
+    "code": "import { defineIsland, onPageHide, onPageShow } from \"@nifrajs/web/islands\"\n\nexport const clock = defineIsland((el) => {\n  const tick = () => {\n    el.textContent = new Date().toLocaleTimeString()\n  }\n  let timer = setInterval(tick, 1000)\n  const hide = onPageHide(el, () => clearInterval(timer))\n  const show = onPageShow(el, () => {\n    timer = setInterval(tick, 1000)\n  })\n  return () => {\n    hide()\n    show()\n    clearInterval(timer)\n  }\n})"
+  },
+  {
     "name": "OPTIONS",
     "topic": "Nifra - Keep-alive",
     "slug": "keep-alive",

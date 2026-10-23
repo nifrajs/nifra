@@ -90,6 +90,8 @@ export class ComponentController {
   }
   readonly #options: ComponentControllerOptions
   readonly #mounted = new Map<string, Mounted>()
+  // Set aside with a `keepAlive` page while it is hidden; another page may mount the same instances.
+  readonly #parked = new Set<Mounted>()
   // Structural outlet anchors survive logout; their private records and native roots do not.
   readonly #restorable = new Map<string, Element>()
   readonly #teardown = new WeakMap<Element, Promise<void>>()
@@ -162,6 +164,8 @@ export class ComponentController {
     try {
       await mounted.ready
     } catch (error) {
+      // Parked while it hydrated: it mounts again when its page is shown.
+      if (this.#parked.has(mounted)) return
       if (this.#mounted.get(instance) === mounted) await this.unmount(instance)
       throw error
     }
@@ -439,6 +443,49 @@ export class ComponentController {
       mounted.generation++
     }
   }
+  /**
+   * Set aside the components inside `page`, a `keepAlive` page the router hides: their pending work is
+   * cancelled, and navigation neither updates nor unmounts them until `unpark` takes them back.
+   * `bindComponentRouter` calls it on the page events.
+   */
+  park(page: Node): void {
+    for (const mounted of this.#mounted.values())
+      if (page.contains(mounted.host)) {
+        this.#mounted.delete(mounted.record.instance)
+        this.#parked.add(mounted)
+        mounted.abort.abort()
+        mounted.abort = new AbortController()
+        mounted.generation++
+      }
+  }
+  /** Take back the components `park` set aside inside `page`, which is shown again. */
+  unpark(page: Node): void {
+    for (const mounted of this.#parked) {
+      if (!page.contains(mounted.host)) continue
+      const id = mounted.record.instance
+      if (this.#mounted.has(id) || this.#disposed) {
+        void this.#release(mounted)
+        continue
+      }
+      this.#parked.delete(mounted)
+      if (mounted.root !== undefined) this.#mounted.set(id, mounted)
+      // Hidden while it hydrated, which `park` cancelled: mount it again.
+      else
+        void this.#mount(mounted.host, id, mounted.host.childNodes.length === 0).catch(() =>
+          this.reportError("component_failed"),
+        )
+    }
+  }
+  async #release(mounted: Mounted): Promise<void> {
+    if (!this.#parked.delete(mounted)) return
+    for (const child of this.#parked)
+      if (mounted.host.contains(child.host)) await this.#release(child)
+    mounted.abort.abort()
+    await mounted.ready.catch(() => {
+      /* A parked hydration was cancelled; nothing of it can commit. */
+    })
+    await mounted.root?.dispose()
+  }
   async adopt(state: ComponentState, ownerUrl?: string): Promise<void> {
     if (ownerUrl !== undefined) this.#ownerUrl = ownerUrl
     if (this.#disposed || state === this.#source) return
@@ -568,7 +615,11 @@ export class ComponentController {
       }
     }
   }
-  async unmount(instance: string): Promise<void> {
+  /** Unmount `instance`; an outlet passes its `host`, which tells a parked page's instance apart. */
+  async unmount(instance: string, host?: Element): Promise<void> {
+    for (const mounted of this.#parked)
+      if (mounted.host === host && mounted.record.instance === instance)
+        return this.#release(mounted)
     this.#restorable.delete(instance)
     await this.#unmount(instance)
   }
@@ -594,7 +645,7 @@ export class ComponentController {
       if (this.#teardown.get(mounted.host) === teardown) this.#teardown.delete(mounted.host)
     }
   }
-  async #clearScope(preserveOutlets = false): Promise<void> {
+  async #clearScope(preserveOutlets = false, keepParked = false): Promise<void> {
     this.#authEpoch++
     if (preserveOutlets) {
       for (const mounted of this.#mounted.values())
@@ -603,7 +654,10 @@ export class ComponentController {
     } else this.#restorable.clear()
     this.#state = { ...this.#state, records: [] }
     this.#source = undefined
-    await Promise.all([...this.#mounted.keys()].map((instance) => this.#unmount(instance)))
+    await Promise.all([
+      ...[...this.#mounted.keys()].map((instance) => this.#unmount(instance)),
+      ...(keepParked ? [] : [...this.#parked].map((mounted) => this.#release(mounted))),
+    ])
   }
   async invalidateScope(): Promise<void> {
     this.#adoption++
@@ -611,7 +665,7 @@ export class ComponentController {
   }
   async navigate(): Promise<void> {
     this.cancelPending()
-    await this.#clearScope()
+    await this.#clearScope(false, !this.#disposed)
   }
   async dispose(): Promise<void> {
     this.#disposed = true

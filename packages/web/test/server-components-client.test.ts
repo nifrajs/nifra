@@ -657,3 +657,161 @@ test("a refresh answered for another auth scope invalidates instead of updating"
     trace: ["hydrate:public"],
   })
 })
+
+// A `keepAlive` page and the outlet hosts inside it, for the controller's parking.
+function page(...hosts: Element[]): Node {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: parking reads only `contains` off a page
+  return { contains: (node: unknown) => hosts.includes(node as Element) } as unknown as Node
+}
+function outletHost(name: string, rendered = true): Element {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the controller reads only `contains` and `childNodes` off a host here
+  return { name, contains: () => false, childNodes: rendered ? [name] : [] } as unknown as Element
+}
+function hostAdapter() {
+  const trace: string[] = []
+  const nameOf = (host: Element): string => String(Reflect.get(host, "name"))
+  const root = (host: Element, record: { readonly html: string }) => ({
+    update() {},
+    dispose() {
+      trace.push(`dispose:${nameOf(host)}:${record.html}`)
+    },
+  })
+  const adapter: ComponentClientAdapter = {
+    name: "vue",
+    prepare: (record) => record.html,
+    hydrate: (host, record) => {
+      trace.push(`hydrate:${nameOf(host)}:${record.html}`)
+      return root(host, record)
+    },
+    create: (host, record) => {
+      trace.push(`create:${nameOf(host)}:${record.html}`)
+      return root(host, record)
+    },
+    update: (root, record, _prepared, current) => {
+      if (current()) trace.push(`update:${record.html}`)
+      void root
+    },
+  }
+  return { trace, adapter }
+}
+const empty = (): ComponentState => ({ ...state(), records: [] })
+
+test("a parked page's components outlive the navigations away and update once it is back", async () => {
+  const { trace, adapter } = hostAdapter()
+  const host = outletHost("a")
+  const controller = new ComponentController({ state: state(), adapter })
+  try {
+    await controller.mount(host, "instance_1")
+    controller.park(page(host))
+    await controller.adopt(empty())
+    await controller.navigate()
+    expect(trace).toEqual(["hydrate:a:public"])
+    await controller.adopt(state("scope_1", "kept"))
+    controller.unpark(page(host))
+    await controller.adopt(state("scope_1", "fresh"))
+    expect(trace).toEqual(["hydrate:a:public", "update:fresh"])
+  } finally {
+    await controller.dispose()
+  }
+  expect(trace.at(-1)).toBe("dispose:a:public")
+})
+
+test("a parked instance frees its id for another page, and the outlet's host tells them apart", async () => {
+  const { trace, adapter } = hostAdapter()
+  const [a, b] = [outletHost("a"), outletHost("b")]
+  const controller = new ComponentController({ state: state(), adapter })
+  try {
+    await controller.mount(a, "instance_1")
+    controller.park(page(a))
+    await controller.mount(b, "instance_1")
+    await controller.unmount("instance_1", a)
+    expect(trace).toEqual(["hydrate:a:public", "hydrate:b:public", "dispose:a:public"])
+    await controller.adopt(state("scope_1", "next"))
+    expect(trace.at(-1)).toBe("update:next")
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a page shown again while its instance is mounted elsewhere releases its parked copy", async () => {
+  const { trace, adapter } = hostAdapter()
+  const [a, b] = [outletHost("a"), outletHost("b")]
+  const controller = new ComponentController({ state: state(), adapter })
+  try {
+    await controller.mount(a, "instance_1")
+    controller.park(page(a))
+    await controller.mount(b, "instance_1")
+    controller.unpark(page(a))
+    await Bun.sleep(0)
+    expect(trace).toEqual(["hydrate:a:public", "hydrate:b:public", "dispose:a:public"])
+  } finally {
+    await controller.dispose()
+  }
+  expect(trace).toEqual([
+    "hydrate:a:public",
+    "hydrate:b:public",
+    "dispose:a:public",
+    "dispose:b:public",
+  ])
+})
+
+test("a page hidden while its components hydrate mounts them again once it is shown", async () => {
+  const { trace, adapter } = hostAdapter()
+  for (const host of [outletHost("a"), outletHost("b", false)]) {
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let held = true
+    const gated: ComponentClientAdapter = {
+      ...adapter,
+      prepare: async (...args) => {
+        if (held) {
+          held = false
+          await gate
+        }
+        return adapter.prepare(...args)
+      },
+    }
+    const controller = new ComponentController({ state: state(), adapter: gated })
+    const errors: string[] = []
+    try {
+      const mounting = controller.mount(host, "instance_1").catch((error: unknown) => {
+        errors.push(String(error))
+      })
+      await Bun.sleep(0)
+      controller.park(page(host))
+      release()
+      await mounting
+      expect(errors).toEqual([])
+      controller.unpark(page(host))
+      await controller.whenReady("instance_1")
+    } finally {
+      await controller.dispose()
+    }
+  }
+  // Hydrating over the server's markup when it is still there, else creating it.
+  expect(trace).toEqual([
+    "hydrate:a:public",
+    "dispose:a:public",
+    "create:b:public",
+    "dispose:b:public",
+  ])
+})
+
+test("a scope change releases parked components with the rest", async () => {
+  const { trace, adapter } = hostAdapter()
+  const host = outletHost("a")
+  const controller = new ComponentController({ state: state(), adapter })
+  try {
+    await controller.mount(host, "instance_1")
+    controller.park(page(host))
+    await controller.invalidateScope()
+    expect(trace).toEqual(["hydrate:a:public", "dispose:a:public"])
+    controller.unpark(page(host))
+    await controller.adopt(state("scope_2", "next"))
+    expect(trace).toEqual(["hydrate:a:public", "dispose:a:public"])
+  } finally {
+    await controller.dispose()
+  }
+})

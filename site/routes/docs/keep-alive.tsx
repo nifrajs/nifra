@@ -37,6 +37,31 @@ const SVELTE = `<script>
   onPageShow(poll)
 </script>`
 
+const VUE = `<script setup lang="ts">
+import { onPageHide, onPageShow } from "@nifrajs/web-vue/router"
+const socket = connect()
+onPageHide(() => socket.pause())
+onPageShow(() => socket.resume())
+</script>`
+
+const ISLAND = `import { defineIsland, onPageHide, onPageShow } from "@nifrajs/web/islands"
+
+export const clock = defineIsland((el) => {
+  const tick = () => {
+    el.textContent = new Date().toLocaleTimeString()
+  }
+  let timer = setInterval(tick, 1000)
+  const hide = onPageHide(el, () => clearInterval(timer))
+  const show = onPageShow(el, () => {
+    timer = setInterval(tick, 1000)
+  })
+  return () => {
+    hide()
+    show()
+    clearInterval(timer)
+  }
+})`
+
 const CSS = `/* Stops matching: the wrappers sit between main and the page's root */
 main > section { padding: 2rem; }
 
@@ -90,9 +115,9 @@ export default function KeepAlive() {
       </p>
       <CodeBlock code={OPTIONS} />
       <p>
-        <code>keepAlive</code> works with the React adapter (React 19.2 or later, for{" "}
-        <code>&lt;Activity&gt;</code>) and the Svelte adapter. A build with another adapter fails and
-        names the routes that export it.
+        <code>keepAlive</code> works with the React (19.2 or later, for{" "}
+        <code>&lt;Activity&gt;</code>), Preact, Solid, Svelte and Vue adapters. A build with another
+        adapter fails and names the routes that export it.
       </p>
 
       <h2>When a page is kept, and when it comes back</h2>
@@ -117,6 +142,11 @@ export default function KeepAlive() {
           Going back and then following a link drops the pages ahead of it, as the browser drops
           those history entries.
         </li>
+        <li>
+          A page left with a <a href="/docs/routing#modal-routes">route open in a modal</a> over
+          it is kept with the modal. Back to that entry shows the page and opens the modal over it
+          again.
+        </li>
       </ul>
 
       <h2>Fresh data</h2>
@@ -140,21 +170,75 @@ export default function KeepAlive() {
       </p>
       <CodeBlock code={REACT} lang="tsx" />
       <p>
-        A Svelte page keeps running while it is hidden. Pause timers, sockets and media with{" "}
-        <code>onPageHide</code> and resume them with <code>onPageShow</code>:
+        A Preact, Solid, Svelte or Vue page keeps running while it is hidden. Pause timers, sockets
+        and media with <code>onPageHide</code> and resume them with <code>onPageShow</code>, from
+        each adapter's <code>/router</code>:
       </p>
       <CodeBlock code={SVELTE} lang="svelte" />
+      <CodeBlock code={VUE} lang="vue" />
+      <table>
+        <thead>
+          <tr>
+            <th>Adapter</th>
+            <th>
+              <code>usePageVisibility()</code>
+            </th>
+            <th>
+              <code>onPageHide</code> / <code>onPageShow</code>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>React</td>
+            <td>a boolean</td>
+            <td>effects, which hiding cleans up</td>
+          </tr>
+          <tr>
+            <td>Preact</td>
+            <td>a boolean</td>
+            <td>hooks</td>
+          </tr>
+          <tr>
+            <td>Solid</td>
+            <td>an accessor</td>
+            <td>run in a component, removed with it</td>
+          </tr>
+          <tr>
+            <td>Svelte</td>
+            <td>a getter</td>
+            <td>run as the component initializes, return their removal</td>
+          </tr>
+          <tr>
+            <td>Vue</td>
+            <td>a ref</td>
+            <td>
+              run in <code>setup</code>; <code>onActivated</code> / <code>onDeactivated</code> also
+              run
+            </td>
+          </tr>
+        </tbody>
+      </table>
       <p>
-        Any framework's code can listen for the <code>nifra:pagehide</code> and{" "}
-        <code>nifra:pageshow</code> events, which bubble from the page.
+        A <code>useBlocker</code> in a hidden page blocks nothing. Any code can listen for the{" "}
+        <code>nifra:pagehide</code> and <code>nifra:pageshow</code> events, which bubble from the
+        page. An island inside a kept page stays mounted with it; its enhancer pauses with{" "}
+        <code>onPageHide</code> and <code>onPageShow</code> from <code>@nifrajs/web/islands</code>:
+      </p>
+      <CodeBlock code={ISLAND} />
+      <p>
+        The <a href="/docs/server-components">server components</a> of a kept page stay mounted too.
+        With <code>bindComponentRouter</code> installed, navigation leaves them alone while the page
+        is hidden, and the reload of a page that comes back updates them.
       </p>
 
       <h2>CSS around a kept page</h2>
       <p>
         A kept page renders inside two <code>display:contents</code> elements,{" "}
         <code>[data-nifra-entry]</code> and <code>[data-nifra-page]</code>; so does a layout below
-        which the routes' layouts differ. They take no box, but a selector that reached the page's
-        root as a direct child, or by its position among siblings, stops matching:
+        which the routes' layouts differ. Vue, whose <code>&lt;KeepAlive&gt;</code> moves the page
+        itself, renders neither. They take no box, but a selector that reached the page's root as a
+        direct child, or by its position among siblings, stops matching:
       </p>
       <CodeBlock code={CSS} lang="text" />
       <p>
@@ -197,9 +281,6 @@ export default function KeepAlive() {
 
       <h2>Limits</h2>
       <ul>
-        <li>
-          A page with an intercepted route open (a modal over it) is not kept.
-        </li>
         <li>
           A route with a <code>clientLoader</code> runs it again when the page comes back, even with{" "}
           <code>revalidate: false</code>.

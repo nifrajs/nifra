@@ -11,6 +11,7 @@
  */
 import { epochOf, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
 import type { KeepAliveTable } from "./internal/keep-alive-table.ts"
+import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./internal/page-events.ts"
 import { shareData } from "./internal/share-data.ts"
 import type { ClientRouteHooks, KeepAliveOptions } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
@@ -26,6 +27,7 @@ import {
 
 export { EPOCH_COOKIE, IDENTITY_CHANNEL, identityChanged } from "./identity.ts"
 export type { KeepAliveTable } from "./internal/keep-alive-table.ts"
+export { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./internal/page-events.ts"
 
 /** Most pages kept per tab. */
 export const KEEP_ALIVE_MAX = 3
@@ -108,7 +110,10 @@ interface Kept {
 }
 
 interface Restore {
+  /** The URL of the history entry restored: the page's, or the target its boundary holds. */
   readonly path: string
+  /** The URL the page's own data reloads from. */
+  readonly pagePath: string
   readonly kept: RouterState
   readonly reload: boolean
 }
@@ -180,17 +185,28 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
   // A reload that fails shows the kept data instead of loading the page as a document.
   const fetchData: FetchRouteData = async (path, match, signal, navigation, read) => {
     const restore = reloading
-    if (restore === undefined || restore.path !== path) {
+    const held = restore?.kept.intercepted
+    // A page kept with a boundary open reloads twice: its own data, then the target the boundary holds.
+    const target =
+      held !== undefined && path === restore?.kept.path && path !== restore.pagePath
+        ? restore.kept.boundaries?.[held.boundary]
+        : undefined
+    if (restore === undefined || (path !== restore.pagePath && target === undefined)) {
       return base(path, match, signal, navigation, read)
     }
-    if (!restore.reload) return envelopeOf(restore.kept)
+    const kept = (): unknown =>
+      target === undefined
+        ? envelopeOf(restore.kept)
+        : { v: 1, data: target.data, live: target.live }
+    if (!restore.reload) return kept()
     let payload: unknown
     try {
       payload = await base(path, match, signal, navigation, read)
     } catch (error) {
       if (signal?.aborted === true || hasRedirect(error)) throw error
-      return envelopeOf(restore.kept)
+      return kept()
     }
+    if (target !== undefined) return targetOnto(target.data, payload)
     return routeHooks[restore.kept.routeId]?.shareData === false
       ? payload
       : sharedOnto(restore.kept, payload)
@@ -221,8 +237,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
 
     const keepAliveOf = (routeId: string): true | KeepAliveOptions | undefined =>
       keepRoutes.has(routeId) ? routeHooks[routeId]?.keepAlive : undefined
+    // A boundary open over the page is kept with it (its target is the page's to show again).
     const keepable = (state: RouterState): boolean =>
-      !state.pending && state.intercepted === undefined && keepAliveOf(state.routeId) !== undefined
+      !state.pending && keepAliveOf(state.routeId) !== undefined
     // One page instance per route, and per pathname on a route that keeps alive, whose pages would
     // otherwise have nothing to keep.
     const sameInstance = (a: RouterState, b: RouterState): boolean =>
@@ -362,14 +379,22 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       if (restore !== undefined) {
         // The restored page stays on screen while its reload runs: the router's own pending tick for
         // it is not a navigation the visitor made. A redirect it follows is.
-        if (next.pending && (next.pendingPath === undefined || next.pendingPath === restore.path))
+        if (
+          next.pending &&
+          (next.pendingPath === undefined ||
+            next.pendingPath === restore.path ||
+            next.pendingPath === restore.pagePath)
+        )
+          return
+        const onPage =
+          !next.pending &&
+          pagePathOf(next) === restore.pagePath &&
+          next.routeId === restore.kept.routeId
+        // The page alone, on the way to opening its boundary on the target again.
+        if (onPage && restore.kept.intercepted !== undefined && next.intercepted === undefined)
           return
         endRestore()
-        if (
-          !next.pending &&
-          pagePathOf(next) === restore.path &&
-          next.routeId === restore.kept.routeId
-        ) {
+        if (onPage) {
           active = { instance: active.instance, index: active.index, settled: next }
           shown = { ...next, params: shareData(restore.kept.params, next.params) }
           flags = undefined
@@ -396,21 +421,38 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       const kept = record.page.state
       active = { instance, index: entry.index, settled: kept }
       const reload = record.revalidate || record.stale || kept.path !== path
+      const modal = kept.intercepted
+      const pagePath = modal === undefined ? path : modal.pagePath
       let done = (): void => {}
       const ended = new Promise<void>((resolve) => {
         done = resolve
       })
       endRestore()
-      restoring = { path, kept, reload, done, ended }
-      reloading = { path, kept, reload }
+      const mine = { path, pagePath, kept, reload, done, ended }
+      restoring = mine
+      reloading = { path, pagePath, kept, reload }
       stampEntry(instance)
       shown = kept
       flags = { restored: true, revalidating: reload }
       leaving = false
       leftGone = false
       refresh()
-      return inner.navigate(path).finally(() => {
-        if (restoring?.path === path) endRestore()
+      // The router shows a boundary's target only over the page it opened on: it loads the page, then
+      // opens the boundary on the target again, as the link that first opened it did.
+      const reloaded =
+        modal === undefined
+          ? inner.navigate(path)
+          : inner.navigate(pagePath).then(() => {
+              const now = inner.snapshot()
+              const onPage =
+                restoring === mine &&
+                !now.pending &&
+                now.routeId === kept.routeId &&
+                pagePathOf(now) === pagePath
+              return onPage ? inner.navigate(path) : undefined
+            })
+      return reloaded.finally(() => {
+        if (restoring === mine) endRestore()
       })
     }
 
@@ -432,7 +474,8 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     // paths (`X-Nifra-Revalidate`) is read inside the router, so every kept page reloads when shown.
     const markStale = (paths?: readonly string[]): void => {
       for (const record of records.values()) {
-        if (paths === undefined || paths.includes(pagePathOf(record.page.state)))
+        const { state } = record.page
+        if (paths === undefined || paths.includes(pagePathOf(state)) || paths.includes(state.path))
           record.stale = true
       }
     }
@@ -525,6 +568,13 @@ const hasRedirect = (error: unknown): boolean =>
   typeof error === "object" &&
   error !== null &&
   typeof Reflect.get(error, "redirectTo") === "string"
+
+/** A held target's reload, its data shared onto what the boundary shows. */
+const targetOnto = (shown: unknown, payload: unknown): unknown => {
+  if (!isRouteDataEnvelope(payload)) return shareData(shown, payload)
+  if (payload.status !== undefined) return payload
+  return { ...payload, data: shareData(shown, payload.data) }
+}
 
 /** A route data envelope that publishes exactly `state`'s data. */
 const envelopeOf = (state: RouterState): unknown => {
@@ -743,11 +793,6 @@ const collect = (node: SlotNode, into: string[]): void => {
   for (const child of node.children) collect(child, into)
 }
 
-/** Dispatched on a page's element just before it leaves the document. */
-export const PAGE_HIDE_EVENT = "nifra:pagehide"
-/** Dispatched on a page's element once it is back in the document. */
-export const PAGE_SHOW_EVENT = "nifra:pageshow"
-
 /** The DOM half of keep-alive: takes hidden slots out of the document and puts them back. */
 export interface SlotParking {
   /** The ref of a slot's outer wrapper (`data-nifra-entry`). Stable per key. */
@@ -767,6 +812,8 @@ interface Parked {
   parked: boolean
   shown: boolean
   showing: boolean
+  /** The hide event went out and no show event since. */
+  hid: boolean
   next: Node | null
   offsets: (readonly [Element, number, number])[] | undefined
   focus: Element | undefined
@@ -834,6 +881,7 @@ export function createSlotParking(): SlotParking {
         parked: false,
         shown: false,
         showing: false,
+        hid: false,
         next: null,
         offsets: undefined,
         focus: undefined,
@@ -849,6 +897,14 @@ export function createSlotParking(): SlotParking {
     const focused = typeof document === "undefined" ? null : document.activeElement
     slot.focus =
       focused !== null && focused !== slot.page && slot.page.contains(focused) ? focused : undefined
+  }
+  // Sent while the page is still in the document, before the router's subscribers see the state that
+  // hides it, so what holds the page's content (server components) sets it aside first.
+  const fire = (slot: Parked, hide: boolean): void => {
+    slot.hid = hide
+    slot.page?.dispatchEvent(
+      new CustomEvent(hide ? PAGE_HIDE_EVENT : PAGE_SHOW_EVENT, { bubbles: true }),
+    )
   }
   const unpark = (slot: Parked): void => {
     if (!slot.parked || slot.page === undefined || slot.entry === undefined) return
@@ -883,8 +939,15 @@ export function createSlotParking(): SlotParking {
       for (const node of wrappedNodes(next)) {
         const slot = slots.get(node.key)
         if (slot === undefined) continue
-        if (node.hidden && slot.shown) remember(slot)
-        else if (!node.hidden) unpark(slot)
+        if (node.hidden) {
+          if (!slot.shown) continue
+          remember(slot)
+          if (!slot.hid && slot.page !== undefined) fire(slot, true)
+        } else {
+          // Shown again before it was parked: it never left the document.
+          if (slot.hid && !slot.parked) fire(slot, false)
+          unpark(slot)
+        }
       }
     },
     after(tree) {
@@ -897,7 +960,7 @@ export function createSlotParking(): SlotParking {
         if (node.hidden) {
           if (!slot.parked) {
             if (slot.shown) remember(slot)
-            page.dispatchEvent(new CustomEvent(PAGE_HIDE_EVENT, { bubbles: true }))
+            if (!slot.hid) fire(slot, true)
             slot.next = page.nextSibling
             page.remove()
             slot.parked = true
@@ -917,7 +980,7 @@ export function createSlotParking(): SlotParking {
           if (focus?.isConnected && page.contains(focus))
             // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: it held focus, so it is focusable; the call stays optional
             (focus as HTMLElement).focus?.({ preventScroll: true })
-          page.dispatchEvent(new CustomEvent(PAGE_SHOW_EVENT, { bubbles: true }))
+          fire(slot, false)
         }
         slot.offsets = undefined
         slot.focus = undefined
