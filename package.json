@@ -48,6 +48,7 @@
     "check:server-components:performance": "bun scripts/check-server-components-performance.ts",
     "check:server-components:consumers": "bun scripts/check-server-components-consumers.ts",
     "check:workerd": "bun run scripts/check-workerd.ts && bun run scripts/check-workerd-live.ts",
+    "check:runtime-differential": "bun run scripts/check-runtime-differential.ts",
     "check:core-performance": "bun run bench/http/_fetch-micro.ts --check",
     "check:middleware-overhead": "bun run bench/http/middleware-overhead.ts --check",
     "check:output-guard": "bun run bench/schema/output-guard.ts --check",

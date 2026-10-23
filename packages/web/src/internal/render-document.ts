@@ -41,7 +41,7 @@ import {
 import { PRERENDERED_GLOBAL } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
 import { isStaticMeta, mergeHeads } from "./head-merge.ts"
-import { isRequestAbort } from "./request-abort.ts"
+import { reportDeferredRejection } from "./request-abort.ts"
 import { PRE_HYDRATION_GUARD } from "./runtime-contract.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./script-types.ts"
 
@@ -215,6 +215,8 @@ export interface RenderPageOptions {
   /** The request's abort signal. A deferred value that rejects because it aborted is the client
    * leaving, not a failure, so the server log skips it. Omit ⇒ every rejection is logged. */
   readonly signal?: AbortSignal
+  /** Where a rejected deferred value is logged: the app's error log. Omit ⇒ the console. */
+  readonly logError?: ((error: unknown) => void) | undefined
   /**
    * A hash-based Content-Security-Policy from `createCspPolicy`. The document then carries `nonce`
    * only when it needs one (it defers a value, or a head tag names the nonce); otherwise it renders
@@ -594,6 +596,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       streamNonce,
       streamNonce === nonce ? nonceAttr : ` nonce="${escapeAttr(streamNonce ?? "")}"`,
       options.signal,
+      options.logError,
     ).then((response) => new ResponseRenderedPage(response))
   const last = chain[chain.length - 1]
   const leaf = isWeakKey(last) ? last : undefined
@@ -667,6 +670,7 @@ async function renderStreamedPage(
   nonce: string | undefined,
   nonceAttr: string,
   signal: AbortSignal | undefined,
+  logError: ((error: unknown) => void) | undefined,
 ): Promise<Response> {
   // Streaming path - required for `defer()` (progressive `<Await>` resolution) and used by any adapter
   // that doesn't implement `renderToString`. Awaiting `renderToStream` resolves on shell-readiness
@@ -696,6 +700,7 @@ async function renderStreamedPage(
     enc,
     nonceAttr,
     signal,
+    logError,
   )
   return new Response(body, { status, headers })
 }
@@ -787,6 +792,7 @@ function streamDocument(
   enc: TextEncoder,
   nonceAttr: string,
   signal: AbortSignal | undefined,
+  logError: ((error: unknown) => void) | undefined,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader()
   // A client that goes away cancels the body: the renderer stops, and nothing more is written.
@@ -811,7 +817,7 @@ function streamDocument(
         // A rejected (or unserializable) deferred streams __nifraReject (the client `<Await>`
         // surfaces it) - it must not break the whole body. Redact: stream a stable opaque code,
         // never the raw error text; log the real reason server-side.
-        if (!isRequestAbort(signal, err)) console.error("[nifra/web] deferred value rejected:", err)
+        reportDeferredRejection(signal, err, logError)
         return `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`
       }),
   )

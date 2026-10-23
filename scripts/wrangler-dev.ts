@@ -84,8 +84,12 @@ function killTree(child: ChildProcess): void {
   }
 }
 
-/** Start `wrangler dev --local` on `config`; `NIFRA_WORKERD_PORT` pins the port. */
-export async function startWranglerDev(config: string): Promise<WranglerDev> {
+/** Start `wrangler dev --local` on `config`; `NIFRA_WORKERD_PORT` pins the port. `onOutput` sees
+ * every chunk Wrangler writes, in order, past the 20 kB `logs()` keeps. */
+export async function startWranglerDev(
+  config: string,
+  onOutput?: (chunk: string) => void,
+): Promise<WranglerDev> {
   if (!existsSync(WRANGLER)) {
     throw new Error("wrangler is not installed; run `bun install` before check:workerd")
   }
@@ -132,6 +136,7 @@ export async function startWranglerDev(config: string): Promise<WranglerDev> {
   let logs = ""
   const capture = (chunk: Buffer): void => {
     logs = `${logs}${chunk.toString()}`.slice(-20_000)
+    onOutput?.(chunk.toString())
   }
   child.stdout?.on("data", capture)
   child.stderr?.on("data", capture)

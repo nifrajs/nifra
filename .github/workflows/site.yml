@@ -88,7 +88,7 @@ jobs:
       - name: Probe production site
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 20); do
+          for _ in $(seq 1 20); do
             if home="$(curl --fail --silent --show-error https://nifra.dev/)" &&
               [[ "$home" == *"<title>Nifra - "* ]] &&
               [[ "$(curl --fail --silent --show-error https://nifra.dev/assets/deployment.txt)" == "$DEPLOYMENT" ]]; then

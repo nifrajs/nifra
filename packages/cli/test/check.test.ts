@@ -123,6 +123,7 @@ describe("release verification", () => {
       "cross-runtime-deno",
       "cross-runtime-node",
       "workerd",
+      "runtime-differential",
       "pipeline-parity",
       "leak-matrix",
       "verification-parity",

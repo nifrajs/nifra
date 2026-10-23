@@ -2,6 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { server, status } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
+import {
+  closeArgsAnswers,
+  closeArgsRoute,
+  closeReportRoute,
+  closeReports,
+  FORBIDDEN_CLOSES,
+  REPORT_CAP,
+  SERVER_CLOSE_REPORTS,
+} from "../../core/test/ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 import { PUBLISHED, publishFeedApp, publishRoundTrip } from "./ws-publish-fixture.ts"
@@ -99,6 +108,24 @@ describe("@nifrajs/node WebSocket payload caps", () => {
       await running.stop({ drainMs: 50 })
       running = undefined
     }
+  })
+
+  test("a close RFC 6455 forbids throws a RangeError and leaves the socket open", async () => {
+    running = await serve(closeArgsRoute(server().use(websocket())), {
+      port: 0,
+      hostname: "127.0.0.1",
+    })
+    expect(await closeArgsAnswers(running.port)).toEqual({
+      answers: FORBIDDEN_CLOSES.map(() => "range"),
+      closed: { code: 4000, reason: "ok" },
+    })
+  })
+
+  test("close is given the server's own close when the server closed first", async () => {
+    const app = server({ wsMaxPayloadBytes: REPORT_CAP }).use(websocket())
+    const next = closeReportRoute(app)
+    running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+    expect(await closeReports(running.port, next)).toEqual([...SERVER_CLOSE_REPORTS])
   })
 
   test("a cap of 0 refuses every non-empty message", async () => {

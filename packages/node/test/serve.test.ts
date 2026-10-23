@@ -182,7 +182,7 @@ test("a Host name with an underscore is served, as a container service name ofte
   expect(bad.status).toBe(400)
 })
 
-test("Host is matched in any case, the first of a repeat wins, and none means localhost", async () => {
+test("Host is matched in any case, a repeat is a 400, and none means localhost", async () => {
   const app = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
   running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const port = running.port
@@ -198,10 +198,12 @@ test("Host is matched in any case, the first of a repeat wins, and none means lo
       socket.write(`${head}Connection: close\r\n\r\n`)
     })
 
+  const upper = await exchange("GET /host HTTP/1.1\r\nHOST: first.example\r\n")
+  expect(upper).toContain('{"origin":"http://first.example"}')
   const repeated = await exchange(
     "GET /host HTTP/1.1\r\nHOST: first.example\r\nhost: second.example\r\n",
   )
-  expect(repeated).toContain('{"origin":"http://first.example"}')
+  expect(repeated).toStartWith("HTTP/1.1 400")
   const missing = await exchange("GET /host HTTP/1.0\r\n")
   expect(missing).toContain('{"origin":"http://localhost"}')
 })
@@ -1123,6 +1125,24 @@ test("c.boundedJson on a bodyless GET returns invalid_json through the lean sour
   })
   expect(res.status).toBe(400)
   expect(await res.json()).toEqual({ ok: false, error: "invalid_json" })
+})
+
+// Fetch's `json()` drops a leading byte order mark; the lazy source's own decode kept it, so a body
+// Bun and workerd parse was refused here. Found by scripts/check-runtime-differential.ts.
+test("a JSON body led by a byte order mark parses as Fetch parses it", async () => {
+  const app = server()
+    .post("/named", { body: nameBody }, (c) => c.body)
+    .post("/bounded", (c) => c.boundedJson())
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const body = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"name":"Ada"}')])
+  for (const path of ["/named", "/bounded"]) {
+    const res = await fetch(`http://127.0.0.1:${running.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    })
+    expect([path, res.status, await res.json()]).toEqual([path, 200, { name: "Ada" }])
+  }
 })
 
 test("c.req.json() works through the lazy source on a POST", async () => {
