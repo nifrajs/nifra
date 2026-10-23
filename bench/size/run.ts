@@ -262,8 +262,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // QueryClient.clear(): 17,769 -> 18,212 B; every browser client held weakly from creation, so a
   // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
   // A revalidation keeps the identity of what it did not change (the sharing walk, and the same
-  // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3).
-  "nifra-web-client": 18.4,
+  // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3). `identityChanged()`,
+  // which drops kept pages on a token sign-in or sign-out in every tab: 18,817 -> 18,938 B (Bun 1.4.3).
+  "nifra-web-client": 18.5,
   "nifra-i18n": 4.3,
 }
 

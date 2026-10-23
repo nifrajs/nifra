@@ -494,7 +494,8 @@ export const routeDataOf = async (
   return readResponseData(res, signal, read)
 }
 
-const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation, read) => {
+/** The router's own transport, which a `fetchData` override may layer over. */
+export const fetchRouteData: FetchRouteData = async (path, _match, signal, navigation, read) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
@@ -524,9 +525,6 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
   )
 }
 
-/** The router's own transport, which a `fetchData` override may layer over. */
-export { defaultFetchData as fetchRouteData }
-
 /**
  * Create the agnostic router store. `navigate` is guarded by a monotonic generation so that when
  * navigations overlap, only the latest result is applied (rapid clicks don't flash stale data).
@@ -550,9 +548,9 @@ const isClientActionResult = (value: unknown): value is ClientActionResult =>
 
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
-  const fetchData = options.fetchData ?? defaultFetchData
+  const fetchData = options.fetchData ?? fetchRouteData
   // Start a handed-over list's fetch now, so the first navigation rarely waits for it.
-  if (fetchData === defaultFetchData) prerenderedOf()
+  if (fetchData === fetchRouteData) prerenderedOf()
   // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
   // to it as routes load), so a same-route nav always sees the current route's keys.
   const searchClientKeys = options.searchClientKeys ?? {}

@@ -172,7 +172,7 @@ const NDJSON_ENCODER = new TextEncoder()
  * `{__nifra_deferred: id}` placeholders (`forClient`), then one line per deferred as its promise
  * settles - `{"i": id, "v": value}` on resolve, `{"i": id, "e": "deferred_error"}` on reject (a
  * rejection is data, not a stream error; the opaque code never leaks the raw reason). Closes when all
- * settle. The client (`defaultFetchData`) returns the
+ * settle. The client (`fetchRouteData`) returns the
  * data after line 1 and settles `<Await>`'s markers as the resolution lines arrive. `JSON.stringify`
  * escapes newlines in values, so each line is NDJSON-safe; no HTML escaping (this is a fetch body,
  * parsed with `JSON.parse`, never injected into markup). A rejection caused by the request `signal`
@@ -323,7 +323,7 @@ function markersFromPlaceholders(data: unknown, pending: Pending): unknown {
 }
 
 /**
- * Client side of {@link ndjsonStream} (used by the router's `defaultFetchData` on a soft nav): read
+ * Client side of {@link ndjsonStream} (used by the router's `fetchRouteData` on a soft nav): read
  * the NDJSON body into a data object whose deferred markers settle as resolution lines arrive.
  * Returns after **line 1** so the router can apply the critical data + render immediately; the
  * markers' promises settle/reject in the background. If the stream ends (or `signal` aborts) with
