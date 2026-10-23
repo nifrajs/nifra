@@ -15779,11 +15779,11 @@ await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with 
 ## Client disconnect and `c.req.signal`
 
 `Deno.serve` aborts a request's `signal` when the client goes away and, by default, also once a
-response has been sent in full. Deno prints a one-time notice about that default the first time a
-request's `signal` is read. nifra reads it when it rebuilds a request (a mounted app, a path with
-`.` or `..` segments, an idempotent route), so `c.req.signal` and `fetch(c.req)` still follow a
-client that hangs up. To have the signal abort only on a disconnect, and no notice, run Deno with
-`--unstable-no-legacy-abort`:
+response has been sent in full. Deno prints a one-time notice about that default when it finishes
+the response to a request whose `signal` was read. nifra reads it when it rebuilds a request (a
+mounted app, a path with `.` or `..` segments, an idempotent route), so `c.req.signal` and
+`fetch(c.req)` still follow a client that hangs up. To have the signal abort only on a disconnect,
+and no notice, run Deno with `--unstable-no-legacy-abort`:
 
 ```sh
 deno run --allow-net --unstable-no-legacy-abort main.ts
