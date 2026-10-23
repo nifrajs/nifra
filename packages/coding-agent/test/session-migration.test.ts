@@ -143,3 +143,77 @@ describe("legacy FileSessionStore evidence migration", () => {
     })
   })
 })
+
+describe("legacy session migration refusals", () => {
+  test("refuses a non-positive source cap, overlapping roots and an unsafe session id", async () => {
+    const { source, target } = await fixture()
+    const refusal = (options: Partial<Parameters<typeof migrateLegacySession>[0]>) =>
+      migrateLegacySession({
+        sourceRoot: source,
+        targetRoot: target,
+        sessionId: "session-1",
+        ...options,
+      })
+    await expect(refusal({ maxSourceBytes: 0 })).rejects.toMatchObject({ code: "invalid_options" })
+    await expect(refusal({ targetRoot: join(source, "inside") })).rejects.toMatchObject({
+      code: "overlapping_roots",
+    })
+    await expect(refusal({ sessionId: "../escape" })).rejects.toMatchObject({
+      code: "invalid_options",
+    })
+  })
+
+  test("names the legacy line it cannot trust", async () => {
+    const { source, target } = await fixture()
+    const line = (fields: Record<string, unknown>) =>
+      JSON.stringify({
+        version: 1,
+        sessionId: "broken",
+        seq: 0,
+        at: 0,
+        type: "session.started",
+        ...fields,
+      })
+    const cases: [string, string][] = [
+      ["not json", "[invalid_source]: legacy line 1 is not JSON"],
+      ["[1]", "[invalid_source]: legacy line 1 is not an object"],
+      [line({ version: 2 }), "[invalid_source]: legacy line 1 has invalid identity"],
+      // The field check is shared with evidence records, so it reports their code.
+      [line({ seq: -1 }), "[invalid_record]: legacy line 1.seq must be a non-negative integer"],
+      [line({ type: "Not A Type" }), "[invalid_source]: legacy line 1 has invalid type"],
+      [line({ pinned: "yes" }), "[invalid_source]: legacy line 1 has invalid pinned flag"],
+    ]
+    for (const [text, message] of cases) {
+      await Bun.write(join(source, "broken.jsonl"), `${text}\n`)
+      const migrating = migrateLegacySession({
+        sourceRoot: source,
+        targetRoot: target,
+        sessionId: "broken",
+      })
+      await expect(migrating).rejects.toThrow(`session migration ${message}`)
+    }
+  })
+
+  test("an evidence record parses only with exactly its own fields", async () => {
+    const { source, target } = await fixture()
+    await migrateLegacySession({ sourceRoot: source, targetRoot: target, sessionId: "session-1" })
+    const [first] = (await readFile(join(target, "session-1.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((text) => JSON.parse(text) as Record<string, unknown>)
+    if (first === undefined) throw new Error("the migration wrote no evidence")
+    const cases: [unknown, string][] = [
+      [null, "record must be an object"],
+      [{ ...first, payload: "secret" }, "unknown evidence field 'payload'"],
+      [{ ...first, version: 99 }, "unsupported evidence version"],
+      [{ ...first, sessionId: "not a token" }, "sessionId must be a bounded token"],
+      [{ ...first, code: "Not A Code" }, "code is invalid"],
+      [{ ...first, digest: "abc" }, "digest must be sha256 hex"],
+      [{ ...first, pinned: "yes" }, "pinned must be boolean"],
+    ]
+    for (const [value, message] of cases)
+      expect(() => parseSessionEvidenceRecord(value)).toThrow(
+        new SessionMigrationError("invalid_record", message),
+      )
+  })
+})

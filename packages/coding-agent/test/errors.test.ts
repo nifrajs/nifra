@@ -26,3 +26,20 @@ describe("publicErrorMessage", () => {
     expect(message.endsWith("…")).toBe(true)
   })
 })
+
+describe("publicErrorDetails edges", () => {
+  test("a string error is its own message and a number falls back", () => {
+    expect(publicErrorMessage("plain failure", "fallback")).toBe("plain failure")
+    expect(publicErrorMessage(42, "fallback")).toBe("fallback")
+  })
+
+  test("an empty stack is left out and a long one is cut", () => {
+    const empty = new Error("no stack")
+    empty.stack = ""
+    expect(publicErrorDetails(empty, "fallback", true)).toEqual({ message: "no stack" })
+    const long = new Error("long stack")
+    long.stack = "s".repeat(20_000)
+    const details = publicErrorDetails(long, "fallback", true)
+    expect(details.stack).toBe(`${"s".repeat(16 * 1024)}…`)
+  })
+})
