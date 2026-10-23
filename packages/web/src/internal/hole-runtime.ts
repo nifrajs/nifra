@@ -67,7 +67,8 @@ export interface HoleRoot {
 
 export interface HoleHost {
   /** Apply a data request's fill once it arrives, unless a newer one is given first. Without the
-   * shell's runtime, only a server component's fill or the error slot can be put. */
+   * shell's runtime, only a server component's fill or the error slot can be put. A first fill the
+   * host was rendered with (`initialHtml`) hydrates its islands over that HTML. */
   refill(fill: unknown): void
   dispose(): void
 }
@@ -187,7 +188,7 @@ export function holeHost(
       ? runtime?.subscribe(name, start)
       : undefined
   if (now !== undefined) start(now)
-  const apply = (frame: unknown, mine: number): void => {
+  const apply = (frame: unknown, mine: number, inPlace: boolean): void => {
     if (!isRecord(frame)) return
     const failed = frame.error === true
     const record = failed ? undefined : recordOf(frame)
@@ -203,7 +204,7 @@ export function holeHost(
       host.removeAttribute("data-nifra-hole-error")
       if (record !== undefined) {
         host.setAttribute("data-nifra-filled", "")
-        root = componentRoot(host, record, true, showError)
+        root = componentRoot(host, record, !inPlace, showError)
         return
       }
       put(frame)
@@ -214,14 +215,16 @@ export function holeHost(
   }
   return {
     refill(fill) {
+      // A blocking render's settled fill is the server HTML the host already shows.
+      const inPlace = latest === 0 && root === undefined && initialHtml(fill) !== ""
       const mine = ++latest
       host.setAttribute("aria-busy", "true")
       settledFill(fill).then(
         (frame) => {
-          if (!disposed && mine === latest) apply(frame, mine)
+          if (!disposed && mine === latest) apply(frame, mine, inPlace)
         },
         () => {
-          if (!disposed && mine === latest) apply(ERROR_FRAME, mine)
+          if (!disposed && mine === latest) apply(ERROR_FRAME, mine, false)
         },
       )
     },

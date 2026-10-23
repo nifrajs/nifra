@@ -153,20 +153,41 @@ test("of two refills, the one given last wins, whichever settles first", async (
   expect(host.text).toBe("new")
 })
 
-test("with no shell runtime, a fill still mounts, and an error builds the error slot without HTML", async () => {
+test("with no shell runtime, a blocking render's fill hydrates over the host's HTML, a later one mounts afresh, and an error builds the error slot without HTML", async () => {
   const { adapter, log, releases } = client()
   holeComponents(adapter)
   const host = new FakeHost()
   const driven = holeHost("summary", hostOf(host), undefined)
   driven.refill({ v: 1, html: "a", component: record(1) })
   await flush()
-  expect(log).toEqual(["prepare a", "create a"])
-  driven.refill({ v: 1, error: true, html: "<p>ignored</p>" })
+  expect(log).toEqual(["prepare a", "hydrate a"])
+  expect(host.attributes.get("aria-busy")).toBe("false")
+  driven.refill({ v: 1, html: "b", component: record(2) })
   await flush()
   releases[0]?.()
   await flush()
+  expect(log.slice(2)).toEqual(["dispose a", "disposed a", "prepare b", "create b"])
+  expect(host.text).toBe("b")
+  driven.refill({ v: 1, error: true, html: "<p>ignored</p>" })
+  await flush()
+  releases[1]?.()
+  await flush()
   expect(host.text).toBe("This section is unavailable.")
   expect(host.attributes.has("data-nifra-hole-error")).toBe(true)
+})
+
+test("a deferred first fill mounts afresh: its host was rendered empty", async () => {
+  const { adapter, log } = client()
+  holeComponents(adapter)
+  const host = new FakeHost()
+  const driven = holeHost("summary", hostOf(host), undefined)
+  driven.refill({
+    __nifra_deferred: true,
+    promise: Promise.resolve({ v: 1, html: "a", component: record(1) }),
+  })
+  await flush()
+  expect(log).toEqual(["prepare a", "create a"])
+  expect(host.text).toBe("a")
 })
 
 test("a fill whose record fails the protocol check mounts nothing and shows the error slot", async () => {
