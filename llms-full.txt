@@ -6650,9 +6650,10 @@ npm i ws
 `server({ wsMaxPayloadBytes })` caps one inbound message (default
 `maxBodyBytes`, 1 MB): a socket that sends more is closed with `1009`
 and the message never reaches your handler. Bun and Node refuse it while it arrives. When a
-message passes Bun's own frame limit (the largest cap on the listener, below), Bun drops the
-connection without a close frame, so the client sees `1006`; your
-`close` handler still gets `1009`, as on every other runtime. Deno's
+message passes Bun's own frame limit (the largest cap on the listener, below), Bun up to 1.4.3
+drops the connection without a close frame, so the client sees `1006`, and Bun
+1.4.4 sends `1009`; your `close` handler gets `1009` either
+way, as on every other runtime. Deno's
 `Deno.upgradeWebSocket` takes no size limit, so Deno receives each message whole
 (up to its own limit, 64 MiB on Deno 2.9) before nifra can check it: the cap still keeps the
 message from your handler, but it does not bound the memory Deno spent receiving it. Where that
@@ -17274,6 +17275,28 @@ Clients that include `text/event-stream` in `Accept` receive progress notificati
 followed by the final JSON-RPC response in the same stream. An SSE `GET /mcp` opens a cancellable
 server-message connection; a plain `GET /mcp` remains a health page.
 
+## stdio
+
+A command an agent launches (`"command": "my-server"` in its MCP config) talks over stdin and stdout
+instead. `serveStdio` runs the same server that way, on Bun, Node or Deno:
+
+```ts
+import { serveStdio } from "@nifrajs/mcp/stdio"
+
+await serveStdio(mcp)
+```
+
+It resolves when stdin ends and every pending request has answered. Whoever can write to the process's
+stdin can call every tool, so the HTTP origin, host and `authorizeMessage` options do not apply. Write
+logs to stderr: anything else on stdout corrupts the stream. `runStdioTransport` is the framing layer
+underneath, for a host that dispatches messages itself.
+
+## Widgets on Node and Deno
+
+A React widget from `@nifrajs/mcp/react` is bundled with `Bun.build`. For a server that runs on Node
+or Deno, bundle it at build time with `bundleReactWidget({ component })`, ship the returned body as a
+file, and pass that file's text to `defineMcpWidget({ uri, name, html })` at run time.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
@@ -19062,6 +19085,20 @@ cd my-app
 bun install
 bun run dev
 ```
+
+## As a library
+
+A tool that generates a nifra app can write the same starter without shelling out to the CLI.
+`create-nifra/scaffold` runs on Bun, Node and Deno, and importing it never starts the CLI:
+
+```ts
+import { scaffold } from "create-nifra/scaffold"
+
+const result = await scaffold({ target: "./my-api", template: "api" })
+```
+
+It takes the CLI's options (`template`, `framework`, `deployTarget`, `docker`, `ci`, `db`, `auth`,
+`force`, `link`) and refuses a non-empty directory unless `force` is set.
 
 MIT.
 

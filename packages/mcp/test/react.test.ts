@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { join } from "node:path"
-import { UI_MIME } from "../src/index.ts"
-import { reactWidget } from "../src/react.ts"
+import { defineMcpWidget, UI_MIME } from "../src/index.ts"
+import { bundleReactWidget, reactWidget } from "../src/react.ts"
 
 describe("reactWidget", () => {
   test("bundles a React component into a self-contained ui:// widget", async () => {
@@ -33,6 +33,21 @@ describe("reactWidget", () => {
     })
     const { text } = await widget.resource.read()
     expect(text).toContain('<div id="root">')
+    expect(text.trimEnd().endsWith("</html>")).toBe(true)
+  }, 20_000)
+
+  test("bundleReactWidget returns a body that defineMcpWidget serves without bundling again", async () => {
+    const body = await bundleReactWidget({ component: join(import.meta.dir, "fixtures/Hello.tsx") })
+    expect(body.startsWith('<div id="root"></div>\n<script>')).toBe(true)
+    expect(body.endsWith("</script>")).toBe(true)
+    // Only the closing tag survives unescaped: the bundle's own `</script` spellings are escaped.
+    expect(body.match(/<\/script/gi)?.length).toBe(1)
+
+    const widget = defineMcpWidget({ uri: "ui://test/prebuilt", name: "Hello", html: body })
+    const { text, mimeType } = await widget.resource.read()
+    expect(mimeType).toBe(UI_MIME)
+    expect(text).toContain(body)
+    expect(text).toContain("window.mcpApp")
     expect(text.trimEnd().endsWith("</html>")).toBe(true)
   }, 20_000)
 })

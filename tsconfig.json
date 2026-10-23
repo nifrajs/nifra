@@ -60,6 +60,7 @@
       "@nifrajs/mcp": ["./packages/mcp/src/index.ts"],
       "@nifrajs/mcp/protocol": ["./packages/mcp/src/protocol.ts"],
       "@nifrajs/mcp/http": ["./packages/mcp/src/http.ts"],
+      "@nifrajs/mcp/stdio": ["./packages/mcp/src/stdio.ts"],
       "@nifrajs/mcp/server": ["./packages/mcp/src/server.ts"],
       "@nifrajs/mcp/react": ["./packages/mcp/src/react.ts"],
       "@nifrajs/webmcp": ["./packages/webmcp/src/index.ts"],
@@ -90,7 +91,8 @@
       "@nifrajs/web/diagnostic-prompt": ["./packages/web/src/diagnostic-prompt.ts"],
       "@nifrajs/web/dev-feed": ["./packages/web/src/dev-feed.ts"],
       "@nifrajs/web/internal/parity": ["./packages/web/src/internal/parity.ts"],
-      "create-nifra/agent-files": ["./packages/create-nifra/src/agent-files.ts"]
+      "create-nifra/agent-files": ["./packages/create-nifra/src/agent-files.ts"],
+      "create-nifra/scaffold": ["./packages/create-nifra/src/scaffold/project.ts"]
     }
   },
   "include": [

@@ -420,9 +420,9 @@ describe("app.listen() WebSockets", () => {
         resolve(e.code)
       })
     })
-    // Bun drops the connection outright rather than sending a 1009 close frame, so the client sees
-    // 1006 (abnormal closure); the handler still gets the 1009 a nifra-checked cap sends.
-    expect(closed).toBe(1006)
+    // Up to 1.4.3 Bun drops the connection without a close frame, so the client sees 1006 (abnormal
+    // closure); from 1.4.4 it sends 1009. Either way the handler gets the 1009 a nifra-checked cap sends.
+    expect(closed).toBe(Bun.semver.satisfies(Bun.version, ">=1.4.4") ? 1009 : 1006)
     expect(await handlerSaw.promise).toEqual({ code: 1009, reason: "message too large" })
   })
 

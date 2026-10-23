@@ -51,3 +51,34 @@ describe("transport byte policy", () => {
     if (result.ok) expect([...result.bytes]).toEqual([1, 2, 3])
   })
 })
+
+describe("bounded transport read failures", () => {
+  test("a stream that errors is a read-error, and a failed cancel keeps it so", async () => {
+    const failure = new Error("socket reset")
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(failure)
+      },
+    })
+    await expect(readBoundedTransportBytes(body, 8)).resolves.toEqual({
+      ok: false,
+      reason: "read-error",
+      error: failure,
+    })
+  })
+
+  test("an over-cap chunk is too-large even when the source refuses to cancel", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(16))
+      },
+      cancel() {
+        throw new Error("cannot cancel")
+      },
+    })
+    await expect(readBoundedTransportBytes(body, 8)).resolves.toEqual({
+      ok: false,
+      reason: "too-large",
+    })
+  })
+})

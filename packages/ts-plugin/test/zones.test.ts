@@ -91,6 +91,18 @@ const FILES: Record<string, string> = {
     "export const aliased = [query, kit]",
     "",
   ].join("\n"),
+  "frontend/barrel.ts": [
+    'export type { Row } from "../backend/db"',
+    'export { type Rows } from "../backend/db"',
+    'export { query } from "../backend/db"',
+    'import type legacyTypes = require("../backend/save.fn")',
+    'import legacy = require("../backend/mail")',
+    'import "@nifrajs/web/backend-only"',
+    'import seed from "../backend/seed.json"',
+    "export const barrel = [legacy, seed]",
+    "",
+  ].join("\n"),
+  "backend/seed.json": "{}\n",
   "node_modules/pg/package.json": JSON.stringify({ name: "pg", types: "index.d.ts" }),
   "node_modules/pg/index.d.ts": "export declare class Pool {}\n",
 }
@@ -201,6 +213,19 @@ test("an import of a file in no valid zone carries the classifier's reason", () 
   expect(zoneErrors("frontend/button.tsx")).toEqual([
     expect.stringContaining('uses the retired ".server" suffix') as unknown as string,
   ])
+})
+
+test("re-exports, require imports, the backend-only marker and unresolved relative files are checked", () => {
+  const errors = zoneErrors("frontend/barrel.ts")
+  expect(errors.map((error) => error.slice(0, error.indexOf(":")))).toEqual([
+    '"../backend/db"',
+    '"../backend/mail"',
+    '"@nifrajs/web/backend-only"',
+    '"../backend/seed.json"',
+  ])
+  expect(errors[2]).toContain(
+    "marks a module backend-only, but frontend/barrel.ts reaches the browser",
+  )
 })
 
 test("a file no build loads is not checked", () => {

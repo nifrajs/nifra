@@ -210,8 +210,8 @@ export function createBunWsHandlers(
       // Registry mode: drop topic subscriptions so it never holds a dead socket. Native mode: Bun
       // unsubscribes the socket from every topic on close, so there is nothing to sweep here.
       if (!nativePubsub) (ws.data.pubsub ?? topics).unsubscribeAll(nifra)
-      // Bun's own maxPayloadLength drops the connection without a close frame, so the peer sees 1006;
-      // the handler gets the 1009 every other payload cap reports.
+      // Bun's own maxPayloadLength reports 1006 here, whether it dropped the connection (up to 1.4.3)
+      // or sent the peer a 1009 (from 1.4.4); the handler gets the 1009 every other payload cap reports.
       const oversize = code === 1006 && reason === BUN_TOO_BIG_REASON
       const closeCode = oversize ? 1009 : code
       const closeReason = oversize ? "message too large" : reason

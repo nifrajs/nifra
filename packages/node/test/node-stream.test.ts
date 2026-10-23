@@ -134,3 +134,22 @@ test("a spoofed claim holder returning a non-Readable is rejected", () => {
   })
   expect(claimNodeStream(fake)).toBeNull()
 })
+
+test("a source that errors mid-read errors the Web view with its error", async () => {
+  const source = new Readable({
+    read() {
+      this.destroy(new Error("socket reset"))
+    },
+  })
+  const reader = claimableWebStream(source).getReader()
+  await expect(reader.read()).rejects.toThrow("socket reset")
+})
+
+test("drain policy, source untouched: an error after cancel only destroys the source", async () => {
+  const source = endlessSource(16)
+  const web = claimableWebStream(source, "drain")
+  await web.cancel()
+  source.emit("error", new Error("client reset"))
+  await waitDestroyed(source)
+  expect(source.destroyed).toBe(true)
+})

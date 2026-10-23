@@ -4,6 +4,7 @@
  * - {@link ./protocol.ts} - the transport-agnostic JSON-RPC dispatch ({@link handleRpc}) + types, plus
  *   the MCP Apps (SEP-1865) extension (`structuredContent`, `_meta.ui.resourceUri`, the UI capability).
  * - {@link ./http.ts} - {@link respondMcpHttp}, a Web `fetch` handler you mount at `POST /mcp`.
+ * - `@nifrajs/mcp/stdio` - `serveStdio`, the same server over stdin/stdout for a launched command.
  *
  * Higher-level authoring helpers - {@link defineMcpWidget}, {@link defineMcpTool}, {@link createMcpServer}
  * - build MCP Apps servers whose tool results render real UI.

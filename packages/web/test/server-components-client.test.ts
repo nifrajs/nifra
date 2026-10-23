@@ -530,3 +530,130 @@ test("an obsolete adoption cannot update after a later route adoption", async ()
     await controller.dispose()
   }
 })
+
+/** A refresh response carrying `next` as the frames for whatever instance the request selected. */
+const respondWith =
+  (
+    next: ComponentState,
+  ): NonNullable<
+    import("../src/server-components/client.ts").ComponentControllerOptions["fetch"]
+  > =>
+  async (url, init) => {
+    const selection = readComponentRequest(
+      new Request(url, { ...init, headers: { ...init?.headers, "sec-fetch-site": "same-origin" } }),
+    )!
+    return new Response(
+      componentFrames(
+        {
+          ...selection,
+          input: undefined,
+          adapter: next.adapter,
+          owner: next.owner,
+          scope: next.scope,
+          instance: next.records[0]?.instance,
+        },
+        next,
+      ),
+      { headers: { "content-type": COMPONENT_MEDIA_TYPE } },
+    )
+  }
+
+async function refreshWith(
+  fetch: NonNullable<
+    import("../src/server-components/client.ts").ComponentControllerOptions["fetch"]
+  >,
+) {
+  const h = harness()
+  const navigated: string[] = []
+  const errors: string[] = []
+  const controller = new ComponentController({
+    state: state(),
+    adapter: h.adapter,
+    fetch,
+    navigate: (url) => navigated.push(url),
+    onError: (code) => errors.push(code),
+  })
+  await controller.mount(h.host, "instance_1")
+  const outcome = await controller.refresh("instance_1").then(
+    (value) => value,
+    (error: { code?: string }) => error.code ?? "thrown",
+  )
+  const records = controller.state.records.length
+  const trace = [...h.trace]
+  await controller.dispose()
+  return { outcome, navigated, errors, records, trace }
+}
+
+test("a controller refuses another adapter's state and a second mount of one instance", async () => {
+  const h = harness()
+  expect(
+    () => new ComponentController({ state: state(), adapter: { ...h.adapter, name: "svelte" } }),
+  ).toThrow(expect.objectContaining({ code: "component_version" }))
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    await controller.mount(h.host, "instance_1")
+    await expect(controller.mount(h.host, "instance_1")).rejects.toMatchObject({
+      code: "component_contract",
+    })
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a refresh answered by a redirect navigates to the owner instead", async () => {
+  const result = await refreshWith(async () => new Response(null, { status: 302 }))
+  expect(result).toMatchObject({ outcome: false, navigated: ["https://fixture.test/owner"] })
+})
+
+test("a refresh the server denies invalidates the scope", async () => {
+  const result = await refreshWith(async () => new Response(null, { status: 403 }))
+  expect(result).toMatchObject({ outcome: false, errors: ["component_denied"], records: 0 })
+})
+
+test("a terminal control answer navigates, and a malformed one is a protocol error", async () => {
+  const control =
+    (body: string | null, header = "200") =>
+    async () =>
+      new Response(body, { headers: { "x-nifra-component-control": header } })
+  const done = await refreshWith(control('{"v":1,"control":{"status":200}}'))
+  expect(done).toMatchObject({ outcome: false, navigated: ["https://fixture.test/owner"] })
+  for (const [body, header] of [
+    [null, "200"],
+    ["{not json", "200"],
+    ["[1]", "200"],
+    ['{"v":2,"control":{"status":200}}', "200"],
+    ['{"v":1,"control":{"status":302}}', "302"],
+    ['{"v":1,"control":{"status":200}}', "204"],
+  ] as const) {
+    const refused = await refreshWith(control(body, header))
+    expect(refused).toMatchObject({ outcome: "component_protocol", navigated: [] })
+  }
+})
+
+test("a refresh whose frames break the protocol keeps the mounted tree", async () => {
+  const base = state("scope_1", "next")
+  const child = {
+    ...base.records[0]!,
+    instance: "orphan",
+    parent: "ghost",
+    reference: "reference_2",
+  }
+  for (const fetch of [
+    async () => new Response("{}", { headers: { "content-type": "application/json" } }),
+    respondWith({ ...base, build: "build_2" }),
+    respondWith({ ...base, records: [...base.records, child] }),
+  ]) {
+    const result = await refreshWith(fetch)
+    expect(result).toMatchObject({ outcome: "component_protocol", trace: ["hydrate:public"] })
+  }
+})
+
+test("a refresh answered for another auth scope invalidates instead of updating", async () => {
+  const result = await refreshWith(respondWith(state("scope_2", "next")))
+  expect(result).toMatchObject({
+    outcome: false,
+    errors: ["component_denied"],
+    records: 0,
+    trace: ["hydrate:public"],
+  })
+})

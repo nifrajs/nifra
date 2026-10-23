@@ -472,6 +472,9 @@ export function agentError(code: string, message: string, details?: unknown): Ag
  */
 export * from "./orchestration.ts"
 
+/** The environment a host hands a process it spawns, shared by the adapters that spawn one. */
+export * from "./process-env.ts"
+
 /**
  * Additive run-lifecycle contracts (run snapshots, evidence-event envelopes, handoff snapshots,
  * feature negotiation, cursor resume). Additive to the session protocol; carries no payload content.

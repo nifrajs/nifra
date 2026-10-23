@@ -99,14 +99,15 @@ function eventText(event: WsEvent): string {
   }
 }
 
-/** The close for a message over the cap: 1009, or Bun's drop. Its reason is the runtime's. */
+/** The close for a message over the cap: 1009, or the drop of Bun up to 1.4.3. Its reason is the
+ * runtime's: Bun 1.4.4 sends "Received too big message", Node's `ws` none. */
 const OVERSIZE_CLOSE = /^< (?:close 1009 .*|end)$/
 
 /**
  * One socket's events as compared. After a frame the protocol forbids, the runtime fails the
  * connection its own way (U12-U14), so only what came before is compared. After a message over the
- * cap the socket closes with 1009 - Node's `ws` with no reason, Bun by dropping the connection (U11)
- * - so that close reads as one line on every runtime.
+ * cap the socket closes with 1009 - Node's `ws` with no reason, Bun 1.4.4 with its own, Bun up to
+ * 1.4.3 by dropping the connection (U11) - so that close reads as one line on every runtime.
  */
 function socketLines(events: readonly WsEvent[]): string[] {
   const lines: string[] = []

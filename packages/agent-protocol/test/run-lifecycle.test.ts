@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test"
 import {
   CURSOR_BEFORE_ALL,
   evidenceEventId,
+  isTerminalApprovalState,
+  isTerminalHandoffState,
   negotiateFeatures,
+  parseDecisionCoordinate,
   parseHandoffSnapshot,
   parseRunEvidenceEvent,
   parseRunPlanRef,
@@ -10,6 +13,7 @@ import {
   RUN_LIFECYCLE_VERSION,
   RunContractError,
   resumeFromCursor,
+  vectorAdvances,
 } from "../src/index.ts"
 
 const DIGEST = "a".repeat(64)
@@ -197,5 +201,67 @@ describe("forward-compatible transport decoders", () => {
         status: "sideways",
       }),
     ).toThrow(/status/)
+  })
+})
+
+describe("lifecycle contract edges", () => {
+  test("a cursor window entry with a negative seq is refused", () => {
+    expect(() => resumeFromCursor([{ seq: -1 }])).toThrow(
+      "cursor window seq must be a non-negative integer",
+    )
+  })
+
+  test("each envelope refuses a version it does not speak", () => {
+    expect(() => parseRunSnapshot({ version: 2 })).toThrow("run snapshot.version must be 1")
+    expect(() => parseRunEvidenceEvent({ version: 2 })).toThrow(
+      "run evidence event.version must be 1",
+    )
+    expect(() => parseHandoffSnapshot({ version: 2 })).toThrow("handoff snapshot.version must be 1")
+  })
+
+  test("a run snapshot keeps its failure code", () => {
+    const snapshot = parseRunSnapshot({
+      version: RUN_LIFECYCLE_VERSION,
+      runId: "r",
+      plan: { id: "p", digest: DIGEST, nodeCount: 1 },
+      state: "failed",
+      cursor: 0,
+      counters: { total: 1, completed: 0, failed: 1 },
+      updatedAt: 5,
+      failureCode: "node_failed",
+    })
+    expect(snapshot.failureCode).toBe("node_failed")
+  })
+
+  test("vectors only advance forward by a safe integer", () => {
+    expect(vectorAdvances(1, 2)).toBe(true)
+    expect(vectorAdvances(2, 2)).toBe(false)
+    expect(vectorAdvances(1, 1.5)).toBe(false)
+  })
+
+  test("only settled approvals and handoffs are terminal", () => {
+    expect(isTerminalApprovalState("pending")).toBe(false)
+    expect(isTerminalApprovalState("approved")).toBe(true)
+    expect(isTerminalHandoffState("pending")).toBe(false)
+    expect(isTerminalHandoffState("declined")).toBe(true)
+  })
+
+  test("a decision coordinate is parsed field by field", () => {
+    const coordinate = {
+      runId: "r",
+      nodeId: "n",
+      capability: "deploy",
+      requestId: "q",
+      vector: 3,
+      expiresAt: 100,
+    }
+    expect(parseDecisionCoordinate(coordinate)).toEqual(coordinate)
+    expect(() => parseDecisionCoordinate("r")).toThrow("decision coordinate must be an object")
+    expect(() => parseDecisionCoordinate({ ...coordinate, runId: "" })).toThrow(
+      "decision coordinate.runId must be a non-empty string",
+    )
+    expect(() => parseDecisionCoordinate({ ...coordinate, vector: -1 })).toThrow(
+      "decision coordinate.vector must be a non-negative integer",
+    )
   })
 })
