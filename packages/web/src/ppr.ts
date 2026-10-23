@@ -20,7 +20,7 @@ import {
 } from "./internal/ppr/contract.ts"
 import { createPprIntegration } from "./internal/ppr/integration.ts"
 import { type PprOptions, resolvePprOptions } from "./internal/ppr/options.ts"
-import { MIN_STORE_SECRET_LENGTH } from "./internal/ppr/shell-store.ts"
+import { isStoreSecret, MIN_STORE_SECRET_LENGTH } from "./internal/store-signature.ts"
 import type { CacheStore } from "./isr.ts"
 
 export {
@@ -100,7 +100,7 @@ export function partialPrerendering(config: PprConfig): PprSetup {
         "[nifra/web] experimental.ppr.store needs the build's shell check records: an unchecked shell is never shared",
       )
     }
-    if (typeof storeSecret !== "string" || storeSecret.length < MIN_STORE_SECRET_LENGTH) {
+    if (!isStoreSecret(storeSecret)) {
       throw new TypeError(
         `[nifra/web] experimental.ppr.store needs storeSecret, at least ${MIN_STORE_SECRET_LENGTH} characters, to sign the shells it shares`,
       )

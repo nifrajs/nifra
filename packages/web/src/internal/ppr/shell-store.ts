@@ -5,6 +5,7 @@
  * fails the check is a miss.
  */
 import type { CachedResponse, CacheStore } from "../../isr.ts"
+import { storeSigner } from "../store-signature.ts"
 
 /** A shell or a shared hole's frame as the shared store holds it: everything a process needs to
  * serve it. */
@@ -38,22 +39,6 @@ export interface SharedShellStore {
 }
 
 const MAC_HEADER = "x-nifra-ppr-mac"
-/** Below this, a secret is too short to sign with. */
-export const MIN_STORE_SECRET_LENGTH = 32
-
-const hex = (bytes: ArrayBuffer): string => {
-  let text = ""
-  for (const byte of new Uint8Array(bytes)) text += byte.toString(16).padStart(2, "0")
-  return text
-}
-
-const fromHex = (text: string): Uint8Array<ArrayBuffer> | undefined => {
-  if (text.length % 2 !== 0 || !/^[0-9a-f]*$/.test(text)) return undefined
-  const bytes = new Uint8Array(text.length / 2)
-  for (let at = 0; at < bytes.length; at++)
-    bytes[at] = Number.parseInt(text.slice(at * 2, at * 2 + 2), 16)
-  return bytes
-}
 
 const isStrings = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -81,32 +66,14 @@ export function sharedShellStore(
   secret: string,
   deployment: string,
 ): SharedShellStore {
-  const encoder = new TextEncoder()
-  let signingKey: Promise<CryptoKey> | undefined
-  const key = (): Promise<CryptoKey> => {
-    signingKey ??= crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign", "verify"],
-    )
-    return signingKey
-  }
+  const signer = storeSigner(secret)
   const invalidateTag = store.invalidateTag
   return {
     async get(entryKey) {
       const cached = await store.get(entryKey)
       if (cached === undefined) return undefined
-      const mac = fromHex(cached.headers[MAC_HEADER] ?? "")
-      if (mac === undefined) return undefined
-      const verified = await crypto.subtle.verify(
-        "HMAC",
-        await key(),
-        mac,
-        encoder.encode(cached.body),
-      )
-      if (!verified) {
+      // One part, where ISR signs two: under a shared secret neither entry verifies as the other.
+      if (!(await signer.verify([cached.body], cached.headers[MAC_HEADER]))) {
         console.error("[nifra/web] ppr: a shared store entry failed its signature check", {
           key: entryKey,
         })
@@ -133,7 +100,7 @@ export function sharedShellStore(
     },
     async set(entryKey, entry, keepSeconds, fence) {
       const body = JSON.stringify({ v: 1, key: entryKey, deployment, entry })
-      const mac = hex(await crypto.subtle.sign("HMAC", await key(), encoder.encode(body)))
+      const mac = await signer.sign([body])
       const value: CachedResponse = {
         body,
         status: entry.notFound ? 404 : 200,
