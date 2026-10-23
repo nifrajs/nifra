@@ -204,29 +204,7 @@ export interface WsWaiver {
   matches(violation: Violation, testCase: WsCase, outcomes: WsOutcomes): boolean
 }
 
-export const WS_OPEN_FINDINGS: readonly WsWaiver[] = [
-  {
-    id: "WS1 bun-close-without-code-sends-1000",
-    why:
-      "`ws.close()` with no code sends a close with no status on Node, Deno and workerd, as the WHATWG " +
-      "`WebSocket.close()` does, and the server's `close` callback hears 1005; Bun's `ServerWebSocket.close()` " +
-      "sends 1000 and reports 1000. Waived where Bun's session, with that close read as no code, is the " +
-      "others'.",
-    matches: (violation, testCase, outcomes) => {
-      if (violation.kind !== "difference") return false
-      if (!testCase.steps.some((step) => step.kind === "text" && step.text === "close::"))
-        return false
-      const bun = outcomes.get("bun-serve")
-      if (bun === undefined) return false
-      const asNoCode = wsCanonical(bun)
-        .replace('< close 1000 ""', "< close with no code")
-        .replace('"closed:1000:"', '"closed:1005:"')
-      return [...outcomes].every(
-        ([lane, outcome]) => lane === "bun-serve" || wsCanonical(outcome) === asNoCode,
-      )
-    },
-  },
-]
+export const WS_OPEN_FINDINGS: readonly WsWaiver[] = []
 
 function ownViolations(testCase: WsCase, outcomes: WsOutcomes): Violation[] {
   const seen = new Map<

@@ -492,20 +492,13 @@ describe("judgeWs", () => {
     )
   })
 
-  test("Bun's 1000 for a close without a code waits on WS1, and only that", () => {
+  test("a close without a code that is 1000 on one runtime and empty on another is a difference", () => {
     const noCode = wsCase([{ kind: "text", text: "close::" }])
     const empty: WsEvent = { kind: "close", bytes: new Uint8Array(0) }
     const outcomes = lanes(["bun-serve", [opened(), closed(1000)]], ["node", [opened(), empty]])
-    expect(judgeWs(noCode, outcomes)).toEqual({
-      violations: [],
-      excusedBy: ["WS1 bun-close-without-code-sends-1000"],
-    })
-    expect(judgeWs(hi, outcomes).violations[0]?.kind).toBe("difference")
-    const alsoText = lanes(
-      ["bun-serve", [opened(), said("x"), closed(1000)]],
-      ["node", [opened(), empty]],
-    )
-    expect(judgeWs(noCode, alsoText).violations[0]?.kind).toBe("difference")
+    const judged = judgeWs(noCode, outcomes)
+    expect(judged.violations[0]?.kind).toBe("difference")
+    expect(judged.excusedBy).toEqual([])
   })
 
   test("after a forbidden frame or a message over the cap, each runtime closes its own way", () => {
