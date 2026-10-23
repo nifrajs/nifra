@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Workflow actions are pinned by SHA; this keeps the pins moving. The cooldown holds a release back
+  # 14 days, the same age every pin here has to reach.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # The Linux bench rig's base image, pinned by digest. Node's major follows the host, so a new
+  # major is ignored and only the digest moves.
+  - package-ecosystem: docker
+    directory: /bench/linux-rig
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    ignore:
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
