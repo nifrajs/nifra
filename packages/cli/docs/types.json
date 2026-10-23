@@ -2343,6 +2343,12 @@
     "doc": "/** The result of a target build - the deploy dir + the client manifest + an optional size report. */"
   },
   {
+    "name": "BundleReactWidgetOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface BundleReactWidgetOptions {\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
+  },
+  {
     "name": "Bundler",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -3329,6 +3335,13 @@
     "kind": "type",
     "package": "@nifrajs/core",
     "signature": "export type ClassifiedSchema<S extends object> = S & {\n    readonly [CLASSIFICATION]: DataClassification;\n};"
+  },
+  {
+    "name": "CliToolContract",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type CliToolContract = ToolContract<any, any>;",
+    "doc": "/** A heterogeneous tool list. Each contract still validates its own input at execution. */"
   },
   {
     "name": "ClientAction",
@@ -6472,6 +6485,12 @@
     "signature": "export interface FormatterOptions<M extends object = RegisteredMessages> {\n    /** Catalogs to try, in order, for a key `messages` lacks: typically the base language's, then the\n     * default locale's (`locales.chain(key)` gives that order). The formatter's locale still formats a\n     * fallback message's numbers, dates and plurals. */\n    readonly fallback?: readonly CatalogFor<M>[] | undefined;\n    /** Called with a key no catalog has, once per key per formatter, before the key is returned. Pass a\n     * stable function (module scope): formatters are cached per handler, so a new function on every\n     * render builds a new formatter every render. */\n    readonly onMissing?: ((key: string, locale: string) => void) | undefined;\n    /** Default `timeZone` for `d()`. An invalid zone throws here, like `Intl.DateTimeFormat`. */\n    readonly timeZone?: string | undefined;\n    /** Default `numberingSystem` (`\"deva\"`, `\"arab\"`, ...) for `n()`, `d()` and plural `#`. */\n    readonly numberingSystem?: string | undefined;\n}"
   },
   {
+    "name": "Framework",
+    "kind": "type",
+    "package": "create-nifra",
+    "signature": "export type Framework = (typeof FRAMEWORKS)[number];"
+  },
+  {
     "name": "FrameworkError",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -8536,6 +8555,13 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const MAX_SOCKET_RECORD_BYTES = 30720;"
+  },
+  {
+    "name": "MAX_STDIO_MESSAGE_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare const MAX_STDIO_MESSAGE_BYTES: number;",
+    "doc": "/** Default cap on one message, in either direction, in UTF-8 bytes. */"
   },
   {
     "name": "MAX_TRANSPORT_BYTES",
@@ -11793,7 +11819,7 @@
     "name": "ReactWidgetOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface ReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
+    "signature": "export interface ReactWidgetOptions extends BundleReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n}"
   },
   {
     "name": "ReadAt",
@@ -14040,6 +14066,18 @@
     "doc": "/** The subset of the `sass` / `sass-embedded` API this plugin uses. Both packages satisfy it. */"
   },
   {
+    "name": "ScaffoldOptions",
+    "kind": "interface",
+    "package": "create-nifra",
+    "signature": "export interface ScaffoldOptions {\n    /** Destination directory. */\n    readonly target: string;\n    /** Template to copy. Default `\"api\"`. */\n    readonly template?: TemplateName;\n    /** Frontend framework (site template only). Default `\"react\"`. */\n    readonly framework?: string;\n    /** Where the site deploys (site template only): `bun` (default), `node`, `deno`, `cloudflare` or\n     * `vercel`. */\n    readonly deployTarget?: string;\n    /** Add a Dockerfile that builds and runs the server (`bun` and `node` targets). */\n    readonly docker?: boolean;\n    /** Emit a CI deploy workflow for the site's target. Only `\"github\"` today. */\n    readonly ci?: string;\n    /** Wire a data layer: `drizzle-{libsql,postgres,sqlite}` | `prisma-{postgres,sqlite}` | `kysely-postgres`. */\n    readonly db?: string;\n    /** Wire authentication: `better-auth` (requires `--db` - auth needs a database). */\n    readonly auth?: string;\n    /** Allow scaffolding into a non-empty directory (copies template, overwrites collisions). */\n    readonly force?: boolean;\n    /** Path to a local nifra monorepo - replaces `@nifrajs/*` semver deps with `file:` refs so\n     *  the app runs against the local source before the packages are published to npm. */\n    readonly link?: string;\n}"
+  },
+  {
+    "name": "ScaffoldResult",
+    "kind": "interface",
+    "package": "create-nifra",
+    "signature": "export interface ScaffoldResult {\n    readonly name: string;\n    readonly template: TemplateName;\n    readonly framework?: Framework;\n    /** Where a site deploys, and whether it ships a Dockerfile. */\n    readonly deploy?: {\n        readonly target: DeployTarget;\n        readonly label: string;\n        readonly docker: boolean;\n    };\n    /** The CI provider a workflow was generated for, when `--ci` was passed. */\n    readonly ci?: \"github\";\n    /** Repo secrets the generated workflow needs (for the next-steps message). */\n    readonly ciSecrets?: readonly string[];\n    /** The Drizzle preset wired in, when `--db` was passed. */\n    readonly db?: DbChoice;\n    /** The auth preset wired in, when `--auth` was passed. */\n    readonly auth?: AuthChoice;\n    /** Local nifra monorepo path when `--link` was used; undefined when using published packages. */\n    readonly link?: string;\n}"
+  },
+  {
     "name": "ScheduledController",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -14280,6 +14318,12 @@
     "package": "@nifrajs/node",
     "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,\n     * `immutable` applies only to these; any other file is sent with its validators and no\n     * `cache-control`, so a file that keeps its name across deploys still revalidates.\n     */\n    readonly hashedFiles?: Iterable<string>;\n    /**\n     * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside\n     * `hashedFiles`). Unset, such a file carries only its validators.\n     */\n    readonly cacheControl?: string;\n    /**\n     * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under\n     * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so\n     * a mount over a directory that also holds the server bundle can expose just the build's listed\n     * files. A later mount over the same paths can still serve the rest.\n     */\n    readonly files?: Iterable<string>;\n    /**\n     * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to\n     * `host` (its Host header). `false` passes the request on, without touching the filesystem, to the\n     * next mount and then the app - the seam a host policy uses so a host's refused file meets the\n     * app's own refusal instead of being served.\n     */\n    readonly allow?: (host: string, pathname: string) => boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered `404` - the same response as a missing file, so probing\n     * can't distinguish \"hidden\" from \"absent\". Dotfiles land in build output by accident, not by\n     * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.\n     * `/.well-known` is public by definition (RFC 8615) and always served, as `servePublicDir` does.\n     * The rule applies to the requested path and again to the file it resolves to, so a visible name\n     * linking to `.env` is denied too. Set `\"allow\"` if the directory deliberately holds dotfiles.\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n}",
     "doc": "/**\n * Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted\n * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the\n * platform serves assets; this is for `node server.js`.)\n */"
+  },
+  {
+    "name": "ServeStdioOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface ServeStdioOptions extends Omit<StdioTransportOptions, \"onRequest\" | \"onResponse\"> {\n    /**\n     * Answer a throwing tool with its error message instead of only \"Tool execution failed\". Paths, SQL\n     * diagnostics and provider responses end up in error messages; enable it only when every process that\n     * can write to stdin may read them.\n     */\n    readonly exposeToolErrors?: boolean;\n}"
   },
   {
     "name": "ServeTestAppOptions",
@@ -15212,6 +15256,32 @@
     "doc": "/** A status-bearing response whose code and body remain visible to TypeScript. */"
   },
   {
+    "name": "StdioConnection",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface StdioConnection {\n    /**\n     * Write one message as one line. A message that cannot be serialized, or whose encoding exceeds the\n     * message cap, is replaced by a `-32603` error carrying the same id, so the peer still gets an answer.\n     */\n    send(message: StdioMessage): void;\n}"
+  },
+  {
+    "name": "StdioMessage",
+    "kind": "type",
+    "package": "@nifrajs/mcp",
+    "signature": "export type StdioMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotification;",
+    "doc": "/** Anything one side of the connection may send. */"
+  },
+  {
+    "name": "StdioOutput",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface StdioOutput {\n    write(chunk: string): unknown;\n}",
+    "doc": "/** Where encoded lines go. `process.stdout` satisfies it. */"
+  },
+  {
+    "name": "StdioTransportOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface StdioTransportOptions {\n    /** Default `process.stdin`. String chunks are UTF-8 encoded before framing. */\n    readonly input?: AsyncIterable<Uint8Array | string>;\n    /** Default `process.stdout`. */\n    readonly output?: StdioOutput;\n    /** Cap on one message in UTF-8 bytes, in either direction. Default {@link MAX_STDIO_MESSAGE_BYTES}. */\n    readonly maxMessageBytes?: number;\n    /**\n     * A client request or notification. Resolve to its response, or `null` to send none. Requests are\n     * dispatched concurrently as their lines arrive. A rejection is answered with a generic `-32603`\n     * error for a request and with nothing for a notification - the rejection's message is never sent.\n     */\n    readonly onRequest: (message: JsonRpcRequest, connection: StdioConnection) => Promise<JsonRpcResponse | null>;\n    /**\n     * A response to a request this side sent through {@link StdioConnection.send}. Return `false` when no\n     * request with that id is pending, and the line is answered as an Invalid Request. Omitted, every\n     * response is invalid.\n     */\n    readonly onResponse?: (message: JsonRpcResponse, connection: StdioConnection) => boolean;\n}"
+  },
+  {
     "name": "StepCatalog",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -15515,6 +15585,20 @@
     "doc": "/** Where `enableSwap` looks for links, forms, slots and islands. */"
   },
   {
+    "name": "TEMPLATE_DEV_URLS",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const TEMPLATE_DEV_URLS: Readonly<Record<TemplateName, string>>;",
+    "doc": "/** Where each template's `dev` script serves: `PORT ?? 3000`, `nifra dev`'s default, `wrangler dev`'s. */"
+  },
+  {
+    "name": "TOOL_CLI_EXIT",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const TOOL_CLI_EXIT: Readonly<{\n    ok: 0;\n    failed: 1;\n    usage: 2;\n    refused: 3;\n}>;",
+    "doc": "/** Process exit codes {@link runToolCli} resolves to. */"
+  },
+  {
     "name": "TableCatalogs",
     "kind": "interface",
     "package": "@nifrajs/i18n",
@@ -15527,6 +15611,12 @@
     "package": "@nifrajs/web-vanilla",
     "signature": "export declare class Template {\n    /** The final markup. Built eagerly at tag time (interpolations are already values by then). */\n    readonly html: string;\n    constructor(htmlString: string);\n    toString(): string;\n}",
     "doc": "/** A rendered HTML fragment - what `html` returns and components produce. Stringified once. */"
+  },
+  {
+    "name": "TemplateName",
+    "kind": "type",
+    "package": "create-nifra",
+    "signature": "export type TemplateName = keyof typeof TEMPLATES;"
   },
   {
     "name": "TestClientOptions",
@@ -15663,6 +15753,19 @@
     "package": "@nifrajs/core",
     "signature": "export interface ToolCatalogEntry {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly capability: string;\n    readonly sensitivity: ToolSensitivity;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotent: boolean;\n    readonly annotations: ToolAnnotations;\n}",
     "doc": "/**\n * A read-only, transport-neutral view of a tool contract.\n *\n * This module is descriptive only. It never validates input, checks capabilities, requests approval,\n * reserves idempotency, consumes cost, or executes the tool. Those policies stay in `executeTool`.\n */"
+  },
+  {
+    "name": "ToolCliOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolCliOptions extends Omit<ToolCallOptions, \"approval\" | \"dryRun\" | \"ledger\"> {\n    /** The command name shown in usage text. */\n    readonly program: string;\n    /** Default: the process streams. */\n    readonly streams?: ToolCliStreams;\n    /** Cap on `--input` JSON, inline or from stdin, in UTF-8 bytes. Default 1 MiB. */\n    readonly maxInputBytes?: number;\n    /** Prototype-poisoning policy for every JSON value read. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n}"
+  },
+  {
+    "name": "ToolCliStreams",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolCliStreams {\n    readonly stdout: {\n        write(chunk: string): unknown;\n    };\n    readonly stderr: {\n        write(chunk: string): unknown;\n    };\n    /** Read by `--input -`. */\n    readonly stdin?: AsyncIterable<Uint8Array | string>;\n}",
+    "doc": "/** Where the CLI writes. `process.stdout` / `process.stderr` / `process.stdin` satisfy it. */"
   },
   {
     "name": "ToolCompletedView",
@@ -17362,6 +17465,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function bunImageBackend(): ImageBackend;",
     "doc": "/**\n * {@link ImageBackend} backed by `Bun.Image` (libjpeg-turbo / libspng / libwebp, decoded off the main\n * thread). Requires the Bun runtime. The default backend of `createImageHandler`.\n */"
+  },
+  {
+    "name": "bundleReactWidget",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function bundleReactWidget(opts: BundleReactWidgetOptions): Promise<string>;",
+    "doc": "/**\n * Bundle a React component into a widget body: the mount point and one inline script that renders the\n * component on every pushed `structuredContent`. Pass it to `defineMcpWidget({ html })`, which adds the\n * document shell and the bridge. Run it at build time and ship the result as a file when the server\n * itself does not run on Bun.\n */"
   },
   {
     "name": "bytes",
@@ -19860,6 +19970,13 @@
     "package": "@nifrajs/better-auth",
     "signature": "export declare function getSession<A extends BetterAuthLike>(auth: A, input: Request | Headers | AuthHeaders): Promise<SessionOf<A> | null>;",
     "doc": "/**\n * Resolve the better-auth session for a request - a thin, typed wrapper over `auth.api.getSession`.\n * Returns `null` when unauthenticated. Accepts a raw `Request` for handlers/loaders, native\n * `Headers`, or the body-blind `AuthHeaders` capsule supplied by `authenticate()`.\n *\n * ```ts\n * const session = await getSession(auth, c.req) // typed: { user, session } | null\n * if (session) c.set.headers[\"x-user\"] = session.user.id\n * ```\n */"
+  },
+  {
+    "name": "githubDeployWorkflow",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function githubDeployWorkflow(target: string, appName: string): string;",
+    "doc": "/**\n * Build a GitHub Actions workflow that builds on every push/PR and deploys `target` on a push to `main`.\n * Runs `bun run build` (`nifra build` for the app's target), then the target's official deploy\n * mechanism. Exported for unit tests. Throws on an unknown target.\n */"
   },
   {
     "name": "gone",
@@ -22969,6 +23086,20 @@
     "signature": "export declare function runSagaReconciliationWorker(store: SagaStore, options: SpecializedWorkerOptions<SagaReconciliationFinding>): Promise<ReconciliationWorkerResult>;"
   },
   {
+    "name": "runStdioTransport",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function runStdioTransport(options: StdioTransportOptions): Promise<void>;",
+    "doc": "/**\n * Read newline-delimited JSON-RPC messages from `input` until it ends, dispatching each, then wait for\n * every dispatched request to settle. Resolves once all responses are written.\n *\n * A line over the cap is answered with one `-32600` error and skipped up to its newline without being\n * buffered; invalid UTF-8 and invalid JSON are answered with `-32700`. A final line without a newline\n * is processed at end of input.\n */"
+  },
+  {
+    "name": "runToolCli",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function runToolCli(tools: readonly CliToolContract[], argv: readonly string[], options: ToolCliOptions): Promise<number>;",
+    "doc": "/**\n * Run one command line against `tools`. Resolves to the exit code; it never throws for anything a\n * user typed. `argv` excludes the runtime and script (`process.argv.slice(2)`).\n */"
+  },
+  {
     "name": "runToolContractConformance",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -23020,6 +23151,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare const sanitizedHtml: typeof sanitizeHtml;",
     "doc": "/** Explicit sanitized-content vocabulary for callers and security audits. */"
+  },
+  {
+    "name": "scaffold",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult>;",
+    "doc": "/**\n * Copy a template into `target` and finalize it (gitignore rename, package name, the site's deploy target).\n * Throws on: unknown template, `--target`/`--docker` with a non-site template, unknown deploy target, or\n * an existing destination. Pure enough to unit-test (no argv, no process.exit).\n */"
   },
   {
     "name": "scanForSecrets",
@@ -23193,6 +23331,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function servePublicDir(options: ServePublicDirOptions): (request: Request) => Promise<Response | undefined>;",
     "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n *\n * Files up to 256 KiB carry a strong `ETag` from the exact snapshot served, matching the Node and\n * Deno readers. Those snapshots carry `Last-Modified` only while mtime reflects their own last change.\n * Larger files stream without an `ETag`: an open inode can change after a separate hash pass. They\n * are dated once settled, but an `If-Range` request gets the whole file rather than spliced versions.\n */"
+  },
+  {
+    "name": "serveStdio",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function serveStdio(server: McpServer, options?: ServeStdioOptions): Promise<void>;",
+    "doc": "/**\n * Serve `server`'s tools, resources and prompts over stdio until the input ends. One process is one\n * session: request cancellation (`notifications/cancelled`) and progress notifications work as they\n * do over HTTP.\n */"
   },
   {
     "name": "serveTestApp",

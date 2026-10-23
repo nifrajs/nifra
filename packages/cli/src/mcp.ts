@@ -40,8 +40,9 @@
  * handed to that CLI; when that is impossible the version-sensitive tools refuse rather than answer
  * for the wrong release (see `./mcp-delegate.ts`). The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
  * standard MCP progress notifications and request cancellation - no SDK dependency, the same
- * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
- * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
+ * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts` and the
+ * stdio framing in `@nifrajs/mcp/stdio`; this module is the dispatch shell (roots, tool wiring, the run
+ * subprocess).
  *
  * This process runs no project code and holds none of the project's `.env`: the config, the backend
  * and everything they import run in a fresh subprocess per call (`./mcp-isolate.ts`), and a session
@@ -50,6 +51,7 @@
 
 import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
+import { runStdioTransport, type StdioConnection } from "@nifrajs/mcp/stdio"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import type { AppLoader } from "./load.ts"
@@ -59,9 +61,6 @@ import { docsTools } from "./mcp-docs-tools.ts"
 import {
   createMcpProtocolState,
   handleRpc,
-  isJsonRpcRequest,
-  isJsonRpcResponse,
-  type JsonRpcNotification,
   type JsonRpcRequest,
   type JsonRpcResponse,
   type McpPrompt,
@@ -188,8 +187,6 @@ const ANSWERED_WITHOUT_THE_APP: ReadonlySet<string> = new Set([
   "notifications/initialized",
   "notifications/roots/list_changed",
 ])
-const MAX_STDIO_MESSAGE_BYTES = 8 * 1024 * 1024
-const STDIO_ENCODER = new TextEncoder()
 
 interface ProjectApp {
   readonly name: string
@@ -268,29 +265,12 @@ export async function runMcpServer(
   let drift: ToolingDrift | undefined = await detectToolingDrift(rootState.root, version)
   const serverInfo = { name: "nifra", version }
   const state = createMcpProtocolState()
-  const send = (message: JsonRpcResponse | JsonRpcNotification): void => {
-    let encoded: string
-    try {
-      encoded = JSON.stringify(message)
-    } catch {
-      encoded = JSON.stringify(
-        rpcError(responseIdOf(message), -32603, "MCP response is not serializable"),
-      )
-    }
-    if (STDIO_ENCODER.encode(encoded).byteLength > MAX_STDIO_MESSAGE_BYTES)
-      encoded = JSON.stringify(
-        rpcError(responseIdOf(message), -32603, "MCP response exceeded the size limit"),
-      )
-    process.stdout.write(`${encoded}\n`)
-  }
   let rootsSupported = false
   let rootsRequestPending = false
-  const requestRoots = (): void => {
+  const requestRoots = (connection: StdioConnection): void => {
     if (!rootsSupported || rootsRequestPending) return
     rootsRequestPending = true
-    process.stdout.write(
-      `${JSON.stringify({ jsonrpc: "2.0", id: ROOTS_REQUEST_ID, method: "roots/list" })}\n`,
-    )
+    connection.send({ jsonrpc: "2.0", id: ROOTS_REQUEST_ID, method: "roots/list" })
   }
   const onRootsAnswer = async (message: JsonRpcResponse): Promise<void> => {
     const result = "result" in message ? message.result : undefined
@@ -310,15 +290,20 @@ export async function runMcpServer(
   // must see the adopted root, even though dispatches themselves run concurrently.
   let rootsUpdate: Promise<void> = Promise.resolve()
 
-  const dispatchRootsAnswer = (message: JsonRpcResponse): void => {
+  const dispatchRootsAnswer = (message: JsonRpcResponse): boolean => {
     // The roots answer is a response to a request initiated by this server, not a client RPC request.
     // Serialize adoption with normal dispatch so a following request cannot observe a half-updated root.
-    if (!rootsRequestPending) return
+    if (message.id !== ROOTS_REQUEST_ID) return false
+    if (!rootsRequestPending) return true
     rootsRequestPending = false
     rootsUpdate = onRootsAnswer(message).catch(() => {})
+    return true
   }
 
-  const dispatch = async (message: JsonRpcRequest): Promise<void> => {
+  const dispatch = async (
+    message: JsonRpcRequest,
+    connection: StdioConnection,
+  ): Promise<JsonRpcResponse | null> => {
     await rootsUpdate
     if (message.method === "initialize") {
       rootsSupported = clientSupportsRoots(message.params)
@@ -338,13 +323,12 @@ export async function runMcpServer(
           prompts: projectPrompts(),
           instructions: rootInstructions(rootState, drift),
         },
-        { state, sendNotification: send, exposeToolErrors: true },
+        { state, sendNotification: connection.send, exposeToolErrors: true },
       )
-      if (response) send(response)
       // Ask for the client's workspace roots once the handshake completes, and again whenever the
-      // client says they changed. The answer comes back through the interception above.
-      if (method.startsWith("notifications/")) requestRoots()
-      return
+      // client says they changed. The answer comes back through `dispatchRootsAnswer`.
+      if (method.startsWith("notifications/")) requestRoots(connection)
+      return response
     }
     const project = await ctx
     let activeTools: McpTool[]
@@ -386,76 +370,28 @@ export async function runMcpServer(
       ...project.features,
       instructions: rootInstructions(rootState, drift),
     }
-    const response = await handleRpc(message, activeTools, serverInfo, features, {
+    return handleRpc(message, activeTools, serverInfo, features, {
       state,
-      sendNotification: send,
+      sendNotification: connection.send,
       // The stdio caller is the developer's own agent: a failure it cannot read it cannot fix.
       exposeToolErrors: true,
     })
-    if (response) send(response)
   }
 
-  const decoder = new TextDecoder()
-  let buffer = ""
-  let bufferBytes = 0
-  let discardingOversized = false
-  const processLine = (rawLine: string): void => {
-    const line = rawLine.trim()
-    if (line === "") return
-    if (STDIO_ENCODER.encode(rawLine).byteLength > MAX_STDIO_MESSAGE_BYTES) {
-      send(rpcError(null, -32600, "MCP message exceeded the size limit"))
-      return
-    }
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(line) as unknown
-    } catch {
-      send(rpcError(null, -32700, "parse error"))
-      return
-    }
-    if (isJsonRpcRequest(parsed)) {
-      void dispatch(parsed).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        send(rpcError(parsed.id ?? null, -32603, msg))
-      })
-    } else if (isJsonRpcResponse(parsed) && parsed.id === ROOTS_REQUEST_ID) {
-      dispatchRootsAnswer(parsed)
-    } else {
-      // Do not let null, arrays, scalars, responses for unknown ids, or malformed envelopes reach the
-      // dispatch shell. In particular, reading `.id` from a hostile `null` must never crash the loop.
-      send(rpcError(null, -32600, "Invalid Request"))
-    }
+  try {
+    await runStdioTransport({
+      onRequest: async (message, connection) => {
+        try {
+          return await dispatch(message, connection)
+        } catch (err) {
+          // Same audience as `exposeToolErrors`: a project that fails to load says why.
+          if (message.id === undefined) return null
+          return rpcError(message.id, -32603, err instanceof Error ? err.message : String(err))
+        }
+      },
+      onResponse: dispatchRootsAnswer,
+    })
+  } finally {
+    closeWarmWorkers()
   }
-  for await (const chunk of Bun.stdin.stream()) {
-    let text = decoder.decode(chunk as Uint8Array, { stream: true })
-    if (discardingOversized) {
-      const newline = text.indexOf("\n")
-      if (newline === -1) continue
-      text = text.slice(newline + 1)
-      discardingOversized = false
-    }
-    buffer += text
-    bufferBytes += STDIO_ENCODER.encode(text).byteLength
-    let nl = buffer.indexOf("\n")
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl)
-      buffer = buffer.slice(nl + 1)
-      bufferBytes = Math.max(0, bufferBytes - STDIO_ENCODER.encode(line).byteLength - 1)
-      nl = buffer.indexOf("\n")
-      processLine(line)
-    }
-    if (bufferBytes > MAX_STDIO_MESSAGE_BYTES) {
-      buffer = ""
-      bufferBytes = 0
-      discardingOversized = true
-      send(rpcError(null, -32600, "MCP message exceeded the size limit"))
-    }
-  }
-  closeWarmWorkers()
-}
-
-function responseIdOf(message: JsonRpcResponse | JsonRpcNotification): string | number | null {
-  if (!("id" in message)) return null
-  const id = message.id
-  return id === null || typeof id === "string" || typeof id === "number" ? id : null
 }

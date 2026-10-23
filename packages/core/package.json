@@ -295,6 +295,11 @@
       "types": "./dist/tool-catalog.d.ts",
       "default": "./dist/tool-catalog.js"
     },
+    "./tool-cli": {
+      "bun": "./src/tool-cli.ts",
+      "types": "./dist/tool-cli.d.ts",
+      "default": "./dist/tool-cli.js"
+    },
     "./execution-policy": {
       "bun": "./src/execution-policy.ts",
       "types": "./dist/execution-policy.d.ts",

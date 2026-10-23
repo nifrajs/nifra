@@ -53,6 +53,28 @@ Clients that include `text/event-stream` in `Accept` receive progress notificati
 followed by the final JSON-RPC response in the same stream. An SSE `GET /mcp` opens a cancellable
 server-message connection; a plain `GET /mcp` remains a health page.
 
+## stdio
+
+A command an agent launches (`"command": "my-server"` in its MCP config) talks over stdin and stdout
+instead. `serveStdio` runs the same server that way, on Bun, Node or Deno:
+
+```ts
+import { serveStdio } from "@nifrajs/mcp/stdio"
+
+await serveStdio(mcp)
+```
+
+It resolves when stdin ends and every pending request has answered. Whoever can write to the process's
+stdin can call every tool, so the HTTP origin, host and `authorizeMessage` options do not apply. Write
+logs to stderr: anything else on stdout corrupts the stream. `runStdioTransport` is the framing layer
+underneath, for a host that dispatches messages itself.
+
+## Widgets on Node and Deno
+
+A React widget from `@nifrajs/mcp/react` is bundled with `Bun.build`. For a server that runs on Node
+or Deno, bundle it at build time with `bundleReactWidget({ component })`, ship the returned body as a
+file, and pass that file's text to `defineMcpWidget({ uri, name, html })` at run time.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

@@ -10,25 +10,32 @@
  * `react` + `react-dom` resolve from the CONSUMER's `node_modules` at bundle time - they are NOT a
  * dependency of `@nifrajs/mcp`. This entry is Bun-only (it calls `Bun.build`); import it from
  * `@nifrajs/mcp/react`, not the package root, so the core stays runtime-agnostic and dependency-free.
+ *
+ * A server that runs on Node or Deno bundles ahead of time instead: {@link bundleReactWidget} returns
+ * the widget body at build time, the package ships it as a file, and the server passes that file's text
+ * to `defineMcpWidget({ html })` at run time - no `Bun.build`, no React install where it runs.
  */
 import { randomBytes } from "node:crypto"
 import { rm, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { defineMcpWidget, type McpWidget } from "./widget.ts"
 
-export interface ReactWidgetOptions {
+export interface BundleReactWidgetOptions {
+  /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the
+   * tool's `structuredContent` as props. */
+  readonly component: string
+  /** Minify the client bundle (default true). */
+  readonly minify?: boolean
+}
+
+export interface ReactWidgetOptions extends BundleReactWidgetOptions {
   /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */
   readonly uri: string
   readonly name: string
   readonly description?: string
   readonly title?: string
-  /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the
-   * tool's `structuredContent` as props. */
-  readonly component: string
   /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */
   readonly head?: string
-  /** Minify the client bundle (default true). */
-  readonly minify?: boolean
 }
 
 /** Bundle `component` + a bootstrap into a self-contained browser IIFE that renders on pushed data. */
@@ -69,21 +76,32 @@ if (el) {
   }
 }
 
-/** Build a {@link McpWidget} from a React component. Async - it bundles the component at definition time
- * (a one-time cost at server start); pass the result to `createMcpServer({ widgets })` / a tool's `widget`. */
-export async function reactWidget(opts: ReactWidgetOptions): Promise<McpWidget> {
+/**
+ * Bundle a React component into a widget body: the mount point and one inline script that renders the
+ * component on every pushed `structuredContent`. Pass it to `defineMcpWidget({ html })`, which adds the
+ * document shell and the bridge. Run it at build time and ship the result as a file when the server
+ * itself does not run on Bun.
+ */
+export async function bundleReactWidget(opts: BundleReactWidgetOptions): Promise<string> {
   const bundle = await bundleComponent(opts.component, opts.minify ?? true)
   // Escape any `</script` the bundle may contain (inside string/regex literals) so it can't terminate
   // this inline <script> early - `<\/script` is equivalent JS but invisible to the HTML parser.
   const safe = bundle.replace(/<\/(script)/gi, "<\\/$1")
+  // `safe` is a Bun-generated JavaScript bundle with every HTML script end-tag escaped before it is
+  // placed in this inline script. The widget test asserts the generated document remains intact.
+  return `<div id="root"></div>\n<script>${safe}</script>` // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
+}
+
+/** Build a {@link McpWidget} from a React component. Async - it bundles the component at definition time
+ * (a one-time cost at server start); pass the result to `createMcpServer({ widgets })` / a tool's `widget`. */
+export async function reactWidget(opts: ReactWidgetOptions): Promise<McpWidget> {
+  const html = await bundleReactWidget(opts)
   return defineMcpWidget({
     uri: opts.uri,
     name: opts.name,
     ...(opts.description !== undefined ? { description: opts.description } : {}),
     ...(opts.title !== undefined ? { title: opts.title } : {}),
     ...(opts.head !== undefined ? { head: opts.head } : {}),
-    // `safe` is a Bun-generated JavaScript bundle with every HTML script end-tag escaped before it is
-    // placed in this inline script. The widget test asserts the generated document remains intact.
-    html: `<div id="root"></div>\n<script>${safe}</script>`, // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
+    html,
   })
 }
