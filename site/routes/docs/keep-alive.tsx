@@ -21,7 +21,7 @@ const OPTIONS = `import type { KeepAliveOptions } from "@nifrajs/web"
 export const keepAlive: KeepAliveOptions = { revalidate: false, maxAge: 60_000 }`
 
 const REACT = `// doc-check: skip - a page component; Chart is the app's own.
-import { usePageVisibility } from "@nifrajs/web-react/keep-alive"
+import { usePageVisibility } from "@nifrajs/web-react/router"
 
 export default function Dashboard() {
   const visible = usePageVisibility()
@@ -29,7 +29,7 @@ export default function Dashboard() {
 }`
 
 const SVELTE = `<script>
-  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/keep-alive"
+  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/router"
   let timer
   const poll = () => (timer = setInterval(refresh, 5000))
   poll()

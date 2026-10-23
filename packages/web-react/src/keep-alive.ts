@@ -33,6 +33,7 @@ import {
 import { hydrateRoot } from "react-dom/client"
 import { withRouterContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { pageVisibilityContext } from "./page-visibility.ts"
 import { routeProps } from "./route-props.ts"
 import { inSlot } from "./slot.ts"
 
@@ -43,15 +44,7 @@ export interface KeepAliveMountOptions extends MountRouterOptions {
   readonly keepAlive: KeepAliveTable
 }
 
-const VisibleContext = createContext(true)
-
-/**
- * Whether the page this component renders in is on screen. `false` while it is kept hidden behind
- * another page; its effects have cleaned up by then (`Activity`), and run again when it is shown.
- */
-export function usePageVisibility(): boolean {
-  return useContext(VisibleContext)
-}
+export { usePageVisibility } from "./page-visibility.ts"
 
 type LayoutProps = {
   readonly data: unknown
@@ -154,7 +147,7 @@ const Slot = memo(function Slot({ node }: { readonly node: SlotNode }): ReactNod
   return inSlot(
     node.hidden,
     createElement(
-      VisibleContext.Provider,
+      pageVisibilityContext().Provider,
       { value: !node.hidden },
       withRouterContext(props, content),
     ),

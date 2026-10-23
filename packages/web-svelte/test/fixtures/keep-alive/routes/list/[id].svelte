@@ -12,7 +12,7 @@
 </script>
 
 <script>
-  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/keep-alive"
+  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/router"
   let { data, params } = $props()
   const instance = $props.id()
   let count = $state(0)

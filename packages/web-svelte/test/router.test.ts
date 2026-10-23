@@ -115,3 +115,40 @@ test("useSearch and useMatches read the chain's context, and report nothing outs
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test("onPageHide and onPageShow register with the kept page's slot, and do nothing outside one", async () => {
+  // Compiled in the test process for the same reason as the probe above.
+  const { compile } = await import("svelte/compiler")
+  const { render } = await import("svelte/server")
+  const source = `<script>
+  import { onPageHide, onPageShow } from ${JSON.stringify(join(import.meta.dir, "../src/router.ts"))}
+  let { report } = $props()
+  report(onPageHide(() => {}), onPageShow(() => {}))
+</script>
+<p>page</p>`
+  const dir = await mkdtemp(join(import.meta.dir, ".tmp-nifra-visibility-probe-"))
+  try {
+    const file = join(dir, "probe.js")
+    await writeFile(file, compile(source, { generate: "server", filename: "Probe.svelte" }).js.code)
+    const Probe = (await import(file)).default
+    const visibility = { hide: new Set<() => void>(), show: new Set<() => void>() }
+    const removals: (() => void)[] = []
+    const report = (...remove: (() => void)[]) => removals.push(...remove)
+    // The render runs when its body is read.
+    const kept = render(Probe, {
+      props: { report },
+      context: new Map([["@nifrajs/web-svelte:visibility", visibility]]),
+    }).body
+    expect(kept).toContain("<p>page</p>")
+    expect([visibility.hide.size, visibility.show.size]).toEqual([1, 1])
+    for (const remove of removals) remove()
+    expect([visibility.hide.size, visibility.show.size]).toEqual([0, 0])
+
+    removals.length = 0
+    expect(render(Probe, { props: { report } }).body).toContain("<p>page</p>")
+    expect(removals).toHaveLength(2)
+    for (const remove of removals) expect(remove).not.toThrow()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

@@ -4,7 +4,7 @@
  *
  * `KeepAlive.svelte` renders the page on screen and every page the router keeps, grouped by the layouts
  * they share; a kept page stays mounted and running outside the document. `onPageHide` / `onPageShow`
- * let a page pause its own timers and listeners meanwhile.
+ * (from `@nifrajs/web-svelte/router`, re-exported here) let a page pause its timers meanwhile.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
 import { searchOfChain } from "@nifrajs/web/client"
@@ -15,46 +15,16 @@ import {
   type SlotNode,
   slotTree,
 } from "@nifrajs/web/keep-alive"
-import { getContext, hydrate as svelteHydrate } from "svelte"
+import { hydrate as svelteHydrate } from "svelte"
 import { setMountedRouter } from "./fetcher.ts"
 import KeepAlive from "./KeepAlive.svelte"
 
 export * from "./client.ts"
+export { onPageHide, onPageShow } from "./router.ts"
 
 /** `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go. */
 export interface KeepAliveMountOptions extends MountRouterOptions {
   readonly keepAlive: KeepAliveTable
-}
-
-// Must match the key `Slot.svelte` provides a kept page's visibility callbacks under.
-const VISIBILITY_KEY = "@nifrajs/web-svelte:visibility"
-
-interface Visibility {
-  readonly hide: Set<() => void>
-  readonly show: Set<() => void>
-}
-
-const register = (kind: keyof Visibility, callback: () => void): (() => void) => {
-  const visibility = getContext<Visibility | undefined>(VISIBILITY_KEY)
-  if (visibility === undefined) return () => {}
-  visibility[kind].add(callback)
-  return () => {
-    visibility[kind].delete(callback)
-  }
-}
-
-/**
- * Run `callback` each time the page this component renders in is hidden behind another page. The page
- * keeps running while it is hidden: pause its timers, sockets and media here. Call it while the
- * component initializes; returns its removal. A no-op outside a kept page.
- */
-export function onPageHide(callback: () => void): () => void {
-  return register("hide", callback)
-}
-
-/** Run `callback` each time the page this component renders in is shown again after being hidden. */
-export function onPageShow(callback: () => void): () => void {
-  return register("show", callback)
 }
 
 /** What `KeepAlive.svelte` and `Slot.svelte` render with: one per mount, on the server or the client. */

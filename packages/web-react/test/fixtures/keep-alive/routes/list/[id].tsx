@@ -1,5 +1,4 @@
-import { usePageVisibility } from "@nifrajs/web-react/keep-alive"
-import { useParams } from "@nifrajs/web-react/router"
+import { usePageVisibility, useParams } from "@nifrajs/web-react/router"
 import { useEffect, useId, useState } from "react"
 
 export const keepAlive = true

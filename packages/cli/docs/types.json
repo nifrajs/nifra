@@ -21342,14 +21342,14 @@
     "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function onPageHide(callback: () => void): () => void;",
-    "doc": "/**\n * Run `callback` each time the page this component renders in is hidden behind another page. The page\n * keeps running while it is hidden: pause its timers, sockets and media here. Call it while the\n * component initializes; returns its removal. A no-op outside a kept page.\n */"
+    "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another\n * page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it\n * while the component initializes; returns its removal. A no-op outside a kept page.\n */"
   },
   {
     "name": "onPageShow",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function onPageShow(callback: () => void): () => void;",
-    "doc": "/** Run `callback` each time the page this component renders in is shown again after being hidden. */"
+    "doc": "/** Run `callback` each time the `keepAlive` page this component renders in is shown again. */"
   },
   {
     "name": "openGraph",
@@ -24748,7 +24748,7 @@
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function usePageVisibility(): boolean;",
-    "doc": "/**\n * Whether the page this component renders in is on screen. `false` while it is kept hidden behind\n * another page; its effects have cleaned up by then (`Activity`), and run again when it is shown.\n */"
+    "doc": "/**\n * Whether the page this component renders in is on screen. `false` while it is kept hidden behind\n * another page; its effects have cleaned up by then (`Activity`), and run again when it is shown.\n * Always `true` on the server and on a page that does not keep alive.\n */"
   },
   {
     "name": "useParams",

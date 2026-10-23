@@ -6864,7 +6864,7 @@ _No named exports (side-effect entrypoint)._
 - **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
   Hydrate the keep-alive view. Like `mountRouter` from `@nifrajs/web-react/client`, it hydrates against the state the server rendered and then follows the store.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
-  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown.
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
 
 ### `@nifrajs/web-react/query`
 
@@ -6942,6 +6942,8 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` …
 - **useNavigation** _(function)_ - `useNavigation: () => Navigation`
   Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra navigates imperatively - it fetches the next route's chunk + loader data while the current route stays on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspe…
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
 - **useParams** _(function)_ - `useParams: <T extends Record<string, string | undefined> = Record<string, string>>() => Readonly<T>`
   The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
 - **usePending** _(function)_ - `usePending: () => boolean`
@@ -7198,9 +7200,9 @@ _No named exports (side-effect entrypoint)._
 - **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
   Hydrate the keep-alive view. Its first render matches the server's (the same `KeepAlive` root, with the slot wrappers the server rendered), so hydration reconciles the document as it is.
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
-  Run `callback` each time the page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
-  Run `callback` each time the page this component renders in is shown again after being hidden.
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
 
 ### `@nifrajs/web-svelte/mdx`
 
@@ -7234,6 +7236,10 @@ _No named exports (side-effect entrypoint)._
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
 - **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]`

@@ -6,7 +6,7 @@
   out of the document while the node is hidden. Its page keeps running there, so a wrapped node also
   provides the routing context of its own state - a hidden page never reads another page's params - and
   the visibility callbacks `onPageHide` / `onPageShow` register with (the key strings are kept in sync
-  with keep-alive.ts and router.ts).
+  with router.ts).
 -->
 <script>
   import { setContext, untrack } from "svelte"

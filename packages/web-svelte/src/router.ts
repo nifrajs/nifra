@@ -122,3 +122,34 @@ export function useBlocker(shouldBlock: boolean | BlockerFunction): Readable<Blo
     ),
   )
 }
+
+// The key `Slot.svelte` provides a kept page's visibility callbacks under.
+const VISIBILITY_KEY = "@nifrajs/web-svelte:visibility"
+
+interface Visibility {
+  readonly hide: Set<() => void>
+  readonly show: Set<() => void>
+}
+
+const onVisibility = (kind: keyof Visibility, callback: () => void): (() => void) => {
+  const visibility = getContext<Visibility | undefined>(VISIBILITY_KEY)
+  if (visibility === undefined) return () => {}
+  visibility[kind].add(callback)
+  return () => {
+    visibility[kind].delete(callback)
+  }
+}
+
+/**
+ * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another
+ * page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it
+ * while the component initializes; returns its removal. A no-op outside a kept page.
+ */
+export function onPageHide(callback: () => void): () => void {
+  return onVisibility("hide", callback)
+}
+
+/** Run `callback` each time the `keepAlive` page this component renders in is shown again. */
+export function onPageShow(callback: () => void): () => void {
+  return onVisibility("show", callback)
+}

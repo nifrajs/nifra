@@ -11684,7 +11684,7 @@ runs them again when it is shown. `usePageVisibility()` reads which it is:
 
 ```tsx
 // doc-check: skip - a page component; Chart is the app's own.
-import { usePageVisibility } from "@nifrajs/web-react/keep-alive"
+import { usePageVisibility } from "@nifrajs/web-react/router"
 
 export default function Dashboard() {
   const visible = usePageVisibility()
@@ -11697,7 +11697,7 @@ A Svelte page keeps running while it is hidden. Pause timers, sockets and media 
 
 ```svelte
 <script>
-  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/keep-alive"
+  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/router"
   let timer
   const poll = () => (timer = setInterval(refresh, 5000))
   poll()
