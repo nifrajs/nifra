@@ -13,7 +13,7 @@
  *   bun scripts/check-runtime-differential.ts --runs 300
  *   bun scripts/check-runtime-differential.ts --seed 42 --lanes bun-serve,node
  *   bun scripts/check-runtime-differential.ts --replay '<case JSON printed by a failing run>'
- *   bun scripts/check-runtime-differential.ts --expose F7   # report an open finding, shrunk
+ *   bun scripts/check-runtime-differential.ts --expose U16  # report a waived entry, shrunk
  *   bun scripts/check-runtime-differential.ts --runs 0 --ws-runs 200   # WebSocket sessions only
  *
  * Node and Deno load the built `dist`: run `bun run build` first.

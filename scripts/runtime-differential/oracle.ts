@@ -159,7 +159,7 @@ export const OPEN_EQUIVALENCES: readonly Equivalence[] = []
 
 const PARSER_REFUSAL = "refused by its own parser"
 
-/** An open entry named in `exposed`, by its whole id or its leading code (`F7`), excuses nothing. */
+/** An open entry named in `exposed`, by its whole id or its leading code (`U16`), excuses nothing. */
 export const isExposed = (id: string, exposed: ReadonlySet<string>) =>
   exposed.has(id) || exposed.has(id.slice(0, id.indexOf(" ")))
 
@@ -269,10 +269,12 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
     },
   },
   {
-    id: "F7 workerd-joins-cookies-with-comma",
+    id: "U16 workerd-joins-cookies-with-comma",
     why:
       "Two Cookie headers reach a Worker joined by ', ' (the Fetch rule for repeated fields); Bun, Node " +
-      "and Deno join Cookie with '; '. nifra splits on ';', so on workerd the first cookie swallows the next.",
+      "and Deno join Cookie with '; '. nifra splits on ';', so on workerd the first cookie swallows the next. " +
+      "Splitting on ', ' too would let an unencoded cookie value holding ', sid=x' inject a cookie, and a " +
+      "browser sends one Cookie line, so it stays a workerd quirk.",
     matches: (violation, testCase, outcomes) =>
       violation.kind === "difference" &&
       testCase.request.headers.filter(([name]) => name.toLowerCase() === "cookie").length > 1 &&
