@@ -271,13 +271,14 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // QueryClient.clear(): 17,769 -> 18,212 B; every browser client held weakly from creation, so a
   // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
   // A revalidation keeps the identity of what it did not change (the sharing walk, and the same
-  // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3).
+  // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3). `identityChanged()`,
+  // which drops kept pages on a token sign-in or sign-out in every tab: 18,817 -> 18,938 B (Bun 1.4.3).
   // Non-tree client-data fallback and sampled row-ID indexing: 19,205 B (Bun 1.4.4).
   // Partial prerendering's prefetch marker and its leave hook on navigation: 18,265 -> 18,368 B.
   // A reload asks for the fill of each hole host on screen, a server component's included, and the
   // leave hook runs only for a navigation that loads: 18,368 -> 18,436 B (Bun 1.4.3).
-  // Both of the above together: 19,387 B (Bun 1.4.4).
-  "nifra-web-client": 19.0,
+  // Both of the above together: 19,387 B; with `identityChanged()` as well: 19,513 B (Bun 1.4.4).
+  "nifra-web-client": 19.1,
   "nifra-i18n": 4.3,
 }
 

@@ -32,3 +32,20 @@ test("discoverRoutes scans a routes dir into a manifest", async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("discoverRoutes marks the pages that export keepAlive, and passes over one it cannot read", () => {
+  const dir = mkdtempSync(`${tmpdir()}/nifra-routes-`)
+  try {
+    writeFileSync(`${dir}/_layout.tsx`, "export const keepAlive = true\nexport default 'layout'\n")
+    writeFileSync(`${dir}/list.tsx`, "export const keepAlive = true\nexport default 'list'\n")
+    writeFileSync(`${dir}/list.backend.ts`, "export const keepAlive = true\n")
+    writeFileSync(`${dir}/index.tsx`, "export default 'home'\n")
+    // Listed like a route file, but reading it fails: discovery still builds the manifest.
+    mkdirSync(`${dir}/odd.tsx`)
+
+    const m = discoverRoutes(dir)
+    expect(m.routes.filter((r) => r.keepAlive === true).map((r) => r.id)).toEqual(["list"])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

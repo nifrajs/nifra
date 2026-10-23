@@ -3,10 +3,11 @@
  * (and the rest of @nifrajs/web) stays fs-free + edge-portable: this runs at build/startup
  * only. It scans a routes dir and feeds the pure `buildManifest`.
  */
-import { readdirSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   buildManifest,
+  exportsKeepAlive,
   isMiddlewareFile,
   isRouteBackendFile,
   type Manifest,
@@ -45,12 +46,25 @@ export function discoverRoutes(dir: string, options: DiscoverRoutesOptions = {})
     )
   const query = options.importQuery ? `?${options.importQuery}` : ""
   const load = options.load
-  return buildManifest(files, (file) =>
-    load === undefined
-      ? () => import(`${dir}/${file}${query}`) as Promise<RouteModule>
-      : // No `importQuery` here: an injected loader owns its own invalidation (Vite's module graph
-        // re-evaluates on change), and appending a cache-buster would defeat it by minting a new
-        // module id per request.
-        () => load(join(dir, file)) as Promise<RouteModule>,
+  return buildManifest(
+    files,
+    (file) =>
+      load === undefined
+        ? () => import(`${dir}/${file}${query}`) as Promise<RouteModule>
+        : // No `importQuery` here: an injected loader owns its own invalidation (Vite's module graph
+          // re-evaluates on change), and appending a cache-buster would defeat it by minting a new
+          // module id per request.
+          () => load(join(dir, file)) as Promise<RouteModule>,
+    { keepAlive: files.filter((file) => keepsAlive(join(dir, file))) },
   )
+}
+
+const keepsAlive = (path: string): boolean => {
+  if (isRouteBackendFile(path) || path.slice(path.lastIndexOf("/") + 1).startsWith("_"))
+    return false
+  try {
+    return exportsKeepAlive(readFileSync(path, "utf8"))
+  } catch {
+    return false
+  }
 }

@@ -8,6 +8,7 @@ import type { ReactNode } from "react"
 import { compose } from "./compose.ts"
 import { reactDomServer } from "./react-dom-server.ts"
 import { explainRenderError } from "./render-error.ts"
+import { slottedChain } from "./slot.ts"
 
 // The marker opening a Suspense boundary the server gave up on. Markup can't forge it: React escapes
 // text, and a comment only comes from React itself or `dangerouslySetInnerHTML`.
@@ -38,11 +39,13 @@ export const reactAdapter: RenderAdapter = {
   // React's string renderer cannot wait for a component that suspends (`use`, `lazy`): it writes the
   // boundary's fallback behind a client-render marker, or throws with no boundary above it. Either
   // way the page is handed back (`undefined`) to be streamed, where the boundary resolves.
-  async renderToString(chain, props) {
+  async renderToString(chain, props, options) {
     const { renderToString } = await reactDomServer()
     let html: string
     try {
-      html = renderToString(compose(chain, props))
+      html = renderToString(
+        compose(options?.slots === undefined ? chain : slottedChain(chain, options.slots), props),
+      )
     } catch (error) {
       if (suspendedSynchronously(error)) return undefined
       throw explainRenderError(error)
@@ -67,10 +70,14 @@ export const reactAdapter: RenderAdapter = {
     // the document tail. React's default `onError` logs to console.error (errors aren't swallowed).
     // The nonce reaches the inline runtime React streams to reveal each resolved boundary.
     const { renderToReadableStream } = await reactDomServer()
+    const tree = compose(
+      options?.slots === undefined ? chain : slottedChain(chain, options.slots),
+      props,
+    )
     try {
       return await (options?.nonce === undefined
-        ? renderToReadableStream(compose(chain, props))
-        : renderToReadableStream(compose(chain, props), { nonce: options.nonce }))
+        ? renderToReadableStream(tree)
+        : renderToReadableStream(tree, { nonce: options.nonce }))
     } catch (error) {
       throw explainRenderError(error)
     }

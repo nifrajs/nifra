@@ -99,6 +99,12 @@ export {
   type LiveClientEntry,
 } from "./internal/codegen.ts"
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
+// The server half of the identity epoch that drops kept pages on a sign-in or sign-out.
+export {
+  type IdentityEpochContext,
+  type KeepAliveServerOptions,
+  rotateIdentityEpoch,
+} from "./internal/identity-epoch.ts"
 export type { PrerenderedPages } from "./internal/prerendered-pages.ts"
 export {
   gone,
@@ -183,6 +189,7 @@ export {
   filePathToPatterns,
   type GetStaticPaths,
   type InertScriptType,
+  type KeepAliveOptions,
   type LayoutEntry,
   type LinkDescriptor,
   type Loader,
@@ -305,6 +312,7 @@ export {
   type FetcherState,
   type FetchRouteData,
   type Intercepted,
+  type KeptPage,
   type MountRouterOptions,
   NAV_FROM_HEADER,
   PREFETCH_HEADER,

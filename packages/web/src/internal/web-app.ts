@@ -10,6 +10,7 @@ import {
   NIFRA_BACKEND_WS_RUNTIME,
   preRouteMountPaths,
 } from "@nifrajs/core/mount"
+import { withResponseObserver } from "@nifrajs/core/response-observer"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { replacedRequestOf, type ServerOptions, server } from "@nifrajs/core/server"
 import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
@@ -26,6 +27,7 @@ import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
+import { identityEpochHook, type KeepAliveServerOptions } from "./identity-epoch.ts"
 import { INVALIDATION, type InvalidationOp, invalidationOf } from "./invalidation-contract.ts"
 import { LIVE_ATTACH, type LiveAttachment, type LiveRuntimeHandle } from "./live-contract.ts"
 import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
@@ -294,6 +296,14 @@ export interface CreateWebAppOptions<Env = unknown> {
    * server entry, before its static files too. A refused path answers the policy's refusal.
    */
   readonly hostPolicy?: HostPolicy
+  /**
+   * Which cookies say who is signed in, for an app with a `keepAlive` route. A response that changes
+   * or deletes one rotates the readable identity epoch cookie, and every tab drops the pages it kept
+   * for the previous visitor. The session cookies of `@nifrajs/auth`, Better Auth and Auth.js count
+   * under their default names; name any other in `identityCookies`. Development reports, once per
+   * name, an `HttpOnly` cookie that changes and is in neither list (`NIFRA_KEEPALIVE_IDENTITY_COOKIE`).
+   */
+  readonly keepAlive?: KeepAliveServerOptions
   /**
    * The files the build emitted, by request path: `buildAssets` from the generated server manifest.
    * A {@link hostPolicy} rule's `buildAssets` token matches exactly these. `nifra dev` serves the
@@ -724,6 +734,16 @@ export function createWebApp<Env = unknown>(
   // absent. A root catch-all page (`[...slug].tsx`) already answers every path, the root included,
   // and the router refuses a second `/*` under another param name.
   if (!ownsRootCatchAll) app.register("GET", "/*", undefined, pageExecutor.fallback)
+
+  // Last, after every hook the caller's `use` added: a cookie any of them sets is seen here.
+  if (manifest.routes.some((route) => route.keepAlive === true)) {
+    const nodeEnv = typeof process === "undefined" ? undefined : process.env.NODE_ENV
+    app.use(
+      withResponseObserver({
+        onResponseHeaders: identityEpochHook(options.keepAlive ?? {}, nodeEnv !== "production"),
+      }),
+    )
+  }
 
   const evidenceProvider: ComposedEvidenceProvider = async (passed) => {
     const { traverseEvidence } = await import("./evidence-traversal.ts")

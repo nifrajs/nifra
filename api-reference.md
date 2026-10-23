@@ -5242,6 +5242,8 @@ _No named exports (side-effect entrypoint)._
   Response header carrying bounded route tags into {@link withISR}.
 - **ISR_STATUS_HEADER** _(const)_ - `ISR_STATUS_HEADER: "x-nifra-isr"`
   Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served + regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests.
+- **IdentityEpochContext** _(interface)_ - `interface IdentityEpochContext`
+  The response-cookie surface {@link rotateIdentityEpoch} needs: nifra's handler context.
 - **InertScriptType** _(type)_ - `type InertScriptType = "application/ld+json" | "application/json"`
   One `<script>` element a route contributes to `<head>` - for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **InfiniteData** _(interface)_ - `interface InfiniteData<T, P>`
@@ -5258,6 +5260,12 @@ _No named exports (side-effect entrypoint)._
 - **KVCacheStoreOptions** _(interface)_ - `interface KVCacheStoreOptions`
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any KV-like binding satisfies it and tests can pass an in-memory double.
+- **KeepAliveOptions** _(interface)_ - `interface KeepAliveOptions`
+  A page's `keepAlive` export as an object.
+- **KeepAliveServerOptions** _(interface)_ - `interface KeepAliveServerOptions`
+  `createWebApp`'s `keepAlive` option: which cookies say who is signed in.
+- **KeptPage** _(interface)_ - `interface KeptPage`
+  A page kept mounted while its history entry is not the one on screen.
 - **LAYOUT_DATA_GLOBAL** _(const)_ - `LAYOUT_DATA_GLOBAL: "__NIFRA_LAYOUT_DATA__"`
   Per-layout loader data for hydration.
 - **LOCALES_GLOBAL** _(const)_ - `LOCALES_GLOBAL: "__NIFRA_LOCALES__"`
@@ -5469,7 +5477,7 @@ _No named exports (side-effect entrypoint)._
   Validate and serialize the neutral boundary manifest. Duplicate names fail closed at startup.
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
   Stable mode label for adapter registries and diagnostics.
-- **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
+- **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>, options?: BuildManifestOptions) => Manifest`
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware` files are special; othe…
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
@@ -5505,7 +5513,6 @@ _No named exports (side-effect entrypoint)._
 - **fontPreload** _(function)_ - `fontPreload: (input: FontPreloadInput) => LinkDescriptor`
   Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` - nifra injects it into `<head>` (`<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous">`). Values are escaped at injection by the head renderer. Preloading the font file removes a render-blocking r…
 - **generateClientEntry** _(function)_ - `generateClientEntry: (manifest: Manifest, options: GenerateClientEntryOptions) => string`
-  Codegen: emit a client-entry module (as source) that lazily imports each route's layout chain (so `Bun.build` with `splitting` code-splits one chunk per route), builds a `patterns` list, then creates the agnostic router store (with a `loadModule` hook), installs history + form interception, loads t…
 - **generateRouteSearchTypes** _(function)_ - `generateRouteSearchTypes: (manifest: Manifest, options: GenerateRouteSearchTypesOptions) => string`
   Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's `searchSchema`. It augments the {@link RouteSearch} map with `"<pattern>": SearchOf<typeof import(...)>` for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a…
 - **generateServerManifest** _(function)_ - `generateServerManifest: (manifest: Manifest, options: GenerateServerManifestOptions) => string`
@@ -5564,6 +5571,8 @@ _No named exports (side-effect entrypoint)._
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
+- **rotateIdentityEpoch** _(function)_ - `rotateIdentityEpoch: (c: IdentityEpochContext) => void`
+  Rotate the identity epoch from a flow that changes who is signed in without changing a cookie `createWebApp` watches - say, a session kept server-side under a cookie whose value stays the same. Every tab then drops the pages it kept alive for the previous visitor.
 - **sanitizeHtml** _(function)_ - `sanitizeHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
   Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.
 - **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
@@ -5821,6 +5830,8 @@ _No named exports (side-effect entrypoint)._
   Read the nonce carried by the current server-rendered document, if any.
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
+- **identityChanged** _(function)_ - `identityChanged: () => void`
+  Tell this tab and every other tab of the origin that the visitor signed in or out. Call it at login and logout when identity lives in client storage (a bearer token) rather than in a cookie, which the server's epoch cookie already covers: every page kept alive for the previous visitor is dropped.
 - **installForms** _(function)_ - `installForms: (router: ClientRouter) => () => void`
   Intercept submissions of same-origin `<form method="post">` whose action targets an app route: submit via the router (no full reload - POST the action, then revalidate the active loader). On failure it falls back to a native submit, so the form still works. Returns a teardown function.
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
@@ -5991,6 +6002,8 @@ _No named exports (side-effect entrypoint)._
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
 - **formatBuildLog** _(function)_ - `formatBuildLog: (log: unknown, root?: string) => string`
   One bundler log as `file:line:column: message`, the source line it points at underneath. Bun's `BuildMessage`/`ResolveMessage` carry the place in `position`, which their `String()` drops: a failed build said "Could not resolve: ./db" without naming the module that imported it.
+- **isConsoleDiagnostic** _(function)_ - `isConsoleDiagnostic: (message: string) => boolean`
+  True when a console `message` reports a catalog failure that is only ever logged, never thrown.
 - **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
   True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
@@ -6152,6 +6165,46 @@ _No named exports (side-effect entrypoint)._
   Where `enableSwap` looks for links, forms, slots and islands.
 - **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
   Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under `root` refresh its slot in place. Call it instead of `mountIslands`.
+
+### `@nifrajs/web/keep-alive`
+
+- **EPOCH_COOKIE** _(const)_ - `EPOCH_COOKIE: "__Host-nifra-epoch"`
+  The readable cookie holding the epoch on an `https:` origin.
+- **IDENTITY_CHANNEL** _(const)_ - `IDENTITY_CHANNEL: "nifra-identity-v1"`
+  The channel every tab of an origin hears a sign-in or sign-out on.
+- **KEEP_ALIVE_MAX** _(const)_ - `KEEP_ALIVE_MAX: 3`
+  Most pages kept per tab.
+- **KEEP_ALIVE_MAX_AGE_MS** _(const)_ - `KEEP_ALIVE_MAX_AGE_MS: number`
+  Longest a page stays hidden unless its route sets `keepAlive: { maxAge }`, in milliseconds.
+- **KeepAliveClient** _(interface)_ - `interface KeepAliveClient`
+  What {@link keepAliveClient} returns: the transport to build the router with, then the layer.
+- **KeepAliveClientOptions** _(interface)_ - `interface KeepAliveClientOptions`
+- **KeepAliveDropReason** _(type)_ - `type KeepAliveDropReason = | "identity" | "pagehide" | "forward" | "lru" | "expired" | "layout" | "hot-update" | "manual"`
+  Why kept pages were dropped.
+- **KeepAliveNavigateOptions** _(interface)_ - `interface KeepAliveNavigateOptions`
+  Per-navigation options of {@link KeepAliveRouter.navigate}.
+- **KeepAliveRouter** _(interface)_ - `interface KeepAliveRouter`
+  The router as {@link keepAliveClient} hands it to the history layer and the adapter.
+- **KeepAliveTable** _(interface)_ - `interface KeepAliveTable`
+  What the server and the browser both read to place the slot wrappers.
+- **PAGE_HIDE_EVENT** _(const)_ - `PAGE_HIDE_EVENT: "nifra:pagehide"`
+  Dispatched on a page's element just before it leaves the document.
+- **PAGE_SHOW_EVENT** _(const)_ - `PAGE_SHOW_EVENT: "nifra:pageshow"`
+  Dispatched on a page's element once it is back in the document.
+- **SlotNode** _(interface)_ - `interface SlotNode`
+  One element of the view: a layout and the slots under it, or a page.
+- **SlotParking** _(interface)_ - `interface SlotParking`
+  The DOM half of keep-alive: takes hidden slots out of the document and puts them back.
+- **checkSlotCss** _(function)_ - `checkSlotCss: (entry: Element, page: Element) => void`
+  Dev only: report each same-origin style rule whose selector the slot wrappers around `page` stop matching (`NIFRA_KEEPALIVE_DIRECT_CHILD_CSS`). A stylesheet the page cannot read is skipped.
+- **createSlotParking** _(function)_ - `createSlotParking: () => SlotParking`
+  One per mounted view.
+- **identityChanged** _(function)_ - `identityChanged: () => void`
+  Tell this tab and every other tab of the origin that the visitor signed in or out. Call it at login and logout when identity lives in client storage (a bearer token) rather than in a cookie, which the server's epoch cookie already covers: every page kept alive for the previous visitor is dropped.
+- **keepAliveClient** _(function)_ - `keepAliveClient: (options: KeepAliveClientOptions) => KeepAliveClient`
+  Keep-alive for a router. See the module docs; the generated client entry wires it:
+- **slotTree** _(function)_ - `slotTree: (state: RouterState, chains: Readonly<Record<string, MatchChain | undefined>>, table: KeepAliveTable, previous?: readonly SlotNode[]) => readonly SlotNode[]`
+  The view of `state`: the page on screen and every kept page, grouped by the layouts they share. A layout every page under it shares renders once; where two chains part, each part is a slot. Pass the previous tree to keep the identity of every node that did not change.
 
 ### `@nifrajs/web/live`
 
@@ -6905,6 +6958,22 @@ _No named exports (side-effect entrypoint)._
   Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes the attribute value and the client reads the decoded `dataset.islandProps`.
 - **IslandProps** _(interface)_ - `interface IslandProps`
 
+### `@nifrajs/web-react/keep-alive`
+
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`.
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` instead of crashing the app. DOM-transparent (it rend…
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "react"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe React's recoverable errors and identity.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Like `mountRouter` from `@nifrajs/web-react/client`, it hydrates against the state the server rendered and then follows the store.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
+
 ### `@nifrajs/web-react/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode`
@@ -6989,6 +7058,8 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` …
 - **useNavigation** _(function)_ - `useNavigation: () => Navigation`
   Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra navigates imperatively - it fetches the next route's chunk + loader data while the current route stays on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspe…
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
 - **useParams** _(function)_ - `useParams: <T extends Record<string, string | undefined> = Record<string, string>>() => Readonly<T>`
   The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
 - **usePending** _(function)_ - `usePending: () => boolean`
@@ -7237,6 +7308,26 @@ _No named exports (side-effect entrypoint)._
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
+### `@nifrajs/web-svelte/keep-alive`
+
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`.
+- **KeepAliveMount** _(interface)_ - `interface KeepAliveMount`
+  What `KeepAlive.svelte` and `Slot.svelte` render with: one per mount, on the server or the client.
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary`
+  Wrap a route's `_error` component as a boundary marker for `Chain.svelte` to render.
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "svelte"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe Svelte warnings and identity.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Its first render matches the server's (the same `KeepAlive` root, with the slot wrappers the server rendered), so hydration reconciles the document as it is.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
+
 ### `@nifrajs/web-svelte/mdx`
 
 - **svelteMdxBunPlugin** _(function)_ - `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
@@ -7277,6 +7368,10 @@ _No named exports (side-effect entrypoint)._
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
 - **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]`

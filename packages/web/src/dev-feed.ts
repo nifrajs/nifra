@@ -36,6 +36,7 @@ import {
   buildDiagnostic,
   type Diagnostic,
   type DiagnosticFrame,
+  isConsoleDiagnostic,
 } from "./diagnostic.ts"
 import { createRedactor } from "./internal/secret-scan.ts"
 import { originalPosition, ssrSourceMaps } from "./internal/source-map.ts"
@@ -1140,8 +1141,16 @@ const ssrRemap = (
 export function captureInto(feed: DevFeed): () => void {
   return installCapture({
     feedId: feed.id,
-    line: (level, message, request) =>
-      feed.recordLog(level, message, { requestId: request?.requestId }),
+    line: (level, message, request) => {
+      feed.recordLog(level, message, { requestId: request?.requestId })
+      // A diagnostic the server only logs (no throw reaches the feed) still becomes an entry.
+      if ((level === "warn" || level === "error") && isConsoleDiagnostic(message)) {
+        const warning = new Error(message)
+        warning.name = "Warning"
+        warning.stack = `Warning: ${message}`
+        feed.recordError(warning, { category: "ssr", requestId: request?.requestId })
+      }
+    },
     structured: (entry, request) => {
       const level = isDevLogLevel(entry.level) ? entry.level : "log"
       feed.recordLog(level, structuredText(entry), { requestId: request?.requestId })
