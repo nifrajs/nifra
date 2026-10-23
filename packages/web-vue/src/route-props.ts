@@ -3,6 +3,23 @@ import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
 // instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
 import { searchOfChain } from "@nifrajs/web/client"
 
+type Schemas = NonNullable<MountRouterOptions["searchSchemas"]>[string]
+const NO_SCHEMAS: Schemas = []
+let lastSearch:
+  | {
+      readonly schemas: Schemas
+      readonly raw: string
+      readonly search: Record<string, unknown>
+    }
+  | undefined
+// The last render's search while the schemas and the query are the same: an equal new object would
+// count as a changed prop and re-render a memoized page.
+const searchFor = (schemas: Schemas = NO_SCHEMAS, raw: string): Record<string, unknown> => {
+  if (lastSearch?.schemas !== schemas || lastSearch.raw !== raw)
+    lastSearch = { schemas, raw, search: searchOfChain(schemas, raw) }
+  return lastSearch.search
+}
+
 /** The client half of the server's `RenderProps`, so the first render matches the SSR markup. */
 export function routeProps(
   state: RouterState,
@@ -28,7 +45,7 @@ export function routeProps(
     // The same `params`/`path` the server render received, so `useMatches` reports the same chain.
     params: state.params,
     path,
-    search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
+    search: searchFor(searchSchemas?.[state.routeId], rawSearch),
     ...(state.submission ? { submission: state.submission } : {}),
     ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
     // The chain `useMatches` reports - the server passed the same one to the SSR render.

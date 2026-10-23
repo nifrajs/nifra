@@ -49,6 +49,11 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
       node,
     ) as VNode
   }
+  return withRouteContext(props, node)
+}
+
+/** `node` inside the search and render-props providers for `props`, as {@link compose} wraps the chain. */
+export function withRouteContext(props: RenderProps, node: ComponentChildren): VNode {
   return createSearchProvider(
     SearchContext.Provider,
     { value: props.search ?? EMPTY_SEARCH },

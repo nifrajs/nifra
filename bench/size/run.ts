@@ -261,7 +261,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // re-matching: 17,540 -> 17,718 B (Bun 1.4.3). Queries refetching on live keys and
   // QueryClient.clear(): 17,769 -> 18,212 B; every browser client held weakly from creation, so a
   // viewer switch also clears one made before the live client loaded: 18,212 -> 18,265 B (Bun 1.4.3).
-  "nifra-web-client": 17.9,
+  // A revalidation keeps the identity of what it did not change (the sharing walk, and the same
+  // response text reusing the page unparsed): 18,263 -> 18,817 B (Bun 1.4.3).
+  "nifra-web-client": 18.4,
   "nifra-i18n": 4.3,
 }
 

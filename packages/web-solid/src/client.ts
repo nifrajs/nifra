@@ -7,7 +7,7 @@ import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
  * build; kept in its own entry so SSR code never ships to the client bundle. No JSX - Solid's package
  * build is plain `tsc`, so this uses Solid's runtime functions directly, like `compose`.
  */
-import { createSignal } from "solid-js"
+import { createMemo, createSignal } from "solid-js"
 import { hydrate as solidHydrate, render as solidRender } from "solid-js/web"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
@@ -58,7 +58,7 @@ export function mountRouter(options: MountRouterOptions): void {
       // and re-mounts below, so the root render fn reads no signal and never re-runs on its own.
       return compose(
         routes[initial.routeId] ?? [],
-        routeProps(snapshot, searchSchemas, matchChains),
+        routeProps(snapshot, searchSchemas, matchChains, (read) => createMemo(read)),
       )()
     }, el)
   }

@@ -39,6 +39,8 @@ import { render as runtimeRender } from "svelte/server"
 type ChainProps = {
   readonly chain: readonly unknown[]
   readonly props: RenderProps
+  /** The page's data, apart from `props` so that the client can hand it over identity-checked. */
+  readonly data: unknown
   /** Explicitly `| undefined`: the adapter always passes the key, and `RenderProps.layoutData` is
    * optional, so under `exactOptionalPropertyTypes` the absent case has to be part of the type. */
   readonly layoutData: readonly unknown[] | undefined
@@ -113,7 +115,7 @@ export const svelteAdapter: RenderAdapter = {
   // render after it stays a plain synchronous call - see `loadChain`.
   renderToString(chain, props, options) {
     const Chain = loadChain()
-    const props$ = { chain, props, layoutData: props.layoutData }
+    const props$ = { chain, props, data: props.data, layoutData: props.layoutData }
     return Chain instanceof Promise
       ? Chain.then((C) => bodyOf(C, props$, options))
       : bodyOf(Chain, props$, options)
@@ -122,7 +124,7 @@ export const svelteAdapter: RenderAdapter = {
     // `Chain` folds the layout chain (page innermost gets `props`; layouts wrap via their `children`
     // snippet). Svelte's `render` returns { head, body }; the body goes into #root.
     const Chain = loadChain()
-    const props$ = { chain, props, layoutData: props.layoutData }
+    const props$ = { chain, props, data: props.data, layoutData: props.layoutData }
     return Chain instanceof Promise
       ? Chain.then((C) => oneChunk(bodyOf(C, props$, options)))
       : oneChunk(bodyOf(Chain, props$, options))

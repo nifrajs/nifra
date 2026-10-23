@@ -1,4 +1,4 @@
-import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import type { BoundaryStates, MountRouterOptions, RenderProps } from "@nifrajs/web"
 /**
  * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -6,9 +6,17 @@ import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
  * navigation (no full reload). Kept in its own entry so server code (preact-render-to-string) stays
  * out of the client bundle.
  */
-import { type FunctionComponent, h, hydrate as preactHydrate } from "preact"
-import { useSyncExternalStore } from "preact/compat"
-import { compose } from "./compose.ts"
+import {
+  type ComponentChildren,
+  createContext,
+  type FunctionComponent,
+  h,
+  hydrate as preactHydrate,
+  type VNode,
+} from "preact"
+import { memo, useSyncExternalStore } from "preact/compat"
+import { useContext } from "preact/hooks"
+import { compose, withRouteContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { routeProps } from "./route-props.ts"
 
@@ -35,6 +43,62 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
   preactHydrate(compose(chain, props), container as Element)
 }
 
+/** The chain the mounted router renders, and the props it renders it with. */
+const ChainContext = createContext<{
+  readonly chain: readonly unknown[]
+  readonly props: RenderProps
+}>({ chain: [], props: { data: null } })
+type LayoutProps = {
+  readonly data: unknown
+  readonly boundaries?: BoundaryStates
+  readonly children?: ComponentChildren
+}
+// One `memo` per component, so its type stays the same across renders.
+const memoized = <P extends object>(): ((
+  component: FunctionComponent<P>,
+) => FunctionComponent<P>) => {
+  const held = new WeakMap<FunctionComponent<P>, FunctionComponent<P>>()
+  return (component) => {
+    let memoComponent = held.get(component)
+    if (memoComponent === undefined) {
+      memoComponent = memo(component)
+      held.set(component, memoComponent)
+    }
+    return memoComponent
+  }
+}
+const memoPage = memoized<RenderProps>()
+const memoLayout = memoized<LayoutProps>()
+// One element per depth, created once: a layout's `children` stays the same element across renders,
+// so its memo compares equal, while the level inside still re-renders through the context.
+const levels: VNode<{ readonly depth: number }>[] = []
+const levelAt = (depth: number): VNode<{ readonly depth: number }> => {
+  let level = levels[depth]
+  if (level === undefined) {
+    level = h(Level, { depth })
+    levels[depth] = level
+  }
+  return level
+}
+// One level of the chain as `compose` builds it, memoized on its own props: a reload that kept the data
+// (the router shares what it did not change) re-renders a layout or the page only for a prop of its own
+// that moved, such as the page's `pending`.
+function Level({ depth }: { readonly depth: number }): ComponentChildren {
+  const { chain, props } = useContext(ChainContext)
+  if (chain[depth] === undefined) return null
+  // A class component (an `_error` boundary) renders through the memo's wrapper all the same.
+  if (depth === chain.length - 1)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain holds the route's modules' default exports, its last entry the page component
+    return h(memoPage(chain[depth] as FunctionComponent<RenderProps>), props)
+  const data = props.layoutData?.[depth] ?? null
+  return h(
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
+    memoLayout(chain[depth] as FunctionComponent<LayoutProps>),
+    props.boundaries === undefined ? { data } : { data, boundaries: props.boundaries },
+    levelAt(depth + 1),
+  )
+}
+
 /**
  * Hydrate a stateful Preact Router. `useSyncExternalStore` (preact/compat) subscribes to the
  * agnostic store and re-renders the matched layout chain on each store change - so client
@@ -46,7 +110,16 @@ export function mountRouter(options: MountRouterOptions): void {
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Router: FunctionComponent = () => {
     const state = useSyncExternalStore(router.subscribe, router.snapshot)
-    return compose(routes[state.routeId] ?? [], routeProps(state, searchSchemas, matchChains))
+    const props = routeProps(state, searchSchemas, matchChains)
+    // The same host markup `compose` renders, so it hydrates the server's chain as it is.
+    return withRouteContext(
+      props,
+      h(
+        ChainContext.Provider,
+        { value: { chain: routes[state.routeId] ?? [], props } },
+        levelAt(0),
+      ),
+    )
   }
   preactHydrate(h(Router, null), container as Element)
 }

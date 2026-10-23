@@ -167,6 +167,8 @@ export type ClientAction = (
 export interface ClientRouteHooks {
   readonly clientLoader?: ClientLoader
   readonly clientAction?: ClientAction
+  /** The page's `shareData` export: `false` gives every reload of it fresh data. */
+  readonly shareData?: boolean
   /** Neutral boundary descriptors needed for soft-navigation interception. A boundary's loader lives in
    * the route's backend half, so the browser never learns whether one exists. */
   readonly boundaries?: ReadonlyArray<Omit<BoundaryDescriptor, "hasLoad">>
@@ -380,6 +382,15 @@ export interface RouteModule {
    * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve
    * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */
   readonly searchClientKeys?: readonly string[]
+  /**
+   * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live
+   * refresh) fresh data. By default a reload keeps the identity of every part of `data` and the layouts'
+   * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer
+   * that memoizes on identity skips it. Opt out for a page whose code compares `data` against its value
+   * from before the reload, or whose rows re-render whatever their identity, which then pay the
+   * comparison for nothing. Client-only.
+   */
+  readonly shareData?: boolean
   readonly meta?: MetaInput
   /**
    * Opt this route out of nifra's full-document client hydration. The server still renders the full
@@ -635,6 +646,7 @@ export const FRONTEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "HydrateFallback",
   "searchSchema",
   "searchClientKeys",
+  "shareData",
   "clientLoader",
   "clientAction",
   "boundaries",

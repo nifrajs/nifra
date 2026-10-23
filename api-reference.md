@@ -5141,6 +5141,8 @@ _No named exports (side-effect entrypoint)._
   The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and** `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running (Next, Vite, a stray Node API). `4321` rarely is - and being the *same* constant across `nifra dev` and `nifr…
 - **DRAFT_COOKIE** _(const)_ - `DRAFT_COOKIE: "__nifra_draft"`
   The cookie name nifra uses for draft/preview mode.
+- **DataText** _(interface)_ - `interface DataText`
+  What the router knows about the response text a path's data on screen was read from. The router's own transport resolves a reload answering that same text to this object itself, and the router keeps the data on screen without parsing it; for any other plain JSON response it records the text in `tex…
 - **Deferred** _(interface)_ - `interface Deferred<T>`
   A loader value marked to stream in after the shell. The component consumes it with the adapter's `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback. `id` is assigned by the server at serialization time - the streamed resolve script keys off it.
 - **DehydratedState** _(interface)_ - `interface DehydratedState`
@@ -5153,8 +5155,8 @@ _No named exports (side-effect entrypoint)._
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, ) => Promise<unknown>`
-  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream).
+- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, read?: DataText, ) => Promise<unknown>`
+  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `read` is the {@link DataText} of the data on screen, which a custom transport may ignore.
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`

@@ -11,6 +11,7 @@ import type { BoundaryDescriptor, BoundaryState, BoundaryStates } from "./bounda
 import { parseNdjsonData } from "./deferred.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 import { appUrl, requestPattern } from "./internal/route-path.ts"
+import { shareData } from "./internal/share-data.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -209,8 +210,20 @@ export function createMatcher(
   }
 }
 
+/**
+ * What the router knows about the response text a path's data on screen was read from. The router's
+ * own transport resolves a reload answering that same text to this object itself, and the router keeps
+ * the data on screen without parsing it; for any other plain JSON response it records the text in
+ * `text`. A response with deferred parts sets neither, and a custom transport may ignore it.
+ */
+export interface DataText {
+  readonly previous: string | undefined
+  text?: string
+}
+
 /** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch
- * (and its deferred stream). */
+ * (and its deferred stream). `read` is the {@link DataText} of the data on screen, which a custom
+ * transport may ignore. */
 export type FetchRouteData = (
   path: string,
   match: RouteMatch,
@@ -219,6 +232,7 @@ export type FetchRouteData = (
     readonly from: string
     readonly retain: readonly number[]
   },
+  read?: DataText,
 ) => Promise<unknown>
 
 /** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */
@@ -372,10 +386,19 @@ export interface MountRouterOptions {
 /** Read a nifra data response: a deferred loader/action streams NDJSON (parse line 1 + settle
  * `<Await>` markers as resolution lines arrive); a non-deferred one returns a single JSON. Shared by
  * navigation fetches and action submits - both transports are identical. */
-const readResponseData = (res: Response, signal?: AbortSignal): Promise<unknown> =>
+const readResponseData = (
+  res: Response,
+  signal?: AbortSignal,
+  read?: DataText,
+): Promise<unknown> =>
   (res.headers.get("content-type") ?? "").includes("application/x-ndjson") && res.body !== null
     ? parseNdjsonData(res.body, signal)
-    : res.text().then(parsePageData)
+    : res.text().then((text) => {
+        if (read === undefined) return parsePageData(text)
+        if (text === read.previous) return read
+        read.text = text
+        return parsePageData(text)
+      })
 
 // Index scan, not `/\/+$/` - the unanchored-start trailing-run replace backtracks quadratically and
 // the pathname is caller-controlled.
@@ -444,6 +467,7 @@ export const routeDataOf = async (
   res: Response,
   path: string,
   signal?: AbortSignal,
+  read?: DataText,
 ): Promise<unknown> => {
   const redirectTo = res.headers.get(REDIRECT_HEADER)
   if (redirectTo !== null) throw redirected(redirectTo)
@@ -452,10 +476,10 @@ export const routeDataOf = async (
     return { v: 1, data: null, status } satisfies RouteDataEnvelope
   }
   if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
-  return readResponseData(res, signal)
+  return readResponseData(res, signal, read)
 }
 
-const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
+const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation, read) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
@@ -469,7 +493,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     const pathname = hash === -1 ? path : path.slice(0, hash)
     if (prerenderedSetOf(prerendered).has(pathname)) {
       const staticRes = await fetch(appUrl(dataUrlFor(pathname)), { signal: signal ?? null })
-      if (staticRes.ok) return readResponseData(staticRes, signal)
+      if (staticRes.ok) return readResponseData(staticRes, signal, read)
     }
   }
   const headers = new Headers({ [DATA_HEADER]: "1" })
@@ -477,7 +501,12 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     headers.set(RETAIN_HEADER, navigation.retain.join(","))
     headers.set(NAV_FROM_HEADER, navigation.from)
   }
-  return routeDataOf(await fetch(appUrl(path), { headers, signal: signal ?? null }), path, signal)
+  return routeDataOf(
+    await fetch(appUrl(path), { headers, signal: signal ?? null }),
+    path,
+    signal,
+    read,
+  )
 }
 
 /**
@@ -565,6 +594,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     readonly terminalRouteId?: string | undefined
     readonly boundaries?: BoundaryStates
     readonly live?: unknown
+    /** The response text this was read from, when it was plain JSON. */
+    readonly text?: string | undefined
   }
   const dataFields = (value: LoadedRouteData) => ({
     data: value.data,
@@ -625,18 +656,29 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     signal?: AbortSignal,
     // Offer the server the layout data on screen: it re-runs whichever of those loaders it must.
     keepLayouts?: boolean,
+    // What this path shows, when this is a reload of it: the same response text again is that, unparsed.
+    shown?: LoadedRouteData,
   ): Promise<LoadedRouteData> => {
     const retainFrom = keepLayouts
       ? state.layoutData && { path: pagePathOf(state), layoutData: state.layoutData }
       : undefined
     const retain = retainFrom?.layoutData.map((_, index) => index) ?? []
+    const hooks = routeHooks[match.routeId]
+    // A client loader's output is not what the text says, and an opted-out route takes fresh data.
+    const read: DataText = {
+      previous:
+        hooks?.clientLoader === undefined && hooks?.shareData !== false ? shown?.text : undefined,
+    }
     const payload = await fetchData(
       path,
       match,
       signal,
       retainFrom === undefined ? undefined : { from: retainFrom.path, retain },
+      read,
     )
-    if (!isRouteDataEnvelope(payload)) return { data: payload }
+    if (shown !== undefined && payload === read) return shown
+    const text = read.text
+    if (!isRouteDataEnvelope(payload)) return { data: payload, text }
     if (payload.status !== undefined) {
       const terminalRouteId = options.statusRoutes?.[payload.status] ?? options.statusRoutes?.[404]
       if (terminalRouteId === undefined) {
@@ -663,8 +705,28 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       serverComponents: payload.serverComponents,
       live: payload.live,
       ...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),
+      text,
     }
   }
+  // A reload with every part equal to what its path shows replaced by that part, so what the reload
+  // did not change keeps its identity on screen (`shareData`), unless the route exports
+  // `shareData = false`.
+  const shareShown = (
+    routeId: string,
+    shown: LoadedRouteData,
+    loaded: LoadedRouteData,
+  ): LoadedRouteData =>
+    loaded.terminalRouteId !== undefined || routeHooks[routeId]?.shareData === false
+      ? loaded
+      : {
+          ...loaded,
+          data: shareData(shown.data, loaded.data),
+          layoutData: shareData(shown.layoutData, loaded.layoutData),
+          serverComponents: shareData(shown.serverComponents, loaded.serverComponents),
+          ...(loaded.boundaries === undefined
+            ? {}
+            : { boundaries: shareData(shown.boundaries, loaded.boundaries) }),
+        }
   /**
    * Apply a client loader without making the server loader eager. The thunk is memoized per navigation
    * (or per hydration), so a hook can call it repeatedly without duplicate requests. The returned
@@ -756,6 +818,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     emit()
   }
   let state = options.initial
+  // The page as last published from a load, with the response text it was read from. Every publish of
+  // page data replaces it, and a reload reuses it only for the same text, which says the same.
+  let shownPage: LoadedRouteData | undefined
   const listeners = new Set<() => void>()
   let generation = 0
   // Snapshot listeners to defend against accidental un/subscribe during notification. The adapters
@@ -921,13 +986,18 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const pageRoute = match(pagePath) ?? { routeId: state.routeId, params: state.params }
     const rematched = pageRoute.routeId !== state.routeId
     const targetRoute = intercepted !== undefined && target ? match(targetPath) : null
+    // The page's own route shares with what the page shows; a status page answered by its URL's route
+    // has nothing of that route on screen.
+    const shown = rematched ? undefined : (shownPage ?? state)
+    const shownTarget = { data: intercepted && state.boundaries?.[intercepted.boundary]?.data }
     const [reloaded, targetOutcome] = await Promise.all([
       page
         ? (async (): Promise<LoadedRouteData> => {
             if (rematched) await loadModule?.(pageRoute.routeId, pagePath)
-            return applyClientLoader(pagePath, pageRoute, signal, () =>
-              loadRouteData(pagePath, pageRoute, signal),
+            const loaded = await applyClientLoader(pagePath, pageRoute, signal, () =>
+              loadRouteData(pagePath, pageRoute, signal, false, shown),
             )
+            return shown === undefined ? loaded : shareShown(pageRoute.routeId, shown, loaded)
           })()
         : undefined,
       targetRoute === null
@@ -935,8 +1005,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         : (async (): Promise<LoadedRouteData | undefined> => {
             try {
               await loadModule?.(targetRoute.routeId, targetPath)
-              const outcome = await applyClientLoader(targetPath, targetRoute, signal, () =>
-                loadRouteData(targetPath, targetRoute, signal),
+              const outcome = shareShown(
+                targetRoute.routeId,
+                shownTarget,
+                await applyClientLoader(targetPath, targetRoute, signal, () =>
+                  loadRouteData(targetPath, targetRoute, signal),
+                ),
               )
               if (mine === generation) cachePut(targetPath, outcome)
               return outcome
@@ -947,7 +1021,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     ])
     if (reloaded?.terminalRouteId !== undefined)
       await loadTerminal(reloaded.terminalRouteId, pagePath)
-    if (reloaded !== undefined && mine === generation) cachePut(pagePath, reloaded)
+    if (reloaded !== undefined && mine === generation) {
+      cachePut(pagePath, reloaded)
+      shownPage = reloaded
+    }
     const fields = dataFields(reloaded ?? state)
     if (reloaded?.terminalRouteId !== undefined)
       return { fields, route: { routeId: reloaded.terminalRouteId, params: {} } }
@@ -1044,6 +1121,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     let fGeneration = 0
     let fAbort: AbortController | undefined
     let loadedPath: string | undefined
+    // `data` as loaded, with the response text it was read from.
+    let shown: LoadedRouteData | undefined
     const fListeners = new Set<() => void>()
     const fEmit = (): void => {
       if (fListeners.size > 0) for (const l of [...fListeners]) l() // snapshot for defensiveness
@@ -1059,11 +1138,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       fState = { ...fState, pending: true }
       fEmit()
       try {
-        const [, loaded] = await Promise.all([
+        // Loading the path again is a reload of what this fetcher shows.
+        const before = path === loadedPath ? shown : undefined
+        const [, fresh] = await Promise.all([
           loadModule?.(matched.routeId),
-          loadRouteData(path, matched, ac.signal),
+          loadRouteData(path, matched, ac.signal, false, before),
         ])
         if (mine !== fGeneration) return // a newer load/submit on THIS fetcher superseded us
+        const loaded = before === undefined ? fresh : shareShown(matched.routeId, before, fresh)
+        shown = loaded
         // Record the loaded path only on SUCCESS - a thrown or superseded load must not
         // leave `loadedPath` pointing at a path this fetcher never actually showed, or a later
         // `X-Nifra-Revalidate` for it would spuriously refetch onto unexpected data.
@@ -1230,6 +1313,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           actionData: undefined, // a fresh navigation has no action result
           pending: false,
         }
+        shownPage = loaded
         emit()
       } catch (err) {
         // Clear our pending flag + target (only if still current) and rethrow - the caller decides how
@@ -1318,6 +1402,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             actionData: undefined,
             pending: false,
           }
+          shownPage = loaded
           emit()
           return
         }

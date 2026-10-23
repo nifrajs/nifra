@@ -295,6 +295,7 @@ export {
   createClientRouter,
   createMatcher,
   DATA_HEADER,
+  type DataText,
   type Fetcher,
   type FetcherState,
   type FetchRouteData,

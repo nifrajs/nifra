@@ -41,7 +41,7 @@ export function hydrate(
   try {
     svelteHydrate(Chain, {
       target: container as Element,
-      props: { chain, props, layoutData: props.layoutData },
+      props: { chain, props, data: props.data, layoutData: props.layoutData },
     })
   } finally {
     if (warning !== undefined) console.warn = originalWarn
