@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue gates on the required checks run against main plus the queued pull requests.
+  merge_group:
   # A manual run, for any branch, to get the Windows job on a branch before cutting a release.
   workflow_dispatch:
 
