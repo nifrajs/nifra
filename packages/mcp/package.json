@@ -43,6 +43,11 @@
       "types": "./dist/http.d.ts",
       "default": "./dist/http.js"
     },
+    "./stdio": {
+      "bun": "./src/stdio.ts",
+      "types": "./dist/stdio.d.ts",
+      "default": "./dist/stdio.js"
+    },
     "./react": {
       "bun": "./src/react.ts",
       "types": "./dist/react.d.ts",

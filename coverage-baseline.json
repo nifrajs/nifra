@@ -811,6 +811,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/tool-cli.ts": {
+    "functions": 100,
+    "lines": 99.74160206718346
+  },
   "packages/core/src/tool-contract.ts": {
     "functions": 100,
     "lines": 100
@@ -869,7 +873,7 @@
   },
   "packages/create-nifra/src/cli.ts": {
     "functions": 100,
-    "lines": 95.10086455331412
+    "lines": 92.95774647887323
   },
   "packages/create-nifra/src/db.ts": {
     "functions": 100,
@@ -882,6 +886,10 @@
   "packages/create-nifra/src/scaffold/frameworks.ts": {
     "functions": 100,
     "lines": 98.07692307692307
+  },
+  "packages/create-nifra/src/scaffold/project.ts": {
+    "functions": 100,
+    "lines": 96.7741935483871
   },
   "packages/create-nifra/src/scaffold/route-types.ts": {
     "functions": 100,
@@ -1140,6 +1148,10 @@
     "lines": 100
   },
   "packages/mcp/src/standard.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/stdio.ts": {
     "functions": 100,
     "lines": 100
   },
