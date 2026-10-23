@@ -9,7 +9,7 @@
 import { transformAsync } from "@babel/core"
 // @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
-import { normalizeFilePath, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import { normalizeFilePath, requirePeer, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 // @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
 import type { BunPlugin } from "bun"
@@ -27,14 +27,10 @@ export function solidMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
   return {
     name: `nifra-solid-mdx-${generate}`,
     async setup(build) {
-      let compile: MdxCompiler["compile"]
-      try {
-        compile = ((await import(MDX_MODULE)) as MdxCompiler).compile
-      } catch {
-        throw new Error(
-          "@nifrajs/web-solid/mdx: compiling `.mdx` needs the `@mdx-js/mdx` package - install it (`bun add @mdx-js/mdx`).",
-        )
-      }
+      const { compile } = await requirePeer<MdxCompiler>(MDX_MODULE, {
+        feature: "Solid MDX support",
+        install: "bun add @mdx-js/mdx",
+      })
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
         const path = normalizeFilePath(args.path)
         // 1. MDX → JSX, with intrinsics provided by the Solid runtime (rendered via `<Dynamic>`).

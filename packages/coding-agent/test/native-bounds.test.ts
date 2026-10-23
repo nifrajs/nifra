@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test"
+import { FakeModelGateway } from "@nifrajs/agent"
 import {
   AGENT_MAX_EVENT_TEXT,
   AGENT_MAX_PAYLOAD_STRING,
   type AgentEvent,
   isAgentEvent,
 } from "@nifrajs/agent-protocol"
-import { type NativeMessage, type NativeModelPort, NifraBackend } from "../src/index.ts"
+import {
+  createNativeGatewayModelPort,
+  type NativeMessage,
+  type NativeModelPort,
+  type NativeModelRequest,
+  NifraBackend,
+} from "../src/index.ts"
 
 async function run(
   backend: NifraBackend,
@@ -215,5 +222,86 @@ describe("native backend event bounds", () => {
     const end = last(events)
     if (end?.type !== "session.failed") throw new Error("expected the turn to fail")
     expect(end.error.message).toBe("native turn failed")
+  })
+})
+
+describe("native backend option bounds", () => {
+  const model: NativeModelPort = { complete: () => ({ type: "text", text: "ok" }) }
+
+  test("the constructor refuses a step or message limit out of range", () => {
+    expect(() => new NifraBackend({ model, maxSteps: 0 })).toThrow(
+      "maxSteps must be between 1 and 512",
+    )
+    expect(() => new NifraBackend({ model, maxMessageChars: 255 })).toThrow(
+      "maxMessageChars must be at least 256",
+    )
+  })
+
+  test("createSession refuses an empty cwd, odd capabilities and an unbounded id", async () => {
+    const backend = new NifraBackend({ model })
+    await expect(backend.createSession({ cwd: "" })).rejects.toThrow(
+      "cwd must be a bounded non-empty path",
+    )
+    await expect(
+      backend.createSession({ cwd: process.cwd(), capabilities: ["not a token"] }),
+    ).rejects.toThrow("capabilities must be bounded tokens")
+    await expect(
+      backend.createSession({ cwd: process.cwd(), sessionId: "not valid" }),
+    ).rejects.toThrow("sessionId must be a bounded token")
+  })
+
+  test("a message past maxMessageChars fails the turn before the model runs", async () => {
+    let calls = 0
+    const backend = new NifraBackend({
+      model: {
+        complete: () => {
+          calls++
+          return { type: "text", text: "ok" }
+        },
+      },
+      maxMessageChars: 256,
+    })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "long" })
+    const events = backend.send({ sessionId: "long", message: "x".repeat(257) })
+    await expect(events[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      code: "MESSAGE_BOUNDED",
+    })
+    expect(calls).toBe(0)
+  })
+})
+
+describe("native gateway model port", () => {
+  const request = (): NativeModelRequest => ({
+    sessionId: "gateway",
+    cwd: process.cwd(),
+    messages: [{ role: "user", text: "hi" }],
+    tools: [],
+    signal: new AbortController().signal,
+  })
+  const portFor = (output: unknown, route: { readonly routeId?: string } = {}) =>
+    createNativeGatewayModelPort({
+      gateway: new FakeModelGateway({ responses: [{ ok: true, output }] }),
+      policy: { routes: ["primary"], retryableCodes: [] },
+      ...route,
+    })
+
+  test("passes a text or a tool response through", async () => {
+    expect(await portFor({ type: "text", text: "hello" }).complete(request())).toEqual({
+      type: "text",
+      text: "hello",
+    })
+    expect(
+      await portFor(
+        { type: "tool", name: "read", input: { path: "a.ts" } },
+        { routeId: "primary" },
+      ).complete(request()),
+    ).toEqual({ type: "tool", name: "read", input: { path: "a.ts" } })
+  })
+
+  test("a response of neither shape fails with the gateway's code", async () => {
+    for (const output of ["text", [], { type: "text" }, { type: "tool", name: "read" }])
+      await expect(Promise.resolve(portFor(output).complete(request()))).rejects.toThrow(
+        "native gateway failed: malformed_output",
+      )
   })
 })

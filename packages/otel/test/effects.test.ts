@@ -132,4 +132,42 @@ describe("effectTracing", () => {
     expect(spans[0]?.attributes["nifra.effect.id"]).toBe("effect_old")
     expect(spans[0]?.attributes["nifra.effect.error_code"]).toBe("observation_expired")
   })
+
+  test("refuses an unbounded active cap or age", () => {
+    expect(() => effectTracing({ maxActive: 0 })).toThrow(
+      "effect tracing maxActive must be a positive safe integer",
+    )
+    expect(() => effectTracing({ maxActiveAgeMs: 1.5 })).toThrow(
+      "effect tracing maxActiveAgeMs must be a positive safe integer",
+    )
+  })
+
+  test("a sweep stops at the first live observation, and an unmatched end is its own span", () => {
+    const spans: NifraSpan[] = []
+    let now = 10
+    const effects = effectTracing({
+      exporter: { onEnd: (span) => spans.push(span) },
+      maxActiveAgeMs: 5,
+      now: () => now,
+    })
+    const event = (effectId: string, phase: "started" | "succeeded" | "failed", at: number) =>
+      effects.observer({ effectId, capability: "db.write", stage: "execution", phase, at })
+    event("effect_old", "started", 10)
+    now = 12
+    event("effect_live", "started", 12)
+    now = 15
+    event("effect_orphan", "failed", 15)
+    expect(spans.map((span) => span.attributes["nifra.effect.id"])).toEqual([
+      "effect_old",
+      "effect_orphan",
+    ])
+    expect(spans[1]?.status).toBe("error")
+    now = 16
+    event("effect_live", "succeeded", 16)
+    expect(spans.map((span) => [span.attributes["nifra.effect.id"], span.status])).toEqual([
+      ["effect_old", "error"],
+      ["effect_orphan", "error"],
+      ["effect_live", "ok"],
+    ])
+  })
 })

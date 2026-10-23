@@ -99,6 +99,32 @@ describe("contract laboratory", () => {
     expect(report.results.every((result) => result.replay.seed === 73)).toBe(true)
   })
 
+  test("const, exclusive bounds and unique items each get a hostile mutation", async () => {
+    const body = t.object({
+      kind: t.literal("order"),
+      score: t.number({ exclusiveMinimum: 0, exclusiveMaximum: 10 }),
+      tags: t.array(t.string({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
+    })
+    const app = server().post("/orders", { body }, () => ({ ok: true }))
+    const report = await assertAdversarialContract(app, { seed: 7, maxMutationsPerInput: 64 })
+    expect(report.ok).toBe(true)
+    const ids = report.results.map((result) => result.id)
+    for (const reason of ["const", "exclusive-minimum", "exclusive-maximum", "duplicate-item"])
+      expect(ids.some((id) => id.includes(reason))).toBe(true)
+  })
+
+  test("a body schema on a method that sends no body is a gap", async () => {
+    const app = server().get("/search", { body: t.object({ q: t.string() }) }, () => ({ ok: true }))
+    const report = await runAdversarialContract(app)
+    expect(report.ok).toBe(false)
+    expect(report.gaps).toContainEqual({
+      route: "GET /search",
+      target: "body",
+      code: "UNSUPPORTED_BODY_METHOD",
+      message: "GET cannot carry a request body",
+    })
+  })
+
   test("a synthesized path satisfies a param constraint and fills a part-literal segment", async () => {
     const seen: Record<string, unknown>[] = []
     const response = t.object({ ok: t.boolean() })

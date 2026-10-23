@@ -91,8 +91,9 @@ export interface ServerOptions {
   readonly trustBodyFraming?: boolean
   /**
    * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
-   * socket closes with `1009`; when Bun's own frame limit refuses it, Bun drops the connection and the
-   * client sees `1006`, while the `close` handler still gets `1009`. Default: `maxBodyBytes` (1 MB).
+   * socket closes with `1009`; when Bun's own frame limit refuses it, Bun up to 1.4.3 drops the
+   * connection (the client sees `1006`) and Bun 1.4.4 sends `1009`, while the `close` handler gets
+   * `1009` either way. Default: `maxBodyBytes` (1 MB).
    * Bun and Node stop buffering at the cap, so a huge frame is never held in memory; on Bun a mounted
    * app's smaller cap, and on Deno and Workers every cap, is checked after the runtime has buffered
    * the whole message.
