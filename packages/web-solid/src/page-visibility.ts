@@ -13,6 +13,7 @@ export interface PageSlot {
 
 // A `globalThis` singleton for the same reason as the router's contexts (see router.ts).
 const PAGE_CONTEXT_SLOT = Symbol.for("nifra.web-solid.page-context")
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only this module writes the registry key, and it writes a page context
 const pageContextSlot = globalThis as { [PAGE_CONTEXT_SLOT]?: Context<PageSlot | undefined> }
 export const PageContext = pageContextSlot[PAGE_CONTEXT_SLOT] ?? createContext<PageSlot>()
 pageContextSlot[PAGE_CONTEXT_SLOT] = PageContext

@@ -172,6 +172,10 @@ export async function assertKeepAliveMatrix(
 
   await follow(page, "/list/2")
   await showing(page, "List 2")
+  // React renders a hidden `<Activity>`'s update at idle priority, after the page on screen.
+  await page.waitForFunction(
+    () => Reflect.get(window, "__kept")?.getAttribute("data-visible") === "false",
+  )
   const hidden = await page.evaluate(() => {
     const kept: Element = Reflect.get(window, "__kept")
     return {

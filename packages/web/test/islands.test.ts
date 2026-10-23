@@ -483,22 +483,31 @@ describe("onPageHide / onPageShow", () => {
       listeners.get(type)?.delete(listener)
     },
   }
-  const fire = (type: string, target: FakeNode): void => {
-    for (const listener of [...(listeners.get(type) ?? [])])
-      listener({ type, target } as unknown as Event)
+  const eventOf = (type: string, target: FakeNode | null): Event =>
+    // biome-ignore lint/plugin/noChainedTypeAssertions: a plain object stands in for an event
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the helpers read only `type` and `target` off a page event
+    ({ type, target }) as unknown as Event
+  const asElement = (node: FakeNode): Element =>
+    // biome-ignore lint/plugin/noChainedTypeAssertions: a FakeNode stands in for an element
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the helpers pass an island's element only to `contains`
+    node as unknown as Element
+  const fire = (type: string, target: FakeNode | null): void => {
+    for (const listener of [...(listeners.get(type) ?? [])]) listener(eventOf(type, target))
   }
+  // Each restored as it was: a `document` left defined, even as undefined, turns off code generation
+  // in the output guard for every later test in the process.
   const withDom = (run: () => void): void => {
-    const saved = {
-      document: Reflect.get(globalThis, "document"),
-      Node: Reflect.get(globalThis, "Node"),
-    }
+    const saved = ["document", "Node"].map(
+      (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
+    )
     Reflect.set(globalThis, "document", fakeDocument)
     Reflect.set(globalThis, "Node", FakeNode)
     try {
       run()
     } finally {
-      Reflect.set(globalThis, "document", saved.document)
-      Reflect.set(globalThis, "Node", saved.Node)
+      for (const [name, descriptor] of saved)
+        if (descriptor === undefined) Reflect.deleteProperty(globalThis, name)
+        else Object.defineProperty(globalThis, name, descriptor)
       listeners.clear()
     }
   }
@@ -508,8 +517,8 @@ describe("onPageHide / onPageShow", () => {
       const el = new FakeNode()
       const page = new FakeNode([new FakeNode([el])])
       const seen: string[] = []
-      const hide = onPageHide(el as unknown as Element, () => seen.push("hide"))
-      const show = onPageShow(el as unknown as Element, () => seen.push("show"))
+      const hide = onPageHide(asElement(el), () => seen.push("hide"))
+      const show = onPageShow(asElement(el), () => seen.push("show"))
       fire(PAGE_HIDE_EVENT, page)
       fire(PAGE_SHOW_EVENT, page)
       hide()
@@ -526,17 +535,16 @@ describe("onPageHide / onPageShow", () => {
       const el = new FakeNode()
       const other = new FakeNode([new FakeNode()])
       let ran = 0
-      onPageHide(el as unknown as Element, () => ran++)
+      onPageHide(asElement(el), () => ran++)
       fire(PAGE_HIDE_EVENT, other)
-      for (const listener of listeners.get(PAGE_HIDE_EVENT) ?? [])
-        listener({ type: PAGE_HIDE_EVENT, target: null } as unknown as Event)
+      fire(PAGE_HIDE_EVENT, null)
       expect(ran).toBe(0)
     })
   })
 
   test("off the browser they register nothing and return a no-op", () => {
-    expect(Reflect.get(globalThis, "document")).toBeUndefined()
-    const el = {} as unknown as Element
+    expect("document" in globalThis).toBe(false)
+    const el = asElement(new FakeNode())
     expect(() => onPageHide(el, () => {})()).not.toThrow()
     expect(() => onPageShow(el, () => {})()).not.toThrow()
   })

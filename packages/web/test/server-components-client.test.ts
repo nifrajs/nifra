@@ -660,10 +660,13 @@ test("a refresh answered for another auth scope invalidates instead of updating"
 
 // A `keepAlive` page and the outlet hosts inside it, for the controller's parking.
 function page(...hosts: Element[]): Node {
+  const contains = (node: unknown): boolean => hosts.some((host) => host === node)
+  // biome-ignore lint/plugin/noChainedTypeAssertions: a plain object stands in for a page element
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: parking reads only `contains` off a page
-  return { contains: (node: unknown) => hosts.includes(node as Element) } as unknown as Node
+  return { contains } as unknown as Node
 }
 function outletHost(name: string, rendered = true): Element {
+  // biome-ignore lint/plugin/noChainedTypeAssertions: a plain object stands in for an outlet host
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the controller reads only `contains` and `childNodes` off a host here
   return { name, contains: () => false, childNodes: rendered ? [name] : [] } as unknown as Element
 }

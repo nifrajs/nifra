@@ -72,11 +72,11 @@ class FakeChannel {
   close(): void {}
 }
 
-const saved = {
-  history: Reflect.get(globalThis, "history"),
-  document: Reflect.get(globalThis, "document"),
-  BroadcastChannel: Reflect.get(globalThis, "BroadcastChannel"),
-}
+// Restored as they were: a `document` left defined, even as undefined, turns off code generation
+// in the output guard for every later test in the process.
+const saved = ["history", "document", "BroadcastChannel"].map(
+  (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
+)
 // The value at `path` inside `value`, or undefined where a step is not an object.
 const at = (value: unknown, ...path: string[]): unknown =>
   path.reduce<unknown>(
@@ -99,7 +99,9 @@ beforeEach(() => {
   FakeChannel.open = []
 })
 afterEach(() => {
-  for (const [name, value] of Object.entries(saved)) Reflect.set(globalThis, name, value)
+  for (const [name, descriptor] of saved)
+    if (descriptor === undefined) Reflect.deleteProperty(globalThis, name)
+    else Object.defineProperty(globalThis, name, descriptor)
 })
 
 // ---- the router under the layer -----------------------------------------------------------------

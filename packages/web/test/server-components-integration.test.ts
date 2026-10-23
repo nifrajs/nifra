@@ -161,10 +161,11 @@ test("router transitions cancel pending owners, adopt verified data and report i
 test("the router binding parks the components of a kept page from its page events", () => {
   const saved = [...componentControllers]
   componentControllers.clear()
-  const globals = {
-    document: Reflect.get(globalThis, "document"),
-    Node: Reflect.get(globalThis, "Node"),
-  }
+  // Each restored as it was: a `document` left defined, even as undefined, turns off code generation
+  // in the output guard for every later test in the process.
+  const globals = ["document", "Node"].map(
+    (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
+  )
   class FakeNode {
     constructor(readonly name: string) {}
     contains(): boolean {
@@ -182,9 +183,10 @@ test("the router binding parks the components of a kept page from its page event
     },
   })
   const fire = (type: string, target: unknown): void => {
+    // biome-ignore lint/plugin/noChainedTypeAssertions: a plain object stands in for an event
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the binding reads only `type` and `target` off a page event
-    for (const listener of [...(listeners.get(type) ?? [])])
-      listener({ type, target } as unknown as Event)
+    const event = { type, target } as unknown as Event
+    for (const listener of [...(listeners.get(type) ?? [])]) listener(event)
   }
   const controller = new ObservedController({ state: initial, adapter })
   const value: RouterState = { routeId: "owner", data: null, params: {}, path: "/", pending: false }
@@ -199,8 +201,9 @@ test("the router binding parks the components of a kept page from its page event
   } finally {
     componentControllers.clear()
     for (const item of saved) componentControllers.add(item)
-    Reflect.set(globalThis, "document", globals.document)
-    Reflect.set(globalThis, "Node", globals.Node)
+    for (const [name, descriptor] of globals)
+      if (descriptor === undefined) Reflect.deleteProperty(globalThis, name)
+      else Object.defineProperty(globalThis, name, descriptor)
   }
 })
 

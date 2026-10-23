@@ -63,6 +63,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
         page: parking.page,
       },
     })
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
   }, container as Element)
   // Solid has updated the document by the time a publish returns: park what it hid, restore what it
   // showed again.
