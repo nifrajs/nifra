@@ -16,6 +16,12 @@ import {
   settleInvalidation,
 } from "./internal/invalidation.ts"
 import { INVALIDATION, type InvalidationHandoff } from "./internal/invalidation-contract.ts"
+import {
+  isStoreSecret,
+  MIN_STORE_SECRET_LENGTH,
+  type StoreSigner,
+  storeSigner,
+} from "./internal/store-signature.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { SWAP_HEADER } from "./render-seam.ts"
 
@@ -56,7 +62,9 @@ export interface CacheStore {
    * The current point in this store's purge order. `withISR` takes one before each render and hands it
    * back as {@link CachedResponse.fence}, and `set` skips that entry when its key or one of its tags
    * was purged after the point. Without it, a purge that lands while a page renders is undone when the
-   * render stores the page it built from data read before the purge.
+   * render stores the page it built from data read before the purge. A store whose purges reach other
+   * instances late must also check on read, as {@link KVCacheStore} does: `set` there cannot see a
+   * purge that has not arrived yet.
    */
   readonly fence?: () => number | Promise<number>
 }
@@ -152,6 +160,9 @@ export interface MemoryCacheStoreOptions {
   readonly max?: number
 }
 
+// Nothing outside this process can write these, so `withISR` keeps their pages unsigned.
+const inProcessStores = new WeakSet<CacheStore>()
+
 /**
  * In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the
  * rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a
@@ -185,6 +196,7 @@ export class MemoryCacheStore implements CacheStore {
     if (!Number.isSafeInteger(this.max) || this.max <= 0) {
       throw new RangeError("[nifra/web] MemoryCacheStore max must be a positive safe integer")
     }
+    inProcessStores.add(this)
   }
 
   get(key: string): Promise<CachedResponse | undefined> {
@@ -368,25 +380,15 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
 }
 
 const KV_TAG_EPOCH_PREFIX = "__nifra_isr_tag_v1:"
-const KV_PURGED_AT = "__nifraPurgedAt"
+const KV_PATH_EPOCH_PREFIX = "__nifra_isr_path_v1:"
+const KV_PATH_DIGEST_PREFIX = "__nifra_isr_path_v1#"
+/** Cloudflare KV's key limit, in UTF-8 bytes. */
+const KV_KEY_LIMIT = 512
+/** How long (seconds) a path epoch outlives the store's `expirationTtl`. */
+const PATH_EPOCH_SLACK = 86_400
 
-/** When a KV page key was purged, from the marker `delete` leaves; `-Infinity` for a page or nothing. */
-function kvPurgedAt(raw: string | null): number {
-  if (raw === null || !raw.includes(KV_PURGED_AT)) return Number.NEGATIVE_INFINITY
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed === "object" && parsed !== null && KV_PURGED_AT in parsed) {
-      const at = parsed[KV_PURGED_AT]
-      if (typeof at === "number") return at
-    }
-  } catch {
-    // Not a marker.
-  }
-  return Number.NEGATIVE_INFINITY
-}
-
-/** When a tag epoch was written (`<time>:<uuid>`); an epoch from before epochs carried a time is older
- * than any render. */
+/** When a tag or path epoch was written (`<time>:<uuid>`); an epoch from before epochs carried a time
+ * is older than any render. */
 function kvEpochTime(epoch: string): number {
   const at = epoch.indexOf(":")
   const time = at === -1 ? Number.NaN : Number(epoch.slice(0, at))
@@ -403,8 +405,10 @@ const kvClock = (): number => {
   return lastKvTime
 }
 
-type StoredTaggedResponse = CachedResponse & {
+type StoredResponse = CachedResponse & {
   readonly __nifraTagEpochs?: Readonly<Record<string, string>>
+  /** Absent while the path was never purged. */
+  readonly __nifraPathEpoch?: string
 }
 
 /**
@@ -412,7 +416,8 @@ type StoredTaggedResponse = CachedResponse & {
  * binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges
  * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize
  * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as
- * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.
+ * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`,
+ * and give `withISR` the `storeSecret` it signs these pages with.
  *
  * Cloudflare is the default, not a requirement: {@link KVNamespaceLike} is three structural methods,
  * so a Redis, Deno KV, or Upstash binding satisfies it (pass `minExpirationTtl` for their TTL floor).
@@ -422,6 +427,7 @@ type StoredTaggedResponse = CachedResponse & {
 export class KVCacheStore implements CacheStore {
   private readonly kv: KVNamespaceLike
   private readonly putOptions: { readonly expirationTtl?: number } | undefined
+  private readonly pathEpochOptions: { readonly expirationTtl?: number } | undefined
 
   constructor(kv: KVNamespaceLike, options: KVCacheStoreOptions = {}) {
     const floor = options.minExpirationTtl ?? 60
@@ -449,10 +455,17 @@ export class KVCacheStore implements CacheStore {
     // Precompute the put options object once: omit it entirely when no TTL (KV then never expires).
     this.putOptions =
       options.expirationTtl !== undefined ? { expirationTtl: options.expirationTtl } : undefined
+    // An expired path epoch would make pages stored under the one it replaced read as current again.
+    // Those were stored before the purge reached their location, so they expire within the TTL plus
+    // that delay; without a TTL they never expire, and neither may the epoch.
+    this.pathEpochOptions =
+      options.expirationTtl !== undefined
+        ? { expirationTtl: options.expirationTtl + PATH_EPOCH_SLACK }
+        : undefined
   }
 
   async get(key: string): Promise<CachedResponse | undefined> {
-    const raw = await this.kv.get(key)
+    const [raw, pathEpoch] = await Promise.all([this.kv.get(key), this.pathEpoch(key)])
     if (raw === null) return undefined
     let parsed: unknown
     try {
@@ -462,52 +475,65 @@ export class KVCacheStore implements CacheStore {
       return undefined
     }
     if (!isCachedResponse(parsed)) return undefined
-    const tags = normalizeTags(parsed.tags)
-    if (tags.length === 0) return parsed
-    const epochs = (parsed as StoredTaggedResponse).__nifraTagEpochs
+    const {
+      __nifraTagEpochs: epochs,
+      __nifraPathEpoch: storedPathEpoch,
+      ...value
+    } = parsed as StoredResponse
+    // A page another location stored before this path's purge reached it keeps the older epoch.
+    if ((storedPathEpoch ?? "0") !== pathEpoch) return undefined
+    const tags = normalizeTags(value.tags)
+    if (tags.length === 0) return value
     if (epochs === undefined) return undefined
     const current = await Promise.all(
       tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
     )
     if (current.some(([tag, epoch]) => epochs[tag] !== epoch)) return undefined
-    const { __nifraTagEpochs: _ignored, ...value } = parsed as StoredTaggedResponse
     return value
   }
 
-  /** Wall-clock time, so purges on any instance order against it. KV is eventually consistent, so the
-   * fence holds only for purges this location has already seen. */
+  /** Wall-clock time, so purges on any instance order against it. KV is eventually consistent, so
+   * `set` refuses only purges this location has already seen; a page stored before a purge reached
+   * its location keeps the older epoch and reads as a miss once the purge arrives. */
   fence(): number {
     return kvClock()
   }
 
   async set(key: string, value: CachedResponse): Promise<void> {
     const { fence, ...entry } = value
-    if (fence !== undefined && kvPurgedAt(await this.kv.get(key)) > fence) return
     const tags = normalizeTags(entry.tags)
-    if (tags.length === 0) {
-      await this.kv.put(key, JSON.stringify(entry), this.putOptions)
+    const [pathEpoch, ...tagEpochs] = await Promise.all([
+      this.pathEpoch(key),
+      ...tags.map(async (tag) => (await this.kv.get(this.tagKey(tag))) ?? "0"),
+    ])
+    if (
+      fence !== undefined &&
+      [pathEpoch, ...tagEpochs].some((epoch) => kvEpochTime(epoch) > fence)
+    ) {
       return
     }
-    const epochs = Object.fromEntries(
-      await Promise.all(
-        tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
-      ),
-    )
-    if (fence !== undefined && Object.values(epochs).some((epoch) => kvEpochTime(epoch) > fence)) {
-      return
-    }
-    const stored: StoredTaggedResponse = {
+    const stored: StoredResponse = {
       ...entry,
-      tags,
-      __nifraTagEpochs: epochs,
+      ...(tags.length === 0
+        ? {}
+        : {
+            tags,
+            __nifraTagEpochs: Object.fromEntries(tags.map((tag, at) => [tag, tagEpochs[at]!])),
+          }),
+      ...(pathEpoch === "0" ? {} : { __nifraPathEpoch: pathEpoch }),
     }
     await this.kv.put(key, JSON.stringify(stored), this.putOptions)
   }
 
-  /** Leaves a marker rather than removing the key, so `set` can refuse a render that began before
-   * the purge. The marker reads as a miss. */
+  /** Moves the path's epoch and leaves the page: a page stored under the old epoch reads as a miss,
+   * even one another location stored before this purge reached it, and `set` refuses a render begun
+   * before the purge. */
   async delete(key: string): Promise<void> {
-    await this.kv.put(key, JSON.stringify({ [KV_PURGED_AT]: kvClock() }), this.putOptions)
+    await this.kv.put(
+      await this.pathKey(key),
+      `${kvClock()}:${crypto.randomUUID()}`,
+      this.pathEpochOptions,
+    )
   }
 
   async invalidateTag(tag: string): Promise<void> {
@@ -520,6 +546,21 @@ export class KVCacheStore implements CacheStore {
 
   private tagKey(tag: string): string {
     return `${KV_TAG_EPOCH_PREFIX}${encodeURIComponent(tag)}`
+  }
+
+  /** The page key under a prefix, or its digest when that would pass KV's key limit. */
+  private async pathKey(key: string): Promise<string> {
+    const named = `${KV_PATH_EPOCH_PREFIX}${key}`
+    // A UTF-16 unit is at most three UTF-8 bytes, so most keys skip the encode.
+    if (named.length * 3 <= KV_KEY_LIMIT) return named
+    const encoder = new TextEncoder()
+    if (encoder.encode(named).byteLength <= KV_KEY_LIMIT) return named
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(key)))
+    return `${KV_PATH_DIGEST_PREFIX}${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+  }
+
+  private async pathEpoch(key: string): Promise<string> {
+    return (await this.kv.get(await this.pathKey(key))) ?? "0"
   }
 }
 
@@ -572,6 +613,19 @@ export function withoutCacheChannel(res: Response): Response {
 
 export interface ISROptions {
   readonly store: CacheStore
+  /**
+   * Signs every page written to `store` and checks the signature on every read, so whoever else can
+   * write the store (another service on the same KV namespace, a leaked token) cannot hand visitors a
+   * page this app did not render. Required for every store but a {@link MemoryCacheStore}, whose
+   * pages never leave the process and stay unsigned. The same in every process, at least 32
+   * characters, and random: generate it, such as 32 random bytes as hex, since a guessable secret
+   * can be found from any signed page and then signs pages of its own. A page whose signature is
+   * missing or wrong reads as a miss and renders again, so a new secret only empties the cache. It
+   * cannot stop a store writer from deleting pages, or from putting back an older page this app
+   * stored for the same key. That page keeps its age: still within its freshness window, it is a hit
+   * until the window ends; past it, it serves stale and regenerates.
+   */
+  readonly storeSecret?: string
   /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated
    * behind). A route overrides it per-page via `export const revalidate` (surfaced as the
    * `x-nifra-isr-revalidate` response header). */
@@ -608,10 +662,11 @@ export interface ISROptions {
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
   /**
-   * Called when a store call fails: it throws, rejects, or outlives {@link storeTimeoutMs}. The request
-   * is served without the cache either way - a failed read is a miss, a failed write still returns the
-   * rendered page, a failed regeneration keeps the stale entry - so a store outage never changes a
-   * status. Default: one `console.error` line per operation per minute, never naming the cache key.
+   * Called when a store call fails: it throws, rejects, or outlives {@link storeTimeoutMs}, or (op
+   * `"verify"`) a page it returns fails its {@link storeSecret} signature check. The request is served
+   * without the cache either way - a failed read is a miss, a failed write still returns the rendered
+   * page, a failed regeneration keeps the stale entry - so a store outage never changes a status.
+   * Default: one `console.error` line per operation per minute, never naming the cache key.
    */
   readonly onStoreError?: (error: unknown, info: { readonly op: ISRStoreOp }) => void
   /**
@@ -636,9 +691,10 @@ export interface ISROptions {
 }
 
 /** The store operation an {@link ISROptions.onStoreError} report is about. */
-export type ISRStoreOp = "get" | "set" | "delete" | "fence"
+export type ISRStoreOp = "get" | "set" | "delete" | "fence" | "verify"
 
 const STORE_FAILED = Symbol("nifra.isr.store-failed")
+const MAC_HEADER = "x-nifra-isr-mac"
 const STORE_REPORT_INTERVAL_MS = 60_000
 const STORE_REPORT_DETAIL_CHARS = 200
 
@@ -656,6 +712,61 @@ function storeErrorDetail(error: unknown, key: string): string {
   return redacted.length > STORE_REPORT_DETAIL_CHARS
     ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
     : redacted
+}
+
+/**
+ * What a page's MAC covers: everything a replay serves, plus the key, so a page copied to another key
+ * never verifies there. Header names and tags are sorted, since a store need not keep their order.
+ */
+function signedParts(key: string, entry: CachedResponse): readonly string[] {
+  const names = Object.keys(entry.headers)
+    .filter((name) => name !== MAC_HEADER)
+    .sort()
+  const headers = names.map((name) => [name, entry.headers[name]])
+  const tags = entry.tags === undefined ? [] : [...entry.tags].sort()
+  const meta = JSON.stringify([
+    1,
+    key,
+    entry.status,
+    entry.storedAt,
+    entry.revalidate,
+    headers,
+    tags,
+  ])
+  return [meta, entry.body]
+}
+
+async function signed(
+  signer: StoreSigner,
+  key: string,
+  entry: CachedResponse,
+): Promise<CachedResponse> {
+  const mac = await signer.sign(signedParts(key, entry))
+  return { ...entry, headers: { ...entry.headers, [MAC_HEADER]: mac } }
+}
+
+async function verified(signer: StoreSigner, key: string, entry: CachedResponse): Promise<boolean> {
+  try {
+    return await signer.verify(signedParts(key, entry), entry.headers[MAC_HEADER])
+  } catch {
+    // A store's own malformed record.
+    return false
+  }
+}
+
+function signerFor(store: CacheStore, secret: unknown): StoreSigner | undefined {
+  if (secret !== undefined && !isStoreSecret(secret)) {
+    throw new TypeError(
+      `[nifra/web] ISR storeSecret must be a string of at least ${MIN_STORE_SECRET_LENGTH} characters`,
+    )
+  }
+  if (inProcessStores.has(store)) return undefined
+  if (secret === undefined) {
+    throw new TypeError(
+      `[nifra/web] withISR needs storeSecret, at least ${MIN_STORE_SECRET_LENGTH} characters, to sign the pages it keeps in a store other processes can write. Only a MemoryCacheStore runs without one.`,
+    )
+  }
+  return storeSigner(secret)
 }
 
 // Headers only an action or a data request carries; a stored page is always a plain document GET.
@@ -910,6 +1021,11 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
+  const signer = signerFor(store, options.storeSecret)
+  const write = (key: string, entry: CachedResponse): Promise<void> =>
+    signer === undefined
+      ? store.set(key, entry)
+      : signed(signer, key, entry).then((value) => store.set(key, value))
   const storeTimeoutMs = options.storeTimeoutMs
   if (storeTimeoutMs !== undefined && !(Number.isFinite(storeTimeoutMs) && storeTimeoutMs > 0)) {
     throw new RangeError("[nifra/web] ISR storeTimeoutMs must be a positive finite number")
@@ -1093,7 +1209,7 @@ export function withISR(
     }
     // A failed write still answers with the page, and still hands it to concurrent misses: whether it
     // may be shared was decided above, not by the store.
-    await attempt("set", key, () => store.set(key, entry))
+    await attempt("set", key, () => write(key, entry))
     stored?.(entry)
     return fresh(entry)
   }
@@ -1157,7 +1273,7 @@ export function withISR(
           ...(tags.length === 0 ? {} : { tags }),
           fence,
         }
-        await attempt("set", key, () => store.set(key, entry))
+        await attempt("set", key, () => write(key, entry))
       } else if (isInvalidationResponse(judged(req), res)) {
         // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
         // publicly visible forever, because every stale request would retry the same non-cacheable
@@ -1207,7 +1323,11 @@ export function withISR(
     }
 
     const read = personal ? undefined : await attempt("get", key, () => store.get(key))
-    const hit = read === STORE_FAILED ? undefined : read
+    let hit = read === STORE_FAILED ? undefined : read
+    if (hit !== undefined && signer !== undefined && !(await verified(signer, key, hit))) {
+      reportStoreError("verify", key, new Error("a stored page failed its signature check"))
+      hit = undefined
+    }
     if (hit !== undefined) {
       if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).

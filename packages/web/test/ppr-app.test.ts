@@ -227,7 +227,7 @@ describe("PPR app: requests that are not a streamed document", () => {
           return fetch(`${app.origin}${url.pathname}${url.search}`, { headers: request.headers })
         },
       },
-      { store, revalidate: 60, now: Date.now },
+      { store, storeSecret: "ppr-app-test-store-secret-0123456789", revalidate: 60, now: Date.now },
     )
     const page = await served(new Request("https://shop.example/p/53", {}))
     expect(page.headers.get("cache-control")).toBe("private, no-store")

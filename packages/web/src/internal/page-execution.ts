@@ -1014,6 +1014,12 @@ export function createPageRequestExecutor<Env = unknown>(
   const dirOfId = (id: string, suffix: string): string =>
     id === suffix ? "" : id.slice(0, id.length - suffix.length - 1)
 
+  /** The server's error log for one request, where a rejected `defer()` value is written. */
+  const deferredLogOf = (req: Request): ((error: unknown) => void) | undefined => {
+    const log = options.logBoundaryError
+    return log === undefined ? undefined : (error) => log(error, req)
+  }
+
   const boundaryFor = (route: RouteEntry, err: unknown): string | undefined => {
     const ids = route.errorIds ?? []
     const failing = layoutErrorId(err)
@@ -1082,6 +1088,7 @@ export function createPageRequestExecutor<Env = unknown>(
         status: 500,
         hydrate: false,
         signal: req.signal,
+        logError: deferredLogOf(req),
         ...(layoutData === undefined ? {} : { layoutData }),
         ...(personalized || layoutData !== undefined ? { headers: PRIVATE_PAGE_HEADERS } : {}),
         ...(nonce === undefined ? {} : { nonce }),
@@ -1232,6 +1239,7 @@ export function createPageRequestExecutor<Env = unknown>(
       path: pathOf(req),
       status,
       signal: req.signal,
+      logError: deferredLogOf(req),
       // The browser renders this page inside the root layout, so a page that had to render alone
       // stays server-only, as a nested `_404` does.
       ...(wraps && chain === undefined ? { hydrate: false } : {}),
@@ -1360,12 +1368,15 @@ export function createPageRequestExecutor<Env = unknown>(
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
       }
-      return new Response(ndjsonStream(payload, allDeferred, undefined, req.signal), {
-        headers: {
-          "content-type": "application/x-ndjson; charset=utf-8",
-          ...DATA_RESPONSE_HEADERS,
+      return new Response(
+        ndjsonStream(payload, allDeferred, undefined, req.signal, deferredLogOf(req)),
+        {
+          headers: {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            ...DATA_RESPONSE_HEADERS,
+          },
         },
-      })
+      )
     }
 
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
@@ -1398,6 +1409,7 @@ export function createPageRequestExecutor<Env = unknown>(
         matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
         hydrate: mod.hydrate !== false,
         signal: req.signal,
+        logError: deferredLogOf(req),
         ...preloadOf(route.id),
         ...stylesOf(route.id),
         ...appDocumentOptions,
@@ -1530,6 +1542,7 @@ export function createPageRequestExecutor<Env = unknown>(
       status: 404,
       hydrate: false,
       signal: req.signal,
+      logError: deferredLogOf(req),
       ...localeOption(req),
       ...(layoutData !== undefined ? { layoutData } : {}),
       ...stylesOf(id),
@@ -2176,13 +2189,16 @@ export function createPageRequestExecutor<Env = unknown>(
               headers: { ...DATA_RESPONSE_HEADERS, ...revalidateHeader },
             })
           }
-          return new Response(ndjsonStream(forClient, deferred, undefined, c.req.signal), {
-            headers: {
-              "content-type": "application/x-ndjson; charset=utf-8",
-              ...DATA_RESPONSE_HEADERS,
-              ...revalidateHeader,
+          return new Response(
+            ndjsonStream(forClient, deferred, undefined, c.req.signal, deferredLogOf(c.req)),
+            {
+              headers: {
+                "content-type": "application/x-ndjson; charset=utf-8",
+                ...DATA_RESPONSE_HEADERS,
+                ...revalidateHeader,
+              },
             },
-          })
+          )
         }
         if (options.serverComponents?.owns(route.id)) {
           if (options.rerenderOwnerGET === undefined) throw new Error("component_contract")
@@ -2335,6 +2351,7 @@ export function createPageRequestExecutor<Env = unknown>(
           matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
           hydrate: mod.hydrate !== false,
           signal: c.req.signal,
+          logError: deferredLogOf(c.req),
           ...layoutProps,
           ...preloadOf(route.id),
           ...stylesOf(route.id),

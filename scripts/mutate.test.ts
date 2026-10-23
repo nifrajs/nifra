@@ -267,9 +267,6 @@ describe("parseJunit and classify", () => {
 })
 
 describe("test selection", () => {
-  let dir = ""
-  afterEach(() => rmSync(dir, { recursive: true, force: true }))
-
   test("reads runtime imports only", () => {
     const source = [
       'import type { A } from "./types.ts"',
@@ -292,29 +289,33 @@ describe("test selection", () => {
   })
 
   test("selects every test that reaches the file, nearest first", () => {
-    dir = realpathSync(mkdtempSync(join(tmpdir(), "mutate-graph-")))
-    const files: Record<string, string> = {
-      "src/target.ts": "export const t = 1\n",
-      "src/middle.ts": 'export * from "./target.ts"\n',
-      "src/types.ts": 'import type { t } from "./target.ts"\nexport type T = typeof t\n',
-      "test/direct.test.ts": 'import { t } from "../src/target.ts"\n',
-      "test/far.test.ts": 'import { t } from "../src/middle.ts"\n',
-      "test/types-only.test.ts": 'import "../src/types.ts"\n',
-      "test/unrelated.test.ts": 'import { readFileSync } from "node:fs"\n',
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "mutate-graph-")))
+    try {
+      const files: Record<string, string> = {
+        "src/target.ts": "export const t = 1\n",
+        "src/middle.ts": 'export * from "./target.ts"\n',
+        "src/types.ts": 'import type { t } from "./target.ts"\nexport type T = typeof t\n',
+        "test/direct.test.ts": 'import { t } from "../src/target.ts"\n',
+        "test/far.test.ts": 'import { t } from "../src/middle.ts"\n',
+        "test/types-only.test.ts": 'import "../src/types.ts"\n',
+        "test/unrelated.test.ts": 'import { readFileSync } from "node:fs"\n',
+      }
+      for (const [file, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, file)), { recursive: true })
+        writeFileSync(join(dir, file), text)
+      }
+      const tests = Object.keys(files)
+        .filter((file) => file.endsWith(".test.ts"))
+        .map((file) => join(dir, file))
+      const graph = buildImportGraph(dir, tests)
+      const selected = selectTests(graph, new Set(tests), join(dir, "src/target.ts"))
+      expect(selected.map((t) => [relative(dir, t.file).split(sep).join("/"), t.depth])).toEqual([
+        ["test/direct.test.ts", 1],
+        ["test/far.test.ts", 2],
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
-    for (const [file, text] of Object.entries(files)) {
-      mkdirSync(dirname(join(dir, file)), { recursive: true })
-      writeFileSync(join(dir, file), text)
-    }
-    const tests = Object.keys(files)
-      .filter((file) => file.endsWith(".test.ts"))
-      .map((file) => join(dir, file))
-    const graph = buildImportGraph(dir, tests)
-    const selected = selectTests(graph, new Set(tests), join(dir, "src/target.ts"))
-    expect(selected.map((t) => [relative(dir, t.file).split(sep).join("/"), t.depth])).toEqual([
-      ["test/direct.test.ts", 1],
-      ["test/far.test.ts", 2],
-    ])
   })
 })
 
@@ -411,7 +412,11 @@ describe("formatSummary", () => {
 // kills a test run by its POSIX process group, which Windows does not have.
 describe.skipIf(process.platform === "win32")("a run", () => {
   let repo = ""
-  afterEach(() => rmSync(repo, { recursive: true, force: true }))
+  // Bun on Windows reads an empty path as the cwd, so an unguarded rm would delete the checkout.
+  afterEach(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true })
+    repo = ""
+  })
 
   const SOURCE = [
     "export function clamp(value: number, max: number): number {",

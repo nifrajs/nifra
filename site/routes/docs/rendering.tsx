@@ -109,7 +109,10 @@ export default {
     if (new URL(req.url).pathname === "/__nifra/revalidate") {
       return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
-    const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
+    // Signs every page it stores and serves only pages that verify. Generate the secret:
+    // \`openssl rand -hex 32 | wrangler secret put ISR_STORE_SECRET\`
+    const storeSecret = env.ISR_STORE_SECRET
+    const isr = withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() })
     // waitUntil keeps the worker alive while a stale page regenerates behind the response.
     return isr(req, { env, waitUntil: (p) => ctx.waitUntil(p) })
   },
@@ -131,7 +134,10 @@ import { revalidateEndpoint } from "@nifrajs/web"
 
 const cdn = cloudflareZone({ zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN })
 // The CDN stores the pages ISR would, tagged, for the route's \`revalidate\`; browsers revalidate.
-const handler = withCdn(withISR(app, { store, revalidate: 60, now: () => Date.now() }), { provider: cdn })
+const storeSecret = env.ISR_STORE_SECRET // signs the pages a shared store keeps
+const handler = withCdn(withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() }), {
+  provider: cdn,
+})
 // One purge reaches the origin store first, then the CDN: 200 done, 202 queued, 502 refused.
 const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cdn })`
 
@@ -159,7 +165,13 @@ export async function loader({ api, draft, params }: Route.LoaderArgs) {
 
 // 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.
 createWebApp({ adapter, manifest, clientEntry, api, draftSecret: env.DRAFT_SECRET })
-withISR(app, { store, revalidate: 60, now: () => Date.now(), draftSecret: env.DRAFT_SECRET })`
+withISR(app, {
+  store,
+  storeSecret: env.ISR_STORE_SECRET, // a shared store's page-signing secret
+  revalidate: 60,
+  now: () => Date.now(),
+  draftSecret: env.DRAFT_SECRET,
+})`
 
 const FONTS = `// fonts.css - a CLS-safe @font-face for a self-hosted font (the pipeline bundles + hashes it).
 import { fontFace } from "@nifrajs/web"
@@ -287,13 +299,36 @@ export default function Rendering() {
         page renders from being undone when that render stores the page it built from the old data;
         both built-in stores do.
       </p>
+      <p>
+        Workers KV is eventually consistent: a purge is usually seen at once where it was made and
+        reaches other locations as their copies expire, which Cloudflare puts at up to 60 seconds or
+        more. Until then those locations serve the old page. A page one of them rebuilt from the old
+        data in that time reads as a miss once the purge arrives, so a purge by path or by tag is
+        delayed by propagation, never lost. For a purge that every location honors at the same
+        moment, use a store with a strongly consistent backend, such as a Durable Object.
+      </p>
+      <p>
+        Anything else that can write a shared store - another service on the same KV namespace, a
+        leaked token - could put a page with its own script in front of every visitor. So over any
+        store but <code>MemoryCacheStore</code>, <code>withISR</code> needs a{" "}
+        <code>storeSecret</code> (the same in every process, at least 32 characters, and generated
+        at random - <code>openssl rand -hex 32</code> - since a guessable one can be found from any
+        signed page) and refuses to
+        start without one. Each page is stored with an HMAC-SHA-256 over its key, body, status,
+        headers, tags and freshness, and a page whose signature is missing or wrong is a miss: it
+        renders again and the signed render replaces it. A new secret only empties the cache. The
+        signature cannot stop a store writer from deleting pages or putting back an older page the
+        app stored for the same URL. That page keeps its age: still within its freshness window, it
+        is a hit until the window ends; past it, it serves stale and regenerates.
+      </p>
       <CodeBlock code={KV} />
       <p>
         A store outage never fails a page. A read that throws, rejects, or outlives{" "}
         <code>storeTimeoutMs</code> is a miss and the page renders; a failed write still returns the
         rendered page; a failed background regeneration keeps the stale entry. Each failure goes to{" "}
         <code>onStoreError(error, &#123; op &#125;)</code>, which by default logs one line per operation
-        per minute without the cache key. Set <code>storeTimeoutMs</code> for a network store, so a
+        per minute without the cache key; a page that fails its signature check is reported with op{" "}
+        <code>"verify"</code>. Set <code>storeTimeoutMs</code> for a network store, so a
         hung connection costs a miss rather than the request.
       </p>
 

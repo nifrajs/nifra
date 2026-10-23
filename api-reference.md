@@ -3281,7 +3281,7 @@ _No named exports (side-effect entrypoint)._
 
 - **SignatureEncoding** _(type)_ - `type SignatureEncoding = "hex" | "base64" | "base64url"`
 - **VerifyWebhookOptions** _(interface)_ - `interface VerifyWebhookOptions`
-- **WebhookFailureReason** _(type)_ - `type WebhookFailureReason = | "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance" | "malformed_signature" | "payload_too_large" | "invalid_content_length"`
+- **WebhookFailureReason** _(type)_ - `type WebhookFailureReason = | "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance" | "malformed_signature" | "payload_too_large" | "invalid_content_length" | "invalid_body"`
 - **WebhookProvider** _(type)_ - `type WebhookProvider = "stripe" | "github" | "generic"`
 - **WebhookResult** _(type)_ - `type WebhookResult = | { readonly ok: true; readonly payload: string } | { readonly ok: false; readonly reason: WebhookFailureReason }`
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
@@ -5196,7 +5196,7 @@ _No named exports (side-effect entrypoint)._
   Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget.
 - **ISRQuery** _(type)_ - `type ISRQuery = "bypass" | "all" | readonly string[]`
   Which query parameters an ISR key carries - see {@link ISROptions.query}.
-- **ISRStoreOp** _(type)_ - `type ISRStoreOp = "get" | "set" | "delete" | "fence"`
+- **ISRStoreOp** _(type)_ - `type ISRStoreOp = "get" | "set" | "delete" | "fence" | "verify"`
   The store operation an {@link ISROptions.onStoreError} report is about.
 - **ISR_REVALIDATE_HEADER** _(const)_ - `ISR_REVALIDATE_HEADER: "x-nifra-isr-revalidate"`
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…

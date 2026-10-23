@@ -309,6 +309,29 @@ function exceedsPayloadCap(message: NifraWsData, cap: number): boolean {
   return false
 }
 
+/** Deno copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before
+ * `WebSocket.close` sees it, so the socket stays open. Deno sent such a code on the wire. */
+function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
+  if (code === undefined) {
+    if (reason !== undefined && reason !== "")
+      throw new RangeError("ws.close(): a reason needs a code")
+    return
+  }
+  if (
+    !Number.isInteger(code) ||
+    !(
+      (code >= 1000 && code <= 1003) ||
+      (code >= 1007 && code <= 1014) ||
+      (code >= 3000 && code <= 4999)
+    )
+  )
+    throw new RangeError(
+      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
+    )
+  if (reason !== undefined && exceedsPayloadCap(reason, 123))
+    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
+}
+
 function internalError(): Response {
   return new Response('{"ok":false,"error":"internal_error"}', {
     status: 500,
@@ -336,9 +359,20 @@ function attachDenoWebSocket(
 ): void {
   const { handler, data, pubsub, maxPayloadBytes } = outcome
   const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => socket.send(payload)
+  // Deno's close event carries the peer's echo, without its reason; `close` is given the server's
+  // own close when the server closed first, as on Bun.
+  let sentClose: readonly [number, string] | undefined
+  // A close with no code is 1000 here as on Bun, whose close() cannot send one without a status.
+  const closeSocket = (code = 1000, reason?: string): void => {
+    if (sentClose === undefined && socket.readyState <= 1) sentClose = [code, reason ?? ""]
+    socket.close(code, reason)
+  }
   const ws: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
-    close: (code, reason) => socket.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      closeSocket(code, reason)
+    },
     get readyState() {
       return socket.readyState
     },
@@ -372,14 +406,15 @@ function attachDenoWebSocket(
     // `Deno.upgradeWebSocket` takes no size limit: Deno has buffered the whole message (up to its own
     // limit) by now, so this keeps an oversize one from the handler but cannot bound that buffer.
     if (maxPayloadBytes !== undefined && exceedsPayloadCap(payload, maxPayloadBytes)) {
-      socket.close(1009, "message too large")
+      closeSocket(1009, "message too large")
       return
     }
     safe(() => handler.message?.(ws, payload))
   })
   socket.addEventListener("close", (event) => {
     pubsub.unsubscribeAll(ws) // drop topic subscriptions so the registry never holds a dead socket
-    safe(() => handler.close?.(ws, event.code, event.reason))
+    const [code, reason] = sentClose ?? [event.code, event.reason]
+    safe(() => handler.close?.(ws, code, reason))
   })
   socket.addEventListener("error", (event) => reportError(event))
 }

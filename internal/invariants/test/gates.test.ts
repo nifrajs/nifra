@@ -39,6 +39,7 @@ const GATES: Readonly<Record<string, Gate>> = {
   "check:server-components:performance": { untested: BENCHMARK },
   "check:server-components:consumers": { untested: END_TO_END },
   "check:workerd": { untested: END_TO_END },
+  "check:runtime-differential": { redPath: "scripts/runtime-differential.test.ts" },
   "check:core-performance": { untested: BENCHMARK },
   "check:middleware-overhead": { untested: BENCHMARK },
   "check:output-guard": { untested: BENCHMARK },

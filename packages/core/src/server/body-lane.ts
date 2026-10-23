@@ -30,6 +30,10 @@ type FramedJsonSource = RequestSource & {
 
 const INVALID_JSON = (): ResponseResult => plainError(400, "invalid_json")
 
+// `Deno.serve`'s own `Request.json()` keeps a leading UTF-8 byte order mark that its `text()` and every
+// other runtime's `json()` drop, so it refuses a body they parse. Deno decodes the bytes itself below.
+const nativeJsonKeepsBom = "Deno" in globalThis
+
 /** Read a JSON source with the declared-length precheck, delivered-byte recheck, streaming cap, and
  * prototype-poisoning guard in one lane. */
 export function readBoundedJsonSource(
@@ -72,7 +76,7 @@ export function readBoundedJsonSource<T>(
         ? Promise.resolve(plainError(413, "payload_too_large"))
         : Promise.resolve(plainError(413, "payload_too_large")).then(onResult)
 
-    if (hasTrustedBodyFraming(req)) {
+    if (hasTrustedBodyFraming(req) && !nativeJsonKeepsBom) {
       return raw.json().then(
         (parsed) => {
           try {
@@ -156,17 +160,23 @@ export function readBoundedJsonSource<T>(
   }
 
   const body = raw.body
+  // A body off a client's connection that fails mid-read is refused as this lane's other failures
+  // are; one built in this process, or a stream the app already holds, keeps its error.
+  const refuseFailedRead = body !== null && !body.locked && hasTrustedBodyFraming(req)
   const streamed =
     body === null
       ? Promise.resolve<unknown | ResponseResult>(plainError(400, "invalid_json"))
-      : drainCapped(body, maxBytes).then((drained) => {
-          if (!drained.ok) return plainError(413, "payload_too_large")
-          try {
-            return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
-          } catch {
-            return plainError(400, "invalid_json")
-          }
-        })
+      : drainCapped(body, maxBytes).then(
+          (drained) => {
+            if (!drained.ok) return plainError(413, "payload_too_large")
+            try {
+              return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
+            } catch {
+              return plainError(400, "invalid_json")
+            }
+          },
+          refuseFailedRead ? INVALID_JSON : undefined,
+        )
   return onResult === undefined ? streamed : streamed.then(onResult, onError)
 }
 

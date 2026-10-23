@@ -29,6 +29,7 @@ export function requestTargetApp<App>(app: App): App {
     .get("/", () => ({ route: "GET /" }))
     .delete("/", () => ({ route: "DELETE /" }))
     .get("/posts", () => ({ route: "GET /posts" }))
+    .get("/url", (c) => ({ route: "GET /url", path: new URL(c.req.url).pathname }))
     .get("/users/:id", (c) => ({ route: "GET /users/:id", id: c.params.id }))
     .get("/users/:id/posts", (c) => ({ route: "GET /users/:id/posts", id: c.params.id }))
     .get("/tags/%3Cb%3E", () => ({ route: "GET /tags/%3Cb%3E" }))
@@ -53,6 +54,8 @@ export interface RequestTargetCase {
 }
 
 export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
+  // A handler that parses `c.req.url` gets a URL it can parse.
+  { method: "GET", target: "/url", answer: { route: "GET /url", path: "/url" } },
   { method: "GET", target: "/users/..", answer: { route: "GET /" } },
   { method: "DELETE", target: "/users/..", answer: { route: "DELETE /" } },
   { method: "GET", target: "/users/../posts", answer: { route: "GET /posts" } },
@@ -111,19 +114,27 @@ export interface RawAnswer {
   readonly body: string
 }
 
-/** Send one request with `target` on the request line, byte for byte, and read the answer. */
+/** One `Host` line per value, so a list sends the field repeated. */
+const hostLines = (host: string | readonly string[]): string[] =>
+  (typeof host === "string" ? [host] : host).map((value) => `Host: ${value}`)
+
+/**
+ * Send one request with `target` on the request line, byte for byte, and read the answer. An empty
+ * `host` list sends no Host, which only HTTP/1.0 allows.
+ */
 export function rawExchange(
   port: number,
   method: string,
   target: string,
   body?: string,
-  host = "127.0.0.1",
+  host: string | readonly string[] = "127.0.0.1",
+  version = "1.1",
 ): Promise<RawAnswer> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     const chunks: Buffer[] = []
     socket.on("connect", () => {
-      const head = [`${method} ${target} HTTP/1.1`, `Host: ${host}`, "Connection: close"]
+      const head = [`${method} ${target} HTTP/${version}`, ...hostLines(host), "Connection: close"]
       if (body !== undefined) {
         head.push("Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`)
       }
@@ -154,16 +165,76 @@ export const INVALID_HOSTS: readonly string[] = [
   "x@y",
   "x\\users\\7#",
   "x:1/users/7#",
+  // Syntactically a Host, but no URL can be built on it: Bun then leaves the target unparsed.
+  "127.0.0.1:99999",
+  "[1:2]",
+  "a b",
+  "ü.example",
+  "",
 ]
 
-/** Each invalid Host whose request for `/posts` was answered by anything but a 400 or `GET /posts`. */
+/**
+ * Host sent more than once, which RFC 9112 section 3.2 answers 400. Joined into one header, the app
+ * would read an authority the request was not routed on: Bun routes on the first value.
+ */
+export const REPEATED_HOSTS: readonly (readonly string[])[] = [
+  ["127.0.0.1", "other.example"],
+  ["127.0.0.1", "127.0.0.1"],
+  ["127.0.0.1", "other.example", "third.example"],
+  ["127.0.0.1", ""],
+  ["", "127.0.0.1"],
+  ["LOCALHOST:80", "other.example"],
+  ["[::1]", "other.example"],
+]
+
+/**
+ * A Host the authority check refuses that a URL parser builds on anyway: Node and Deno answer 400,
+ * and Bun, which builds the URL on it, has to as well. `%61.example` parses as `a.example`, so the
+ * header and the URL would name different authorities.
+ */
+export const PARSEABLE_INVALID_HOSTS: readonly string[] = [
+  "a!b",
+  "a.example,b.example",
+  "%61.example",
+  "a~b",
+]
+
+/** Each repeated or parseable invalid Host whose request was answered by anything but a 400. */
+export async function refusedHostMismatches(port: number): Promise<string[]> {
+  const mismatches: string[] = []
+  for (const host of [...REPEATED_HOSTS, ...PARSEABLE_INVALID_HOSTS]) {
+    for (const target of ["/posts", "/url"]) {
+      const answer = await rawExchange(port, "GET", target, undefined, host)
+      if (answer.status !== 400) {
+        mismatches.push(
+          `Host ${JSON.stringify(host)} ${target}: got ${answer.status} ${answer.body}`,
+        )
+      }
+    }
+  }
+  return mismatches
+}
+
+const INVALID_HOST_ANSWERS: Readonly<Record<string, string>> = {
+  "/posts": JSON.stringify({ route: "GET /posts" }),
+  "/users/../posts": JSON.stringify({ route: "GET /posts" }),
+  // A handler that parses `c.req.url` throws on a URL built from no Host at all.
+  "/url": JSON.stringify({ route: "GET /url", path: "/url" }),
+}
+
+/**
+ * Each invalid Host whose request, spelled plainly or through a dot segment, was answered by anything
+ * but a 400 or the route's own answer.
+ */
 export async function invalidHostMismatches(port: number): Promise<string[]> {
   const mismatches: string[] = []
   for (const host of INVALID_HOSTS) {
-    const answer = await rawExchange(port, "GET", "/posts", undefined, host)
-    if (answer.status === 400) continue
-    if (answer.status === 200 && answer.body === JSON.stringify({ route: "GET /posts" })) continue
-    mismatches.push(`Host ${host}: got ${answer.status} ${answer.body}`)
+    for (const [target, expected] of Object.entries(INVALID_HOST_ANSWERS)) {
+      const answer = await rawExchange(port, "GET", target, undefined, host)
+      if (answer.status === 400) continue
+      if (answer.status === 200 && answer.body === expected) continue
+      mismatches.push(`Host ${host} ${target}: got ${answer.status} ${answer.body}`)
+    }
   }
   return mismatches
 }
@@ -173,7 +244,7 @@ export function rawUpgradeStatus(
   port: number,
   target: string,
   headers: Readonly<Record<string, string>> = {},
-  host = "127.0.0.1",
+  host: string | readonly string[] = "127.0.0.1",
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
@@ -182,7 +253,7 @@ export function rawUpgradeStatus(
       socket.write(
         [
           `GET ${target} HTTP/1.1`,
-          `Host: ${host}`,
+          ...hostLines(host),
           "Connection: Upgrade",
           "Upgrade: websocket",
           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
@@ -226,10 +297,12 @@ function parseResponse(text: string): RawAnswer {
 }
 
 /** Every case whose answer differs from the matrix, one line each. Empty when all agree. */
-export async function requestTargetMismatches(port: number): Promise<string[]> {
+export async function requestTargetMismatches(port: number, hostless = false): Promise<string[]> {
   const mismatches: string[] = []
   for (const { method, target, body, answer } of REQUEST_TARGET_CASES) {
-    const got = await rawExchange(port, method, target, body)
+    const got = hostless
+      ? await rawExchange(port, method, target, body, [], "1.0")
+      : await rawExchange(port, method, target, body)
     const expected = JSON.stringify(answer)
     if (got.status !== 200 || got.body !== expected) {
       mismatches.push(`${method} ${target}: got ${got.status} ${got.body}, expected ${expected}`)

@@ -3507,7 +3507,7 @@ export async function walkSource(
     // A backslash is a filename character on POSIX; only Windows separators need normalizing.
     const rel = sep === "\\" ? normalizeProjectPath(rawRel) : rawRel
     // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
-    if (PLAIN_SCRIPT_FILE.test(rel) && !ZONED_PATH.test(rel)) continue
+    if (PLAIN_SCRIPT_FILE.test(rel) && !ZONE_DIRECTORY.test(rel) && !ZONE_SUFFIX.test(rel)) continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
@@ -3520,8 +3520,8 @@ export async function walkSource(
 }
 
 const PLAIN_SCRIPT_FILE = /\.[cm]?js$/
-const ZONED_PATH =
-  /(^|\/)(?:routes|frontend|shared|backend)\/|\.(?:frontend|shared|backend|fn)\.[^/]+$/
+const ZONE_DIRECTORY = /(?:^|\/)(?:routes|frontend|shared|backend)\//
+const ZONE_SUFFIX = /\.(?:frontend|shared|backend|fn)\.[^/]+$/
 /** A single-file component: its `<script>` blocks are the code a build compiles. */
 export const COMPONENT_FILE = /\.(?:svelte|vue)$/
 
