@@ -51,6 +51,7 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
 - nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
 - nifra migrate <kind> [--from <value>] [--to <value>] [--write] [--zones] [--json] [--dir <value>] - Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.
+- nifra scaffold <kind> <route> <name> [--shared] [--interactive] [--timeout <value>] [--server] [--json] [--dir <value>] - Add a partially prerendered hole to a route (`scaffold hole <route> <name>`): its definition and `<Hole>` in the page, its loader in the backend half.
 - nifra target <target> [--json] [--dir <value>] - Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.
 - nifra types [--check] [--json] [--dir <value>] - Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.
 - nifra schemas [--write] [--check] [--json] [--dir <value>] - Write a reviewable `loaderOutput`/`actionOutput` from the loader's or action's return type where a route has none (`--write`), keep generated ones current, and list returned fields a hand-written schema drops.

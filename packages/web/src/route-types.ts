@@ -144,7 +144,7 @@ function routeTypesModule(
   )
   lines.push(
     route.kind === "page"
-      ? 'import type { MetaArgs as WebMetaArgs, RenderProps } from "@nifrajs/web"'
+      ? 'import type { BoundaryLoadersOf, MetaArgs as WebMetaArgs, RenderProps } from "@nifrajs/web"'
       : 'import type { MetaArgs as WebMetaArgs } from "@nifrajs/web"',
   )
   lines.push("")
@@ -181,6 +181,8 @@ function routeTypesModule(
       "    readonly actionData?: ActionData",
       "    readonly params: Params",
       "  }",
+      "  /** The backend half's `boundaryLoaders`. Check it, `export const boundaryLoaders = { ... } satisfies Route.BoundaryLoaders`, and a key must name a boundary the page declares; with a `shellLoader`, every hole needs one. */",
+      `  export type BoundaryLoaders = BoundaryLoadersOf<${frontend === undefined ? "unknown" : "Frontend"}, ${backend === undefined ? "unknown" : "Backend"}>`,
     )
   } else {
     lines.push(

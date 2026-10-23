@@ -22,6 +22,12 @@ import { isClientOnlySearchChange } from "./search.ts"
 export const DATA_HEADER = "x-nifra-data"
 
 /**
+ * Sent beside {@link DATA_HEADER} by a prefetch. A partially prerendered route answers it with its
+ * shell data and starts no hole: nothing could cancel that work if the link is never followed.
+ */
+export const PREFETCH_HEADER = "x-nifra-prefetch"
+
+/**
  * Global the server injects (`createWebApp({ prerenderedPaths })`) listing the SSG-prerendered paths.
  * The client's default data fetch reads it: a soft-nav INTO a prerendered route fetches its static
  * `<path>/_data.json` (a CDN file - no worker round-trip) instead of the dynamic header-GET, unless
@@ -83,6 +89,20 @@ export const RETAIN_HEADER = "x-nifra-retain"
  * the full-chain case.
  */
 export const NAV_FROM_HEADER = "x-nifra-from"
+
+/**
+ * Sent on a data request that reloads the route instance on screen: the holes, comma separated, whose
+ * hosts the partially prerendered page holds. Each one's state then carries its fill (server HTML,
+ * plus props when it hydrates) instead of its data, so the client updates the host in place.
+ */
+export const HOLE_FILL_HEADER = "x-nifra-hole-fill"
+
+/**
+ * Holes of a partially prerendered page the client keeps, comma separated: they are not loaded, and
+ * each state says so. Only the live load endpoint sets it, for holes whose keys did not change. A name
+ * the route does not declare is refused with a 400.
+ */
+export const KEEP_HOLES_HEADER = "x-nifra-keep-holes"
 
 /**
  * The data-mode payload once a chain can carry layout data.
@@ -210,7 +230,9 @@ export function createMatcher(
 }
 
 /** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch
- * (and its deferred stream). */
+ * (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result.
+ * `hosts` names the holes of the page on screen whose hosts reload in place
+ * ({@link HOLE_FILL_HEADER}). */
 export type FetchRouteData = (
   path: string,
   match: RouteMatch,
@@ -219,6 +241,8 @@ export type FetchRouteData = (
     readonly from: string
     readonly retain: readonly number[]
   },
+  purpose?: "prefetch",
+  hosts?: readonly string[],
 ) => Promise<unknown>
 
 /** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */
@@ -455,7 +479,14 @@ export const routeDataOf = async (
   return readResponseData(res, signal)
 }
 
-const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
+const defaultFetchData: FetchRouteData = async (
+  path,
+  _match,
+  signal,
+  navigation,
+  purpose,
+  hosts,
+) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
@@ -473,6 +504,8 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     }
   }
   const headers = new Headers({ [DATA_HEADER]: "1" })
+  if (purpose === "prefetch") headers.set(PREFETCH_HEADER, "1")
+  if (hosts !== undefined && hosts.length > 0) headers.set(HOLE_FILL_HEADER, hosts.join(","))
   if (navigation !== undefined && navigation.retain.length > 0) {
     headers.set(RETAIN_HEADER, navigation.retain.join(","))
     headers.set(NAV_FROM_HEADER, navigation.from)
@@ -625,6 +658,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     signal?: AbortSignal,
     // Offer the server the layout data on screen: it re-runs whichever of those loaders it must.
     keepLayouts?: boolean,
+    purpose?: "prefetch",
+    hosts?: readonly string[],
   ): Promise<LoadedRouteData> => {
     const retainFrom = keepLayouts
       ? state.layoutData && { path: pagePathOf(state), layoutData: state.layoutData }
@@ -635,6 +670,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       match,
       signal,
       retainFrom === undefined ? undefined : { from: retainFrom.path, retain },
+      purpose,
+      hosts,
     )
     if (!isRouteDataEnvelope(payload)) return { data: payload }
     if (payload.status !== undefined) {
@@ -921,12 +958,25 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const pageRoute = match(pagePath) ?? { routeId: state.routeId, params: state.params }
     const rematched = pageRoute.routeId !== state.routeId
     const targetRoute = intercepted !== undefined && target ? match(targetPath) : null
+    // A hole on screen that is a host stays one: it reloads as a fill.
+    const hosts = rematched
+      ? []
+      : Object.values(state.boundaries ?? {})
+          .filter((held) => held.ppr === true)
+          .map((held) => held.name)
     const [reloaded, targetOutcome] = await Promise.all([
       page
         ? (async (): Promise<LoadedRouteData> => {
             if (rematched) await loadModule?.(pageRoute.routeId, pagePath)
             return applyClientLoader(pagePath, pageRoute, signal, () =>
-              loadRouteData(pagePath, pageRoute, signal),
+              loadRouteData(
+                pagePath,
+                pageRoute,
+                signal,
+                false,
+                undefined,
+                hosts.length === 0 ? undefined : hosts,
+              ),
             )
           })()
         : undefined,
@@ -1420,14 +1470,17 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
         const [, loaded] = await Promise.all([
           loadModule?.(matched.routeId, path),
-          loadRouteData(path, matched),
+          loadRouteData(path, matched, undefined, false, "prefetch"),
         ])
         prefetched.delete(path) // a stale entry re-enters as the newest
         if (prefetched.size >= MAX_PREFETCH) {
           const oldest = prefetched.keys().next().value
           if (oldest !== undefined) prefetched.delete(oldest)
         }
-        if (loaded.serverComponents === undefined) prefetched.set(path, [loaded, Date.now()])
+        // A prefetched hole is an empty host nothing fills; the navigation fetches it, cancellably.
+        const holes = Object.values(loaded.boundaries ?? {}).some((state) => state.ppr === true)
+        if (loaded.serverComponents === undefined && !holes)
+          prefetched.set(path, [loaded, Date.now()])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {

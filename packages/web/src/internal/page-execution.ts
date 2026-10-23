@@ -10,21 +10,24 @@ import {
   status as statusResult,
 } from "@nifrajs/core/server"
 import {
+  type BoundaryRegistration,
   type BoundaryRequestCtx,
   type BoundaryStates,
   boundaryDescriptors,
   resolveStaticBoundaries,
+  type ShellCtx,
   type StaticBoundaryCache,
   startDynamicBoundaries,
 } from "../boundary.ts"
 import type { CspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
-import { defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
+import { type Deferred, defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
 import { routeTags } from "../isr.ts"
 import type {
   LayoutEntry,
   LoaderContext,
+  LoaderResponseControls,
   Manifest,
   Meta,
   MetaArgs,
@@ -39,16 +42,27 @@ import { SWAP_HEADER } from "../render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
+  HOLE_FILL_HEADER,
+  KEEP_HOLES_HEADER,
   NAV_FROM_HEADER,
+  PREFETCH_HEADER,
   REDIRECT_HEADER,
   RETAIN_HEADER,
   REVALIDATE_HEADER,
   STATUS_HEADER,
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
+import { serverHoleComponent } from "../server-components/hole.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
-import type { LiveEnvelope, LiveFinish, LiveLoad, LiveRouteMatch } from "./live-contract.ts"
+import {
+  holeOwner,
+  type LiveEnvelope,
+  type LiveFinish,
+  type LiveLoad,
+  type LiveRouteMatch,
+} from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
+import { type HoleLive, isHole, type PprIntegration, type PprRequest } from "./ppr/contract.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,
@@ -119,8 +133,71 @@ function swapOption(req: Request): { readonly swapSlot?: string } {
   return swapSlot === undefined ? {} : { swapSlot }
 }
 
+const headerOf = (c: PageRouteContext<unknown>, name: string): string | null =>
+  c.header !== undefined ? c.header(name) : c.req.headers.get(name)
+
 function isDataRequest(c: PageRouteContext<unknown>): boolean {
-  return (c.header !== undefined ? c.header(DATA_HEADER) : c.req.headers.get(DATA_HEADER)) !== null
+  return headerOf(c, DATA_HEADER) !== null
+}
+
+/** The live owners of one response's holes, settled once the last hole that ran does. */
+interface HoleOwners {
+  readonly kept: readonly string[]
+  readonly loaded: Promise<readonly string[]>
+}
+
+/**
+ * A data request's hole refresh: the hosts the client holds, which reload as fills, the holes it
+ * keeps, and in a live load each hole's owner. A name the route does not declare is a 400.
+ */
+function holeRefresh(
+  c: PageRouteContext<unknown>,
+  request: PprRequest,
+  live: LiveLoad | undefined,
+): { readonly request: PprRequest; readonly owners?: HoleOwners } | Response {
+  if (!isDataRequest(c)) return { request }
+  const declared = new Set(request.holes.map((hole) => hole.name))
+  const namesOf = (header: string): Set<string> | undefined => {
+    const value = headerOf(c, header)
+    const names = new Set<string>()
+    if (value === null) return names
+    for (const name of value.split(",")) {
+      const trimmed = name.trim()
+      if (declared.has(trimmed)) names.add(trimmed)
+      // A live load's names come from a grant this server sealed and the page's own client: one
+      // naming a hole an older build declared is skipped.
+      else if (live === undefined) return undefined
+    }
+    return names
+  }
+  const kept = namesOf(KEEP_HOLES_HEADER)
+  const fill = namesOf(HOLE_FILL_HEADER)
+  if (kept === undefined || fill === undefined) {
+    return new Response("Bad Request: the route has no such hole", {
+      status: 400,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    })
+  }
+  const refreshed: PprRequest = {
+    ...request,
+    ...(fill.size === 0 ? {} : { fill }),
+    ...(kept.size === 0 ? {} : { kept }),
+  }
+  if (live === undefined) return { request: refreshed }
+  const routeId = request.routeId
+  let finish: (loaded: readonly string[]) => void = () => {}
+  const loaded = new Promise<readonly string[]>((resolve) => {
+    finish = resolve
+  })
+  const holeLive: HoleLive = {
+    collector: (hole) => live.collector(holeOwner(hole, routeId)),
+    seal: (hole) => live.seal(holeOwner(hole, routeId)),
+    done: (names) => finish(names.map((hole) => holeOwner(hole, routeId))),
+  }
+  return {
+    request: { ...refreshed, live: holeLive },
+    owners: { kept: [...kept].map((hole) => holeOwner(hole, routeId)), loaded },
+  }
 }
 
 /** The page slot of an `ssr = false` route with no `HydrateFallback`: a component that renders nothing. */
@@ -128,6 +205,40 @@ const EMPTY_LEAF = (): null => null
 
 /** `ctx.live` outside a live load: keys are declared for nobody. */
 const NO_LIVE = (): void => {}
+
+const headersSent = (): never => {
+  throw new TypeError(
+    "[nifra/web] ppr: a hole's server component cannot set a cookie: the shell already sent the headers",
+  )
+}
+
+/** A hole's response headers went out with the shell, so its server component sets none. */
+const SENT_CONTROLS: LoaderResponseControls = Object.freeze({
+  headers: Object.freeze({}),
+  cookie: headersSent,
+  deleteCookie: headersSent,
+})
+
+/**
+ * The envelope's `live` member. With holes running it trails them: one grant, issued once the last hole
+ * settled, holding each hole that loaded and each the client kept.
+ */
+const liveEnvelopeOf = (
+  live: LiveLoad,
+  owners: LiveFinish,
+  holes: HoleOwners | undefined,
+): Promise<LiveEnvelope> | Deferred<LiveEnvelope> =>
+  holes === undefined
+    ? live.finish(owners)
+    : defer(
+        holes.loaded.then((loaded) =>
+          live.finish({
+            ...owners,
+            fresh: [...owners.fresh, ...loaded],
+            retained: [...owners.retained, ...holes.kept],
+          }),
+        ),
+      )
 
 /** Run one owner's loader with its `ctx.live`, closing the collector once the loader settles. */
 const runLiveLoader = (
@@ -303,6 +414,8 @@ export interface PageExecutionOptions<Env = unknown> {
   /** Logs a failure an `_error` boundary answered. Without a boundary the error propagates and the
    * server logs it, so this runs only where the server never sees the throw. */
   readonly logBoundaryError?: (error: unknown, request: Request) => void
+  /** Experimental partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
+  readonly ppr?: PprIntegration
 }
 
 type PageResponse = Response | ResponseResult | RenderedPage
@@ -405,11 +518,13 @@ export function createPageRequestExecutor<Env = unknown>(
   const { i18n } = options
   const pageLocales = new Map(i18n?.locales.locales.map((locale) => [locale.key, locale]))
   /** The request's locale for a document, with the served locales the client names locales from. */
-  const localeOption = (req: Request): { locale?: PageLocale; locales?: PageLocales } => {
+  const localeFor = (key: string): { locale?: PageLocale; locales?: PageLocales } => {
     if (i18n === undefined) return {}
-    const locale = pageLocales.get(i18n.localeOf(pathOf(req)))
+    const locale = pageLocales.get(key)
     return locale === undefined ? { locales: i18n.locales } : { locale, locales: i18n.locales }
   }
+  const localeOption = (req: Request): { locale?: PageLocale; locales?: PageLocales } =>
+    i18n === undefined ? {} : localeFor(i18n.localeOf(pathOf(req)))
   /** Whether a route sits under a `[lang]` or `[[lang]]` directory, which the locale routing checks. */
   const localeGuarded = (route: RouteEntry): boolean => {
     if (i18n === undefined) return false
@@ -1209,7 +1324,7 @@ export function createPageRequestExecutor<Env = unknown>(
     responseHeaders: Record<string, string> | undefined,
     personalized: boolean,
     serverComponents?: import("../server-components/types.ts").ComponentState,
-    live?: LiveEnvelope,
+    live?: LiveEnvelope | Deferred<LiveEnvelope>,
   ): Promise<PageResponse> => {
     // Every layout loader settled before the page rendered, so a status or error page can reuse them.
     const settled: LayoutChainSource = async (_page, count) =>
@@ -1232,6 +1347,9 @@ export function createPageRequestExecutor<Env = unknown>(
         ...deferred,
         ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
       ]
+      // Deferred when holes run: their owners are known only once the last one settles.
+      const liveSplit = live === undefined ? undefined : prepareDeferred(live, allDeferred.length)
+      if (liveSplit !== undefined) allDeferred.push(...liveSplit.deferred)
       const payload =
         layoutData === undefined &&
         boundarySplit === undefined &&
@@ -1245,7 +1363,7 @@ export function createPageRequestExecutor<Env = unknown>(
               retained: layoutRetained,
               ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
               ...(serverComponents === undefined ? {} : { serverComponents }),
-              ...(live === undefined ? {} : { live }),
+              ...(liveSplit === undefined ? {} : { live: liveSplit.forClient }),
             }
       if (allDeferred.length === 0) {
         return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
@@ -1514,6 +1632,112 @@ export function createPageRequestExecutor<Env = unknown>(
       }
     }
 
+  const pprRequestFor = (
+    c: PageRouteContext<Env>,
+    route: RouteEntry,
+    mod: RouteModule,
+    layouts: LoadedLayoutModules,
+    boundaries: readonly BoundaryRegistration[],
+    shellLoader: NonNullable<RouteModule["shellLoader"]>,
+    requestApi: unknown,
+    draft: boolean,
+    search: Record<string, unknown>,
+  ): PprRequest => {
+    const path = urlPartsFor(c.req).pathname
+    const locale = i18n?.localeOf(path)
+    const params = c.params
+    const shellOrigin = options.ppr?.origin
+    const variations =
+      options.ppr?.variationsOf(mod.shellVariations, urlPartsFor(c.req).search) ?? {}
+    const shellSearch = options.ppr?.variationQuery(variations) ?? ""
+    // What a shared entry's tags read: its key's parts, never the Host or an undeclared query, which
+    // the first visitor of a key could set so a later purge misses the entry.
+    const shellUrl = (): URL => {
+      const url = new URL(shellOrigin ?? "http://shell.invalid")
+      url.pathname = path
+      url.search = shellSearch
+      return url
+    }
+    // The unbound `api`: a shell is built for every visitor, so no visitor's platform reaches it.
+    const shellContext: Omit<ShellCtx, "signal"> =
+      shellOrigin === undefined
+        ? { phase: "shell", params, locale, variations, api }
+        : { phase: "shell", params, locale, variations, api, origin: shellOrigin }
+    return {
+      routeId: route.id,
+      path,
+      locale,
+      variations,
+      request: c.req,
+      holes: boundaries.filter(isHole),
+      holeContext: { request: c.req, params, api: requestApi, env: c.env, draft, search },
+      shellContext,
+      revalidate: mod.revalidate,
+      waitUntil: c.waitUntil,
+      tags: () =>
+        mod.revalidateTags === undefined
+          ? []
+          : routeTags(mod.revalidateTags, { params, url: shellUrl() }, route.id),
+      holeTags: (hole) =>
+        hole.revalidateTags === undefined
+          ? []
+          : routeTags(hole.revalidateTags, { params, url: shellUrl() }, `${route.id}#${hole.name}`),
+      loadShell: async (signal) => shellLoader({ ...shellContext, signal }),
+      renderShellDocument: async (shellData, states) => {
+        const statics = boundaries.some((boundary) => boundary.mode === "static")
+          ? await resolveStaticBoundaries(
+              boundaries,
+              { phase: "build" },
+              options.staticBoundaryCache,
+            )
+          : undefined
+        const { chain, head } = resolveChainAndHead(
+          layouts,
+          undefined,
+          mod,
+          // A Host header is the client's to choose, so a shared shell's meta gets the configured one.
+          { data: shellData, pageData: shellData, params, origin: shellOrigin ?? "" },
+          serverLeafOf(route, mod),
+        )
+        // Nothing here reads the request beyond its pathname: no origin, search, nonce or headers.
+        const page: DocumentInput = {
+          adapter,
+          chain,
+          data: shellData,
+          head,
+          clientEntry,
+          routeId: route.id,
+          params,
+          path,
+          search: searchOfChain(
+            [...layouts.map((m) => m.searchSchema), mod.searchSchema],
+            shellSearch === "" ? "" : `?${shellSearch}`,
+          ),
+          matchChain: matchChainOf(route.layoutIds, layouts, route.id, mod),
+          hydrate: mod.hydrate !== false,
+          boundaries: { ...statics, ...states },
+          ...preloadOf(route.id),
+          ...stylesOf(route.id),
+          ...appDocumentOptions,
+          ...(locale === undefined ? {} : localeFor(locale)),
+        }
+        if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
+        const result = await renderPageResult(page)
+        // A buffered page hands over its string: a Response round trip to read it back cost more.
+        const rendered = result.toNodeBody?.() ?? result.toResponse()
+        if (rendered.status !== 200) {
+          throw new Error(
+            `[nifra/web] ppr: the shell of "${route.id}" rendered status ${rendered.status}`,
+          )
+        }
+        if (rendered instanceof Response) return rendered.text()
+        return typeof rendered.body === "string"
+          ? rendered.body
+          : new TextDecoder().decode(rendered.body)
+      },
+    }
+  }
+
   return {
     get: (route) => {
       const is404Fallback = options.staticFallbacks?.[route.pattern] === "404"
@@ -1581,6 +1805,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let run: LayoutRun | undefined
         let skipPage = false
         let liveCtx: LoaderContext
+        let holeOwners: HoleOwners | undefined
         try {
           const ctx: LoaderContext = {
             params: c.params,
@@ -1623,8 +1848,89 @@ export function createPageRequestExecutor<Env = unknown>(
               : []
           if (boundaryDefinitions.length > 0) boundaryDescriptors(boundaryDefinitions)
           const effectiveSearch = searchChainOf(run.modules, mod, c.req)
+          const ppr = options.ppr
+          const shellLoader =
+            componentRequest === undefined && !componentOwner ? mod.shellLoader : undefined
+          let pprRequest: PprRequest | undefined
+          // How a document that renders whole gets its holes: complete, unless no shell exists yet.
+          let wholeHoles: "settled" | "deferred" = "settled"
+          if (ppr !== undefined && shellLoader !== undefined) {
+            ppr.assertRoute(route, run.modules, boundaryDefinitions)
+            pprRequest = pprRequestFor(
+              c,
+              route,
+              mod,
+              run.modules,
+              boundaryDefinitions,
+              shellLoader,
+              requestApi,
+              draft,
+              effectiveSearch,
+            )
+            const refresh = holeRefresh(c, pprRequest, live)
+            if (refresh instanceof Response) return refresh
+            pprRequest = refresh.request
+            holeOwners = refresh.owners
+            const components = options.serverComponents
+            const renderHole = components?.hosts?.(route.id) === true ? components.hole : undefined
+            if (
+              renderHole === undefined &&
+              pprRequest.holes.some((hole) => serverHoleComponent(hole.render) !== undefined)
+            ) {
+              throw new Error(
+                `[nifra/web] ppr: route "${route.id}" has a hole that shows a server component; list the component under createServerComponents({ holes }) for this route`,
+              )
+            }
+            if (renderHole !== undefined) {
+              const loaderCtx = ctx
+              pprRequest = {
+                ...pprRequest,
+                // The owner path's context, but with the hole's signal and no response to change.
+                component: (name, component, input, signal) =>
+                  renderHole.call(
+                    components,
+                    route.id,
+                    component,
+                    name,
+                    input,
+                    Object.create(
+                      c,
+                      Object.getOwnPropertyDescriptors({
+                        ...loaderCtx,
+                        search: effectiveSearch,
+                        set: SENT_CONTROLS,
+                        signal,
+                        data: undefined,
+                        layoutData: [],
+                      }),
+                    ),
+                  ),
+              }
+            }
+            // A draft is the editor's alone, so it never reads or fills the shared shell.
+            if (!draft && !isDataRequest(c)) {
+              const streamed = await ppr.stream(pprRequest, () => controls.documentHeaders())
+              if (streamed instanceof Response) return streamed
+              wholeHoles = streamed
+            }
+            // Its holes are one visitor's, so no cache may store the page they render into.
+            controls.personalize()
+          }
+          // Every PPR hole runs through the PPR server, so each has admission and its own deadline.
+          const holeStates =
+            pprRequest === undefined || ppr === undefined
+              ? undefined
+              : ppr.server.holeStates(
+                  pprRequest,
+                  !isDataRequest(c)
+                    ? wholeHoles
+                    : c.req.headers.get(PREFETCH_HEADER) === null
+                      ? "deferred"
+                      : "omitted",
+                  c.req.signal,
+                )
           const boundaryBatch =
-            boundaryDefinitions.length === 0
+            boundaryDefinitions.length === 0 || holeStates !== undefined
               ? undefined
               : startDynamicBoundaries(boundaryDefinitions, {
                   request: c.req,
@@ -1634,6 +1940,7 @@ export function createPageRequestExecutor<Env = unknown>(
                   draft,
                   search: effectiveSearch,
                   signal: c.req.signal,
+                  live: NO_LIVE,
                 } satisfies BoundaryRequestCtx)
           const staticBoundaryPromise =
             boundaryDefinitions.length === 0
@@ -1644,14 +1951,19 @@ export function createPageRequestExecutor<Env = unknown>(
                   options.staticBoundaryCache,
                 )
           const pageResult =
-            mod.loader === undefined || skipPage
-              ? null
-              : live === undefined
-                ? mod.loader({ ...ctx, search: effectiveSearch })
-                : runLiveLoader(live, `P:${route.id}`, mod.loader, {
-                    ...ctx,
-                    search: effectiveSearch,
-                  })
+            pprRequest !== undefined && ppr !== undefined
+              ? // A key with no shell yet must not build one through its data either.
+                draft || wholeHoles === "deferred"
+                ? pprRequest.loadShell(c.req.signal)
+                : ppr.shellData(pprRequest, c.req.signal)
+              : mod.loader === undefined || skipPage
+                ? null
+                : live === undefined
+                  ? mod.loader({ ...ctx, search: effectiveSearch })
+                  : runLiveLoader(live, `P:${route.id}`, mod.loader, {
+                      ...ctx,
+                      search: effectiveSearch,
+                    })
           const [pageData, , staticBoundaries] =
             run.pending === undefined && staticBoundaryPromise === undefined
               ? ([await pageResult, undefined, undefined] as const)
@@ -1659,7 +1971,9 @@ export function createPageRequestExecutor<Env = unknown>(
                 ? await Promise.all([pageResult, run.pending])
                 : await Promise.all([pageResult, run.pending, staticBoundaryPromise])
           data = pageData
-          layoutData = run.layoutData
+          // A gate on a PPR route runs for its redirect or refusal only. Its data reaches no response,
+          // so a soft navigation renders the layouts exactly as the shared shell did.
+          layoutData = pprRequest === undefined ? run.layoutData : undefined
           if (componentOwner) {
             for (let i = 0; i < (layoutData?.length ?? 0); i++) {
               const outcome = layoutData?.[i]
@@ -1688,7 +2002,10 @@ export function createPageRequestExecutor<Env = unknown>(
               options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
             )
           }
-          if (boundaryBatch !== undefined) {
+          if (holeStates !== undefined) {
+            // The static resolver names every boundary, leaving the dynamic ones to the holes.
+            boundaryStates = { ...staticBoundaries, ...(await holeStates) }
+          } else if (boundaryBatch !== undefined) {
             // Each resolver returns a state for every boundary and marks the other's modes
             // `unresolved`, so a slot takes its state from the resolver of its own mode.
             const streamed = { ...boundaryBatch.initial }
@@ -1757,7 +2074,8 @@ export function createPageRequestExecutor<Env = unknown>(
         const liveEnvelope =
           live === undefined || !isData || isStatusSignal(data) || isControlFlow(data)
             ? undefined
-            : await live.finish(
+            : await liveEnvelopeOf(
+                live,
                 liveOwners(
                   route,
                   layoutModules,
@@ -1767,6 +2085,7 @@ export function createPageRequestExecutor<Env = unknown>(
                   skipPage,
                   liveCtx,
                 ),
+                holeOwners,
               )
         return handleDataOrDocument(
           c.req,

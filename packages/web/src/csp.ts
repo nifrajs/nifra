@@ -109,8 +109,9 @@ const inlineScriptBodies = (html: string): string[] => {
 
 const ENCODER = new TextEncoder()
 
-/** A CSP hash source for one inline script body: `'sha256-<base64 of the UTF-8 bytes>'`. */
-async function hashSource(body: string): Promise<string> {
+/** A CSP hash source for one inline script body: `'sha256-<base64 of the UTF-8 bytes>'`. Shared with
+ * the PPR runtime; `index.ts` does not re-export it. */
+export async function hashSource(body: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", ENCODER.encode(body)))
   let binary = ""
   for (const byte of digest) binary += String.fromCharCode(byte)
@@ -156,6 +157,19 @@ const preparedSources = (policy: CspPolicy, adapter: RenderAdapter): AdapterSour
     throw new Error("[nifra/web] CSP policy used before prepareCspPolicy resolved")
   }
   return known
+}
+
+/**
+ * The policy value for a partially prerendered document: the adapter's hash sources plus `extra`
+ * (the PPR runtime and invoker hashes), with no nonce. Prepare the policy for `adapter` first.
+ */
+export function cspHeaderWithSources(
+  policy: CspPolicy,
+  adapter: RenderAdapter,
+  extra: string,
+): string | undefined {
+  const { sources } = preparedSources(policy, adapter)
+  return policy[CSP_POLICY].header({ sources: sources === "" ? extra : `${sources} ${extra}` })
 }
 
 /**

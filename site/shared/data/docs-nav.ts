@@ -48,6 +48,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
       { href: "/docs/query", label: "Query cache" },
       { href: "/docs/live", label: "Live refresh" },
       { href: "/docs/streaming", label: "Streaming" },
+      { href: "/docs/partial-prerendering", label: "Partial prerendering" },
       { href: "/docs/hydration", label: "Hydration" },
       { href: "/docs/islands", label: "Islands" },
       { href: "/docs/content", label: "Content & MDX" },
