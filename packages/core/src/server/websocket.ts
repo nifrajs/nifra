@@ -18,7 +18,7 @@ import type {
 import { validateStandard } from "../schema/standard.ts"
 import { decodeTransportFrame, type TransportCodecRegistry } from "../transport-codec.ts"
 import { guardDecodedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
-import { isResponseResult } from "./runtime-core.ts"
+import { isResponseResult, type StatusResponse } from "./runtime-core.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -172,7 +172,7 @@ export interface WebSocketHandler<
    * `data: undefined`. A thrown `Response` rejects with it; any other throw goes to the route's
    * `onError` hooks, then a flat 500.
    */
-  upgrade?(c: WebSocketContext<Env> & Extra): MaybePromise<Data | Response>
+  upgrade?(c: WebSocketContext<Env> & Extra): MaybePromise<Data | Response | StatusResponse>
   /**
    * Contract-first messages: a Standard Schema (`t`, zod, valibot, …) validating each **inbound** frame.
    * Text frames are parsed as JSON first. When set, `message` receives the validated, typed value; a
