@@ -34,6 +34,9 @@ the same app, and `build.ts` builds the client bundle and the worker.
   `GET` `200`s are cached; assets, soft-nav data fetches, redirects, and errors pass through.
 - A route sets its freshness with `export const revalidate = <seconds>` (see `routes/index.tsx`).
 - `KVCacheStore(env.ISR_CACHE)` is the shared, durable store (production); `MemoryCacheStore` is dev.
+  Over KV, `withISR` needs `storeSecret` (at least 32 characters): it signs every page it stores and
+  treats a page that does not verify as a miss, so nothing else that can write the namespace can
+  serve your visitors a page.
 - `revalidateEndpoint({ store, secret })` is the on-demand purge handler:
 
   ```sh
@@ -50,5 +53,6 @@ deliberate single-instance deployment), and add authenticated/CSRF middleware to
 ```sh
 bunx wrangler kv namespace create ISR_CACHE   # paste the id into wrangler.toml
 bunx wrangler secret put REVALIDATE_SECRET     # set a real purge secret
+openssl rand -hex 32 | bunx wrangler secret put ISR_STORE_SECRET   # random; signs cached pages
 bun run build && bunx wrangler deploy
 ```

@@ -28,6 +28,8 @@ const app = createWebApp({
 interface Env {
   readonly ISR_CACHE: KVNamespaceLike
   readonly REVALIDATE_SECRET?: string
+  /** Signs every cached page, so a page anything else writes to the namespace is never served. */
+  readonly ISR_STORE_SECRET: string
 }
 
 /** Minimal shape of the Workers execution context - just `waitUntil`. */
@@ -48,7 +50,12 @@ export default {
 
     // Cache GET documents stale-while-revalidate. Default 60s; a route's `export const revalidate`
     // overrides it per-page.
-    const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
+    const isr = withISR(app, {
+      store,
+      storeSecret: env.ISR_STORE_SECRET,
+      revalidate: 60,
+      now: () => Date.now(),
+    })
     return isr(req, { env, waitUntil: (p) => ctx.waitUntil(p) })
   },
 }
