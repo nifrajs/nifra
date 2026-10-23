@@ -35,7 +35,10 @@ after(async () => {
   await stop?.()
 })
 
-function exchange(path: string): Promise<{ status: number; body: string }> {
+function exchange(
+  path: string,
+  hosts: readonly string[] = ["127.0.0.1"],
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, "127.0.0.1")
     let received = ""
@@ -44,7 +47,7 @@ function exchange(path: string): Promise<{ status: number; body: string }> {
       socket.write(
         [
           `POST ${path} HTTP/1.1`,
-          "Host: 127.0.0.1",
+          ...hosts.map((host) => `Host: ${host}`),
           "Content-Type: application/json",
           "Content-Type: application/json",
           "User-Agent: one",
@@ -80,4 +83,10 @@ test("a repeated Content-Type and User-Agent read as every value, joined", async
 test("a repeated Content-Type is not a JSON body", async () => {
   const refused = await exchange("/items")
   assert.equal(refused.status, 415)
+})
+
+// Joined, the app would read both authorities from Host while the request was routed on the first.
+test("a repeated Host is a 400", async () => {
+  const refused = await exchange("/echo", ["127.0.0.1", "other.example"])
+  assert.equal(refused.status, 400)
 })

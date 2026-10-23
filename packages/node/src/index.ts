@@ -940,10 +940,12 @@ function normalizeHostCached(value: string): string | undefined {
 }
 
 /** `headers.host` read from `rawHeaders`: the `headers` getter builds every header into an object,
- * a cost a request that reads no other header would otherwise pay just for Host. Node keeps the
- * first Host when one repeats, and so does this. */
-function rawHost(req: IncomingMessage): string | undefined {
+ * a cost a request that reads no other header would otherwise pay just for Host. `null` when Host
+ * repeats: `joinDuplicateHeaders` would hand the app both authorities while this routes on one, and
+ * RFC 9112 section 3.2 answers such a request 400, as Deno does. */
+function rawHost(req: IncomingMessage): string | null | undefined {
   const raw = req.rawHeaders
+  let host: string | undefined
   for (let i = 0; i < raw.length; i += 2) {
     const name = raw[i] as string
     if (
@@ -951,14 +953,17 @@ function rawHost(req: IncomingMessage): string | undefined {
       name === "Host" ||
       (name.length === 4 && name.toLowerCase() === "host")
     ) {
-      return raw[i + 1]
+      if (host !== undefined) return null
+      host = raw[i + 1]
     }
   }
-  return undefined
+  return host
 }
 
 function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefined {
-  const normalized = normalizeHostCached(rawHost(req) ?? "localhost")
+  const host = rawHost(req)
+  if (host === null) return undefined
+  const normalized = normalizeHostCached(host ?? "localhost")
   if (normalized === undefined) return undefined
   if (policy.allowedHosts !== undefined) {
     try {

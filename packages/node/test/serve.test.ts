@@ -182,7 +182,7 @@ test("a Host name with an underscore is served, as a container service name ofte
   expect(bad.status).toBe(400)
 })
 
-test("Host is matched in any case, the first of a repeat wins, and none means localhost", async () => {
+test("Host is matched in any case, a repeat is a 400, and none means localhost", async () => {
   const app = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
   running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const port = running.port
@@ -198,10 +198,12 @@ test("Host is matched in any case, the first of a repeat wins, and none means lo
       socket.write(`${head}Connection: close\r\n\r\n`)
     })
 
+  const upper = await exchange("GET /host HTTP/1.1\r\nHOST: first.example\r\n")
+  expect(upper).toContain('{"origin":"http://first.example"}')
   const repeated = await exchange(
     "GET /host HTTP/1.1\r\nHOST: first.example\r\nhost: second.example\r\n",
   )
-  expect(repeated).toContain('{"origin":"http://first.example"}')
+  expect(repeated).toStartWith("HTTP/1.1 400")
   const missing = await exchange("GET /host HTTP/1.0\r\n")
   expect(missing).toContain('{"origin":"http://localhost"}')
 })
