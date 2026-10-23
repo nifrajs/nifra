@@ -236,6 +236,24 @@ describe("readBoundedBytes - the cap holds on real bytes (GHSA-rv63-4mwf-qqc2 cl
     markTrustedBodyFraming(locked)
     await expect(readBoundedBytes(locked, CAP)).rejects.toThrow()
   })
+
+  test("a sized client body the app already read or locked keeps its rejection", async () => {
+    const sized = () => {
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-length": "4" },
+        body: "abcd",
+      })
+      markTrustedBodyFraming(request)
+      return request
+    }
+    const spent = sized()
+    await spent.text()
+    const locked = sized()
+    locked.body?.getReader()
+    for (const request of [spent, locked])
+      await expect(readBoundedBytes(request, CAP)).rejects.toThrow(TypeError)
+  })
 })
 
 // A client that hangs up inside a body reaches the app only on Deno, where the read then fails. Found by

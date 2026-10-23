@@ -12,6 +12,7 @@ import { jsonError } from "./http.ts"
 interface BodySource {
   readonly headers: Pick<Headers, "get">
   readonly body: ReadableStream<Uint8Array> | null
+  readonly bodyUsed?: boolean
   arrayBuffer(): Promise<ArrayBuffer>
   bytes?(): Promise<Uint8Array>
 }
@@ -148,6 +149,9 @@ export async function readBoundedBytes(
   const fromClient = hasTrustedBodyFraming(source) || hasTrustedBodyFraming(req)
   if (length !== undefined && req.headers.get("transfer-encoding") === null) {
     // Called outside the `try`: a spent reader throws synchronously, and that throw is the app's.
+    // A Request the app already read or locked rejects instead. Only a read that disturbed an unused
+    // body failed on the client's side; Bun marks a locked body used, Node and Deno leave it unused.
+    const usedBefore = req.bodyUsed
     const bytesReader = req.bytes
     const reading =
       bytesReader === undefined
@@ -157,7 +161,7 @@ export async function readBoundedBytes(
     try {
       bytes = await reading
     } catch (error) {
-      if (fromClient) return UNREADABLE
+      if (fromClient && usedBefore !== true && req.bodyUsed !== false) return UNREADABLE
       throw error
     }
     // Content-Length was the fast-reject hint, never the enforcement: a lying or buffering
