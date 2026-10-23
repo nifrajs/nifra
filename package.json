@@ -121,7 +121,7 @@
   },
   "overrides": {
     "@hono/node-server": "2.1.5",
-    "body-parser": "2.3.0",
+    "body-parser": "2.4.0",
     "esbuild": "0.28.1",
     "find-my-way": "9.7.0",
     "immutable": "5.1.8",
