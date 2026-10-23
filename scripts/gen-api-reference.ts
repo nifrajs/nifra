@@ -105,6 +105,24 @@ function cap(s: string): string {
   return flat.length > SIG_CAP ? `${flat.slice(0, SIG_CAP - 1)}…` : flat
 }
 
+// A type literal written one member per line separates its members by the newline alone, which joining
+// the lines drops: add the `;` each such member leaves out, so the one-line signature still parses.
+function oneLine(node: ts.TypeNode): string {
+  const start = node.getStart()
+  const ends: number[] = []
+  const visit = (child: ts.Node): void => {
+    if (ts.isTypeLiteralNode(child)) {
+      for (const member of child.members.slice(0, -1))
+        if (!/[;,]$/.test(member.getText())) ends.push(member.getEnd() - start)
+    }
+    ts.forEachChild(child, visit)
+  }
+  visit(node)
+  let text = node.getText()
+  for (const end of ends.sort((a, b) => b - a)) text = `${text.slice(0, end)};${text.slice(end)}`
+  return text
+}
+
 /** A one-line signature for the export, by declaration kind - value types via the checker, declared
  * types by their header (members elided; the source is the full detail). */
 function signatureOf(
@@ -117,7 +135,7 @@ function signatureOf(
   if (ts.isClassDeclaration(decl)) return `class ${name}${typeParams(decl)}`
   if (ts.isEnumDeclaration(decl)) return `enum ${name}`
   if (ts.isTypeAliasDeclaration(decl)) {
-    const rhs = decl.type.getText()
+    const rhs = oneLine(decl.type)
     const head = `type ${name}${typeParams(decl)}`
     return rhs.length <= SIG_CAP ? cap(`${head} = ${rhs}`) : head
   }

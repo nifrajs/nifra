@@ -66,7 +66,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentPorts** _(interface)_ - `interface AgentPorts`
 - **AgentResumeMismatchError** _(class)_ - `class AgentResumeMismatchError`
   A resume whose continuation is not the step the turn suspended on.
-- **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended" readonly pending: AgentPendingContinuation readonly reason: "max_turns" })`
+- **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended"; readonly pending: AgentPendingContinuation; readonly reason: "max_turns" })`
 - **AgentSharedState** _(interface)_ - `interface AgentSharedState<State = unknown>`
   A shared, observable state document for one run - the state a live UI mirrors while the agent works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI `STATE_SNAPSHOT`/`STA…
 - **AgentStatePatchOp** _(type)_ - `type AgentStatePatchOp = | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown } | { readonly op: "remove"; readonly path: string }`
@@ -110,7 +110,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DeploymentDisposeResult** _(interface)_ - `interface DeploymentDisposeResult`
 - **DeploymentError** _(class)_ - `class DeploymentError`
 - **DeploymentErrorCode** _(type)_ - `type DeploymentErrorCode = | "invalid_capabilities" | "capability_denied" | "hostile_code_requires_isolation" | "authority_expanded" | "invalid_plan" | "invalid_transition" | "malformed_callback" | "adapter_error" | "ca…`
-- **DeploymentEvidence** _(type)_ - `type DeploymentEvidence = { readonly kind: "prepared" | "started" | "inspected" | "cancelled" | "disposed" | "failed" readonly deploymentId: string readonly state: DeploymentState | "new" readonly code?: DeploymentError…`
+- **DeploymentEvidence** _(type)_ - `type DeploymentEvidence = { readonly kind: "prepared" | "started" | "inspected" | "cancelled" | "disposed" | "failed"; readonly deploymentId: string; readonly state: DeploymentState | "new"; readonly code?: DeploymentEr…`
 - **DeploymentFilesystem** _(type)_ - `type DeploymentFilesystem = "none" | "workspace" | "host"`
 - **DeploymentInspectRequest** _(interface)_ - `interface DeploymentInspectRequest`
 - **DeploymentInspection** _(interface)_ - `interface DeploymentInspection`
@@ -1521,7 +1521,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **InferSchema** _(type)_ - `type InferSchema<S> = S extends StandardSchemaV1<infer Output> ? Output : never`
   The validated output type of a schema.
 - **JoinCardinality** _(type)_ - `type JoinCardinality = "one-to-many" | "one-to-one"`
-- **JoinedRow** _(type)_ - `type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = { readonly left: Entry<Left> readonly right: Cardinality extends "one-to-one" ? Entry<Ri…`
+- **JoinedRow** _(type)_ - `type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = { readonly left: Entry<Left>; readonly right: Cardinality extends "one-to-one" ? Entry<R…`
 - **ParseEntryOptions** _(interface)_ - `interface ParseEntryOptions<S extends StandardSchemaV1>`
 - **SharedKey** _(type)_ - `type SharedKey<Left extends Record<string, unknown>, Right extends Record<string, unknown>> = { [K in ContentFieldKey<Left> & ContentFieldKey<Right>]: [Left[K]] extends [Right[K]] ? [Right[K]] extends [Left[K]] ? K : ne…`
   Keys whose frontmatter value types are identical on both sides of a join.
@@ -2036,11 +2036,11 @@ Every public export of every package and documented subpath - name, kind, signat
   A node category such as `request`, `command`, `event`, `workflow`, `projection`, or `repair`.
 - **CausalityParent** _(interface)_ - `interface CausalityParent`
   One immediate parent edge. Relation is a bounded token (`caused`, `emitted`, `projected`, …).
-- **CausalityParseResult** _(type)_ - `type CausalityParseResult = | { readonly success: true; readonly context: CausalityContext } | { readonly success: false readonly reason: "missing" | "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityParseResult** _(type)_ - `type CausalityParseResult = | { readonly success: true; readonly context: CausalityContext } | { readonly success: false; readonly reason: "missing" | "incomplete" | "invalid" | "unknown-field" }`
 - **CausalityReader** _(interface)_ - `interface CausalityReader`
 - **CausalityRecord** _(interface)_ - `interface CausalityRecord`
   One append-only graph record. It intentionally has no payload or metadata field.
-- **CausalityRecordParseResult** _(type)_ - `type CausalityRecordParseResult = | { readonly success: true; readonly record: CausalityRecord } | { readonly success: false readonly reason: "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityRecordParseResult** _(type)_ - `type CausalityRecordParseResult = | { readonly success: true; readonly record: CausalityRecord } | { readonly success: false; readonly reason: "incomplete" | "invalid" | "unknown-field" }`
 - **CausalityRecorder** _(interface)_ - `interface CausalityRecorder<Tx = unknown>`
 - **CausalityRef** _(interface)_ - `interface CausalityRef`
   A bounded identity within one execution graph.
@@ -2173,7 +2173,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DataPortOptions** _(interface)_ - `interface DataPortOptions`
   Options for the public request-bound data port wrapper.
 - **DataRequest** _(interface)_ - `interface DataRequest<Operation extends string = string, Input = unknown>`
-- **DataRequestFor** _(type)_ - `type DataRequestFor<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = { readonly operation: Operation readonly scope: DataScope readonly capability: CapabilityOf<Contract["operati…`
+- **DataRequestFor** _(type)_ - `type DataRequestFor<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = { readonly operation: Operation; readonly scope: DataScope; readonly capability: CapabilityOf<Contract["opera…`
 - **DataScope** _(type)_ - `type DataScope = RlsScope`
   Backward-compatible name for the request scope carried by every data operation.
 - **RlsScope** _(interface)_ - `interface RlsScope`
@@ -2309,7 +2309,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/edge-kit`
 
-- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string> /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
+- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string>; /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
@@ -4038,7 +4038,7 @@ _No named exports (side-effect entrypoint)._
   Options for {@link shapeRows}.
 - **SqliteDatabaseLike** _(interface)_ - `interface SqliteDatabaseLike`
   The structural slice of `bun:sqlite`'s `Database` this package needs.
-- **SqliteGate** _(type)_ - `type SqliteGate = | { readonly ok: true; readonly query: string } | { readonly ok: false readonly reason: "empty" | "multiple" | "not-read" | "unexposed" readonly text: string readonly relation?: string }`
+- **SqliteGate** _(type)_ - `type SqliteGate = | { readonly ok: true; readonly query: string } | { readonly ok: false; readonly reason: "empty" | "multiple" | "not-read" | "unexposed"; readonly text: string; readonly relation?: string }`
   The outcome of {@link gateSqliteStatement}. A refusal's `text` is the message `run_query` returns.
 - **SqliteQueryOptions** _(interface)_ - `interface SqliteQueryOptions`
   Options for {@link querySqlite} and {@link explainSqlite}.
@@ -4137,7 +4137,7 @@ _No named exports (side-effect entrypoint)._
 - **ApiKeyVerifyOptions** _(interface)_ - `interface ApiKeyVerifyOptions<P>`
 - **AuthPlugin** _(type)_ - `type AuthPlugin<P>`
   A token-auth plugin (`bearer` / `apiKey`). Apply it with `app.use(auth)` - it rejects unauthorized requests to **routes defined after it** with `401` (unless `optional`). Read the verified principal inside a handler/loader via {@link AuthPlugin.principal} (nullable) or {@link AuthPlugin.requirePrin…
-- **BasicAuthPlugin** _(type)_ - `type BasicAuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null requirePrincipal(request: Request): P }`
+- **BasicAuthPlugin** _(type)_ - `type BasicAuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null; requirePrincipal(request: Request): P }`
 - **BasicAuthStaticOptions** _(interface)_ - `interface BasicAuthStaticOptions<P = string>`
 - **BasicAuthVerifyOptions** _(interface)_ - `interface BasicAuthVerifyOptions<P>`
 - **BearerOptions** _(interface)_ - `interface BearerOptions<P>`
@@ -4172,7 +4172,7 @@ _No named exports (side-effect entrypoint)._
 - **JwtHeader** _(interface)_ - `interface JwtHeader`
 - **JwtKeyResolver** _(type)_ - `type JwtKeyResolver = ( header: JwtHeader, claims: JwtClaims, ) => MaybePromise<JwtVerificationKey | null | undefined>`
 - **JwtOptions** _(interface)_ - `interface JwtOptions`
-- **JwtPlugin** _(type)_ - `type JwtPlugin<C extends JwtClaims = JwtClaims> = IdentityPlugin & { claims(request: Request): C | null requireClaims(request: Request): C }`
+- **JwtPlugin** _(type)_ - `type JwtPlugin<C extends JwtClaims = JwtClaims> = IdentityPlugin & { claims(request: Request): C | null; requireClaims(request: Request): C }`
 - **JwtVerificationKey** _(type)_ - `type JwtVerificationKey = string | Uint8Array | CryptoKey | JwkKey`
 - **LanguageMatch** _(interface)_ - `interface LanguageMatch`
 - **LanguageOptions** _(interface)_ - `interface LanguageOptions<L extends readonly string[]>`
@@ -5079,7 +5079,7 @@ _No named exports (side-effect entrypoint)._
   A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ - `interface BlockerController`
   The browser layer's blocker registry - installed by `installHistory` (which owns navigation and can therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route component's…
-- **BlockerFunction** _(type)_ - `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation readonly nextLocation: BlockerLocation }) => boolean`
+- **BlockerFunction** _(type)_ - `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation }) => boolean`
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerLocation** _(interface)_ - `interface BlockerLocation`
   A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
@@ -5156,11 +5156,11 @@ _No named exports (side-effect entrypoint)._
   Markup a render produced for outside the app root, which an adapter that sets {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render settles: `renderToString` resolving, or `renderToStream` returning its stream.
 - **DraftCookieControls** _(interface)_ - `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
-- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic" readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic"; readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, read?: DataText, ) => Promise<unknown>`
+- **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string; readonly retain: readonly number[] }, read?: DataText, ) => Promise<unknown>`
   How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `read` is the {@link DataText} of the data on screen, which a custom transport may ignore.
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
@@ -5209,7 +5209,7 @@ _No named exports (side-effect entrypoint)._
   A stable per-key handle for an infinite (paged) query.
 - **InfiniteQueryOptions** _(interface)_ - `interface InfiniteQueryOptions<T, P>`
   Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the next page from the last page - return `undefined`/`null` to signal there is no next page.
-- **InterceptBoundary** _(type)_ - `type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: { readonly intercept: string } readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **InterceptBoundary** _(type)_ - `type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: { readonly intercept: string }; readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
 - **Intercepted** _(interface)_ - `interface Intercepted`
   Which intercept boundary is open, and the page underneath it.
 - **KVCacheStore** _(class)_ - `class KVCacheStore`
@@ -5384,7 +5384,7 @@ _No named exports (side-effect entrypoint)._
   One client navigation, as a layout's {@link ShouldRevalidate} sees it.
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
   Loads a module through the dev server's module graph rather than the runtime's resolver.
-- **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static" readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
+- **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static"; readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
 - **StaticBoundaryCache** _(interface)_ - `interface StaticBoundaryCache`
   Public in-memory reference cache for build-safe static boundary values. It holds no payload outside the process and is intentionally not a durable or tenant-aware cache implementation.
 - **StaticBoundaryImportEdge** _(interface)_ - `interface StaticBoundaryImportEdge`
@@ -6048,7 +6048,7 @@ _No named exports (side-effect entrypoint)._
   What a `bindIsland` setup receives.
 - **BindListOptions** _(interface)_ - `interface BindListOptions<T, E extends ListNode = HTMLElement>`
   How `bindList` turns items into keyed DOM.
-- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
+- **Computed** _(type)_ - `type Computed<T> = { (): T; dispose(): void }`
   A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
 - **IslandBusUnsubscribe** _(type)_ - `type IslandBusUnsubscribe = () => void`
   Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it straight back as its `IslandCleanup`.
@@ -6064,11 +6064,11 @@ _No named exports (side-effect entrypoint)._
   The node surface `bindList` uses; an `Element` has it.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
-- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T> /** Fetch the current key again; once disposed, nothing. */ refetch(): void /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
+- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T>; /** Fetch the current key again; once disposed, nothing. */ refetch(): void; /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
   Call it to read the current state (tracking, like a signal).
 - **ResourceState** _(type)_ - `type ResourceState<T>`
   An async value's state. `status` narrows `value` and `error`, so no branch can be skipped.
-- **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
+- **Signal** _(type)_ - `type Signal<T> = { (): T; set(next: T | ((prev: T) => T)): void }`
   A readable/writable reactive value: call it to read (tracking), `.set` to write.
 - **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
   Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
