@@ -349,6 +349,27 @@ test("known stderr entries are matched as whole entries, with what follows them"
   expect(unknownStderr("node", log).rest).toContain("Failed to drain")
 })
 
+test("workerd's C++ input checks are known entries; a Worker exception is not", () => {
+  const stack = "  stack: /node_modules/@cloudflare/workerd-linux-64/bin/workerd@33cce47"
+  const log = [
+    "✘ [ERROR] Uncaught exception: workerd/api/global-scope.c++:265: failed: remote.jsg.Error: Handler does not export a connect() function.",
+    stack,
+    "✘ [ERROR] e = kj/compat/http.c++:3987: failed: expected reason.size() == 0 [123 == 0]; WebSocket close code 1005 cannot have a reason",
+    stack,
+    "✘ [ERROR] Uncaught exception: kj/compat/http.c++:3987: failed: remote.worker_do_not_log; Request failed due to internal error",
+    "✘ [ERROR] Uncaught exception: kj/compat/url.c++:453: failed: invalid hostname when stringifying URL; host = ü.example",
+    "✘ [ERROR] e = kj/compat/http.c++:2311: failed: invalid HTTP chunk size; text = preamble",
+    "✘ [ERROR] Uncaught exception: workerd/jsg/_virtual_includes/iterator/workerd/jsg/value.h:1520: failed: remote.jsg.TypeError: Invalid URL string.",
+    "✘ [ERROR] Uncaught TypeError: Cannot read properties of undefined (reading 'x')",
+    "    at handler (worker.js:10:3)",
+    "",
+  ].join("\n")
+  expect(unknownStderr("workerd", log)).toEqual({
+    rest: "✘ [ERROR] Uncaught TypeError: Cannot read properties of undefined (reading 'x')\n    at handler (worker.js:10:3)",
+    known: ["U17 workerd-logs-refused-input"],
+  })
+})
+
 test("a seed generates the same cases, each with the reasons a parser may refuse it", () => {
   const first = fc.sample(caseArbitrary, { seed: 7, numRuns: 50 })
   expect(fc.sample(caseArbitrary, { seed: 7, numRuns: 50 })).toEqual(first)

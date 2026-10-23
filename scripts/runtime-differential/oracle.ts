@@ -371,8 +371,9 @@ export const KNOWN_STDERR: readonly {
   readonly entry: RegExp
 }[] = [
   {
-    // Printed once per process, the first time a request's `signal` is read, unless Deno runs with
-    // `--unstable-no-legacy-abort`. nifra reads it to carry it over when it rebuilds a request.
+    // Printed once per process, when Deno finishes the response to a request whose `signal` was read,
+    // unless Deno runs with `--unstable-no-legacy-abort`. nifra reads it to carry it over when it
+    // rebuilds a request.
     id: "U10 deno-legacy-abort-notice",
     lane: "deno",
     entry: /^Deno\.serve: request\.signal aborts on successful responses \(legacy behavior\)/,
@@ -387,6 +388,17 @@ export const KNOWN_STDERR: readonly {
     lane: "workerd",
     entry:
       /^✘ \[ERROR\] (?:Failed to drain the unused request body\.|Uncaught Error: Network connection lost\.|Error inside ProxyWorker \(the affected request failed; the dev server continues\): )/,
+  },
+  {
+    // Linux workerd logs the C++ check that refused an input: a URL or Host it cannot parse (a port
+    // past 65535 fails while it builds the request URL), a bad chunk size, a CONNECT with no connect()
+    // handler to take it, a close frame RFC 6455 forbids (and the proxy's copy of that failure). macOS
+    // workerd logs none of these. The case is still judged on its answer, and an exception in the
+    // Worker's own code logs as a JavaScript error, not one of these.
+    id: "U17 workerd-logs-refused-input",
+    lane: "workerd",
+    entry:
+      /^✘ \[ERROR\] (?:Uncaught exception: |e = )(?:kj|workerd)\/[\w/-]+\.(?:c\+\+|h):\d+: failed: /,
   },
 ]
 
