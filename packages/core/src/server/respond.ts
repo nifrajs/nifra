@@ -13,6 +13,7 @@ import {
   EMPTY_RESPONSE_CONTROLS,
   type HandlerResult,
   isResponseResult,
+  JSON_CONTENT_TYPE,
   type PlainRender,
   plainRenderHeaders,
   type ResponseResult,
@@ -41,10 +42,9 @@ function plainRenderSet(plain: PlainRender, set: CtxSet): CtxSet {
   } as CtxSet
 }
 
-// Keep the fast JSON respond path byte-identical to `Response.json` without probing it at module
-// scope: workerd forbids `Response.json()` during startup. A shared `Headers` is safe to reuse
-// across responses: the Response constructor copies `init.headers` into its own list.
-const JSON_CONTENT_TYPE = "application/json;charset=utf-8"
+// Keep the fast JSON respond path byte-identical to `Response.json` (see `JSON_CONTENT_TYPE`). A
+// shared `Headers` is safe to reuse across responses: the Response constructor copies
+// `init.headers` into its own list.
 const JSON_CT_HEADERS = new Headers({ "content-type": JSON_CONTENT_TYPE })
 const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
 
@@ -757,7 +757,7 @@ function renderValue(
               body,
               status,
               headers as Record<string, string>,
-              JSON_CT_HEADERS.get("content-type") ?? "application/json;charset=utf-8",
+              JSON_CONTENT_TYPE,
             )
           : // lgtm [js/stack-trace-exposure] the serialized body is not a caught error stack.
             new Response(body, { status, headers: withJsonContentType(headers) })
@@ -787,12 +787,12 @@ function withJsonContentType(
 ): Record<string, string> | Headers {
   if (headers === undefined) return JSON_CT_HEADERS
   if (headers instanceof Headers) {
-    if (!headers.has("content-type")) headers.set("content-type", "application/json;charset=utf-8")
+    if (!headers.has("content-type")) headers.set("content-type", JSON_CONTENT_TYPE)
     return headers
   }
   return Object.hasOwn(headers, "content-type")
     ? headers
-    : { ...headers, "content-type": "application/json;charset=utf-8" }
+    : { ...headers, "content-type": JSON_CONTENT_TYPE }
 }
 
 /** Headers that describe a Response's body or its framing: a `c.set` value for one describes a body

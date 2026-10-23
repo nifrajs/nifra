@@ -878,6 +878,8 @@ function normalizeHostAuthority(value: string): string | undefined {
     }
     if (hostname.length === 0 || !/^[0-9a-f:.%]+$/i.test(hostname)) return undefined
     hostname = `[${hostname.toLowerCase()}]`
+    // `[1:2]` passes the character test, but no URL can be built on it.
+    if (!URL.canParse(`http://${hostname}/`)) return undefined
   } else {
     const colon = value.indexOf(":")
     if (colon === -1) {
@@ -938,10 +940,12 @@ function normalizeHostCached(value: string): string | undefined {
 }
 
 /** `headers.host` read from `rawHeaders`: the `headers` getter builds every header into an object,
- * a cost a request that reads no other header would otherwise pay just for Host. Node keeps the
- * first Host when one repeats, and so does this. */
-function rawHost(req: IncomingMessage): string | undefined {
+ * a cost a request that reads no other header would otherwise pay just for Host. `null` when Host
+ * repeats: `joinDuplicateHeaders` would hand the app both authorities while this routes on one, and
+ * RFC 9112 section 3.2 answers such a request 400, as Deno does. */
+function rawHost(req: IncomingMessage): string | null | undefined {
   const raw = req.rawHeaders
+  let host: string | undefined
   for (let i = 0; i < raw.length; i += 2) {
     const name = raw[i] as string
     if (
@@ -949,14 +953,17 @@ function rawHost(req: IncomingMessage): string | undefined {
       name === "Host" ||
       (name.length === 4 && name.toLowerCase() === "host")
     ) {
-      return raw[i + 1]
+      if (host !== undefined) return null
+      host = raw[i + 1]
     }
   }
-  return undefined
+  return host
 }
 
 function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefined {
-  const normalized = normalizeHostCached(rawHost(req) ?? "localhost")
+  const host = rawHost(req)
+  if (host === null) return undefined
+  const normalized = normalizeHostCached(host ?? "localhost")
   if (normalized === undefined) return undefined
   if (policy.allowedHosts !== undefined) {
     try {
@@ -1374,12 +1381,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   // Only a WebSocket handshake leaves the HTTP parser; any other `Upgrade` (curl's h2c offer) is an
   // ordinary request. Node versions without the option send every upgrade to the `upgrade` event.
-  const upgradeOptions =
-    resolveWs === undefined ? {} : { shouldUpgradeCallback: isWebSocketUpgrade }
+  // A field sent twice is joined with ", ", as Fetch's `Headers` hands it to an app on Bun, Deno and
+  // Workers. Node otherwise keeps only the first of a field it treats as a singleton (Content-Type,
+  // Authorization, User-Agent), so the same request was JSON here and an unsupported type there.
+  const serverOptions =
+    resolveWs === undefined
+      ? { joinDuplicateHeaders: true }
+      : { joinDuplicateHeaders: true, shouldUpgradeCallback: isWebSocketUpgrade }
   const server =
     options.tls === undefined
-      ? createServer(upgradeOptions, onRequest)
-      : createHttpsServer({ ...options.tls, ...upgradeOptions }, onRequest)
+      ? createServer(serverOptions, onRequest)
+      : createHttpsServer({ ...options.tls, ...serverOptions }, onRequest)
   if (report !== undefined) (server as ReportingServer)[ERROR_REPORTER] = report
 
   // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can
@@ -2087,11 +2099,18 @@ function detachedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
+// Fetch's `json()` decodes UTF-8 without a leading byte order mark; `Buffer#toString` keeps one, and
+// `JSON.parse` then refuses a body every other runtime parses.
+const utf8Text = (body: Buffer): string =>
+  body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf
+    ? body.toString("utf8", 3)
+    : body.toString("utf8")
+
 function parseJsonBytes(bytes: Uint8Array): unknown {
   const buffer = Buffer.isBuffer(bytes)
     ? bytes
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  return JSON.parse(buffer.toString("utf8")) as unknown
+  return JSON.parse(utf8Text(buffer)) as unknown
 }
 
 const bodyItself = (body: Buffer): Buffer => body
@@ -2099,7 +2118,7 @@ const bodyItself = (body: Buffer): Buffer => body
 const parsedWithLength = (
   body: Buffer,
 ): { readonly value: unknown; readonly byteLength: number } => ({
-  value: JSON.parse(body.toString("utf8")) as unknown,
+  value: JSON.parse(utf8Text(body)) as unknown,
   byteLength: body.byteLength,
 })
 
@@ -2197,13 +2216,13 @@ class LazyNodeRequestSource implements NodeRequestSource {
 
   json(): Promise<unknown> {
     if (this.requestValue !== undefined) return this.requestValue.json()
-    return this.readNodeBody().then((buffer) => JSON.parse(buffer.toString("utf8")) as unknown)
+    return this.readNodeBody().then((buffer) => JSON.parse(utf8Text(buffer)) as unknown)
   }
 
   jsonWithByteLength(): Promise<{ readonly value: unknown; readonly byteLength: number }> {
     if (this.requestValue !== undefined) {
       return this.requestValue.arrayBuffer().then((buffer) => ({
-        value: JSON.parse(Buffer.from(buffer).toString("utf8")) as unknown,
+        value: JSON.parse(utf8Text(Buffer.from(buffer))) as unknown,
         byteLength: buffer.byteLength,
       }))
     }
@@ -2891,6 +2910,30 @@ type WsServerCtor = new (options: { noServer: true; maxPayload?: number }) => Ws
  * `@types/ws` dependency here (the surface is structurally typed via {@link WsServer}/{@link WsSocket}). */
 const WS_MODULE_SPECIFIER = "ws"
 
+/** Node copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before `ws`
+ * sees it. `ws` marks the socket closing before it checks the code, so a refused close left the socket
+ * half-open: its later sends dropped and the peer's close never answered. */
+function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
+  if (code === undefined) {
+    if (reason !== undefined && reason !== "")
+      throw new RangeError("ws.close(): a reason needs a code")
+    return
+  }
+  if (
+    !Number.isInteger(code) ||
+    !(
+      (code >= 1000 && code <= 1003) ||
+      (code >= 1007 && code <= 1014) ||
+      (code >= 3000 && code <= 4999)
+    )
+  )
+    throw new RangeError(
+      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
+    )
+  if (reason !== undefined && Buffer.byteLength(reason) > 123)
+    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
+}
+
 /** Lazily build a noServer `ws` `WebSocketServer`, or `undefined` if `ws` isn't installed. */
 async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefined> {
   try {
@@ -3016,9 +3059,19 @@ function attachNodeWebSocket(
   const rawSend = (payload: string | ArrayBufferView | ArrayBuffer): void => {
     if (typeof payload !== "string" || !writeTextFrame(ws, payload)) ws.send(payload)
   }
+  // `ws` reports the peer's echo, without its reason, and 1006 after failing a message over its own
+  // `maxPayload`; `close` is given the server's own close when the server closed first, as on Bun.
+  let sentClose: readonly [number, string] | undefined
+  const closeSocket = (code?: number, reason?: string): void => {
+    if (sentClose === undefined && ws.readyState <= 1) sentClose = [code ?? 1005, reason ?? ""]
+    ws.close(code, reason)
+  }
   const nifra: NifraWs = {
     send: outcome.sender === undefined ? rawSend : outcome.sender(handler, rawSend, reportError),
-    close: (code, reason) => ws.close(code, reason),
+    close: (code, reason) => {
+      assertCloseArgs(code, reason)
+      closeSocket(code, reason)
+    },
     get readyState() {
       return ws.readyState
     },
@@ -3046,7 +3099,7 @@ function attachNodeWebSocket(
   }
   ws.on("message", (raw, isBinary) => {
     if (maxPayloadBytes !== undefined && raw.byteLength > maxPayloadBytes) {
-      ws.close(1009, "message too large")
+      closeSocket(1009, "message too large")
       return
     }
     const payload: NifraWsData = isBinary
@@ -3056,9 +3109,14 @@ function attachNodeWebSocket(
   })
   ws.on("close", (code, reason) => {
     pubsub.unsubscribeAll(nifra) // drop topic subscriptions so the registry never holds a dead socket
-    safe(() => handler.close?.(nifra, code, reason.toString()))
+    const [sentCode, sentReason] = sentClose ?? [code, reason.toString()]
+    safe(() => handler.close?.(nifra, sentCode, sentReason))
   })
-  ws.on("error", (error) => reportError(error))
+  ws.on("error", (error) => {
+    if ("code" in error && error.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH")
+      sentClose ??= [1009, "message too large"]
+    reportError(error)
+  })
   safe(() => handler.open?.(nifra)) // open: the socket is already established here
 }
 

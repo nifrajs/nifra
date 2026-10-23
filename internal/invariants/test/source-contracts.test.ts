@@ -131,6 +131,10 @@ const RULES: readonly Rule[] = [
         count: 1,
         reason: "the bounded body reader itself, past its length check",
       },
+      "packages/core/src/server/server.ts": {
+        count: 2,
+        reason: "a source that hands the bounded readers the readers of the request it wraps",
+      },
       "packages/testing/src/certification.ts": { count: 1, reason: "test tooling" },
       "packages/testing/src/contract-lab.ts": { count: 1, reason: "test tooling" },
       "packages/create-nifra/src/agents.ts": { count: 1, reason: "prose in generated guidance" },

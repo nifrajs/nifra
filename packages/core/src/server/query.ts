@@ -189,11 +189,7 @@ export async function readBoundedForm(
   maxBytes: number,
 ): Promise<Record<string, QueryValue> | ResponseResult> {
   const read = await readBoundedBytes(req, maxBytes)
-  if (!read.ok) {
-    return read.status === 413
-      ? plainError(413, "payload_too_large")
-      : plainError(400, "invalid_content_length")
-  }
+  if (!read.ok) return plainError(read.status, read.error)
   const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
   // URLSearchParams owns the format's quirks (`+` as space, percent-decoding, empty keys);
   // it never throws on junk input, so no try/catch is needed here.

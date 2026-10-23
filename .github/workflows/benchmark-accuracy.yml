@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   accuracy:
-    uses: ./.github/workflows/benchmarks.yml
+    # A reusable workflow called with ./ already comes from the caller's commit, not the workspace;
+    # actionlint 1.7.12 rejects $/ and would stop type-checking these inputs.
+    uses: ./.github/workflows/benchmarks.yml # zizmor: ignore[self-repository]
     with:
       min_runs: 7
       max_runs: 15
