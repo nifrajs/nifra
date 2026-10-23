@@ -300,6 +300,14 @@ export default function Rendering() {
         both built-in stores do.
       </p>
       <p>
+        Workers KV is eventually consistent: a purge is usually seen at once where it was made and
+        reaches other locations as their copies expire, which Cloudflare puts at up to 60 seconds or
+        more. Until then those locations serve the old page. A page one of them rebuilt from the old
+        data in that time reads as a miss once the purge arrives, so a purge by path or by tag is
+        delayed by propagation, never lost. For a purge that every location honors at the same
+        moment, use a store with a strongly consistent backend, such as a Durable Object.
+      </p>
+      <p>
         Anything else that can write a shared store - another service on the same KV namespace, a
         leaked token - could put a page with its own script in front of every visitor. So over any
         store but <code>MemoryCacheStore</code>, <code>withISR</code> needs a{" "}

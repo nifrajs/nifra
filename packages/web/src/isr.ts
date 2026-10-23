@@ -62,7 +62,9 @@ export interface CacheStore {
    * The current point in this store's purge order. `withISR` takes one before each render and hands it
    * back as {@link CachedResponse.fence}, and `set` skips that entry when its key or one of its tags
    * was purged after the point. Without it, a purge that lands while a page renders is undone when the
-   * render stores the page it built from data read before the purge.
+   * render stores the page it built from data read before the purge. A store whose purges reach other
+   * instances late must also check on read, as {@link KVCacheStore} does: `set` there cannot see a
+   * purge that has not arrived yet.
    */
   readonly fence?: () => number | Promise<number>
 }
@@ -378,25 +380,15 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
 }
 
 const KV_TAG_EPOCH_PREFIX = "__nifra_isr_tag_v1:"
-const KV_PURGED_AT = "__nifraPurgedAt"
+const KV_PATH_EPOCH_PREFIX = "__nifra_isr_path_v1:"
+const KV_PATH_DIGEST_PREFIX = "__nifra_isr_path_v1#"
+/** Cloudflare KV's key limit, in UTF-8 bytes. */
+const KV_KEY_LIMIT = 512
+/** How long (seconds) a path epoch outlives the store's `expirationTtl`. */
+const PATH_EPOCH_SLACK = 86_400
 
-/** When a KV page key was purged, from the marker `delete` leaves; `-Infinity` for a page or nothing. */
-function kvPurgedAt(raw: string | null): number {
-  if (raw === null || !raw.includes(KV_PURGED_AT)) return Number.NEGATIVE_INFINITY
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed === "object" && parsed !== null && KV_PURGED_AT in parsed) {
-      const at = parsed[KV_PURGED_AT]
-      if (typeof at === "number") return at
-    }
-  } catch {
-    // Not a marker.
-  }
-  return Number.NEGATIVE_INFINITY
-}
-
-/** When a tag epoch was written (`<time>:<uuid>`); an epoch from before epochs carried a time is older
- * than any render. */
+/** When a tag or path epoch was written (`<time>:<uuid>`); an epoch from before epochs carried a time
+ * is older than any render. */
 function kvEpochTime(epoch: string): number {
   const at = epoch.indexOf(":")
   const time = at === -1 ? Number.NaN : Number(epoch.slice(0, at))
@@ -413,8 +405,10 @@ const kvClock = (): number => {
   return lastKvTime
 }
 
-type StoredTaggedResponse = CachedResponse & {
+type StoredResponse = CachedResponse & {
   readonly __nifraTagEpochs?: Readonly<Record<string, string>>
+  /** Absent while the path was never purged. */
+  readonly __nifraPathEpoch?: string
 }
 
 /**
@@ -433,6 +427,7 @@ type StoredTaggedResponse = CachedResponse & {
 export class KVCacheStore implements CacheStore {
   private readonly kv: KVNamespaceLike
   private readonly putOptions: { readonly expirationTtl?: number } | undefined
+  private readonly pathEpochOptions: { readonly expirationTtl?: number } | undefined
 
   constructor(kv: KVNamespaceLike, options: KVCacheStoreOptions = {}) {
     const floor = options.minExpirationTtl ?? 60
@@ -460,10 +455,17 @@ export class KVCacheStore implements CacheStore {
     // Precompute the put options object once: omit it entirely when no TTL (KV then never expires).
     this.putOptions =
       options.expirationTtl !== undefined ? { expirationTtl: options.expirationTtl } : undefined
+    // An expired path epoch would make pages stored under the one it replaced read as current again.
+    // Those were stored before the purge reached their location, so they expire within the TTL plus
+    // that delay; without a TTL they never expire, and neither may the epoch.
+    this.pathEpochOptions =
+      options.expirationTtl !== undefined
+        ? { expirationTtl: options.expirationTtl + PATH_EPOCH_SLACK }
+        : undefined
   }
 
   async get(key: string): Promise<CachedResponse | undefined> {
-    const raw = await this.kv.get(key)
+    const [raw, pathEpoch] = await Promise.all([this.kv.get(key), this.pathEpoch(key)])
     if (raw === null) return undefined
     let parsed: unknown
     try {
@@ -473,52 +475,65 @@ export class KVCacheStore implements CacheStore {
       return undefined
     }
     if (!isCachedResponse(parsed)) return undefined
-    const tags = normalizeTags(parsed.tags)
-    if (tags.length === 0) return parsed
-    const epochs = (parsed as StoredTaggedResponse).__nifraTagEpochs
+    const {
+      __nifraTagEpochs: epochs,
+      __nifraPathEpoch: storedPathEpoch,
+      ...value
+    } = parsed as StoredResponse
+    // A page another location stored before this path's purge reached it keeps the older epoch.
+    if ((storedPathEpoch ?? "0") !== pathEpoch) return undefined
+    const tags = normalizeTags(value.tags)
+    if (tags.length === 0) return value
     if (epochs === undefined) return undefined
     const current = await Promise.all(
       tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
     )
     if (current.some(([tag, epoch]) => epochs[tag] !== epoch)) return undefined
-    const { __nifraTagEpochs: _ignored, ...value } = parsed as StoredTaggedResponse
     return value
   }
 
-  /** Wall-clock time, so purges on any instance order against it. KV is eventually consistent, so the
-   * fence holds only for purges this location has already seen. */
+  /** Wall-clock time, so purges on any instance order against it. KV is eventually consistent, so
+   * `set` refuses only purges this location has already seen; a page stored before a purge reached
+   * its location keeps the older epoch and reads as a miss once the purge arrives. */
   fence(): number {
     return kvClock()
   }
 
   async set(key: string, value: CachedResponse): Promise<void> {
     const { fence, ...entry } = value
-    if (fence !== undefined && kvPurgedAt(await this.kv.get(key)) > fence) return
     const tags = normalizeTags(entry.tags)
-    if (tags.length === 0) {
-      await this.kv.put(key, JSON.stringify(entry), this.putOptions)
+    const [pathEpoch, ...tagEpochs] = await Promise.all([
+      this.pathEpoch(key),
+      ...tags.map(async (tag) => (await this.kv.get(this.tagKey(tag))) ?? "0"),
+    ])
+    if (
+      fence !== undefined &&
+      [pathEpoch, ...tagEpochs].some((epoch) => kvEpochTime(epoch) > fence)
+    ) {
       return
     }
-    const epochs = Object.fromEntries(
-      await Promise.all(
-        tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
-      ),
-    )
-    if (fence !== undefined && Object.values(epochs).some((epoch) => kvEpochTime(epoch) > fence)) {
-      return
-    }
-    const stored: StoredTaggedResponse = {
+    const stored: StoredResponse = {
       ...entry,
-      tags,
-      __nifraTagEpochs: epochs,
+      ...(tags.length === 0
+        ? {}
+        : {
+            tags,
+            __nifraTagEpochs: Object.fromEntries(tags.map((tag, at) => [tag, tagEpochs[at]!])),
+          }),
+      ...(pathEpoch === "0" ? {} : { __nifraPathEpoch: pathEpoch }),
     }
     await this.kv.put(key, JSON.stringify(stored), this.putOptions)
   }
 
-  /** Leaves a marker rather than removing the key, so `set` can refuse a render that began before
-   * the purge. The marker reads as a miss. */
+  /** Moves the path's epoch and leaves the page: a page stored under the old epoch reads as a miss,
+   * even one another location stored before this purge reached it, and `set` refuses a render begun
+   * before the purge. */
   async delete(key: string): Promise<void> {
-    await this.kv.put(key, JSON.stringify({ [KV_PURGED_AT]: kvClock() }), this.putOptions)
+    await this.kv.put(
+      await this.pathKey(key),
+      `${kvClock()}:${crypto.randomUUID()}`,
+      this.pathEpochOptions,
+    )
   }
 
   async invalidateTag(tag: string): Promise<void> {
@@ -531,6 +546,21 @@ export class KVCacheStore implements CacheStore {
 
   private tagKey(tag: string): string {
     return `${KV_TAG_EPOCH_PREFIX}${encodeURIComponent(tag)}`
+  }
+
+  /** The page key under a prefix, or its digest when that would pass KV's key limit. */
+  private async pathKey(key: string): Promise<string> {
+    const named = `${KV_PATH_EPOCH_PREFIX}${key}`
+    // A UTF-16 unit is at most three UTF-8 bytes, so most keys skip the encode.
+    if (named.length * 3 <= KV_KEY_LIMIT) return named
+    const encoder = new TextEncoder()
+    if (encoder.encode(named).byteLength <= KV_KEY_LIMIT) return named
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(key)))
+    return `${KV_PATH_DIGEST_PREFIX}${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+  }
+
+  private async pathEpoch(key: string): Promise<string> {
+    return (await this.kv.get(await this.pathKey(key))) ?? "0"
   }
 }
 
