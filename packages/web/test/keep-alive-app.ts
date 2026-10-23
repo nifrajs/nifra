@@ -88,6 +88,9 @@ export async function serveApp(options: {
       if (pathname === "/entry.js") {
         return new Response(script, { headers: { "content-type": "text/javascript" } })
       }
+      // A full Chrome asks for it on the first page of each origin and logs the 404 as a console error,
+      // which every assertion on the page's problems would count.
+      if (pathname === "/favicon.ico") return new Response(null, { status: 204 })
       // The same hold, for a test that serves the app from a child process.
       if (pathname === HOLD_PATH) {
         releaseHeld = hold()
