@@ -238,6 +238,7 @@ function wrapped(
   })
   const store = recordingStore(new MemoryCacheStore(), calls, options.stallTags)
   const handler = withISR(appWith(action, runtime), {
+    storeSecret: SECRET,
     store,
     revalidate: 60,
     now: () => Date.now(),
@@ -320,6 +321,7 @@ test("key parity under a custom key: the purge keys each path with the action's 
       db,
     ),
     {
+      storeSecret: SECRET,
       store: recordingStore(new MemoryCacheStore(), calls),
       revalidate: 60,
       now: () => Date.now(),
@@ -394,6 +396,7 @@ test("a page purge that hangs is cut off at storeTimeoutMs, retried, and the act
   const handler = withISR(
     appWith(async () => revalidate(["/posts/1"], { ok: true }), undefined),
     {
+      storeSecret: SECRET,
       store: {
         get: (key) => base.get(key),
         set: (key, value) => base.set(key, value),
@@ -424,6 +427,7 @@ test("a custom ISR key is handed each revalidated path as a request on the actio
   const handler = withISR(
     appWith(async () => revalidate(["/posts/1"], { ok: true }), undefined),
     {
+      storeSecret: SECRET,
       store: recordingStore(new MemoryCacheStore(), calls),
       revalidate: 60,
       now: () => Date.now(),

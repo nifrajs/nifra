@@ -109,7 +109,9 @@ export default {
     if (new URL(req.url).pathname === "/__nifra/revalidate") {
       return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
-    const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
+    // Signs every page it stores, so a page anyone else wrote to the namespace is never served.
+    const storeSecret = env.ISR_STORE_SECRET // \`wrangler secret put ISR_STORE_SECRET\`
+    const isr = withISR(app, { store, storeSecret, revalidate: 60, now: () => Date.now() })
     // waitUntil keeps the worker alive while a stale page regenerates behind the response.
     return isr(req, { env, waitUntil: (p) => ctx.waitUntil(p) })
   },
@@ -287,13 +289,25 @@ export default function Rendering() {
         page renders from being undone when that render stores the page it built from the old data;
         both built-in stores do.
       </p>
+      <p>
+        Anything else that can write a shared store - another service on the same KV namespace, a
+        leaked token - could put a page with its own script in front of every visitor. So over any
+        store but <code>MemoryCacheStore</code>, <code>withISR</code> needs a{" "}
+        <code>storeSecret</code> (at least 32 characters, the same in every process) and refuses to
+        start without one. Each page is stored with an HMAC-SHA-256 over its key, body, status,
+        headers, tags and freshness, and a page whose signature is missing or wrong is a miss: it
+        renders again and the signed render replaces it. A new secret only empties the cache. The
+        signature cannot stop a store writer from deleting pages or putting back an older page the
+        app stored for the same URL; that page keeps its age, so it serves stale and regenerates.
+      </p>
       <CodeBlock code={KV} />
       <p>
         A store outage never fails a page. A read that throws, rejects, or outlives{" "}
         <code>storeTimeoutMs</code> is a miss and the page renders; a failed write still returns the
         rendered page; a failed background regeneration keeps the stale entry. Each failure goes to{" "}
         <code>onStoreError(error, &#123; op &#125;)</code>, which by default logs one line per operation
-        per minute without the cache key. Set <code>storeTimeoutMs</code> for a network store, so a
+        per minute without the cache key; a page that fails its signature check is reported with op{" "}
+        <code>"verify"</code>. Set <code>storeTimeoutMs</code> for a network store, so a
         hung connection costs a miss rather than the request.
       </p>
 

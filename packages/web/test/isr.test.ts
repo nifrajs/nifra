@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, setSystemTime, spyOn, test } from "bun:test"
 import { type CachedResponse, type CacheStore, MemoryCacheStore } from "../src/isr.ts"
 
+const STORE_SECRET = "isr-test-store-secret-0123456789abcdef"
+
 const entry = (body: string): CachedResponse => ({
   body,
   status: 200,
@@ -208,7 +210,12 @@ describe("withISR", () => {
       },
     })
     const { app, calls } = trackApp(() => html("v1"))
-    const handler = withISR(app, { store: spy, revalidate: 60, now: () => 0 })
+    const handler = withISR(app, {
+      store: spy,
+      storeSecret: STORE_SECRET,
+      revalidate: 60,
+      now: () => 0,
+    })
     for (const query of ["?a=1", "?a=2", "?utm_source=x"]) {
       const res = await handler(new Request(`http://x/p${query}`))
       expect(res.headers.get("x-nifra-isr")).toBeNull()
@@ -276,7 +283,12 @@ describe("withISR", () => {
     let cacheControl = "private, no-store"
     let t = 0
     const { app, calls } = trackApp(() => html("v", { "cache-control": cacheControl }))
-    const handler = withISR(app, { store: spy, revalidate: 60, now: () => t })
+    const handler = withISR(app, {
+      store: spy,
+      storeSecret: STORE_SECRET,
+      revalidate: 60,
+      now: () => t,
+    })
     await handler(new Request("http://x/p"))
     await handler(new Request("http://x/p"))
     expect(gets).toEqual(["http://x/p"]) // the second request went straight to the app
@@ -304,7 +316,12 @@ describe("withISR", () => {
       },
     })
     const { app } = trackApp(() => html("v", { "cache-control": "no-store" }))
-    const handler = withISR(app, { store: spy, revalidate: 0, now: () => 0 })
+    const handler = withISR(app, {
+      store: spy,
+      storeSecret: STORE_SECRET,
+      revalidate: 0,
+      now: () => 0,
+    })
     await handler(new Request("http://x/p"))
     await handler(new Request("http://x/p"))
     expect(gets).toBe(2)
@@ -1203,6 +1220,7 @@ describe("KVCacheStore", () => {
       { fetch: async () => html("fresh") },
       {
         store: new KVCacheStore(kv),
+        storeSecret: STORE_SECRET,
         revalidate: 60,
         now: () => 0,
       },
@@ -1294,7 +1312,7 @@ describe("withISR over KVCacheStore (the production store path)", () => {
     let body = "v1"
     let t = 0
     const { app, calls } = trackApp(() => html(body))
-    const handler = withISR(app, { store, revalidate: 1, now: () => t })
+    const handler = withISR(app, { store, storeSecret: STORE_SECRET, revalidate: 1, now: () => t })
 
     const miss = await handler(new Request("http://x/p"))
     expect(miss.headers.get("x-nifra-isr")).toBe("miss")
@@ -1323,7 +1341,12 @@ describe("withISR over KVCacheStore (the production store path)", () => {
     const store = new KVCacheStore(kv)
     let t = 0
     const { app, calls } = trackApp(() => html("v"))
-    const handler = withISR(app, { store, revalidate: 1000, now: () => t }) // long freshness
+    const handler = withISR(app, {
+      store,
+      storeSecret: STORE_SECRET,
+      revalidate: 1000,
+      now: () => t,
+    }) // long freshness
     const purge = revalidateEndpoint({ store, secret: "s" })
 
     await handler(new Request("http://x/p")) // miss → cached
@@ -1578,6 +1601,7 @@ describe("withISR store failures", () => {
     }
     const handler = withISR(trackApp(() => html("PAGE")).app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 60,
       now: () => 0,
       onStoreError,
@@ -1592,6 +1616,7 @@ describe("withISR store failures", () => {
     const store = failing((op) => (op === "get" ? Promise.reject(new Error("offline")) : undefined))
     const handler = withISR(trackApp(() => html("PAGE")).app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 60,
       now: () => 0,
       onStoreError,
@@ -1606,6 +1631,7 @@ describe("withISR store failures", () => {
     const store = failing((op) => (op === "get" ? new Promise<never>(() => {}) : undefined))
     const handler = withISR(trackApp(() => html("PAGE")).app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 60,
       now: () => 0,
       storeTimeoutMs: 5,
@@ -1624,6 +1650,7 @@ describe("withISR store failures", () => {
     })
     const handler = withISR(trackApp(() => html("PAGE")).app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 60,
       now: () => 0,
       onStoreError,
@@ -1642,6 +1669,7 @@ describe("withISR store failures", () => {
     const store = failing((op) => (op === "set" ? new Promise<never>(() => {}) : undefined))
     const handler = withISR(trackApp(() => html("PAGE")).app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 60,
       now: () => 0,
       storeTimeoutMs: 5,
@@ -1666,7 +1694,13 @@ describe("withISR store failures", () => {
       },
     }
     const store = failing((op) => (op === "set" ? Promise.reject(new Error("down")) : undefined))
-    const handler = withISR(app, { store, revalidate: 60, now: () => 0, onStoreError: () => {} })
+    const handler = withISR(app, {
+      store,
+      storeSecret: STORE_SECRET,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError: () => {},
+    })
     const pending = Array.from({ length: 4 }, () => handler(new Request("http://x/p")))
     release()
     const bodies = await Promise.all((await Promise.all(pending)).map((res) => res.text()))
@@ -1685,6 +1719,7 @@ describe("withISR store failures", () => {
     let version = 1
     const handler = withISR(trackApp(() => html(`v${version}`)).app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 1,
       now: () => t,
       onStoreError,
@@ -1710,6 +1745,7 @@ describe("withISR store failures", () => {
       const store = failing(() => Promise.reject(new Error("GET http://x/secret-path failed")))
       const handler = withISR(trackApp(() => html("PAGE")).app, {
         store,
+        storeSecret: STORE_SECRET,
         revalidate: 60,
         now: () => t,
       })
@@ -1830,7 +1866,12 @@ describe("a purge that lands while a page renders", () => {
             })
           },
         }
-        const isr = withISR(app, { store, revalidate: 3600, now: () => 0 })
+        const isr = withISR(app, {
+          store,
+          storeSecret: STORE_SECRET,
+          revalidate: 3600,
+          now: () => 0,
+        })
         const first = isr(new Request("http://x/p"))
         await started.promise
         data = "v2"
@@ -1859,6 +1900,7 @@ describe("a purge that lands while a page renders", () => {
     }
     const isr = withISR(app, {
       store,
+      storeSecret: STORE_SECRET,
       revalidate: 3600,
       now: () => 0,
       onStoreError: (_error, { op }) => reports.push(op),
@@ -1866,5 +1908,230 @@ describe("a purge that lands while a page renders", () => {
     await (await isr(new Request("http://x/p"))).text()
     expect((await isr(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
     expect(reports).toEqual(["fence"])
+  })
+})
+
+describe("pages a shared store holds are signed", () => {
+  const MAC = "x-nifra-isr-mac"
+  const stored = (kv: FakeKV, path = "/p"): Record<string, unknown> & CachedResponse =>
+    JSON.parse(kv.store.get(pageKey(path)) ?? "null")
+  const plant = (kv: FakeKV, value: unknown, path = "/p"): void => {
+    kv.store.set(pageKey(path), JSON.stringify(value))
+  }
+  const signedSetup = ({ defaultReport = false } = {}) => {
+    const kv = new FakeKV()
+    const reports: ISRStoreOp[] = []
+    let body = "real"
+    const tracked = trackApp(() =>
+      html(body, { "content-security-policy": "script-src 'self'", "x-nifra-isr-tags": "b,a" }),
+    )
+    const options: ISROptions = {
+      store: new KVCacheStore(kv),
+      storeSecret: STORE_SECRET,
+      revalidate: 60,
+      now: () => 0,
+    }
+    const handler = withISR(
+      tracked.app,
+      defaultReport ? options : { ...options, onStoreError: (_error, { op }) => reports.push(op) },
+    )
+    const read = async (path = "/p") => {
+      const res = await handler(new Request(`http://x${path}`))
+      return { status: res.headers.get("x-nifra-isr"), body: await res.text(), res }
+    }
+    return {
+      kv,
+      reports,
+      handler,
+      read,
+      calls: tracked.calls,
+      setBody: (next: string) => (body = next),
+    }
+  }
+
+  test("a store other processes can write refuses to start without a secret", () => {
+    const app = trackApp(() => html("x")).app
+    const kv = new KVCacheStore(new FakeKV())
+    expect(() => withISR(app, { store: kv, revalidate: 60, now: () => 0 })).toThrow(
+      /needs storeSecret, at least 32 characters/,
+    )
+    const custom: CacheStore = {
+      get: async () => undefined,
+      set: async () => {},
+      delete: async () => {},
+    }
+    expect(() => withISR(app, { store: custom, revalidate: 60, now: () => 0 })).toThrow(
+      /needs storeSecret/,
+    )
+  })
+
+  test("a secret shorter than 32 characters is refused, even for the memory store", () => {
+    const app = trackApp(() => html("x")).app
+    for (const store of [new MemoryCacheStore(), new KVCacheStore(new FakeKV())]) {
+      expect(() =>
+        withISR(app, { store, storeSecret: "x".repeat(31), revalidate: 60, now: () => 0 }),
+      ).toThrow(/storeSecret must be a string of at least 32 characters/)
+    }
+  })
+
+  test("the memory store keeps its pages unsigned, with or without a secret", async () => {
+    for (const storeSecret of [undefined, STORE_SECRET]) {
+      const store = new MemoryCacheStore()
+      const options: ISROptions = { store, revalidate: 60, now: () => 0 }
+      const handler = withISR(
+        trackApp(() => html("v")).app,
+        storeSecret === undefined ? options : { ...options, storeSecret },
+      )
+      await (await handler(new Request("http://x/p"))).text()
+      expect((await store.get(pageKey("/p")))?.headers[MAC]).toBeUndefined()
+      expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
+    }
+  })
+
+  test("a page this app stored verifies, and its MAC never reaches the visitor", async () => {
+    const { kv, read, calls, reports } = signedSetup()
+    expect((await read()).status).toBe("miss")
+    expect(stored(kv).headers[MAC]).toMatch(/^[0-9a-f]{64}$/)
+    const hit = await read()
+    expect([hit.status, hit.body, hit.res.headers.has(MAC)]).toEqual(["hit", "real", false])
+    expect(hit.res.headers.get("content-security-policy")).toBe("script-src 'self'")
+    expect([calls(), reports]).toEqual([1, []])
+  })
+
+  test("a page whose MAC was copied onto planted content is a miss, rendered and stored again", async () => {
+    const { kv, read, calls, reports } = signedSetup()
+    await read()
+    plant(kv, { ...stored(kv), body: "<script>steal()</script>" })
+    const after = await read()
+    expect([after.status, after.body, calls(), reports]).toEqual(["miss", "real", 2, ["verify"]])
+    // The render overwrote the planted page with one that verifies.
+    expect((await read()).status).toBe("hit")
+    expect(calls()).toBe(2)
+  })
+
+  test("every field a replay serves is covered", async () => {
+    const mutations: Array<(page: CachedResponse) => CachedResponse> = [
+      (page) => ({ ...page, status: 201 }),
+      (page) => ({ ...page, storedAt: page.storedAt + 1 }),
+      (page) => ({ ...page, revalidate: page.revalidate * 1000 }),
+      (page) => ({ ...page, tags: ["a"] }),
+      (page) => ({ ...page, headers: { ...page.headers, "content-security-policy": "" } }),
+      (page) => ({ ...page, headers: { ...page.headers, link: "</evil.js>; rel=preload" } }),
+    ]
+    for (const mutate of mutations) {
+      const { kv, read, reports } = signedSetup()
+      await read()
+      const { __nifraTagEpochs, ...page } = stored(kv)
+      plant(kv, { ...mutate(page), __nifraTagEpochs })
+      expect((await read()).status).toBe("miss")
+      expect(reports).toEqual(["verify"])
+    }
+  })
+
+  test("a page with no MAC, or one that is not 64 lowercase hex digits, is a miss", async () => {
+    for (const mac of [undefined, "", "zz".repeat(32), "AB".repeat(32), "ab".repeat(31)]) {
+      const { kv, read, reports } = signedSetup()
+      await read()
+      const page = stored(kv)
+      const headers: Record<string, unknown> = { ...page.headers }
+      if (mac === undefined) delete headers[MAC]
+      else headers[MAC] = mac
+      plant(kv, { ...page, headers })
+      const after = await read()
+      expect([after.status, after.body, reports]).toEqual(["miss", "real", ["verify"]])
+    }
+  })
+
+  test("a page signed under another secret is a miss", async () => {
+    const first = signedSetup()
+    await first.read()
+    const reports: ISRStoreOp[] = []
+    const other = withISR(trackApp(() => html("other")).app, {
+      store: new KVCacheStore(first.kv),
+      storeSecret: `${STORE_SECRET}-rotated`,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError: (_error, { op }) => reports.push(op),
+    })
+    const res = await other(new Request("http://x/p"))
+    expect([res.headers.get("x-nifra-isr"), await res.text(), reports]).toEqual([
+      "miss",
+      "other",
+      ["verify"],
+    ])
+    // Each secret refuses the other's pages.
+    expect((await first.read()).status).toBe("miss")
+    expect(first.reports).toEqual(["verify"])
+  })
+
+  test("a page copied to another key never verifies there", async () => {
+    const { kv, read, setBody, reports } = signedSetup()
+    setBody("admin only")
+    await read("/a")
+    setBody("public")
+    plant(kv, stored(kv, "/a"), "/b")
+    const res = await read("/b")
+    expect([res.status, res.body, reports]).toEqual(["miss", "public", ["verify"]])
+  })
+
+  test("a store that reorders headers and tags still serves the page", async () => {
+    const base = new MemoryCacheStore()
+    const reorder = (page: CachedResponse): CachedResponse => ({
+      ...page,
+      headers: Object.fromEntries(Object.entries(page.headers).reverse()),
+      ...(page.tags === undefined ? {} : { tags: [...page.tags].reverse() }),
+    })
+    const store: CacheStore = {
+      get: async (key) => {
+        const page = await base.get(key)
+        return page === undefined ? undefined : reorder(page)
+      },
+      set: (key, value) => base.set(key, value),
+      delete: (key) => base.delete(key),
+    }
+    const handler = withISR(
+      trackApp(() => html("v", { "x-nifra-isr-tags": "a,b", "content-language": "en" })).app,
+      { store, storeSecret: STORE_SECRET, revalidate: 60, now: () => 0 },
+    )
+    await (await handler(new Request("http://x/p"))).text()
+    expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
+  })
+
+  test("a malformed record from a custom store is a miss, not an error", async () => {
+    const reports: ISRStoreOp[] = []
+    const store: CacheStore = {
+      // A record a store deserialized without the fields a page needs.
+      get: async () => JSON.parse('{"body":"planted"}'),
+      set: async () => {},
+      delete: async () => {},
+    }
+    const handler = withISR(trackApp(() => html("real")).app, {
+      store,
+      storeSecret: STORE_SECRET,
+      revalidate: 60,
+      now: () => 0,
+      onStoreError: (_error, { op }) => reports.push(op),
+    })
+    const res = await handler(new Request("http://x/p"))
+    expect([res.status, await res.text(), reports]).toEqual([200, "real", ["verify"]])
+  })
+
+  test("the default report says the check failed, never names the key, and is rate-limited", async () => {
+    const error = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const { kv, read } = signedSetup({ defaultReport: true })
+      await read("/secret-path")
+      plant(kv, { ...stored(kv, "/secret-path"), body: "planted" }, "/secret-path")
+      await read("/secret-path")
+      plant(kv, { ...stored(kv, "/secret-path"), body: "planted" }, "/secret-path")
+      await read("/secret-path")
+      expect(error).toHaveBeenCalledTimes(1)
+      const line = String(error.mock.calls[0]?.[0])
+      expect(line).toContain("ISR store verify failed")
+      expect(line).toContain("signature check")
+      expect(line).not.toContain("secret-path")
+    } finally {
+      error.mockRestore()
+    }
   })
 })

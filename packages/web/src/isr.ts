@@ -16,6 +16,12 @@ import {
   settleInvalidation,
 } from "./internal/invalidation.ts"
 import { INVALIDATION, type InvalidationHandoff } from "./internal/invalidation-contract.ts"
+import {
+  isStoreSecret,
+  MIN_STORE_SECRET_LENGTH,
+  type StoreSigner,
+  storeSigner,
+} from "./internal/store-signature.ts"
 import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { SWAP_HEADER } from "./render-seam.ts"
 
@@ -152,6 +158,9 @@ export interface MemoryCacheStoreOptions {
   readonly max?: number
 }
 
+// Nothing outside this process can write these, so `withISR` keeps their pages unsigned.
+const inProcessStores = new WeakSet<CacheStore>()
+
 /**
  * In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the
  * rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a
@@ -185,6 +194,7 @@ export class MemoryCacheStore implements CacheStore {
     if (!Number.isSafeInteger(this.max) || this.max <= 0) {
       throw new RangeError("[nifra/web] MemoryCacheStore max must be a positive safe integer")
     }
+    inProcessStores.add(this)
   }
 
   get(key: string): Promise<CachedResponse | undefined> {
@@ -412,7 +422,8 @@ type StoredTaggedResponse = CachedResponse & {
  * binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges
  * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize
  * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as
- * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.
+ * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`,
+ * and give `withISR` the `storeSecret` it signs these pages with.
  *
  * Cloudflare is the default, not a requirement: {@link KVNamespaceLike} is three structural methods,
  * so a Redis, Deno KV, or Upstash binding satisfies it (pass `minExpirationTtl` for their TTL floor).
@@ -572,6 +583,17 @@ export function withoutCacheChannel(res: Response): Response {
 
 export interface ISROptions {
   readonly store: CacheStore
+  /**
+   * Signs every page written to `store` and checks the signature on every read, so whoever else can
+   * write the store (another service on the same KV namespace, a leaked token) cannot hand visitors a
+   * page this app did not render. Required for every store but a {@link MemoryCacheStore}, whose
+   * pages never leave the process and stay unsigned. At least 32 characters, the same in every
+   * process. A page whose signature is missing or wrong reads as a miss and renders again, so a new
+   * secret only empties the cache. It cannot stop a store writer from deleting pages, or from putting
+   * back an older page this app stored for the same key; that page keeps its age, so it serves stale
+   * and regenerates.
+   */
+  readonly storeSecret?: string
   /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated
    * behind). A route overrides it per-page via `export const revalidate` (surfaced as the
    * `x-nifra-isr-revalidate` response header). */
@@ -608,10 +630,11 @@ export interface ISROptions {
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
   /**
-   * Called when a store call fails: it throws, rejects, or outlives {@link storeTimeoutMs}. The request
-   * is served without the cache either way - a failed read is a miss, a failed write still returns the
-   * rendered page, a failed regeneration keeps the stale entry - so a store outage never changes a
-   * status. Default: one `console.error` line per operation per minute, never naming the cache key.
+   * Called when a store call fails: it throws, rejects, or outlives {@link storeTimeoutMs}, or (op
+   * `"verify"`) a page it returns fails its {@link storeSecret} signature check. The request is served
+   * without the cache either way - a failed read is a miss, a failed write still returns the rendered
+   * page, a failed regeneration keeps the stale entry - so a store outage never changes a status.
+   * Default: one `console.error` line per operation per minute, never naming the cache key.
    */
   readonly onStoreError?: (error: unknown, info: { readonly op: ISRStoreOp }) => void
   /**
@@ -636,9 +659,10 @@ export interface ISROptions {
 }
 
 /** The store operation an {@link ISROptions.onStoreError} report is about. */
-export type ISRStoreOp = "get" | "set" | "delete" | "fence"
+export type ISRStoreOp = "get" | "set" | "delete" | "fence" | "verify"
 
 const STORE_FAILED = Symbol("nifra.isr.store-failed")
+const MAC_HEADER = "x-nifra-isr-mac"
 const STORE_REPORT_INTERVAL_MS = 60_000
 const STORE_REPORT_DETAIL_CHARS = 200
 
@@ -656,6 +680,61 @@ function storeErrorDetail(error: unknown, key: string): string {
   return redacted.length > STORE_REPORT_DETAIL_CHARS
     ? `${redacted.slice(0, STORE_REPORT_DETAIL_CHARS)}...`
     : redacted
+}
+
+/**
+ * What a page's MAC covers: everything a replay serves, plus the key, so a page copied to another key
+ * never verifies there. Header names and tags are sorted, since a store need not keep their order.
+ */
+function signedParts(key: string, entry: CachedResponse): readonly string[] {
+  const names = Object.keys(entry.headers)
+    .filter((name) => name !== MAC_HEADER)
+    .sort()
+  const headers = names.map((name) => [name, entry.headers[name]])
+  const tags = entry.tags === undefined ? [] : [...entry.tags].sort()
+  const meta = JSON.stringify([
+    1,
+    key,
+    entry.status,
+    entry.storedAt,
+    entry.revalidate,
+    headers,
+    tags,
+  ])
+  return [meta, entry.body]
+}
+
+async function signed(
+  signer: StoreSigner,
+  key: string,
+  entry: CachedResponse,
+): Promise<CachedResponse> {
+  const mac = await signer.sign(signedParts(key, entry))
+  return { ...entry, headers: { ...entry.headers, [MAC_HEADER]: mac } }
+}
+
+async function verified(signer: StoreSigner, key: string, entry: CachedResponse): Promise<boolean> {
+  try {
+    return await signer.verify(signedParts(key, entry), entry.headers[MAC_HEADER])
+  } catch {
+    // A store's own malformed record.
+    return false
+  }
+}
+
+function signerFor(store: CacheStore, secret: unknown): StoreSigner | undefined {
+  if (secret !== undefined && !isStoreSecret(secret)) {
+    throw new TypeError(
+      `[nifra/web] ISR storeSecret must be a string of at least ${MIN_STORE_SECRET_LENGTH} characters`,
+    )
+  }
+  if (inProcessStores.has(store)) return undefined
+  if (secret === undefined) {
+    throw new TypeError(
+      `[nifra/web] withISR needs storeSecret, at least ${MIN_STORE_SECRET_LENGTH} characters, to sign the pages it keeps in a store other processes can write. Only a MemoryCacheStore runs without one.`,
+    )
+  }
+  return storeSigner(secret)
 }
 
 // Headers only an action or a data request carries; a stored page is always a plain document GET.
@@ -910,6 +989,11 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
+  const signer = signerFor(store, options.storeSecret)
+  const write = (key: string, entry: CachedResponse): Promise<void> =>
+    signer === undefined
+      ? store.set(key, entry)
+      : signed(signer, key, entry).then((value) => store.set(key, value))
   const storeTimeoutMs = options.storeTimeoutMs
   if (storeTimeoutMs !== undefined && !(Number.isFinite(storeTimeoutMs) && storeTimeoutMs > 0)) {
     throw new RangeError("[nifra/web] ISR storeTimeoutMs must be a positive finite number")
@@ -1093,7 +1177,7 @@ export function withISR(
     }
     // A failed write still answers with the page, and still hands it to concurrent misses: whether it
     // may be shared was decided above, not by the store.
-    await attempt("set", key, () => store.set(key, entry))
+    await attempt("set", key, () => write(key, entry))
     stored?.(entry)
     return fresh(entry)
   }
@@ -1157,7 +1241,7 @@ export function withISR(
           ...(tags.length === 0 ? {} : { tags }),
           fence,
         }
-        await attempt("set", key, () => store.set(key, entry))
+        await attempt("set", key, () => write(key, entry))
       } else if (isInvalidationResponse(judged(req), res)) {
         // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
         // publicly visible forever, because every stale request would retry the same non-cacheable
@@ -1207,7 +1291,11 @@ export function withISR(
     }
 
     const read = personal ? undefined : await attempt("get", key, () => store.get(key))
-    const hit = read === STORE_FAILED ? undefined : read
+    let hit = read === STORE_FAILED ? undefined : read
+    if (hit !== undefined && signer !== undefined && !(await verified(signer, key, hit))) {
+      reportStoreError("verify", key, new Error("a stored page failed its signature check"))
+      hit = undefined
+    }
     if (hit !== undefined) {
       if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).

@@ -23,3 +23,8 @@ id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 # and it would collide with a secret of the same name. Set it with
 # `bunx wrangler secret put REVALIDATE_SECRET`; until then the deployed Worker answers 404 on
 # /__nifra/revalidate. `bun run dev` passes a local value with --var.
+
+# The ISR page-signing secret, at least 32 characters: withISR signs every page it writes to KV and
+# serves only pages that verify. A secret too, never a [vars] entry: set it with
+# `bunx wrangler secret put ISR_STORE_SECRET`; until then the deployed Worker answers 500.
+# `bun run dev` passes a local value with --var.

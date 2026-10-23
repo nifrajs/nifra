@@ -38,15 +38,18 @@ Cloudflare account needed:
 
 ```sh
 bun run examples/isr-react/build.ts
-cd examples/isr-react && bunx wrangler dev --var REVALIDATE_SECRET:dev-secret
+cd examples/isr-react && bunx wrangler dev --var REVALIDATE_SECRET:dev-secret \
+  --var ISR_STORE_SECRET:dev-isr-store-secret-not-for-production
 ```
 
 The only difference from `server.ts` is the store: `MemoryCacheStore` → `KVCacheStore(env.ISR_CACHE)`,
-so the page cache and on-demand purges hold **across worker instances**. `ctx.waitUntil` keeps the
+so the page cache and on-demand purges hold **across worker instances**. A shared store needs
+`storeSecret`: `withISR` signs every page it writes there and serves only pages that verify. `ctx.waitUntil` keeps the
 worker alive while a stale page regenerates behind the response.
 
 To deploy: create a KV namespace (`bunx wrangler kv namespace create ISR_CACHE`), paste its id into
-`wrangler.toml`, set the purge secret (`bunx wrangler secret put REVALIDATE_SECRET`), then
+`wrangler.toml`, set the purge secret (`bunx wrangler secret put REVALIDATE_SECRET`) and the
+page-signing secret (`bunx wrangler secret put ISR_STORE_SECRET`, 32+ random characters), then
 `bunx wrangler deploy`.
 
 ## How it works
@@ -55,7 +58,8 @@ To deploy: create a KV namespace (`bunx wrangler kv namespace create ISR_CACHE`)
   `GET` `200`s are cached; assets, data-mode soft-nav fetches, redirects, and errors pass through.
 - Per-route `export const revalidate` (seconds) → the `x-nifra-isr-revalidate` header → the page's TTL.
 - `MemoryCacheStore` (dev) refuses to run under `NODE_ENV=production`; `KVCacheStore` (prod) is the
-  shared, durable store. Any backend fitting the `CacheStore` interface works.
+  shared, durable store. Any backend fitting the `CacheStore` interface works; every store but
+  `MemoryCacheStore` needs `storeSecret`.
 - `revalidateEndpoint({ store, secret })` is the on-demand purge handler.
 
 See [the rendering docs](../../site/routes/docs/rendering.tsx) for the full picture (SSG + ISR).
