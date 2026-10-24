@@ -52,7 +52,6 @@ import {
   STATUS_HEADER,
 } from "../router.ts"
 import { searchOf, searchOfChain } from "../search.ts"
-import { serverHoleComponent } from "../server-components/hole.ts"
 import { mergeHeads, resolveChainMeta } from "./head-merge.ts"
 import { keepAliveTable, slotDepths } from "./keep-alive-table.ts"
 import {
@@ -63,7 +62,13 @@ import {
   type LiveRouteMatch,
 } from "./live-contract.ts"
 import { prepareModules } from "./module-preparation.ts"
-import { type HoleLive, isHole, type PprIntegration, type PprRequest } from "./ppr/contract.ts"
+import {
+  type HoleLive,
+  isHole,
+  type PprIntegration,
+  type PprRequest,
+  serverHoleComponent,
+} from "./ppr/contract.ts"
 import {
   EMPTY_RETAIN,
   type HeadersLike,

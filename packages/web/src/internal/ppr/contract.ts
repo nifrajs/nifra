@@ -47,6 +47,16 @@ export type HoleRegistration = DynamicHole | SharedHole
 export const isHole = (boundary: BoundaryRegistration): boundary is HoleRegistration =>
   boundary.mode === "dynamic" || boundary.mode === "shared"
 
+/** The key `serverHole()` stores a hole's server component under, on the hole's `render`. */
+export const SERVER_HOLE: unique symbol = Symbol.for("nifra.web.server-hole")
+
+/** The server component a hole's `render` names, or `undefined` for an ordinary `render`. */
+export const serverHoleComponent = (render: unknown): object | undefined => {
+  if (typeof render !== "function") return undefined
+  const component: unknown = Reflect.get(render, SERVER_HOLE)
+  return typeof component === "object" && component !== null ? component : undefined
+}
+
 /** What the page executor hands over for one PPR request. */
 export interface PprRequest {
   readonly routeId: string

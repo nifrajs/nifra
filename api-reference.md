@@ -6597,8 +6597,6 @@ _No named exports (side-effect entrypoint)._
 
 - **serverHole** _(function)_ - `serverHole: <Input, Props, View>(component: ServerComponent<Input, Props, View>) => (data: Input) => never`
   A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its input. The page's app lists the component under `createServerComponents({ holes })` for the route. The hole cannot be `interactive`; its client islands are.
-- **serverHoleComponent** _(const)_ - `serverHoleComponent: (render: unknown) => object | undefined`
-  The server component a hole's `render` names, or `undefined` for an ordinary `render`.
 
 ### `@nifrajs/web/server-components/islands`
 

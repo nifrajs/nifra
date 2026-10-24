@@ -24059,13 +24059,6 @@
     "doc": "/**\n * A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its\n * input. The page's app lists the component under `createServerComponents({ holes })` for the route.\n * The hole cannot be `interactive`; its client islands are.\n */"
   },
   {
-    "name": "serverHoleComponent",
-    "kind": "const",
-    "package": "@nifrajs/web",
-    "signature": "export declare const serverHoleComponent: (render: unknown) => object | undefined;",
-    "doc": "/** The server component a hole's `render` names, or `undefined` for an ordinary `render`. */"
-  },
-  {
     "name": "serviceWorkerRegistration",
     "kind": "function",
     "package": "@nifrajs/web",
