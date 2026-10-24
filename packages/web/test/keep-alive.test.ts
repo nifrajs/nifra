@@ -837,6 +837,36 @@ describe("keepAliveClient", () => {
     expect(fake.navigations).toEqual(["/list/1"])
   })
 
+  test("the page on screen through a sign-in is not kept with the previous visitor's data", async () => {
+    fakeDocument.cookie = "nifra-epoch=alice"
+    const { router, push, fake } = setup(state("list", "/list/1", { data: { owner: "alice" } }), {
+      hooks: { list: { keepAlive: { revalidate: false } } },
+    })
+    fakeDocument.cookie = "nifra-epoch=bob"
+    identityChanged()
+    push(state("detail", "/detail"))
+    expect(router.snapshot().kept).toBeUndefined()
+    fakeHistory.go(-1)
+    await router.navigate("/list/1")
+    expect(router.snapshot().restored).toBeUndefined()
+    expect(fake.navigations).toEqual(["/list/1"])
+  })
+
+  test("the page on screen is kept again once its data loads under the new epoch", () => {
+    fakeDocument.cookie = "nifra-epoch=alice"
+    const { router, push, fake } = setup(state("list", "/list/1", { data: { owner: "alice" } }))
+    fakeDocument.cookie = "nifra-epoch=bob"
+    identityChanged()
+    // An update that loads nothing keeps the data, and the epoch, it had.
+    fake.publish({ ...fake.inner.snapshot(), actionData: { ok: true } })
+    push(state("detail", "/detail"))
+    expect(keptOf(router)).toEqual([])
+    push(state("list", "/list/2", { data: { owner: "bob" } }))
+    fake.publish(state("list", "/list/2", { data: { owner: "bob", fresh: true } }))
+    push(state("detail", "/detail"))
+    expect(keptOf(router)).toEqual(["/list/2"])
+  })
+
   test("another tab's sign-out, identityChanged() and a visible tab's new epoch each drop", () => {
     const { router, push, drops } = setup(state("list", "/list/1"))
     const other = new FakeChannel("nifra-identity-v1")

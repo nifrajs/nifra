@@ -246,10 +246,13 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     let lastEpoch = readEpoch()
 
     const first = readEntry()
+    // `epoch` is the one the page's data was loaded under: a page left after a sign-in or sign-out
+    // shows the previous visitor's data, so it is not kept.
     let active = {
       instance: first.instance ?? newInstance(),
       index: first.index,
       settled: inner.snapshot(),
+      epoch: lastEpoch,
     }
     stampEntry(active.instance)
     if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
@@ -340,15 +343,15 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       dropKept("identity")
     }
 
-    const keep = (instance: string, index: number, state: RouterState): void => {
-      if (!keepable(state)) return
+    const keep = (instance: string, index: number, state: RouterState, epoch: string): void => {
+      if (!keepable(state) || epoch !== readEpoch()) return
       const setting = keepAliveOf(state.routeId)
       const settings = typeof setting === "object" ? setting : {}
       records.delete(instance)
       records.set(instance, {
         page: { instance, state },
         index,
-        epoch: readEpoch(),
+        epoch,
         hiddenAt: now(),
         maxAge: settings.maxAge ?? KEEP_ALIVE_MAX_AGE_MS,
         revalidate: settings.revalidate !== false,
@@ -361,7 +364,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     const settle = (next: RouterState): void => {
       const entry = readEntry()
       if (sameInstance(active.settled, next)) {
-        active = { instance: active.instance, index: entry.index, settled: next }
+        // Data the router did not load again is still the data it was loaded with.
+        const epoch = next.data === active.settled.data ? active.epoch : readEpoch()
+        active = { instance: active.instance, index: entry.index, settled: next, epoch }
       } else {
         // The page on screen was left: by a push (a fresh entry above it), a traversal (an entry that
         // already carries an instance), or a replace (its own entry rewritten), which discards it.
@@ -372,7 +377,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           )
         }
         if (entry.index !== active.index && !leftGone)
-          keep(active.instance, active.index, active.settled)
+          keep(active.instance, active.index, active.settled, active.epoch)
         const reuse =
           entry.index !== active.index &&
           entry.instance !== undefined &&
@@ -380,7 +385,12 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           !records.has(entry.instance)
             ? entry.instance
             : undefined
-        active = { instance: reuse ?? newInstance(), index: entry.index, settled: next }
+        active = {
+          instance: reuse ?? newInstance(),
+          index: entry.index,
+          settled: next,
+          epoch: readEpoch(),
+        }
       }
       stampEntry(active.instance)
       sweep()
@@ -424,7 +434,12 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           return
         endRestore()
         if (onPage) {
-          active = { instance: active.instance, index: active.index, settled: next }
+          active = {
+            instance: active.instance,
+            index: active.index,
+            settled: next,
+            epoch: restore.reload ? readEpoch() : active.epoch,
+          }
           shown = { ...next, params: shareData(restore.kept.params, next.params) }
           flags = undefined
           refresh()
@@ -446,9 +461,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       const entry = readEntry()
       records.delete(instance)
       keptPages = undefined
-      if (!leftGone) keep(active.instance, active.index, active.settled)
+      if (!leftGone) keep(active.instance, active.index, active.settled, active.epoch)
       const kept = record.page.state
-      active = { instance, index: entry.index, settled: kept }
+      active = { instance, index: entry.index, settled: kept, epoch: record.epoch }
       const reload = record.revalidate || record.stale || kept.path !== path
       const modal = kept.intercepted
       const pagePath = modal === undefined ? path : modal.pagePath
