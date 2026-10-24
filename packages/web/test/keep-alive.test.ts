@@ -981,6 +981,27 @@ describe("keepAliveClient", () => {
     expect(router.snapshot().restored).toBeUndefined()
   })
 
+  for (const failed of [false, true]) {
+    test(`a new epoch during a restore's reload does not keep its ${failed ? "fallback" : "late"} data`, async () => {
+      fakeDocument.cookie = "nifra-epoch=alice"
+      const alice = state("list", "/list/1", { data: { owner: "alice" } })
+      const { router, push, fake } = setup(alice)
+      push(state("detail", "/detail"))
+      fakeHistory.go(-1)
+      const release = fake.hold()
+      const restoring = router.navigate("/list/1")
+      // Another tab's sign-in moves the shared cookie; its broadcast has not reached this tab.
+      fakeDocument.cookie = "nifra-epoch=bob"
+      // A failed reload republishes the kept response.
+      fake.publish(failed ? alice : state("list", "/list/1", { data: { owner: "alice-late" } }))
+      release()
+      await restoring
+      expect(fake.navigations).toEqual(["/list/1"])
+      push(state("detail", "/detail"))
+      expect(keptOf(router)).toEqual([])
+    })
+  }
+
   test("another tab's sign-out, identityChanged() and a visible tab's new epoch each drop", () => {
     const { router, push, drops } = setup(state("list", "/list/1"))
     const other = new FakeChannel("nifra-identity-v1")
