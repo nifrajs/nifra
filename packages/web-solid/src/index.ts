@@ -62,7 +62,7 @@ function documentView(chain: readonly unknown[], props: RenderProps, slots: read
   return (): JSX.Element =>
     KeepAliveView({
       tree: () => tree,
-      state: () => state,
+      shown: props,
       mount: { propsOf: () => props, chainOf: () => chain, entry: noRef, page: noRef },
     })
 }

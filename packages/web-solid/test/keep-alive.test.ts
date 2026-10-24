@@ -129,7 +129,7 @@ test("each slot renders its own state, and a page's `_error` boundary renders in
   const html = renderToString(() =>
     KeepAliveView({
       tree: () => tree,
-      state: () => stateAt("/b"),
+      shown: propsOf(() => stateAt("/b")),
       mount: {
         propsOf,
         // The browser's chain of an error route: the layouts, the `_error` boundary, then the page.

@@ -19,7 +19,7 @@ import {
 import { createMemo, createSignal } from "solid-js"
 import { hydrate as solidHydrate } from "solid-js/web"
 import { setMountedRouter } from "./fetcher.ts"
-import { KeepAliveView } from "./keep-alive-view.ts"
+import { KeepAliveView, type KeepAliveViewMount } from "./keep-alive-view.ts"
 import { routeProps } from "./route-props.ts"
 
 export * from "./client.ts"
@@ -53,16 +53,13 @@ export function mountRouter(options: KeepAliveMountOptions): void {
       current = slotTree(state(), matchChains, table, current)
       return current
     })
-    return KeepAliveView({
-      tree,
-      state,
-      mount: {
-        propsOf: (of) => routeProps(of, searchSchemas, matchChains, (read) => createMemo(read)),
-        chainOf: (of) => routes[of.routeId] ?? [],
-        entry: parking.entry,
-        page: parking.page,
-      },
-    })
+    const mount: KeepAliveViewMount = {
+      propsOf: (of) => routeProps(of, searchSchemas, matchChains, (read) => createMemo(read)),
+      chainOf: (of) => routes[of.routeId] ?? [],
+      entry: parking.entry,
+      page: parking.page,
+    }
+    return KeepAliveView({ tree, shown: mount.propsOf(state), mount })
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
   }, container as Element)
   // Solid has updated the document by the time a publish returns: park what it hid, restore what it
