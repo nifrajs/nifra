@@ -54,6 +54,7 @@ import {
   type StandardSchemaV1,
 } from "@nifrajs/core/server"
 import { guardChannel, outputGuard } from "./internal/output-guard.ts"
+import { SERVER_FN_NAMESPACE } from "./internal/server-boundary.ts"
 
 /** The URL prefix every mounted function lives under. Namespaced per mount, then by export name. */
 export const SERVER_FN_PREFIX = "/_nifra/fn"
@@ -124,8 +125,6 @@ export function serverFn<Input = void, Output = unknown>(
 const isServerFn = (value: unknown): value is ServerFn<unknown, unknown> =>
   typeof value === "function" && SERVER_FN in (value as object)
 
-/** A namespace segment: lowercase, dot/dash separated. Constrained so a mount cannot invent a path. */
-const NAMESPACE = /^[a-z0-9]+(?:[-.][a-z0-9]+)*$/
 /** An export name that is safe in a URL path without escaping. */
 const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
@@ -163,7 +162,7 @@ export type ServerFnModule = Readonly<Record<string, unknown>>
  * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.
  */
 export function serverFunctions(namespace: string, module: ServerFnModule): IdentityPlugin {
-  if (!NAMESPACE.test(namespace)) {
+  if (!SERVER_FN_NAMESPACE.test(namespace)) {
     throw new Error(
       `[nifra/fn] invalid server-function namespace ${JSON.stringify(namespace)} - use lowercase dot/dash segments (it becomes a URL path).`,
     )
@@ -215,5 +214,15 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
     }
     return app
   }
-  return defineIdentityPlugin(`nifra:server-fn:${namespace}`, apply)
+  // A plugin name per module: the same module mounted twice stays one mount, while a second module
+  // under a taken namespace mounts too, so its functions are served, or a name both modules export
+  // fails as a duplicate route instead of the second module silently answering nothing.
+  const modules = MODULES_BY_NAMESPACE.get(namespace) ?? []
+  MODULES_BY_NAMESPACE.set(namespace, modules)
+  if (!modules.includes(module)) modules.push(module)
+  const index = modules.indexOf(module)
+  const suffix = index === 0 ? "" : `#${index + 1}`
+  return defineIdentityPlugin(`nifra:server-fn:${namespace}${suffix}`, apply)
 }
+
+const MODULES_BY_NAMESPACE = new Map<string, ServerFnModule[]>()

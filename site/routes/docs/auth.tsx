@@ -239,8 +239,11 @@ export default function Auth() {
       <h2>Guard a route</h2>
       <p>
         <code>requireSession</code> / <code>requireUser</code> throw a <code>status(...)</code> render
-        (a 302 to <code>redirectTo</code>, or a 401) when the session is missing - Nifra renders a
-        thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
+        (a 302 to <code>redirectTo</code>, or a 401) when the session is empty, or when it lacks the
+        key a login sets - Nifra renders a thrown control-flow value as-is, so the guard
+        short-circuits the loader. A session can hold data before anyone signs in (a cart, a return
+        path), and <code>requireSession</code> passes it, so guard a signed-in page with{" "}
+        <code>requireUser</code>. It is plain data, not
         a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes. To guard
         every page under a directory, run the same check in the <code>middleware</code> export of that
         directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.

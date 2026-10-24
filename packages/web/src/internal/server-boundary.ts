@@ -12,6 +12,8 @@
 
 /** Modules whose exports become client stubs: `todos.fn.ts`, `x.fn.mjs`, or the extensionless `foo.fn`. */
 export const SERVER_FN_MODULE = /\.fn(\.[cm]?[jt]sx?)?$/
+/** A server-function namespace: lowercase, dot/dash separated, so a mount cannot invent a path. */
+export const SERVER_FN_NAMESPACE = /^[a-z0-9]+(?:[-.][a-z0-9]+)*$/
 
 import { jsStringLiteral } from "./js-string.ts"
 import { DATE_TAG, REVIVE_DATES_SOURCE } from "./revive-dates.ts"
@@ -105,7 +107,14 @@ function stringEnd(source: string, start: number): number {
  */
 export function serverFnNamespace(filePath: string): string {
   const base = filePath.replaceAll("\\", "/").split("/").pop() ?? ""
-  return base.replace(SERVER_FN_MODULE, "")
+  const namespace = base.replace(SERVER_FN_MODULE, "")
+  // `serverFunctions()` refuses this namespace, so a stub calling it could never reach a function.
+  if (!SERVER_FN_NAMESPACE.test(namespace)) {
+    throw new Error(
+      `[nifra/fn] ${base} names the server-function namespace ${JSON.stringify(namespace)}, which serverFunctions() refuses - name the file in lowercase dot/dash segments (todo-items.fn.ts).`,
+    )
+  }
+  return namespace
 }
 
 /** The server functions a module declares, in source order. */

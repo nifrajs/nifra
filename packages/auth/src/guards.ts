@@ -79,6 +79,9 @@ const rejection = (options: GuardOptions): ResponseResult => {
  * (302/401) - control flow, not a `Response`; see the module docs above. Use at
  * the top of a protected loader:
  * `const session = requireSession(await sessions.get(c), { redirectTo: "/login" })`.
+ *
+ * Non-empty is not signed in: a session that holds anything (a cart, a return path, CSRF state)
+ * passes. Guard a page for signed-in visitors with {@link requireUser} and the key a login sets.
  */
 export function requireSession<Data extends Record<string, unknown>>(
   session: Session<Data>,

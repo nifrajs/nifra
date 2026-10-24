@@ -124,7 +124,11 @@ export default function ServerFunctions() {
       <p>
         One thing worth knowing: the namespace you pass here and the <code>*.fn.ts</code> filename are
         not statically checked against each other. If they disagree the call 404s, and the generated
-        stub names the mismatch - but the compiler will not catch it for you.
+        stub names the mismatch - but the compiler will not catch it for you. The build fails on a
+        filename that is not a valid namespace (<code>todoItems.fn.ts</code>; use{" "}
+        <code>todo-items.fn.ts</code>). Two files with one basename (<code>admin/todos.fn.ts</code>{" "}
+        and <code>user/todos.fn.ts</code>) share the namespace: both mount, and an export name they
+        both use fails at boot as a duplicate route.
       </p>
 
       <h2>Calling it</h2>

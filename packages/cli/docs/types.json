@@ -17680,7 +17680,7 @@
     "kind": "function",
     "package": "@nifrajs/env",
     "signature": "export declare function boolean(opts?: Base<boolean>): StandardSchemaV1<boolean>;",
-    "doc": "/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive). */"
+    "doc": "/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off` → false (case-insensitive). Set\n * but empty is `default` when there is one, else false. */"
   },
   {
     "name": "boundAgentText",
@@ -19989,7 +19989,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function etag(options?: ETagOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
-    "doc": "/**\n * A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns\n * **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged\n * responses. Built on the portable `onResponseBody` tier: the hook receives the final\n * framework-serialized bytes on every runtime with nothing drained, so the middleware stays on\n * Node's direct writer. Handler-returned raw `Response`s (streams, proxied fetches) use a capped,\n * replaying fallback so oversized bodies remain intact. Idempotent.\n */"
+    "doc": "/**\n * A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns\n * **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged\n * responses. Built on the portable `onResponseBody` tier: the hook receives the final\n * framework-serialized bytes on every runtime with nothing drained, so the middleware stays on\n * Node's direct writer. Handler-returned raw `Response`s (streams, proxied fetches) use a capped,\n * replaying fallback so oversized bodies remain intact. A response that already carries an `ETag`\n * (a version the app manages) keeps it, and `If-None-Match` is checked against that tag. Idempotent.\n */"
   },
   {
     "name": "evaluateBuildFreshness",
@@ -21790,7 +21790,7 @@
     "kind": "function",
     "package": "@nifrajs/env",
     "signature": "export declare function number(opts?: Base<number> & Optional): StandardSchemaV1<number | undefined>;",
-    "doc": "/** A finite number, coerced from its decimal string. */"
+    "doc": "/** A finite number, coerced from its decimal string (`42`, `-3.5`; not `0x10` or `1e3`). */"
   },
   {
     "name": "ogImageResponse",
@@ -23230,7 +23230,7 @@
     "kind": "function",
     "package": "@nifrajs/auth",
     "signature": "export declare function requireSession<Data extends Record<string, unknown>>(session: Session<Data>, options?: GuardOptions): Session<Data>;",
-    "doc": "/**\n * Require a non-empty session. Returns it when present; otherwise throws a `status(...)` render\n * (302/401) - control flow, not a `Response`; see the module docs above. Use at\n * the top of a protected loader:\n * `const session = requireSession(await sessions.get(c), { redirectTo: \"/login\" })`.\n */"
+    "doc": "/**\n * Require a non-empty session. Returns it when present; otherwise throws a `status(...)` render\n * (302/401) - control flow, not a `Response`; see the module docs above. Use at\n * the top of a protected loader:\n * `const session = requireSession(await sessions.get(c), { redirectTo: \"/login\" })`.\n *\n * Non-empty is not signed in: a session that holds anything (a cart, a return path, CSRF state)\n * passes. Guard a page for signed-in visitors with {@link requireUser} and the key a login sets.\n */"
   },
   {
     "name": "requireSession",

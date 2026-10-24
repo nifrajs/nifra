@@ -1819,7 +1819,11 @@ in the module that is not a server function is ignored rather than mounted.
 
 One thing worth knowing: the namespace you pass here and the `*.fn.ts` filename are
 not statically checked against each other. If they disagree the call 404s, and the generated
-stub names the mismatch - but the compiler will not catch it for you.
+stub names the mismatch - but the compiler will not catch it for you. The build fails on a
+filename that is not a valid namespace (`todoItems.fn.ts`; use
+`todo-items.fn.ts`). Two files with one basename (`admin/todos.fn.ts`
+and `user/todos.fn.ts`) share the namespace: both mount, and an export name they
+both use fails at boot as a duplicate route.
 
 ### Calling it
 
@@ -5279,8 +5283,11 @@ app.post("/api/logout", async (c) => {
 ### Guard a route
 
 `requireSession` / `requireUser` throw a `status(...)` render
-(a 302 to `redirectTo`, or a 401) when the session is missing - Nifra renders a
-thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
+(a 302 to `redirectTo`, or a 401) when the session is empty, or when it lacks the
+key a login sets - Nifra renders a thrown control-flow value as-is, so the guard
+short-circuits the loader. A session can hold data before anyone signs in (a cart, a return
+path), and `requireSession` passes it, so guard a signed-in page with
+`requireUser`. It is plain data, not
 a `Response`: same bytes on the wire, on the lane an ordinary return takes. To guard
 every page under a directory, run the same check in the `middleware` export of that
 directory's `_layout.backend.ts` - see [Route middleware](/docs/routing#middleware).
@@ -17022,9 +17029,9 @@ Every value in `process.env` is a `string | undefined`; these turn it into the v
 | helper | type | notes |
 | --- | --- | --- |
 | `env.string({ default?, optional? })` | `string` | empty string counts as unset |
-| `env.number({ default?, optional? })` | `number` | finite, coerced |
-| `env.port({ default? })` | `number` | integer 1-65535 |
-| `env.boolean({ default? })` | `boolean` | `true`/`1`/`yes`/`on` vs `false`/`0`/`no`/`off`/empty |
+| `env.number({ default?, optional? })` | `number` | plain decimal (`42`, `-3.5`; not `0x10` or `1e3`); blank counts as unset |
+| `env.port({ default? })` | `number` | decimal integer 1-65535; blank counts as unset |
+| `env.boolean({ default? })` | `boolean` | `true`/`1`/`yes`/`on` vs `false`/`0`/`no`/`off`; empty is `default`, else `false` |
 | `env.enum([...], { default? })` | union | one of the listed values |
 | `env.url({ default?, optional? })` | `string` | parses with WHATWG `URL`, returns the normalized href |
 

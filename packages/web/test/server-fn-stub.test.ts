@@ -35,6 +35,13 @@ describe("serverFnNamespace", () => {
     // A path-derived namespace would put the build machine's layout into a public URL.
     expect(serverFnNamespace("/home/runner/work/app/src/todos.fn.ts")).not.toContain("runner")
   })
+
+  test("a file whose name serverFunctions() would refuse fails the build, naming the file", () => {
+    expect(serverFnNamespace("todo-items.fn.ts")).toBe("todo-items")
+    for (const file of ["/app/todoItems.fn.ts", "todo_items.fn.ts"]) {
+      expect(() => serverFnNamespace(file)).toThrow(/\.fn\.ts names the server-function namespace/)
+    }
+  })
 })
 
 describe("scanServerFnExports", () => {

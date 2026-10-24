@@ -88,6 +88,35 @@ describe("mounting", () => {
     expect(() => serverFunctions("../evil", fns)).toThrow(/namespace/)
     expect(() => serverFunctions("Has Spaces", fns)).toThrow(/namespace/)
   })
+
+  test("two modules under one namespace both mount; the same module twice stays one mount", async () => {
+    const admin = {
+      add: serverFn({ output: t.object({ by: t.string() }) }, () => ({ by: "admin" })),
+    }
+    const user = {
+      remove: serverFn({ output: t.object({ by: t.string() }) }, () => ({ by: "user" })),
+    }
+    const both = server()
+      .use(serverFunctions("shared", admin))
+      .use(serverFunctions("shared", user))
+      .use(serverFunctions("shared", admin))
+    const call = async (name: string) => {
+      const res = await both.fetch(
+        new Request(`http://t${SERVER_FN_PREFIX}/shared/${name}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "null",
+        }),
+      )
+      return `${res.status} ${await res.text()}`
+    }
+    expect(await call("add")).toBe('200 {"by":"admin"}')
+    expect(await call("remove")).toBe('200 {"by":"user"}')
+    const clash = { add: serverFn({}, () => ({ by: "clash" })) }
+    expect(() =>
+      server().use(serverFunctions("shared", admin)).use(serverFunctions("shared", clash)),
+    ).toThrow(/duplicate route: POST \/_nifra\/fn\/shared\/add/)
+  })
 })
 
 describe("input is never trusted", () => {

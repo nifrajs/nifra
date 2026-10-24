@@ -3435,7 +3435,7 @@ _No named exports (side-effect entrypoint)._
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }`
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Output = unknown>`
 - **boolean** _(function)_ - `boolean: (opts?: Base<boolean>) => StandardSchemaV1<boolean>`
-  A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive).
+  A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off` → false (case-insensitive). Set but empty is `default` when there is one, else false.
 - **defineEnv** _(function)_ - `defineEnv: <S extends EnvShape>(shape: S, options?: DefineEnvOptions) => EnvResult<S>`
   Validate the environment against a schema and return a **frozen, typed** object - or throw at startup listing **every** problem at once (not just the first), so a misconfigured deploy fails loud and immediately instead of erroring on the first request that touches a bad var. This is the boot-time h…
 - **enumValue** _(function)_ - `enumValue: <const V extends readonly [string, ...string[]]>(values: V, opts?: Base<V[number]>) => StandardSchemaV1<V[number]>`
@@ -3443,7 +3443,7 @@ _No named exports (side-effect entrypoint)._
 - **env** _(const)_ - `env: { string: (opts?: Base<string> & Optional) => StandardSchemaV1<string | undefined>; number: (opts?: Base<number> & Optional) => StandardSchemaV1<number | undefined>; port: (opts?: Base<number>) => StandardSchemaV1<…`
   The coercing env validators, grouped - `env.string()`, `env.port()`, `env.enum([...])`, …
 - **number** _(function)_ - `number: (opts?: Base<number> & Optional) => StandardSchemaV1<number | undefined>`
-  A finite number, coerced from its decimal string.
+  A finite number, coerced from its decimal string (`42`, `-3.5`; not `0x10` or `1e3`).
 - **port** _(function)_ - `port: (opts?: Base<number>) => StandardSchemaV1<number>`
   A TCP port: an integer in 1-65535.
 - **string** _(function)_ - `string: (opts?: Base<string> & Optional) => StandardSchemaV1<string | undefined>`
