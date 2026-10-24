@@ -147,19 +147,20 @@
   },
   "dependencies": {
     "@nifrajs/core": "workspace:*",
-    "@nifrajs/authjs": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
     "@nifrajs/web": "workspace:*",
     "@nifrajs/schema": "workspace:*"
   },
   "peerDependencies": {
+    "@nifrajs/authjs": "workspace:^",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
     "react-server-dom-webpack": "19.3.1"
   },
   "devDependencies": {
+    "@nifrajs/authjs": "workspace:*",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
@@ -179,6 +180,9 @@
   },
   "homepage": "https://github.com/nifrajs/nifra#readme",
   "peerDependenciesMeta": {
+    "@nifrajs/authjs": {
+      "optional": true
+    },
     "@vitejs/plugin-rsc": {
       "optional": true
     },

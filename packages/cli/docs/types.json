@@ -15295,7 +15295,7 @@
     "name": "SingleCopyRegistration",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SingleCopyRegistration {\n    /** `preload` at the top level: covers `bun run` and anything that loads app sources directly. */\n    readonly run: boolean;\n    /** `[test] preload`: covers `bun test`, the surface that runs app sources unbundled. */\n    readonly test: boolean;\n    /** The `bunfig.toml` that was read, if one exists. */\n    readonly config?: string;\n}",
+    "signature": "export interface SingleCopyRegistration {\n    /** `preload` at the top level: covers `bun run` and anything that loads app sources directly. */\n    readonly run: boolean;\n    /** `[test] preload`: covers `bun test`, the surface that runs app sources unbundled. */\n    readonly test: boolean;\n    /**\n     * Tables whose `preload` names the registrar although Bun reads it from neither place: below\n     * `[install]` the line is `install.preload`, so `bun run` loads every copy while the file looks armed.\n     */\n    readonly ignored?: readonly string[];\n    /** The `bunfig.toml` that was read, if one exists. */\n    readonly config?: string;\n}",
     "doc": "/** Which unbundled phases have the resolver preloaded. Bundled phases never need it - nifra's build\n * injects the plugin itself. */"
   },
   {

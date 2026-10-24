@@ -233,6 +233,11 @@ export interface SingleCopyRegistration {
   readonly run: boolean
   /** `[test] preload`: covers `bun test`, the surface that runs app sources unbundled. */
   readonly test: boolean
+  /**
+   * Tables whose `preload` names the registrar although Bun reads it from neither place: below
+   * `[install]` the line is `install.preload`, so `bun run` loads every copy while the file looks armed.
+   */
+  readonly ignored?: readonly string[]
   /** The `bunfig.toml` that was read, if one exists. */
   readonly config?: string
 }
@@ -286,6 +291,7 @@ export function readSingleCopyRegistration(cwd: string): SingleCopyRegistration 
   let section = ""
   let run = false
   let test = false
+  const ignored: string[] = []
   for (const line of text.split(/\r?\n/)) {
     const match = PRELOAD_ASSIGNMENT.exec(line)
     if (match?.groups === undefined) continue
@@ -298,8 +304,9 @@ export function readSingleCopyRegistration(cwd: string): SingleCopyRegistration 
       continue
     if (section === "test") test = true
     else if (section === "") run = true
+    else if (!ignored.includes(section)) ignored.push(section)
   }
-  return { run, test, config }
+  return ignored.length === 0 ? { run, test, config } : { run, test, ignored, config }
 }
 
 /** The repository a linked checkout resolves its own dependencies from: its nearest `.git` ancestor.
@@ -646,12 +653,20 @@ const processSet = (key: symbol): Set<string> => {
 const copyLine = (label: string, path: string | undefined, version: string | undefined): string =>
   `  ${label}: ${path ?? "(not installed for the app)"}${version === undefined ? "" : ` (${version})`}`
 
-/** One report per package: both copies, both versions, the reason, and the fix. */
+/**
+ * One report per package: both copies, both versions, the reason, and the fix. A version skew comes
+ * from the plan, which reads installs, so it says installed: nothing may ever load that copy, and a
+ * runtime `onLoad` cannot watch for it without re-emitting CommonJS files as ES modules.
+ */
 const describeSkips = (name: string, skips: readonly SingleCopySkip[]): string => {
   const first = skips[0]
   const reason = first?.reason ?? "version-skew"
+  const effect =
+    reason === "version-skew"
+      ? "a second copy is installed at another version, and whatever loads it does not share this copy's module state."
+      : "a second copy loads, so its module state is not shared."
   const lines = [
-    `[nifra] single-copy: ${name} is NOT deduplicated (${reason}) - a second copy loads, so its module state is not shared.`,
+    `[nifra] single-copy: ${name} is NOT deduplicated (${reason}) - ${effect}`,
     copyLine("app copy", first?.to, first?.toVersion),
   ]
   for (const skip of skips) {
@@ -683,7 +698,7 @@ const describeSkewGroup = (skips: readonly SingleCopySkip[]): string => {
   if (first === undefined || skips.length === 1) return describeSkips(first?.package ?? "", skips)
   const names = skips.map((skip) => skip.package).sort(codeUnitOrder)
   return [
-    `[nifra] single-copy: ${names.length} packages are NOT deduplicated (version-skew) - a second copy of each loads, so their module state is not shared.`,
+    `[nifra] single-copy: ${names.length} packages are NOT deduplicated (version-skew) - a second copy of each is installed at another version, and whatever loads one does not share the app copy's module state.`,
     copyLine(
       "app copies",
       first.to === undefined ? undefined : modulesDirOf(first.to),

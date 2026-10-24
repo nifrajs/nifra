@@ -71,23 +71,18 @@ import {
 } from "./ppr/contract.ts"
 import {
   EMPTY_RETAIN,
-  type HeadersLike,
   isControlFlow,
   isResponseResult,
   isRevalidateResult,
-  isStatusSignal,
   type LoadedLayoutModules,
   layoutErrorId,
-  notFound,
   type RenderAssemblyCache,
   type RenderedPage,
   type RenderPageOptions,
   type RevalidateResult,
   redirect,
   renderPageResult,
-  STATUS_SIGNAL,
   STATUS_TEXT,
-  type StatusSignal,
   scopeParams,
   tagLayoutError,
   withDuplicateInstanceHint,
@@ -105,6 +100,13 @@ import {
   privateOutcome,
   varyOnDataHeader,
 } from "./response-controls.ts"
+import {
+  type HeadersLike,
+  isStatusSignal,
+  notFound,
+  STATUS_SIGNAL,
+  type StatusSignal,
+} from "./status-page.ts"
 
 export type { NonceResolver } from "../nonce.ts"
 

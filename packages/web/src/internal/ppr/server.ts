@@ -10,7 +10,8 @@ import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../cs
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
 import { HOLE_ERROR_HTML } from "../hole-runtime.ts"
-import { isControlFlow, isStatusSignal, notFound } from "../render-document.ts"
+import { isControlFlow } from "../render-document.ts"
+import { isStatusSignal, notFound } from "../status-page.ts"
 import { HoleAdmission, type HoleRun, type HoleSlot, watchAbort } from "./admission.ts"
 import type { ShellCheckRecord } from "./compile-shell.ts"
 import {

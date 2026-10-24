@@ -14,7 +14,8 @@ import {
   PprShellCold,
   PprShellUnchecked,
 } from "../src/internal/ppr/server.ts"
-import { notFound, redirect } from "../src/internal/render-document.ts"
+import { redirect } from "../src/internal/render-document.ts"
+import { notFound } from "../src/internal/status-page.ts"
 import type { RenderAdapter } from "../src/render-seam.ts"
 
 const adapter: RenderAdapter = {

@@ -1,7 +1,8 @@
 import { narrowCapabilityContext } from "@nifrajs/core/capabilities"
 import { validateStandard } from "@nifrajs/core/schema"
 import { outputGuard, runGuard } from "../internal/output-guard.ts"
-import { isControlFlow, isStatusSignal } from "../internal/render-document.ts"
+import { isControlFlow } from "../internal/render-document.ts"
+import { isStatusSignal } from "../internal/status-page.ts"
 import { ServerComponentError } from "./error.ts"
 import { assertComponentSchema, componentValue } from "./schema.ts"
 import type {

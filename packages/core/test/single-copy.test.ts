@@ -156,6 +156,25 @@ test("readSingleCopyRegistration tells the run preload from the test preload", a
     // Not armed for `bun run`: a `[test]` preload covers `bun test` only, and reporting otherwise
     // would claim a guarantee the app does not have.
     expect(registration.run).toBe(false)
+    expect(registration.ignored).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a preload written below [install] arms nothing for `bun run`, and the table is named", async () => {
+  const { ground, app } = await linkedRepos("registration-install-table", {
+    declaration: ["state"],
+    bunfig:
+      '[install]\nexact = true\npreload = ["@nifrajs/core/single-copy/register"]\n[test]\npreload = ["@nifrajs/core/single-copy/register"]\n',
+  })
+  try {
+    const registration = readSingleCopyRegistration(app)
+    expect(registration).toMatchObject({ run: false, test: true, ignored: ["install"] })
+    // The line reader agrees with Bun's own parse: the key belongs to the table above it.
+    const parsed = Bun.TOML.parse(await readFile(join(app, "bunfig.toml"), "utf8"))
+    expect(parsed).not.toHaveProperty("preload")
+    expect(parsed).toHaveProperty(["install", "preload"])
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
@@ -923,7 +942,7 @@ test("the registrar reports each planned skip, warns once, and installs one plug
       expect(installed[0]?.plan).toBe(first)
       expect(warnings).toHaveLength(1)
       expect(warnings[0]?.split("\n")).toEqual([
-        "[nifra] single-copy: state is NOT deduplicated (version-skew) - a second copy loads, so its module state is not shared.",
+        "[nifra] single-copy: state is NOT deduplicated (version-skew) - a second copy is installed at another version, and whatever loads it does not share this copy's module state.",
         `  app copy: ${ours} (1.0.0)`,
         `  linked copy: ${theirs} (2.0.0)`,
         "  2.0.0 there, 1.0.0 here - redirecting would serve a version that copy did not ask for",
@@ -964,7 +983,7 @@ test("a linked tree that skews several packages at once is one report, not one p
       expect(plan.skipped.map((skip) => skip.package).sort()).toEqual(["cache", "state", "store"])
       expect(warnings).toHaveLength(1)
       expect(warnings[0]?.split("\n")).toEqual([
-        "[nifra] single-copy: 3 packages are NOT deduplicated (version-skew) - a second copy of each loads, so their module state is not shared.",
+        "[nifra] single-copy: 3 packages are NOT deduplicated (version-skew) - a second copy of each is installed at another version, and whatever loads one does not share the app copy's module state.",
         `  app copies: ${dirname(ours)} (1.0.0)`,
         `  linked copies: ${dirname(theirs)} (2.0.0)`,
         "  packages: cache, state, store",

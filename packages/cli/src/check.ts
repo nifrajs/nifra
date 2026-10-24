@@ -675,6 +675,8 @@ export function renderCheckReport(result: CheckResult): string[] {
   if (deduplicated.length > 0) {
     const packages = deduplicated.map((finding) => finding.package).join(", ")
     lines.push(`• identity-sensitive duplicate installs handled by singleCopy: ${packages}`)
+    const unarmed = deduplicated.find((finding) => finding.unenforced !== undefined)
+    if (unarmed !== undefined) lines.push(`  ${unarmed.remediation}`)
   }
   if (result.ruleOverrides !== undefined) {
     const active = Object.entries(result.ruleOverrides).map(([rule, override]) => {

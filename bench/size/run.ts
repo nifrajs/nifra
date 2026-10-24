@@ -290,8 +290,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 1,000-row list 8-11%, against 3-4%): 19,648 B (Bun 1.4.4). A warmed prefetch is dropped when
   // the visitor's identity changes and when an action revalidates its path: 19,648 -> 19,844 B
   // (Bun 1.4.4). A navigation loads before its view transition, which holds only the page swap and
-  // skips its animation when no frame comes: 19,844 -> 19,961 B (Bun 1.4.4).
-  "nifra-web-client": 19.5,
+  // skips its animation when no frame comes: 19,844 -> 19,961 B (Bun 1.4.4). `notFound`, `gone` and
+  // `statusPage`, which this row's whole-namespace import keeps and a named import tree-shakes:
+  // 19,961 -> 20,178 B (Bun 1.4.4).
+  "nifra-web-client": 19.8,
   "nifra-i18n": 4.3,
 }
 

@@ -84,3 +84,16 @@ test("the generated client entry imports the client subpath, never the root", ()
   expect(line).toContain('"@nifrajs/web/client"')
   expect(line).not.toContain(`from ${ROOT_SPECIFIER}`)
 })
+
+test("the status helpers come from the client subpath as the root's own functions, importing nothing", async () => {
+  const client = await import("../src/client.ts")
+  const root = await import("../src/index.ts")
+  // One implementation: a helper shared by a loader (root) and a component (client) throws the same
+  // branded signal either way.
+  expect(client.notFound).toBe(root.notFound)
+  expect(client.gone).toBe(root.gone)
+  expect(client.statusPage).toBe(root.statusPage)
+  // Vite dev serves this module to the browser as written, so any import here is evaluated there.
+  const source = readFileSync(resolve(ROOT, "packages/web/src/internal/status-page.ts"), "utf8")
+  expect(new Bun.Transpiler({ loader: "ts" }).scanImports(source)).toEqual([])
+})
