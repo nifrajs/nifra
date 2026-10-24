@@ -36,8 +36,8 @@ export interface KeepAliveViewMount {
 
 export interface KeepAliveViewProps {
   readonly tree: Accessor<readonly SlotNode[]>
-  /** The state on screen, which the layouts every page shares render with. */
-  readonly state: Accessor<RouterState>
+  /** The props of the state on screen, which the layouts every page shares render with. */
+  readonly shown: RenderProps
   readonly mount: KeepAliveViewMount
 }
 
@@ -169,7 +169,7 @@ function Slot(props: {
 
 /** The keep-alive view. */
 export function KeepAliveView(props: KeepAliveViewProps): JSX.Element {
-  return withRouteContext(props.mount.propsOf(props.state), () =>
+  return withRouteContext(props.shown, () =>
     createComponent(Level, { nodes: props.tree, mount: props.mount }),
   )
 }
