@@ -3486,6 +3486,13 @@ hooks.
 routes declared after them.
 
 -
+An `authenticate()` stage, and a required auth plugin built on one (
+`bearer()`, `jwt()`, `basicAuth()`,
+`apiKey()`), guards the routes **and** the `mount()` and
+`mountFetch()` handlers declared after it. A mount declared before it stays
+public.
+
+-
 A **WebSocket** route, listed as `WS /path`, runs the request hooks, then the
 authentication stages, `derive`s, `beforeHandle`s and
 `onError` declared before it. Its handshake runs no `around`,
@@ -12858,6 +12865,10 @@ mount small and temporary, and use typed routes for every migrated endpoint.
 `/*` for a subtree. By default the legacy app sees the original URL. Set
 `stripPrefix: true` when the legacy app declares paths relative to its mount point.
 The platform object is forwarded as the second argument when the runtime supplies one.
+
+An auth plugin used before the mount, such as `bearer()` or
+`jwt()`, guards it like a route: a request it refuses never reaches the legacy
+app. Mount before the plugin when the legacy app keeps its own auth.
 
 A mounted fetch handler carries HTTP only. A WebSocket upgrade under the mount reaches it as
 an ordinary request and never becomes a socket, so keep the legacy app's sockets on its own

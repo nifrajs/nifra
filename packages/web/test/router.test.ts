@@ -966,7 +966,7 @@ describe("createClientRouter", () => {
     ): Promise<void> => {
       const realFetch = globalThis.fetch
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts actions through it here.
-      globalThis.fetch = (async () => {
+      globalThis.fetch = (async (_url: string, _init?: RequestInit) => {
         onPost()
         return new Response(JSON.stringify({ ok: true }), {
           headers: {

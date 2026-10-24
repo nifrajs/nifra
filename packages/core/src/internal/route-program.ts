@@ -13,6 +13,7 @@ import { declaredHeaderNames } from "../server/headers.ts"
 import { pathnameOf } from "../server/http.ts"
 import { queryObjectOf } from "../server/query.ts"
 import type { Registry } from "../server/registry.ts"
+import { toResponse } from "../server/respond.ts"
 import {
   CONTEXT_SEARCH,
   CONTEXT_SET,
@@ -260,6 +261,83 @@ function authenticationInputOf(
     clientIp: ctx.clientIp,
     signal: ctx.signal,
   })
+}
+
+/**
+ * Run the `authenticate()` stages a mount was registered after, in order, against the request the
+ * mount would receive: `undefined` once each one authenticated, else the response that refuses it. A
+ * stage that throws or decides nothing valid answers 503, and its cause goes to `report`.
+ */
+export function authenticateMount(
+  stages: readonly RawAuthStage[],
+  request: Request,
+  platform: { readonly env?: unknown; readonly clientIp?: string | undefined } | undefined,
+  report: (error: unknown) => void,
+): MaybePromise<Response | undefined> {
+  let query: Readonly<Record<string, string | readonly string[]>> | undefined
+  const search = (() => {
+    const at = request.url.indexOf("?")
+    return at === -1 ? "" : request.url.slice(at)
+  })()
+  const input = Object.freeze({
+    method: request.method,
+    pathname: pathnameOf(request.url),
+    headers: authHeadersOf(request),
+    params: Object.freeze({}),
+    search,
+    get query() {
+      query ??= frozenQueryOf(search)
+      return query
+    },
+    request,
+    env: platform?.env,
+    clientIp: platform?.clientIp,
+    signal: request.signal,
+  })
+  const unavailable = (error: unknown): Response => {
+    report(error)
+    return toResponse(defaultAuthenticationResponse("unavailable"), EMPTY_RESPONSE_CONTROLS)
+  }
+  const decide = (
+    index: number,
+    result: import("../server/auth.ts").AuthenticationResult<unknown>,
+  ): MaybePromise<Response | undefined> => {
+    if (
+      result === null ||
+      typeof result !== "object" ||
+      (result.kind === "rejected"
+        ? !validAuthenticationFailureReason(result.reason) ||
+          (result.response !== undefined &&
+            !(result.response instanceof Response) &&
+            !isResponseResult(result.response))
+        : result.kind !== "authenticated" ||
+          result.principal === null ||
+          result.principal === undefined)
+    ) {
+      const id = stages[index]?.id
+      return unavailable(new TypeError(`authenticate() stage "${id}" returned an invalid decision`))
+    }
+    if (result.kind === "rejected") {
+      const refusal = result.response ?? defaultAuthenticationResponse(result.reason)
+      return refusal instanceof Response ? refusal : toResponse(refusal, EMPTY_RESPONSE_CONTROLS)
+    }
+    markAuthenticatedRequest(request)
+    return run(index + 1)
+  }
+  const run = (index: number): MaybePromise<Response | undefined> => {
+    const stage = stages[index]
+    if (stage === undefined) return undefined
+    let outcome: MaybePromise<import("../server/auth.ts").AuthenticationResult<unknown>>
+    try {
+      outcome = stage.run(input)
+    } catch (error) {
+      return unavailable(error)
+    }
+    return outcome instanceof Promise
+      ? outcome.then((settled) => decide(index, settled), unavailable)
+      : decide(index, outcome)
+  }
+  return run(0)
 }
 
 function defaultAuthenticationResponse(

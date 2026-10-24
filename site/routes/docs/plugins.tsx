@@ -389,6 +389,13 @@ export default function Plugins() {
           routes declared after them.
         </li>
         <li>
+          An <code>authenticate()</code> stage, and a required auth plugin built on one (
+          <code>bearer()</code>, <code>jwt()</code>, <code>basicAuth()</code>,{" "}
+          <code>apiKey()</code>), guards the routes <b>and</b> the <code>mount()</code> and{" "}
+          <code>mountFetch()</code> handlers declared after it. A mount declared before it stays
+          public.
+        </li>
+        <li>
           A <b>WebSocket</b> route, listed as <code>WS /path</code>, runs the request hooks, then the
           authentication stages, <code>derive</code>s, <code>beforeHandle</code>s and{" "}
           <code>onError</code> declared before it. Its handshake runs no <code>around</code>,{" "}

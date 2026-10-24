@@ -24,6 +24,27 @@ describe("bearer()", () => {
     expect(await res.json()).toEqual({ role: "admin" })
   })
 
+  test("guards a legacy mountFetch() and a mounted app registered after it", async () => {
+    const auth = bearer({ verify: lookup })
+    const app = server()
+      .mountFetch("/public", () => new Response("public"))
+      .use(auth)
+      .mountFetch("/legacy", (request) => new Response(auth.requirePrincipal(request).role))
+      .mount({ path: "/child", app: server().get("/x", () => "child"), stripPrefix: true })
+    const status = async (path: string, headers: Record<string, string> = {}) =>
+      (await app.fetch(new Request(`http://x${path}`, { headers }))).status
+    expect(await status("/public/a")).toBe(200)
+    for (const path of ["/legacy/a", "/child/x"]) {
+      expect(await status(path)).toBe(401)
+      expect(await status(path, { authorization: "Bearer bad" })).toBe(401)
+      expect(await status(path, { authorization: "Bearer good" })).toBe(200)
+    }
+    const legacy = await app.fetch(
+      new Request("http://x/legacy/a", { headers: { authorization: "Bearer good" } }),
+    )
+    expect(await legacy.text()).toBe("admin")
+  })
+
   test("rejects a missing token with 401 + WWW-Authenticate", async () => {
     const app = server()
       .use(bearer({ verify: lookup }))
