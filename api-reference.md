@@ -6180,6 +6180,8 @@ _No named exports (side-effect entrypoint)._
   Most pages kept per tab.
 - **KEEP_ALIVE_MAX_AGE_MS** _(const)_ - `KEEP_ALIVE_MAX_AGE_MS: number`
   Longest a page stays hidden unless its route sets `keepAlive: { maxAge }`, in milliseconds.
+- **KEPT_PAGES_GLOBAL** _(const)_ - `KEPT_PAGES_GLOBAL: "__nifraKeepAlive"`
+  Where a development build lists its kept pages, for `@nifrajs/devtools`.
 - **KeepAliveClient** _(interface)_ - `interface KeepAliveClient`
   What {@link keepAliveClient} returns: the transport to build the router with, then the layer.
 - **KeepAliveClientOptions** _(interface)_ - `interface KeepAliveClientOptions`
@@ -6191,6 +6193,8 @@ _No named exports (side-effect entrypoint)._
   The router as {@link keepAliveClient} hands it to the history layer and the adapter.
 - **KeepAliveTable** _(interface)_ - `interface KeepAliveTable`
   What the server and the browser both read to place the slot wrappers.
+- **KeptPageInfo** _(interface)_ - `interface KeptPageInfo`
+  One kept page, as the devtools panel lists it.
 - **PAGE_HIDE_EVENT** _(const)_ - `PAGE_HIDE_EVENT: "nifra:pagehide"`
   Dispatched on a kept page's element as the router hides it (`keepAlive`), while it is still in the document and before the router's subscribers see the state that hides it.
 - **PAGE_SHOW_EVENT** _(const)_ - `PAGE_SHOW_EVENT: "nifra:pageshow"`
@@ -6209,6 +6213,8 @@ _No named exports (side-effect entrypoint)._
   Tell this tab and every other tab of the origin that the visitor signed in or out. Call it at login and logout when identity lives in client storage (a bearer token) rather than in a cookie, which the server's epoch cookie already covers: every page kept alive for the previous visitor is dropped.
 - **keepAliveClient** _(function)_ - `keepAliveClient: (options: KeepAliveClientOptions) => KeepAliveClient`
   Keep-alive for a router. See the module docs; the generated client entry wires it:
+- **noteKeptView** _(function)_ - `noteKeptView: (key: string, elements: (() => readonly Element[]) | undefined) => void`
+  For an adapter, in development: the elements slot `key` renders, read when the devtools panel counts a kept page's nodes. `undefined` once the slot has left the view.
 - **rememberView** _(function)_ - `rememberView: (elements: readonly Element[]) => PageView`
   Note the inner scroll offsets of a page's top-level `elements` and the element inside them that has focus, while they are still laid out. For an adapter whose framework takes a hidden page out of the document itself (Vue's `KeepAlive`), in place of {@link createSlotParking}.
 - **slotTree** _(function)_ - `slotTree: (state: RouterState, chains: Readonly<Record<string, MatchChain | undefined>>, table: KeepAliveTable, previous?: readonly SlotNode[]) => readonly SlotNode[]`

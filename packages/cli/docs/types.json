@@ -8054,6 +8054,13 @@
     "doc": "/** Longest a page stays hidden unless its route sets `keepAlive: { maxAge }`, in milliseconds. */"
   },
   {
+    "name": "KEPT_PAGES_GLOBAL",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const KEPT_PAGES_GLOBAL = \"__nifraKeepAlive\";",
+    "doc": "/** Where a development build lists its kept pages, for `@nifrajs/devtools`. */"
+  },
+  {
     "name": "KVCacheStore",
     "kind": "class",
     "package": "@nifrajs/web",
@@ -8190,6 +8197,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface KeptPage {\n    readonly instance: string;\n    /** Its last settled state, which it renders from while hidden. */\n    readonly state: RouterState;\n}",
     "doc": "/** A page kept mounted while its history entry is not the one on screen. */"
+  },
+  {
+    "name": "KeptPageInfo",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface KeptPageInfo {\n    readonly instance: string;\n    readonly path: string;\n    readonly routeId: string;\n    /** How long it has been hidden, in milliseconds. */\n    readonly hiddenFor: number;\n    /** The elements it renders, while its view has them. */\n    readonly nodes: number | undefined;\n}",
+    "doc": "/** One kept page, as the devtools panel lists it. */"
   },
   {
     "name": "LAST_ERROR_PATH",
@@ -19667,7 +19681,7 @@
     "kind": "function",
     "package": "@nifrajs/devtools",
     "signature": "export declare function devtoolsClientScript(options?: DevToolsClientOptions): string;",
-    "doc": "/**\n * Returns a self-contained JavaScript string that creates a floating DevTools\n * overlay in the browser. Inject via `<script>` tag in dev mode.\n *\n * The overlay:\n * - Connects to `/_nifra/devtools` via EventSource\n * - Shows a scrolling log of request traces\n * - Color-coded method badges and status codes\n * - ISR hit/miss/stale indicators\n * - Collapsible with a ⚡ toggle button\n */"
+    "doc": "/**\n * Returns a self-contained JavaScript string that creates a floating DevTools\n * overlay in the browser. Inject via `<script>` tag in dev mode.\n *\n * The overlay:\n * - Connects to `/_nifra/devtools` via EventSource\n * - Shows a scrolling log of request traces\n * - Color-coded method badges and status codes\n * - ISR hit/miss/stale indicators\n * - In an app with `keepAlive` routes, the pages kept hidden: path, instance, hidden time and node count\n * - Collapsible with a ⚡ toggle button\n */"
   },
   {
     "name": "diagnostic",
@@ -21763,6 +21777,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function notFoundInput<Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal): NotFoundInput<Env>;",
     "doc": "/** @internal The read-only view a {@link NotFoundHandler} receives. `url` and `headers` stay getters\n * so a source that builds them on demand is not forced to for a handler that never reads them. */"
+  },
+  {
+    "name": "noteKeptView",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function noteKeptView(key: string, elements: (() => readonly Element[]) | undefined): void;",
+    "doc": "/**\n * For an adapter, in development: the elements slot `key` renders, read when the devtools panel\n * counts a kept page's nodes. `undefined` once the slot has left the view.\n */"
   },
   {
     "name": "number",

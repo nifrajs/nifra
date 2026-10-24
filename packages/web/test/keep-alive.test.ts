@@ -5,9 +5,11 @@ import { keepAliveTable, slotDepths } from "../src/internal/keep-alive-table.ts"
 import {
   checkSlotCss,
   createSlotParking,
+  KEPT_PAGES_GLOBAL,
   type KeepAliveClientOptions,
   type KeepAliveDropReason,
   type KeepAliveRouter,
+  type KeptPageInfo,
   keepAliveClient,
   PAGE_HIDE_EVENT,
   PAGE_SHOW_EVENT,
@@ -1167,6 +1169,33 @@ describe("createSlotParking", () => {
     state: state("list", "/list"),
     hidden,
     wrapped: true,
+  })
+
+  test("in development, the router lists its kept pages, with the nodes each one's slot renders", () => {
+    const listed = (): readonly KeptPageInfo[] => {
+      const source: unknown = Reflect.get(globalThis, KEPT_PAGES_GLOBAL)
+      if (typeof source !== "object" || source === null || !("pages" in source)) return []
+      return typeof source.pages === "function" ? source.pages() : []
+    }
+    const clock = spyOn(Date, "now").mockReturnValue(1_000)
+    try {
+      const { router, push } = setup(state("list", "/list/1"))
+      push(state("detail", "/detail"))
+      const instance = router.snapshot().kept?.[0]?.instance ?? ""
+      const parking = createSlotParking()
+      const page = new FakeElement("DIV").append(new FakeElement("P").append(new FakeElement("B")))
+      parking.page(`\0${instance}`)(asElement(page))
+      clock.mockReturnValue(4_500)
+      expect(listed()).toEqual([
+        { instance, path: "/list/1", routeId: "list", hiddenFor: 3_500, nodes: 3 },
+      ])
+      // The slot left the view: its count goes with it.
+      parking.after([])
+      expect(listed()[0]?.nodes).toBeUndefined()
+    } finally {
+      clock.mockRestore()
+      Reflect.deleteProperty(globalThis, KEPT_PAGES_GLOBAL)
+    }
   })
 
   test("parks a hidden slot and puts it back with its scroll offsets and focus", () => {

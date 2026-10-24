@@ -13,6 +13,7 @@ import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
 import {
   type KeepAliveRouter,
   type KeepAliveTable,
+  noteKeptView,
   PAGE_HIDE_EVENT,
   PAGE_SHOW_EVENT,
   type PageView,
@@ -171,6 +172,8 @@ export function mountRouter(options: KeepAliveMountOptions): void {
         if (first.wrapped && instance !== null) {
           const entry: Kept = { slot: page, instance, view: undefined, showing: false }
           kept.set(key, entry)
+          if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+            noteKeptView(key, () => elementsOf(instance.subTree))
           onActivated(() => {
             if (!entry.showing) return
             entry.showing = false
@@ -180,7 +183,10 @@ export function mountRouter(options: KeepAliveMountOptions): void {
             dispatch(elementsOf(instance.subTree), PAGE_SHOW_EVENT)
           })
           onUnmounted(() => {
-            if (kept.get(key) === entry) kept.delete(key)
+            if (kept.get(key) !== entry) return
+            kept.delete(key)
+            if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+              noteKeptView(key, undefined)
           })
         }
         return () => {

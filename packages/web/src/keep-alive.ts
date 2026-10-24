@@ -252,6 +252,10 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       settled: inner.snapshot(),
     }
     stampEntry(active.instance)
+    if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+      Reflect.set(globalThis, KEPT_PAGES_GLOBAL, {
+        pages: () => describeKept(records.values()),
+      })
     // What is on screen: the router's state, or a restored page's kept state until its reload lands.
     let shown = active.settled
     let flags: Partial<RouterState> | undefined
@@ -915,6 +919,49 @@ const wrappedNodes = (nodes: readonly SlotNode[], into: SlotNode[] = []): SlotNo
   return into
 }
 
+// Development only: what each slot renders, by slot key, for the devtools panel's node counts.
+const keptViews = new Map<string, () => readonly Element[]>()
+
+/**
+ * For an adapter, in development: the elements slot `key` renders, read when the devtools panel
+ * counts a kept page's nodes. `undefined` once the slot has left the view.
+ */
+export function noteKeptView(key: string, elements: (() => readonly Element[]) | undefined): void {
+  if (elements === undefined) keptViews.delete(key)
+  else keptViews.set(key, elements)
+}
+
+/** Where a development build lists its kept pages, for `@nifrajs/devtools`. */
+export const KEPT_PAGES_GLOBAL = "__nifraKeepAlive"
+
+/** One kept page, as the devtools panel lists it. */
+export interface KeptPageInfo {
+  readonly instance: string
+  readonly path: string
+  readonly routeId: string
+  /** How long it has been hidden, in milliseconds. */
+  readonly hiddenFor: number
+  /** The elements it renders, while its view has them. */
+  readonly nodes: number | undefined
+}
+
+const describeKept = (records: Iterable<Kept>): KeptPageInfo[] => {
+  const at = now()
+  return [...records].map(({ page, hiddenAt }) => {
+    const elements = keptViews.get(`\0${page.instance}`)?.()
+    return {
+      instance: page.instance,
+      path: page.state.path,
+      routeId: page.state.routeId,
+      hiddenFor: at - hiddenAt,
+      nodes: elements?.reduce(
+        (count, element) => count + 1 + element.querySelectorAll("*").length,
+        0,
+      ),
+    }
+  })
+}
+
 /** One per mounted view. */
 export function createSlotParking(): SlotParking {
   const slots = new Map<string, Parked>()
@@ -975,7 +1022,10 @@ export function createSlotParking(): SlotParking {
         // A null never clears the page: React detaches refs inside a hidden `Activity`, and a parked
         // page is still the framework's element. The slot leaving the tree (`after`) drops it.
         ref = (element) => {
-          if (element !== null) slotOf(key).page = element
+          if (element === null) return
+          slotOf(key).page = element
+          if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+            noteKeptView(key, () => [element])
         }
         pageRefs.set(key, ref)
       }
@@ -1042,6 +1092,8 @@ export function createSlotParking(): SlotParking {
         slots.delete(key)
         entryRefs.delete(key)
         pageRefs.delete(key)
+        if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+          noteKeptView(key, undefined)
       }
     },
   }

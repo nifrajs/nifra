@@ -392,6 +392,7 @@
       },
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
+        "happy-dom": "21.0.4",
       },
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",
