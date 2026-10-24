@@ -508,9 +508,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
             instance: active.instance,
             index: active.index,
             settled: next,
-            epoch: restore.reload ? readEpoch() : active.epoch,
-            // A restore started before an identity signal must not bless its old data, even if
-            // its reload failed and fell back to the kept response.
+            // The epoch and identity the restore started under: a reload's response, or the kept
+            // response a failed reload falls back to, never belongs to a visitor who arrived since.
+            epoch: active.epoch,
             identity: active.identity,
             // A reload that failed shows the kept data, from the kept sources.
             sources: sourcesOf(next) ?? active.sources,
