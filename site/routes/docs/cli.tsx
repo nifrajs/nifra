@@ -18,8 +18,8 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 #        --vite | --bun (dev/build) force the pipeline`
 
 const UPGRADE = `nifra upgrade --list          # the release targets this CLI knows
-nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.0.0 --write   # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.6.0           # dry-run: every planned edit, nothing written
+nifra upgrade 5.6.0 --write   # apply; it verifies with nifra check once the target is installed
 bun install                   # install the new pins
 nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left`

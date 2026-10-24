@@ -110,7 +110,9 @@ export default function Data() {
         field that is any JSON value, passed through whole - a tool-call payload or a settings blob
         the page does not pick apart. A loader without a schema is flagged by{" "}
         <code>nifra check</code>. See{" "}
-        <a href="/docs/structure">Project structure</a> for the route pair.
+        <a href="/docs/structure">Project structure</a> for the route pair. A loader that names the
+        data it read with <code>live(...keys)</code> reloads on its own when that data changes - see{" "}
+        <a href="/docs/live">Live refresh</a>.
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
@@ -161,8 +163,8 @@ export default function Data() {
         <code>actionData</code>, bounded by <code>actionOutput</code>.
       </p>
       <p>
-        A reload of the page on screen (an action's revalidation, <code>invalidate()</code>, a live
-        refresh, a fetcher loading its path again) keeps every part of <code>data</code> and the
+        A reload of the page on screen (an action's revalidation, <code>invalidate()</code>, a{" "}
+        <a href="/docs/live">live refresh</a>, a fetcher loading its path again) keeps every part of <code>data</code> and the
         layouts' data that it did not change as the same object, with one bound: an array none of
         whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
         stops comparing early. A row kept this way keeps its DOM and component state: a Solid{" "}

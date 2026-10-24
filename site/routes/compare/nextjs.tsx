@@ -49,17 +49,39 @@ export default function VsNextjs() {
           <tr>
             <td>Runtimes</td>
             <td>Bun, Node, Deno, edge workers - one app, adapter per runtime</td>
-            <td>Node (Vercel-optimized), partial edge support</td>
+            <td>Node and the Edge runtime; other hosts through deployment adapters</td>
           </tr>
           <tr>
-            <td>React Server Components</td>
-            <td>No - deliberate (see below)</td>
+            <td>Server components</td>
+            <td>
+              Opt-in: native RSC/Flight for React, server-rendered ranges for the other four (see
+              below)
+            </td>
             <td>Yes, the App Router is built on them</td>
           </tr>
           <tr>
+            <td>Partial prerendering</td>
+            <td>Experimental, on all five UI frameworks</td>
+            <td>Yes, under Cache Components</td>
+          </tr>
+          <tr>
+            <td>Kept pages on back/forward</td>
+            <td>
+              Per route, with <code>keepAlive</code>, on all five UI frameworks
+            </td>
+            <td>A few recent routes, under Cache Components</td>
+          </tr>
+          <tr>
+            <td>Live data</td>
+            <td>Built in: loaders declare keys, a publish reloads them on every open tab</td>
+            <td>
+              No built-in push; data refreshes on navigation or <code>router.refresh()</code>
+            </td>
+          </tr>
+          <tr>
             <td>AI-agent tooling</td>
-            <td>Docs/types as a live MCP server; structured verification commands</td>
-            <td>llms.txt style docs</td>
+            <td>MCP server over the project's typed surface; structured verification commands</td>
+            <td>Dev-server MCP endpoint (Next.js 16) and docs bundled with the package</td>
           </tr>
         </tbody>
       </table>

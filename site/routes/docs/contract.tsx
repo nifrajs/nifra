@@ -11,10 +11,13 @@ const LOADER_CTX = `// The single context object passed to every loader AND acti
 interface LoaderContext {
   params:  Record<string, string>  // matched route params (:id, *path)
   request: Request                 // the standard Web Request - read headers/body/URL off it
+  req:     Request                 // alias of request, the name a route handler's c.req uses
   api:     unknown                 // the in-process backend client createWebApp was given
   env:     unknown                 // platform bindings forwarded from c.env (Workers KV/D1/…)
   draft:   boolean                 // true only when a valid draft cookie is present (draftSecret set)
+  search:  Record<string, unknown> // the query, validated by the route's searchSchema when it has one
   set:     LoaderResponseControls  // response headers + cookies for this page request (see below)
+  live:    (...keys: string[]) => void // the keys this data depends on, for live refresh (/docs/live)
 }
 
 // api + env are typed per route by the generated Route.LoaderArgs (./+types/<name>); the agnostic
@@ -605,10 +608,10 @@ export default function Contract() {
 
       <h2>Optional server components</h2>
       <p>
-        The post-4.0 <a href="/docs/server-components">server-components pipeline</a> supports
-        React, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
+        The optional <a href="/docs/server-components">server-components pipeline</a> supports
+        React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
         in <code>*.component.server.ts(x)</code>, register owner instances and export a named
-        <code>componentPipeline</code> configuration. React uses native RSC/Flight; the other three
+        <code>componentPipeline</code> configuration. React uses native RSC/Flight; the other four
         hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
         HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
         router and await auth-scope invalidation on identity, tenant or permission changes.

@@ -12,7 +12,7 @@ nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript 
 - **Secure by default.** Body-size cap, `requestTimeoutMs` + `c.signal`, graceful shutdown, redacting logger, same-origin `redirect()`, constant-time secret comparison, fail-closed middleware.
 - **Money** in integer minor units; **time** parsed to absolute UTC at the boundary.
 - Throwing a `Response` anywhere in the lifecycle is control flow (returned as-is), not an error.
-Optional server components (post-4.0): React, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.
+Optional server components (all five adapters): React, Preact, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.
 
 ---
 
@@ -104,8 +104,12 @@ In the `site` template, a route is two files: the page, and a
 `.backend.ts` half whose loader calls your backend in-process during SSR and
 whose `actions` handle mutations. Only what the loader's output schema declares
 reaches the browser. Add streaming, `defer()`, optimistic UI, and a keyed query
-cache as you grow. The data model is framework-agnostic, so the renderer stays replaceable.
-See [Project structure](/docs/structure) for where code lives.
+cache as you grow, then [live refresh](/docs/live),
+[keep-alive](/docs/keep-alive) pages,
+[server components](/docs/server-components) and
+[partial prerendering](/docs/partial-prerendering) where a page needs them. The
+data model is framework-agnostic, so the renderer stays replaceable. See
+[Project structure](/docs/structure) for where code lives.
 
 ```ts
 // routes/index.backend.ts - the loader runs on the server (in-process during SSR, no network),
@@ -143,11 +147,16 @@ export default function Page({ data }: Route.ComponentProps) {
 **Cloudflare Workers / Pages** - edge build via `buildServer` +
 `toFetchHandler` (the exact way this self-hosted site is compiled and served).
 
+-
+**Vercel Edge, AWS Lambda, or a static host** - `nifra build --target vercel`,
+`@nifrajs/aws-lambda`, or `nifra build --target static` for a
+prerendered site. See [Deployment](/docs/deployment).
+
 See the [benchmarks](/benchmarks) for how it performs.
 
 ## Nifra vs. other frameworks - the honest comparison
 
-> How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an agentic application layer built around typed capabilities.
+> How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, React Router, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, partial prerendering, live refresh, and an agentic application layer built around typed capabilities.
 
 Honest comparison. Nifra is a **full-stack framework first** - five UI libraries and five runtimes
 from one core, with loaders, actions, streaming, and a typed data layer - and a
@@ -155,9 +164,9 @@ from one core, with loaders, actions, streaming, and a typed data layer - and a
 
 ### Nifra's lane
 
-Every other full-stack framework here is **one UI library on a mostly-one-runtime story**. Nifra
-bets the opposite axis: one core, many front-ends, many runtimes, with a contract-first typed backend
-in the same project.
+Every other full-stack framework here is **built around one UI library** (TanStack Start
+supports two), and most reach other hosts through adapters. Nifra bets on the other axis: one
+core, five front-ends, many runtimes, with a contract-first typed backend in the same project.
 
 Framework
 UI libraries
@@ -169,9 +178,9 @@ Bun · Node · Deno · Workers · Edge
 
 Next.js
 React
-Node · Vercel Edge
+Node · Edge runtime · adapters
 
-Nuxt 3
+Nuxt 4
 Vue
 Nitro (many)
 
@@ -179,29 +188,38 @@ SvelteKit
 Svelte
 adapters
 
-Remix / RR7
+React Router 7 (Remix)
 React
 adapters
 
 TanStack Start
-React (Solid WIP)
-Nitro
+React · Solid
+Nitro · host plugins
 
 ### Full-stack parity
 
 Across the board, Nifra ships the modern full-stack feature set on all five UI frameworks:
 
-- File routing (dynamic / catch-all / groups / optional) + nested layouts.
+-
+File routing (dynamic / catch-all / groups / optional) + nested layouts, typed search
+params, and a route [opened in a modal](/docs/routing#modal-routes).
 
 -
-SSR · SSG · ISR, streaming SSR with out-of-order Suspense, islands, view transitions, and a
-~0 KB-client vanilla adapter.
+SSR · SSG · ISR, streaming SSR with out-of-order Suspense,
+[partial prerendering](/docs/partial-prerendering) (experimental), view
+transitions, and a ~0 KB-client vanilla adapter with
+[islands](/docs/islands) and slot swaps.
 
 -
 Loaders + actions + [server functions](/docs/server-functions) (typed
 `serverFn` RPC, server code never shipped to the browser) + progressive-enhancement
 forms; `defer()` / `<Await>` streaming data; query cache, optimistic
 UI, concurrent fetchers, revalidation.
+
+-
+[Live refresh](/docs/live) (a publish reloads only the loaders that read the
+changed keys) and [keep-alive](/docs/keep-alive) pages (back and forward bring
+the same page back, state and scroll included).
 
 - Head/meta, hover/focus prefetch, scroll restoration.
 
@@ -222,9 +240,50 @@ mutation API across the supported UI libraries.
 
 The optional [server-components pipeline](/docs/server-components) adds
 server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
-Solid and Preact use their native islands in validated server-rendered ranges. It shipped in
-5.0.0, and all five adapters pass the same certification. Server functions remain the mutation API; native React `"use server"` actions
-are unsupported.
+Solid and Preact use their native islands in validated server-rendered ranges. All five
+adapters pass the same certification, and a partially prerendered page can show a server
+component in a hole. Server functions remain the mutation API; native React
+`"use server"` actions are unsupported.
+
+### Caching and fresh data
+
+[SSG and ISR](/docs/rendering) cover pages that change rarely. Three more tools
+cover the pages that do not:
+
+-
+**
+[Partial prerendering](/docs/partial-prerendering)
+**
+(experimental, all five adapters). The part of a page that is the same for every visitor is
+built once, cached and sent at once; each per-visitor hole streams into it as its own loader
+settles. The build refuses a shell whose code reaches a module that reads the visitor, and
+`checkShellCanaries` looks for visitor data in a served shell. A shared hole, such
+as a price, is cached on its own schedule and tags. Next.js offers the same model for React
+as partial prerendering under Cache Components.
+
+-
+**
+[Live refresh](/docs/live)
+**
+. A loader names the keys its data read with `live(...keys)`; a
+`publish`, or an action's `revalidate(paths, data, { keys })`,
+reloads only those loaders on every open tab that read them, through the hooks, middleware,
+gates and loaders a navigation runs. One WebSocket per tab carries opaque change tags, never
+data. Query hooks can refetch on the same keys. A Redis Streams bus spans processes, and on
+Workers a hibernating Durable Object holds the sockets.
+
+-
+**Tag purges in one order.** An action's
+`revalidate(paths, data, { tags, keys })` clears data caches, then the
+page store, then live pages, then the CDN, before it answers, so the visitor who wrote reads
+the write. A page store shared between processes is signed.
+
+-
+**
+[Keep-alive](/docs/keep-alive)
+**
+(all five adapters). `export const keepAlive = true` keeps a page mounted after
+the visitor leaves it; back and forward bring it back with its state, scroll and focus.
 
 ### Also a standalone backend (vs. Hono & Elysia)
 
@@ -262,10 +321,12 @@ emitting a real 3.1 doc with field-level request/response schemas (+ Scalar UI).
 **Run it yourself:** `bun run bench:realworld` and
 `bun run bench:http:compare`.
 
-### The AI-agent toolchain - Nifra-only
+### The AI-agent toolchain
 
-Nifra covers both sides of the agent loop: agents that edit your codebase and agents that are
-part of the product. Every surface is anchored to the same typed capability boundary:
+Agent tooling is no longer rare: Next.js 16 serves a dev-server MCP endpoint, and Svelte
+publishes an MCP server for its docs. Nifra covers both sides of the agent loop: agents that
+edit your codebase and agents that are part of the product. Every surface is anchored to the
+same typed capability boundary:
 
 -
 `nifra mcp` - an MCP server exposing `nifra_context` (the project's typed
@@ -314,20 +375,17 @@ your route contracts, so the compiler catches any frontend/backend drift.
 
 -
 **The full modern toolkit on your UI of choice** - loaders, actions, streaming SSR with
-out-of-order Suspense, SSG/ISR, islands, query cache, progressive-enhancement forms.
+out-of-order Suspense, SSG/ISR, partial prerendering, live refresh, keep-alive, server
+components, islands, query cache, progressive-enhancement forms.
 
 -
-**A framework AI agents edit accurately** - the `nifra mcp` toolchain + verified,
-version-checked examples, which no other framework ships.
+**A framework AI agents edit accurately** - the `nifra mcp` toolchain,
+version-checked examples, and gates that name the fix when a change drifts from the
+contract.
 
 -
 **To start lean and grow** - begin as a typed API, graduate to full-stack on the same core,
 no rewrite.
-
-Nifra provides streaming SSR, islands and typed
-[server functions](/docs/server-functions). The optional
-[server-components pipeline](/docs/server-components) adds native React
-RSC/Flight and corresponding Vue, Svelte and Solid views under a shared execution contract.
 
 ## Nifra - Routing
 
@@ -1538,7 +1596,9 @@ leaves the server. Declare a timestamp as `t.date()` and the page gets a
 field that is any JSON value, passed through whole - a tool-call payload or a settings blob
 the page does not pick apart. A loader without a schema is flagged by
 `nifra check`. See
-[Project structure](/docs/structure) for the route pair.
+[Project structure](/docs/structure) for the route pair. A loader that names the
+data it read with `live(...keys)` reloads on its own when that data changes - see
+[Live refresh](/docs/live).
 
 ```ts
 // routes/users/[id].backend.ts - a loader runs on the server: in-process during SSR (no network
@@ -1609,8 +1669,8 @@ loader **revalidates** (no full reload); with JS disabled the native form POST r
 - progressive enhancement, same code. What the action returns reaches the page as
 `actionData`, bounded by `actionOutput`.
 
-A reload of the page on screen (an action's revalidation, `invalidate()`, a live
-refresh, a fetcher loading its path again) keeps every part of `data` and the
+A reload of the page on screen (an action's revalidation, `invalidate()`, a
+[live refresh](/docs/live), a fetcher loading its path again) keeps every part of `data` and the
 layouts' data that it did not change as the same object, with one bound: an array none of
 whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
 stops comparing early. A row kept this way keeps its DOM and component state: a Solid
@@ -2045,8 +2105,10 @@ export default function Product({ data }: Route.ComponentProps) {
 }
 ```
 
-This is request-time progressive SSR/partial rendering. It is distinct from build-time SSG:
-the shell is not a precomputed PPR artifact, and deferred values remain request-scoped.
+This is request-time progressive SSR: the whole page, shell included, renders for each
+request, and deferred values remain request-scoped. To serve the part that is the same for
+every visitor from a cache and stream only the per-visitor parts, use
+[partial prerendering](/docs/partial-prerendering) (experimental).
 
 ### SSG - prerender at build
 
@@ -2120,6 +2182,11 @@ still applies. A request with a query string, a navigation data request, a slot 
 draft-mode visitor renders on demand. So does a page whose build-time render set a cookie, was private or
 `no-store`, or varied on a request header other than `Accept-Encoding`
 and nifra's own data and slot-swap headers, and every page of an app with a `nonce`. The Vite pipeline and the edge targets render every page on demand.
+
+A site with no server at all builds with `nifra build --target static`: it writes
+the prerendered pages, the client bundle and the `public/` files, for any static
+host, and fails when no route opts in. A route that is not prerendered has nothing to answer
+it there.
 
 ### ISR - cache with stale-while-revalidate
 
@@ -2442,8 +2509,10 @@ a metric instead of its final value - aggregate those with `delta` or
 
 Content that's the same for everyone and changes rarely → **SSG**. Content that changes
 occasionally and can tolerate seconds-to-minutes of staleness → **ISR**. Per-request or
-per-user content → plain **SSR** (the default). You can mix all three in one app, route by
-route.
+per-user content → plain **SSR** (the default). A page that is mostly shared with a few
+per-visitor parts → [partial prerendering](/docs/partial-prerendering)
+(experimental). You can mix them in one app, route by route. A page that must update while it
+is open, without a reload, adds [live refresh](/docs/live) to any of them.
 
 ## Nifra - Hydration & pre-hydration forms
 
@@ -2946,7 +3015,13 @@ export default function Page({ data }: Route.ComponentProps) {
 
 The same `defer()` works in actions and across client-side soft navigations (an
 NDJSON stream settles the deferred values), and it's framework-agnostic - React
-`<Suspense>` and Solid's streaming both drive it from one core.
+`<Suspense>` and Solid's streaming both drive it from one core. See
+[Frameworks](/docs/frameworks) for which adapters stream the boundary in the
+server HTML.
+
+[Partial prerendering](/docs/partial-prerendering) (experimental) streams the same
+way from a cached shell: the part of the page every visitor shares goes out at once from the
+cache, and each per-visitor hole streams in as its loader settles.
 
 ### Server-Sent Events
 
@@ -3205,6 +3280,11 @@ progressive-enhancement forms (work with JS off).
 `useQuery`), and concurrent `useFetcher` mutations.
 
 - Optimistic UI, targeted revalidation, hover-prefetch, and scroll restoration.
+
+-
+[Live refresh](/docs/live), [keep-alive](/docs/keep-alive) pages,
+[server components](/docs/server-components), and
+[partial prerendering](/docs/partial-prerendering) (experimental).
 
 -
 True HMR in dev for all five (`@nifrajs/web/vite`) - see
@@ -6825,6 +6905,10 @@ Vercel Edge
 
 none (Build Output API v3)
 
+`nifra build --target static` also builds a site with no server: the prerendered
+pages, the client bundle and `public/`, for any static host. See
+[SSG & ISR](/docs/rendering).
+
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
 
@@ -6919,7 +7003,10 @@ spawn one process per core, each binding the same port with
 `app.listen(PORT, { reusePort: true })`; the kernel load-balances connections
 across them (Linux balances ~evenly). A supervisor that spawns + restarts workers is ~20
 lines - see `examples/cluster.ts`. Anything shared across workers (rate limits,
-sessions, pub/sub) needs a shared store, as in any multi-instance deploy.
+sessions, pub/sub) needs a shared store, as in any multi-instance deploy. So do an ISR page
+store (signed with one `storeSecret` in every process - see
+[SSG & ISR](/docs/rendering)) and
+[live refresh](/docs/live) (one Redis Streams bus for every process).
 
 ### Node & Deno
 
@@ -7406,8 +7493,8 @@ starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list          # the release targets this CLI knows
-nifra upgrade 5.0.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.0.0 --write   # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.6.0           # dry-run: every planned edit, nothing written
+nifra upgrade 5.6.0 --write   # apply; it verifies with nifra check once the target is installed
 bun install                   # install the new pins
 nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left
@@ -9851,10 +9938,13 @@ same fields, always - `params`, `request`, `api`,
 interface LoaderContext {
   params:  Record<string, string>  // matched route params (:id, *path)
   request: Request                 // the standard Web Request - read headers/body/URL off it
+  req:     Request                 // alias of request, the name a route handler's c.req uses
   api:     unknown                 // the in-process backend client createWebApp was given
   env:     unknown                 // platform bindings forwarded from c.env (Workers KV/D1/…)
   draft:   boolean                 // true only when a valid draft cookie is present (draftSecret set)
+  search:  Record<string, unknown> // the query, validated by the route's searchSchema when it has one
   set:     LoaderResponseControls  // response headers + cookies for this page request (see below)
+  live:    (...keys: string[]) => void // the keys this data depends on, for live refresh (/docs/live)
 }
 
 // api + env are typed per route by the generated Route.LoaderArgs (./+types/<name>); the agnostic
@@ -10305,10 +10395,10 @@ file that reaches it.
 
 ### Optional server components
 
-The post-4.0 [server-components pipeline](/docs/server-components) supports
-React, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
+The optional [server-components pipeline](/docs/server-components) supports
+React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
 in `*.component.server.ts(x)`, register owner instances and export a named
-`componentPipeline` configuration. React uses native RSC/Flight; the other three
+`componentPipeline` configuration. React uses native RSC/Flight; the other four
 hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
 HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
 router and await auth-scope invalidation on identity, tenant or permission changes.
@@ -12571,14 +12661,15 @@ If the project has `nifra.assurance.ts`, run `nifra assure --json`.
 Exercise every redirect path - loader, action, and layout gate - and, if the app proxies,
 each deploy adapter it uses.
 
-## Nifra 5.0 migration guide - upgrade from 3.x or 4.x
+## Nifra 5 upgrade guide - from 3.x, 4.x or an earlier 5.x
 
-> Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates.
+> Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates. Then move a 5.x app to 5.6.
 
 Nifra 4.0 split every app into a frontend and a backend half, and 5.0 enforces the split and
 changes a handful of defaults. The upgrade command pins the packages and moves imports; the
 layout migration moves files; this guide covers what each leaves to you and how to tell a
-finished migration from one that needs a decision.
+finished migration from one that needs a decision. An app already on 5.x skips to
+[Moving to 5.6](#5-6).
 
 ### 1. Run the executable upgrade
 
@@ -12773,6 +12864,47 @@ If the project has `nifra.assurance.ts`, run `nifra assure --json`.
 Exercise the pages that load or post data, and every browser call to the backend, under
 `nifra dev` and against the production build.
 
+### Moving to 5.6
+
+An app already on 5.x moves with `nifra upgrade 5.6.0`, which prints every note
+below with the rest of the release's. It moves the imports and dependencies itself; the
+rest needs a hand:
+
+-
+`@nifrajs/islets` and `@nifrajs/web/nano` merge into
+`@nifrajs/web/islands`. An island host is any element with
+`data-island="id"`, with its props in
+`data-island-props`; `<nifra-island data-id>` markers are no
+longer mounted. An islets `island("id", setup)` becomes
+`bindIsland(setup)` passed to `mountIslands({ id })`, and a
+nano signal is read by calling it (`count()`). See
+[Islands](/docs/islands).
+
+-
+`withISR` over any store but `MemoryCacheStore` takes a
+`storeSecret` of at least 32 random characters, the same in every process, and
+throws at startup without one. Pages stored before the upgrade render once more.
+
+-
+The server-component pipeline is certified on Vite 8.3.4: pin `vite` to exactly
+that version.
+
+-
+An `authenticate()` stage, and `bearer()`, `jwt()`,
+`basicAuth()` and `apiKey()`, gate the mounts registered after them:
+register a mount that must stay public first. `idempotency()` covers only the
+routes declared after it.
+
+-
+`t.integer()` refuses values past the safe-integer range by default, forms are
+parsed by one parser on every runtime, and `@nifrajs/web-vanilla`'s
+`html` escapes each value for the place it lands and throws on a string as a
+tag name or inside `<script>`.
+
+-
+A Svelte page receives `data` as the router published it, not a deep reactive
+proxy: copy what you edit into the page's own state.
+
 ## Nifra - Migrating from Express, Hono, Fastify & Elysia
 
 > Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia - and you gain a typed client, multi-runtime deploy, and optional SSR.
@@ -12915,6 +13047,31 @@ Nifra's client router - `Link` + hover/focus prefetch, scroll restoration
 `metadata` / `<Head>` / `definePageMeta`
 
 `export const meta` (or a `meta()` function of the loader data)
+
+`revalidatePath` · `revalidateTag`
+
+an action's `revalidate(paths, data, { tags })`, or
+`revalidateEndpoint` for a webhook - see
+[SSG & ISR](/docs/rendering)
+
+Server Components · `"use client"`
+
+opt-in [server components](/docs/server-components) on all five adapters
+
+Partial prerendering (Cache Components)
+
+a `shellLoader` and holes - see
+[Partial prerendering](/docs/partial-prerendering) (experimental)
+
+Intercepting routes (`(.)photo`)
+
+a boundary with `{ intercept: "/photos/:id" }` - see
+[Opening a route in a modal](/docs/routing#modal-routes)
+
+`keepalive` in `definePageMeta`
+
+`export const keepAlive = true` - see
+[Keep-alive](/docs/keep-alive)
 
 ### Data loading (Next.js → Nifra + React)
 
@@ -14286,7 +14443,10 @@ Reaches the browser
 
 `routes/x.tsx` (`.svelte`, `.vue`, `.mdx`)
 
-a page: the component, `meta`
+a page: the component, `meta`,
+[
+`keepAlive`
+](/docs/keep-alive)
 
 yes
 
@@ -14294,6 +14454,8 @@ yes
 
 that page's `loader`, `action`, `loaderOutput`,
 `actionOutput`, `hydrate`, `revalidate`,
+`shellLoader` and `boundaryLoaders` (a
+[partially prerendered](/docs/partial-prerendering) page),
 `middleware` (in `_layout.backend.ts`)
 
 never
@@ -19201,20 +19363,30 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-Optional server components are implemented for React, Vue, Svelte and Solid in the post-4.0
-feature branch. React uses native RSC/Flight; the other adapters use native islands in validated
-server ranges. Definitions require closed input/public-props schemas and authorization. Refresh
-executes the actual owner GET, preserving admission, read capabilities, budgets and cancellation;
-output is private/no-store. Mutate through validated server functions or actions.
-
-Use the `/server-components`, `/server-components/client`, `/server-components/islands` and
-`/server-components/build` exports with an explicit `componentPipeline` named config export.
-See [the server-components guide](https://nifra.dev/docs/server-components) and the four runnable
-repository examples for complete entries, native outlets, exact compiler pins and rollback.
-
 Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
+
+One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer with a
+`@nifrajs/web-*` adapter):
+
+- File routing, nested layouts, typed loaders and actions, progressive-enhancement forms, and the
+  client router with prefetch and scroll restoration - [routing](https://nifra.dev/docs/routing),
+  [loaders & actions](https://nifra.dev/docs/data).
+- Streaming SSR with `defer()`, SSG, and ISR with tag purges - [rendering](https://nifra.dev/docs/rendering).
+- [Live refresh](https://nifra.dev/docs/live) (`@nifrajs/web/live`, `/live-client`, `/live-redis`):
+  loaders declare keys, a publish reloads only what read them.
+- [Partial prerendering](https://nifra.dev/docs/partial-prerendering) (`@nifrajs/web/ppr`,
+  experimental): a cached shell, with per-visitor holes streamed in.
+- [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
+  [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
+- Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:
+  React uses native RSC/Flight, the others their own islands in validated server-rendered ranges.
+  Definitions take closed input and public-props schemas and authorization; a refresh runs the
+  owner page's GET with its admission, capabilities, budgets and cancellation. Use the
+  `/server-components`, `/server-components/client`, `/server-components/islands` and
+  `/server-components/build` exports with a `componentPipeline` config export; the repository has a
+  runnable example per adapter.
 
 ## Guarding pages
 

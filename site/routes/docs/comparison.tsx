@@ -4,7 +4,7 @@ import { docsMeta } from "../../shared/meta"
 export const meta = docsMeta(
   "/docs/comparison",
   "Nifra vs. other frameworks - the honest comparison",
-  "How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an agentic application layer built around typed capabilities.",
+  "How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, React Router, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, partial prerendering, live refresh, and an agentic application layer built around typed capabilities.",
 )
 
 export default function Comparison() {
@@ -19,9 +19,9 @@ export default function Comparison() {
 
       <h2>Nifra's lane</h2>
       <p>
-        Every other full-stack framework here is <b>one UI library on a mostly-one-runtime story</b>. Nifra
-        bets the opposite axis: one core, many front-ends, many runtimes, with a contract-first typed backend
-        in the same project.
+        Every other full-stack framework here is <b>built around one UI library</b> (TanStack Start
+        supports two), and most reach other hosts through adapters. Nifra bets on the other axis: one
+        core, five front-ends, many runtimes, with a contract-first typed backend in the same project.
       </p>
       <table>
         <thead>
@@ -40,10 +40,10 @@ export default function Comparison() {
           <tr>
             <td>Next.js</td>
             <td>React</td>
-            <td>Node · Vercel Edge</td>
+            <td>Node · Edge runtime · adapters</td>
           </tr>
           <tr>
-            <td>Nuxt 3</td>
+            <td>Nuxt 4</td>
             <td>Vue</td>
             <td>Nitro (many)</td>
           </tr>
@@ -53,14 +53,14 @@ export default function Comparison() {
             <td>adapters</td>
           </tr>
           <tr>
-            <td>Remix / RR7</td>
+            <td>React Router 7 (Remix)</td>
             <td>React</td>
             <td>adapters</td>
           </tr>
           <tr>
             <td>TanStack Start</td>
-            <td>React (Solid WIP)</td>
-            <td>Nitro</td>
+            <td>React · Solid</td>
+            <td>Nitro · host plugins</td>
           </tr>
         </tbody>
       </table>
@@ -68,16 +68,26 @@ export default function Comparison() {
       <h2>Full-stack parity</h2>
       <p>Across the board, Nifra ships the modern full-stack feature set on all five UI frameworks:</p>
       <ul>
-        <li>File routing (dynamic / catch-all / groups / optional) + nested layouts.</li>
         <li>
-          SSR · SSG · ISR, streaming SSR with out-of-order Suspense, islands, view transitions, and a
-          ~0&nbsp;KB-client vanilla adapter.
+          File routing (dynamic / catch-all / groups / optional) + nested layouts, typed search
+          params, and a route <a href="/docs/routing#modal-routes">opened in a modal</a>.
+        </li>
+        <li>
+          SSR · SSG · ISR, streaming SSR with out-of-order Suspense,{" "}
+          <a href="/docs/partial-prerendering">partial prerendering</a> (experimental), view
+          transitions, and a ~0&nbsp;KB-client vanilla adapter with{" "}
+          <a href="/docs/islands">islands</a> and slot swaps.
         </li>
         <li>
           Loaders + actions + <a href="/docs/server-functions">server functions</a> (typed{" "}
           <code>serverFn</code> RPC, server code never shipped to the browser) + progressive-enhancement
           forms; <code>defer()</code> / <code>&lt;Await&gt;</code> streaming data; query cache, optimistic
           UI, concurrent fetchers, revalidation.
+        </li>
+        <li>
+          <a href="/docs/live">Live refresh</a> (a publish reloads only the loaders that read the
+          changed keys) and <a href="/docs/keep-alive">keep-alive</a> pages (back and forward bring
+          the same page back, state and scroll included).
         </li>
         <li>Head/meta, hover/focus prefetch, scroll restoration.</li>
         <li>
@@ -101,10 +111,54 @@ export default function Comparison() {
       <p>
         The optional <a href="/docs/server-components">server-components pipeline</a> adds
         server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
-        Solid and Preact use their native islands in validated server-rendered ranges. It shipped in
-        5.0.0, and all five adapters pass the same certification. Server functions remain the mutation API; native React <code>"use server"</code> actions
-        are unsupported.
+        Solid and Preact use their native islands in validated server-rendered ranges. All five
+        adapters pass the same certification, and a partially prerendered page can show a server
+        component in a hole. Server functions remain the mutation API; native React{" "}
+        <code>"use server"</code> actions are unsupported.
       </p>
+
+      <h2>Caching and fresh data</h2>
+      <p>
+        <a href="/docs/rendering">SSG and ISR</a> cover pages that change rarely. Three more tools
+        cover the pages that do not:
+      </p>
+      <ul>
+        <li>
+          <b>
+            <a href="/docs/partial-prerendering">Partial prerendering</a>
+          </b>{" "}
+          (experimental, all five adapters). The part of a page that is the same for every visitor is
+          built once, cached and sent at once; each per-visitor hole streams into it as its own loader
+          settles. The build refuses a shell whose code reaches a module that reads the visitor, and{" "}
+          <code>checkShellCanaries</code> looks for visitor data in a served shell. A shared hole, such
+          as a price, is cached on its own schedule and tags. Next.js offers the same model for React
+          as partial prerendering under Cache Components.
+        </li>
+        <li>
+          <b>
+            <a href="/docs/live">Live refresh</a>
+          </b>
+          . A loader names the keys its data read with <code>live(...keys)</code>; a{" "}
+          <code>publish</code>, or an action&apos;s <code>revalidate(paths, data, &#123; keys &#125;)</code>,
+          reloads only those loaders on every open tab that read them, through the hooks, middleware,
+          gates and loaders a navigation runs. One WebSocket per tab carries opaque change tags, never
+          data. Query hooks can refetch on the same keys. A Redis Streams bus spans processes, and on
+          Workers a hibernating Durable Object holds the sockets.
+        </li>
+        <li>
+          <b>Tag purges in one order.</b> An action&apos;s{" "}
+          <code>revalidate(paths, data, &#123; tags, keys &#125;)</code> clears data caches, then the
+          page store, then live pages, then the CDN, before it answers, so the visitor who wrote reads
+          the write. A page store shared between processes is signed.
+        </li>
+        <li>
+          <b>
+            <a href="/docs/keep-alive">Keep-alive</a>
+          </b>{" "}
+          (all five adapters). <code>export const keepAlive = true</code> keeps a page mounted after
+          the visitor leaves it; back and forward bring it back with its state, scroll and focus.
+        </li>
+      </ul>
 
       <h2>Also a standalone backend (vs. Hono &amp; Elysia)</h2>
       <p>
@@ -186,10 +240,12 @@ export default function Comparison() {
         <code>bun run bench:http:compare</code>.
       </p>
 
-      <h2>The AI-agent toolchain - Nifra-only</h2>
+      <h2>The AI-agent toolchain</h2>
       <p>
-        Nifra covers both sides of the agent loop: agents that edit your codebase and agents that are
-        part of the product. Every surface is anchored to the same typed capability boundary:
+        Agent tooling is no longer rare: Next.js 16 serves a dev-server MCP endpoint, and Svelte
+        publishes an MCP server for its docs. Nifra covers both sides of the agent loop: agents that
+        edit your codebase and agents that are part of the product. Every surface is anchored to the
+        same typed capability boundary:
       </p>
       <ul>
         <li>
@@ -240,23 +296,19 @@ export default function Comparison() {
         </li>
         <li>
           <b>The full modern toolkit on your UI of choice</b> - loaders, actions, streaming SSR with
-          out-of-order Suspense, SSG/ISR, islands, query cache, progressive-enhancement forms.
+          out-of-order Suspense, SSG/ISR, partial prerendering, live refresh, keep-alive, server
+          components, islands, query cache, progressive-enhancement forms.
         </li>
         <li>
-          <b>A framework AI agents edit accurately</b> - the <code>nifra mcp</code> toolchain + verified,
-          version-checked examples, which no other framework ships.
+          <b>A framework AI agents edit accurately</b> - the <code>nifra mcp</code> toolchain,
+          version-checked examples, and gates that name the fix when a change drifts from the
+          contract.
         </li>
         <li>
           <b>To start lean and grow</b> - begin as a typed API, graduate to full-stack on the same core,
           no rewrite.
         </li>
       </ul>
-      <p>
-        Nifra provides streaming SSR, islands and typed{" "}
-        <a href="/docs/server-functions">server functions</a>. The optional{" "}
-        <a href="/docs/server-components">server-components pipeline</a> adds native React
-        RSC/Flight and corresponding Vue, Svelte and Solid views under a shared execution contract.
-      </p>
     </div>
   )
 }

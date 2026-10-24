@@ -1,19 +1,29 @@
 # @nifrajs/web
 
-Optional server components are implemented for React, Vue, Svelte and Solid in the post-4.0
-feature branch. React uses native RSC/Flight; the other adapters use native islands in validated
-server ranges. Definitions require closed input/public-props schemas and authorization. Refresh
-executes the actual owner GET, preserving admission, read capabilities, budgets and cancellation;
-output is private/no-store. Mutate through validated server functions or actions.
-
-Use the `/server-components`, `/server-components/client`, `/server-components/islands` and
-`/server-components/build` exports with an explicit `componentPipeline` named config export.
-See [the server-components guide](https://nifra.dev/docs/server-components) and the four runnable
-repository examples for complete entries, native outlets, exact compiler pins and rollback.
-
 Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
+
+One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer with a
+`@nifrajs/web-*` adapter):
+
+- File routing, nested layouts, typed loaders and actions, progressive-enhancement forms, and the
+  client router with prefetch and scroll restoration - [routing](https://nifra.dev/docs/routing),
+  [loaders & actions](https://nifra.dev/docs/data).
+- Streaming SSR with `defer()`, SSG, and ISR with tag purges - [rendering](https://nifra.dev/docs/rendering).
+- [Live refresh](https://nifra.dev/docs/live) (`@nifrajs/web/live`, `/live-client`, `/live-redis`):
+  loaders declare keys, a publish reloads only what read them.
+- [Partial prerendering](https://nifra.dev/docs/partial-prerendering) (`@nifrajs/web/ppr`,
+  experimental): a cached shell, with per-visitor holes streamed in.
+- [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
+  [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
+- Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:
+  React uses native RSC/Flight, the others their own islands in validated server-rendered ranges.
+  Definitions take closed input and public-props schemas and authorization; a refresh runs the
+  owner page's GET with its admission, capabilities, budgets and cancellation. Use the
+  `/server-components`, `/server-components/client`, `/server-components/islands` and
+  `/server-components/build` exports with a `componentPipeline` config export; the repository has a
+  runnable example per adapter.
 
 ## Guarding pages
 

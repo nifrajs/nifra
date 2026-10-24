@@ -122,8 +122,12 @@ bun run dev`}</code>
         <code>.backend.ts</code> half whose loader calls your backend in-process during SSR and
         whose <code>actions</code> handle mutations. Only what the loader's output schema declares
         reaches the browser. Add streaming, <code>defer()</code>, optimistic UI, and a keyed query
-        cache as you grow. The data model is framework-agnostic, so the renderer stays replaceable.
-        See <a href="/docs/structure">Project structure</a> for where code lives.
+        cache as you grow, then <a href="/docs/live">live refresh</a>,{" "}
+        <a href="/docs/keep-alive">keep-alive</a> pages,{" "}
+        <a href="/docs/server-components">server components</a> and{" "}
+        <a href="/docs/partial-prerendering">partial prerendering</a> where a page needs them. The
+        data model is framework-agnostic, so the renderer stays replaceable. See{" "}
+        <a href="/docs/structure">Project structure</a> for where code lives.
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
@@ -139,6 +143,11 @@ bun run dev`}</code>
         <li>
           <b>Cloudflare Workers / Pages</b> - edge build via <code>buildServer</code> +{" "}
           <code>toFetchHandler</code> (the exact way this self-hosted site is compiled and served).
+        </li>
+        <li>
+          <b>Vercel Edge, AWS Lambda, or a static host</b> - <code>nifra build --target vercel</code>,{" "}
+          <code>@nifrajs/aws-lambda</code>, or <code>nifra build --target static</code> for a
+          prerendered site. See <a href="/docs/deployment">Deployment</a>.
         </li>
       </ul>
 

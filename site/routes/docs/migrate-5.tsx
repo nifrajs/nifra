@@ -3,8 +3,8 @@ import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/migrate-5",
-  "Nifra 5.0 migration guide - upgrade from 3.x or 4.x",
-  "Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates.",
+  "Nifra 5 upgrade guide - from 3.x, 4.x or an earlier 5.x",
+  "Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates. Then move a 5.x app to 5.6.",
 )
 
 const COMMANDS = [
@@ -60,12 +60,13 @@ const MOUNT = [
 export default function Migrate5() {
   return (
     <div className="prose">
-      <h1 className="page">Upgrading from Nifra 3.x or 4.x to 5.0</h1>
+      <h1 className="page">Upgrading to Nifra 5</h1>
       <p className="lead">
         Nifra 4.0 split every app into a frontend and a backend half, and 5.0 enforces the split and
         changes a handful of defaults. The upgrade command pins the packages and moves imports; the
         layout migration moves files; this guide covers what each leaves to you and how to tell a
-        finished migration from one that needs a decision.
+        finished migration from one that needs a decision. An app already on 5.x skips to{" "}
+        <a href="#5-6">Moving to 5.6</a>.
       </p>
 
       <h2>1. Run the executable upgrade</h2>
@@ -233,6 +234,50 @@ export default function Migrate5() {
           <code>nifra dev</code> and against the production build.
         </li>
       </ol>
+
+      <h2 id="5-6">Moving to 5.6</h2>
+      <p>
+        An app already on 5.x moves with <code>nifra upgrade 5.6.0</code>, which prints every note
+        below with the rest of the release&apos;s. It moves the imports and dependencies itself; the
+        rest needs a hand:
+      </p>
+      <ul>
+        <li>
+          <code>@nifrajs/islets</code> and <code>@nifrajs/web/nano</code> merge into{" "}
+          <code>@nifrajs/web/islands</code>. An island host is any element with{" "}
+          <code>data-island=&quot;id&quot;</code>, with its props in{" "}
+          <code>data-island-props</code>; <code>&lt;nifra-island data-id&gt;</code> markers are no
+          longer mounted. An islets <code>island(&quot;id&quot;, setup)</code> becomes{" "}
+          <code>bindIsland(setup)</code> passed to <code>mountIslands(&#123; id &#125;)</code>, and a
+          nano signal is read by calling it (<code>count()</code>). See{" "}
+          <a href="/docs/islands">Islands</a>.
+        </li>
+        <li>
+          <code>withISR</code> over any store but <code>MemoryCacheStore</code> takes a{" "}
+          <code>storeSecret</code> of at least 32 random characters, the same in every process, and
+          throws at startup without one. Pages stored before the upgrade render once more.
+        </li>
+        <li>
+          The server-component pipeline is certified on Vite 8.3.4: pin <code>vite</code> to exactly
+          that version.
+        </li>
+        <li>
+          An <code>authenticate()</code> stage, and <code>bearer()</code>, <code>jwt()</code>,{" "}
+          <code>basicAuth()</code> and <code>apiKey()</code>, gate the mounts registered after them:
+          register a mount that must stay public first. <code>idempotency()</code> covers only the
+          routes declared after it.
+        </li>
+        <li>
+          <code>t.integer()</code> refuses values past the safe-integer range by default, forms are
+          parsed by one parser on every runtime, and <code>@nifrajs/web-vanilla</code>&apos;s{" "}
+          <code>html</code> escapes each value for the place it lands and throws on a string as a
+          tag name or inside <code>&lt;script&gt;</code>.
+        </li>
+        <li>
+          A Svelte page receives <code>data</code> as the router published it, not a deep reactive
+          proxy: copy what you edit into the page&apos;s own state.
+        </li>
+      </ul>
     </div>
   )
 }
