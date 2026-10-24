@@ -10,6 +10,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryState, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import { epochOf, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
+import { present } from "./internal/present.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 import { appUrl, requestPattern } from "./internal/route-path.ts"
 import { shareData } from "./internal/share-data.ts"
@@ -1361,11 +1362,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           searchClientKeys[state.routeId] ?? [],
         )
       ) {
-        ++generation // supersede any in-flight navigation so its late result is dropped
+        const mine = ++generation // supersede any in-flight navigation so its late result is dropped
         navAbort?.abort()
-        cachePut(path, dataFields(state))
-        state = { ...state, path, pending: false, pendingPath: undefined }
-        emit()
+        await present(() => {
+          if (mine !== generation) return
+          cachePut(path, dataFields(state))
+          state = { ...state, path, pending: false, pendingPath: undefined }
+          emit()
+        })
         return
       }
       const mine = ++generation
@@ -1378,46 +1382,51 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const [to, target, loaded] = await loadFollowing(mine, path, matched, ac.signal, true, true)
         if (mine !== generation) return // a newer navigation superseded this one - drop the stale result
         cachePut(to, loaded) // keep the keyed cache coherent with what we publish
-        // The page's own URL is never intercepted: navigating there (Back out of a boundary, a link
-        // to itself) shows the page, even when a boundary's pattern matches it.
-        const pagePath = pagePathOf(state)
-        const interception =
-          loaded.terminalRouteId === undefined && pathnameOf(to) !== pathnameOf(pagePath)
-            ? interceptionFor(state.routeId, to, target)
-            : undefined
-        if (interception !== undefined) {
-          // The target's ordinary data request has already completed (including its server authz and
-          // optional client wrapper). Only the presentation route is retained; the current page stays
-          // mounted underneath the named slot. A target that returned a terminal status never reaches
-          // this branch, so an unauthorized/missing target cannot become a modal.
-          state = {
-            ...state,
-            path: to,
-            boundaries: holdTarget(state.boundaries, interception, loaded),
-            intercepted: { boundary: interception.name, pagePath },
-            pending: false,
-            pendingPath: undefined,
+        // The swap can wait a frame for the presenter, and a newer navigation started meanwhile owns it.
+        await present(() => {
+          if (mine !== generation) return
+          // The page's own URL is never intercepted: navigating there (Back out of a boundary, a link
+          // to itself) shows the page, even when a boundary's pattern matches it.
+          const pagePath = pagePathOf(state)
+          const interception =
+            loaded.terminalRouteId === undefined && pathnameOf(to) !== pathnameOf(pagePath)
+              ? interceptionFor(state.routeId, to, target)
+              : undefined
+          if (interception !== undefined) {
+            // The target's ordinary data request has already completed (including its server authz and
+            // optional client wrapper). Only the presentation route is retained; the current page stays
+            // mounted underneath the named slot. A target that returned a terminal status never reaches
+            // this branch, so an unauthorized/missing target cannot become a modal.
+            state = {
+              ...state,
+              path: to,
+              boundaries: holdTarget(state.boundaries, interception, loaded),
+              intercepted: { boundary: interception.name, pagePath },
+              pending: false,
+              pendingPath: undefined,
+            }
+            emit()
+            return
           }
+          state = {
+            routeId: loaded.terminalRouteId ?? target.routeId,
+            params: loaded.terminalRouteId === undefined ? target.params : {},
+            path: to,
+            ...dataFields(loaded),
+            actionData: undefined, // a fresh navigation has no action result
+            pending: false,
+          }
+          shownPage = loaded
           emit()
-          return
-        }
-        state = {
-          routeId: loaded.terminalRouteId ?? target.routeId,
-          params: loaded.terminalRouteId === undefined ? target.params : {},
-          path: to,
-          ...dataFields(loaded),
-          actionData: undefined, // a fresh navigation has no action result
-          pending: false,
-        }
-        shownPage = loaded
-        emit()
+        })
       } catch (err) {
-        // Clear our pending flag + target (only if still current) and rethrow - the caller decides how
-        // to recover (the history layer falls back to a full-page navigation).
-        if (mine === generation) {
-          state = { ...state, pending: false, pendingPath: undefined }
-          emit()
-        }
+        // A newer navigation or submit owns the page, and aborting this one's request is how it took
+        // over: as with a submit, the superseded navigation settles quietly.
+        if (mine !== generation) return
+        // Clear our pending flag + target and rethrow - the caller decides how to recover (the history
+        // layer falls back to a full-page navigation).
+        state = { ...state, pending: false, pendingPath: undefined }
+        emit()
         throw err
       }
     },
