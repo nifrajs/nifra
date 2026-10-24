@@ -176,6 +176,66 @@ describe("etag", () => {
     }
   })
 
+  test("a handler's ETag with a comma inside its quotes still revalidates", async () => {
+    const app = server()
+      .use(etag())
+      .get("/doc", (c) => {
+        c.set.headers.etag = '"v,42"'
+        return { version: 42 }
+      })
+      .get("/raw", () => new Response("raw", { headers: { etag: 'W/"r,7"' } }))
+    for (const [path, tag] of [
+      ["/doc", '"v,42"'],
+      ["/raw", 'W/"r,7"'],
+    ] as const) {
+      const revalidated = await app.fetch(
+        new Request(`http://x${path}`, { headers: { "if-none-match": `"other", ${tag}` } }),
+      )
+      expect({ path, status: revalidated.status }).toEqual({ path, status: 304 })
+    }
+  })
+
+  test("a handler's own ETag is kept, and If-None-Match is checked against it", async () => {
+    let cancelled = false
+    const versioned = server()
+      .use(etag())
+      .get("/doc", (c) => {
+        c.set.headers.etag = '"v42"'
+        return { version: 42 }
+      })
+      .get(
+        "/raw",
+        () =>
+          new Response(
+            new ReadableStream({
+              start: (controller) => controller.enqueue(new TextEncoder().encode("raw")),
+              cancel: () => {
+                cancelled = true
+              },
+            }),
+            { headers: { etag: '"r7"', "content-type": "text/plain" } },
+          ),
+      )
+    for (const [path, tag] of [
+      ["/doc", '"v42"'],
+      ["/raw", '"r7"'],
+    ] as const) {
+      const fresh = await versioned.fetch(new Request(`http://x${path}`))
+      expect(fresh.status).toBe(200)
+      expect(fresh.headers.get("etag")).toBe(tag)
+      if (path === "/raw") await fresh.body?.cancel()
+      else await fresh.text()
+      const revalidated = await versioned.fetch(
+        new Request(`http://x${path}`, { headers: { "if-none-match": tag } }),
+      )
+      expect(revalidated.status).toBe(304)
+      expect(revalidated.headers.get("etag")).toBe(tag)
+      expect(revalidated.headers.get("content-type")).toBeNull()
+      expect(await revalidated.text()).toBe("")
+    }
+    expect(cancelled).toBe(true)
+  })
+
   test("non-GET responses are untouched (no ETag)", async () => {
     const res = await app.fetch(new Request("http://x/", { method: "POST" }))
     expect(res.headers.get("etag")).toBeNull()

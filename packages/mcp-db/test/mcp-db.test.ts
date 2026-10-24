@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite"
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, setSystemTime, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { McpDbConfigError, serveDatabaseAsMcp } from "../src/index.ts"
+import { McpDbConfigError, type SqliteDatabaseLike, serveDatabaseAsMcp } from "../src/index.ts"
 import { cellBoundedSqliteQuery } from "../src/internal/shared.ts"
 import { openQuerySession } from "../src/internal/sqlite-session.ts"
 
@@ -188,6 +188,89 @@ describe("schema tools", () => {
     expect(text).not.toContain("users")
   })
 
+  test("list_tables reuses its counts for 10 seconds, then counts again", async () => {
+    const db = seededDb()
+    const served = serveDatabaseAsMcp(db, { tables: ["habits"] })
+    const rows = async () => JSON.parse((await call(served, "list_tables")).text)[0]?.rows
+    try {
+      expect(await rows()).toBe(2)
+      db.run("PRAGMA query_only = OFF")
+      db.run("INSERT INTO habits (name) VALUES ('swim')")
+      expect(await rows()).toBe(2)
+      setSystemTime(new Date(Date.now() + 10_000))
+      expect(await rows()).toBe(3)
+    } finally {
+      setSystemTime()
+      await served.close?.()
+    }
+  })
+
+  test("a row count past the query time limit is reported as null, not a failed listing", async () => {
+    const real = seededDb()
+    const slow: SqliteDatabaseLike = {
+      run: (sql) => real.run(sql),
+      prepare: (sql) => {
+        // The in-process lane checks its deadline once the statement returns.
+        if (sql.includes('"entries"')) setSystemTime(new Date(Date.now() + 60_000))
+        return real.prepare(sql)
+      },
+    }
+    const served = serveDatabaseAsMcp(slow, { tables: ["habits", "entries"] })
+    try {
+      const result = await call(served, "list_tables")
+      expect(result.isError).toBe(false)
+      expect(JSON.parse(result.text)).toEqual([
+        { table: "habits", rows: 2 },
+        { table: "entries", rows: null },
+      ])
+    } finally {
+      setSystemTime()
+      await served.close?.()
+    }
+  })
+
+  test("a listing whose count fails is not reused", async () => {
+    const real = seededDb()
+    let failures = 1
+    const flaky: SqliteDatabaseLike = {
+      run: (sql) => real.run(sql),
+      prepare: (sql) => {
+        if (sql.includes("count(*)") && failures-- > 0) throw new Error("disk I/O error")
+        return real.prepare(sql)
+      },
+    }
+    const served = serveDatabaseAsMcp(flaky, { tables: ["habits"] })
+    try {
+      expect(await call(served, "list_tables")).toMatchObject({ isError: true })
+      expect(JSON.parse((await call(served, "list_tables")).text)).toEqual([
+        { table: "habits", rows: 2 },
+      ])
+    } finally {
+      await served.close?.()
+    }
+  })
+
+  test("a file-backed database counts rows on the worker's own connection", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const db = new Database(join(directory, "app.db"))
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    db.run("INSERT INTO habits (name) VALUES ('read'), ('run')")
+    const served = serveDatabaseAsMcp(db, { tables: ["habits"], enforceQueryOnly: false })
+    try {
+      // A row this connection has not committed: a count run here would see it.
+      db.run("BEGIN")
+      db.run("INSERT INTO habits (name) VALUES ('swim')")
+      expect(JSON.parse((await call(served, "list_tables")).text)).toEqual([
+        { table: "habits", rows: 2 },
+      ])
+      db.run("ROLLBACK")
+    } finally {
+      await served.close?.()
+      db.close(true)
+      await removeDirectoryAfterWorkerExit(directory)
+    }
+  })
+
   test("describe_table returns columns for an exposed table", async () => {
     const { text } = await call(server, "describe_table", { table: "habits" })
     const columns = JSON.parse(text) as
@@ -319,7 +402,22 @@ describe("run_query (opt-in)", () => {
     expect(comment.isError).toBe(false)
   })
 
-  test("a SELECT that touches an unexposed table is rejected by plan verification", async () => {
+  test("a table alias reads its table, and cannot stand in for an unexposed one", async () => {
+    for (const sql of [
+      "SELECT h.name FROM habits h",
+      "SELECT a.name FROM habits AS a JOIN habits b ON a.id = b.id",
+      "SELECT `h`.name FROM [habits] `h`",
+    ]) {
+      const result = await call(server, "run_query", { sql }, auth)
+      expect(result).toMatchObject({ isError: false })
+      expect(JSON.parse(result.text).rows).toEqual([{ name: "read" }])
+    }
+    const result = await call(server, "run_query", { sql: "SELECT * FROM users AS h" }, auth)
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain("not exposed")
+  })
+
+  test("a SELECT that touches an unexposed table is rejected", async () => {
     for (const sql of [
       "SELECT * FROM users",
       "SELECT * FROM constant",

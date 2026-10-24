@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
 import { handleMcpHttp, publicDocsTools, respondMcpHttp } from "../src/mcp-http.ts"
 
 const post = (body: unknown): Request =>
@@ -22,6 +23,13 @@ describe("publicDocsTools", () => {
       "nifra_learn",
       "nifra_types",
     ])
+  })
+
+  test("the docs-mcp help line names every tool the server serves", () => {
+    const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8")
+    const start = source.indexOf("  nifra docs-mcp")
+    const help = source.slice(start, source.indexOf("\n  nifra ", start + 1))
+    for (const tool of publicDocsTools()) expect(help).toContain(tool.name)
   })
 })
 

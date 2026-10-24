@@ -4,6 +4,7 @@ import {
   type Middleware,
   type ResponseBodyReplacement,
 } from "@nifrajs/core/server"
+import { ifNoneMatchIncludes } from "./_entity-tag.ts"
 import { weakFingerprint } from "./_fingerprint.ts"
 
 /** Whether `body` is over `maxBytes` as UTF-8. A UTF-16 unit is 1 to 3 bytes, so only a string
@@ -101,7 +102,8 @@ function replayFrom(res: Response, chunks: readonly Uint8Array[], reader: ChunkR
  * responses. Built on the portable `onResponseBody` tier: the hook receives the final
  * framework-serialized bytes on every runtime with nothing drained, so the middleware stays on
  * Node's direct writer. Handler-returned raw `Response`s (streams, proxied fetches) use a capped,
- * replaying fallback so oversized bodies remain intact. Idempotent.
+ * replaying fallback so oversized bodies remain intact. A response that already carries an `ETag`
+ * (a version the app manages) keeps it, and `If-None-Match` is checked against that tag. Idempotent.
  */
 export function etag(options: ETagOptions = {}) {
   const weak = options.weak ?? true
@@ -115,18 +117,21 @@ export function etag(options: ETagOptions = {}) {
       withResponseObserver<Middleware>({
         onResponseBody(body, headers, req, status) {
           if (!isConditionalMethod(req.method) || status !== 200) return undefined
+          const revalidate = (tag: string): ResponseBodyReplacement | undefined => {
+            if (!matchesIfNoneMatch(req.header("if-none-match"), tag)) return undefined
+            // A 304 carries no body - drop the body-describing headers so strict intermediaries
+            // do not see a null body with a non-zero Content-Length.
+            headers.delete("content-length")
+            headers.delete("content-type")
+            return { body: null, status: 304 }
+          }
+          const own = headers.get("etag")
+          if (own !== null) return revalidate(own)
           if (exceeds(body, maxBytes)) return undefined
           const finish = (fingerprint: string): ResponseBodyReplacement | undefined => {
             const tag = prefix + String.fromCharCode(34) + fingerprint + String.fromCharCode(34)
             headers.set("etag", tag)
-            if (matchesIfNoneMatch(req.header("if-none-match"), tag)) {
-              // A 304 carries no body - drop the body-describing headers so strict intermediaries
-              // do not see a null body with a non-zero Content-Length.
-              headers.delete("content-length")
-              headers.delete("content-type")
-              return { body: null, status: 304 }
-            }
-            return undefined
+            return revalidate(tag)
           }
           if (weak) return finish(weakFingerprint()(body))
           return sha256Tag(typeof body === "string" ? ETAG_ENCODER.encode(body) : body).then(finish)
@@ -138,6 +143,12 @@ export function etag(options: ETagOptions = {}) {
             response.body === null
           ) {
             return response
+          }
+          const own = response.headers.get("etag")
+          if (own !== null) {
+            if (!matchesIfNoneMatch(req.headers.get("if-none-match"), own)) return response
+            void response.body.cancel()
+            return notModified(response.headers)
           }
           // Hashing reads the body before any of it is sent. A stream meant to arrive as it is
           // produced - an event stream, or one marked no-store or no-transform - passes through.
@@ -180,11 +191,7 @@ async function etagRawResponse(
   const tag = prefix + String.fromCharCode(34) + digest + String.fromCharCode(34)
   const headers = new Headers(response.headers)
   headers.set("etag", tag)
-  if (matchesIfNoneMatch(req.headers.get("if-none-match"), tag)) {
-    headers.delete("content-length")
-    headers.delete("content-type")
-    return new Response(null, { status: 304, headers })
-  }
+  if (matchesIfNoneMatch(req.headers.get("if-none-match"), tag)) return notModified(headers)
   // The body was consumed and rebuilt from bytes. Re-derive framing at the serving adapter
   // instead of trusting a stale upstream declaration.
   headers.delete("content-length")
@@ -195,17 +202,13 @@ async function etagRawResponse(
   })
 }
 
-function matchesIfNoneMatch(value: string | null, tag: string): boolean {
-  if (value === null) return false
-  const normalizedTag = weakComparableTag(tag)
-  for (const part of value.split(",")) {
-    const candidate = part.trim()
-    if (candidate === "*") return true
-    if (weakComparableTag(candidate) === normalizedTag) return true
-  }
-  return false
+function notModified(source: Headers): Response {
+  const headers = new Headers(source)
+  headers.delete("content-length")
+  headers.delete("content-type")
+  return new Response(null, { status: 304, headers })
 }
 
-function weakComparableTag(tag: string): string {
-  return tag.startsWith("W/") ? tag.slice(2) : tag
+function matchesIfNoneMatch(value: string | null, tag: string): boolean {
+  return value !== null && ifNoneMatchIncludes(value, tag)
 }

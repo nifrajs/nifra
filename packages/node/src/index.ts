@@ -16,7 +16,7 @@ import { type FileHandle, realpath } from "node:fs/promises"
 import {
   createServer,
   type IncomingHttpHeaders,
-  type IncomingMessage,
+  IncomingMessage,
   type ServerResponse,
   STATUS_CODES,
 } from "node:http"
@@ -958,6 +958,68 @@ function rawHost(req: IncomingMessage): string | null | undefined {
     }
   }
   return host
+}
+
+// The `headers` getter merges the first `kHeadersCount` entries of `rawHeaders` (a lowered
+// `maxHeadersCount` stops it short of the list) into the object it keeps under `kHeaders`. Both are
+// private symbols, found once here. Bun's `node:http` names them too but leaves the count at 0 and
+// Deno's builds the object up front, so a scan runs only where the count covers every raw entry.
+const INCOMING_SLOTS = ((): { readonly count: symbol; readonly built: symbol } | undefined => {
+  try {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the constructor only stores the socket, so a socketless message is safe to probe for its slot symbols.
+    const symbols = Object.getOwnPropertySymbols(new IncomingMessage(null as never))
+    const count = symbols.find((symbol) => symbol.description === "kHeadersCount")
+    const built = symbols.find((symbol) => symbol.description === "kHeaders")
+    return count === undefined || built === undefined ? undefined : { count, built }
+  } catch {
+    return undefined
+  }
+})()
+
+/** `key` and `name` are one header name: equal but for ASCII letter case. Same lengths assumed. */
+function sameHeaderName(key: string, name: string): boolean {
+  for (let i = 0; i < name.length; i++) {
+    const a = key.charCodeAt(i)
+    const b = name.charCodeAt(i)
+    if (a !== b) {
+      const folded = b | 32
+      if ((a | 32) !== folded || folded < 97 || folded > 122) return false
+    }
+  }
+  return true
+}
+
+/**
+ * One request header as `headers[name]` gives it, repeats joined with ", " like `Headers.get`. The
+ * getter builds every header into an object up front (2.9% of a real-world POST's CPU); seven reads
+ * scanning `rawHeaders` instead measured 124-222 ns cheaper. A repeated name, more than 32 headers,
+ * or an object already built takes the getter, so Node's merge rules stay the only ones.
+ */
+function nodeRequestHeader(req: IncomingMessage, name: string): string | null {
+  // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: reads only the two slot symbols found above, and only `typeof`/`!= null` checks touch them.
+  const slots = req as unknown as Record<symbol, unknown>
+  const count =
+    INCOMING_SLOTS === undefined || slots[INCOMING_SLOTS.built] != null
+      ? undefined
+      : slots[INCOMING_SLOTS.count]
+  const raw = req.rawHeaders
+  if (typeof count === "number" && count <= 64 && count === raw.length) {
+    let found: string | undefined
+    let repeated = false
+    for (let i = 0; i < count; i += 2) {
+      const key = raw[i]
+      if (key?.length !== name.length || (key !== name && !sameHeaderName(key, name))) continue
+      if (found !== undefined) {
+        repeated = true
+        break
+      }
+      found = raw[i + 1]
+    }
+    if (!repeated) return found ?? null
+  }
+  const value = req.headers[name.toLowerCase()]
+  if (value === undefined) return null
+  return Array.isArray(value) ? value.join(", ") : value
 }
 
 function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefined {
@@ -2188,12 +2250,10 @@ class LazyNodeRequestSource implements NodeRequestSource {
     return this.headersValue
   }
 
-  // Read straight off Node's already-lowercased header bag (comma-joining multi-values to match
-  // `Headers.get`) so the body-cap path can check content-type/length without building a `Headers`.
+  // Read straight off Node's request (comma-joining multi-values to match `Headers.get`) so the
+  // body-cap path can check content-type/length without building a `Headers`.
   header(name: string): string | null {
-    const value = this.nodeReq.headers[name.toLowerCase()]
-    if (value === undefined) return null
-    return Array.isArray(value) ? value.join(", ") : value
+    return nodeRequestHeader(this.nodeReq, name)
   }
 
   get body(): ReadableStream<Uint8Array> | null {
@@ -2446,9 +2506,7 @@ class LeanNodeGetSource implements NodeRequestSource {
   }
 
   header(name: string): string | null {
-    const value = this.nodeReq.headers[name.toLowerCase()]
-    if (value === undefined) return null
-    return Array.isArray(value) ? value.join(", ") : value
+    return nodeRequestHeader(this.nodeReq, name)
   }
 
   get body(): null {
@@ -2485,20 +2543,51 @@ function headersFromNode(input: IncomingHttpHeaders): Headers {
  * `Headers` (validating every name/value) and then copy it into the request's own list, validating
  * everything a second time.
  */
-function headerRecordFromNode(input: IncomingHttpHeaders): Record<string, string> {
+function headerRecordFromNode(input: IncomingHttpHeaders): NodeHeaderInit {
   const record = Object.create(null) as Record<string, string>
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue
-    record[key] = Array.isArray(value) ? value.join(", ") : value
+    const joined = Array.isArray(value) ? value.join(", ") : value
+    // Node trims every field line, so a trailing space means the last member was empty.
+    if (joined.endsWith(" ")) return headerPairsFromNode(input)
+    record[key] = joined
   }
   return record
+}
+
+type NodeHeaderInit = Record<string, string> | Array<[string, string]>
+
+/**
+ * The same bag as `[name, value]` pairs, for a request whose joined value ends in an empty member.
+ * `Headers` strips the whitespace around each value it is given, so the record's `"a, "` would read
+ * back as `"a,"`; appending the empty members one by one keeps the `"a, "` Bun and Deno show.
+ */
+function headerPairsFromNode(input: IncomingHttpHeaders): Array<[string, string]> {
+  const pairs: Array<[string, string]> = []
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined) continue
+    if (Array.isArray(value)) {
+      for (const member of value) pairs.push([key, member])
+      continue
+    }
+    const delimiter = key === "cookie" ? "; " : ", "
+    let base = value
+    let empty = 0
+    while (base.endsWith(delimiter)) {
+      base = base.slice(0, -delimiter.length)
+      empty++
+    }
+    pairs.push([key, base])
+    for (; empty > 0; empty--) pairs.push([key, ""])
+  }
+  return pairs
 }
 
 function makeWebRequest(
   req: IncomingMessage,
   method: string,
   url: string,
-  headers: Headers | Record<string, string>,
+  headers: Headers | NodeHeaderInit,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
   res?: RequestEnd,
 ): Request {
@@ -2538,16 +2627,16 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
   class LazyWebRequest {
     #method: string
     #url: string
-    #headersInit: (() => Headers | Record<string, string>) | undefined
-    #materialize: ((headers: Headers | Record<string, string>) => Request) | undefined
+    #headersInit: (() => Headers | NodeHeaderInit) | undefined
+    #materialize: ((headers: Headers | NodeHeaderInit) => Request) | undefined
     #headers: Headers | undefined
     #real: Request | undefined
 
     constructor(
       method: string,
       url: string,
-      headersInit: () => Headers | Record<string, string>,
-      materialize: (headers: Headers | Record<string, string>) => Request,
+      headersInit: () => Headers | NodeHeaderInit,
+      materialize: (headers: Headers | NodeHeaderInit) => Request,
     ) {
       this.#method = method
       this.#url = url
@@ -2569,7 +2658,7 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
         this.#headers = this.#real.headers
         return this.#headers
       }
-      const init = (this.#headersInit as () => Headers | Record<string, string>)()
+      const init = (this.#headersInit as () => Headers | NodeHeaderInit)()
       this.#headers = init instanceof Headers ? init : new Headers(init)
       return this.#headers
     }
@@ -2577,11 +2666,11 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
     /** The real undici Request, built on first demand. Named for the forwarding descriptors below. */
     get _real(): Request {
       if (this.#real === undefined) {
-        const materialize = this.#materialize as (h: Headers | Record<string, string>) => Request
+        const materialize = this.#materialize as (h: Headers | NodeHeaderInit) => Request
         // Hand the materializer the SAME Headers a hook may already have observed (and mutated),
         // so the real request reflects it; otherwise let it build from its own cheap record.
         this.#real = materialize(
-          this.#headers ?? (this.#headersInit as () => Headers | Record<string, string>)(),
+          this.#headers ?? (this.#headersInit as () => Headers | NodeHeaderInit)(),
         )
         this.#headersInit = undefined
         this.#materialize = undefined

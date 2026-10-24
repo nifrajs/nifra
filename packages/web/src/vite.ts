@@ -252,7 +252,7 @@ const readAgentBody = async (req: IncomingMessage, max: number): Promise<Buffer 
 function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   const headers = new Headers()
   for (const [key, value] of Object.entries(req.headers)) {
-    if (typeof value === "string") headers.set(key, value)
+    if (typeof value === "string") appendJoined(headers, key, value)
     else if (Array.isArray(value)) for (const v of value) headers.append(key, v)
   }
   const url = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`
@@ -266,6 +266,23 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   }
   if (body !== undefined) init.body = body
   return new Request(url, init as unknown as ConstructorParameters<typeof Request>[1])
+}
+
+/**
+ * Node joins a repeated field into one string, and a trailing space there means the last member was
+ * empty (each field line is trimmed). `Headers` strips the whitespace around each value it is given,
+ * so the empty members are appended one by one to keep the "a, " production shows.
+ */
+function appendJoined(headers: Headers, name: string, joined: string): void {
+  const delimiter = name === "cookie" ? "; " : ", "
+  let base = joined
+  let empty = 0
+  while (base.endsWith(delimiter)) {
+    base = base.slice(0, -delimiter.length)
+    empty++
+  }
+  headers.append(name, base)
+  for (; empty > 0; empty--) headers.append(name, "")
 }
 
 /** The bits of a Node ServerResponse `pipeWebBodyToNode` touches - structural, to avoid a node:http dep here. */

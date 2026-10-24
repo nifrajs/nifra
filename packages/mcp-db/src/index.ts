@@ -31,14 +31,9 @@ import {
   fitToBytes,
   gateSqliteStatement,
   type SqliteDatabaseLike,
-  unexposedPlanRelation,
   unexposedProgramRelation,
 } from "./internal/shared.ts"
-import {
-  openQuerySession,
-  type QuerySession,
-  QueryTimeoutError,
-} from "./internal/sqlite-session.ts"
+import { openQuerySession, QueryTimeoutError } from "./internal/sqlite-session.ts"
 
 export type { SqliteDatabaseLike } from "./internal/shared.ts"
 
@@ -65,7 +60,8 @@ export interface RunQueryOptions {
    */
   readonly maxResultBytes?: number
   /**
-   * Maximum wall-clock time for planning, execution, and optional counting (default 5 seconds).
+   * Maximum wall-clock time for planning, execution, and optional counting (default 5 seconds). It
+   * also bounds `list_tables`' row counts, at the same 5-second default when `runQuery` is omitted.
    * The deadline always bounds the RESPONSE. Whether it also stops the WORK depends on where the
    * query runs: a file-backed database runs it in a reusable read-only worker that is terminated
    * on expiry, while an in-memory database (or a shim with no `filename`) runs it on this thread,
@@ -94,7 +90,7 @@ export interface ServeDatabaseAsMcpOptions {
   /**
    * Set `PRAGMA query_only = ON` on the connection at construction (default true). Disable ONLY
    * when the same connection must also serve writes elsewhere in the app - with it disabled,
-   * `run_query` still gates on SELECT/WITH + plan verification, but the engine-level guarantee is
+   * `run_query` still gates on SELECT/WITH + compiled-statement verification, but the engine-level guarantee is
    * yours to provide (e.g. open a second, read-only connection for the MCP mount - preferred).
    */
   readonly enforceQueryOnly?: boolean
@@ -112,6 +108,10 @@ export class McpDbConfigError extends Error {
     this.name = "McpDbConfigError"
   }
 }
+
+// A count reads the whole table and the schema tools answer anyone, so one count per table serves
+// every listing for this long instead of each call scanning again.
+const ROW_COUNT_TTL_MS = 10_000
 
 /** A safe SQL identifier - quoting is not enough for PRAGMA args, so reject instead. */
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -176,21 +176,44 @@ export function serveDatabaseAsMcp(
   assertResultLimit(queryTimeoutMs, "queryTimeoutMs")
   assertResultLimit(maxConcurrentQueries, "maxConcurrentQueries")
   let activeQueries = 0
-  let session: QuerySession | undefined
+  // One lane for the life of the server, picked once here and shared by the row counts and run_query.
+  const session = openQuerySession(db)
+
+  const countTables = async (): Promise<{ table: string; rows: unknown }[]> => {
+    const deadline = Date.now() + queryTimeoutMs
+    const tables: { table: string; rows: unknown }[] = []
+    for (const table of options.tables) {
+      let rows: unknown = null
+      try {
+        const [count] = await session.run(
+          // nifra-expect sql-dynamic: table name from the operator-configured allowlist, escaped by sqlIdentifier; SQL cannot bind an identifier as a parameter
+          sqlIdentifiers`SELECT count(*) AS n FROM "${table}"`,
+          deadline,
+        )
+        if (typeof count === "object" && count !== null && "n" in count) rows = count.n
+      } catch (error) {
+        if (!(error instanceof QueryTimeoutError)) throw error
+      }
+      tables.push({ table, rows })
+    }
+    return tables
+  }
+  let listing: { readonly at: number; readonly tables: ReturnType<typeof countTables> } | undefined
 
   const listTables = defineMcpTool({
     name: "list_tables",
-    description: "List the tables this server exposes, with row counts.",
-    handler: () => {
-      const rows = options.tables.map((table) => {
-        // nifra-expect sql-dynamic: table name from the operator-configured allowlist, escaped by sqlIdentifier; SQL cannot bind an identifier as a parameter
-        const [count] = db
-          .prepare(sqlIdentifiers`SELECT count(*) AS n FROM "${table}"`)
-          .all() as Array<{
-          n: number
-        }>
-        return { table, rows: count?.n ?? 0 }
-      })
+    description:
+      "List the tables this server exposes, with row counts (refreshed at most every 10 seconds; null when a count runs past the query time limit).",
+    handler: async () => {
+      if (listing === undefined || Date.now() - listing.at >= ROW_COUNT_TTL_MS) {
+        const tables = countTables()
+        const current = { at: Date.now(), tables }
+        listing = current
+        tables.catch(() => {
+          if (listing === current) listing = undefined
+        })
+      }
+      const rows = await listing.tables
       return { text: JSON.stringify(rows), structuredContent: { tables: rows } }
     },
   })
@@ -218,9 +241,6 @@ export function serveDatabaseAsMcp(
   const tools = [listTables, describeTable]
 
   if (options.runQuery !== undefined) {
-    // One lane for the life of the server: picked once here, so the handler below always has it.
-    const querySession = openQuerySession(db)
-    session = querySession
     const runQuery = defineMcpTool({
       name: "run_query",
       description:
@@ -245,35 +265,24 @@ export function serveDatabaseAsMcp(
           if (!gate.ok) return { isError: true, text: gate.text }
 
           const deadline = Date.now() + queryTimeoutMs
-
-          // Verify via the query plan that only allowlisted tables are touched. SQLite names every
-          // scanned/searched relation in EXPLAIN QUERY PLAN detail rows.
           const query = gate.query
-          let planRows: Array<{ detail?: unknown }>
-          try {
-            planRows = (await querySession.run(`EXPLAIN QUERY PLAN ${query}`, deadline)) as Array<{
-              detail?: unknown
-            }>
-          } catch (error) {
-            if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
-            return { isError: true, text: `query failed to plan: ${String(error)}` }
-          }
           let catalog: unknown[]
           let program: unknown[]
           try {
-            catalog = await querySession.run(
+            catalog = await session.run(
               "SELECT tbl_name, rootpage FROM sqlite_master WHERE rootpage > 0",
               deadline,
             )
-            program = await querySession.run(`EXPLAIN ${query}`, deadline)
+            program = await session.run(`EXPLAIN ${query}`, deadline)
           } catch (error) {
             if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
             return { isError: true, text: `query failed to plan: ${String(error)}` }
           }
-          // The plan names a scan by its alias; the program names the table by its root page.
-          const unexposed =
-            unexposedPlanRelation(planRows, (relation) => allowlist.has(relation)) ??
-            unexposedProgramRelation(program, catalog, (relation) => allowlist.has(relation))
+          // The program names each table it opens by root page. EXPLAIN QUERY PLAN cannot stand in:
+          // it names a scan by its alias (`FROM habits h` plans as `SCAN h`).
+          const unexposed = unexposedProgramRelation(program, catalog, (relation) =>
+            allowlist.has(relation),
+          )
           if (unexposed !== undefined) {
             return {
               isError: true,
@@ -288,11 +297,11 @@ export function serveDatabaseAsMcp(
             // cannot make the driver materialize every row. Where the driver names the columns,
             // oversized cells and rows past the byte budget are never copied out either.
             const bounded = boundedSqliteQuery(query, maxRows)
-            const columns = await querySession.columns(bounded, deadline)
+            const columns = await session.columns(bounded, deadline)
             if (columns.length === 0) {
-              limitedRows = await querySession.run(bounded, deadline)
+              limitedRows = await session.run(bounded, deadline)
             } else {
-              const read = await querySession.read(
+              const read = await session.read(
                 cellBoundedSqliteQuery(query, columns, maxRows, maxResultBytes),
                 deadline,
                 maxResultBytes,
@@ -309,10 +318,9 @@ export function serveDatabaseAsMcp(
           let total: number | null = limitedRows.length
           if (wasLimited && options.runQuery?.exactTotal === true) {
             try {
-              const countRows = (await querySession.run(
-                countSqliteQuery(query),
-                deadline,
-              )) as Array<{ __nifra_total?: unknown }>
+              const countRows = (await session.run(countSqliteQuery(query), deadline)) as Array<{
+                __nifra_total?: unknown
+              }>
               const count = countRows[0]?.__nifra_total
               if (
                 typeof count !== "number" ||
@@ -357,7 +365,7 @@ export function serveDatabaseAsMcp(
   })
 
   const runQueryOptions = options.runQuery
-  if (session === undefined || runQueryOptions === undefined) return server
+  if (runQueryOptions === undefined) return { ...server, close: () => session.close() }
 
   // `run_query` is authorized at the TRANSPORT boundary, where the inbound Request's credentials
   // are visible - the handler itself performs no auth, so every path to it must pass this gate:

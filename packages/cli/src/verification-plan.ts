@@ -169,6 +169,11 @@ const GATES = Object.freeze([
     "Run `bun run check:runtime-differential` and replay the printed shrunk case; fix the runtime or adapter that answered differently, or document the difference in scripts/runtime-differential/oracle.ts.",
   ),
   gate(
+    "postgres-live",
+    [["run", "test:postgres"]],
+    "Set NIFRA_TEST_POSTGRES_URL to the superuser URL of a throwaway Postgres, run `bun run test:postgres` and fix the first failing live query; without the variable the suites skip.",
+  ),
+  gate(
     "pipeline-parity",
     [["run", "check:pipeline-parity"]],
     "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
@@ -259,6 +264,7 @@ const RELEASE_PLAN = Object.freeze([
   "cross-runtime-node",
   "workerd",
   "runtime-differential",
+  "postgres-live",
   "pipeline-parity",
   "leak-matrix",
   "verification-parity",
@@ -305,6 +311,7 @@ const RELEASE_GROUPS: Readonly<Record<string, readonly string[]>> = Object.freez
     "cross-runtime-node",
     "workerd",
     "runtime-differential",
+    "postgres-live",
   ],
   pipelines: ["build", "pipeline-parity", "leak-matrix"],
   "server-components": [

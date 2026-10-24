@@ -16,13 +16,16 @@ Nifra framework package.
 2. Set `NIFRA_WORKBENCH_URL` to the printed URL and run `cargo tauri dev` from
    `apps/workbench/src-tauri`.
 
-For a packaged build, provide a signed `nifra-workbench` sidecar or set
-`NIFRA_WORKBENCH_COMMAND` to a trusted launcher. The desktop shell intentionally
-does not download runtimes, extensions, or model providers.
+A packaged (release) build has no default launcher: the development one is a path
+inside a repository checkout. Provide a signed `nifra-workbench` sidecar and set
+`NIFRA_WORKBENCH_COMMAND` to it, or set `NIFRA_WORKBENCH_URL`; without either the
+shell refuses to start. The desktop shell intentionally does not download runtimes,
+extensions, or model providers.
 
 ## Security boundary
 
-The shell loads only a loopback Workbench URL, keeps the RPC bearer token in the
-local launcher URL, and never exposes a remote listener by default. Production
+The shell loads only an `http` URL on a loopback host (`127.0.0.1`, `::1` or
+`localhost`) and refuses any other, from `NIFRA_WORKBENCH_URL` or the launcher. It
+keeps the RPC bearer token in the local launcher URL, and never exposes a remote listener by default. Production
 packaging should replace the development URL with a sidecar supervisor that
 passes the token out-of-band rather than persisting it in app state.

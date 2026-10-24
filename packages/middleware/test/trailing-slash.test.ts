@@ -28,6 +28,17 @@ describe("trailing slash middleware", () => {
     expect(networkPath.headers.get("location")).toBe("/.//attacker")
   })
 
+  test("trimTrailingSlash strips a whole trailing run and leaves an inner run alone", async () => {
+    const app = server()
+      .use(trimTrailingSlash())
+      .get("/docs", () => "ok")
+    const location = async (path: string) =>
+      (await app.fetch(new Request(`http://x${path}`))).headers.get("location")
+    expect(await location("/docs///")).toBe("/docs")
+    expect(await location("//")).toBe("/")
+    expect(await location(`/${"/".repeat(4000)}a/`)).toBe(`/.//${"/".repeat(3999)}a`)
+  })
+
   test("trimTrailingSlash rewrite mode routes internally", async () => {
     const app = server()
       .use(trimTrailingSlash({ mode: "rewrite" }))

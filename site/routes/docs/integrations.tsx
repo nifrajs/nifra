@@ -105,6 +105,15 @@ export default function Integrations() {
         <code>definePlugin</code> - a few lines, typed end-to-end. For everything else, an import
         at the top of the file is the whole integration.
       </p>
+
+      <h2>GraphQL</h2>
+      <p>
+        <code>@nifrajs/graphql</code> mounts a GraphQL-over-HTTP endpoint with{" "}
+        <code>mountGraphql</code>, executed by the <code>graphql</code> package's own parser and
+        executor, with your typed nifra context passed to the resolvers. Subscriptions run over
+        nifra's WebSocket lane with <code>graphql-ws</code>. The request body goes through the same
+        bounded parser as every other route, and the query text is never logged.
+      </p>
     </div>
   )
 }

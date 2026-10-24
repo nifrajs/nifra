@@ -3437,7 +3437,7 @@ _No named exports (side-effect entrypoint)._
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }`
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Output = unknown>`
 - **boolean** _(function)_ - `boolean: (opts?: Base<boolean>) => StandardSchemaV1<boolean>`
-  A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive).
+  A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off` → false (case-insensitive). Set but empty is `default` when there is one, else false.
 - **defineEnv** _(function)_ - `defineEnv: <S extends EnvShape>(shape: S, options?: DefineEnvOptions) => EnvResult<S>`
   Validate the environment against a schema and return a **frozen, typed** object - or throw at startup listing **every** problem at once (not just the first), so a misconfigured deploy fails loud and immediately instead of erroring on the first request that touches a bad var. This is the boot-time h…
 - **enumValue** _(function)_ - `enumValue: <const V extends readonly [string, ...string[]]>(values: V, opts?: Base<V[number]>) => StandardSchemaV1<V[number]>`
@@ -3445,7 +3445,7 @@ _No named exports (side-effect entrypoint)._
 - **env** _(const)_ - `env: { string: (opts?: Base<string> & Optional) => StandardSchemaV1<string | undefined>; number: (opts?: Base<number> & Optional) => StandardSchemaV1<number | undefined>; port: (opts?: Base<number>) => StandardSchemaV1<…`
   The coercing env validators, grouped - `env.string()`, `env.port()`, `env.enum([...])`, …
 - **number** _(function)_ - `number: (opts?: Base<number> & Optional) => StandardSchemaV1<number | undefined>`
-  A finite number, coerced from its decimal string.
+  A finite number, coerced from its decimal string (`42`, `-3.5`; not `0x10` or `1e3`).
 - **port** _(function)_ - `port: (opts?: Base<number>) => StandardSchemaV1<number>`
   A TCP port: an integer in 1-65535.
 - **string** _(function)_ - `string: (opts?: Base<string> & Optional) => StandardSchemaV1<string | undefined>`
@@ -4094,7 +4094,7 @@ _No named exports (side-effect entrypoint)._
 - **fitToBytes** _(function)_ - `fitToBytes: <T>(count: number, build: (shown: number) => T, maxBytes: number) => { readonly value: T; readonly serialized: string; readonly shown: number; } | undefined`
   Serialize `build(shown)` for the largest `shown <= count` (halving from `count`) whose JSON fits `maxBytes`. `undefined` when even `build(0)` does not fit.
 - **gateSqliteStatement** _(function)_ - `gateSqliteStatement: (input: string, exposed: (relation: string) => boolean) => SqliteGate`
-  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an…
+  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready to wrap. The compiled program ({@link unexposedProgramRelation}) remains the authority on the …
 - **isDbRefusal** _(function)_ - `isDbRefusal: (value: unknown) => value is DbRefusal`
   True for a value {@link dbRefusal} built.
 - **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>`
@@ -4112,7 +4112,7 @@ _No named exports (side-effect entrypoint)._
 - **toJsonCell** _(function)_ - `toJsonCell: (value: unknown, redaction?: DbRedaction, depth?: number) => unknown`
   One database value as JSON: bytes become `<n bytes>`, a bigint outside the safe range a string, a date an ISO string, a non-finite number a string. Strings go through `redaction.text`, and a key inside a JSON value that `redaction.column` matches is masked.
 - **unexposedPlanRelation** _(function)_ - `unexposedPlanRelation: (planRows: readonly { readonly detail?: unknown; }[], exposed: (relation: string) => boolean) => string | undefined`
-  The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed.
+  The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed. The plan names a scan by its alias (`FROM habits h` plans as `SCAN h`, `users AS habits` as `SCAN habits`), so it cannot decide o…
 
 ### `@nifrajs/mcp-db/postgres`
 

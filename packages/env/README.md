@@ -41,9 +41,9 @@ Every value in `process.env` is a `string | undefined`; these turn it into the v
 | helper | type | notes |
 | --- | --- | --- |
 | `env.string({ default?, optional? })` | `string` | empty string counts as unset |
-| `env.number({ default?, optional? })` | `number` | finite, coerced |
-| `env.port({ default? })` | `number` | integer 1-65535 |
-| `env.boolean({ default? })` | `boolean` | `true`/`1`/`yes`/`on` vs `false`/`0`/`no`/`off`/empty |
+| `env.number({ default?, optional? })` | `number` | plain decimal (`42`, `-3.5`; not `0x10` or `1e3`); blank counts as unset |
+| `env.port({ default? })` | `number` | decimal integer 1-65535; blank counts as unset |
+| `env.boolean({ default? })` | `boolean` | `true`/`1`/`yes`/`on` vs `false`/`0`/`no`/`off`; empty is `default`, else `false` |
 | `env.enum([...], { default? })` | union | one of the listed values |
 | `env.url({ default?, optional? })` | `string` | parses with WHATWG `URL`, returns the normalized href |
 

@@ -184,6 +184,10 @@ export const DENIED_FUNCTION_PREFIXES: readonly string[] = [
   "pg_try_advisory",
   "pg_notify",
   "query_to_xml",
+  "ts_stat",
+  "ts_rewrite",
+  "crosstab",
+  "connectby",
   "table_to_xml",
   "cursor_to_xml",
   "schema_to_xml",
@@ -270,6 +274,106 @@ export function lintPostgres(sql: string): PgLintRefusal | undefined {
   }
   if (depth !== 0) return { kind: "statement", message: "the statement leaves a parenthesis open" }
   return undefined
+}
+
+// Postgres' reserved and type/function-name keywords: none of them can be a bare table name or alias.
+const NOT_A_NAME = new Set(
+  `
+  all analyse analyze and any array as asc asymmetric both case cast check collate column
+  constraint create current_catalog current_date current_role current_time current_timestamp
+  current_user default deferrable desc distinct do else end except false fetch for foreign from
+  grant group having in initially intersect into lateral leading limit localtime localtimestamp
+  not null offset on only or order placing primary references returning select session_user some
+  symmetric system_user table then to trailing true union unique user using variadic when where
+  window with authorization binary collation concurrently cross current_schema freeze full ilike
+  inner is isnull join left like natural notnull outer overlaps right similar tablesample verbose
+  `
+    .trim()
+    .split(/\s+/),
+)
+
+// Words that close a FROM list at their own parenthesis depth.
+const FROM_LIST_ENDS = new Set(
+  `
+  where group having window order limit offset fetch for union intersect except returning select
+  `
+    .trim()
+    .split(/\s+/),
+)
+
+const isPunct = (token: PgToken | undefined, value: string): boolean =>
+  token?.kind === "punct" && token.value === value
+const isKeyword = (token: PgToken | undefined, word: string): boolean =>
+  token?.kind === "word" && token.bare && token.value.toLowerCase() === word
+const isName = (token: PgToken | undefined): token is PgToken =>
+  token?.kind === "word" && !(token.bare && NOT_A_NAME.has(token.value.toLowerCase()))
+
+/** A table reference starting at `start` that carries a column alias list: `[ONLY] name [*] [AS] alias (`. */
+function aliasListAt(
+  tokens: readonly PgToken[],
+  start: number,
+): { readonly table: string; readonly alias: string } | undefined {
+  let at = start
+  const only = isKeyword(tokens[at], "only")
+  if (only) at++
+  const parenthesized = only && isPunct(tokens[at], "(")
+  if (parenthesized) at++
+  let name = tokens[at]
+  if (!isName(name)) return undefined
+  at++
+  for (let part = tokens[at + 1]; isPunct(tokens[at], ".") && isName(part); part = tokens[at + 1]) {
+    name = part
+    at += 2
+  }
+  if (parenthesized) {
+    if (!isPunct(tokens[at], ")")) return undefined
+    at++
+  } else if (isPunct(tokens[at], "(")) return undefined // a function in FROM, whose alias list is safe
+  if (isPunct(tokens[at], "*")) at++
+  if (isKeyword(tokens[at], "as")) at++
+  const alias = tokens[at]
+  if (!isName(alias) || !isPunct(tokens[at + 1], "(")) return undefined
+  return { table: name.value, alias: alias.value }
+}
+
+/**
+ * Every table the statement gives a column alias list, as in `FROM users AS t(a, b)`. A verbose plan
+ * prints such a scan's columns by the alias names (its partitions' scans too), and the list can hand a
+ * real column's name to another one, so no check on the plan's column names can see what is read.
+ * A function's or a subquery's alias list is not reported: the plan prints the base columns under them.
+ */
+export function tableAliasLists(
+  sql: string,
+): readonly { readonly table: string; readonly alias: string }[] {
+  const { tokens } = lexPostgres(sql)
+  const found: { readonly table: string; readonly alias: string }[] = []
+  // Per parenthesis depth: is a FROM list open there.
+  const inFromList: boolean[] = [false]
+  let itemStart = false
+  for (const [index, token] of tokens.entries()) {
+    const starts: boolean = itemStart
+    itemStart = false
+    if (starts) {
+      const listed = aliasListAt(tokens, index)
+      if (listed !== undefined) found.push(listed)
+    }
+    if (isPunct(token, "(")) {
+      // A parenthesized join holds a FROM list of its own; a subquery's SELECT closes it.
+      inFromList.push(starts)
+      itemStart = starts
+    } else if (isPunct(token, ")")) {
+      if (inFromList.length > 1) inFromList.pop()
+    } else if (isPunct(token, ",")) {
+      itemStart = inFromList.at(-1) === true
+    } else if (token.kind === "word" && token.bare) {
+      const word = token.value.toLowerCase()
+      if (word === "from" || word === "join") {
+        inFromList[inFromList.length - 1] = true
+        itemStart = true
+      } else if (FROM_LIST_ENDS.has(word)) inFromList[inFromList.length - 1] = false
+    }
+  }
+  return found
 }
 
 /** The statement without a final `;` (comments after it included), ready to wrap in a subquery. */

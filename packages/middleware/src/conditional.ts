@@ -1,3 +1,4 @@
+import { ifNoneMatchIncludes } from "./_entity-tag.ts"
 import { withHeaders } from "./_utils.ts"
 
 export interface ConditionalResponseOptions {
@@ -15,23 +16,11 @@ function lastModifiedHeader(date: Date | undefined): string | undefined {
   return date.toUTCString()
 }
 
-function weakTag(value: string): string {
-  return value.startsWith("W/") ? value.slice(2) : value
-}
-
-function matchesIfNoneMatch(value: string, etag: string): boolean {
-  const comparable = weakTag(etag)
-  return value.split(",").some((candidate) => {
-    const item = candidate.trim()
-    return item === "*" || weakTag(item) === comparable
-  })
-}
-
 function isFresh(request: Request, options: ConditionalResponseOptions): boolean {
   if (request.method !== "GET" && request.method !== "HEAD") return false
   const ifNoneMatch = request.headers.get("if-none-match")
   if (ifNoneMatch !== null && options.etag !== undefined) {
-    return matchesIfNoneMatch(ifNoneMatch, options.etag)
+    return ifNoneMatchIncludes(ifNoneMatch, options.etag)
   }
   if (ifNoneMatch !== null) return false
   const modified = options.lastModified?.getTime()

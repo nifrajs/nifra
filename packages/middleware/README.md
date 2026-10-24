@@ -25,12 +25,9 @@ const app = server()
   .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
-  .use(rateLimit({
-    store: new MemoryStore(),
-    max: 100,
-    windowMs: 60_000,
-    key: (req) => req.headers.get("x-user-id") ?? "anonymous",
-  }))
+  // Keyed by the caller IP the server resolved. MemoryStore refuses production unless given
+  // { allowInProduction: true } for a single instance; several instances need one shared store.
+  .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
   .use(timing())
   .get("/", () => ({ ok: true }))
 ```

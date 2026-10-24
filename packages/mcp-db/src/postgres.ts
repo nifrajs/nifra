@@ -39,7 +39,12 @@ import {
   type PostgresClient,
   records,
 } from "./internal/pg-exec.ts"
-import { DENIED_FUNCTION_PREFIXES, lintPostgres, withoutTerminator } from "./internal/pg-lexer.ts"
+import {
+  DENIED_FUNCTION_PREFIXES,
+  lintPostgres,
+  tableAliasLists,
+  withoutTerminator,
+} from "./internal/pg-lexer.ts"
 import {
   type DbPlan,
   type DbRedaction,
@@ -342,9 +347,14 @@ function scopeMatcher(scope: PostgresScope): (relation: PlanRelation) => string 
  * The plan-level table check: each relation, and every table it inherits from (partitions too). A
  * `pg_*` function in FROM reads server state the way a catalog does - a system view such as
  * `pg_stat_activity` plans as one once the planner drops its catalog joins - so it is out of scope too.
- * With `masked`, a plan expression that uses a masked column, or a whole row holding one, is refused.
+ * With `masked`, a plan expression that uses a masked column, or a whole row holding one, is refused,
+ * and so is any masked column of a relation `statement` reads when it gives a table a column alias list.
  */
-function checkScope(scope: PostgresScope, masked?: (column: string) => boolean) {
+function checkScope(
+  scope: PostgresScope,
+  masked: ((column: string) => boolean) | undefined,
+  statement: string,
+) {
   const outOfScope = scopeMatcher(scope)
   return async (connection: PgConnection, reads: PlanReads): Promise<DbRefusal | undefined> => {
     for (const fn of reads.functions) {
@@ -393,6 +403,9 @@ function checkScope(scope: PostgresScope, masked?: (column: string) => boolean) 
       if (column === "*") wholeRows.push(relation)
       else if (masked(column)) hits.add(`${relation.name}.${column}`)
     }
+    // The plan names an alias-listed scan's columns by the list, which can reuse a real column's name.
+    const renamed = tableAliasLists(statement)
+    if (renamed.length > 0) wholeRows.push(...reads.relations)
     const listed = [...wholeRows, ...reads.outputs.map((output) => output.relation)]
     if (listed.length > 0) {
       const live = new Map<string, string[]>()
@@ -423,6 +436,13 @@ function checkScope(scope: PostgresScope, masked?: (column: string) => boolean) 
       }
     }
     if (hits.size === 0) return undefined
+    const [aliased] = renamed
+    if (aliased !== undefined) {
+      return dbRefusal(
+        "NIFRA_DB_COLUMN_REFUSED",
+        `the query renames the columns of ${aliased.table} with the alias list ${aliased.alias}(...), so the plan cannot show which columns it reads, and it reads a relation holding ${[...hits].join(", ")}, masked as ${hits.size === 1 ? "a credential" : "credentials"}; alias columns in the select list instead`,
+      )
+    }
     return dbRefusal(
       "NIFRA_DB_COLUMN_REFUSED",
       `the query reads ${[...hits].join(", ")}, masked as ${hits.size === 1 ? "a credential" : "credentials"}`,
@@ -465,7 +485,7 @@ export async function queryPostgres(
   const fetched = await gated(client, sql, options, (connection, statement) =>
     fetchThroughCursor(connection, statement, {
       maxRows: options.maxRows,
-      scope: checkScope(options, options.redaction?.column),
+      scope: checkScope(options, options.redaction?.column, statement),
     }),
   )
   if (isDbRefusal(fetched)) return fetched
@@ -494,7 +514,7 @@ export async function explainPostgres(
   const explained = await gated(client, sql, options, (connection, statement) =>
     explainThroughServer(connection, statement, {
       analyze: options.analyze === true,
-      scope: checkScope(options, options.redaction?.column),
+      scope: checkScope(options, options.redaction?.column, statement),
     }),
   )
   if (isDbRefusal(explained)) return explained

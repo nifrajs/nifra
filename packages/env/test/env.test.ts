@@ -36,6 +36,21 @@ describe("env coercing helpers", () => {
     )
   })
 
+  test("number and port read decimal text only, and space alone as unset", () => {
+    const number = (N: string) => defineEnv({ N: env.number({ default: 7 }) }, { source: { N } }).N
+    expect(number(" 42 ")).toBe(42)
+    expect(number("-.5")).toBe(-0.5)
+    expect(number("   ")).toBe(7)
+    for (const N of ["0x10", "1e3", "0b1", "Infinity", "4 2"]) {
+      expect(() => number(N)).toThrow(/must be a number/)
+    }
+    expect(() => defineEnv({ N: env.number() }, { source: { N: " " } })).toThrow(/N: is required/)
+    const port = (P: string) => defineEnv({ P: env.port({ default: 3000 }) }, { source: { P } }).P
+    expect(port(" ")).toBe(3000)
+    expect(port(" 8080 ")).toBe(8080)
+    for (const P of ["0x50", "8e3", "+80"]) expect(() => port(P)).toThrow(/port in 1-65535/)
+  })
+
   test("port: integer 1-65535", () => {
     expect(defineEnv({ P: env.port({ default: 3000 }) }, { source: {} }).P).toBe(3000)
     expect(defineEnv({ P: env.port() }, { source: { P: "8080" } }).P).toBe(8080)
@@ -53,6 +68,7 @@ describe("env coercing helpers", () => {
       expect(defineEnv({ B: env.boolean() }, { source: { B: v } }).B).toBe(false)
     }
     expect(defineEnv({ B: env.boolean({ default: true }) }, { source: {} }).B).toBe(true)
+    expect(defineEnv({ B: env.boolean({ default: true }) }, { source: { B: " " } }).B).toBe(true)
     expect(() => defineEnv({ B: env.boolean() }, { source: { B: "maybe" } })).toThrow(
       /must be a boolean/,
     )

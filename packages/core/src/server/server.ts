@@ -50,7 +50,11 @@ import {
   type RouteEntry,
 } from "../internal/route-execution.ts"
 import type { ProgramValidationKind, RouteProgramStage } from "../internal/route-program.ts"
-import { compileRouteProgram, executeRouteProgram } from "../internal/route-program.ts"
+import {
+  authenticateMount,
+  compileRouteProgram,
+  executeRouteProgram,
+} from "../internal/route-program.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
 import {
@@ -381,6 +385,8 @@ interface FetchMount<Env = unknown> {
   readonly fallbackOn404: boolean
   readonly beforeRoutes: boolean
   readonly order: number
+  /** The `authenticate()` stages registered before this mount, which gate it as they gate a route. */
+  readonly authStages: readonly RawAuthStage[]
   /** Why this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
   readonly opaque: string | OpaqueMountDeclaration | undefined
   /** The mounted app (`mount()` only), for reflection to tell a composed child from an opaque one. */
@@ -697,13 +703,19 @@ function resolvedSource(req: Request, url: string): RequestSource {
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
 const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
+// Clients repeat one Host on every request; comparing to the last valid one is ~7x cheaper than the regex.
+let lastValidHost = ""
+
 // A port past 65535, or an IPv6 literal no URL parser takes (`[1:2]`), is refused as Node refuses it:
 // no URL can be built on either, so resolving a dot segment against one threw out of `fetch`.
 const invalidHost = (host: string): boolean => {
+  if (host === lastValidHost) return false
   const authority = HOST_AUTHORITY.exec(host)
   if (authority === null) return true
   if (authority[1] !== undefined && Number(authority[1]) > 65_535) return true
-  return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
+  if (host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)) return true
+  lastValidHost = host
+  return false
 }
 
 /**
@@ -966,8 +978,9 @@ interface HookAuditState {
   readonly hasCustomLogger: boolean
   readonly sites: {
     readonly kind: string
-    /** Routes that captured the chain so far: merged routes excluded, they keep their own. */
-    readonly routesAtPush: number
+    /** Routes that captured the chain so far: merged routes excluded, they keep their own. -1 once a
+     * mount captured it, which no route count matches. */
+    routesAtPush: number
     readonly mergedAtPush: number
     readonly site: string | undefined
   }[]
@@ -1047,6 +1060,19 @@ const recordScopedHook = (key: object, routesAtPush: number, kind: string): void
     mergedAtPush: state.merged,
     site: captureCallerSite(),
   })
+}
+
+/** `next(value)` now, or once `value` settles. */
+const thenMaybe = <T, U>(
+  value: MaybePromise<T>,
+  next: (value: T) => MaybePromise<U>,
+): MaybePromise<U> => (value instanceof Promise ? value.then(next) : next(value))
+
+/** A mount registered after an `authenticate()` stage runs it, so the stage covers something. */
+const noteAuthenticatedMount = (key: object): void => {
+  const state = hookAudit.get(key)
+  if (state === undefined) return
+  for (const site of state.sites) if (site.kind === "authenticate") site.routesAtPush = -1
 }
 
 /** Count routes a `merge()` adopted: they never run this server's order-scoped hooks, so a hook
@@ -1327,15 +1353,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
   private readonly responseBodyOwners: Set<object>
+  // General lifecycles need no extra response bookkeeping when neither controls nor observers
+  // use it. Share the fused renderer after the lifecycle, including on body/write routes.
   private readonly finalizeResponse = (result: unknown, set: CtxSet, ctx?: RawContext): Response =>
-    toResponse(
-      result as HandlerResult,
-      set,
-      this.responseBodyTag,
-      this.staticResponseHeaders,
-      // Response hooks write next, and they run for this same request object.
-      ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
-    )
+    set === EMPTY_RESPONSE_CONTROLS && this.onResponseHooks.length === 0
+      ? fusedRespondNoSet(result, this.responseBodyTag, this.staticResponseHeaders, true)
+      : toResponse(
+          result as HandlerResult,
+          set,
+          this.responseBodyTag,
+          this.staticResponseHeaders,
+          // Response hooks write next, and they run for this same request object.
+          ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
+        )
   private readonly responseRequests: WeakMap<Request, Request>
   /** A request the WebSocket handshake check ran the onRequest hooks on and then passed to HTTP →
    * what the hooks returned, so `fetch` routes that instead of running the hooks a second time. */
@@ -1481,7 +1511,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /**
    * Mount a legacy fetch handler under a literal path prefix. Mounted handlers sit behind typed
    * routes, so routes can move one at a time while the remaining legacy surface stays live.
-   * Mounted responses are outside Nifra's typed route and response-contract checks.
+   * Mounted responses are outside Nifra's typed route and response-contract checks. An
+   * `authenticate()` stage registered before the mount, or a required auth plugin built on one
+   * (`bearer()`, `jwt()`, `basicAuth()`, `apiKey()`), refuses a request before the handler sees it;
+   * mount before the stage to keep the legacy surface public.
    *
    * It carries HTTP only: a WebSocket upgrade under the prefix reaches the handler as an ordinary
    * request and never becomes a socket. Serve that path's sockets with `app.ws()` routes or a
@@ -1503,7 +1536,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       beforeRoutes: false,
       order: this.mountOrder++,
       opaque: options.opaque,
+      authStages: [...this.authStages],
     }
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production" && this.authStages.length > 0)
+      noteAuthenticatedMount(this)
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
     return this
@@ -1559,7 +1595,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       order: this.mountOrder++,
       opaque: options.opaque,
       app,
+      authStages: [...this.authStages],
     }
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production" && this.authStages.length > 0)
+      noteAuthenticatedMount(this)
     // Mounts run before routes: a request under this prefix that no mount on the way strips comes back
     // here unchanged until the stack overflows, which takes the process down. Dev-time only, like the
     // hook audit: a production define folds this away, and the first dev request would hit it anyway.
@@ -1618,7 +1657,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * (see {@link ServerOptions.unusedScopedHooks}).
    */
   /**
-   * Register a dedicated authentication stage for subsequent routes.
+   * Register a dedicated authentication stage for subsequent routes, and for the `mount()` and
+   * `mountFetch()` handlers registered after it: a request it refuses never reaches them.
    *
    * Unlike `derive`, this stage receives a body-blind authentication capsule and is compiled before
    * route validation. Keeping it separate prevents an unrelated derive from accidentally becoming a
@@ -3480,7 +3520,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // whatever their prefix lengths. A 404 fallthrough chain stays on the ordinary path.
     const mount =
       this.firstMountUnder(parts.pathname, true) ?? this.firstMountUnder(parts.pathname, false)
-    if (mount === undefined || mount.fallbackOn404) return undefined
+    if (mount === undefined || mount.fallbackOn404 || mount.authStages.length > 0) return undefined
     const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
     return typeof candidate === "function"
       ? {
@@ -3941,18 +3981,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           }
         }
         if (selected === undefined) return WS_PASS
-        let childRequest = request
-        if (selected.stripPrefix) {
-          childRequest = stripMountPrefix(request, selected.path)
-          selected.wsPassed ??= new WeakMap()
-          selected.wsPassed.set(request, childRequest)
+        const mount = selected
+        const upgrade = (): MaybePromise<WebSocketUpgradeOutcome> => {
+          let childRequest = request
+          if (mount.stripPrefix) {
+            childRequest = stripMountPrefix(request, mount.path)
+            mount.wsPassed ??= new WeakMap()
+            mount.wsPassed.set(request, childRequest)
+          }
+          try {
+            return mount.resolveWebSocketUpgrade!(childRequest, platform)
+          } catch {
+            return refuse(jsonError(500, "internal_error"))
+          }
         }
-        let child: MaybePromise<WebSocketUpgradeOutcome>
-        try {
-          child = selected.resolveWebSocketUpgrade!(childRequest, platform)
-        } catch {
-          return refuse(jsonError(500, "internal_error"))
-        }
+        const child =
+          mount.authStages.length === 0
+            ? upgrade()
+            : thenMaybe(
+                authenticateMount(mount.authStages, request, platform, this.logger),
+                (refusal): MaybePromise<WebSocketUpgradeOutcome> =>
+                  refusal === undefined ? upgrade() : refuse(refusal),
+              )
         const settle = (outcome: WebSocketUpgradeOutcome): MaybePromise<WebSocketUpgradeOutcome> =>
           outcome.kind === "pass" ||
           (outcome.kind === "reject" && outcome.response.status === 404 && selected!.fallbackOn404)
@@ -4465,10 +4515,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         }
       }
       if (mount === undefined) return fallback ?? jsonError(404, "not_found")
-      const childRequest = mount.stripPrefix
-        ? (mount.wsPassed?.get(request) ?? stripMountPrefix(request, mount.path))
-        : request
-      const outcome = mount.handler(childRequest, platform)
+      const selected = mount
+      const run = (): MaybePromise<Response> => {
+        const childRequest = selected.stripPrefix
+          ? (selected.wsPassed?.get(request) ?? stripMountPrefix(request, selected.path))
+          : request
+        return selected.handler(childRequest, platform)
+      }
+      const outcome =
+        mount.authStages.length === 0
+          ? run()
+          : thenMaybe(
+              authenticateMount(mount.authStages, request, platform, this.logger),
+              (refusal) => refusal ?? run(),
+            )
       if (!replayable || !mount.fallbackOn404) return outcome
       if (outcome instanceof Promise) {
         return outcome.then((response) =>

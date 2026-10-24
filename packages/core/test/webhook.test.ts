@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { verifyWebhook } from "../src/server/webhook.ts"
 
 const enc = new TextEncoder()
@@ -92,6 +92,37 @@ describe("verifyWebhook - Stripe preset", () => {
       now: 1000,
     })
     expect(r).toEqual({ ok: true, payload })
+  })
+
+  test("a header listing many signatures costs one HMAC per secret", async () => {
+    const valid = await stripeHeader(1000, payload)
+    const bogus = Array.from({ length: 200 }, () => `v1=${"ab".repeat(32)}`).join(",")
+    const header = `${valid.slice(0, valid.indexOf(","))},${bogus},${valid.slice(valid.indexOf(",") + 1)}`
+    const signs = spyOn(crypto.subtle, "sign")
+    try {
+      const secrets = ["whsec_new_padded_to_at_least_32by", secret]
+      const r = await verifyWebhook(
+        webhookRequest(payload, { "stripe-signature": header }),
+        secrets,
+        {
+          provider: "stripe",
+          now: 1000,
+        },
+      )
+      expect(r).toEqual({ ok: true, payload })
+      expect(signs).toHaveBeenCalledTimes(secrets.length)
+    } finally {
+      signs.mockRestore()
+    }
+  })
+
+  test("a signature of the wrong length never matches", async () => {
+    const full = await hmacHex(secret, `1000.${payload}`)
+    for (const v1 of [full.slice(0, 32), `${full}00`]) {
+      const req = webhookRequest(payload, { "stripe-signature": `t=1000,v1=${v1}` })
+      const r = await verifyWebhook(req, secret, { provider: "stripe", now: 1000 })
+      expect(r).toEqual({ ok: false, reason: "invalid_signature" })
+    }
   })
 
   test("a malformed header fails (malformed_signature)", async () => {
