@@ -247,23 +247,20 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
 export function withToolMeta(tool: McpTool): McpTool {
   const meta = PROJECT_TOOL_META[tool.name]
   if (meta === undefined) return tool
-  const schema = tool.inputSchema as { readonly properties?: Readonly<Record<string, unknown>> }
-  const properties =
-    meta.fields === undefined || schema.properties === undefined
-      ? schema.properties
-      : Object.fromEntries(
-          Object.entries(schema.properties).map(([name, property]) => {
-            const description = meta.fields?.[name]
-            if (description === undefined || typeof property !== "object" || property === null)
-              return [name, property]
-            return "description" in property
-              ? [name, property]
-              : [name, { ...property, description }]
-          }),
-        )
-  return {
-    ...tool,
-    annotations: tool.annotations ?? meta.annotations,
-    inputSchema: properties === undefined ? tool.inputSchema : { ...tool.inputSchema, properties },
-  }
+  const annotated = { ...tool, annotations: tool.annotations ?? meta.annotations }
+  const fields = meta.fields
+  const properties = tool.inputSchema.properties
+  if (fields === undefined || !isRecord(properties)) return annotated
+  const described = Object.fromEntries(
+    Object.entries(properties).map(([name, property]) => {
+      const description = fields[name]
+      return description === undefined || !isRecord(property) || "description" in property
+        ? [name, property]
+        : [name, { ...property, description }]
+    }),
+  )
+  return { ...annotated, inputSchema: { ...tool.inputSchema, properties: described } }
 }
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null

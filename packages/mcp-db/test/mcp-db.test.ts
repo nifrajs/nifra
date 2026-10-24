@@ -191,8 +191,7 @@ describe("schema tools", () => {
   test("list_tables reuses its counts for 10 seconds, then counts again", async () => {
     const db = seededDb()
     const served = serveDatabaseAsMcp(db, { tables: ["habits"] })
-    const rows = async () =>
-      (JSON.parse((await call(served, "list_tables")).text) as Array<{ rows: number }>)[0]?.rows
+    const rows = async () => JSON.parse((await call(served, "list_tables")).text)[0]?.rows
     try {
       expect(await rows()).toBe(2)
       db.run("PRAGMA query_only = OFF")

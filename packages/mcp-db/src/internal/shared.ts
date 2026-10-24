@@ -149,7 +149,7 @@ function stripSqlNoise(sql: string): string {
   let from = 0
   let i = 0
   while (i < sql.length) {
-    const char = sql[i] as string
+    const char = sql.charAt(i)
     const comment = commentEnd(sql, i)
     const close = QUOTE_CLOSE.get(char)
     if (comment !== undefined) {
@@ -174,7 +174,7 @@ function statementEnd(sql: string): { readonly end: number; readonly terminator:
   let end = 0
   let i = 0
   while (i < sql.length) {
-    const char = sql[i] as string
+    const char = sql.charAt(i)
     if (char === ";") return { end, terminator: i }
     const comment = commentEnd(sql, i)
     if (comment !== undefined) {
@@ -237,7 +237,7 @@ function tokenizeSql(sql: string): SqlToken[] {
     tokens.push({ kind: "word", value, bare: false })
   }
   while (i < sql.length) {
-    const char = sql[i] as string
+    const char = sql.charAt(i)
     if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
       i++
     } else if (char === "-" && sql[i + 1] === "-") {

@@ -149,8 +149,10 @@ interface Example {
  */
 function mdxToMarkdown(file: string, src: string): string {
   const consts = new Map<string, string>()
-  for (const m of src.matchAll(/^export const (\w+) = `((?:[^`\\]|\\.)*)`/gm)) {
-    consts.set(m[1] as string, (m[2] as string).replaceAll("\\`", "`").replaceAll("\\${", "${"))
+  for (const [, name = "", body = ""] of src.matchAll(
+    /^export const (\w+) = `((?:[^`\\]|\\.)*)`/gm,
+  )) {
+    consts.set(name, body.replaceAll("\\`", "`").replaceAll("\\${", "${"))
   }
   const open = src.indexOf('<div className="prose">')
   const close = src.lastIndexOf("</div>")
@@ -164,10 +166,10 @@ function mdxToMarkdown(file: string, src: string): string {
       continue
     }
     if (line.startsWith("# ")) continue // the page's title, which the corpus heading already gives
-    const block = /^<CodeBlock code=\{(\w+)\} \/>$/.exec(trimmed)
-    if (block !== null) {
-      const code = consts.get(block[1] as string)
-      if (code === undefined) throw new Error(`${file}: <CodeBlock> names an unknown ${block[1]}`)
+    const block = /^<CodeBlock code=\{(\w+)\} \/>$/.exec(trimmed)?.[1]
+    if (block !== undefined) {
+      const code = consts.get(block)
+      if (code === undefined) throw new Error(`${file}: <CodeBlock> names an unknown ${block}`)
       lines.push("```ts", code.trim(), "```")
       continue
     }

@@ -896,7 +896,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // path -> [data, when it arrived, the identity epoch it was loaded under]
   const prefetched = new Map<string, readonly [LoadedRouteData, number, string]>()
   const inflight = new Set<string>()
-  const readEpoch = (): string => (typeof document === "undefined" ? "" : epochOf(document.cookie))
+  // Read without the DOM types: this module also builds in tsconfigs that leave the DOM lib out.
+  const readEpoch = (): string => {
+    const doc: unknown = Reflect.get(globalThis, "document")
+    const cookie = typeof doc === "object" && doc !== null ? Reflect.get(doc, "cookie") : undefined
+    return typeof cookie === "string" ? epochOf(cookie) : ""
+  }
   const freshPrefetch = (path: string): LoadedRouteData | undefined => {
     const held = prefetched.get(path)
     return held !== undefined &&

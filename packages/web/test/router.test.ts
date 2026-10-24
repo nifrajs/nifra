@@ -968,12 +968,9 @@ describe("createClientRouter", () => {
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts actions through it here.
       globalThis.fetch = (async (_url: string, _init?: RequestInit) => {
         onPost()
-        return new Response(JSON.stringify({ ok: true }), {
-          headers: {
-            "content-type": "application/json",
-            ...(revalidate === undefined ? {} : { "x-nifra-revalidate": revalidate }),
-          },
-        })
+        const headers = new Headers({ "content-type": "application/json" })
+        if (revalidate !== undefined) headers.set("x-nifra-revalidate", revalidate)
+        return new Response(JSON.stringify({ ok: true }), { headers })
       }) as typeof fetch
       try {
         await act()

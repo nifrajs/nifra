@@ -11,13 +11,11 @@ test("every project tool says whether it reads, writes or runs code, and describ
       tool: tool.name,
       annotations: true,
     })
-    const properties =
-      (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}
-    for (const [field, property] of Object.entries(properties)) {
+    for (const [field, property] of Object.entries(Object(tool.inputSchema.properties ?? {}))) {
       expect({
         tool: tool.name,
         field,
-        description: typeof (property as { description?: unknown }).description,
+        description: typeof Reflect.get(Object(property), "description"),
       }).toEqual({
         tool: tool.name,
         field,

@@ -10,6 +10,7 @@ import {
   type WebSocketUpgradeOutcome,
 } from "../src/index.ts"
 import { NODE_NATIVE_MOUNT, RESOLVE_NODE_MOUNT } from "../src/server/install.ts"
+import { attachWebSocket, TopicRegistry } from "../src/ws.ts"
 
 const token: AuthenticationStage<{ readonly id: string }> = {
   id: "token",
@@ -122,12 +123,12 @@ describe("authenticate() stages gate the mounts registered after them", () => {
         },
       })
       .mountFetch("/m", reach)
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the invalid decision under test.
-    const invalid = {
+    // JSON.parse types the decision loosely, so the stage can return a malformed one.
+    const invalid: AuthenticationStage<unknown> = {
       id: "invalid",
       mode: "sync",
-      run: () => ({}),
-    } as unknown as AuthenticationStage<unknown>
+      run: () => JSON.parse("{}"),
+    }
     const deciding = server({ logger }).authenticate(invalid).mountFetch("/m", reach)
     expect(await ask(throwing, "/m")).toEqual([503, '{"ok":false,"error":"auth_unavailable"}'])
     expect(await ask(deciding, "/m")).toEqual([503, '{"ok":false,"error":"auth_unavailable"}'])
@@ -135,6 +136,26 @@ describe("authenticate() stages gate the mounts registered after them", () => {
     expect(logged).toEqual([
       "authenticate() stage failed before a mount",
       "authenticate() stage failed before a mount",
+    ])
+  })
+
+  test("a stage sees the mount request's path, search and query", async () => {
+    const seen: unknown[] = []
+    const app = server()
+      .authenticate({
+        id: "query-key",
+        mode: "sync",
+        run: (input) => {
+          seen.push([input.pathname, input.search, input.query])
+          return input.query.key === "ok" ? authenticated({ id: "k" }) : rejected("unauthenticated")
+        },
+      })
+      .mountFetch("/legacy", legacy)
+    expect((await ask(app, "/legacy/a?key=no"))[0]).toBe(401)
+    expect(await ask(app, "/legacy/a?key=ok&tag=1&tag=2")).toEqual([200, "legacy /legacy/a"])
+    expect(seen).toEqual([
+      ["/legacy/a", "?key=no", { key: "no" }],
+      ["/legacy/a", "?key=ok&tag=1&tag=2", { key: "ok", tag: ["1", "2"] }],
     ])
   })
 
@@ -163,6 +184,8 @@ describe("authenticate() stages gate the mounts registered after them", () => {
         kind: "upgrade",
         handler: {},
         data: undefined,
+        pubsub: new TopicRegistry(),
+        attach: attachWebSocket,
       }),
     }
     const app = server().authenticate(token).mount({ path: "/ws", app: child })
