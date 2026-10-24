@@ -438,9 +438,15 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     run()
   }
 
+  // A kept page shown again reloads itself, and that load brings the grant to watch it by.
+  const busy = (current: ClientRouter): boolean => {
+    const state = current.snapshot()
+    return state.pending || state.revalidating === true
+  }
+
   const run = (): void => {
     const current = router
-    if (stopped || current === undefined || hidden() || current.snapshot().pending) return
+    if (stopped || current === undefined || hidden() || busy(current)) return
     const now = Date.now()
     for (const frame of frames) {
       if (frame.loading || wakeOf(frame) > now) continue
@@ -448,7 +454,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       else if (watchable(frame)) reload(frame, "renew")
       else reload(frame, "load", true)
       // One load at a time: the router runs it, and its next state runs this again.
-      if (current.snapshot().pending) break
+      if (busy(current)) break
     }
     arm()
   }

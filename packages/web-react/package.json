@@ -36,6 +36,11 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./keep-alive": {
+      "bun": "./src/keep-alive.ts",
+      "types": "./dist/keep-alive.d.ts",
+      "default": "./dist/keep-alive.js"
+    },
     "./await": {
       "bun": "./src/await.ts",
       "types": "./dist/await.d.ts",
@@ -158,7 +163,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
-    "happy-dom": "20.14.6",
+    "happy-dom": "21.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-server-dom-webpack": "19.3.1",

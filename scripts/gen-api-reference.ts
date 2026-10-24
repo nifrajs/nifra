@@ -105,6 +105,46 @@ function cap(s: string): string {
   return flat.length > SIG_CAP ? `${flat.slice(0, SIG_CAP - 1)}…` : flat
 }
 
+// A type literal written one member per line separates its members by the newline alone, which joining
+// the lines drops: add the `;` each such member leaves out, so the one-line signature still parses.
+// Comments go: a member's doc is detail the signature line has no room for.
+function oneLine(node: ts.TypeNode): string {
+  const start = node.getStart()
+  const source = node.getSourceFile().text
+  const edits: { readonly from: number; readonly to: number; readonly text: string }[] = []
+  const comments = new Set<number>()
+  const visit = (child: ts.Node): void => {
+    for (const range of ts.getLeadingCommentRanges(source, child.pos) ?? []) {
+      if (range.pos < start || comments.has(range.pos)) continue
+      comments.add(range.pos)
+      edits.push({ from: range.pos - start, to: range.end - start, text: "" })
+    }
+    if (ts.isTypeLiteralNode(child)) {
+      for (const member of child.members.slice(0, -1)) {
+        const end = member.getEnd() - start
+        if (!/[;,]$/.test(member.getText())) edits.push({ from: end, to: end, text: ";" })
+      }
+    }
+    for (const token of child.getChildren()) visit(token)
+  }
+  visit(node)
+  let text = node.getText()
+  // Right to left, a removal before an insertion at the same offset, so each edit's offsets still hold.
+  edits.sort((a, b) => b.from - a.from || b.to - a.to)
+  for (const edit of edits) text = `${text.slice(0, edit.from)}${edit.text}${text.slice(edit.to)}`
+  return text
+}
+
+/** `text` as a Markdown code span: the fence outruns every backtick run inside it (a template literal
+ * type), and a space pads a backtick at either edge, so the span ends where the text does. */
+export function codeSpan(text: string): string {
+  let longest = 0
+  for (const [run] of text.matchAll(/`+/g)) longest = Math.max(longest, run.length)
+  const fence = "`".repeat(longest + 1)
+  const pad = text.startsWith("`") || text.endsWith("`") ? " " : ""
+  return `${fence}${pad}${text}${pad}${fence}`
+}
+
 /** A one-line signature for the export, by declaration kind - value types via the checker, declared
  * types by their header (members elided; the source is the full detail). */
 function signatureOf(
@@ -117,7 +157,7 @@ function signatureOf(
   if (ts.isClassDeclaration(decl)) return `class ${name}${typeParams(decl)}`
   if (ts.isEnumDeclaration(decl)) return `enum ${name}`
   if (ts.isTypeAliasDeclaration(decl)) {
-    const rhs = decl.type.getText()
+    const rhs = oneLine(decl.type)
     const head = `type ${name}${typeParams(decl)}`
     return rhs.length <= SIG_CAP ? cap(`${head} = ${rhs}`) : head
   }
@@ -173,7 +213,7 @@ export function generateApiReference(): string {
         const sig = signatureOf(raw.getName(), sym, decl, checker)
         const summary = summaryOf(sym, checker)
         lines.push(
-          `- **${raw.getName()}** _(${kindOf(decl)})_ - \`${sig}\`${summary ? `\n  ${summary}` : ""}`,
+          `- **${raw.getName()}** _(${kindOf(decl)})_ - ${codeSpan(sig)}${summary ? `\n  ${summary}` : ""}`,
         )
       }
       const heading = pkg.entries.length > 1 ? `### \`${entry.importPath}\`\n\n` : ""

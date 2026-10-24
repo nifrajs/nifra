@@ -115,10 +115,65 @@ export function useNavigate(): NavigateFunction {
  * re-evaluated at navigation time. A constant boolean is fine as-is.
  */
 export function useBlocker(shouldBlock: boolean | BlockerFunction): Readable<Blocker> {
+  const hidden = pageHidden()
   return readable<Blocker>(IDLE_BLOCKER, (set) =>
     registerBlocker(
-      (args) => (typeof shouldBlock === "function" ? shouldBlock(args) : shouldBlock),
+      // A `keepAlive` page hidden behind another one blocks nothing.
+      (args) =>
+        hidden?.() !== true &&
+        (typeof shouldBlock === "function" ? shouldBlock(args) : shouldBlock),
       set,
     ),
   )
+}
+
+// The key `Slot.svelte` provides a kept page's visibility under.
+const VISIBILITY_KEY = "@nifrajs/web-svelte:visibility"
+
+interface Visibility {
+  readonly hidden: () => boolean
+  readonly hide: Set<() => void>
+  readonly show: Set<() => void>
+}
+
+// A store built in a module script has no component, and so no context to read.
+const pageHidden = (): (() => boolean) | undefined => {
+  try {
+    return getContext<Visibility | undefined>(VISIBILITY_KEY)?.hidden
+  } catch {
+    return undefined
+  }
+}
+
+const onVisibility = (kind: "hide" | "show", callback: () => void): (() => void) => {
+  const visibility = getContext<Visibility | undefined>(VISIBILITY_KEY)
+  if (visibility === undefined) return () => {}
+  visibility[kind].add(callback)
+  return () => {
+    visibility[kind].delete(callback)
+  }
+}
+
+/**
+ * Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden
+ * behind another page, where it keeps running. Always `true` on the server and on a page that does not
+ * keep alive. Call it while the component initializes; read it in markup or a `$derived`.
+ */
+export function usePageVisibility(): () => boolean {
+  const hidden = getContext<Visibility | undefined>(VISIBILITY_KEY)?.hidden
+  return () => hidden?.() !== true
+}
+
+/**
+ * Run `callback` each time the `keepAlive` page this component renders in is hidden behind another
+ * page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it
+ * while the component initializes; returns its removal. A no-op outside a kept page.
+ */
+export function onPageHide(callback: () => void): () => void {
+  return onVisibility("hide", callback)
+}
+
+/** Run `callback` each time the `keepAlive` page this component renders in is shown again. */
+export function onPageShow(callback: () => void): () => void {
+  return onVisibility("show", callback)
 }

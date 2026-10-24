@@ -1,5 +1,13 @@
 import { describe, expect, mock, test } from "bun:test"
-import { createIslandBus, defineIsland, type IslandEnhancer, mountIslands } from "../src/islands.ts"
+import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "../src/internal/page-events.ts"
+import {
+  createIslandBus,
+  defineIsland,
+  type IslandEnhancer,
+  mountIslands,
+  onPageHide,
+  onPageShow,
+} from "../src/islands.ts"
 
 // mountIslands only reads `.dataset` off each element and iterates `root.querySelectorAll(...)`, so a
 // minimal stub stands in for the DOM (Bun's test env has no `document`). Casts are test-only.
@@ -452,5 +460,92 @@ describe("createIslandBus", () => {
     dispose() // runs the unsubscribe the enhancer returned
     bus.emit("n", 2)
     expect(seen).toEqual([1])
+  })
+})
+
+describe("onPageHide / onPageShow", () => {
+  // The keep-alive client dispatches the page events on a kept page's element and they bubble to the
+  // document, so a document stand-in calls its listeners with that element as the target.
+  class FakeNode {
+    constructor(readonly children: readonly FakeNode[] = []) {}
+    contains(other: unknown): boolean {
+      return other === this || this.children.some((child) => child.contains(other))
+    }
+  }
+  const listeners = new Map<string, Set<(event: Event) => void>>()
+  const fakeDocument = {
+    addEventListener: (type: string, listener: (event: Event) => void) => {
+      const set = listeners.get(type) ?? new Set()
+      set.add(listener)
+      listeners.set(type, set)
+    },
+    removeEventListener: (type: string, listener: (event: Event) => void) => {
+      listeners.get(type)?.delete(listener)
+    },
+  }
+  const eventOf = (type: string, target: FakeNode | null): Event =>
+    // biome-ignore lint/plugin/noChainedTypeAssertions: a plain object stands in for an event
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the helpers read only `type` and `target` off a page event
+    ({ type, target }) as unknown as Event
+  const asElement = (node: FakeNode): Element =>
+    // biome-ignore lint/plugin/noChainedTypeAssertions: a FakeNode stands in for an element
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the helpers pass an island's element only to `contains`
+    node as unknown as Element
+  const fire = (type: string, target: FakeNode | null): void => {
+    for (const listener of [...(listeners.get(type) ?? [])]) listener(eventOf(type, target))
+  }
+  // Each restored as it was: a `document` left defined, even as undefined, turns off code generation
+  // in the output guard for every later test in the process.
+  const withDom = (run: () => void): void => {
+    const saved = ["document", "Node"].map(
+      (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
+    )
+    Reflect.set(globalThis, "document", fakeDocument)
+    Reflect.set(globalThis, "Node", FakeNode)
+    try {
+      run()
+    } finally {
+      for (const [name, descriptor] of saved)
+        if (descriptor === undefined) Reflect.deleteProperty(globalThis, name)
+        else Object.defineProperty(globalThis, name, descriptor)
+      listeners.clear()
+    }
+  }
+
+  test("each runs when the page around the island hides or shows, until it is removed", () => {
+    withDom(() => {
+      const el = new FakeNode()
+      const page = new FakeNode([new FakeNode([el])])
+      const seen: string[] = []
+      const hide = onPageHide(asElement(el), () => seen.push("hide"))
+      const show = onPageShow(asElement(el), () => seen.push("show"))
+      fire(PAGE_HIDE_EVENT, page)
+      fire(PAGE_SHOW_EVENT, page)
+      hide()
+      fire(PAGE_HIDE_EVENT, page)
+      fire(PAGE_SHOW_EVENT, page)
+      show()
+      fire(PAGE_SHOW_EVENT, page)
+      expect(seen).toEqual(["hide", "show", "show"])
+    })
+  })
+
+  test("another page's events, and events with no node target, pass the island by", () => {
+    withDom(() => {
+      const el = new FakeNode()
+      const other = new FakeNode([new FakeNode()])
+      let ran = 0
+      onPageHide(asElement(el), () => ran++)
+      fire(PAGE_HIDE_EVENT, other)
+      fire(PAGE_HIDE_EVENT, null)
+      expect(ran).toBe(0)
+    })
+  })
+
+  test("off the browser they register nothing and return a no-op", () => {
+    expect("document" in globalThis).toBe(false)
+    const el = asElement(new FakeNode())
+    expect(() => onPageHide(el, () => {})()).not.toThrow()
+    expect(() => onPageShow(el, () => {})()).not.toThrow()
   })
 })

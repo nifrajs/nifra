@@ -81,6 +81,8 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   // Client-only search keys: registry + per-route population (drives the revalidation opt-out).
   expect(code).toContain("const searchClientKeys = {}")
   expect(code).toContain("searchClientKeys[id] = mods[mods.length - 1].searchClientKeys ?? []")
+  // The page's `shareData = false` reaches the router, which then gives its reloads fresh data.
+  expect(code).toContain("shareData: page.shareData")
   // patterns drive client-side matching and must mirror the server routes.
   expect(code).toContain('{ routeId: "index", pattern: "/" }')
   expect(code).toContain('{ routeId: "users/[id]", pattern: "/users/:id" }')

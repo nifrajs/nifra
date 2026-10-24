@@ -10,7 +10,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 
 ## Public entrypoints
 
-`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/ppr` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
+`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/keep-alive` · `@nifrajs/web-react/ppr` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRende…` · from `@nifrajs/web-react/server-components/rsc`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
 
-_…and 76 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 78 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

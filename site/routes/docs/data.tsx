@@ -160,6 +160,20 @@ export default function Data() {
         - progressive enhancement, same code. What the action returns reaches the page as{" "}
         <code>actionData</code>, bounded by <code>actionOutput</code>.
       </p>
+      <p>
+        A reload of the page on screen (an action's revalidation, <code>invalidate()</code>, a live
+        refresh, a fetcher loading its path again) keeps every part of <code>data</code> and the
+        layouts' data that it did not change as the same object, with one bound: an array none of
+        whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
+        stops comparing early. A row kept this way keeps its DOM and component state: a Solid{" "}
+        <code>&lt;For&gt;</code> keeps the row, a memoized React or Preact row
+        and a Vue child component skip their render, and a Svelte or Solid effect on <code>data</code>{" "}
+        runs again only when the reload changed it. Dates compare by time, rows with an{" "}
+        <code>id</code> pair by it, and the built-in transport does not parse again a plain JSON
+        response with the same text as the one on screen (a response with deferred parts is always
+        parsed). A page whose code compares <code>data</code> with its value from before a reload exports{" "}
+        <code>shareData = false</code> and gets fresh data on every reload.
+      </p>
       <CodeBlock code={ACTION} lang="ts" />
       <CodeBlock code={FORM} />
       <p>

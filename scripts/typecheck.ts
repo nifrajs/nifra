@@ -87,6 +87,9 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "packages/web/test/fixtures/ppr/tsconfig.json",
   "packages/web/test/fixtures/ppr/components/tsconfig.json",
   "packages/web-react/test/fixtures/ppr-components/tsconfig.json",
+  "bench/keep-alive/tsconfig.json",
+  "bench/keep-alive/tsconfig.react.json",
+  "bench/keep-alive/tsconfig.svelte.json",
 ]
 
 /**

@@ -39,3 +39,12 @@ test("a snapshot with no layout data renders the layouts with null", () => {
   expect("layoutData" in routeProps(snapshot(), undefined)).toBe(false)
   expect(render(snapshot())).toContain('data-layout="root">null')
 })
+
+test("routeProps keeps search the same object while the query is the same", () => {
+  // A new object with equal content would count as a changed prop for a memoized page.
+  const searchAt = (path: string) => routeProps(snapshot({ path }), undefined).search
+  const first = searchAt("/org?page=2")
+  expect(first).toEqual({ page: 2 })
+  expect(searchAt("/org?page=2")).toBe(first)
+  expect(searchAt("/org?page=3")).toEqual({ page: 3 })
+})

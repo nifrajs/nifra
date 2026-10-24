@@ -52,7 +52,8 @@
     "@nifrajs/core": "workspace:^"
   },
   "devDependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "happy-dom": "21.0.4"
   },
   "repository": {
     "type": "git",

@@ -18,6 +18,7 @@
   },
   "include": [
     "src/client.ts",
+    "src/keep-alive.ts",
     "src/live-client.ts",
     "src/islands.ts",
     "src/islands-swap.ts",
@@ -25,6 +26,7 @@
     "test/apply-head.test.ts",
     "test/client-browser.test.ts",
     "test/css-loading.test.ts",
-    "test/live-client.test.ts"
+    "test/live-client.test.ts",
+    "test/keep-alive.test.ts"
   ]
 }

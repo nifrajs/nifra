@@ -52,6 +52,7 @@ import {
   useState,
 } from "react"
 
+export { usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, PrefetchMode, UIMatch }
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */

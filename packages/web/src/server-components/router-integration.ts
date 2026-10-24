@@ -1,13 +1,27 @@
+import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "../internal/page-events.ts"
 import type { ClientRouter } from "../router.ts"
 import type { ComponentController } from "./client.ts"
 import { componentControllers } from "./registry.ts"
 
-/** Optional router integration; imported only by opted-in application entries. */
+/**
+ * Optional router integration; imported only by opted-in application entries. The components of a
+ * `keepAlive` page are parked while it is hidden, so navigation leaves them as they are.
+ */
 export function bindComponentRouter(
   router: Pick<ClientRouter, "snapshot" | "subscribe">,
 ): () => void {
   let previous = router.snapshot()
-  return router.subscribe(() => {
+  const onPage = (event: Event): void => {
+    const page = event.target
+    if (page instanceof Node)
+      for (const controller of componentControllers)
+        if (event.type === PAGE_HIDE_EVENT) controller.park(page)
+        else controller.unpark(page)
+  }
+  const target = typeof document === "undefined" ? undefined : document
+  target?.addEventListener(PAGE_HIDE_EVENT, onPage)
+  target?.addEventListener(PAGE_SHOW_EVENT, onPage)
+  const stop = router.subscribe(() => {
     const next = router.snapshot()
     if (next.pending && next.pendingPath !== previous.pendingPath)
       for (const controller of componentControllers) controller.cancelPending()
@@ -25,6 +39,11 @@ export function bindComponentRouter(
     }
     previous = next
   })
+  return () => {
+    stop()
+    target?.removeEventListener(PAGE_HIDE_EVENT, onPage)
+    target?.removeEventListener(PAGE_SHOW_EVENT, onPage)
+  }
 }
 
 /** Refresh only after the existing mutation transport reports success. */

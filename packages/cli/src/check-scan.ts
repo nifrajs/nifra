@@ -2461,6 +2461,37 @@ function sqlMethod(ts: TypeScriptApi, call: TSApi.CallExpression): SqlSink | und
       ? { method, receiver: receiver?.getText() }
       : undefined
   const callee = call.expression
+  // Svelte compiles this unbound rune; it is not a driver's raw-statement escape hatch.
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "raw" &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "$state"
+  ) {
+    const source = callee.getSourceFile()
+    const imported = source.statements.some((statement) => {
+      if (ts.isImportEqualsDeclaration(statement)) return statement.name.text === "$state"
+      if (!ts.isImportDeclaration(statement)) return false
+      const clause = statement.importClause
+      const bindings = clause?.namedBindings
+      return (
+        clause?.name?.text === "$state" ||
+        (bindings !== undefined &&
+          (ts.isNamespaceImport(bindings)
+            ? bindings.name.text === "$state"
+            : bindings.elements.some((binding) => binding.name.text === "$state")))
+      )
+    })
+    let bound = imported || isShadowedAt(ts, callee.expression, "$state")
+    for (
+      let scope: TSApi.Node | undefined = callee.parent;
+      scope !== undefined && !bound;
+      scope = scope.parent
+    ) {
+      bound = directBinding(ts, source, scope, "$state") !== undefined
+    }
+    if (/\.svelte(?:\.[jt]s)?$/.test(source.fileName) && !bound) return undefined
+  }
   if (ts.isIdentifier(callee)) return sink(callee.text, undefined)
   if (ts.isPropertyAccessExpression(callee)) return sink(callee.name.text, callee.expression)
   if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {

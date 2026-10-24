@@ -35,6 +35,7 @@ export function currentDocumentNonce(): string | undefined {
   return script.getAttribute("nonce") ?? undefined
 }
 
+export { identityChanged } from "./identity.ts"
 /**
  * Everything the generated client entry needs, re-exported here so that entry imports ONE module and
  * that module is DOM-only. It used to take these from `@nifrajs/web`, whose graph includes `renderPage`

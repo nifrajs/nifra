@@ -66,7 +66,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentPorts** _(interface)_ - `interface AgentPorts`
 - **AgentResumeMismatchError** _(class)_ - `class AgentResumeMismatchError`
   A resume whose continuation is not the step the turn suspended on.
-- **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended" readonly pending: AgentPendingContinuation readonly reason: "max_turns" })`
+- **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended"; readonly pending: AgentPendingContinuation; readonly reason: "max_turns" })`
 - **AgentSharedState** _(interface)_ - `interface AgentSharedState<State = unknown>`
   A shared, observable state document for one run - the state a live UI mirrors while the agent works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI `STATE_SNAPSHOT`/`STA…
 - **AgentStatePatchOp** _(type)_ - `type AgentStatePatchOp = | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown } | { readonly op: "remove"; readonly path: string }`
@@ -110,7 +110,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DeploymentDisposeResult** _(interface)_ - `interface DeploymentDisposeResult`
 - **DeploymentError** _(class)_ - `class DeploymentError`
 - **DeploymentErrorCode** _(type)_ - `type DeploymentErrorCode = | "invalid_capabilities" | "capability_denied" | "hostile_code_requires_isolation" | "authority_expanded" | "invalid_plan" | "invalid_transition" | "malformed_callback" | "adapter_error" | "ca…`
-- **DeploymentEvidence** _(type)_ - `type DeploymentEvidence = { readonly kind: "prepared" | "started" | "inspected" | "cancelled" | "disposed" | "failed" readonly deploymentId: string readonly state: DeploymentState | "new" readonly code?: DeploymentError…`
+- **DeploymentEvidence** _(type)_ - `type DeploymentEvidence = { readonly kind: "prepared" | "started" | "inspected" | "cancelled" | "disposed" | "failed"; readonly deploymentId: string; readonly state: DeploymentState | "new"; readonly code?: DeploymentEr…`
 - **DeploymentFilesystem** _(type)_ - `type DeploymentFilesystem = "none" | "workspace" | "host"`
 - **DeploymentInspectRequest** _(interface)_ - `interface DeploymentInspectRequest`
 - **DeploymentInspection** _(interface)_ - `interface DeploymentInspection`
@@ -426,7 +426,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentEventType** _(type)_ - `type AgentEventType`
 - **AgentExtensionEvent** _(interface)_ - `interface AgentExtensionEvent`
   A backend's own event, such as a vendor's plan or reasoning frames. Hosts that do not know the type pass it through; `data` is a display copy inside the payload bounds, like a tool's output.
-- **AgentExtensionEventType** _(type)_ - `type AgentExtensionEventType = `x-${string}``
+- **AgentExtensionEventType** _(type)_ - `` type AgentExtensionEventType = `x-${string}` ``
   The type of an event the protocol does not define: `x-<vendor>.<name>`, lowercase, at most 64 characters, such as `x-codex.plan` or `x-acme.context.usage`. See {@link isAgentExtensionEventType}.
 - **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 - **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
@@ -1521,7 +1521,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **InferSchema** _(type)_ - `type InferSchema<S> = S extends StandardSchemaV1<infer Output> ? Output : never`
   The validated output type of a schema.
 - **JoinCardinality** _(type)_ - `type JoinCardinality = "one-to-many" | "one-to-one"`
-- **JoinedRow** _(type)_ - `type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = { readonly left: Entry<Left> readonly right: Cardinality extends "one-to-one" ? Entry<Ri…`
+- **JoinedRow** _(type)_ - `type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = { readonly left: Entry<Left>; readonly right: Cardinality extends "one-to-one" ? Entry<R…`
 - **ParseEntryOptions** _(interface)_ - `interface ParseEntryOptions<S extends StandardSchemaV1>`
 - **SharedKey** _(type)_ - `type SharedKey<Left extends Record<string, unknown>, Right extends Record<string, unknown>> = { [K in ContentFieldKey<Left> & ContentFieldKey<Right>]: [Left[K]] extends [Right[K]] ? [Right[K]] extends [Left[K]] ? K : ne…`
   Keys whose frontmatter value types are identical on both sides of a join.
@@ -1608,7 +1608,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
-- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+- **JoinRoutePath** _(type)_ - `` type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}` ``
   Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
@@ -2036,11 +2036,11 @@ Every public export of every package and documented subpath - name, kind, signat
   A node category such as `request`, `command`, `event`, `workflow`, `projection`, or `repair`.
 - **CausalityParent** _(interface)_ - `interface CausalityParent`
   One immediate parent edge. Relation is a bounded token (`caused`, `emitted`, `projected`, …).
-- **CausalityParseResult** _(type)_ - `type CausalityParseResult = | { readonly success: true; readonly context: CausalityContext } | { readonly success: false readonly reason: "missing" | "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityParseResult** _(type)_ - `type CausalityParseResult = | { readonly success: true; readonly context: CausalityContext } | { readonly success: false; readonly reason: "missing" | "incomplete" | "invalid" | "unknown-field" }`
 - **CausalityReader** _(interface)_ - `interface CausalityReader`
 - **CausalityRecord** _(interface)_ - `interface CausalityRecord`
   One append-only graph record. It intentionally has no payload or metadata field.
-- **CausalityRecordParseResult** _(type)_ - `type CausalityRecordParseResult = | { readonly success: true; readonly record: CausalityRecord } | { readonly success: false readonly reason: "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityRecordParseResult** _(type)_ - `type CausalityRecordParseResult = | { readonly success: true; readonly record: CausalityRecord } | { readonly success: false; readonly reason: "incomplete" | "invalid" | "unknown-field" }`
 - **CausalityRecorder** _(interface)_ - `interface CausalityRecorder<Tx = unknown>`
 - **CausalityRef** _(interface)_ - `interface CausalityRef`
   A bounded identity within one execution graph.
@@ -2173,7 +2173,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DataPortOptions** _(interface)_ - `interface DataPortOptions`
   Options for the public request-bound data port wrapper.
 - **DataRequest** _(interface)_ - `interface DataRequest<Operation extends string = string, Input = unknown>`
-- **DataRequestFor** _(type)_ - `type DataRequestFor<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = { readonly operation: Operation readonly scope: DataScope readonly capability: CapabilityOf<Contract["operati…`
+- **DataRequestFor** _(type)_ - `type DataRequestFor<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = { readonly operation: Operation; readonly scope: DataScope; readonly capability: CapabilityOf<Contract["opera…`
 - **DataScope** _(type)_ - `type DataScope = RlsScope`
   Backward-compatible name for the request scope carried by every data operation.
 - **RlsScope** _(interface)_ - `interface RlsScope`
@@ -2309,7 +2309,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/edge-kit`
 
-- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string> /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
+- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string>; _cookies?: string[] }`
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
@@ -2905,7 +2905,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
-- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+- **JoinRoutePath** _(type)_ - `` type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}` ``
   Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
@@ -3659,7 +3659,7 @@ _No named exports (side-effect entrypoint)._
 - **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions<K extends string = string>`
 - **LocalizeOptions** _(interface)_ - `interface LocalizeOptions`
 - **LocalizedRouter** _(interface)_ - `interface LocalizedRouter<K extends string = string>`
-- **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string>`
+- **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string> = | { readonly kind: "ok"; readonly locale: K } | { readonly kind: "not-found" } | { readonly kind: "redirect"; readonly location: string }`
   What a `[lang]` segment value means for the request.
 - **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath<K extends string = string>`
   A pathname with its locale prefix removed (or not, when it carries none).
@@ -4075,7 +4075,7 @@ _No named exports (side-effect entrypoint)._
   Options for {@link shapeRows}.
 - **SqliteDatabaseLike** _(interface)_ - `interface SqliteDatabaseLike`
   The structural slice of `bun:sqlite`'s `Database` this package needs.
-- **SqliteGate** _(type)_ - `type SqliteGate = | { readonly ok: true; readonly query: string } | { readonly ok: false readonly reason: "empty" | "multiple" | "not-read" | "unexposed" readonly text: string readonly relation?: string }`
+- **SqliteGate** _(type)_ - `type SqliteGate = | { readonly ok: true; readonly query: string } | { readonly ok: false; readonly reason: "empty" | "multiple" | "not-read" | "unexposed"; readonly text: string; readonly relation?: string }`
   The outcome of {@link gateSqliteStatement}. A refusal's `text` is the message `run_query` returns.
 - **SqliteQueryOptions** _(interface)_ - `interface SqliteQueryOptions`
   Options for {@link querySqlite} and {@link explainSqlite}.
@@ -4172,9 +4172,9 @@ _No named exports (side-effect entrypoint)._
 - **AdmissionSnapshot** _(interface)_ - `interface AdmissionSnapshot`
 - **ApiKeyStaticOptions** _(interface)_ - `interface ApiKeyStaticOptions`
 - **ApiKeyVerifyOptions** _(interface)_ - `interface ApiKeyVerifyOptions<P>`
-- **AuthPlugin** _(type)_ - `type AuthPlugin<P>`
+- **AuthPlugin** _(type)_ - `type AuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null; requirePrincipal(request: Request): P }`
   A token-auth plugin (`bearer` / `apiKey`). Apply it with `app.use(auth)` - it rejects unauthorized requests to **routes defined after it** with `401` (unless `optional`). Read the verified principal inside a handler/loader via {@link AuthPlugin.principal} (nullable) or {@link AuthPlugin.requirePrin…
-- **BasicAuthPlugin** _(type)_ - `type BasicAuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null requirePrincipal(request: Request): P }`
+- **BasicAuthPlugin** _(type)_ - `type BasicAuthPlugin<P> = IdentityPlugin & { principal(request: Request): P | null; requirePrincipal(request: Request): P }`
 - **BasicAuthStaticOptions** _(interface)_ - `interface BasicAuthStaticOptions<P = string>`
 - **BasicAuthVerifyOptions** _(interface)_ - `interface BasicAuthVerifyOptions<P>`
 - **BearerOptions** _(interface)_ - `interface BearerOptions<P>`
@@ -4209,7 +4209,7 @@ _No named exports (side-effect entrypoint)._
 - **JwtHeader** _(interface)_ - `interface JwtHeader`
 - **JwtKeyResolver** _(type)_ - `type JwtKeyResolver = ( header: JwtHeader, claims: JwtClaims, ) => MaybePromise<JwtVerificationKey | null | undefined>`
 - **JwtOptions** _(interface)_ - `interface JwtOptions`
-- **JwtPlugin** _(type)_ - `type JwtPlugin<C extends JwtClaims = JwtClaims> = IdentityPlugin & { claims(request: Request): C | null requireClaims(request: Request): C }`
+- **JwtPlugin** _(type)_ - `type JwtPlugin<C extends JwtClaims = JwtClaims> = IdentityPlugin & { claims(request: Request): C | null; requireClaims(request: Request): C }`
 - **JwtVerificationKey** _(type)_ - `type JwtVerificationKey = string | Uint8Array | CryptoKey | JwkKey`
 - **LanguageMatch** _(interface)_ - `interface LanguageMatch`
 - **LanguageOptions** _(interface)_ - `interface LanguageOptions<L extends readonly string[]>`
@@ -4696,7 +4696,7 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/storage
 
-- **BeaconingStorageAdapter** _(type)_ - `type BeaconingStorageAdapter<A extends StorageAdapter = StorageAdapter> = A & { /** * A view bound to a request context: every operation announces its capability first, and fails * closed when the route did not declare …`
+- **BeaconingStorageAdapter** _(type)_ - `type BeaconingStorageAdapter<A extends StorageAdapter = StorageAdapter> = A & { for(context: object): A }`
   A storage adapter that can be bound to a request context.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies.
@@ -4803,7 +4803,7 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
-- **ComparisonCode** _(type)_ - `type ComparisonCode`
+- **ComparisonCode** _(type)_ - `type ComparisonCode = | "equal" | "improved" | "tolerated" | "regressed" | "missing" | "added" | "incomparable"`
 - **ContractAuthContext** _(type)_ - `type ContractAuthContext = "authenticated" | "unauthenticated"`
 - **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
@@ -5116,7 +5116,7 @@ _No named exports (side-effect entrypoint)._
   A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ - `interface BlockerController`
   The browser layer's blocker registry - installed by `installHistory` (which owns navigation and can therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route component's…
-- **BlockerFunction** _(type)_ - `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation readonly nextLocation: BlockerLocation }) => boolean`
+- **BlockerFunction** _(type)_ - `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation }) => boolean`
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerLocation** _(interface)_ - `interface BlockerLocation`
   A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
@@ -5187,6 +5187,8 @@ _No named exports (side-effect entrypoint)._
   The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and** `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running (Next, Vite, a stray Node API). `4321` rarely is - and being the *same* constant across `nifra dev` and `nifr…
 - **DRAFT_COOKIE** _(const)_ - `DRAFT_COOKIE: "__nifra_draft"`
   The cookie name nifra uses for draft/preview mode.
+- **DataText** _(interface)_ - `interface DataText`
+  What the router knows about the response text a path's data on screen was read from. The router's own transport resolves a reload answering that same text to this object itself, and the router keeps the data on screen without parsing it; for any other plain JSON response it records the text in `tex…
 - **Deferred** _(interface)_ - `interface Deferred<T>`
   A loader value marked to stream in after the shell. The component consumes it with the adapter's `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback. `id` is assigned by the server at serialization time - the streamed resolve script keys off it.
 - **DehydratedState** _(interface)_ - `interface DehydratedState`
@@ -5195,12 +5197,12 @@ _No named exports (side-effect entrypoint)._
   Markup a render produced for outside the app root, which an adapter that sets {@link RenderAdapter.documentParts} appends to. Each part must be complete before the render settles: `renderToString` resolving, or `renderToStream` returning its stream.
 - **DraftCookieControls** _(interface)_ - `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
-- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI>`
+- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic"; readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
 - **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
   Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
 - **FetchRouteData** _(type)_ - `type FetchRouteData`
-  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result. `hosts` names the holes of the page on screen whose hosts reload in place ({@link HOLE_FILL_HEADER}).
+  How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream). `purpose` is `"prefetch"` when no navigation is waiting on the result. `hosts` names the holes of the page on screen whose hosts reload in place ({@link HOLE_FILL_HEADER}). `read`…
 - **Fetcher** _(interface)_ - `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`
@@ -5240,6 +5242,8 @@ _No named exports (side-effect entrypoint)._
   Response header carrying bounded route tags into {@link withISR}.
 - **ISR_STATUS_HEADER** _(const)_ - `ISR_STATUS_HEADER: "x-nifra-isr"`
   Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served + regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests.
+- **IdentityEpochContext** _(interface)_ - `interface IdentityEpochContext`
+  The response-cookie surface {@link rotateIdentityEpoch} needs: nifra's handler context.
 - **InertScriptType** _(type)_ - `type InertScriptType = "application/ld+json" | "application/json"`
   One `<script>` element a route contributes to `<head>` - for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **InfiniteData** _(interface)_ - `interface InfiniteData<T, P>`
@@ -5248,7 +5252,7 @@ _No named exports (side-effect entrypoint)._
   A stable per-key handle for an infinite (paged) query.
 - **InfiniteQueryOptions** _(interface)_ - `interface InfiniteQueryOptions<T, P>`
   Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the next page from the last page - return `undefined`/`null` to signal there is no next page.
-- **InterceptBoundary** _(type)_ - `type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: { readonly intercept: string } readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **InterceptBoundary** _(type)_ - `type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: { readonly intercept: string }; readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
 - **Intercepted** _(interface)_ - `interface Intercepted`
   Which intercept boundary is open, and the page underneath it.
 - **KVCacheStore** _(class)_ - `class KVCacheStore`
@@ -5256,6 +5260,12 @@ _No named exports (side-effect entrypoint)._
 - **KVCacheStoreOptions** _(interface)_ - `interface KVCacheStoreOptions`
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any KV-like binding satisfies it and tests can pass an in-memory double.
+- **KeepAliveOptions** _(interface)_ - `interface KeepAliveOptions`
+  A page's `keepAlive` export as an object.
+- **KeepAliveServerOptions** _(interface)_ - `interface KeepAliveServerOptions`
+  `createWebApp`'s `keepAlive` option: which cookies say who is signed in.
+- **KeptPage** _(interface)_ - `interface KeptPage`
+  A page kept mounted while its history entry is not the one on screen.
 - **LAYOUT_DATA_GLOBAL** _(const)_ - `LAYOUT_DATA_GLOBAL: "__NIFRA_LAYOUT_DATA__"`
   Per-layout loader data for hydration.
 - **LOCALES_GLOBAL** _(const)_ - `LOCALES_GLOBAL: "__NIFRA_LOCALES__"`
@@ -5419,7 +5429,7 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
-- **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI>`
+- **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
   Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
   Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
@@ -5431,7 +5441,7 @@ _No named exports (side-effect entrypoint)._
   One client navigation, as a layout's {@link ShouldRevalidate} sees it.
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
   Loads a module through the dev server's module graph rather than the runtime's resolver.
-- **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static" readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
+- **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static"; readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
 - **StaticBoundaryCache** _(interface)_ - `interface StaticBoundaryCache`
   Public in-memory reference cache for build-safe static boundary values. It holds no payload outside the process and is intentionally not a durable or tenant-aware cache implementation.
 - **StaticBoundaryImportEdge** _(interface)_ - `interface StaticBoundaryImportEdge`
@@ -5467,7 +5477,7 @@ _No named exports (side-effect entrypoint)._
   Validate and serialize the neutral boundary manifest. Duplicate names fail closed at startup.
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
   Stable mode label for adapter registries and diagnostics.
-- **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
+- **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>, options?: BuildManifestOptions) => Manifest`
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware` files are special; othe…
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
@@ -5503,7 +5513,6 @@ _No named exports (side-effect entrypoint)._
 - **fontPreload** _(function)_ - `fontPreload: (input: FontPreloadInput) => LinkDescriptor`
   Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` - nifra injects it into `<head>` (`<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous">`). Values are escaped at injection by the head renderer. Preloading the font file removes a render-blocking r…
 - **generateClientEntry** _(function)_ - `generateClientEntry: (manifest: Manifest, options: GenerateClientEntryOptions) => string`
-  Codegen: emit a client-entry module (as source) that lazily imports each route's layout chain (so `Bun.build` with `splitting` code-splits one chunk per route), builds a `patterns` list, then creates the agnostic router store (with a `loadModule` hook), installs history + form interception, loads t…
 - **generateRouteSearchTypes** _(function)_ - `generateRouteSearchTypes: (manifest: Manifest, options: GenerateRouteSearchTypesOptions) => string`
   Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's `searchSchema`. It augments the {@link RouteSearch} map with `"<pattern>": SearchOf<typeof import(...)>` for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a…
 - **generateServerManifest** _(function)_ - `generateServerManifest: (manifest: Manifest, options: GenerateServerManifestOptions) => string`
@@ -5562,6 +5571,8 @@ _No named exports (side-effect entrypoint)._
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
+- **rotateIdentityEpoch** _(function)_ - `rotateIdentityEpoch: (c: IdentityEpochContext) => void`
+  Rotate the identity epoch from a flow that changes who is signed in without changing a cookie `createWebApp` watches - say, a session kept server-side under a cookie whose value stays the same. Every tab then drops the pages it kept alive for the previous visitor.
 - **sanitizeHtml** _(function)_ - `sanitizeHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
   Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.
 - **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
@@ -5642,7 +5653,7 @@ _No named exports (side-effect entrypoint)._
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
   One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
-- **SecretRule** _(type)_ - `type SecretRule`
+- **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
@@ -5819,6 +5830,8 @@ _No named exports (side-effect entrypoint)._
   Read the nonce carried by the current server-rendered document, if any.
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
+- **identityChanged** _(function)_ - `identityChanged: () => void`
+  Tell this tab and every other tab of the origin that the visitor signed in or out. Call it at login and logout when identity lives in client storage (a bearer token) rather than in a cookie, which the server's epoch cookie already covers: every page kept alive for the previous visitor is dropped.
 - **installForms** _(function)_ - `installForms: (router: ClientRouter) => () => void`
   Intercept submissions of same-origin `<form method="post">` whose action targets an app route: submit via the router (no full reload - POST the action, then revalidate the active loader). On failure it falls back to a native submit, so the form still works. Returns a teardown function.
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
@@ -5899,7 +5912,7 @@ _No named exports (side-effect entrypoint)._
 - **DEV_TOKEN_HEADER** _(const)_ - `DEV_TOKEN_HEADER: "x-nifra-dev-token"`
   Request header carrying the agent token from the discovery record.
 - **DevEntrySource** _(type)_ - `type DevEntrySource = "server" | "browser"`
-- **DevErrorCategory** _(type)_ - `type DevErrorCategory`
+- **DevErrorCategory** _(type)_ - `type DevErrorCategory = | "ssr" | "page" | "api" | "build" | "browser" | "hydration" | "process"`
 - **DevErrorEntry** _(interface)_ - `interface DevErrorEntry`
 - **DevErrorsQuery** _(interface)_ - `interface DevErrorsQuery`
 - **DevErrorsResult** _(interface)_ - `interface DevErrorsResult`
@@ -5989,6 +6002,8 @@ _No named exports (side-effect entrypoint)._
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
 - **formatBuildLog** _(function)_ - `formatBuildLog: (log: unknown, root?: string) => string`
   One bundler log as `file:line:column: message`, the source line it points at underneath. Bun's `BuildMessage`/`ResolveMessage` carry the place in `position`, which their `String()` drops: a failed build said "Could not resolve: ./db" without naming the module that imported it.
+- **isConsoleDiagnostic** _(function)_ - `isConsoleDiagnostic: (message: string) => boolean`
+  True when a console `message` reports a catalog failure that is only ever logged, never thrown.
 - **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
   True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
@@ -6095,7 +6110,7 @@ _No named exports (side-effect entrypoint)._
   What a `bindIsland` setup receives.
 - **BindListOptions** _(interface)_ - `interface BindListOptions<T, E extends ListNode = HTMLElement>`
   How `bindList` turns items into keyed DOM.
-- **Computed** _(type)_ - `type Computed<T> = { (): T dispose(): void }`
+- **Computed** _(type)_ - `type Computed<T> = { (): T; dispose(): void }`
   A derived value: call it to read (tracking), `.dispose()` to stop recomputing it.
 - **IslandBusUnsubscribe** _(type)_ - `type IslandBusUnsubscribe = () => void`
   Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it straight back as its `IslandCleanup`.
@@ -6111,11 +6126,11 @@ _No named exports (side-effect entrypoint)._
   The node surface `bindList` uses; an `Element` has it.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
-- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T> /** Fetch the current key again; once disposed, nothing. */ refetch(): void /** Stop refetching and abort the request in flight; its result is dropped. */ dispose(): void }`
+- **Resource** _(type)_ - `type Resource<T> = { (): ResourceState<T>; refetch(): void; dispose(): void }`
   Call it to read the current state (tracking, like a signal).
 - **ResourceState** _(type)_ - `type ResourceState<T>`
   An async value's state. `status` narrows `value` and `error`, so no branch can be skipped.
-- **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
+- **Signal** _(type)_ - `type Signal<T> = { (): T; set(next: T | ((prev: T) => T)): void }`
   A readable/writable reactive value: call it to read (tracking), `.set` to write.
 - **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
   Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the flush runs in the same flush.
@@ -6135,6 +6150,10 @@ _No named exports (side-effect entrypoint)._
   The `data-island-props` value for `props`: JSON. Emit it through an escaping renderer into a quoted attribute (`data-island-props="${...}"`): unquoted, a space in the JSON ends the value and the rest parses as attributes.
 - **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: { readonly root?: ParentNode; }) => () => void`
   Find every `[data-island]` element under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-island-strategy`. An island whose id has no enhancer, or that is already mounted, is left alone, so calling again after a soft navigation mounts only new hosts. An en…
+- **onPageHide** _(function)_ - `onPageHide: (el: Element, callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page `el` renders in is hidden behind another page, just before it leaves the document. An island in a kept page stays mounted, and its timers and window listeners keep running, while the page is hidden: pause them here. Returns its removal - hand it back as…
+- **onPageShow** _(function)_ - `onPageShow: (el: Element, callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page `el` renders in is shown again; returns its removal.
 - **resource** _(function)_ - `resource: <K, T>(source: () => K, fetcher: (key: K, abort: AbortSignal) => Promise<T>) => Resource<T>`
   An async value keyed by `source`. `source` runs tracked, so a write to any signal it reads starts a new fetch; `fetcher` runs untracked with that key, so nothing it reads (before or after an `await`) is a dependency. A newer fetch aborts the older one and only the newest result lands. Inside an isl…
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
@@ -6150,6 +6169,56 @@ _No named exports (side-effect entrypoint)._
   Where `enableSwap` looks for links, forms, slots and islands.
 - **enableSwap** _(function)_ - `enableSwap: (enhancers: Readonly<Record<string, IslandEnhancer<never>>>, options?: SwapOptions) => () => void`
   Mount the page's islands, as `mountIslands` does, and make every `data-swap` link and GET form under `root` refresh its slot in place. Call it instead of `mountIslands`.
+
+### `@nifrajs/web/keep-alive`
+
+- **EPOCH_COOKIE** _(const)_ - `EPOCH_COOKIE: "__Host-nifra-epoch"`
+  The readable cookie holding the epoch on an `https:` origin.
+- **IDENTITY_CHANNEL** _(const)_ - `IDENTITY_CHANNEL: "nifra-identity-v1"`
+  The channel every tab of an origin hears a sign-in or sign-out on.
+- **KEEP_ALIVE_MAX** _(const)_ - `KEEP_ALIVE_MAX: 3`
+  Most pages kept per tab.
+- **KEEP_ALIVE_MAX_AGE_MS** _(const)_ - `KEEP_ALIVE_MAX_AGE_MS: number`
+  Longest a page stays hidden unless its route sets `keepAlive: { maxAge }`, in milliseconds.
+- **KEPT_PAGES_GLOBAL** _(const)_ - `KEPT_PAGES_GLOBAL: "__nifraKeepAlive"`
+  Where a development build lists its kept pages, for `@nifrajs/devtools`.
+- **KeepAliveClient** _(interface)_ - `interface KeepAliveClient`
+  What {@link keepAliveClient} returns: the transport to build the router with, then the layer.
+- **KeepAliveClientOptions** _(interface)_ - `interface KeepAliveClientOptions`
+- **KeepAliveDropReason** _(type)_ - `type KeepAliveDropReason = | "identity" | "pagehide" | "forward" | "lru" | "expired" | "layout" | "hot-update" | "manual"`
+  Why kept pages were dropped.
+- **KeepAliveNavigateOptions** _(interface)_ - `interface KeepAliveNavigateOptions`
+  Per-navigation options of {@link KeepAliveRouter.navigate}.
+- **KeepAliveRouter** _(interface)_ - `interface KeepAliveRouter`
+  The router as {@link keepAliveClient} hands it to the history layer and the adapter.
+- **KeepAliveTable** _(interface)_ - `interface KeepAliveTable`
+  What the server and the browser both read to place the slot wrappers.
+- **KeptPageInfo** _(interface)_ - `interface KeptPageInfo`
+  One kept page, as the devtools panel lists it.
+- **PAGE_HIDE_EVENT** _(const)_ - `PAGE_HIDE_EVENT: "nifra:pagehide"`
+  Dispatched on a kept page's element as the router hides it (`keepAlive`), while it is still in the document and before the router's subscribers see the state that hides it.
+- **PAGE_SHOW_EVENT** _(const)_ - `PAGE_SHOW_EVENT: "nifra:pageshow"`
+  Dispatched on a kept page's element once it is shown again.
+- **PageView** _(interface)_ - `interface PageView`
+  What a page showed as it was hidden, put back by {@link PageView.restore}.
+- **SlotNode** _(interface)_ - `interface SlotNode`
+  One element of the view: a layout and the slots under it, or a page.
+- **SlotParking** _(interface)_ - `interface SlotParking`
+  The DOM half of keep-alive: takes hidden slots out of the document and puts them back.
+- **checkSlotCss** _(function)_ - `checkSlotCss: (entry: Element, page: Element) => void`
+  Dev only: report each same-origin style rule whose selector the slot wrappers around `page` stop matching (`NIFRA_KEEPALIVE_DIRECT_CHILD_CSS`). A stylesheet the page cannot read is skipped.
+- **createSlotParking** _(function)_ - `createSlotParking: () => SlotParking`
+  One per mounted view.
+- **identityChanged** _(function)_ - `identityChanged: () => void`
+  Tell this tab and every other tab of the origin that the visitor signed in or out. Call it at login and logout when identity lives in client storage (a bearer token) rather than in a cookie, which the server's epoch cookie already covers: every page kept alive for the previous visitor is dropped.
+- **keepAliveClient** _(function)_ - `keepAliveClient: (options: KeepAliveClientOptions) => KeepAliveClient`
+  Keep-alive for a router. See the module docs; the generated client entry wires it:
+- **noteKeptView** _(function)_ - `noteKeptView: (key: string, elements: (() => readonly Element[]) | undefined) => void`
+  For an adapter, in development: the elements slot `key` renders, read when the devtools panel counts a kept page's nodes. `undefined` once the slot has left the view.
+- **rememberView** _(function)_ - `rememberView: (elements: readonly Element[]) => PageView`
+  Note the inner scroll offsets of a page's top-level `elements` and the element inside them that has focus, while they are still laid out. For an adapter whose framework takes a hidden page out of the document itself (Vue's `KeepAlive`), in place of {@link createSlotParking}.
+- **slotTree** _(function)_ - `slotTree: (state: RouterState, chains: Readonly<Record<string, MatchChain | undefined>>, table: KeepAliveTable, previous?: readonly SlotNode[]) => readonly SlotNode[]`
+  The view of `state`: the page on screen and every kept page, grouped by the layouts they share. A layout every page under it shares renders once; where two chains part, each part is a slot. Pass the previous tree to keep the identity of every node that did not change.
 
 ### `@nifrajs/web/live`
 
@@ -6513,7 +6582,7 @@ _No named exports (side-effect entrypoint)._
 - **ServerComponent** _(interface)_ - `interface ServerComponent<Input = unknown, Props = unknown, View = unknown>`
 - **ServerComponentHandle** _(interface)_ - `interface ServerComponentHandle`
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
-  Optional router integration; imported only by opted-in application entries.
+  Optional router integration; imported only by opted-in application entries. The components of a `keepAlive` page are parked while it is hidden, so navigation leaves them as they are.
 - **holeComponents** _(function)_ - `holeComponents: (client: ComponentClientAdapter | undefined) => void`
   Experimental: how the client islands inside partially prerendered holes that show server components mount, as the adapter's component client, such as `vueComponentClient({ islands })`; `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a hole shows its er…
 - **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
@@ -6620,7 +6689,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ReportWebVitalsOptions** _(interface)_ - `interface ReportWebVitalsOptions`
   How {@link reportWebVitals} reports.
-- **WebVitalsMetric** _(type)_ - `type WebVitalsMetric`
+- **WebVitalsMetric** _(type)_ - `type WebVitalsMetric = MetricType & { readonly route: string | undefined }`
   One measurement from `web-vitals` - `name` is `"LCP"`, `"INP"`, `"CLS"`, `"FCP"` or `"TTFB"`, with its `value`, `rating` (`"good"`, `"needs-improvement"` or `"poor"`), `delta` since the last report and an `id` unique to the measurement - plus the route it belongs to.
 - **reportWebVitals** _(function)_ - `reportWebVitals: (report: (metric: WebVitalsMetric) => void, options?: ReportWebVitalsOptions) => () => void`
   Report the page's Core Web Vitals to `report`, each with the route it belongs to. A metric is reported once its value is final - FCP and TTFB as soon as they are known, LCP at the first interaction or when the page is hidden, CLS and INP when the page is hidden - unless `reportAllChanges` asks for …
@@ -6658,10 +6727,10 @@ _No named exports (side-effect entrypoint)._
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
   One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
 - **SecretFinding** _(interface)_ - `interface SecretFinding`
-- **SecretRule** _(type)_ - `type SecretRule`
+- **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **SecretScanFile** _(interface)_ - `interface SecretScanFile`
 - **SecretScanInput** _(interface)_ - `interface SecretScanInput`
-- **Zone** _(type)_ - `type Zone`
+- **Zone** _(type)_ - `type Zone = | "route-frontend" | "route-backend" | "frontend" | "backend" | "shared" | "fn" | "component" | "generated" | "library"`
 - **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
 - **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
 - **ZoneConfig** _(interface)_ - `interface ZoneConfig`
@@ -6763,6 +6832,25 @@ _No named exports (side-effect entrypoint)._
   Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
 
+### `@nifrajs/web-preact/keep-alive`
+
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` instead of crashing the app. DOM-transparent (it rend…
+- **hotUpdateNeedsReload** _(const)_ - `hotUpdateNeedsReload: true`
+  Preact cannot apply Bun's hot updates, so the generated client entry reloads instead.
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
+  Hydrate a server-rendered Preact layout `chain` (with the loader `props`) inside `container`.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Like `mountRouter` from `@nifrajs/web-preact/client`, it hydrates against the state the server rendered and then follows the store.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document. The page keeps running while it is hidden: pause its timers, sockets and media here. A hook: call it unconditionally while rendering. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again. A hook.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page, where its effects keep running: pause timers and listeners on it. Always `true` on the server and on a page that does not keep alive.
+
 ### `@nifrajs/web-preact/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren`
@@ -6794,12 +6882,18 @@ _No named exports (side-effect entrypoint)._
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document. The page keeps running while it is hidden: pause its timers, sockets and media here. A hook: call it unconditionally while rendering. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again. A hook.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismatch.
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page, where its effects keep running: pause timers and listeners on it. Always `true` on the server and on a page that does not keep alive.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed cl…
 
@@ -6903,6 +6997,22 @@ _No named exports (side-effect entrypoint)._
   Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the interactivity (see `mountIslands`). Props are JSON-encoded into `data-island-props`; React escapes the attribute value and the client reads the decoded `dataset.islandProps`.
 - **IslandProps** _(interface)_ - `interface IslandProps`
 
+### `@nifrajs/web-react/keep-alive`
+
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`.
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` instead of crashing the app. DOM-transparent (it rend…
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "react"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe React's recoverable errors and identity.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Like `mountRouter` from `@nifrajs/web-react/client`, it hydrates against the state the server rendered and then follows the store.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
+
 ### `@nifrajs/web-react/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode`
@@ -6987,6 +7097,8 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` …
 - **useNavigation** _(function)_ - `useNavigation: () => Navigation`
   Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra navigates imperatively - it fetches the next route's chunk + loader data while the current route stays on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspe…
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
+  Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
 - **useParams** _(function)_ - `useParams: <T extends Record<string, string | undefined> = Record<string, string>>() => Readonly<T>`
   The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
 - **usePending** _(function)_ - `usePending: () => boolean`
@@ -7107,6 +7219,23 @@ _No named exports (side-effect entrypoint)._
   Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
 
+### `@nifrajs/web-solid/keep-alive`
+
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` (via Solid's `<ErrorBoundary>`) instead of crashing. …
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
+  Hydrate a server-rendered Solid layout `chain` (with the loader `props`) inside `container`.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Its first render matches the server's (the same view, with the slot wrappers the server rendered), so hydration claims the document as it is.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component sets up; it is removed with the component. A no-op o…
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => Accessor<boolean>`
+  Whether the page this component renders in is on screen, as an accessor: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
+
 ### `@nifrajs/web-solid/mdx`
 
 - **solidMdxBunPlugin** _(function)_ - `solidMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
@@ -7153,12 +7282,18 @@ _No named exports (side-effect entrypoint)._
 - **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component sets up; it is removed with the component. A no-op o…
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useMatches** _(function)_ - `useMatches: () => Accessor<readonly UIMatch[]>`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydratio…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => Accessor<boolean>`
+  Whether the page this component renders in is on screen, as an accessor: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read…
 
@@ -7200,7 +7335,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/fetcher`
 
-- **FetcherStore** _(type)_ - `type FetcherStore`
+- **FetcherStore** _(type)_ - `type FetcherStore = Readable<FetcherState> & { readonly load: (path: string) => Promise<void>; readonly submit: (action: string, body: NonNullable<RequestInit["body"]>) => Promise<void> }`
   A fetcher store: a `Readable<FetcherState>` (read via `$`) plus imperative `load`/`submit`.
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void`
   Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use.
@@ -7235,6 +7370,28 @@ _No named exports (side-effect entrypoint)._
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
+### `@nifrajs/web-svelte/keep-alive`
+
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`.
+- **KeepAliveMount** _(interface)_ - `interface KeepAliveMount`
+  What `KeepAlive.svelte` and `Slot.svelte` render with: one per mount, on the server or the client.
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary`
+  Wrap a route's `_error` component as a boundary marker for `Chain.svelte` to render.
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "svelte"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe Svelte warnings and identity.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Its first render matches the server's (the same `KeepAlive` root, with the slot wrappers the server rendered), so hydration reconciles the document as it is.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
+  Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
+
 ### `@nifrajs/web-svelte/mdx`
 
 - **svelteMdxBunPlugin** _(function)_ - `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
@@ -7256,7 +7413,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/query`
 
-- **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { /** Force a refetch (ignores `staleTime`). */ readonly refetch: () => Promise<T> }`
+- **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { readonly refetch: () => Promise<T> }`
   A query store: a `Readable<QueryState<T>>` (read via `$`) plus `refetch`.
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryStore<T>`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
@@ -7275,12 +7432,18 @@ _No named exports (side-effect entrypoint)._
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
 - **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as an accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismat…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
+  Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
 
@@ -7384,6 +7547,26 @@ _No named exports (side-effect entrypoint)._
 
 - **Image** _(const)_ - `Image: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ src: { type: StringConstructor; required: true; }; width: { type: NumberConstructor; required: true; }; height: { type: NumberConstructor; required: …`
 
+### `@nifrajs/web-vue/keep-alive`
+
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`.
+- **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
+  `mountRouter`'s options in a keep-alive app: the generated entry adds which slots are kept.
+- **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree is captured (`onErrorCaptured`) and renders `fallback` with `{ data: { name, message } }` instead of crashi…
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "vue"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe Vue warnings and identity.
+- **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
+  Hydrate the keep-alive view. Like `mountRouter` from `@nifrajs/web-vue/client`, it hydrates against the state the server rendered and then follows the store.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document (Vue's `onDeactivated` runs after). The page keeps running while it is hidden: pause its timers, sockets and media here. Call it in `setup`; it is removed with the co…
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again, once it is back in the document with its scroll and focus. Unlike Vue's `onActivated`, not when it first mounts.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => Readonly<Ref<boolean>>`
+  Whether the page this component renders in is on screen, as a ref: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
+
 ### `@nifrajs/web-vue/plugin`
 
 - **compileVue** _(function)_ - `compileVue: (source: string, filename: string, generate: "dom" | "ssr") => string`
@@ -7426,12 +7609,18 @@ _No named exports (side-effect entrypoint)._
   Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides th…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document (Vue's `onDeactivated` runs after). The page keeps running while it is hidden: pause its timers, sockets and media here. Call it in `setup`; it is removed with the co…
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
+  Run `callback` each time the `keepAlive` page this component renders in is shown again, once it is back in the document with its scroll and focus. Unlike Vue's `onActivated`, not when it first mounts.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
 - **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive ref. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mis…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **usePageVisibility** _(function)_ - `usePageVisibility: () => Readonly<Ref<boolean>>`
+  Whether the page this component renders in is on screen, as a ref: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
   The route's typed, validated search params as a reactive ref - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value` …
 
@@ -7543,7 +7732,7 @@ _No named exports (side-effect entrypoint)._
   The config a scaffold writes: every scaffold declares the CLI, so its launch is unpinned.
 - **MCP_JSON_PATH** _(const)_ - `MCP_JSON_PATH: ".mcp.json"`
   The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it.
-- **MCP_SERVER_ARGS** _(const)_ - `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
+- **MCP_SERVER_ARGS** _(const)_ - ``MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]``
 - **MCP_SERVER_ARGS_INSTALLED** _(const)_ - `MCP_SERVER_ARGS_INSTALLED: readonly ["@nifrajs/cli", "mcp"]`
   The launch args for a project that declares `@nifrajs/cli`: unpinned, so `bunx` runs its install.
 - **MCP_SERVER_COMMAND** _(const)_ - `MCP_SERVER_COMMAND: "bunx"`
@@ -7617,7 +7806,7 @@ _No named exports (side-effect entrypoint)._
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
-- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+- **JoinRoutePath** _(type)_ - `` type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}` ``
   Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`

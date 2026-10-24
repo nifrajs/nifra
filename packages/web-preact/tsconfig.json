@@ -4,7 +4,8 @@
     // Frontend adapter: needs DOM types (client hydrate casts the container to `Element`).
     // Excluded from the root typecheck; checked via the `typecheck` script.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    // The partial prerendering fixture's routes are Preact JSX.
+    // The keep-alive and partial prerendering fixtures' routes are Preact JSX, in .tsx files as route
+    // discovery requires.
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
     "paths": {

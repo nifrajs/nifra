@@ -16,6 +16,7 @@ import {
 } from "../render-seam.ts"
 import { PRERENDERED_GLOBAL } from "../router.ts"
 import { jsStringLiteral, jsValueLiteral } from "./js-string.ts"
+import { keepAliveTable } from "./keep-alive-table.ts"
 
 /** The refusal for a server build given no client entry, shared by the codegen and `buildServer`. */
 export function missingClientEntry(clientEntry: unknown): TypeError {
@@ -61,6 +62,10 @@ export interface GenerateClientEntryOptions {
   readonly live?: LiveClientEntry | undefined
 }
 
+// The router as the entry names it: in a keep-alive app, the keep-alive layer over `router`.
+const keepAround = (keep: unknown, router: string): string =>
+  keep === undefined ? `const router = ${router}` : `const router = __keep.attach(${router})`
+
 /** A client entry for a live server: `{}`, or the endpoints when the runtime moves them. */
 export interface LiveClientEntry {
   readonly path?: string
@@ -77,11 +82,31 @@ export interface LiveClientEntry {
  * Bun has no `import.meta.glob`, so file-based routing needs this. Write the result to a file and
  * bundle it with `buildClient` / `Bun.build` (+ the adapter's transform).
  */
+/** The client modules whose package has a keep-alive mount beside them, at `<package>/keep-alive`. */
+const KEEP_ALIVE_ADAPTERS: readonly string[] = [
+  "@nifrajs/web-react/client",
+  "@nifrajs/web-svelte/client",
+  "@nifrajs/web-preact/client",
+  "@nifrajs/web-solid/client",
+  "@nifrajs/web-vue/client",
+]
+
 export function generateClientEntry(
   manifest: Manifest,
   options: GenerateClientEntryOptions,
 ): string {
-  const { clientModule, resolve } = options
+  const { resolve } = options
+  const keep = keepAliveTable(manifest)
+  if (keep !== undefined && !KEEP_ALIVE_ADAPTERS.includes(options.clientModule)) {
+    throw new Error(
+      `[nifra/web] ${keep.routes.map((id) => `"${id}"`).join(", ")} export keepAlive, which needs the React, Preact, Solid, Svelte or Vue adapter; this app's client module is ${jsStringLiteral(options.clientModule)}. Remove the keepAlive export or switch the adapter.`,
+    )
+  }
+  // A keep-alive app mounts through the adapter's keep-alive module, which re-exports its client.
+  const clientModule =
+    keep === undefined
+      ? options.clientModule
+      : options.clientModule.replace(/\/client$/, "/keep-alive")
 
   const loaderRows: string[] = []
   const patternRows: string[] = []
@@ -178,7 +203,12 @@ export function generateClientEntry(
   }
 
   const live = options.live
-  const liveFetch = live === undefined ? "" : ", fetchData: __live.fetchData"
+  const liveFetch =
+    keep !== undefined
+      ? ", fetchData: __keep.fetchData"
+      : live === undefined
+        ? ""
+        : ", fetchData: __live.fetchData"
   return `${[
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
@@ -188,6 +218,7 @@ export function generateClientEntry(
       ? ['import { bindComponentRouter } from "@nifrajs/web/server-components/client"']
       : []),
     ...(live === undefined ? [] : ['import { liveClient } from "@nifrajs/web/live-client"']),
+    ...(keep === undefined ? [] : ['import { keepAliveClient } from "@nifrajs/web/keep-alive"']),
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     ...(loadings.length > 0
@@ -260,6 +291,12 @@ export function generateClientEntry(
           ].join(", ")} })`,
         ]),
     "const matchChains = {}",
+    ...(keep === undefined
+      ? []
+      : [
+          `const keepAliveTable = ${jsValueLiteral(keep)}`,
+          `const __keep = keepAliveClient({ table: keepAliveTable, routeHooks, matchChains${live === undefined ? "" : ", fetchData: __live.fetchData"} })`,
+        ]),
     `const ${options.copyChunks === true ? "loadRoute" : "loadModule"} = async (id) => {`,
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
@@ -295,7 +332,7 @@ export function generateClientEntry(
     // backend half, which no browser bundle contains.
     "  const boundaryMods = errorRouteIds.has(id) ? mods.slice(0, -1) : mods",
     "  const boundaries = boundaryMods.flatMap((m) => (m.boundaries ?? []).map((b) => ({ name: b.name, mode: b.mode, ...(b.errorId === undefined ? {} : { errorId: b.errorId }) })))",
-    "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, boundaries }",
+    `  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, shareData: page.shareData, ${keep === undefined ? "" : "keepAlive: page.keepAlive, "}boundaries }`,
     "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
     ...(options.copyChunks === true
@@ -358,9 +395,18 @@ export function generateClientEntry(
     ...loadingLines,
     // With `_loading` pages the store is wrapped: a slow navigation then names a loading chain (the
     // shared layouts + the `_loading` component) for the mounted view to render in the meantime.
-    loadings.length > 0
-      ? `const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks${liveFetch} }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })`
-      : `const router = createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks${liveFetch} })`,
+    keepAround(
+      keep,
+      loadings.length > 0
+        ? `withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks${liveFetch} }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })`
+        : `createClientRouter({ patterns, initial, loadModule, statusRoutes${routerStatusOption}, searchClientKeys, routeHooks${liveFetch} })`,
+    ),
+    // Kept pages hold the code they were rendered with: a hot update drops them.
+    ...(keep === undefined
+      ? []
+      : [
+          'if (import.meta.hot) for (const event of ["bun:afterUpdate", "vite:afterUpdate"]) import.meta.hot.on(event, () => router.dropKept("hot-update"))',
+        ]),
     ...(options.serverComponents ? ["bindComponentRouter(router)"] : []),
     "installHistory(router)",
     "installForms(router)",
@@ -416,7 +462,7 @@ export function generateClientEntry(
     "      for (const listener of [...listeners]) listener()",
     "    }, 0)",
     "  }",
-    "  mountRouter({ router: view, routes: chains, searchSchemas, matchChains, container: root })",
+    `  mountRouter({ router: view, routes: chains, searchSchemas, matchChains, container: root${keep === undefined ? "" : ", keepAlive: keepAliveTable"} })`,
     // Run the optional client loader only after the adapter has mounted the SSR tree. The initial
     // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
     // duplicate the first request.
@@ -547,6 +593,13 @@ function moduleSpecifier(resolved: string): string {
 // A route's namespace is not assignable to `RouteModule` under a strict `tsc` (a backend half has no
 // `default`, a typed `meta` narrows its data), so the table holds plain objects and the cast happens at
 // `buildManifest`'s boundary - the same cast `discoverRoutes` applies to its dynamic import.
+// The routes the scan found exporting `keepAlive`, which a disk-less server cannot scan again.
+const keepAliveArg = (manifest: Manifest): string => {
+  const files = [
+    ...new Set(manifest.routes.filter((route) => route.keepAlive).map((route) => route.file)),
+  ]
+  return files.length === 0 ? "" : `, { keepAlive: ${jsValueLiteral(files)} }`
+}
 const LAZY_IMPORTER = "(file) => loaders[file] as () => Promise<RouteModule>"
 const EAGER_IMPORTER = "(file) => () => Promise.resolve(modules[file] as RouteModule)"
 
@@ -630,7 +683,7 @@ export function generateServerManifest(
       cssLoadingLine,
       ...copyChunksLines,
       ...buildAssetsLines,
-      `export const manifest = buildManifest(Object.keys(loaders), ${LAZY_IMPORTER})`,
+      `export const manifest = buildManifest(Object.keys(loaders), ${LAZY_IMPORTER}${keepAliveArg(manifest)})`,
     ].join("\n")}\n`
   }
   // Eager: `import * as` per route (all bundled into the entry, parsed at boot). Index-based
@@ -651,6 +704,6 @@ export function generateServerManifest(
     cssLoadingLine,
     ...copyChunksLines,
     ...buildAssetsLines,
-    `export const manifest = buildManifest(Object.keys(modules), ${EAGER_IMPORTER})`,
+    `export const manifest = buildManifest(Object.keys(modules), ${EAGER_IMPORTER}${keepAliveArg(manifest)})`,
   ].join("\n")}\n`
 }

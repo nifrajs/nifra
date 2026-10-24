@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  captureInto,
   createDevFeed,
   createDevToken,
   DEV_SERVER_LOG_FILE,
@@ -444,6 +445,26 @@ test("capture tees console and stream writes, tags the request, and restores on 
   expect(seen).toContainEqual({ level: "error", message: "partial line" })
   expect(seen).toContainEqual({ level: "log", message: "green" })
   expect(structured).toEqual(["core says"])
+})
+
+test("a server warning carrying a log-only diagnostic code is also an entry", () => {
+  const feed = createDevFeed({ root: tempRoot(), env: {}, persist: false })
+  const realWarn = console.warn
+  console.warn = () => {}
+  const detach = captureInto(feed)
+  try {
+    console.warn(
+      '[nifra/web] NIFRA_KEEPALIVE_IDENTITY_COOKIE: a response changed the HttpOnly cookie "sid"',
+    )
+    console.warn("an ordinary warning")
+  } finally {
+    detach()
+    console.warn = realWarn
+  }
+  expect(feed.errors().errors.map((entry) => [entry.category, entry.diagnostic.code])).toEqual([
+    ["ssr", "NIFRA_KEEPALIVE_IDENTITY_COOKIE"],
+  ])
+  expect(feed.logs({ limit: 10 }).logs.map((line) => line.level)).toEqual(["warn", "warn"])
 })
 
 test("capture is shared and reference-counted across sinks", () => {

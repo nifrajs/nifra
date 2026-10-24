@@ -37,6 +37,11 @@ export function compose(chain: readonly unknown[], props: RenderProps): ReactNod
       node,
     )
   }
+  return withRouterContext(props, node)
+}
+
+/** `node` inside the {@link RouterContext} provider for `props`, as {@link compose} wraps the chain. */
+export function withRouterContext(props: RenderProps, node: ReactNode): ReactNode {
   return createElement(
     RouterContext.Provider,
     {

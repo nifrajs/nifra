@@ -170,10 +170,23 @@ export type ClientAction = (
   args: ClientActionArgs,
 ) => ClientActionResult | undefined | Promise<ClientActionResult | undefined>
 
+/** A page's `keepAlive` export as an object. */
+export interface KeepAliveOptions {
+  /** Reload the page's data when it is shown again (default `true`). A page marked stale while it was
+   * hidden reloads anyway. */
+  readonly revalidate?: boolean
+  /** Longest the page may stay hidden before it is dropped, in milliseconds (default 10 minutes). */
+  readonly maxAge?: number
+}
+
 /** Client hooks populated by the generated route entry after a route chunk loads. */
 export interface ClientRouteHooks {
   readonly clientLoader?: ClientLoader
   readonly clientAction?: ClientAction
+  /** The page's `shareData` export: `false` gives every reload of it fresh data. */
+  readonly shareData?: boolean
+  /** The page's `keepAlive` export: the page stays mounted after a visitor leaves it. */
+  readonly keepAlive?: true | KeepAliveOptions
   /** Neutral boundary descriptors needed for soft-navigation interception. A boundary's loader lives in
    * the route's backend half, so the browser never learns whether one exists. */
   readonly boundaries?: ReadonlyArray<Omit<BoundaryDescriptor, "hasLoad">>
@@ -400,6 +413,25 @@ export interface RouteModule {
    * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve
    * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */
   readonly searchClientKeys?: readonly string[]
+  /**
+   * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live
+   * refresh) fresh data. By default a reload keeps the identity of the parts of `data` and the layouts'
+   * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer
+   * that memoizes on identity skips it. Not every unchanged row, though: an array whose first 32
+   * elements all changed is taken whole, later unchanged elements included, so code that needs a row's
+   * identity must not count on it. Opt out for a page whose code compares `data` against its value
+   * from before the reload, or whose rows re-render whatever their identity, which then pay the
+   * comparison for nothing. Client-only.
+   */
+  readonly shareData?: boolean
+  /**
+   * Keep this page mounted after the visitor leaves it, so back and forward show it again as it was
+   * left: its component state, form fields, inner scroll offsets and focus. At most three pages are
+   * kept per tab, each for at most 10 minutes; a kept page is shown again only by a back or forward to
+   * its own history entry, and its data reloads in place. A sign-in or sign-out drops every kept page.
+   * Client-only.
+   */
+  readonly keepAlive?: true | KeepAliveOptions
   readonly meta?: MetaInput
   /**
    * Opt this route out of nifra's full-document client hydration. The server still renders the full
@@ -582,6 +614,9 @@ export interface RouteEntry {
   readonly loadingIds?: readonly string[]
   /** The frontend half: the file the browser bundle imports. */
   readonly file: string
+  /** Set when the frontend half exports `keepAlive` (found by a scan of its source): its page renders
+   * inside the slot wrappers a kept page needs, on the server and in the browser. */
+  readonly keepAlive?: true
   /** The backend half (`x.backend.ts`), when the route has one. Server-only. */
   readonly backend?: string
   /** Both halves, merged and checked. */
@@ -705,6 +740,8 @@ export const FRONTEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "HydrateFallback",
   "searchSchema",
   "searchClientKeys",
+  "shareData",
+  "keepAlive",
   "clientLoader",
   "clientAction",
   "boundaries",
@@ -1233,6 +1270,25 @@ const ancestorDirs = (file: string): string[] => {
   return dirs
 }
 
+/** Options for {@link buildManifest}. */
+export interface BuildManifestOptions {
+  /** Route files (as in `files`) whose frontend half exports `keepAlive`: see {@link exportsKeepAlive}. */
+  readonly keepAlive?: readonly string[]
+}
+
+// A declaration or an export list naming `keepAlive`, at the start of a line: a comment or a string
+// that mentions one does not start a line with `export`.
+const KEEP_ALIVE_EXPORT =
+  /^[ \t]*export[ \t]+(?:const|let|var)[ \t]+keepAlive\b|^[ \t]*export[ \t]*\{[^}]*\bkeepAlive\b[^}]*\}/m
+
+/**
+ * Whether a route file's source exports `keepAlive`, read without running it: the server and the
+ * client build both need the answer for every route, before any route module has loaded. A `.svelte`
+ * or `.vue` file exports it from its module script the same way. An export the scan cannot see (an
+ * `export *`) keeps nothing.
+ */
+export const exportsKeepAlive = (source: string): boolean => KEEP_ALIVE_EXPORT.test(source)
+
 /**
  * Build a manifest from route file paths (relative to the routes dir) + an `importer` that
  * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
@@ -1245,7 +1301,9 @@ const ancestorDirs = (file: string): string[] => {
 export function buildManifest(
   files: readonly string[],
   importer: (file: string) => () => Promise<RouteModule>,
+  options: BuildManifestOptions = {},
 ): Manifest {
+  const keepAliveFiles = new Set(options.keepAlive)
   const layoutDirs = new Set<string>()
   const layouts: Record<string, LayoutEntry> = {}
   const errorDirs = new Set<string>()
@@ -1411,6 +1469,7 @@ export function buildManifest(
         ...(notFoundIds.length > 0 ? { notFoundIds } : {}),
         ...(loadingIds.length > 0 ? { loadingIds } : {}),
         file,
+        ...(keepAliveFiles.has(file) ? { keepAlive: true } : {}),
         ...(backend === undefined ? {} : { backend }),
         load,
       })

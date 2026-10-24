@@ -22,9 +22,15 @@
   // the reactivity that matters is the subscription below - the store pushes, this does not re-read.
   // Wrapping it in a `$derived` would re-run `snapshot()` and hand `$state` a fresh object on every
   // change, discarding the very state the subscription is maintaining.
+  // `raw`: a snapshot is replaced, never mutated, and a deep proxy would hand the page a new proxy of
+  // the same data on every store change.
   // svelte-ignore state_referenced_locally
-  let snapshot = $state(router.snapshot())
+  let snapshot = $state.raw(router.snapshot())
   $effect(() => router.subscribe(() => { snapshot = router.snapshot() }))
+  // A `$derived` notifies only when its value changes identity, so a reload that kept the data (the
+  // router shares what it did not change) re-runs nothing that reads it.
+  let data = $derived(snapshot.data)
+  let layoutData = $derived(snapshot.layoutData)
 
   let chain = $derived(routes[snapshot.routeId] ?? [])
   let props = $derived.by(() => {
@@ -35,7 +41,6 @@
     const path = snapshot.intercepted?.pagePath ?? snapshot.path
     const q = path.indexOf("?")
     return {
-      data: snapshot.data,
       ...(snapshot.serverComponents === undefined ? {} : { serverComponents: snapshot.serverComponents }),
       actionData: snapshot.actionData,
       pending: snapshot.pending,
@@ -53,4 +58,4 @@
 
 <!-- Each layout's own loader data, from the same snapshot. Without it a layout renders `data: null` on
      the client while the server rendered it with its data. -->
-<Chain {chain} {props} layoutData={snapshot.layoutData} />
+<Chain {chain} {props} {data} {layoutData} />

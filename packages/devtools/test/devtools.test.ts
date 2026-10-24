@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { type NifraSpan, tracing } from "@nifrajs/otel"
+import { Window } from "happy-dom"
 import {
   type DevToolsEvent,
   devtools,
@@ -285,6 +286,47 @@ describe("devtools server middleware", () => {
 })
 
 describe("devtoolsClientScript", () => {
+  test("lists a keepAlive app's kept pages while open, and shows nothing without one", async () => {
+    const window = new Window()
+    let tick = (): void => {}
+    const pages: unknown[] = []
+    // The overlay as a page runs it, with the clock and the stream handed in.
+    new Function("window", "document", "EventSource", "setInterval", devtoolsClientScript())(
+      window,
+      window.document,
+      class {
+        onmessage = null
+      },
+      (run: () => void) => {
+        tick = run
+        return 0
+      },
+    )
+    const panel = window.document.getElementById("nifra-devtools")
+    const kept = (): string[] =>
+      [...(panel?.querySelectorAll("div > div > div") ?? [])]
+        .filter((row) => row.children.length === 4)
+        .map((row) => [...row.children].map((cell) => cell.textContent).join(" | "))
+    panel?.lastElementChild?.dispatchEvent(new window.Event("click"))
+    expect(kept()).toEqual([])
+    Reflect.set(window, "__nifraKeepAlive", { pages: () => pages })
+    pages.push({ instance: "k1", path: "/list/1", routeId: "list", hiddenFor: 12_400, nodes: 31 })
+    pages.push({
+      instance: "k2",
+      path: "/list/2",
+      routeId: "list",
+      hiddenFor: 900,
+      nodes: undefined,
+    })
+    tick()
+    expect(kept()).toEqual([
+      "/list/1 | k1 | hidden 12 s | 31 nodes",
+      "/list/2 | k2 | hidden 1 s | -",
+    ])
+    expect(panel?.textContent).toContain("Kept pages (2)")
+    await window.happyDOM.close()
+  })
+
   test("returns non-empty client script", () => {
     const script = devtoolsClientScript()
     expect(typeof script).toBe("string")

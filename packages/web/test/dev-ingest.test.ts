@@ -178,6 +178,32 @@ test("hydration mismatches are their own category, whether thrown or logged", as
   expect(issues[0]?.prompts[0]?.prompt).toContain("Reload the page named under Request")
 })
 
+test("a nifra diagnostic the browser only logs is an entry with its fix", async () => {
+  const app = start()
+  const { token } = await pageTokenOf(app)
+  const sent = await post(app, {
+    token,
+    events: [
+      {
+        kind: "console",
+        level: "warn",
+        message:
+          '[nifra/web] NIFRA_KEEPALIVE_DIRECT_CHILD_CSS: the selector "main > section" reaches a kept page\'s top-level element',
+        page: "/list",
+      },
+      { kind: "console", level: "warn", message: "an ordinary warning", page: "/list" },
+    ],
+  })
+  const errors = app.session.feed.errors().errors
+  expect(errors.map((entry) => [entry.category, entry.diagnostic.code])).toEqual([
+    ["browser", "NIFRA_KEEPALIVE_DIRECT_CHILD_CSS"],
+  ])
+  const { issues }: { issues: { code: string; prompts: { label?: string }[] }[] } =
+    await sent.json()
+  expect(issues.map((issue) => issue.code)).toEqual(["NIFRA_KEEPALIVE_DIRECT_CHILD_CSS"])
+  expect(issues[0]?.prompts.length).toBe(3)
+})
+
 test("console.error(err) is an error entry too: frameworks report caught errors that way", async () => {
   const app = start()
   const { token } = await pageTokenOf(app)
