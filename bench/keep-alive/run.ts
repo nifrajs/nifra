@@ -14,7 +14,7 @@
  *   median of 3, (kept - not kept) / 3, scaled to a 6,200-node page. Bound 3.5 MiB (React), 2 MiB
  *   (Svelte).
  *
- * View transitions are off, as each one holds a navigation for a frame first. Absolute times move with
+ * View transitions are off, as each one holds a page swap for a frame first. Absolute times move with
  * machine load; the ratios are paired within a run.
  */
 import { join } from "node:path"
@@ -47,8 +47,8 @@ interface Bench {
 
 // Runs in the page before the app's own scripts, so its `popstate` listener fires before the router's.
 const instrument = (): void => {
-  // Every navigation runs inside a view transition where the browser has them, and its callback waits
-  // for a frame that captures the old page: that frame is not the restore or the render being timed.
+  // A navigation's page swap runs inside a view transition where the browser has them, and its callback
+  // waits for a frame that captures the old page: that frame is not the restore or the render timed.
   Object.defineProperty(document, "startViewTransition", { value: undefined })
   let popped = 0
   addEventListener("popstate", () => {

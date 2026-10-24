@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, expect, jest, test } from "bun:test"
 import { installForms, installHistory, signalHydrated } from "../src/client.ts"
 import {
   type Blocker,
@@ -6,7 +6,12 @@ import {
   getBrowserNavigate,
   registerBlocker,
 } from "../src/navigation.ts"
-import type { ClientRouter, RouterState } from "../src/router.ts"
+import {
+  type ClientRouter,
+  createClientRouter,
+  type FetchRouteData,
+  type RouterState,
+} from "../src/router.ts"
 
 type Listener = (event: Event) => void
 
@@ -164,6 +169,7 @@ class FakeDocument extends FakeEventHub {
     ready: Promise<unknown>
     finished: Promise<unknown>
     updateCallbackDone: Promise<unknown>
+    skipTransition?: () => void
   }
 
   getElementById(id: string): FakeElement | null {
@@ -1469,4 +1475,216 @@ test("while a boundary holds a target, a form with no action posts to the route 
   plain.action = "http://example.test/photos/2"
   expect(await submit(plain)).toBe("/photos/2")
   stop()
+})
+
+/**
+ * View transitions as the browser runs them: the update callback runs once a drawn frame has captured
+ * the page, or as a task once the transition is skipped, by `skipTransition()` or a newer transition.
+ */
+function fakeTransitions(): { started: number; readonly frame: () => void } {
+  let current: { run: () => void; skip: () => void } | undefined
+  const skipped = (): Promise<unknown> => {
+    const rejected = Promise.reject(new Error("skipped"))
+    rejected.catch(() => {})
+    return rejected
+  }
+  const transitions = {
+    started: 0,
+    frame: () => current?.run(),
+  }
+  document.startViewTransition = (callback) => {
+    transitions.started++
+    current?.skip()
+    let called = false
+    const run = (): void => {
+      if (called) return
+      called = true
+      void callback()
+    }
+    const transition = { run, skip: () => queueMicrotask(run) }
+    current = transition
+    return {
+      ready: skipped(),
+      finished: skipped(),
+      updateCallbackDone: skipped(),
+      skipTransition: transition.skip,
+    }
+  }
+  return transitions
+}
+
+/** A data transport whose responses the test releases, recording each path it is asked for. Like
+ * `fetch`, it rejects once its signal aborts. */
+function gatedLoads(): {
+  readonly requested: string[]
+  readonly fetchData: FetchRouteData
+  release(path: string): void
+} {
+  const requested: string[] = []
+  const waiting = new Map<string, Array<() => void>>()
+  return {
+    requested,
+    fetchData: (path, _match, signal) => {
+      requested.push(path)
+      return new Promise((resolve, reject) => {
+        waiting.set(path, [...(waiting.get(path) ?? []), () => resolve({ at: path })])
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+      })
+    },
+    release(path) {
+      for (const resolve of waiting.get(path) ?? []) resolve()
+      waiting.delete(path)
+    },
+  }
+}
+
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}
+
+function transitionRouter(loads: ReturnType<typeof gatedLoads>): ClientRouter {
+  return createClientRouter({
+    patterns: ["current", "orchard", "meadow", "glade"].map((name) => ({
+      routeId: name,
+      pattern: `/${name}`,
+    })),
+    initial: { routeId: "current", params: {}, path: "/current", data: null, pending: false },
+    loadModule: async () => {},
+    fetchData: loads.fetchData,
+  })
+}
+
+test("a navigation loads before its view transition, which a page drawing no frames skips", async () => {
+  resetBrowser()
+  const transitions = fakeTransitions()
+  const loads = gatedLoads()
+  const router = transitionRouter(loads)
+  const stop = installHistory(router)
+  jest.useFakeTimers()
+  try {
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/orchard")))
+    await flush()
+    // The data request leaves with the click, not after a frame, and the page shows it pending.
+    expect(loads.requested).toEqual(["/orchard"])
+    expect(router.snapshot().pendingPath).toBe("/orchard")
+    expect(transitions.started).toBe(0)
+
+    loads.release("/orchard")
+    await flush()
+    // The transition holds only the swap, which waits for a frame to capture the page.
+    expect(transitions.started).toBe(1)
+    expect(router.snapshot().path).toBe("/current")
+    jest.advanceTimersByTime(99)
+    await flush()
+    expect(router.snapshot().path).toBe("/current")
+    // No frame came: the animation is skipped and the page swaps.
+    jest.advanceTimersByTime(1)
+    await flush()
+    expect(router.snapshot().path).toBe("/orchard")
+    expect(router.snapshot().pending).toBe(false)
+    expect(locationState.pathname).toBe("/orchard")
+
+    // A page that draws frames swaps inside the transition's callback.
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/meadow")))
+    await flush()
+    loads.release("/meadow")
+    await flush()
+    expect(router.snapshot().path).toBe("/orchard")
+    transitions.frame()
+    await flush()
+    expect(router.snapshot().path).toBe("/meadow")
+  } finally {
+    jest.useRealTimers()
+    stop()
+  }
+  // Torn down, a navigation swaps without a transition.
+  const navigated = router.navigate("/glade")
+  await flush()
+  loads.release("/glade")
+  await navigated
+  expect(router.snapshot().path).toBe("/glade")
+  expect(transitions.started).toBe(2)
+})
+
+test("Back while a navigation waits for a frame goes back and keeps the entry it lands on", async () => {
+  resetBrowser()
+  fakeTransitions()
+  const loads = gatedLoads()
+  const router = transitionRouter(loads)
+  const stop = installHistory(router)
+  jest.useFakeTimers()
+  try {
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/orchard")))
+    await flush()
+    loads.release("/orchard")
+    await flush()
+    expect(locationState.pathname).toBe("/orchard")
+
+    // Back, while the orchard's swap still waits for a frame that never comes.
+    historyCalls = []
+    locationState.pathname = "/current"
+    historyState = { nifraIndex: 0, nifraScroll: [0, 0] }
+    windowHub.emit("popstate", new Event("popstate"))
+    await flush()
+    expect(router.snapshot().pendingPath).toBe("/current")
+    loads.release("/current")
+    await flush()
+    jest.advanceTimersByTime(100)
+    await flush()
+
+    expect(router.snapshot().path).toBe("/current")
+    expect(router.snapshot().pending).toBe(false)
+    // The entry Back landed on still holds its own URL: nothing replaced or pushed over it.
+    expect(historyCalls).toEqual([])
+    expect(locationState.pathname).toBe("/current")
+  } finally {
+    jest.useRealTimers()
+    stop()
+  }
+})
+
+test("a click while a navigation loads takes over, and the first is not loaded as a document", async () => {
+  resetBrowser()
+  const loads = gatedLoads()
+  const router = transitionRouter(loads)
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  try {
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/orchard")))
+    await flush()
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/meadow")))
+    await flush()
+    loads.release("/meadow")
+    await flush()
+    expect(fallback).toEqual([])
+    expect(router.snapshot().path).toBe("/meadow")
+    expect(locationState.pathname).toBe("/meadow")
+  } finally {
+    stop()
+  }
+})
+
+test("a swap that throws inside the transition loads the page as a document", async () => {
+  resetBrowser()
+  const transitions = fakeTransitions()
+  const loads = gatedLoads()
+  const router = transitionRouter(loads)
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  const unsubscribe = router.subscribe(() => {
+    const { pending, path } = router.snapshot()
+    if (!pending && path === "/orchard") throw new Error("render failed")
+  })
+  try {
+    document.emit("click", fakeEvent(fakeAnchor("http://example.test/orchard")))
+    await flush()
+    loads.release("/orchard")
+    await flush()
+    transitions.frame()
+    await flush()
+    expect(fallback).toEqual(["/orchard"])
+  } finally {
+    unsubscribe()
+    stop()
+  }
 })

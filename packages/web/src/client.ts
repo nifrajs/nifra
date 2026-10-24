@@ -5,6 +5,7 @@
  * a full page load). DOM-only - never imported on the server, so the store stays SSR-safe.
  */
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
+import { setPresenter } from "./internal/present.ts"
 import { appUrl } from "./internal/route-path.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import type { Meta } from "./manifest.ts"
@@ -211,6 +212,10 @@ export function waitForStyles(options: WaitForStylesOptions = {}): Promise<void>
   return Promise.all(promises).then(() => undefined)
 }
 
+// How long a navigation's view transition waits for the frame that captures the page before its
+// animation is skipped: several frames at any refresh rate, and short enough to go unnoticed.
+const CAPTURE_DEADLINE_MS = 100
+
 /**
  * Resolve `href` against this page and keep it only when history may move there without a load: same
  * scheme and host as the document, or null. Compared by protocol + host rather than `URL.origin`,
@@ -325,17 +330,45 @@ export function installHistory(
     return document.getElementById(id)
   }
 
-  // Wrap a navigation's render in a View Transition when the browser supports it - a graceful
-  // enhancement (no-op elsewhere). The captured "before" is held across the data fetch, so pair
-  // with link prefetch (hover/focus warms the cache) to keep most transitions instant.
+  // A navigation loads first and hands only its page swap here, so where the browser has View
+  // Transitions the page keeps painting, pending UI included, while the data loads. The browser runs
+  // the swap once a frame has captured the page; one drawing no frames while it reports itself visible
+  // (an occluded window) would hold it forever, so the deadline skips the animation, running the swap.
   type ViewTransition = {
     readonly ready: Promise<unknown>
     readonly finished: Promise<unknown>
     readonly updateCallbackDone: Promise<unknown>
+    skipTransition(): void
   }
   type ViewTransitionDocument = Document & {
     startViewTransition?: (cb: () => unknown) => ViewTransition
   }
+  setPresenter((swap) => {
+    const doc = document as ViewTransitionDocument
+    const start = doc.startViewTransition
+    if (typeof start !== "function") {
+      swap()
+      return Promise.resolve()
+    }
+    return new Promise((resolve, reject) => {
+      let swapped = false
+      const vt = start.call(doc, () => {
+        swapped = true
+        try {
+          swap()
+          resolve()
+        } catch (error) {
+          reject(error)
+        }
+      })
+      setTimeout(() => {
+        if (!swapped) vt.skipTransition()
+      }, CAPTURE_DEADLINE_MS)
+      // A newer navigation's transition, or the deadline, skips this one and rejects its promises -
+      // InvalidStateError or AbortError by engine. The swap still runs, so these are expected.
+      for (const p of [vt.ready, vt.finished, vt.updateCallbackDone]) p.catch(() => {})
+    })
+  })
   // A navigation that loads takes the page from a partially prerendered first document, which then
   // stops filling its holes and cancels the ones still loading on the server. `navigate` publishes
   // its `pendingPath` before its first await; a client-only search change, or a boundary already
@@ -351,20 +384,6 @@ export function installHistory(
     )
       ppr.leave()
     return run
-  }
-
-  const transition = (run: () => Promise<void>): void => {
-    const doc = document as ViewTransitionDocument
-    if (typeof doc.startViewTransition !== "function") {
-      void run()
-      return
-    }
-    const vt = doc.startViewTransition(run)
-    // Rapid in-app clicks supersede an in-flight transition; the browser skips it and rejects its
-    // promises. Reasons vary by engine - InvalidStateError "Transition was aborted because of
-    // invalid state", or AbortError "Transition was skipped". The navigation still completes, so
-    // we swallow these expected aborts rather than let them surface as unhandled rejections.
-    for (const p of [vt.ready, vt.finished, vt.updateCallbackDone]) p.catch(() => {})
   }
 
   // Parse a path into the `{ pathname, search, hash }` a `BlockerFunction` decides on.
@@ -443,7 +462,7 @@ export function installHistory(
     here = url.pathname + url.search + url.hash
     expected = routePath
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    transition(() => navigateFrom(routePath, path))
+    void navigateFrom(routePath, path)
     settle()
   }
 
@@ -600,7 +619,7 @@ export function installHistory(
     pendingScroll = { pos: scrollOf(history.state) }
     const routePath = location.pathname + location.search
     expected = routePath
-    transition(() => navigateFrom(routePath, dest))
+    void navigateFrom(routePath, dest)
     settle()
   }
 
@@ -682,6 +701,7 @@ export function installHistory(
     inView?.disconnect()
     setBrowserNavigate(undefined) // stop routing `useNavigate` to a torn-down router
     setBlockerController(undefined) // stop routing `useBlocker` to a torn-down registry
+    setPresenter(undefined)
     document.removeEventListener("click", onClick)
     document.removeEventListener("pointerover", onPrefetch)
     document.removeEventListener("focusin", onPrefetch)

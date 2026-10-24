@@ -6,6 +6,7 @@ import {
   type RouterState,
   type Submission,
 } from "../src/index.ts"
+import { setPresenter } from "../src/internal/present.ts"
 import { redirectOf } from "../src/router.ts"
 
 describe("createMatcher", () => {
@@ -2067,5 +2068,59 @@ describe("a page whose holes are hosts a partially prerendered document filled",
       spy.mockRestore()
     }
     expect(sent).toEqual([["cart"], ["cart"], undefined])
+  })
+})
+
+describe("a navigation a newer one supersedes", () => {
+  const patterns = [
+    { routeId: "home", pattern: "/" },
+    { routeId: "list", pattern: "/list/:id" },
+  ]
+  const initial = { routeId: "home", params: {}, path: "/", data: null, pending: false }
+
+  test("settles quietly when the newer one aborts its request", async () => {
+    const answers = new Map<string, () => void>()
+    const router = createClientRouter({
+      patterns,
+      initial,
+      fetchData: (path, _match, signal) =>
+        new Promise((resolve, reject) => {
+          answers.set(path, () => resolve({ path }))
+          signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+        }),
+    })
+    const first = router.navigate("/list/1")
+    while (!answers.has("/list/1")) await Bun.sleep(1)
+    const second = router.navigate("/list/2")
+    await expect(first).resolves.toBeUndefined()
+    while (!answers.has("/list/2")) await Bun.sleep(1)
+    answers.get("/list/2")?.()
+    await second
+    expect(router.snapshot().path).toBe("/list/2")
+  })
+
+  test("drops a swap it holds for the presenter, which runs the newer one's", async () => {
+    const swaps: Array<() => void> = []
+    setPresenter((swap) => {
+      swaps.push(swap)
+      return Promise.resolve()
+    })
+    try {
+      const router = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (path) => ({ path }),
+      })
+      await router.navigate("/list/1")
+      // Loaded, but not shown until the presenter runs the swap.
+      expect(router.snapshot()).toEqual({ ...initial, pending: true, pendingPath: "/list/1" })
+      await router.navigate("/list/2")
+      for (const swap of swaps) swap()
+      expect(router.snapshot().path).toBe("/list/2")
+      expect(router.snapshot().data).toEqual({ path: "/list/2" })
+      expect(router.snapshot().pending).toBe(false)
+    } finally {
+      setPresenter(undefined)
+    }
   })
 })
