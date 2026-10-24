@@ -1,5 +1,123 @@
 # @nifrajs/examples
 
+## 5.6.0
+
+### Patch Changes
+
+- Updated dependencies [676a1f0]
+- Updated dependencies [f1a424d]
+- Updated dependencies [a0ae2e6]
+- Updated dependencies [0743b66]
+- Updated dependencies [671a952]
+- Updated dependencies [8315e1c]
+- Updated dependencies [0ec3f30]
+- Updated dependencies [caa1ef8]
+- Updated dependencies [68c3fc7]
+- Updated dependencies [28ec36a]
+- Updated dependencies [7c5fc94]
+- Updated dependencies [13f6b38]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [b73319d]
+- Updated dependencies [aa567fa]
+- Updated dependencies [6b90278]
+- Updated dependencies [5ce69b2]
+- Updated dependencies [d43bc92]
+- Updated dependencies [7810dc5]
+- Updated dependencies [6126cb1]
+- Updated dependencies [ef2d101]
+- Updated dependencies [dec48fc]
+- Updated dependencies [c65a9bb]
+- Updated dependencies [c403814]
+- Updated dependencies [db0bacd]
+- Updated dependencies [6582724]
+- Updated dependencies [f48b257]
+- Updated dependencies [0222181]
+- Updated dependencies [f1d794e]
+- Updated dependencies [b7fb47f]
+- Updated dependencies [c387fb9]
+- Updated dependencies [af398dc]
+- Updated dependencies [8db6a2c]
+- Updated dependencies [4b196d2]
+- Updated dependencies [05608b9]
+- Updated dependencies [1b4b448]
+- Updated dependencies [f39ee8c]
+- Updated dependencies [4f40009]
+- Updated dependencies [4f40009]
+- Updated dependencies [05608b9]
+- Updated dependencies [baa926f]
+- Updated dependencies [2eabd83]
+- Updated dependencies [0b9fed9]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [9ebcb1f]
+- Updated dependencies [dfb59d1]
+- Updated dependencies [328003a]
+- Updated dependencies [328003a]
+- Updated dependencies [a6010f9]
+- Updated dependencies [87f475d]
+- Updated dependencies [3e1e275]
+- Updated dependencies [c4cf782]
+- Updated dependencies [c090bac]
+- Updated dependencies [a98b149]
+- Updated dependencies [8f9b258]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [05608b9]
+- Updated dependencies [9efc061]
+- Updated dependencies [9889273]
+- Updated dependencies [7eab8d8]
+- Updated dependencies [7eab8d8]
+- Updated dependencies [7eab8d8]
+- Updated dependencies [fb1cc25]
+- Updated dependencies [23d0644]
+- Updated dependencies [15c9d60]
+- Updated dependencies [78e64e2]
+- Updated dependencies [f25a8d2]
+- Updated dependencies [778e430]
+- Updated dependencies [4102cc6]
+- Updated dependencies [18c3d73]
+- Updated dependencies [7ec0f81]
+- Updated dependencies [2538b70]
+- Updated dependencies [48f78f0]
+- Updated dependencies [baaac3d]
+- Updated dependencies [740a781]
+- Updated dependencies [2c213b2]
+- Updated dependencies [f25a8d2]
+- Updated dependencies [db0bacd]
+- Updated dependencies [db9f041]
+- Updated dependencies [db9f041]
+- Updated dependencies [8795369]
+- Updated dependencies [1bb2964]
+- Updated dependencies [033ed0f]
+- Updated dependencies [1704919]
+- Updated dependencies [375711b]
+- Updated dependencies [bb35ad0]
+- Updated dependencies [c7d233d]
+- Updated dependencies [feff82f]
+- Updated dependencies [a540dad]
+  - @nifrajs/middleware@5.6.0
+  - @nifrajs/core@5.6.0
+  - @nifrajs/client@5.6.0
+  - @nifrajs/web@5.6.0
+  - @nifrajs/cli@5.6.0
+  - @nifrajs/schema@5.6.0
+  - @nifrajs/web-react@5.6.0
+  - @nifrajs/web-svelte@5.6.0
+  - @nifrajs/node@5.6.0
+  - @nifrajs/web-vanilla@5.6.0
+  - @nifrajs/web-preact@5.6.0
+  - @nifrajs/web-solid@5.6.0
+  - @nifrajs/web-vue@5.6.0
+  - @nifrajs/auth@5.6.0
+  - @nifrajs/mcp@5.6.0
+  - @nifrajs/content@5.6.0
+  - @nifrajs/deno@5.6.0
+  - @nifrajs/i18n@5.6.0
+  - @nifrajs/webmcp@5.6.0
+  - @nifrajs/workers@5.6.0
+  - @nifrajs/image@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

@@ -240,7 +240,7 @@ function renderCdnCheck(out: CdnCheckOutput): readonly string[] {
 export const cdnCheckSpec: CommandSpec<CdnCheckInput, CdnCheckOutput> = {
   name: "cdn-check",
   summary:
-    "Check a deployed page behind a CDN: is it served from cache, do internal or CDN-only headers reach the visitor, and does a soft navigation get page data rather than the cached document.",
+    "Check a deployed page behind a CDN: is it served from cache, do internal or CDN-only headers reach the visitor, and do a soft navigation and a slot swap get their own answer rather than the cached document.",
   input: {
     jsonSchema: {
       type: "object",

@@ -221,10 +221,9 @@ implementation, secrets and database handles off the browser and use the same va
 mutation API across the supported UI libraries.
 
 The optional [server-components pipeline](/docs/server-components) adds
-server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte
-and Solid use their native islands in validated server-rendered ranges. The feature is
-intended for the release after 4.0.0 and requires all four adapters to pass certification.
-Server functions remain the mutation API; native React `"use server"` actions
+server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
+Solid and Preact use their native islands in validated server-rendered ranges. It shipped in
+5.0.0, and all five adapters pass the same certification. Server functions remain the mutation API; native React `"use server"` actions
 are unsupported.
 
 ### Also a standalone backend (vs. Hono & Elysia)
@@ -1737,7 +1736,8 @@ export async function loader() {
 ```
 
 For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
-on both React and Solid.
+on all five adapters: see [fetchers](/docs/mutations) and
+[the query cache](/docs/query).
 
 ## Nifra - Server functions
 
@@ -1966,7 +1966,8 @@ function toggle() {
 
 ### Concurrent fetchers
 
-`useFetcher(key)` (React) / `createFetcher(key)` (Solid) is an
+`useFetcher(key)` (React, Preact, Vue, Svelte) / `createFetcher(key)`
+(Solid), from each adapter's `/fetcher` entry, is an
 independent submission state machine - perfect for row-level actions or side-channel loads
 that shouldn't block navigation. `useFetchers()` exposes the live collection for
 global pending indicators. After a mutation, targeted revalidation refreshes just the
@@ -2998,7 +2999,8 @@ immediately, even if no further frame is sent.
 `body` is a POST stream: the body validates as on any POST, and
 `.subscribe(onEvent, { body })` sends it. A GET stream reconnects after a
 drop and resumes with `Last-Event-ID`; a POST stream does not reconnect unless you
-pass `reconnect: true`, since a reconnect sends the body again. The client's
+pass `reconnect: true`, since a reconnect sends the body again. A
+`204` answer closes the stream for good. The client's
 `onRequest` hook runs before each connect, so a refreshed token reaches the stream.
 
 ```ts
@@ -3037,14 +3039,16 @@ feed.close()
 > Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.
 
 For client-side data that isn't a route loader - lists, widgets, anything refetchable -
-Nifra ships a keyed query cache (TanStack-Query-style), agnostic across React and Solid.
+Nifra ships a keyed query cache (TanStack-Query-style), agnostic across all five adapters.
 
 ### useQuery / createQuery
 
-`useQuery(key, fn)` (React) and `createQuery(key, fn)` (Solid) subscribe
-a component to a cached, keyed query. Concurrent reads of the same key **dedup** into one
-in-flight fetch; results are cached with a `staleTime`, a background refetch, and
-bounded GC.
+`useQuery(key, fn)` (React, Preact, Vue and Svelte) and
+`createQuery(key, fn)` (Solid), each from the adapter's `/query`
+entry, subscribe a component to a cached, keyed query. Concurrent reads of the same key
+**dedup** into one in-flight fetch; results are cached with a `staleTime` (the
+third argument's option), a background refetch, and bounded GC. React also has
+`useMutation`, `useInfiniteQuery` and `HydrationBoundary`.
 
 ```ts
 import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
@@ -3076,9 +3080,9 @@ In an app with [live refresh](/docs/live), a query can name the live keys its da
 depends on: `useQuery(key, fn, { live: [`post:${id}`] })` refetches whenever
 the server publishes one of them.
 
-It's the same agnostic core under both adapters: the cache, dedup, and invalidation logic
-live in `@nifrajs/web`; the bindings are thin `useSyncExternalStore` /
-signal wrappers.
+It's the same agnostic core under every adapter: the cache, dedup, and invalidation logic
+live in `@nifrajs/web`; each binding is a thin wrapper in its framework's own
+reactivity (`useSyncExternalStore`, a signal, a `shallowRef`, a store).
 
 ## Nifra - Frameworks
 
@@ -3237,7 +3241,7 @@ const fetcher = useFetcher("save")          // fetcher.submit(...), fetcher.pend
 const q = useQuery(["todos"], loadTodos)    // q.data, q.isFetching, q.refetch()
 
 // Vue - composables (refs):           const f = useFetcher("save"); f.state.value.pending
-// Solid - signals:                    const q = useQuery(...);       q().data
+// Solid - signals:                    const q = createQuery(...);    q.state().data
 // Svelte - stores (read with $):      const f = useFetcher("save");  $f.pending
 ```
 
@@ -4249,8 +4253,8 @@ never build a path from the name.
 **
 Without `accept`, `file.type` is the client's too.
 **
-Some runtimes derive it from the file extension. Only a type that `accept` matched is
-one the bytes proved.
+It is the part's `Content-Type`, lower-cased, or `text/plain` when
+the part names none. Only a type that `accept` matched is one the bytes proved.
 
 -
 **Serve uploads as downloads.** Send `content-disposition: attachment` and
@@ -6304,8 +6308,9 @@ Size is the other edge axis. `t` is TypeBox-backed - it carries the whole JSON
 Schema type system - so a validated app on `t` is heavier than one on a lean
 validator. Validation is per route, so reach for `t` where you want the contract
 (OpenAPI/MCP for free) and Valibot where the Workers cold-start bundle is what matters: a
-Valibot-validated Nifra app measures **~16 KB gzipped**. Both are first-class, and you can
-mix them in one app.
+minimal Valibot-validated Nifra app measures **about 38 KB gzipped**, against about 62 KB
+on `t` (`bun run bench:size`). Both are first-class, and you can mix
+them in one app.
 
 ### Scheduled (cron)
 
@@ -6675,6 +6680,12 @@ it). Install it when you use `app.ws()`; without it a WS upgrade gets a clean
 ```ts
 npm i ws
 ```
+
+`nifra dev` serves `app.ws()` routes too, on the Bun pipeline and under
+Vite, through each route's own `upgrade()` guard and `Origin`
+check. Under Vite the upgrade goes through Node's `upgrade` event, so it
+needs `ws` as well; without it a WS upgrade gets a `501` naming the
+package, and a path no WebSocket route takes stays with Vite's HMR.
 
 `server({ wsMaxPayloadBytes })` caps one inbound message (default
 `maxBodyBytes`, 1 MB): a socket that sends more is closed with `1009`
@@ -7175,7 +7186,7 @@ The declared production smoke checks: SSR, the mounted API, 404s, headers, auth,
 
 `nifra cdn-check <url>`
 
-Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations getting page data rather than the cached document.
+Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations and slot swaps getting their own answer rather than the cached document.
 
 `nifra i18n check [entry] [--strict]`
 
@@ -16995,6 +17006,10 @@ The plugin is enabled by default only when `NODE_ENV=development`. It records a 
 and serves the overlay stream at `/_nifra/devtools`; remote hosts and cross-origin access stay denied
 unless explicitly allowed. Leave it unregistered in production for zero request-path overhead.
 
+In an app with [`keepAlive`](https://nifra.dev/docs/keep-alive) routes, the overlay also lists the
+kept pages under its request log: each one's path and instance, how long it has been hidden and how
+many elements it renders.
+
 Each SSE connection also has a finite pending-byte budget (`maxPendingBytes`, default 64 KiB),
 including keep-alive frames. A slow reader that fills that budget is closed and releases its
 connection slot. Already queued frames drain before EOF; the overflow frame is dropped. Browser
@@ -18672,10 +18687,11 @@ cost - TypeBox carries the whole JSON Schema type system, so `t` adds meaningful
 
 nifra validates through **Standard Schema**, so any Standard-Schema validator works on a route with
 no adapter - `{ body: v.object({ ... }) }` with valibot, for instance. A validated app built on a
-lean validator like valibot is a fraction of the size (measured ~16 KB gzipped), which matters for
-edge/Workers cold-starts. The trade is the one noted above: a validator that exposes no JSON Schema
-(valibot without a Standard JSON Schema wrapper) gives those routes no OpenAPI/MCP detail. One that
-implements Standard JSON Schema (`~standard.jsonSchema`, as zod 4 does) is described from it.
+lean validator like valibot is lighter (a minimal app measures about 38 KB gzipped on valibot and
+about 62 KB on `t`, `bun run bench:size`), which matters for edge/Workers cold-starts. The trade is
+the one noted above: a validator that exposes no JSON Schema (valibot without a Standard JSON Schema
+wrapper) gives those routes no OpenAPI/MCP detail. One that implements Standard JSON Schema
+(`~standard.jsonSchema`, as zod 4 does) is described from it.
 
 Rule of thumb: reach for `t` when you want the contract (OpenAPI/MCP) for free; bring valibot (or any
 Standard-Schema validator) when bundle size on the edge is the priority. Both are first-class - the
@@ -19518,7 +19534,7 @@ open page.
 - WebMCP registration is not authorization. Enforce authorization again at the server boundary.
 - Keep inputs narrow and annotations honest. A safety hint is not a permission.
 - Predictions are pure local transforms and cannot grant capability or bypass core policy.
-- Receipts contain status, bounded evidence, and error codes—not credentials, request bodies, secrets, or
+- Receipts contain status, bounded evidence, and error codes - not credentials, request bodies, secrets, or
   stack traces.
 - Normal browsers and non-WebMCP hosts receive a safe unsupported report.
 

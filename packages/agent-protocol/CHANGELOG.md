@@ -1,5 +1,15 @@
 # @nifrajs/agent-protocol
 
+## 5.6.0
+
+### Minor Changes
+
+- 2248445: `@nifrajs/agent-protocol` exports `childProcessEnv` and `childProcessBaseEnv`: the environment a host
+  hands a process it spawns, built from the platform and host environment the caller passes. The ACP
+  and Pi backends and the coding agent's isolated extension worker build their child environments with
+  it, so all three pass the same Windows set. An ACP agent on Windows now also receives `BUN_INSTALL`
+  and `USERDOMAIN`.
+
 ## 5.5.1
 
 No changes in this release.

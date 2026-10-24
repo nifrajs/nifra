@@ -1,5 +1,107 @@
 # @nifrajs/web-vue
 
+## 5.6.0
+
+### Minor Changes
+
+- f1d794e: `keepAlive` routes work with the Preact, Solid and Vue adapters as well as React and Svelte. Each of the three ships `usePageVisibility()`, `onPageHide` and `onPageShow` from its `/router` subpath; Vue keeps pages with its own `<KeepAlive>` and renders no wrapper elements. `@nifrajs/web-svelte/router` gains `usePageVisibility()`, and a `useBlocker` in a hidden Svelte page blocks nothing.
+  
+  A page left with a route open in a modal is kept with it, and back to that entry opens the modal again. Islands in a kept page can pause with `onPageHide(el, fn)` and `onPageShow(el, fn)` from `@nifrajs/web/islands`. Server components in a kept page stay mounted while it is hidden: `bindComponentRouter` parks them on the page events, and outlets pass their host to `controller.unmount(instance, host)` so a parked page and the page on screen can hold the same instance. A parked component waits for its page, taken back when the page is shown and released when it is dropped; `controller.isParked(instance, host)` tells an outlet whose framework cleans up a hidden page's effects, as React's `<Activity>` does, to leave it parked. In Vue, a layout inside a kept branch reads the branch's visibility, and a page dropped inside a hidden branch unmounts. In Preact, as in React, props a layout adds with `cloneElement` reach a kept page.
+  
+  The `nifra:pagehide` event fires as the router hides a page, while the page is still in the document and before the router's subscribers see the state that hides it.
+- 4f40009: `useQuery` (and Solid's `createQuery`) take the query cache's options as a third argument: `staleTime`, and `live` to refetch on the live keys a page's loaders grant. React's `useQuery` now hands its options to the client whole.
+- 7eab8d8: Experimental partial prerendering on Vue: `Hole` from the new `@nifrajs/web-vue/ppr` subpath places a hole, with an `error` slot for a failed loader, and hydrates an interactive one as its own app, which keeps its state when the page reloads the hole. A hole's `render` and `fallback` are `h()` output. The adapter renders a hole's HTML with `renderFragment`, its `useId` values under the hole's own prefix.
+
+### Patch Changes
+
+- b7fb47f: A kept page that a partially prerendered document filled stops its holes while it is hidden: a hole still loading is cancelled on the server, and a hole reload on its way is dropped. When the page comes back, its restore names the hole hosts in the data request, so each hole refills in place with `aria-busy="true"` until the fill lands, also on a route with `keepAlive: { revalidate: false }`. A `keepAlive` route's shared shell renders the page inside the same slot wrappers as the app's other documents, so it hydrates; an interactive hole on a kept React page keeps its own root, and its state, while `<Activity>` hides the page, its effects pause with the page, and its root goes when the page is dropped. `renderFragment` gets `hydrates` for the HTML a hole's own root hydrates, which the React adapter renders inside an `<Activity>`.
+  
+  In an app with both `keepAlive` routes and live refresh, a live reload keeps the owners whose keys did not change, as it does without `keepAlive`. A kept page is not watched while it is hidden; when it comes back, what changed meanwhile reloads, and while the page runs its own reload, live refresh waits for that load's grant instead of loading the page a second time.
+  
+  In development, a keep-alive app lists its kept pages on `window.__nifraKeepAlive` (`KEPT_PAGES_GLOBAL`, `KeptPageInfo` from `@nifrajs/web/keep-alive`): instance, path, route, hidden time and element count. Adapters report each slot's elements with `noteKeptView`. The `@nifrajs/devtools` overlay shows the list under its request log. Production builds drop it.
+- 328003a: While an intercept boundary shows a route over the page, the route props describe the page underneath: `path`, the typed `search`, and so `useLocation`, `useSearch` and `useMatches`, come from the page's own path. Before, they read the modal's URL, so the page lost its query string and `useMatches` sliced the modal's URL against the page's route chain.
+- fb1cc25: Keep client-loader reloads safe for cyclic, deeply nested and symbol-bearing data. Limit the initial row-ID index to the sharing sample so replaced lists avoid allocating a full old-row map, and benchmark lightweight rotating-ID payloads.
+  
+  Preserve layout-injected child props in React and Preact and page caching and leave transitions in Vue while retaining unchanged-data render skipping.
+  
+  Vue keeps patching an unchanged layout chain in place after a layout re-renders on its own between router renders.
+  
+  Recognize Svelte's unshadowed `$state.raw()` rune without weakening SQL checks for shadowed or imported database bindings.
+- 4102cc6: Render a Vue layout again only when its own state, its props or the component directly below it change, not on every reload or sibling navigation. `KeepAlive` and `Transition` layouts still keep the pages they hold.
+- 18c3d73: A reload of a path on screen keeps the identity of the parts of its data that it did not change. This covers an action's revalidation, `invalidate()`, the paths an action names with `revalidate()`, a live refresh, a fetcher loading its path again, and a target an intercept boundary holds. Plain objects and arrays compare by content, Dates by time, and array elements with an `id` pair by it, so a prepend or a reorder keeps every unchanged row, and each earlier element is kept for at most one new one; an array whose first 32 elements keep nothing is taken whole, later unchanged elements included. A plain JSON response with the same text as the one the page was read from reuses the page's data without parsing it; a response with deferred parts is always parsed. An unchanged reload publishes only its `pending` flag.
+  
+  A page exports `shareData = false` to get fresh data on every reload. `FetchRouteData` takes an optional seventh argument, `read` (a `DataText`), after `purpose` and `hosts`, that a custom transport may ignore; the same-text skip then does not apply, while sharing still does.
+  
+  The adapters' client mounts take advantage of it. React and Preact render each layout and the page memoized on its own props, with a layout's children read through context, so an unchanged reload re-renders neither a layout nor a memoized row. Vue passes each layout the next level as a stable slot. Svelte and Solid derive `data` and the layouts' data with an identity check, so an effect on them runs again only when a reload changed them; Solid's `<For>` then keeps every unchanged row and its DOM state. Svelte pages receive `data` as the router published it rather than as a deep reactive proxy of it. React, Preact and Vue keep `search` as the same object while the query is the same.
+- Updated dependencies [676a1f0]
+- Updated dependencies [f1a424d]
+- Updated dependencies [a0ae2e6]
+- Updated dependencies [0743b66]
+- Updated dependencies [671a952]
+- Updated dependencies [0ec3f30]
+- Updated dependencies [caa1ef8]
+- Updated dependencies [7c5fc94]
+- Updated dependencies [13f6b38]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [b73319d]
+- Updated dependencies [aa567fa]
+- Updated dependencies [6b90278]
+- Updated dependencies [5ce69b2]
+- Updated dependencies [d43bc92]
+- Updated dependencies [7810dc5]
+- Updated dependencies [6126cb1]
+- Updated dependencies [ef2d101]
+- Updated dependencies [dec48fc]
+- Updated dependencies [c403814]
+- Updated dependencies [db0bacd]
+- Updated dependencies [6582724]
+- Updated dependencies [f48b257]
+- Updated dependencies [0222181]
+- Updated dependencies [f1d794e]
+- Updated dependencies [b7fb47f]
+- Updated dependencies [c387fb9]
+- Updated dependencies [8db6a2c]
+- Updated dependencies [4b196d2]
+- Updated dependencies [1b4b448]
+- Updated dependencies [f39ee8c]
+- Updated dependencies [4f40009]
+- Updated dependencies [05608b9]
+- Updated dependencies [baa926f]
+- Updated dependencies [2eabd83]
+- Updated dependencies [328003a]
+- Updated dependencies [a6010f9]
+- Updated dependencies [87f475d]
+- Updated dependencies [3e1e275]
+- Updated dependencies [c4cf782]
+- Updated dependencies [9efc061]
+- Updated dependencies [9889273]
+- Updated dependencies [fb1cc25]
+- Updated dependencies [23d0644]
+- Updated dependencies [15c9d60]
+- Updated dependencies [78e64e2]
+- Updated dependencies [f25a8d2]
+- Updated dependencies [778e430]
+- Updated dependencies [18c3d73]
+- Updated dependencies [7ec0f81]
+- Updated dependencies [2538b70]
+- Updated dependencies [48f78f0]
+- Updated dependencies [baaac3d]
+- Updated dependencies [2c213b2]
+- Updated dependencies [db9f041]
+- Updated dependencies [033ed0f]
+- Updated dependencies [1704919]
+- Updated dependencies [375711b]
+- Updated dependencies [bb35ad0]
+- Updated dependencies [c7d233d]
+- Updated dependencies [feff82f]
+- Updated dependencies [a540dad]
+  - @nifrajs/core@5.6.0
+  - @nifrajs/web@5.6.0
+  - @nifrajs/i18n@5.6.0
+  - @nifrajs/image@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

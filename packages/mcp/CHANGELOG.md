@@ -1,5 +1,25 @@
 # @nifrajs/mcp
 
+## 5.6.0
+
+### Minor Changes
+
+- 4bc7d8d: `bundleReactWidget` in `@nifrajs/mcp/react` returns a React widget's body at build time, so a server running on Node or Deno serves it through `defineMcpWidget({ html })` without calling `Bun.build`.
+- 4bc7d8d: `@nifrajs/mcp/stdio` serves an MCP server over stdin and stdout on Bun, Node and Deno: `serveStdio(createMcpServer({ ... }))` resolves once stdin ends and every pending request has answered, with progress notifications and request cancellation as over HTTP. `runStdioTransport` is the newline-delimited JSON-RPC framing underneath, with an 8 MiB cap per message in each direction.
+  
+  `nifra mcp` now runs on the same transport, which changes four edge cases:
+  
+  - A line that is not valid UTF-8 is answered with `-32700 parse error` and not dispatched; the invalid bytes were previously replaced with U+FFFD and the message ran.
+  - A notification whose handler throws gets no reply, as JSON-RPC requires; it previously got an error response with a `null` id.
+  - A last line without a trailing newline when stdin closes is processed; it was previously dropped.
+  - When stdin closes, requests still running answer before the warm workers shut down; the workers previously closed at once.
+
+### Patch Changes
+
+- 0b9fed9: The documented nifra mount for `createMcpServer` routes `OPTIONS` as well as `GET` and `POST`: `server().use(method(["GET", "POST", "OPTIONS"], "/mcp", (c) => mcp.fetch(c.req)))`. A browser client on another origin sends a CORS preflight before its first POST, and that route lets `allowAnyOrigin` or `allowedOrigins` answer it. A mount with only `GET` and `POST` routes answers the preflight with 405, so the browser never sends the POST.
+- Updated dependencies [2248445]
+  - @nifrajs/agent-protocol@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

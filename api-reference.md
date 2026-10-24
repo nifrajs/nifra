@@ -1748,7 +1748,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.5.1"`
+- **VERSION** _(const)_ - `VERSION: "5.6.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -6597,8 +6597,6 @@ _No named exports (side-effect entrypoint)._
 
 - **serverHole** _(function)_ - `serverHole: <Input, Props, View>(component: ServerComponent<Input, Props, View>) => (data: Input) => never`
   A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its input. The page's app lists the component under `createServerComponents({ holes })` for the route. The hole cannot be `interactive`; its client islands are.
-- **serverHoleComponent** _(const)_ - `serverHoleComponent: (render: unknown) => object | undefined`
-  The server component a hole's `render` names, or `undefined` for an ordinary `render`.
 
 ### `@nifrajs/web/server-components/islands`
 
@@ -7948,7 +7946,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "5.5.1"`
+- **VERSION** _(const)_ - `VERSION: "5.6.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`

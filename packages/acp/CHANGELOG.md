@@ -1,5 +1,18 @@
 # @nifrajs/acp
 
+## 5.6.0
+
+### Patch Changes
+
+- a6a066d: The error for an ACP agent that exits now names the reason the agent wrote to stderr even when the exit is observed before that line has been read. The exit waits for stderr to end, for at most half a second in case a process the agent left behind keeps it open.
+- 2248445: `@nifrajs/agent-protocol` exports `childProcessEnv` and `childProcessBaseEnv`: the environment a host
+  hands a process it spawns, built from the platform and host environment the caller passes. The ACP
+  and Pi backends and the coding agent's isolated extension worker build their child environments with
+  it, so all three pass the same Windows set. An ACP agent on Windows now also receives `BUN_INSTALL`
+  and `USERDOMAIN`.
+- Updated dependencies [2248445]
+  - @nifrajs/agent-protocol@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

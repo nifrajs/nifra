@@ -4,9 +4,8 @@
  * and the browser mounts only the client islands inside it. Under the coordinated compiler a browser
  * import of a `*.component.server` module is an opaque handle, so the component never ships.
  */
+import { SERVER_HOLE } from "../internal/ppr/contract.ts"
 import type { ServerComponent } from "./types.ts"
-
-const COMPONENT = Symbol.for("nifra.web.server-hole")
 
 /**
  * A `dynamic` hole's `render`: the hole shows `component`, given the hole loader's output as its
@@ -19,13 +18,6 @@ export function serverHole<Input, Props, View>(
   const render = (): never => {
     throw new Error("[nifra/web] a server component hole renders on the server only")
   }
-  Object.defineProperty(render, COMPONENT, { value: component })
+  Object.defineProperty(render, SERVER_HOLE, { value: component })
   return Object.freeze(render)
-}
-
-/** The server component a hole's `render` names, or `undefined` for an ordinary `render`. */
-export const serverHoleComponent = (render: unknown): object | undefined => {
-  if (typeof render !== "function") return undefined
-  const component: unknown = Reflect.get(render, COMPONENT)
-  return typeof component === "object" && component !== null ? component : undefined
 }

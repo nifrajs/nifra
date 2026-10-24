@@ -1,8 +1,7 @@
 import type { BoundaryRegistration } from "../../boundary.ts"
 import type { RouteEntry, RouteModule } from "../../manifest.ts"
-import { serverHoleComponent } from "../../server-components/hole.ts"
 import type { LoadedLayoutModules } from "../render-document.ts"
-import { isHole } from "./contract.ts"
+import { isHole, serverHoleComponent } from "./contract.ts"
 import type { ResolvedPprOptions } from "./options.ts"
 
 /**

@@ -1,5 +1,48 @@
 # @nifrajs/node
 
+## 5.6.0
+
+### Patch Changes
+
+- dec48fc: Reduce URL-splitting overhead while preserving query and fragment semantics.
+  Reduce Node request-body listener allocations with isolated per-read state, retaining
+  body replay, abort handling, and byte-limit enforcement.
+  
+  Reduce Bun's JSON prototype-guard stack bookkeeping while retaining the same iterative security
+  checks and Node's native array stack. Avoid repeated validation callback allocations, and reduce
+  encoded-query iterator work while preserving decoding, repeated keys, and null-prototype records.
+  
+  Reuse a bounded Bun traversal buffer while clearing popped references immediately; rejected input
+  still clears pending work. Preserve Node's existing reset behavior for deeply nested bodies.
+- f48b257: A JSON body that starts with a UTF-8 byte order mark is read the way Fetch's `json()` reads it, with
+  the mark dropped, on every runtime. A body schema or `c.boundedJson()` on `@nifrajs/node` or on Deno
+  answered such a body 400 `invalid_json` where Bun and Workers parsed it.
+- c090bac: On Node, a handler that reads `c.req.body` through its reader (or cancels it) can then read `c.req.signal`, `c.req.bodyUsed` and the rest of the request, as on Bun; this answered 500 before. `bodyUsed` is `true` after such a read. An MCP server mounted with `mcp.fetch(c.req)` reads its body this way, so every MCP POST on Node answered 500.
+- a98b149: A field sent more than once whose last value is empty now reads the same through `c.req.headers` as
+  on Bun and Deno, and as `c.header()` already did: `x-caller: a` then `x-caller:` is `"a, "` (and
+  `cookie` is `"a=1; "`), where it read `"a,"`.
+- 8f9b258: A header sent twice reaches the app as every value joined with ", ", as Fetch's `Headers` gives it on
+  Bun, Deno and Workers. Node kept only the first Content-Type, Authorization or User-Agent, so two
+  Content-Type fields were a JSON body on `@nifrajs/node` and a 415 everywhere else.
+  
+  A request with two Host fields answers 400, as on Deno and as RFC 9112 requires: joined, the app would
+  read both authorities from Host while the request was routed on the first.
+- d76bc3f: Reading a request header by name (`c.header()`, cookies, body framing, response-hook request views) no longer builds Node's full `req.headers` object first. A request that reads a handful of headers costs less CPU; repeated header names still merge exactly as Node merges them.
+- 05608b9: A WebSocket publish on Node frames each text once and writes that frame straight to every idle subscriber's socket, about a quarter less time per publish at 2,000 subscribers. A socket still sending, compressing or closing takes the usual send path, so order holds.
+- db9f041: A Host carrying an IPv6 literal that no URL parser takes, such as `[1:2]`, answers 400 instead of
+  reaching the app, where `new URL(c.req.url)` threw.
+- bb35ad0: `ws.close(code, reason)` with a close RFC 6455 forbids - a code outside 1000-1003, 1007-1014 and
+  3000-4999, a reason over 123 UTF-8 bytes, or a reason without a code - throws a `RangeError` on every
+  runtime, and the socket stays open. Bun and Deno sent such a close on the wire; on Node, `ws` threw
+  after marking the socket closing, so its later sends were dropped and the client's close was never
+  answered; Workers threw their own error.
+- c7d233d: `ws.close()` with no code sends 1000 on every runtime, and the `close` callback hears 1000. Bun sent
+  1000 already; Node, Deno and Workers sent a close with no status, which the peer reads as 1005.
+- feff82f: A WebSocket route's `close` callback is given the server's own code and reason when the server closed
+  first - `ws.close(code, reason)`, or 1009 "message too large" for a message over the payload cap - on
+  every runtime, as on Bun. Node, Deno and Workers passed on the peer's echo of the close, which
+  usually drops the reason, and Node reported 1006 when `ws` refused a message over its cap.
+
 ## 5.5.1
 
 No changes in this release.

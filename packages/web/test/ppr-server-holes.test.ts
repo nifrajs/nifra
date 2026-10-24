@@ -2,11 +2,11 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import type { BoundaryRequestCtx, BoundaryStates } from "../src/boundary.ts"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
-import type { HoleRegistration } from "../src/internal/ppr/contract.ts"
+import { type HoleRegistration, serverHoleComponent } from "../src/internal/ppr/contract.ts"
 import { frameBodyOf } from "../src/internal/ppr/frames.ts"
 import { partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, HOLE_FILL_HEADER } from "../src/router.ts"
-import { serverHole, serverHoleComponent } from "../src/server-components/hole.ts"
+import { serverHole } from "../src/server-components/hole.ts"
 import {
   createServerComponents,
   defineServerComponent,

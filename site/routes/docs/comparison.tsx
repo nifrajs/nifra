@@ -100,10 +100,9 @@ export default function Comparison() {
       </p>
       <p>
         The optional <a href="/docs/server-components">server-components pipeline</a> adds
-        server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte
-        and Solid use their native islands in validated server-rendered ranges. The feature is
-        intended for the release after 4.0.0 and requires all four adapters to pass certification.
-        Server functions remain the mutation API; native React <code>"use server"</code> actions
+        server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
+        Solid and Preact use their native islands in validated server-rendered ranges. It shipped in
+        5.0.0, and all five adapters pass the same certification. Server functions remain the mutation API; native React <code>"use server"</code> actions
         are unsupported.
       </p>
 

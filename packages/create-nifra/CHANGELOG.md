@@ -1,5 +1,19 @@
 # create-nifra
 
+## 5.6.0
+
+### Minor Changes
+
+- 4bc7d8d: `create-nifra/scaffold` exports `scaffold()`, the starter the CLI writes, for tools that generate a nifra app; importing it never starts the CLI. `--link` now works when the CLI runs on Node.
+
+### Patch Changes
+
+- 6582724: `withISR` signs the pages it keeps in a shared store. Over any store but `MemoryCacheStore` it takes a `storeSecret`, the same in every process, at least 32 characters and generated at random (`openssl rand -hex 32`), and refuses to start without one. Each page is stored with an HMAC-SHA-256 over its cache key, body, status, headers, tags and freshness, and a page whose signature is missing or does not match is a miss: it renders again and the signed render replaces it. Whoever else can write the store can no longer serve visitors a page the app did not render. `MemoryCacheStore` pages stay unsigned. `onStoreError` reports a failed check with the new op `"verify"`.
+  
+  The ISR starter's Worker reads the secret from `ISR_STORE_SECRET` (`wrangler secret put ISR_STORE_SECRET`); `bun run dev` passes a local one.
+- 7ec0f81: Generated route types gain `Route.BoundaryLoaders`, and `@nifrajs/web` exports `BoundaryLoadersOf` and `BoundaryLoaderEntry`. With `export const boundaryLoaders = { ... } satisfies Route.BoundaryLoaders`, a key that names no boundary of the page is a type error, and on a route with a `shellLoader` so is a hole without an entry. The check reads a `.tsx` or `.ts` page whose boundary names are literal types, such as a boundary declared `as const`; a hole's `load` gets its context type from the boundary's mode.
+- 033ed0f: The server-component pipeline is certified on Vite 8.3.4, which carries the fix for GHSA-698v-4r3x-3vcv (an unescaped `%` in the dev server's open-in-editor command on Windows). An app on the pipeline pins `vite` to exactly 8.3.4; until it does, the plugin's guard stops the build. A new `create-nifra` site asks for `vite` `^8.3.4`.
+
 ## 5.5.1
 
 No changes in this release.

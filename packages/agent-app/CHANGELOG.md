@@ -1,5 +1,12 @@
 # @nifrajs/agent-app
 
+## 5.6.0
+
+### Patch Changes
+
+- Updated dependencies [2248445]
+  - @nifrajs/agent-protocol@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

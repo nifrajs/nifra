@@ -9,7 +9,6 @@ import type {
 import { type CspPolicy, cspHeaderWithSources, prepareCspPolicy } from "../../csp.ts"
 import { defer } from "../../deferred.ts"
 import type { RenderAdapter } from "../../render-seam.ts"
-import { serverHoleComponent } from "../../server-components/hole.ts"
 import { HOLE_ERROR_HTML } from "../hole-runtime.ts"
 import { isControlFlow, isStatusSignal, notFound } from "../render-document.ts"
 import { HoleAdmission, type HoleRun, type HoleSlot, watchAbort } from "./admission.ts"
@@ -22,6 +21,7 @@ import {
   PprShellCold,
   PprShellUnchecked,
   type SharedHole,
+  serverHoleComponent,
   variationQuery,
 } from "./contract.ts"
 import {

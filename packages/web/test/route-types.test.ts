@@ -37,8 +37,10 @@ function typeErrors(files: readonly string[]): string[] {
     },
   )
   // Only the app's own files: workspace source is checked by the repo's typecheck, not here.
+  // TypeScript names files with `/` separators; on Windows `root` has `\` ones.
+  const prefix = root.replaceAll("\\", "/")
   const own = (diagnostic: ts.Diagnostic): boolean =>
-    diagnostic.file === undefined || diagnostic.file.fileName.startsWith(root)
+    diagnostic.file === undefined || diagnostic.file.fileName.startsWith(prefix)
   return ts
     .getPreEmitDiagnostics(program)
     .filter(own)
@@ -46,7 +48,7 @@ function typeErrors(files: readonly string[]): string[] {
       const where =
         diagnostic.file === undefined || diagnostic.start === undefined
           ? ""
-          : `${diagnostic.file.fileName.slice(root.length + 1)}:${diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1} `
+          : `${diagnostic.file.fileName.slice(prefix.length + 1)}:${diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1} `
       return where + ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")
     })
 }

@@ -243,9 +243,10 @@ describe("Pi output framing", () => {
       })
     }))
 
-  test("output that ends inside a record fails the turn", () =>
+  // Closing fd 1 ends Pi's output while the process lives on, so only the framing can fail. On
+  // Windows the child's pipe stays open after it closes fd 1, so the read never ends.
+  test.skipIf(process.platform === "win32")("output that ends inside a record fails the turn", () =>
     withPi(
-      // Closing fd 1 ends Pi's output while the process lives on, so only the framing can fail.
       fakePi([], {
         after: `if (command.type === "prompt") { const fs = require("node:fs"); fs.writeSync(1, '{"type":"agent'); fs.closeSync(1) }`,
       }),
@@ -256,7 +257,8 @@ describe("Pi output framing", () => {
           message: "Pi emitted an unterminated JSONL record",
         })
       },
-    ))
+    ),
+  )
 })
 
 describe("Pi session lifecycle", () => {

@@ -574,8 +574,8 @@ export default function Security() {
           <b>
             Without <code>accept</code>, <code>file.type</code> is the client&rsquo;s too.
           </b>{" "}
-          Some runtimes derive it from the file extension. Only a type that <code>accept</code> matched is
-          one the bytes proved.
+          It is the part&rsquo;s <code>Content-Type</code>, lower-cased, or <code>text/plain</code> when
+          the part names none. Only a type that <code>accept</code> matched is one the bytes proved.
         </li>
         <li>
           <b>Serve uploads as downloads.</b> Send <code>content-disposition: attachment</code> and{" "}

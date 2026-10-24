@@ -23,11 +23,11 @@ const FRAMEWORKS: ReadonlyArray<{
     plugin: "none",
     bundle: "0 KB",
   },
-  { name: "Solid", pkg: "@nifrajs/web-solid", idiom: "primitives", plugin: "Babel", bundle: "~15 KB" },
+  { name: "Solid", pkg: "@nifrajs/web-solid", idiom: "primitives", plugin: "Babel", bundle: "~17 KB" },
   { name: "Preact", pkg: "@nifrajs/web-preact", idiom: "hooks (React-compat)", plugin: "none", bundle: "~18 KB" },
-  { name: "Svelte 5", pkg: "@nifrajs/web-svelte", idiom: "stores + runes", plugin: ".svelte compiler", bundle: "~49 KB" },
-  { name: "Vue 3", pkg: "@nifrajs/web-vue", idiom: "composables", plugin: ".vue SFC (or render fns)", bundle: "~66 KB" },
-  { name: "React 19", pkg: "@nifrajs/web-react", idiom: "hooks", plugin: "none (Bun JSX)", bundle: "~182 KB" },
+  { name: "Svelte 5", pkg: "@nifrajs/web-svelte", idiom: "stores + runes", plugin: ".svelte compiler", bundle: "~52 KB" },
+  { name: "Vue 3", pkg: "@nifrajs/web-vue", idiom: "composables", plugin: ".vue SFC (or render fns)", bundle: "~71 KB" },
+  { name: "React 19", pkg: "@nifrajs/web-react", idiom: "hooks", plugin: "none (Bun JSX)", bundle: "~218 KB" },
 ]
 
 const VANILLA = `import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
@@ -60,7 +60,7 @@ const fetcher = useFetcher("save")          // fetcher.submit(...), fetcher.pend
 const q = useQuery(["todos"], loadTodos)    // q.data, q.isFetching, q.refetch()
 
 // Vue - composables (refs):           const f = useFetcher("save"); f.state.value.pending
-// Solid - signals:                    const q = useQuery(...);       q().data
+// Solid - signals:                    const q = createQuery(...);    q.state().data
 // Svelte - stores (read with $):      const f = useFetcher("save");  $f.pending`
 
 const SCAFFOLD = `# Scaffold a multi-target SSR site in any of the five (react is the default):

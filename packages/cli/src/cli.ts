@@ -134,8 +134,8 @@ Usage:
                                          to fix it.
   nifra cdn-check <url>                  Check a deployed page behind a CDN: served from cache, no
                                          internal or CDN-only headers reaching the visitor, and soft
-                                         navigations get page data, not the cached document. Exits 1
-                                         on a failure.
+                                         navigations and slot swaps get their own answer, not the
+                                         cached document. Exits 1 on a failure.
   nifra db schema [<table>]              The development database declared as \`devDatabase\` in
                                          nifra.config.ts: tables, columns, keys, indexes.
   nifra db query "<sql>" [--explain [--analyze]]  One read-only SELECT (or its plan), in a fresh
@@ -342,7 +342,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.5.1"
+const CLI_VERSION = "5.6.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter

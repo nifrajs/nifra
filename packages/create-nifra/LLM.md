@@ -29,4 +29,4 @@ _…and 11 more - see [`api-reference.md`](../../api-reference.md#createnifra) f
 
 ## Footguns
 
-- Scaffolding CLI (`bun create nifra <dir>`), not a library - there are no runtime exports to import.
+- Scaffolding CLI (`bun create nifra <dir>`). Its one library entry is `create-nifra/scaffold`, whose `scaffold()` writes the same starter for a tool that generates apps; importing it never starts the CLI.

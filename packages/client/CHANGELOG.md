@@ -1,5 +1,23 @@
 # @nifrajs/client
 
+## 5.6.0
+
+### Minor Changes
+
+- f39ee8c: Loaders can declare what their data depends on with `ctx.live(...keys)`, and `createWebApp` takes a `live` runtime from the new `@nifrajs/web/live` entry. A live load is a `POST` to `/_nifra/live/load` that runs the target page as a `GET` through every app hook, middleware, gate and loader, and returns an AES-256-GCM grant for the keys the loaders declared, the keys' wire tags and opaque subject tags, one per listed secret, so a secret rotation never reads as another viewer. Grants last `grantTtl` seconds (default 600, at most 3600). A load that presents a valid grant for the same socket, path, frame and viewer can keep layout and page data without running those loaders, and `live.revoke`, `live.revokeAll` and `live.revokeKey` refuse older grants. Apps without `live` import nothing new, and `ctx.live` does nothing in them.
+
+### Patch Changes
+
+- 676a1f0: Harden idempotency replay admission and reservation handling, rate-limit capacity, and SSE resource limits.
+  
+  Idempotency covers the routes declared after it; installing it after any route that uses a covered method throws. A replay runs just before the handler, once the route's authentication, validation and every guard, registered before or after the middleware, admit the retry. A request no covered route handles, such as one a mounted app answers, releases its key. Replays without an admission marker are refused. Oversized cacheable responses retain terminal replay records, active leases renew for up to the replay retention TTL when supported, and lost reservations no longer report success. Stores without renewal reserve pending work for at least the replay retention TTL.
+  
+  `beforeHandler()` from `@nifrajs/core/server` marks a `beforeHandle` hook to run just before the handler, after every guard on the route, including guards registered after it in the same scope.
+  
+  The `idempotency()` return type is now `IdentityPlugin` rather than `Middleware`. Existing `.use(idempotency(...))` calls keep their spelling. Replace explicit `Middleware` annotations on the returned plugin with `IdentityPlugin` from `@nifrajs/core`, or let TypeScript infer the type; install the plugin directly with `.use()` instead of extracting its middleware hooks.
+  
+  Rate-limit capacity refuses new keys while preserving live quotas, and each capacity check resumes its bounded scan for expired windows where the last one stopped. SSE checks each encoded frame against the remaining byte budget, and the client stops reconnecting after HTTP 204. Server-component builds resolve public environment values consistently for browser defines and generation hashing.
+
 ## 5.5.1
 
 No changes in this release.

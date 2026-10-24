@@ -58,7 +58,8 @@ export default function Mutations() {
 
       <h2>Concurrent fetchers</h2>
       <p>
-        <code>useFetcher(key)</code> (React) / <code>createFetcher(key)</code> (Solid) is an
+        <code>useFetcher(key)</code> (React, Preact, Vue, Svelte) / <code>createFetcher(key)</code>{" "}
+        (Solid), from each adapter&apos;s <code>/fetcher</code> entry, is an
         independent submission state machine - perfect for row-level actions or side-channel loads
         that shouldn't block navigation. <code>useFetchers()</code> exposes the live collection for
         global pending indicators. After a mutation, targeted revalidation refreshes just the

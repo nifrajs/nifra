@@ -91,8 +91,9 @@ export default function Edge() {
         Schema type system - so a validated app on <code>t</code> is heavier than one on a lean
         validator. Validation is per route, so reach for <code>t</code> where you want the contract
         (OpenAPI/MCP for free) and Valibot where the Workers cold-start bundle is what matters: a
-        Valibot-validated Nifra app measures <b>~16 KB gzipped</b>. Both are first-class, and you can
-        mix them in one app.
+        minimal Valibot-validated Nifra app measures <b>about 38 KB gzipped</b>, against about 62 KB
+        on <code>t</code> (<code>bun run bench:size</code>). Both are first-class, and you can mix
+        them in one app.
       </p>
 
       <h2>Scheduled (cron)</h2>

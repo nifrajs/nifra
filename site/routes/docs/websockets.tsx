@@ -431,6 +431,13 @@ export default function WebSockets() {
       </p>
       <CodeBlock code={NODE_WS} />
       <p>
+        <code>nifra dev</code> serves <code>app.ws()</code> routes too, on the Bun pipeline and under
+        Vite, through each route&apos;s own <code>upgrade()</code> guard and <code>Origin</code>{" "}
+        check. Under Vite the upgrade goes through Node&apos;s <code>upgrade</code> event, so it
+        needs <code>ws</code> as well; without it a WS upgrade gets a <code>501</code> naming the
+        package, and a path no WebSocket route takes stays with Vite&apos;s HMR.
+      </p>
+      <p>
         <code>server({"{ wsMaxPayloadBytes }"})</code> caps one inbound message (default{" "}
         <code>maxBodyBytes</code>, 1 MB): a socket that sends more is closed with <code>1009</code>{" "}
         and the message never reaches your handler. Bun and Node refuse it while it arrives. When a

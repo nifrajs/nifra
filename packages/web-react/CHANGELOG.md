@@ -1,5 +1,143 @@
 # @nifrajs/web-react
 
+## 5.6.0
+
+### Minor Changes
+
+- 5ce69b2: Experimental and unstable: partial prerendering, from the new `@nifrajs/web/ppr` subpath. With `createWebApp({ experimental: { ppr: partialPrerendering({ shellChecks }) } })`, a route whose backend half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary as it settles. An app that does not import the subpath ships none of its server code.
+  
+  - **Shells.** The shell loader (typed with `defineShellLoader`) receives params, locale, declared `variations`, the configured `origin` and the in-process `api`, never the request. A shell is shared only for a route that passed `compileShells` for this deployment, which bundles the page's and its layouts' whole modules, `meta`, `handle` and `searchSchema` included, with `shellLoader`, and refuses one reaching a request-scoped module, including `getContext()` or `tryGetContext()` from `@nifrajs/middleware/context-storage`; it takes the server build's `plugins`, such as `svelteBunPlugin("ssr")`. Any other route renders whole. `checkShellCanaries(app, paths)` requests each path with unique cookie, `Authorization`, header and query values and reports each one that reaches the shared shell, which catches visitor data an app keeps in module state.
+  - **Caching.** A shell older than the route's `revalidate` is served while one rebuild runs behind it; a failing rebuild keeps the old shell for up to ten times `revalidate` (at most a day); a shell loader's `notFound()` is remembered for 60 seconds, during which the route starts no hole; a route already building four shells renders further misses whole. A shell loader still running at `maxHoleTimeoutMs` fails the requests waiting on it and keeps nothing, and its build counts against the route's four until the loader ends. While the store has room every key builds its shell on its first request; once it is full, a key's shell is built on its second request (`shellAfterRequests`, default 2) and the first streams the page whole, each hole as it settles, so a path requested once cannot evict a popular shell; `checkShellCanaries` requests a path until a shell answers. `shellVariations`, closed sets of query values, each select their own shell. `pprShells(app)` drops shells and shared hole frames by tag, as a `createInvalidator` data cache, keeping no build of either that was running when the purge landed, and reports admission and unsent-byte counters. A `revalidateTags` function on the route or a shared hole gets the shell's URL: the configured origin, the path and the declared variations, never the visitor's Host or other query. A page cache such as `withISR` never stores a partially prerendered route's response, whichever way it rendered, since its holes are one visitor's.
+  - **Holes.** A route has 1 to 32 holes, each with a `boundaryLoaders` entry, named with 1-32 lowercase letters, digits and single hyphens, starting with a letter and not ending with a hyphen; a hole's `timeout` is 1 to 30000 ms. A hole that returns or throws a redirect or a status renders its error state, since the shell's status and headers are already sent. Hole HTML is checked on the server and inserted without running scripts, every script in the document is allowed by hash, and a navigation that loads another page cancels the holes still loading, while a search change the browser handles alone leaves them filling. Every hole loader runs under its own deadline and a per-process admission limit that stops admitting a boundary whose loaders keep running after their abort; a prefetch starts no hole. A client that stops reading gets its later holes as errors once its unsent bytes pass a per-response budget, and the slowest readers are cut off when the process's pass its own. Every limit is a default in `PPR_DEFAULTS`, overridable per app.
+  - **Routes.** `partialPrerendering({ origin })` gives `shellLoader` and the shell's `meta` the deployment's public origin, never a visitor's Host. A layout above a partially prerendered page may have a loader only as a `gate`, which runs to redirect or refuse and whose data reaches no response. In development, a shell with fewer than 200 characters of text warns, since Safari does not paint such a page until its last hole arrives, and so does a hole whose fallback renders empty.
+  - **Shared holes.** A boundary with `mode: "shared"` is the same for every visitor: its loader gets the shell's context, never the request, and its frame is built once per route, params, locale and variations, kept on its own `revalidate` and `revalidateTags`, and sent right after the shell. A visitor who arrives while it builds waits up to the hole's timeout, then gets the error slot. A failed build is never kept. `compileShells` checks a shared loader with the shell and refuses one that reaches a request-scoped module; a shared hole it did not check loads for every visitor. `Route.BoundaryLoaders` types a shared loader with the shell's context and requires `revalidate`.
+  - **Many processes.** `partialPrerendering({ store, storeSecret })` puts a `CacheStore` such as `KVCacheStore` behind each process's own shells and shared hole frames, so a process that has not built one reads it from the store. Every entry is signed over its key, deployment and contents, and one that fails the check is a miss. A route whose `revalidateTags` the store cannot drop keeps its entries in the process. A process reads a shell or shared frame it holds from the store again once `sharedRecheckMs` (default 1000) passes, so a purge on one process reaches the others, and a store read slower than `holeTimeoutMs` is a miss. Shells are kept apart by client build, by each route's checked shell code and by an optional `deployment` name, so a server-only change never serves an older shell.
+  - **Runtimes.** Partially prerendered pages stream on Bun, Node, Deno and Cloudflare Workers. A shell builds outside any visitor's async context, including an app created inside its first request. On Workers the shell store defaults to 8 MB, the cancel beacon is off, a stale shell's rebuild runs under `waitUntil`, and the shell check refuses shell code that imports `cloudflare:workers`, which reads the Worker's env with no request.
+  - **Reloading.** When a page reloads after an action or a live refresh, its holes reload in place: each hole gets its new server HTML, an interactive hole's root keeps its state and gets new props, a hole that fails shows the error slot, and no fallback shows on the way. A hole loader names the live keys it reads with `ctx.live(...keys)`, a shared hole's with the keys kept in its entry; a write to one of them reloads that hole, and a live load leaves each hole whose keys did not change as it is.
+  - **Server components in holes.** A `dynamic` hole can show a server component: `serverHole(Component)`, from the new `@nifrajs/web/server-components/hole` subpath, is its `render`; its loader returns the component's input, and the component authorizes, loads and renders for each visitor under the hole's timeout and admission. `createServerComponents({ holes })` lists the components each route's holes may show; a route that shows one the list leaves out fails, and a route either owns server components or shows them in holes. Such a hole is not interactive, and its component cannot set a cookie or a header. In the browser, `holeComponents(client)` from `@nifrajs/web/server-components/client` mounts the islands inside it: after a client navigation the hole mounts from its fill, a blocking render carries its HTML and its islands hydrate over it, and a reload replaces its HTML and mounts its islands afresh. It is built with the coordinated compiler, and the browser gets the component's HTML and islands, never its view.
+  - **Adapters.** `Hole` from `@nifrajs/web-react/ppr`, and `Hole` from `@nifrajs/web-svelte/hole` with `ui(Component, props)` from `@nifrajs/web-svelte/ppr`, place a hole, hydrate an interactive one as its own root and reload it in place. Both adapters render a hole's HTML with `renderFragment`; a React hole may show an image, responsive or not, since the preload hints React writes ahead of it are left out.
+- c403814: `@nifrajs/web/islands` now carries the reactive island runtime: `signal`, `computed`, `effect`, `batch` and `untrack` with auto-tracking, plus:
+  
+  - `bindIsland(setup)` - an enhancer driven by markup. `state(key, fallback)` seeds a signal from the island's props, the returned handlers back `data-bind-on`, and the six `data-bind-*` attributes bind text, visibility, classes, attributes, values and events by name. `onDispose(fn)` runs on unmount, also when registered later from a handler, and at once when registered after the island unmounted. `ctx.props` is `undefined` when the props attribute is absent or malformed. A setup or binding that throws stops everything the island started; on unmount a cleanup that throws is logged and the others still run.
+  - `bindList(source, container, { key, create, update })` - keyed list rendering. A surviving item keeps its node, and a reorder moves only the nodes outside the longest run already in order: swapping two rows of 1,000 moves two nodes.
+  - `resource(source, fetcher)` - an async value keyed by a getter, with a `pending`/`ready`/`error` state. A newer key aborts the older request and only the newest result lands; `refetch()` and `dispose()` are on the returned reader; once disposed, `refetch()` does nothing.
+  - `islandProps(value)` - the JSON for an island's props attribute. Emit it through an escaping renderer inside quotes: `data-island-props="${...}"`.
+  
+  Every effect, list binding and resource an enhancer creates belongs to its island and stops when `mountIslands`' disposer runs. An effect's run, the first included, finishes before the effects its writes trigger run, itself among them.
+  
+  Island hosts are any element with `data-island="<id>"`; props, strategy and media move to `data-island-props`, `data-island-strategy` and `data-island-media`. `<nifra-island data-id>` markers are no longer mounted. Hosts inside `data-island-ignore` are skipped, and a host already mounted is not mounted twice. `mountIslands` accepts enhancers with different props types in one map.
+  
+  The `@nifrajs/web-react` `<Island>` marker renders the new attributes, and `nifra scaffold` emits them.
+  
+  `@nifrajs/web/nano` and the `@nifrajs/islets` package are removed; `@nifrajs/web/islands` replaces both. `nifra upgrade` moves the imports and the dependency, and its notes map each removed name to its replacement. A signal is read by calling it, `computed` tracks what it reads, and an island's effects, lists and resources stop when it unmounts, so no disposer needs collecting.
+- c387fb9: A route can keep its page mounted across navigations: `export const keepAlive = true` (or `{ revalidate: false }`) in a React or Svelte route. Back and forward to a kept page show it at once with its state, scroll and focus as the visitor left them, then revalidate its data in the background unless `revalidate` is `false` (a route's `clientLoader` then runs again over the server data the page was built from). At most three pages are kept per tab, each for up to ten minutes hidden (`keepAlive: { maxAge }` changes that). Kept pages are dropped when the visitor signs in or out (an identity epoch cookie the server sets, shared across tabs, which expires with the session cookie and is renewed with a rolling one), and the page on screen as that happens is not kept; also on a hot update and when the document enters the browser's own back/forward cache. Pages are wrapped at the layouts they do not share with the routes they navigate to, so a shared layout keeps one instance. `usePageVisibility()` from `@nifrajs/web-react/router` and `onPageHide` / `onPageShow` from `@nifrajs/web-svelte/router` let a kept page pause its own work while hidden.
+  
+  `createWebApp({ keepAlive: { identityCookies, ignoreCookies } })` names the cookies that carry who the visitor is, beyond the defaults for nifra, Better Auth and Auth.js sessions; `rotateIdentityEpoch(c)` drops kept pages from a handler that changes identity another way. In development, a changed HttpOnly cookie that is neither an identity cookie nor ignored is reported once, and so is a stylesheet rule that selects a kept page as a direct child of its layout (the wrapper sits between them). `nifra doctor` names the kept routes of an app that uses an auth package.
+  
+  An app with no `keepAlive` route ships the same client code as before.
+- 4f40009: `useQuery` (and Solid's `createQuery`) take the query cache's options as a third argument: `staleTime`, and `live` to refetch on the live keys a page's loaders grant. React's `useQuery` now hands its options to the client whole.
+
+### Patch Changes
+
+- f1d794e: `keepAlive` routes work with the Preact, Solid and Vue adapters as well as React and Svelte. Each of the three ships `usePageVisibility()`, `onPageHide` and `onPageShow` from its `/router` subpath; Vue keeps pages with its own `<KeepAlive>` and renders no wrapper elements. `@nifrajs/web-svelte/router` gains `usePageVisibility()`, and a `useBlocker` in a hidden Svelte page blocks nothing.
+  
+  A page left with a route open in a modal is kept with it, and back to that entry opens the modal again. Islands in a kept page can pause with `onPageHide(el, fn)` and `onPageShow(el, fn)` from `@nifrajs/web/islands`. Server components in a kept page stay mounted while it is hidden: `bindComponentRouter` parks them on the page events, and outlets pass their host to `controller.unmount(instance, host)` so a parked page and the page on screen can hold the same instance. A parked component waits for its page, taken back when the page is shown and released when it is dropped; `controller.isParked(instance, host)` tells an outlet whose framework cleans up a hidden page's effects, as React's `<Activity>` does, to leave it parked. In Vue, a layout inside a kept branch reads the branch's visibility, and a page dropped inside a hidden branch unmounts. In Preact, as in React, props a layout adds with `cloneElement` reach a kept page.
+  
+  The `nifra:pagehide` event fires as the router hides a page, while the page is still in the document and before the router's subscribers see the state that hides it.
+- b7fb47f: A kept page that a partially prerendered document filled stops its holes while it is hidden: a hole still loading is cancelled on the server, and a hole reload on its way is dropped. When the page comes back, its restore names the hole hosts in the data request, so each hole refills in place with `aria-busy="true"` until the fill lands, also on a route with `keepAlive: { revalidate: false }`. A `keepAlive` route's shared shell renders the page inside the same slot wrappers as the app's other documents, so it hydrates; an interactive hole on a kept React page keeps its own root, and its state, while `<Activity>` hides the page, its effects pause with the page, and its root goes when the page is dropped. `renderFragment` gets `hydrates` for the HTML a hole's own root hydrates, which the React adapter renders inside an `<Activity>`.
+  
+  In an app with both `keepAlive` routes and live refresh, a live reload keeps the owners whose keys did not change, as it does without `keepAlive`. A kept page is not watched while it is hidden; when it comes back, what changed meanwhile reloads, and while the page runs its own reload, live refresh waits for that load's grant instead of loading the page a second time.
+  
+  In development, a keep-alive app lists its kept pages on `window.__nifraKeepAlive` (`KEPT_PAGES_GLOBAL`, `KeptPageInfo` from `@nifrajs/web/keep-alive`): instance, path, route, hidden time and element count. Adapters report each slot's elements with `noteKeptView`. The `@nifrajs/devtools` overlay shows the list under its request log. Production builds drop it.
+- af398dc: A kept page's two wrappers, `[data-nifra-entry]` and `[data-nifra-page]`, are `<slot>` elements, which browsers lay out as `display: contents`. They carry no inline style, so under a `style-src` without `'unsafe-inline'` they take no box from the first paint and the console reports nothing, and a wrapper inside a `<p>` stays inside it.
+- 9ebcb1f: Every `nifra mcp` project tool carries MCP tool annotations, so a host can tell the tools that only read the project from the ones that write files or run project code and ask before those. A tool that writes only under a flag, such as `nifra_review` with `fix` and `write`, is marked as a writer. A tool that imports the project's config or backend runs its top-level code, so `nifra_routes`, `nifra_context`, `nifra_openapi`, `nifra_diff`, `nifra_prove` and the `nifra_db_*` tools are marked as running project code. Each tool's input fields that had no description now have one. The `nifra --help` line for `nifra docs-mcp` names all six tools that server offers.
+  
+  `entry.html` from `@nifrajs/content` is documented as unsanitized Markdown output: render it with `trustHtml(entry.html)` for content you wrote, or run it through `sanitizeHtml(entry.html, yourSanitizer)` when contributors or a CMS write it. The `<Content>` examples in the React, Preact and Solid adapters show the `trustHtml` call.
+- 328003a: While an intercept boundary shows a route over the page, the route props describe the page underneath: `path`, the typed `search`, and so `useLocation`, `useSearch` and `useMatches`, come from the page's own path. Before, they read the modal's URL, so the page lost its query string and `useMatches` sliced the modal's URL against the page's route chain.
+- fb1cc25: Keep client-loader reloads safe for cyclic, deeply nested and symbol-bearing data. Limit the initial row-ID index to the sharing sample so replaced lists avoid allocating a full old-row map, and benchmark lightweight rotating-ID payloads.
+  
+  Preserve layout-injected child props in React and Preact and page caching and leave transitions in Vue while retaining unchanged-data render skipping.
+  
+  Vue keeps patching an unchanged layout chain in place after a layout re-renders on its own between router renders.
+  
+  Recognize Svelte's unshadowed `$state.raw()` rune without weakening SQL checks for shadowed or imported database bindings.
+- 18c3d73: A reload of a path on screen keeps the identity of the parts of its data that it did not change. This covers an action's revalidation, `invalidate()`, the paths an action names with `revalidate()`, a live refresh, a fetcher loading its path again, and a target an intercept boundary holds. Plain objects and arrays compare by content, Dates by time, and array elements with an `id` pair by it, so a prepend or a reorder keeps every unchanged row, and each earlier element is kept for at most one new one; an array whose first 32 elements keep nothing is taken whole, later unchanged elements included. A plain JSON response with the same text as the one the page was read from reuses the page's data without parsing it; a response with deferred parts is always parsed. An unchanged reload publishes only its `pending` flag.
+  
+  A page exports `shareData = false` to get fresh data on every reload. `FetchRouteData` takes an optional seventh argument, `read` (a `DataText`), after `purpose` and `hosts`, that a custom transport may ignore; the same-text skip then does not apply, while sharing still does.
+  
+  The adapters' client mounts take advantage of it. React and Preact render each layout and the page memoized on its own props, with a layout's children read through context, so an unchanged reload re-renders neither a layout nor a memoized row. Vue passes each layout the next level as a stable slot. Svelte and Solid derive `data` and the layouts' data with an identity check, so an effect on them runs again only when a reload changed them; Solid's `<For>` then keeps every unchanged row and its DOM state. Svelte pages receive `data` as the router published it rather than as a deep reactive proxy of it. React, Preact and Vue keep `search` as the same object while the query is the same.
+- Updated dependencies [676a1f0]
+- Updated dependencies [f1a424d]
+- Updated dependencies [a0ae2e6]
+- Updated dependencies [0743b66]
+- Updated dependencies [671a952]
+- Updated dependencies [0ec3f30]
+- Updated dependencies [caa1ef8]
+- Updated dependencies [7c5fc94]
+- Updated dependencies [13f6b38]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [b73319d]
+- Updated dependencies [aa567fa]
+- Updated dependencies [6b90278]
+- Updated dependencies [5ce69b2]
+- Updated dependencies [d43bc92]
+- Updated dependencies [7810dc5]
+- Updated dependencies [6126cb1]
+- Updated dependencies [ef2d101]
+- Updated dependencies [dec48fc]
+- Updated dependencies [c403814]
+- Updated dependencies [db0bacd]
+- Updated dependencies [6582724]
+- Updated dependencies [f48b257]
+- Updated dependencies [0222181]
+- Updated dependencies [f1d794e]
+- Updated dependencies [b7fb47f]
+- Updated dependencies [c387fb9]
+- Updated dependencies [8db6a2c]
+- Updated dependencies [4b196d2]
+- Updated dependencies [1b4b448]
+- Updated dependencies [f39ee8c]
+- Updated dependencies [4f40009]
+- Updated dependencies [05608b9]
+- Updated dependencies [baa926f]
+- Updated dependencies [2eabd83]
+- Updated dependencies [328003a]
+- Updated dependencies [a6010f9]
+- Updated dependencies [87f475d]
+- Updated dependencies [3e1e275]
+- Updated dependencies [c4cf782]
+- Updated dependencies [9efc061]
+- Updated dependencies [9889273]
+- Updated dependencies [fb1cc25]
+- Updated dependencies [23d0644]
+- Updated dependencies [15c9d60]
+- Updated dependencies [78e64e2]
+- Updated dependencies [f25a8d2]
+- Updated dependencies [778e430]
+- Updated dependencies [18c3d73]
+- Updated dependencies [7ec0f81]
+- Updated dependencies [2538b70]
+- Updated dependencies [48f78f0]
+- Updated dependencies [baaac3d]
+- Updated dependencies [740a781]
+- Updated dependencies [2c213b2]
+- Updated dependencies [db9f041]
+- Updated dependencies [033ed0f]
+- Updated dependencies [1704919]
+- Updated dependencies [375711b]
+- Updated dependencies [bb35ad0]
+- Updated dependencies [c7d233d]
+- Updated dependencies [feff82f]
+- Updated dependencies [a540dad]
+  - @nifrajs/core@5.6.0
+  - @nifrajs/web@5.6.0
+  - @nifrajs/schema@5.6.0
+  - @nifrajs/authjs@5.6.0
+  - @nifrajs/i18n@5.6.0
+  - @nifrajs/image@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

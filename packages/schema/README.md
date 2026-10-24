@@ -120,10 +120,11 @@ cost - TypeBox carries the whole JSON Schema type system, so `t` adds meaningful
 
 nifra validates through **Standard Schema**, so any Standard-Schema validator works on a route with
 no adapter - `{ body: v.object({ ... }) }` with valibot, for instance. A validated app built on a
-lean validator like valibot is a fraction of the size (measured ~16 KB gzipped), which matters for
-edge/Workers cold-starts. The trade is the one noted above: a validator that exposes no JSON Schema
-(valibot without a Standard JSON Schema wrapper) gives those routes no OpenAPI/MCP detail. One that
-implements Standard JSON Schema (`~standard.jsonSchema`, as zod 4 does) is described from it.
+lean validator like valibot is lighter (a minimal app measures about 38 KB gzipped on valibot and
+about 62 KB on `t`, `bun run bench:size`), which matters for edge/Workers cold-starts. The trade is
+the one noted above: a validator that exposes no JSON Schema (valibot without a Standard JSON Schema
+wrapper) gives those routes no OpenAPI/MCP detail. One that implements Standard JSON Schema
+(`~standard.jsonSchema`, as zod 4 does) is described from it.
 
 Rule of thumb: reach for `t` when you want the contract (OpenAPI/MCP) for free; bring valibot (or any
 Standard-Schema validator) when bundle size on the edge is the priority. Both are first-class - the
