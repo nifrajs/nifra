@@ -12556,7 +12556,7 @@
     "name": "RenderStreamOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderStreamOptions {\n    /** The document's CSP nonce, for every executable `<script>` the framework streams. */\n    readonly nonce?: string;\n    /** Present only for an adapter that sets {@link RenderAdapter.documentParts}. */\n    readonly parts?: DocumentParts;\n    /**\n     * Chain indices to render inside the two slot wrappers a kept page needs (`keepAlive`), each\n     * `<div data-nifra-entry style=\"display:contents\"><div data-nifra-page style=\"display:contents\">`\n     * around that chain entry, so the browser's keep-alive view hydrates the same markup. Present only\n     * in an app with a `keepAlive` route; an adapter without keep-alive support ignores it.\n     */\n    readonly slots?: readonly number[];\n}",
+    "signature": "export interface RenderStreamOptions {\n    /** The document's CSP nonce, for every executable `<script>` the framework streams. */\n    readonly nonce?: string;\n    /** Present only for an adapter that sets {@link RenderAdapter.documentParts}. */\n    readonly parts?: DocumentParts;\n    /**\n     * Chain indices to render inside the two slot wrappers a kept page needs (`keepAlive`), each\n     * `<slot data-nifra-entry><slot data-nifra-page>` around that chain entry (a `<slot>` lays out as\n     * `display: contents`), so the browser's keep-alive view hydrates the same markup. Present only\n     * in an app with a `keepAlive` route; an adapter without keep-alive support ignores it.\n     */\n    readonly slots?: readonly number[];\n}",
     "doc": "/** Per-document options for {@link RenderAdapter.renderToStream}. */"
   },
   {

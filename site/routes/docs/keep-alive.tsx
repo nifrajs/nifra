@@ -186,6 +186,8 @@ export default function KeepAlive() {
         holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
         way is dropped. When the page comes back each hole reloads in place, its old content marked{" "}
         <code>aria-busy="true"</code> until the new arrives, with <code>revalidate: false</code> too.
+        An interactive hole keeps its state through it, in React as well, where{" "}
+        <code>&lt;Activity&gt;</code> cleans the page's effects up while it is hidden.
       </p>
       <p>
         With <a href="/docs/live">live refresh</a>, a hidden page is not watched. When it comes back,
@@ -269,11 +271,13 @@ export default function KeepAlive() {
 
       <h2>CSS around a kept page</h2>
       <p>
-        A kept page renders inside two <code>display:contents</code> elements,{" "}
+        A kept page renders inside two <code>&lt;slot&gt;</code> elements,{" "}
         <code>[data-nifra-entry]</code> and <code>[data-nifra-page]</code>; so does a layout below
-        which the routes' layouts differ. Vue, whose <code>&lt;KeepAlive&gt;</code> moves the page
-        itself, renders neither. They take no box, but a selector that reached the page's root as a
-        direct child, or by its position among siblings, stops matching:
+        which the routes' layouts differ. Browsers lay a <code>&lt;slot&gt;</code> out as{" "}
+        <code>display: contents</code>, and the wrappers carry no inline style, so a strict{" "}
+        <code>style-src</code> needs nothing for them. Vue, whose <code>&lt;KeepAlive&gt;</code>{" "}
+        moves the page itself, renders neither. They take no box, but a selector that reached the
+        page's root as a direct child, or by its position among siblings, stops matching:
       </p>
       <CodeBlock code={CSS} lang="text" />
       <p>

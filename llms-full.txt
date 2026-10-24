@@ -11712,6 +11712,8 @@ A [partially prerendered](/docs/partial-prerendering) page that is kept stops it
 holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
 way is dropped. When the page comes back each hole reloads in place, its old content marked
 `aria-busy="true"` until the new arrives, with `revalidate: false` too.
+An interactive hole keeps its state through it, in React as well, where
+`<Activity>` cleans the page's effects up while it is hidden.
 
 With [live refresh](/docs/live), a hidden page is not watched. When it comes back,
 what changed while it was hidden reloads, whatever `revalidate` says, and a grant
@@ -11819,11 +11821,13 @@ is hidden, and the reload of a page that comes back updates them.
 
 ### CSS around a kept page
 
-A kept page renders inside two `display:contents` elements,
+A kept page renders inside two `<slot>` elements,
 `[data-nifra-entry]` and `[data-nifra-page]`; so does a layout below
-which the routes' layouts differ. Vue, whose `<KeepAlive>` moves the page
-itself, renders neither. They take no box, but a selector that reached the page's root as a
-direct child, or by its position among siblings, stops matching:
+which the routes' layouts differ. Browsers lay a `<slot>` out as
+`display: contents`, and the wrappers carry no inline style, so a strict
+`style-src` needs nothing for them. Vue, whose `<KeepAlive>`
+moves the page itself, renders neither. They take no box, but a selector that reached the
+page's root as a direct child, or by its position among siblings, stops matching:
 
 ```text
 /* Stops matching: the wrappers sit between main and the page's root */
