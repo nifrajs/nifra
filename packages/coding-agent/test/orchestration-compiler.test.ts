@@ -476,7 +476,7 @@ describe("parser rejects illegal structure", () => {
   })
 })
 
-describe("realistic pipeline (exit criterion 1)", () => {
+describe("realistic pipeline", () => {
   test("planner, two parallel implementers, approval, verify, handoff completes", async () => {
     const catalog = createStepCatalog({
       plan: { kind: "task", run: (ctx) => ctx.set("plan", "ready") },

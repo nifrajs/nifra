@@ -25,7 +25,7 @@ export function variationsOf(
   return chosen
 }
 
-/** The plan's eligibility rules a route's own files cannot check: its layouts and boundary modes. */
+/** The PPR eligibility rules a route's own files cannot check: its layouts and boundary modes. */
 export function assertPprRoute(
   route: RouteEntry,
   layouts: LoadedLayoutModules,

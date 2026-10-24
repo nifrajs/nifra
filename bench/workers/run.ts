@@ -38,7 +38,7 @@ const COLD_RUNS = envInt("BENCH_COLD_RUNS", 7)
 // Three nifra rows below the full server scope the compact-edge refactor, heaviest to lightest:
 //   nifra-dx     - SHELL (worker-nifra-dx.ts + _edge-server.ts): the moat AND the real
 //                  `server().get().post()` builder DX. Prices what keeping the API costs over the
-//                  hand-wired kernel - the number Phase-1's decision gate turns on.
+//                  hand-wired kernel - the number the extraction decision turns on.
 //   nifra-kernel - PROTOTYPE (worker-nifra-kernel.ts): the same moat, but dispatch hand-wired against
 //                  the raw router - so it does NOT charge for the builder API.
 //   nifra-edge   - SPIKE (worker-nifra-edge.ts): the real router, NO Server class, NO defaults. The

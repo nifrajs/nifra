@@ -14855,7 +14855,7 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
-    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); on the client, phase 2's build transform replaces this module with typed stubs\n * that POST to the mounted route.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, this module becomes typed stubs that POST under its\n * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it\n * under that name.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
   },
   {
     "name": "ServerFnConfig",
@@ -24042,7 +24042,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function serverFunctions(namespace: string, module: ServerFnModule): IdentityPlugin;",
-    "doc": "/**\n * Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.\n *\n *     import * as todos from \"./actions/todos.fn\"\n *     app.use(serverFunctions(\"todos\", todos))   // -> POST /_nifra/fn/todos/addTodo\n *\n * The namespace is explicit rather than derived from the file path: a path-derived one would put the\n * build machine's layout in a public URL, and this keeps the route readable in logs and greppable in\n * the codebase. Phase 2's transform supplies it automatically from the file's location in the project.\n *\n * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.\n */"
+    "doc": "/**\n * Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.\n *\n *     import * as todos from \"./actions/todos.fn\"\n *     app.use(serverFunctions(\"todos\", todos))   // -> POST /_nifra/fn/todos/addTodo\n *\n * The namespace is explicit rather than derived from the file path: a path-derived one would put the\n * build machine's layout in a public URL, and this keeps the route readable in logs and greppable in\n * the codebase. The client build's stubs call the namespace named by the module's file (`todos.fn.ts`\n * calls `todos`), so pass that same word here.\n *\n * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.\n */"
   },
   {
     "name": "serverHole",

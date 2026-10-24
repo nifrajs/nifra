@@ -4,7 +4,7 @@ import fc from "fast-check"
 import { t } from "../src/index.ts"
 
 /**
- * Property/fuzz coverage of the validator (the Phase 6 exit criterion). Rather than
+ * Property/fuzz coverage of the validator. Rather than
  * assert TypeBox's exact edge semantics, these check the *contract*: well-typed
  * values are always accepted, type-violating values are always rejected.
  */

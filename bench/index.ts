@@ -1,9 +1,9 @@
 /**
- * Router benchmarks. The Phase 1 goal is to be in the same class as the
+ * Router benchmarks. The goal is to be in the same class as the
  * Bun-native leaders on route resolution; the v1 target is parity within ~10% of
  * Elysia (whose router is Memoirist). We also include Hono's RegExpRouter as a
- * second reference. HTTP-level throughput vs Elysia/Hono comes with the server
- * in Phase 2 (see bench/http/).
+ * second reference. HTTP-level throughput vs Elysia/Hono is measured in
+ * bench/http/.
  *
  * NOTE: this is a microbenchmark with a hand-rolled harness - directionally
  * honest, not publication-grade. Treat the ratios, not the absolute ops/s, as

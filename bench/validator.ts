@@ -1,11 +1,11 @@
 /**
  * Validation hot-path microbench. `t` validators are TypeBox-compiled (codegen via
  * `new Function`), so this isolates the per-validate cost on a representative body -
- * the cost every request carrying a body/query schema pays. Phase 6 puts `t` on the
- * hot path, so this is the perf-cadence checkpoint for the phase.
+ * the cost every request carrying a body/query schema pays. `t` is on the hot
+ * path, so this is its perf checkpoint.
  *
  * NOTE: hand-rolled in-process harness - directionally honest, not publication
- * grade. Rigorous external-tool numbers come in Phase 7/8.
+ * grade. Rigorous numbers need an external load tool.
  */
 import { t } from "@nifrajs/schema"
 

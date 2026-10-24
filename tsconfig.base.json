@@ -31,7 +31,7 @@
     "allowImportingTsExtensions": true,
     "forceConsistentCasingInFileNames": true,
 
-    // We typecheck only; Bun runs TS directly. Build/emit config lands in Phase 8.
+    // We typecheck only; Bun runs TS directly. Built packages emit through their own tsconfig.build.json.
     "noEmit": true,
     "skipLibCheck": true
   }

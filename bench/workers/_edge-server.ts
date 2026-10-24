@@ -1,6 +1,6 @@
 /**
- * MEASUREMENT PROTOTYPE - a thin compact-edge server SHELL, to answer the one question Phase-0 left
- * open: what does keeping the real `server().get().post()` DX cost on top of the 4.8 KB kernel?
+ * MEASUREMENT PROTOTYPE - a thin compact-edge server SHELL, to answer the one open
+ * question: what does keeping the real `server().get().post()` DX cost on top of the 4.8 KB kernel?
  *
  * worker-nifra-kernel hand-wired dispatch against the raw router, so it does NOT charge for the
  * builder API. This shell DOES: a chainable `.get/.post`, per-route schema attach, a `c` context, and
@@ -21,7 +21,7 @@
  *   - the shell's own 404/422/500 use a minimal envelope; body-lane rejections use core's exact one
  *   - no lifecycle / around / cookies / response-contract / deadline surface (the point: it is compact)
  * These keep the number a LOWER BOUND on a real edge entrypoint's size, never an under-count of the
- * moat. It exists only to price the DX before the Phase-1 extraction is committed.
+ * moat. It exists only to price the DX before the extraction is committed.
  */
 
 import { Router } from "@nifrajs/core/router"

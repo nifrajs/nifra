@@ -208,7 +208,7 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
   // `@nifrajs/agent-review` must stay dependency-minimal and off the request path - it is composed
   // by `nifra review`, never imported by `core`/`client`/`schema`/`web` or any runtime adapter.
   // A budget break here means the leaf gained a runtime dependency or became reachable from the
-  // kernel, both of which are Phase 6 regressions, not repricings.
+  // kernel, both of which are regressions, not repricings.
   "nifra-agent-review": `import { composeReviewReport, digestReviewReport } from "@nifrajs/agent-review"
 console.log(typeof composeReviewReport, typeof digestReviewReport)`,
   // Browser row, not a server row: everything the generated client entry imports, which is the
