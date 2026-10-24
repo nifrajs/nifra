@@ -38,7 +38,9 @@ import {
   onCleanup,
   useContext,
 } from "solid-js"
+import { PageContext } from "./page-visibility.ts"
 
+export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search + a stable accessor for a `useSearch` used outside a nifra route tree.
@@ -126,17 +128,20 @@ export function useNavigate(): NavigateFunction {
  * predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click,
  * `useNavigate`, or a browser back/forward) is intercepted, `blocker().state` becomes `"blocked"` and
  * `proceed`/`reset` go live - show a dialog and call `proceed()` to continue or `reset()` to stay put.
- * It also arms the browser's native "Leave site?" prompt on tab close / reload. Idle on the server and
- * before hydration.
+ * It also arms the browser's native "Leave site?" prompt on tab close / reload. Idle on the server,
+ * before hydration, and while a `keepAlive` page is hidden.
  *
  * The component body runs once, so to track a CHANGING flag pass a function -
  * `useBlocker(() => isDirty())` - not a bare signal accessor's current value. A constant boolean is fine.
  */
 export function useBlocker(shouldBlock: boolean | BlockerFunction): Accessor<Blocker> {
   const [blocker, setBlocker] = createSignal<Blocker>(IDLE_BLOCKER)
+  const slot = useContext(PageContext)
   onCleanup(
     registerBlocker(
-      (args) => (typeof shouldBlock === "function" ? shouldBlock(args) : shouldBlock),
+      (args) =>
+        slot?.hidden() !== true &&
+        (typeof shouldBlock === "function" ? shouldBlock(args) : shouldBlock),
       setBlocker,
     ),
   )

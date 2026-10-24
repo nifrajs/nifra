@@ -20,6 +20,7 @@ export {
   classify,
   DIAGNOSTIC_CATALOG,
   type FixOption,
+  isConsoleDiagnostic,
   isHydrationMismatch,
 } from "./diagnostic-catalog.ts"
 export {

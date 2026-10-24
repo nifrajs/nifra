@@ -372,11 +372,12 @@ export default function Dev() {
       </p>
       <CodeBlock code={BOUNDARY} />
 
-      <h2>DevTools overlay</h2>
+      <h2 id="devtools">DevTools overlay</h2>
       <p>
         <code>@nifrajs/devtools</code> is a plugin that streams what each request actually did - loader
         traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
-        in the browser.
+        in the browser. In an app with <a href="/docs/keep-alive">keep-alive</a> routes, the overlay
+        also lists the pages kept hidden.
       </p>
       <CodeBlock code={DEVTOOLS} lang="ts" />
       <p>

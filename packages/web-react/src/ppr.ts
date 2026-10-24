@@ -1,5 +1,5 @@
 import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
-import { createElement, type ReactNode, useEffect, useRef, useState } from "react"
+import { createElement, type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
 import { hydrateRoot } from "react-dom/client"
 import { Await } from "./await.ts"
 
@@ -19,6 +19,25 @@ interface HoleState {
   readonly ppr?: true
   readonly fill?: unknown
 }
+
+interface Parked {
+  readonly element: Element
+  readonly driven: HoleHost
+}
+
+// The host effect's cleanup: a host a kept page hides is parked for the page's return, not disposed.
+const leaving =
+  (
+    driver: RefObject<HoleHost | undefined>,
+    parked: RefObject<Parked | undefined>,
+    element: Element,
+    driven: HoleHost,
+  ) =>
+  (): void => {
+    driver.current = undefined
+    if (driven.park()) parked.current = { element, driven }
+    else driven.dispose()
+  }
 
 export interface HoleProps<Data> {
   readonly of: HoleDefinition<Data>
@@ -40,6 +59,7 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
   const { of: hole, state } = props
   const host = useRef<HTMLDivElement>(null)
   const driver = useRef<HoleHost | undefined>(undefined)
+  const parked = useRef<Parked | undefined>(undefined)
   const open = state?.ppr === true
   const [initial] = useState(() => ({ __html: initialHtml(state?.fill) }))
   const interactive = hole.interactive === true
@@ -47,6 +67,16 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
   useEffect(() => {
     const element = host.current
     if (!open || element === null) return
+    // A kept page shown again: `Activity` cleaned the effects up as it hid the page, but the host
+    // kept its root, and its state.
+    const back = parked.current
+    parked.current = undefined
+    if (back?.element === element) {
+      back.driven.unpark()
+      driver.current = back.driven
+      return leaving(driver, parked, element, back.driven)
+    }
+    back?.driven.dispose()
     const driven = holeHost(
       name,
       element,
@@ -72,10 +102,7 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
         : undefined,
     )
     driver.current = driven
-    return () => {
-      driver.current = undefined
-      driven.dispose()
-    }
+    return leaving(driver, parked, element, driven)
   }, [open, interactive, name, render])
   const fill = open ? state?.fill : undefined
   useEffect(() => {

@@ -350,6 +350,7 @@ export function devtools(options?: DevToolsOptions | undefined) {
  * - Shows a scrolling log of request traces
  * - Color-coded method badges and status codes
  * - ISR hit/miss/stale indicators
+ * - In an app with `keepAlive` routes, the pages kept hidden: path, instance, hidden time and node count
  * - Collapsible with a ⚡ toggle button
  */
 export function devtoolsClientScript(options: DevToolsClientOptions = {}): string {
@@ -394,12 +395,38 @@ export function devtoolsClientScript(options: DevToolsClientOptions = {}): strin
   var list=document.createElement('div');
   log.appendChild(list);
 
+  // The pages a keepAlive app keeps hidden, as its development build lists them on window.__nifraKeepAlive.
+  var kept=document.createElement('div');
+  kept.style.cssText='display:none;border-top:1px solid rgba(255,255,255,0.06);margin-top:6px;padding:6px 8px 0;';
+  log.appendChild(kept);
+  function cell(text,css){var c=document.createElement('span');c.textContent=text;c.style.cssText=css;return c;}
+  function renderKept(){
+    var source=window.__nifraKeepAlive;
+    var pages=source&&typeof source.pages==='function'?source.pages():null;
+    kept.textContent='';
+    if(!pages){kept.style.display='none';return;}
+    kept.style.display='block';
+    kept.appendChild(cell('Kept pages ('+pages.length+')','display:block;color:#7c3aed;font-weight:600;margin-bottom:4px;'));
+    for(var i=0;i<pages.length;i++){
+      var page=pages[i];
+      var row=document.createElement('div');
+      row.style.cssText='display:flex;gap:8px;padding:2px 0;color:#e0e0e0;';
+      row.appendChild(cell(page.path,'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'));
+      row.appendChild(cell(page.instance,'color:#888;font-size:11px;'));
+      row.appendChild(cell('hidden '+Math.round(page.hiddenFor/1000)+' s','color:#888;font-size:11px;'));
+      row.appendChild(cell(page.nodes===undefined?'-':page.nodes+' nodes','color:#888;font-size:11px;min-width:64px;text-align:right;'));
+      kept.appendChild(row);
+    }
+  }
+  setInterval(function(){if(open)renderKept();},1000);
+
   panel.appendChild(log);
   panel.appendChild(btn);
 
   btn.onclick=function(){
     open=!open;
     log.style.display=open?'block':'none';
+    if(open)renderKept();
   };
 
   function methodColor(m){

@@ -5,16 +5,22 @@ import { searchOfChain } from "@nifrajs/web/client"
 
 /**
  * The client half of the server's `RenderProps`, as getters so a settle re-renders only what reads the
- * changed field. Cast: a getter always exists where `exactOptionalPropertyTypes` expects absence.
+ * changed field. `derive` is `createMemo` on the client mount: `data` and `layoutData` then notify only
+ * when they change identity, so a reload that kept them (the router shares what it did not change)
+ * re-runs nothing that reads them - a `<For>` keeps its rows. Cast: a getter always exists where
+ * `exactOptionalPropertyTypes` expects absence.
  */
 export function routeProps(
   snapshot: () => RouterState,
   searchSchemas: MountRouterOptions["searchSchemas"],
   matchChains?: MountRouterOptions["matchChains"],
+  derive: <T>(read: () => T) => () => T = (read) => read,
 ): RenderProps {
+  const data = derive(() => snapshot().data)
+  const layoutData = derive(() => snapshot().layoutData)
   return {
     get data() {
-      return snapshot().data
+      return data()
     },
     // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
     // server rendered it with its data.
@@ -22,7 +28,7 @@ export function routeProps(
       return snapshot().serverComponents
     },
     get layoutData() {
-      return snapshot().layoutData
+      return layoutData()
     },
     get actionData() {
       return snapshot().actionData

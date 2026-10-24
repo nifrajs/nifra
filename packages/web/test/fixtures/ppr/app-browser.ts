@@ -6,13 +6,15 @@
  * arrives before or after hydration; a tampered invoker is blocked; fills work under enforced Trusted
  * Types where the framework's client can run under them; the router keeps the holes through a param
  * change and back; a shared hole is built once and filled once for each visitor. Chromium also checks the heap and listener count stay flat over 1000 soft
- * navigations. Run: `bun packages/web/test/fixtures/ppr/app-browser.ts`, with `FRAMEWORK=<name>` for
- * the twin of the app in `web-<name>/test/fixtures/ppr-app`.
+ * navigations. On React served by Bun, a `keepAlive` page from a PPR document cancels its slow hole when
+ * left, comes back at once with its state, and refills its holes in place. Run:
+ * `bun packages/web/test/fixtures/ppr/app-browser.ts`, with `FRAMEWORK=<name>` for the twin of the app
+ * in `web-<name>/test/fixtures/ppr-app`.
  */
 import assert from "node:assert/strict"
 import { type Browser, type BrowserContext, chromium, firefox, type Page, webkit } from "playwright"
 import { probe, releaseHeld } from "./app/lib/probe.ts"
-import type { PprTwin } from "./app/server.ts"
+import type { PprApp, PprTwin } from "./app/server.ts"
 
 declare global {
   interface Window {
@@ -36,6 +38,17 @@ const twin: PprTwin = await import(
 if (RUNTIME !== "bun" && (RUNTIME !== "deno" || FRAMEWORK !== "react")) {
   throw new Error(`PPR_RUNTIME=${RUNTIME} is not served for FRAMEWORK=${FRAMEWORK}`)
 }
+// Started before the app the other checks use: each app takes `console.warn` over until it stops, and
+// the warnings asserted at the end are that app's.
+const kept: PprApp | undefined =
+  FRAMEWORK === "react" && RUNTIME === "bun"
+    ? await import("./app/server.ts").then(({ REACT, startPprApp }) =>
+        // The product page again with `keepAlive`, in a routes tree of its own so the app the other
+        // checks use keeps none.
+        startPprApp({ ...REACT, routesDir: `${import.meta.dir}/kept/routes` }),
+      )
+    : undefined
+assert.deepEqual(kept?.shellFailures ?? [], [], "the kept page's shell passes its check")
 const app =
   RUNTIME === "deno"
     ? await (await import("./app/deno-app.ts")).startPprAppOnDeno()
@@ -294,9 +307,10 @@ async function checkWholePaths(name: string, browser: Browser): Promise<Record<s
 /** A context with the visitor's cookie, the instrumentation and a list of page and console errors. */
 async function visit(
   browser: Browser,
+  at = origin,
 ): Promise<{ context: BrowserContext; page: Page; errors: string[] }> {
   const context = await browser.newContext()
-  await context.addCookies([{ name: "name", value: "ada", url: origin }])
+  await context.addCookies([{ name: "name", value: "ada", url: at }])
   await instrument(context)
   const page = await context.newPage()
   const errors: string[] = []
@@ -506,6 +520,84 @@ async function checkRouter(name: string, browser: Browser): Promise<Record<strin
 }
 
 /**
+ * A `keepAlive` page from a PPR document: leaving it while its slow hole loads cancels that hole on the
+ * server, though the page stays mounted; going back shows it before any data arrives, with the state
+ * the visitor left in its interactive hole, and its holes reload as fills in place. Where the router
+ * starts only once the streamed document ends, the slow hole has filled before the page can be left,
+ * and nothing is left to cancel.
+ */
+async function checkKeptHoles(
+  name: string,
+  browser: Browser,
+  at: string,
+): Promise<Record<string, unknown>> {
+  const { context, page, errors } = await visit(browser, at)
+  const { slowAborted } = await serverProbe()
+  // Under the default 5 s hole deadline.
+  await page.goto(`${at}/k/1?slow=3000`, { waitUntil: "commit" })
+  await routed(page)
+  for (const hole of ["greeting", "cart"]) await filled(page, hole)
+  // The hole's own root has hydrated once React has tagged its button.
+  await page.waitForFunction(() => {
+    const button = document.querySelector("#cart")
+    return button !== null && Object.keys(button).some((key) => key.startsWith("__reactProps"))
+  })
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>("#cart")?.click())
+  await page.waitForFunction(() => document.querySelector("#cart")?.textContent === "cart 3")
+  const slowLeft = await page.evaluate(() => document.querySelector("#slow")?.textContent ?? null)
+  const left = performance.now()
+  await go(page, "#to-other")
+  await page.waitForSelector("#other")
+  const cancelMs = slowLeft === null ? Math.round(await abortLatency(left, slowAborted)) : "filled"
+  // React takes the hidden page out of the document; the state it comes back with shows it stayed mounted.
+  assert.equal(
+    await page.evaluate(() => (document.querySelector("#title")?.getClientRects().length ?? 0) > 0),
+    false,
+    `${name}: the left page is hidden`,
+  )
+  const back = performance.now()
+  await page.evaluate(() => history.back())
+  await page.waitForFunction(
+    () => (document.querySelector("#title")?.getClientRects().length ?? 0) > 0,
+  )
+  const shownMs = performance.now() - back
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      other: document.querySelector("#other") !== null,
+      cart: document.querySelector("#cart")?.textContent,
+      slow: document.querySelector("#slow")?.textContent ?? null,
+    })),
+    { other: false, cart: "cart 3", slow: slowLeft },
+    `${name}: the kept page comes back as it was left, before its slow hole's data`,
+  )
+  await page.waitForFunction(
+    () => document.querySelector('[data-nifra-hole="slow"]')?.getAttribute("aria-busy") === "true",
+  )
+  await page.waitForFunction(
+    () =>
+      document.querySelector("#slow")?.textContent === "slow 3000" &&
+      document.querySelector('[data-nifra-hole="slow"]')?.getAttribute("aria-busy") === "false",
+  )
+  assert.deepEqual(
+    await page.evaluate(() => [
+      document.querySelector("#greeting")?.textContent,
+      document.querySelector("#cart")?.textContent,
+    ]),
+    ["hello ada", "cart 3"],
+    `${name}: the refill keeps the interactive hole's state`,
+  )
+  assert.deepEqual(await page.evaluate(() => window.__violations), [], `${name}: kept CSP`)
+  assert.deepEqual(errors, [], `${name}: kept page errors`)
+  await context.close()
+  return {
+    engine: name,
+    kept: "left, back at once with its state, refilled in place",
+    cancelMs,
+    shownMs: Math.round(shownMs),
+  }
+}
+
+/**
  * A shared hole: the first visitor waits on its build, the next gets its frame with the shell, both
  * fill once with their own per-visitor hole beside it; a soft navigation renders it from the held
  * entry's data.
@@ -638,6 +730,8 @@ try {
       console.log(JSON.stringify(await checkScriptPolicy(name, browser)))
       console.log(JSON.stringify(await checkRouter(name, browser)))
       console.log(JSON.stringify(await checkSharedHole(name, browser)))
+      if (kept !== undefined)
+        console.log(JSON.stringify(await checkKeptHoles(name, browser, kept.origin)))
       if (name === "chromium") console.log(JSON.stringify(await checkHeap(browser)))
     } finally {
       await browser.close()
@@ -650,4 +744,5 @@ try {
   )
 } finally {
   await app.stop()
+  await kept?.stop()
 }

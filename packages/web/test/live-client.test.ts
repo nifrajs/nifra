@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test"
 import type { BoundaryStates } from "../src/boundary.ts"
 import { liveQueries } from "../src/internal/live-queries.ts"
 import { queryDigester, querySalt } from "../src/internal/query-digest.ts"
+import { keepAliveClient } from "../src/keep-alive.ts"
 import { liveClient } from "../src/live-client.ts"
 import { createQueryClient, type QueryHandle } from "../src/query.ts"
 import { type ClientRouter, createClientRouter, type RouterState } from "../src/router.ts"
@@ -75,6 +76,7 @@ class FakeSocket {
 /** A document the test can hide and show. */
 class FakeDocument {
   visibilityState: "visible" | "hidden" = "visible"
+  readonly cookie = ""
   private readonly listeners = new Set<() => void>()
   addEventListener(_type: string, listener: () => void): void {
     this.listeners.add(listener)
@@ -251,15 +253,25 @@ interface Rig {
   readonly stop: () => void
 }
 
-function rig(path = "/posts/1"): Rig {
+function rig(path = "/posts/1", keepAlive = false): Rig {
   const server = scripted()
   const client = liveClient({ fetch: server.fetch, layoutIdsOf })
-  const router = createClientRouter({
+  // An app with a `keepAlive` route: its router wraps the live transport, as the generated entry does.
+  const keep = keepAlive
+    ? keepAliveClient({
+        table: { routes: ["posts/[id]"], layouts: [] },
+        routeHooks: { ...routeHooks, "posts/[id]": { keepAlive: true } },
+        matchChains: {},
+        fetchData: client.fetchData,
+      })
+    : undefined
+  const inner = createClientRouter({
     patterns,
     initial: initial(path),
-    fetchData: client.fetchData,
+    fetchData: keep?.fetchData ?? client.fetchData,
     routeHooks,
   })
+  const router = keep?.attach(inner) ?? inner
   const stop = client.attach(router)
   const socket = (): FakeSocket => {
     const last = FakeSocket.all.at(-1)
@@ -270,8 +282,8 @@ function rig(path = "/posts/1"): Rig {
 }
 
 /** The first live load after hydration, its watch, and a `ready` with nothing stale. */
-async function connected(path = "/posts/1"): Promise<Rig> {
-  const r = rig(path)
+async function connected(path = "/posts/1", keepAlive = false): Promise<Rig> {
+  const r = rig(path, keepAlive)
   r.socket().welcome()
   await until(() => r.socket().watches().length === 1, "first watch")
   ready(r, [[]])
@@ -325,6 +337,60 @@ test("a change reloads only the owner that read it: the rest is kept and shown f
   await until(() => r.socket().watches().length === 2, "rewatch")
   expect(r.socket().lastWatch()).toEqual({ t: "watch", gen: 2, grants: ["grant-2"] })
   r.stop()
+})
+
+test("in an app that keeps pages alive, a change still reloads only the owner that read it", async () => {
+  const r = await connected("/posts/1", true)
+  changed(r, "tag:/posts/1")
+  await until(() => r.server.loads.length === 2 && !r.router.snapshot().pending, "reload")
+  expect(r.server.loads[1]).toMatchObject({ mode: "load", retain: [ROOT], grants: ["grant-1"] })
+  expect(r.router.snapshot().layoutData).toEqual([{ root: 1 }])
+  r.stop()
+})
+
+test("while a page shown again runs its own reload, a change waits for it instead of loading too", async () => {
+  const server = scripted()
+  const client = liveClient({ fetch: server.fetch, layoutIdsOf })
+  const inner = createClientRouter({
+    patterns,
+    initial: initial(),
+    fetchData: client.fetchData,
+    routeHooks,
+  })
+  let revalidating = false
+  const listeners = new Set<() => void>()
+  const router: ClientRouter = {
+    ...inner,
+    snapshot: () => ({ ...inner.snapshot(), revalidating }),
+    subscribe: (listener) => {
+      listeners.add(listener)
+      const off = inner.subscribe(listener)
+      return () => {
+        listeners.delete(listener)
+        off()
+      }
+    },
+  }
+  const stop = client.attach(router)
+  const socket = (): FakeSocket => {
+    const last = FakeSocket.all.at(-1)
+    if (last === undefined) throw new Error("no socket")
+    return last
+  }
+  const r: Rig = { server, router, socket, stop }
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "first watch")
+  ready(r, [[]])
+  await settle()
+  revalidating = true
+  for (const listener of listeners) listener()
+  changed(r, "tag:/posts/1")
+  await settle()
+  expect(server.loads).toHaveLength(1)
+  revalidating = false
+  for (const listener of listeners) listener()
+  await until(() => server.loads.length === 2, "the change's reload")
+  stop()
 })
 
 test("a tag the frame does not hold is ignored", async () => {

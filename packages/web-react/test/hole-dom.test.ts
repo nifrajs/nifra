@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { createSlotParking, PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "@nifrajs/web/keep-alive"
 import { GlobalWindow } from "happy-dom"
-import { act, createElement, type ReactNode, useState } from "react"
+import * as React from "react"
+import { act, type ComponentType, createElement, type ReactNode, useState } from "react"
 import type { Root } from "react-dom/client"
 import type { HoleDefinition, HoleProps } from "../src/ppr.ts"
 
@@ -52,7 +54,11 @@ interface Frame {
 function runtime(fills: Record<string, Fill> = {}) {
   const waiting = new Map<string, (fill: Fill) => void>()
   const unsubscribed: string[] = []
+  const left = { count: 0 }
   const api = Object.assign(() => {}, {
+    leave() {
+      left.count++
+    },
     get: (name: string) => fills[name],
     subscribe(name: string, callback: (fill: Fill) => void) {
       waiting.set(name, callback)
@@ -69,7 +75,7 @@ function runtime(fills: Record<string, Fill> = {}) {
     },
   })
   Reflect.set(globalThis, "__nifraPpr", api)
-  return { waiting, unsubscribed }
+  return { waiting, unsubscribed, left }
 }
 
 function Counter(props: { readonly start: number }): ReactNode {
@@ -170,6 +176,15 @@ const unmount = async (root: Root | undefined) => {
   await act(async () => root?.unmount())
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 }
+
+/** The event a keep-alive view sends from a page it hides or shows, made by the document (Bun's own
+ * event class is not one happy-dom dispatches). */
+const pageEvent = (type: string): Event => {
+  const event = document.createEvent("Event")
+  event.initEvent(type, true, false)
+  return event
+}
+const pageHide = (): Event => pageEvent(PAGE_HIDE_EVENT)
 
 const click = async (host: Element) => {
   await act(async () => {
@@ -286,6 +301,94 @@ describe("Hole in the browser", () => {
     await settle(older.promise)
     expect(host.textContent).toBe("cart 9 clicked 1")
     await unmount(root)
+  })
+
+  test("a kept page hidden behind another leaves the document's holes and drops the refill on its way", async () => {
+    const { left } = runtime({ cart: { props: { count: 2 }, error: false } })
+    const { host, root, container } = await hydratePage(tally, { count: 2 })
+    await click(host)
+    const inflight = deferredFill()
+    await reload(root, tally, inflight.fill)
+    const other = document.createElement("section")
+    document.body.append(other)
+    other.dispatchEvent(pageHide())
+    expect(left.count).toBe(0)
+    container.dispatchEvent(pageHide())
+    expect(left.count).toBe(1)
+    inflight.resolve({ html: "", props: { count: 7 } })
+    await settle(inflight.promise)
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("true")
+    // Shown again: the page's reload refills the host in place.
+    await reload(root, tally, { html: "", props: { count: 8 } })
+    await settle(Promise.resolve())
+    expect(host.textContent).toBe("cart 8 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("false")
+    await unmount(root)
+    other.dispatchEvent(pageHide())
+    container.dispatchEvent(pageHide())
+    expect(left.count).toBe(1)
+    other.remove()
+  })
+
+  test("a host its kept page hides behind Activity keeps its root and state, until the page is dropped", async () => {
+    runtime({ cart: { props: { count: 2 }, error: false } })
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: React 19.2's own export, which the keep-alive mount renders
+    const Activity = Reflect.get(React, "Activity") as ComponentType<{
+      readonly mode: "hidden" | "visible"
+      readonly children?: ReactNode
+    }>
+    const page = (mode: "hidden" | "visible", fill?: unknown) =>
+      createElement(
+        "section",
+        null,
+        createElement(
+          Activity,
+          { mode },
+          createElement(Hole<{ readonly count: number }>, {
+            of: tally,
+            state: { status: "pending", ppr: true, fill },
+          }),
+        ),
+      )
+    const container = document.createElement("main")
+    container.innerHTML = server.renderToString(page("visible"))
+    document.body.append(container)
+    const kept = container.querySelector("section")
+    const host = container.querySelector('[data-nifra-hole="cart"]')
+    if (kept === null || host === null) throw new Error("the shell has no host")
+    host.innerHTML = server.renderToString(tally.render({ count: 2 }), {
+      identifierPrefix: "nifra-cart-",
+    })
+    let root: Root | undefined
+    await act(async () => {
+      root = client.hydrateRoot(container, page("visible"))
+    })
+    await click(host)
+    const hide = async () => {
+      kept.dispatchEvent(pageHide())
+      await act(async () => root?.render(page("hidden")))
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    }
+    await hide()
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    kept.dispatchEvent(pageEvent(PAGE_SHOW_EVENT))
+    await act(async () => root?.render(page("visible", { html: "", props: { count: 5 } })))
+    await settle(Promise.resolve())
+    expect(host.textContent).toBe("cart 5 clicked 1")
+    await click(host)
+    expect(host.textContent).toBe("cart 5 clicked 2")
+
+    // Hidden again, then dropped: the view's slot leaves, and the host's root goes with it.
+    const parking = createSlotParking()
+    parking.page("\0kept")(kept)
+    await hide()
+    expect(host.textContent).toBe("cart 5 clicked 2")
+    parking.after([])
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(host.textContent).toBe("")
+    await unmount(root)
+    container.remove()
   })
 
   test("a refill replaces a server-only host's HTML, and a failed one shows the error slot", async () => {

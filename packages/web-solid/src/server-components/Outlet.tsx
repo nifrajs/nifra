@@ -61,7 +61,7 @@ function Range(props: {
     if (controller !== undefined)
       void (props.controller === undefined
         ? controller.dispose()
-        : controller.unmount(record.instance))
+        : controller.unmount(record.instance, host))
   })
   createEffect(() => {
     const state = props.state

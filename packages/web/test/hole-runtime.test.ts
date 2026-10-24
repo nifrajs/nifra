@@ -9,6 +9,8 @@ class FakeHost {
   readonly attributes = new Map<string, string>()
   children: Array<{ readonly text: string }> = []
   readonly ownerDocument = {
+    addEventListener() {},
+    removeEventListener() {},
     createElement: () => ({
       text: "",
       setAttribute() {},

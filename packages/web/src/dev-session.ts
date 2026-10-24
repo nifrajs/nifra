@@ -44,7 +44,13 @@ import {
 } from "./dev-feed.ts"
 import { DEV_INDICATOR_MAX_ISSUES, DEV_INDICATOR_SOURCE, type DevIssue } from "./dev-indicator.ts"
 import { createSourceMapper } from "./dev-sourcemap.ts"
-import { fixPrompts, isHydrationMismatch, LAST_ERROR_PATH, promptPath } from "./diagnostic.ts"
+import {
+  fixPrompts,
+  isConsoleDiagnostic,
+  isHydrationMismatch,
+  LAST_ERROR_PATH,
+  promptPath,
+} from "./diagnostic.ts"
 import { diagnosticHeadline } from "./diagnostic-prompt.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { ISR_STATUS_HEADER } from "./isr.ts"
@@ -439,16 +445,21 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     if (event.kind === "console") {
       feed.recordLog(event.level, event.message, meta)
       if (event.error !== undefined) return (await recordBrowserError(event.error, meta)).entry
-      // React 18, Vue and Svelte report a mismatch through the console rather than by throwing.
-      if (
-        (event.level === "error" || event.level === "warn") &&
-        isHydrationMismatch(event.message)
-      ) {
-        const recorded = await recordBrowserError(
-          { name: "HydrationMismatch", message: event.message, stack: "" },
-          meta,
-        )
-        return recorded.entry
+      // React 18, Vue and Svelte report a mismatch through the console rather than by throwing, as
+      // nifra's own browser diagnostics do.
+      if (event.level === "error" || event.level === "warn") {
+        const name = isHydrationMismatch(event.message)
+          ? "HydrationMismatch"
+          : isConsoleDiagnostic(event.message)
+            ? "Warning"
+            : undefined
+        if (name !== undefined) {
+          const recorded = await recordBrowserError(
+            { name, message: event.message, stack: "" },
+            meta,
+          )
+          return recorded.entry
+        }
       }
       return undefined
     }

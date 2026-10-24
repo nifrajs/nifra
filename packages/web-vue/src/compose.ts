@@ -24,12 +24,7 @@ function declaredProps(component: unknown): ReadonlySet<string> {
  */
 export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   const last = chain.length - 1
-  // `matchChain` feeds `useMatches` through the provider below; on the page it would fall through as
-  // an attribute on the page's root element.
-  const { matchChain: _chain, ...pageProps } = props as RenderProps & Record<string, unknown>
-  const declared = declaredProps(chain[last])
-  for (const name of ROUTER_PROPS) if (!declared.has(name)) delete pageProps[name]
-  let node: VNode = h(chain[last] as Component, pageProps)
+  let node: VNode = pageNode(chain[last], props)
   for (let i = last - 1; i >= 0; i--) {
     const child = node
     // Layouts render their child via the default slot (`<slot />` / `{@render children}`).
@@ -47,4 +42,14 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   }
   const inner = node
   return h(RouteContextProvider, { value: props }, { default: () => inner })
+}
+
+/** The page's vnode: `props` less what only the provider reads. */
+export function pageNode(page: unknown, props: RenderProps): VNode {
+  // `matchChain` feeds `useMatches` through the provider; on the page it would fall through as an
+  // attribute on the page's root element.
+  const { matchChain: _chain, ...pageProps } = props as RenderProps & Record<string, unknown>
+  const declared = declaredProps(page)
+  for (const name of ROUTER_PROPS) if (!declared.has(name)) delete pageProps[name]
+  return h(page as Component, pageProps)
 }

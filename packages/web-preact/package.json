@@ -31,6 +31,11 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./keep-alive": {
+      "bun": "./src/keep-alive.ts",
+      "types": "./dist/keep-alive.d.ts",
+      "default": "./dist/keep-alive.js"
+    },
     "./await": {
       "bun": "./src/await.ts",
       "types": "./dist/await.d.ts",
@@ -116,7 +121,7 @@
     "preact": "^10.19.0 || ^11.0.0"
   },
   "devDependencies": {
-    "happy-dom": "20.14.6",
+    "happy-dom": "21.0.4",
     "preact": "^11.0.1"
   },
   "repository": {

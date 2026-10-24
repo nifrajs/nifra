@@ -10,7 +10,7 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 
 ## Public entrypoints
 
-`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/fn` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/plugin` · `@nifrajs/web-solid/ppr` · `@nifrajs/web-solid/query` · `@nifrajs/web-solid/router` · `@nifrajs/web-solid/server-components` · `@nifrajs/web-solid/server-components/client` · `@nifrajs/web-solid/server-components/outlet` · `@nifrajs/web-solid/svg`
+`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/fn` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/keep-alive` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/plugin` · `@nifrajs/web-solid/ppr` · `@nifrajs/web-solid/query` · `@nifrajs/web-solid/router` · `@nifrajs/web-solid/server-components` · `@nifrajs/web-solid/server-components/client` · `@nifrajs/web-solid/server-components/outlet` · `@nifrajs/web-solid/svg`
 
 ## Key exports
 
@@ -25,11 +25,11 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`
+- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-solid/keep-alive`
+- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void` · from `@nifrajs/web-solid/keep-alive`
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-solid/i18n`
-- **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-solid/fetcher`
-- **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/plugin`
 
-_…and 32 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 36 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

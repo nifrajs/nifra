@@ -31,7 +31,9 @@ import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
  */
 import { createContext } from "preact"
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/compat"
+import { usePageVisibility } from "./page-visibility.ts"
 
+export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search so the default context value has a stable reference.
@@ -118,7 +120,7 @@ export function useNavigate(): NavigateFunction {
  * (an anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state` becomes
  * `"blocked"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or
  * `reset()` to stay put. It also arms the browser's native "Leave site?" prompt on tab close / reload.
- * Idle (never blocks) on the server and before hydration.
+ * Idle (never blocks) on the server, before hydration, and while a `keepAlive` page is hidden.
  */
 export function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker {
   const [blocker, setBlocker] = useState<Blocker>(IDLE_BLOCKER)
@@ -126,9 +128,12 @@ export function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker {
   // current component state without re-registering (which would drop an open prompt).
   const shouldBlockRef = useRef(shouldBlock)
   shouldBlockRef.current = shouldBlock
+  const visibleRef = useRef(true)
+  visibleRef.current = usePageVisibility()
   useEffect(
     () =>
       registerBlocker((args) => {
+        if (!visibleRef.current) return false
         const current = shouldBlockRef.current
         return typeof current === "function" ? current(args) : current
       }, setBlocker),

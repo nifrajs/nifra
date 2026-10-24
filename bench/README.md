@@ -39,6 +39,7 @@ bun run bench:ppr:gzip          # the same with compression() on
 bun run bench:ppr:saturation    # every loader reading a backend pushed past its capacity
 bun run bench:size              # server bundle size
 bun run bench:coldboot          # cold-start time
+bun run bench/keep-alive/run.ts # keepAlive restore, latency and memory (React + Svelte, Chromium)
 ```
 
 `bench:p99`, `bench:soak`, and `bench:coldboot` accept `NIFRA_PERF_GATE=1` to fail closed against

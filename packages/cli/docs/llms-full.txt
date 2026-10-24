@@ -1610,6 +1610,19 @@ loader **revalidates** (no full reload); with JS disabled the native form POST r
 - progressive enhancement, same code. What the action returns reaches the page as
 `actionData`, bounded by `actionOutput`.
 
+A reload of the page on screen (an action's revalidation, `invalidate()`, a live
+refresh, a fetcher loading its path again) keeps every part of `data` and the
+layouts' data that it did not change as the same object, with one bound: an array none of
+whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
+stops comparing early. A row kept this way keeps its DOM and component state: a Solid
+`<For>` keeps the row, a memoized React or Preact row
+and a Vue child component skip their render, and a Svelte or Solid effect on `data`
+runs again only when the reload changed it. Dates compare by time, rows with an
+`id` pair by it, and the built-in transport does not parse again a plain JSON
+response with the same text as the one on screen (a response with deferred parts is always
+parsed). A page whose code compares `data` with its value from before a reload exports
+`shareData = false` and gets fresh data on every reload.
+
 ```ts
 // routes/users/new.backend.ts - an action handles the route's POST.
 import { t } from "@nifrajs/schema"
@@ -8411,7 +8424,8 @@ export function Counter(props: { message: string }) {
 
 `@nifrajs/devtools` is a plugin that streams what each request actually did - loader
 traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
-in the browser.
+in the browser. In an app with [keep-alive](/docs/keep-alive) routes, the overlay
+also lists the pages kept hidden.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -11257,6 +11271,35 @@ serving the old page until its freshness runs out. The revalidate endpoint answe
 permission for this zone, project or service; a 5xx or `network_error` is retried on
 its own.
 
+### Keep-alive
+
+#### NIFRA_KEEPALIVE_IDENTITY_COOKIE
+
+The app keeps pages alive, and a response changed or deleted an `HttpOnly` cookie
+Nifra does not know as a sign-in cookie. If that cookie says who is signed in, a sign-in or
+sign-out through it leaves the previous visitor's kept pages in every tab, and back shows
+them. Development reports each cookie name once.
+
+**Fix:** name the cookie in
+`createWebApp({ keepAlive: { identityCookies } })` if it
+carries the session, or in `keepAlive.ignoreCookies` if it does not. When the
+session is a token in client storage, call `identityChanged()` from
+`@nifrajs/web/client` at sign-in and sign-out. See
+[keep-alive and sign-in](/docs/keep-alive#sign-in).
+
+#### NIFRA_KEEPALIVE_DIRECT_CHILD_CSS
+
+A `keepAlive` page renders inside two `display:contents` wrappers, so a
+selector that reached its root element as a direct child of the layout (
+`main > section`), by its position among siblings (`:first-child`,
+`:nth-child()`), or through `:has(> ...)` on the layout no longer
+matches it. Development checks the page's same-origin stylesheets the first time it is shown
+and reports each selector once.
+
+**Fix:** use a descendant combinator (`main section`), target the
+wrapper (`[data-nifra-page] > section`), or give the page's root element a class
+and select that.
+
 ### Silencing a nifra check finding
 
 `nifra check` names each finding with an `NF-` code;
@@ -11573,6 +11616,297 @@ the framework itself: contribute typed context to every handler (`c.stripe`, a
 session, a tenant), mount routes of its own, or hook the request lifecycle. That is
 `definePlugin` - a few lines, typed end-to-end. For everything else, an import
 at the top of the file is the whole integration.
+
+## Nifra - Keep-alive
+
+> Pages that stay mounted after the visitor leaves them: back and forward bring back the same page, with its scroll, form input and component state, and a sign-out drops them in every tab.
+
+A route that exports `keepAlive` stays mounted after the visitor leaves it. Back
+and forward bring back the same page, not a new render of it: its scroll positions, form
+input, open `<details>`, focus and component state are where the visitor
+left them.
+
+### Keep a page
+
+```tsx
+// doc-check: skip - a route module; the page component is the app's own.
+// routes/orders/[id].tsx
+export const keepAlive = true
+
+export default function Order({ data }: { data: OrderData }) {
+  // ...
+}
+```
+
+Pass options instead of `true` to change how the page comes back:
+
+```ts
+import type { KeepAliveOptions } from "@nifrajs/web"
+
+// Show the kept page as it was, without reloading its data; drop it after a minute hidden.
+export const keepAlive: KeepAliveOptions = { revalidate: false, maxAge: 60_000 }
+```
+
+`keepAlive` works with the React (19.2 or later, for
+`<Activity>`), Preact, Solid, Svelte and Vue adapters. A build with another
+adapter fails and names the routes that export it.
+
+### When a page is kept, and when it comes back
+
+-
+A page is kept when the visitor leaves it by a link, a form or back and forward. A redirect
+or a `replace` navigation discards it, since its history entry is gone.
+
+-
+Only back or forward to the page's own history entry brings it back. A link to the same
+path renders a fresh page.
+
+-
+A new path on the same route is a new page: `/orders/1` and
+`/orders/2` are kept apart. A change of the query string alone keeps the page.
+
+-
+A tab keeps at most three pages, dropping the one shown longest ago, and none hidden
+longer than ten minutes, or the route's `maxAge`.
+
+-
+Going back and then following a link drops the pages ahead of it, as the browser drops
+those history entries.
+
+-
+A page left with a [route open in a modal](/docs/routing#modal-routes) over
+it is kept with the modal. Back to that entry shows the page and opens the modal over it
+again.
+
+### What changes when a page stays mounted
+
+-
+Code that runs when a page mounts runs once for that page, not on every visit. Back to a
+kept page does not mount it again; work that belongs to each visit goes in
+`onPageShow`. React is the exception: `<Activity>` runs the
+page's effects again each time it is shown.
+
+-
+In Preact, Solid, Svelte and Vue a hidden page keeps running: its timers fire, its
+subscriptions deliver, its stores update. Pause what should not run unseen with
+`onPageHide`.
+
+-
+State outlives the visit. Form input, a filter, an open panel are where the visitor left
+them; reset in `onPageShow` what must start fresh.
+
+-
+Each kept page holds its DOM and its components' memory, at most three per tab. In
+development, the [devtools overlay](/docs/dev#devtools) lists them with their
+path, how long each has been hidden and how many elements it renders.
+
+### Fresh data
+
+A page comes back at once, as it was left, and reloads its data behind it. The reload is
+shared onto the data the page already holds: what did not change keeps its identity, so
+nothing below an unchanged value renders again, and form input in a list survives. Set
+`revalidate: false` to skip the reload; an action submitted while the page was
+hidden still reloads it.
+
+A [partially prerendered](/docs/partial-prerendering) page that is kept stops its
+holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
+way is dropped. When the page comes back each hole reloads in place, its old content marked
+`aria-busy="true"` until the new arrives, with `revalidate: false` too.
+An interactive hole keeps its state through it, in React as well, where
+`<Activity>` cleans the page's effects up while it is hidden.
+
+With [live refresh](/docs/live), a hidden page is not watched. When it comes back,
+what changed while it was hidden reloads, whatever `revalidate` says, and a grant
+that expired in the meantime is loaded again.
+
+### While a page is hidden
+
+A kept page is taken out of the document. It is absent from the accessibility tree, its
+media stops, and its ids never collide with the page on screen. It renders from its own
+route state, so it never sees another page's params.
+
+In React, `<Activity>` cleans up the page's effects while it is hidden and
+runs them again when it is shown. `usePageVisibility()` reads which it is:
+
+```tsx
+// doc-check: skip - a page component; Chart is the app's own.
+import { usePageVisibility } from "@nifrajs/web-react/router"
+
+export default function Dashboard() {
+  const visible = usePageVisibility()
+  return <Chart animate={visible} />
+}
+```
+
+A Preact, Solid, Svelte or Vue page keeps running while it is hidden. Pause timers, sockets
+and media with `onPageHide` and resume them with `onPageShow`, from
+each adapter's `/router`:
+
+```svelte
+<script>
+  import { onPageHide, onPageShow } from "@nifrajs/web-svelte/router"
+  let timer
+  const poll = () => (timer = setInterval(refresh, 5000))
+  poll()
+  onPageHide(() => clearInterval(timer))
+  onPageShow(poll)
+</script>
+```
+
+```vue
+<script setup lang="ts">
+import { onPageHide, onPageShow } from "@nifrajs/web-vue/router"
+const socket = connect()
+onPageHide(() => socket.pause())
+onPageShow(() => socket.resume())
+</script>
+```
+
+Adapter
+
+`usePageVisibility()`
+
+`onPageHide` / `onPageShow`
+
+React
+a boolean
+effects, which hiding cleans up
+
+Preact
+a boolean
+hooks
+
+Solid
+an accessor
+run in a component, removed with it
+
+Svelte
+a getter
+run as the component initializes, return their removal
+
+Vue
+a ref
+
+run in `setup`; `onActivated` / `onDeactivated` also
+run
+
+A `useBlocker` in a hidden page blocks nothing. Any code can listen for the
+`nifra:pagehide` and `nifra:pageshow` events, which bubble from the
+page. An island inside a kept page stays mounted with it; its enhancer pauses with
+`onPageHide` and `onPageShow` from `@nifrajs/web/islands`:
+
+```ts
+import { defineIsland, onPageHide, onPageShow } from "@nifrajs/web/islands"
+
+export const clock = defineIsland((el) => {
+  const tick = () => {
+    el.textContent = new Date().toLocaleTimeString()
+  }
+  let timer = setInterval(tick, 1000)
+  const hide = onPageHide(el, () => clearInterval(timer))
+  const show = onPageShow(el, () => {
+    timer = setInterval(tick, 1000)
+  })
+  return () => {
+    hide()
+    show()
+    clearInterval(timer)
+  }
+})
+```
+
+The [server components](/docs/server-components) of a kept page stay mounted too.
+With `bindComponentRouter` installed, navigation leaves them alone while the page
+is hidden, and the reload of a page that comes back updates them.
+
+### CSS around a kept page
+
+A kept page renders inside two `<slot>` elements,
+`[data-nifra-entry]` and `[data-nifra-page]`; so does a layout below
+which the routes' layouts differ. Browsers lay a `<slot>` out as
+`display: contents`, and the wrappers carry no inline style, so a strict
+`style-src` needs nothing for them. Vue, whose `<KeepAlive>`
+moves the page itself, renders neither. They take no box, but a selector that reached the
+page's root as a direct child, or by its position among siblings, stops matching:
+
+```text
+/* Stops matching: the wrappers sit between main and the page's root */
+main > section { padding: 2rem; }
+
+/* Matches, kept or not */
+main section { padding: 2rem; }
+[data-nifra-page] > section { padding: 2rem; }
+```
+
+In development, the first time a kept page is shown the client reads the page's
+same-origin stylesheets and reports each such selector once, as
+[NIFRA_KEEPALIVE_DIRECT_CHILD_CSS](/docs/errors#keepalive-direct-child-css).
+
+### Keep-alive and sign-in
+
+A page kept for one visitor must never come back for the next. When a response signs a
+visitor in or out, the server also rotates a readable epoch cookie (
+`__Host-nifra-epoch`, or `nifra-epoch` on local `http:`)
+with the session cookie's lifetime. A tab that reads a new epoch drops every page it kept and
+tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
+session that expires while the visitor is away, is covered the same way: back compares the
+epoch before it shows a kept page.
+
+The session cookies of `@nifrajs/auth`, Better Auth and Auth.js count under their
+default names. Name any other in `identityCookies`:
+
+```ts
+// doc-check: skip - adapter, manifest and clientEntry are the app's own.
+const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry,
+  keepAlive: {
+    identityCookies: ["sid"], // your own session cookie
+    ignoreCookies: ["cart"], // HttpOnly, but says nothing about who is signed in
+  },
+})
+```
+
+In development, an `HttpOnly` cookie that changes and is in neither list is
+reported once, as
+[NIFRA_KEEPALIVE_IDENTITY_COOKIE](/docs/errors#keepalive-identity-cookie). A flow
+that changes who is signed in without changing a cookie rotates the epoch itself:
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { rotateIdentityEpoch } from "@nifrajs/web"
+
+// A flow that changes who is signed in without changing a watched cookie.
+export const api = server().post("/switch-account", (c) => {
+  rotateIdentityEpoch(c)
+  return { ok: true }
+})
+```
+
+When identity lives in client storage, as a bearer token, call `identityChanged()`
+at sign-in and sign-out:
+
+```ts
+import { identityChanged } from "@nifrajs/web/client"
+
+// Identity in client storage: say so at sign-in and sign-out.
+export function signOut(): void {
+  localStorage.removeItem("token")
+  identityChanged()
+}
+```
+
+A document the browser puts in its back/forward cache drops its kept pages first, so a
+cached document never carries them.
+
+### Limits
+
+-
+A route with a `clientLoader` runs it again when the page comes back, even with
+`revalidate: false`.
+
+- A hot update of a route module drops every kept page.
 
 ## Nifra - Live refresh
 
@@ -19323,7 +19657,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

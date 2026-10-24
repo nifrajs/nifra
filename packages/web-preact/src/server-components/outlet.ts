@@ -79,7 +79,7 @@ function ComponentRange(props: {
       void (
         options.controller === undefined
           ? controller.dispose()
-          : controller.unmount(record.instance)
+          : controller.unmount(record.instance, element)
       ).catch(() => controller.reportError("component_failed"))
     }
   }, [record.instance])

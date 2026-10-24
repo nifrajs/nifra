@@ -85,3 +85,12 @@ test("the mounted Router renders each layout with the snapshot's layout data", a
 test("a snapshot with no layout data leaves the key off the props", () => {
   expect("layoutData" in routeProps(snapshot(), undefined)).toBe(false)
 })
+
+test("routeProps keeps search the same object while the query is the same", () => {
+  // A new object with equal content would count as a changed prop for a memoized page.
+  const searchAt = (path: string) => routeProps(snapshot({ path }), undefined).search
+  const first = searchAt("/org?page=2")
+  expect(first).toEqual({ page: 2 })
+  expect(searchAt("/org?page=2")).toBe(first)
+  expect(searchAt("/org?page=3")).toEqual({ page: 3 })
+})

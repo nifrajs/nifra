@@ -47,7 +47,7 @@ export interface PprFixtureSetup {
   readonly serverPlugins: readonly import("bun").BunPlugin[]
 }
 
-const REACT: PprFixtureSetup = {
+export const REACT: PprFixtureSetup = {
   routesDir: `${import.meta.dir}/routes`,
   adapter: reactAdapter,
   clientModule: "@nifrajs/web-react/client",
