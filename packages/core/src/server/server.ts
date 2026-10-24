@@ -69,7 +69,11 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import type { AuthenticationStage } from "./auth.ts"
+import {
+  type AuthenticationStage,
+  isAuthenticatedRequest,
+  markAuthenticatedRequest,
+} from "./auth.ts"
 import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
 import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
@@ -778,12 +782,15 @@ function compareMounts<Env>(a: FetchMount<Env>, b: FetchMount<Env>): number {
   return b.priority - a.priority || b.path.length - a.path.length || a.order - b.order
 }
 
+/** Rebase a mounted request's path without losing the authentication mark used by child caches. */
 function stripMountPrefix(request: Request, prefix: string): Request {
   if (prefix === "/") return request
   const url = new URL(request.url)
   const rest = url.pathname.slice(prefix.length)
   url.pathname = rest === "" ? "/" : rest
-  return new Request(url.href, request)
+  const childRequest = new Request(url.href, request)
+  if (isAuthenticatedRequest(request)) markAuthenticatedRequest(childRequest)
+  return childRequest
 }
 
 /** `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating
@@ -3995,14 +4002,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             return refuse(jsonError(500, "internal_error"))
           }
         }
-        const child =
-          mount.authStages.length === 0
-            ? upgrade()
-            : thenMaybe(
-                authenticateMount(mount.authStages, request, platform, this.logger),
-                (refusal): MaybePromise<WebSocketUpgradeOutcome> =>
-                  refusal === undefined ? upgrade() : refuse(refusal),
-              )
         const settle = (outcome: WebSocketUpgradeOutcome): MaybePromise<WebSocketUpgradeOutcome> =>
           outcome.kind === "pass" ||
           (outcome.kind === "reject" && outcome.response.status === 404 && selected!.fallbackOn404)
@@ -4010,7 +4009,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             : outcome.kind === "reject"
               ? refuse(outcome.response)
               : outcome
-        return child instanceof Promise ? child.then(settle) : settle(child)
+        const run = (): MaybePromise<WebSocketUpgradeOutcome> => {
+          const child = upgrade()
+          return child instanceof Promise ? child.then(settle) : settle(child)
+        }
+        // Only a child's miss may fall through, never an authentication refusal.
+        return mount.authStages.length === 0
+          ? run()
+          : thenMaybe(
+              authenticateMount(mount.authStages, request, platform, this.logger),
+              (refusal) => (refusal === undefined ? run() : refuse(refusal)),
+            )
       }
       return dispatch(0)
     }
@@ -4517,25 +4526,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (mount === undefined) return fallback ?? jsonError(404, "not_found")
       const selected = mount
       const run = (): MaybePromise<Response> => {
+        const reused = selected.stripPrefix ? selected.wsPassed?.get(request) : undefined
         const childRequest = selected.stripPrefix
-          ? (selected.wsPassed?.get(request) ?? stripMountPrefix(request, selected.path))
+          ? (reused ?? stripMountPrefix(request, selected.path))
           : request
-        return selected.handler(childRequest, platform)
+        // HTTP authentication may have marked the original since the WebSocket pass.
+        if (reused !== undefined && isAuthenticatedRequest(request)) {
+          markAuthenticatedRequest(reused)
+        }
+        const outcome = selected.handler(childRequest, platform)
+        if (!replayable || !selected.fallbackOn404) return outcome
+        if (outcome instanceof Promise) {
+          return outcome.then((response) =>
+            response.status === 404 ? dispatch(index + 1, response) : response,
+          )
+        }
+        return outcome.status === 404 ? dispatch(index + 1, outcome) : outcome
       }
-      const outcome =
-        mount.authStages.length === 0
-          ? run()
-          : thenMaybe(
-              authenticateMount(mount.authStages, request, platform, this.logger),
-              (refusal) => refusal ?? run(),
-            )
-      if (!replayable || !mount.fallbackOn404) return outcome
-      if (outcome instanceof Promise) {
-        return outcome.then((response) =>
-          response.status === 404 ? dispatch(index + 1, response) : response,
-        )
-      }
-      return outcome.status === 404 ? dispatch(index + 1, outcome) : outcome
+      // Keep gate refusals outside the child's 404 fallthrough path.
+      return mount.authStages.length === 0
+        ? run()
+        : thenMaybe(
+            authenticateMount(mount.authStages, request, platform, this.logger),
+            (refusal) => refusal ?? run(),
+          )
     }
     return dispatch(first)
   }

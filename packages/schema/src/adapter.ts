@@ -30,7 +30,13 @@ export type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T
 function toIssue(error: { readonly message: string; readonly path: string }): StandardIssue {
   return {
     message: error.message,
-    path: error.path === "" ? undefined : error.path.slice(1).split("/"),
+    path:
+      error.path === ""
+        ? undefined
+        : error.path
+            .slice(1)
+            .split("/")
+            .map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~")),
   }
 }
 

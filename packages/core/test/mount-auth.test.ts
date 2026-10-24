@@ -206,4 +206,148 @@ describe("authenticate() stages gate the mounts registered after them", () => {
     expect(refused.kind === "reject" ? refused.response.status : 0).toBe(401)
     expect((await upgrade(SIGNED_IN)).kind).toBe("upgrade")
   })
+  for (const mode of ["sync", "async"] as const) {
+    const gate: AuthenticationStage<{ id: string }> = {
+      id: "hidden",
+      mode,
+      run: (input) => {
+        const decision = input.headers.has("x-session")
+          ? authenticated({ id: "user" })
+          : rejected("forbidden", new Response("hidden", { status: 404 }))
+        return mode === "async" ? Promise.resolve(decision) : decision
+      },
+    }
+
+    test(`${mode} auth 404 is terminal for HTTP, but authenticated child 404 falls through`, async () => {
+      let childRuns = 0
+      let fallbackRuns = 0
+      const app = server()
+        .mountFetch("/", () => {
+          fallbackRuns++
+          return new Response("fallback")
+        })
+        .authenticate(gate)
+        .mountFetch(
+          "/private",
+          () => {
+            childRuns++
+            return new Response("child miss", { status: 404 })
+          },
+          { fallbackOn: 404 },
+        )
+      expect(await ask(app, "/private/a")).toEqual([404, "hidden"])
+      expect([childRuns, fallbackRuns]).toEqual([0, 0])
+      expect(await ask(app, "/private/a", { "x-session": "alice" })).toEqual([200, "fallback"])
+      expect([childRuns, fallbackRuns]).toEqual([1, 1])
+    })
+
+    test(`${mode} auth 404 is terminal for WebSockets, but child rejection can fall through`, async () => {
+      let childRuns = 0
+      let fallbackRuns = 0
+      const app = server()
+        .mount({
+          path: "/",
+          app: {
+            fetch: () => new Response("fallback"),
+            resolveWebSocketUpgrade: (): WebSocketUpgradeOutcome => {
+              fallbackRuns++
+              return { kind: "reject", response: new Response("fallback", { status: 403 }) }
+            },
+          },
+        })
+        .authenticate(gate)
+        .mount({
+          path: "/private",
+          fallbackOn: 404,
+          app: {
+            fetch: () => new Response("http"),
+            resolveWebSocketUpgrade: (): WebSocketUpgradeOutcome => {
+              childRuns++
+              return { kind: "reject", response: new Response("child miss", { status: 404 }) }
+            },
+          },
+        })
+      for (const signedIn of [false, true]) {
+        const headers = new Headers({ upgrade: "websocket" })
+        if (signedIn) headers.set("x-session", "alice")
+        const outcome = await app.resolveWebSocketUpgrade(
+          new Request("http://test/private/a", {
+            headers,
+          }),
+        )
+        expect(outcome.kind).toBe("reject")
+        if (outcome.kind === "reject") {
+          expect(outcome.response.status).toBe(signedIn ? 403 : 404)
+          expect(await outcome.response.text()).toBe(signedIn ? "fallback" : "hidden")
+        }
+        expect([childRuns, fallbackRuns]).toEqual(signedIn ? [1, 1] : [0, 0])
+      }
+    })
+    test(`${mode} HTTP recheck after a WebSocket pass cannot fall through on auth denial`, async () => {
+      let checks = 0
+      let httpRuns = 0
+      const app = server()
+        .mountFetch("/", () => {
+          httpRuns++
+          return new Response("public fallback")
+        })
+        .authenticate({
+          id: "recheck",
+          mode,
+          run: () => {
+            const decision =
+              ++checks === 1
+                ? authenticated({ id: "alice" })
+                : rejected("forbidden", new Response("hidden", { status: 404 }))
+            return mode === "async" ? Promise.resolve(decision) : decision
+          },
+        })
+        .mount({
+          path: "/private",
+          stripPrefix: true,
+          fallbackOn: 404,
+          app: {
+            resolveWebSocketUpgrade: (): WebSocketUpgradeOutcome => ({ kind: "pass" }),
+            fetch: () => {
+              httpRuns++
+              return new Response("child miss", { status: 404 })
+            },
+          },
+        })
+      const request = new Request("http://test/private/a", { headers: { upgrade: "websocket" } })
+      expect((await app.resolveWebSocketUpgrade(request)).kind).toBe("pass")
+      const response = await app.fetch(request)
+      expect(response.status).toBe(404)
+      expect(await response.text()).toBe("hidden")
+      expect(checks).toBe(2)
+      expect(httpRuns).toBe(0)
+    })
+  }
+
+  test("stripped requests retain authentication through WebSocket pass and HTTP reuse", async () => {
+    let passed: Request | undefined
+    const app = server()
+      .authenticate(token)
+      .mount({
+        path: "/private",
+        stripPrefix: true,
+        app: {
+          resolveWebSocketUpgrade: (request: Request): WebSocketUpgradeOutcome => {
+            passed = request
+            expect(isAuthenticatedRequest(request)).toBe(true)
+            return { kind: "pass" }
+          },
+          fetch: (request: Request) => {
+            expect(passed).toBe(request)
+            expect(isAuthenticatedRequest(request)).toBe(true)
+            return new Response(new URL(request.url).pathname)
+          },
+        },
+      })
+    const request = new Request("http://test/private/a", {
+      headers: { upgrade: "websocket", ...SIGNED_IN },
+    })
+    expect((await app.resolveWebSocketUpgrade(request)).kind).toBe("pass")
+    expect(await (await app.fetch(request)).text()).toBe("/a")
+  })
 })

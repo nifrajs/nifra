@@ -3,7 +3,7 @@ import { server } from "@nifrajs/core/server"
 import { createTransportCodecRegistry, plainJsonCodec } from "@nifrajs/core/transport-codec"
 import { richWireCodec } from "@nifrajs/core/transport-codec-rich"
 import { transportCodecs } from "@nifrajs/core/transport-plugin"
-import { inProcessClient } from "../src/client.ts"
+import { client, inProcessClient } from "../src/client.ts"
 
 test("typed client shares a negotiated rich codec with the HTTP server", async () => {
   const rich = richWireCodec()
@@ -62,4 +62,58 @@ test("a codec given without a registry gets one derived, and reused across clien
     expect(response.ok).toBe(true)
     if (response.ok) expect(response.data).toEqual(value)
   }
+})
+
+test("rich response negotiation does not depend on a request body", async () => {
+  const rich = richWireCodec()
+  const registry = createTransportCodecRegistry([plainJsonCodec, rich])
+  const value = { at: new Date("2026-01-01T00:00:00.000Z") }
+  const app = server()
+    .use(transportCodecs(registry))
+    .get("/date", () => value)
+    .delete("/date", () => value)
+    .post("/date", () => value)
+    .post(
+      "/upload",
+      {
+        body: {
+          "~standard": {
+            version: 1 as const,
+            vendor: "test",
+            validate: (input: unknown) => ({ value: input }),
+          },
+        },
+      },
+      () => value,
+    )
+  const api = inProcessClient(app, { transport: { codec: rich, registry } })
+  for (const response of [await api.date.get(), await api.date.delete(), await api.date.post()]) {
+    expect(response.ok).toBe(true)
+    expect(response.data).toEqual(value)
+  }
+  const formApi = client<typeof app>("http://test", {
+    transport: { codec: rich, registry },
+    fetch: async (_url, init) => {
+      expect(init?.body).toBeInstanceOf(FormData)
+      expect(new Headers(init?.headers).get("accept")).toBe(rich.mediaType)
+      expect(new Headers(init?.headers).has("content-type")).toBe(false)
+      return new Response(rich.encode(value), { headers: { "content-type": rich.mediaType } })
+    },
+  })
+  const response = await formApi.upload.post(new FormData())
+  expect(response.ok).toBe(true)
+  expect(response.data).toEqual(value)
+})
+
+test("rich negotiation preserves an explicit caller Accept header", async () => {
+  const rich = richWireCodec()
+  const registry = createTransportCodecRegistry([plainJsonCodec, rich])
+  const value = { at: new Date("2026-01-01T00:00:00.000Z") }
+  const app = server()
+    .use(transportCodecs(registry))
+    .get("/date", () => value)
+  const api = inProcessClient(app, { transport: { codec: rich, registry } })
+  const response = await api.date.get({ headers: { Accept: "application/json" } })
+  expect(response.ok).toBe(true)
+  expect(response.data).toEqual({ at: value.at.toISOString() })
 })

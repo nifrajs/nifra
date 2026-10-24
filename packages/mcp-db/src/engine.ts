@@ -126,17 +126,38 @@ const SQLITE_BUSY_TIMEOUT_MS = 2_000
  * live statements open until they are garbage collected, and the process holds the file until then.
  */
 function finalizeOnClose(db: Database): Database {
-  const statements: { finalize(): void }[] = []
+  // Tracking must not keep statements alive for the lifetime of a pooled connection.
+  const statements = new Set<WeakRef<{ finalize(): void }>>()
+  const collected = new FinalizationRegistry<WeakRef<{ finalize(): void }>>((ref) => {
+    statements.delete(ref)
+  })
   const prepare = db.prepare.bind(db)
   const close = db.close.bind(db)
   Object.assign(db, {
     prepare: (...args: Parameters<Database["prepare"]>) => {
       const statement = prepare(...args)
-      statements.push(statement)
+      const ref = new WeakRef(statement)
+      const finalize = statement.finalize.bind(statement)
+      Object.assign(statement, {
+        finalize: () => {
+          try {
+            finalize()
+          } finally {
+            statements.delete(ref)
+            collected.unregister(ref)
+          }
+        },
+      })
+      statements.add(ref)
+      collected.register(statement, ref, ref)
       return statement
     },
     close: (throwOnError?: boolean) => {
-      for (const statement of statements.splice(0)) statement.finalize()
+      for (const ref of statements) {
+        ref.deref()?.finalize()
+        collected.unregister(ref)
+      }
+      statements.clear()
       close(throwOnError)
     },
   })
