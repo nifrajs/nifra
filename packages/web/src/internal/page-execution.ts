@@ -1736,6 +1736,7 @@ export function createPageRequestExecutor<Env = unknown>(
           ...stylesOf(route.id),
           ...appDocumentOptions,
           ...(locale === undefined ? {} : localeFor(locale)),
+          ...slotsFor(route.layoutIds, route.id),
         }
         if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
         const result = await renderPageResult(page)

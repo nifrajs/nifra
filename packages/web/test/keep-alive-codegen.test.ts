@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import ts from "typescript"
 import {
@@ -10,6 +10,7 @@ import {
   type RenderStreamOptions,
   type RouteModule,
 } from "../src/index.ts"
+import { partialPrerendering } from "../src/ppr.ts"
 
 const importer = (file: string) => async (): Promise<RouteModule> => ({ default: file })
 const FILES = ["_layout.tsx", "index.tsx", "list.tsx", "shop/_layout.tsx", "shop/[item].tsx"]
@@ -84,12 +85,12 @@ test("the server manifest carries which route files keep alive, lazy or eager", 
 
 const recordingAdapter = (
   mode: "string" | "stream",
-  options: { readonly documentParts?: boolean } = {},
+  options: { readonly documentParts?: boolean; readonly after?: string } = {},
 ): RenderAdapter & { readonly seen: (RenderStreamOptions | undefined)[] } => {
   const seen: (RenderStreamOptions | undefined)[] = []
   const html = (streamOptions: RenderStreamOptions | undefined) => {
     seen.push(streamOptions)
-    return `<p>slots ${JSON.stringify(streamOptions?.slots ?? null)}</p>`
+    return `<p>slots ${JSON.stringify(streamOptions?.slots ?? null)}</p>${options.after ?? ""}`
   }
   const adapter: RenderAdapter & { readonly seen: (RenderStreamOptions | undefined)[] } = {
     seen,
@@ -156,5 +157,50 @@ test("a keepAlive app's server render passes the wrapped depths, on every render
         expect(last?.parts === undefined).toBe(!documentParts)
       }
     }
+  }
+})
+
+const shellHalf: Pick<RouteModule, "shellLoader" | "shellOutput" | "boundaryLoaders"> = {
+  shellLoader: () => ({ title: "list" }),
+  shellOutput: t.object({ title: t.string() }),
+  boundaryLoaders: { note: { load: () => ({}), output: t.object({}) } },
+}
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a backend half has no `default` export, and the importer type names the merged module
+const shellBackend = shellHalf as RouteModule
+
+test("a kept page's partially prerendered shell carries the wrappers its document hydrates with", async () => {
+  // No build checked the shell here, which the app warns about.
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    for (const mode of ["string", "stream"] as const) {
+      const adapter = {
+        ...recordingAdapter(mode, { after: '<div data-nifra-hole="note" aria-busy="true"></div>' }),
+        renderFragment: () => "",
+      }
+      const manifest = buildManifest(
+        ["_layout.tsx", "list.tsx", "list.backend.ts"],
+        (file) => async () =>
+          file === "list.backend.ts"
+            ? shellBackend
+            : file === "list.tsx"
+              ? {
+                  default: () => null,
+                  boundaries: [{ name: "note", mode: "dynamic", render: () => "n" }],
+                }
+              : { default: () => null },
+        { keepAlive: ["list.tsx"] },
+      )
+      const app = createWebApp({
+        adapter,
+        manifest,
+        clientEntry: "/c.js",
+        experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+      })
+      const shell = await (await app.fetch(new Request("http://x/list"))).text()
+      expect(shell).toContain("nifra-ppr-req")
+      expect(shell).toContain("<p>slots [1]</p>")
+    }
+  } finally {
+    warn.mockRestore()
   }
 })
