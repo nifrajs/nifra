@@ -697,13 +697,19 @@ function resolvedSource(req: Request, url: string): RequestSource {
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
 const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
+// Clients repeat one Host on every request; comparing to the last valid one is ~7x cheaper than the regex.
+let lastValidHost = ""
+
 // A port past 65535, or an IPv6 literal no URL parser takes (`[1:2]`), is refused as Node refuses it:
 // no URL can be built on either, so resolving a dot segment against one threw out of `fetch`.
 const invalidHost = (host: string): boolean => {
+  if (host === lastValidHost) return false
   const authority = HOST_AUTHORITY.exec(host)
   if (authority === null) return true
   if (authority[1] !== undefined && Number(authority[1]) > 65_535) return true
-  return host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)
+  if (host.charCodeAt(0) === 91 /* [ */ && !URL.canParse(`http://${host}/`)) return true
+  lastValidHost = host
+  return false
 }
 
 /**
@@ -1327,15 +1333,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
   private readonly responseBodyOwners: Set<object>
+  // General lifecycles need no extra response bookkeeping when neither controls nor observers
+  // use it. Share the fused renderer after the lifecycle, including on body/write routes.
   private readonly finalizeResponse = (result: unknown, set: CtxSet, ctx?: RawContext): Response =>
-    toResponse(
-      result as HandlerResult,
-      set,
-      this.responseBodyTag,
-      this.staticResponseHeaders,
-      // Response hooks write next, and they run for this same request object.
-      ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
-    )
+    set === EMPTY_RESPONSE_CONTROLS && this.onResponseHooks.length === 0
+      ? fusedRespondNoSet(result, this.responseBodyTag, this.staticResponseHeaders, true)
+      : toResponse(
+          result as HandlerResult,
+          set,
+          this.responseBodyTag,
+          this.staticResponseHeaders,
+          // Response hooks write next, and they run for this same request object.
+          ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
+        )
   private readonly responseRequests: WeakMap<Request, Request>
   /** A request the WebSocket handshake check ran the onRequest hooks on and then passed to HTTP →
    * what the hooks returned, so `fetch` routes that instead of running the hooks a second time. */

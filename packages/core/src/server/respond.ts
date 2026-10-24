@@ -212,7 +212,7 @@ function denoResponseWithJsonBody(
  * it exactly as `withJsonContentType` did.
  */
 function jsonResponseWithOwnHeaders(
-  result: object,
+  result: unknown,
   status: number,
   headers: Record<string, string>,
 ): Response {
@@ -499,9 +499,16 @@ function tagged(
       )
 }
 
-/** Fused-lane respond when `c.set` is untouched. Bun 1.3's native `Response.json` now beats the
- * older hand-inlined stringify + Response construction on this lane while preserving the exact
- * body/content-type contract; keep the generic fallback for non-JSON values. */
+/** A plain 200 JSON response. On Bun and Deno the native `Response.json` beats a hand-inlined
+ * stringify + Response construction; on Node undici's is 18-26% slower than stringify into the
+ * prebuilt init. Both keep the exact body/content-type contract. */
+function plainJsonResponse(result: object): Response {
+  // `undefined` from stringify (a `toJSON` returning nothing) keeps `Response.json`'s TypeError.
+  const body = IS_BUN || IS_DENO ? undefined : (JSON.stringify(result) as string | undefined)
+  return body === undefined ? Response.json(result) : new Response(body, JSON_INIT_200)
+}
+
+/** Fused-lane respond when `c.set` is untouched; keep the generic fallback for non-JSON values. */
 export function fusedRespondNoSet(
   result: unknown,
   tagResponseBody: ResponseBodyTagOption = false,
@@ -527,7 +534,7 @@ export function fusedRespondNoSet(
     !(result instanceof Response) &&
     !isResponseResult(result)
   ) {
-    const response = Response.json(result)
+    const response = plainJsonResponse(result)
     return residentBodiesRecorded ? markResidentBody(response) : response
   }
   if (
@@ -579,7 +586,7 @@ export function fusedRespondNoSet(
     }
     return withBody(
       statics === undefined
-        ? Response.json(result)
+        ? plainJsonResponse(result)
         : Response.json(result, statics.responseJsonInit200()),
     )
   }
@@ -769,8 +776,9 @@ function renderValue(
     }
   }
   if (IS_DENO && headers !== undefined && !(headers instanceof Headers)) {
-    const body = JSON.stringify(result) as string | undefined
-    if (body !== undefined) return withBody(denoResponseWithJsonBody(body, status, headers))
+    // Deno's own `Response.json` then header writes measured ~10% under stringify, construction and
+    // the same writes plus a content-type one; a declared content-type still overrides the default.
+    return jsonResponseWithOwnHeaders(result, status, headers)
   }
   return withBody(Response.json(result, init))
 }
