@@ -52,7 +52,12 @@ export interface Entry<Frontmatter> {
   readonly slug: string
   /** Frontmatter, validated + typed by the collection's schema. */
   readonly frontmatter: Frontmatter
-  /** The body rendered to HTML (Markdown → HTML). */
+  /**
+   * The body rendered to HTML (Markdown → HTML), unsanitized: raw HTML and `javascript:` links in the
+   * Markdown pass through. Render it as-is only for content you author, with
+   * `<Content html={trustHtml(entry.html)} />`; run anything contributors or a CMS write through
+   * `sanitizeHtml(entry.html, yourSanitizer)` (both from `@nifrajs/web`).
+   */
   readonly html: string
   /** The raw Markdown body, with the frontmatter block stripped. */
   readonly body: string

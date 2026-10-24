@@ -1,7 +1,7 @@
 /**
  * `@nifrajs/web-preact/content` - render pre-rendered HTML (e.g. a `@nifrajs/content` collection entry's
  * `.html`) into the DOM via `dangerouslySetInnerHTML`. Pairs with content collections:
- * `<Content html={entry.html} />`.
+ * `<Content html={trustHtml(entry.html)} />`, with `trustHtml` from `@nifrajs/web`.
  *
  * Security: injects raw HTML, so `html` MUST be trusted (your own Markdown/content, rendered at
  * build/server time) - never pass user-supplied HTML without sanitizing it first.

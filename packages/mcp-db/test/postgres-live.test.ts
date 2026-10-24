@@ -229,7 +229,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     }
   })
 
-  test("every session starts read-only with the timeouts set", async () => {
+  test("every session starts read-only with the timeouts set and JIT off", async () => {
     const client = engineClient(ROLE.reader, 2_500)
     const connection = await client.reserve()
     try {
@@ -243,9 +243,14 @@ describe.skipIf(SKIP)(SUITE, () => {
     const inside = await inReadOnlyTransaction(client, 1_234, async (tx) => {
       const [readOnly] = records(await tx`SHOW transaction_read_only`)
       const [timeout] = records(await tx`SHOW statement_timeout`)
-      return { readOnly: readOnly?.transaction_read_only, timeout: timeout?.statement_timeout }
+      const [jit] = records(await tx`SHOW jit`)
+      return {
+        readOnly: readOnly?.transaction_read_only,
+        timeout: timeout?.statement_timeout,
+        jit: jit?.jit,
+      }
     })
-    expect(inside).toEqual({ readOnly: "on", timeout: "1234ms" })
+    expect(inside).toEqual({ readOnly: "on", timeout: "1234ms", jit: "off" })
   })
 
   test("the cursor accepts only SELECT and VALUES; a data-modifying WITH is refused by the server", async () => {
@@ -322,6 +327,8 @@ describe.skipIf(SKIP)(SUITE, () => {
       "SELECT pg_advisory_lock(42)",
       "SELECT pg_notify('nifra_live', 'x')",
       "SELECT query_to_xml('select * from secrets', true, false, '')",
+      "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', value) FROM secrets')",
+      "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, plainto_tsquery(value) FROM secrets')",
     ]
     for (const sql of ranForSuperuser) {
       expect({ sql, outcome: await serverOnly(su, sql) }).toEqual({ sql, outcome: { ran: true } })
@@ -471,6 +478,11 @@ describe.skipIf(SKIP)(SUITE, () => {
       "SELECT o.id FROM orders o JOIN users u ON u.password_hash = 'x'",
       "SELECT note FROM users UNION ALL SELECT password_hash FROM users",
       "SELECT id FROM users ORDER BY password_hash LIMIT 1",
+      // A table alias list renames columns in the plan, so it can hand password_hash another's name.
+      "SELECT c FROM users AS t(a, b, c)",
+      "SELECT id FROM users AS t(a, b, id)",
+      "SELECT t.* FROM users t(a, b, c)",
+      "SELECT 1 FROM users t(a, b, c) WHERE c LIKE 'h%'",
     ]) {
       expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
         sql,
@@ -491,6 +503,8 @@ describe.skipIf(SKIP)(SUITE, () => {
       "SELECT note, count(*) FROM users GROUP BY note",
       "SELECT o.id FROM orders o CROSS JOIN users u",
       "SELECT note FROM users WHERE note IS NOT NULL",
+      "SELECT s FROM orders AS o(i, s)",
+      "SELECT n FROM generate_series(1, 2) AS g(n) CROSS JOIN users u",
     ]) {
       expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
         sql,
@@ -500,6 +514,21 @@ describe.skipIf(SKIP)(SUITE, () => {
         sql,
         code: code(await explainPostgres(reader, sql, { ...masked, analyze: true })),
       }).toEqual({ sql, code: undefined })
+    }
+  })
+
+  test("text search that runs SQL from a string is refused before the server sees it", async () => {
+    const reader = engineClient(ROLE.reader)
+    const masked = { ...OPTIONS, redaction: { column: (name: string) => name === "password_hash" } }
+    for (const sql of [
+      "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', password_hash) FROM users')",
+      "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', value) FROM secrets')",
+      "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, plainto_tsquery(value) FROM secrets')",
+    ]) {
+      expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_FUNCTION_REFUSED",
+      })
     }
   })
 

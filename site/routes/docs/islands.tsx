@@ -417,7 +417,9 @@ export default function Islands() {
         (default), <code>idle</code>, <code>visible</code> (mount when it scrolls into view), or{" "}
         <code>media</code> with the query in <code>data-island-media</code>. A host with no matching
         enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
-        never a runtime error.
+        never a runtime error. The scheduling itself is <code>@nifrajs/island-trigger</code>'s{" "}
+        <code>scheduleTrigger</code>, which has no DOM or framework dependency, for a runtime of
+        your own.
       </p>
     </div>
   )

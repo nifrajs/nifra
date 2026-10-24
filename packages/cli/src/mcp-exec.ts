@@ -49,6 +49,7 @@ import {
 } from "./mcp-io.ts"
 import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpTool, McpToolContext } from "./mcp-protocol.ts"
+import { withToolMeta } from "./mcp-tool-meta.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 
 const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
@@ -746,7 +747,7 @@ export function projectTools(
       },
     },
   ]
-  return [...catalogTools, ...legacyTools]
+  return [...catalogTools, ...legacyTools].map(withToolMeta)
 }
 
 function childPath(name: "mcp-run" | "mcp-render" | "mcp-ws"): string {

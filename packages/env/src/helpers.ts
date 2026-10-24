@@ -20,6 +20,10 @@ interface Optional {
 }
 
 const isUnset = (raw: string | undefined): boolean => raw === undefined || raw === ""
+// A number's or port's surrounding space is not part of it, so space alone reads as unset.
+const isBlank = (raw: string | undefined): boolean => raw === undefined || raw.trim() === ""
+// Plain decimal only: `Number()` would also read hex (`0x10`), octal, binary and exponents.
+const DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/
 
 /** A required (or defaulted/optional) non-empty string. */
 export function string(opts: Base<string> & Optional = {}): StandardSchemaV1<string | undefined> {
@@ -33,16 +37,17 @@ export function string(opts: Base<string> & Optional = {}): StandardSchemaV1<str
   })
 }
 
-/** A finite number, coerced from its decimal string. */
+/** A finite number, coerced from its decimal string (`42`, `-3.5`; not `0x10` or `1e3`). */
 export function number(opts: Base<number> & Optional = {}): StandardSchemaV1<number | undefined> {
   return envSchema((raw) => {
-    if (isUnset(raw)) {
+    if (raw === undefined || isBlank(raw)) {
       if (opts.default !== undefined) return { value: opts.default }
       if (opts.optional) return { value: undefined }
       return issue("is required")
     }
-    const n = Number(raw)
-    if (!Number.isFinite(n)) return issue("must be a number")
+    const text = raw.trim()
+    const n = Number(text)
+    if (!DECIMAL.test(text) || !Number.isFinite(n)) return issue("must be a number")
     return { value: n }
   })
 }
@@ -50,11 +55,11 @@ export function number(opts: Base<number> & Optional = {}): StandardSchemaV1<num
 /** A TCP port: an integer in 1-65535. */
 export function port(opts: Base<number> = {}): StandardSchemaV1<number> {
   return envSchema((raw) => {
-    if (isUnset(raw)) {
+    if (raw === undefined || isBlank(raw)) {
       if (opts.default !== undefined) return { value: opts.default }
       return issue("is required")
     }
-    const n = Number(raw)
+    const n = /^\d+$/.test(raw.trim()) ? Number(raw) : Number.NaN
     if (!Number.isInteger(n) || n < 1 || n > 65535) {
       return issue("must be an integer port in 1-65535")
     }
@@ -65,13 +70,12 @@ export function port(opts: Base<number> = {}): StandardSchemaV1<number> {
 const TRUE = new Set(["true", "1", "yes", "on"])
 const FALSE = new Set(["false", "0", "no", "off", ""])
 
-/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive). */
+/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off` → false (case-insensitive). Set
+ * but empty is `default` when there is one, else false. */
 export function boolean(opts: Base<boolean> = {}): StandardSchemaV1<boolean> {
   return envSchema((raw) => {
-    if (raw === undefined) {
-      if (opts.default !== undefined) return { value: opts.default }
-      return issue("is required")
-    }
+    if (opts.default !== undefined && isBlank(raw)) return { value: opts.default }
+    if (raw === undefined) return issue("is required")
     const v = raw.trim().toLowerCase()
     if (TRUE.has(v)) return { value: true }
     if (FALSE.has(v)) return { value: false }

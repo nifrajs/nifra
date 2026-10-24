@@ -72,4 +72,24 @@ describe("conditionalResponse()", () => {
     await Promise.resolve()
     expect(cancelled).toBe(true)
   })
+
+  test("a body whose cancel fails still answers 304, and the failure is swallowed", async () => {
+    let attempted = false
+    const response = new Response(
+      new ReadableStream({
+        cancel() {
+          attempted = true
+          throw new Error("source already gone")
+        },
+      }),
+    )
+    const notModified = conditionalResponse(
+      new Request("http://x/resource", { headers: { "if-none-match": '"x,1"' } }),
+      response,
+      { etag: '"x,1"' },
+    )
+    expect(notModified.status).toBe(304)
+    await Promise.resolve()
+    expect(attempted).toBe(true)
+  })
 })

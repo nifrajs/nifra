@@ -4,9 +4,10 @@
  * this reads the body bounded (DoS guard, shared with `c.boundedBody`) and verifies before handing
  * back the raw text for the handler to parse with its own schema.
  *
- * Verification is **constant-time**: the provider's signature is fed to `crypto.subtle.verify`
- * (WebCrypto), which checks the HMAC without a byte-by-byte string compare - so a wrong signature
- * can't be discovered through timing. WebCrypto-only, so it runs on Bun / Node / Deno / workerd.
+ * Verification is **constant-time**: the expected HMAC is computed once per secret with
+ * `crypto.subtle.sign` (WebCrypto) and compared to each signature the header lists without an early
+ * exit - so a wrong signature can't be discovered through timing, and a header listing many
+ * signatures costs no extra HMAC over the body. WebCrypto-only, so it runs on Bun / Node / Deno / workerd.
  *
  * Presets cover Stripe (`t=…,v1=…` with a replay-window check) and GitHub (`sha256=…`); `generic`
  * takes an explicit header + encoding for any other provider.
@@ -75,7 +76,7 @@ const importHmacKey = (secret: string): Promise<CryptoKey> => {
     TEXT.encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["verify"],
+    ["sign"],
   )
 }
 
@@ -121,17 +122,26 @@ const decodeSignature = (
       ? fromBase64Url(value)
       : fromBase64(value)
 
-/** True iff `sig` is a valid HMAC-SHA256 of `payload` under any of `keys` (constant-time per check). */
-async function verifyAny(
-  keys: readonly CryptoKey[],
-  sig: Uint8Array<ArrayBuffer>,
-  payload: Uint8Array,
-): Promise<boolean> {
-  for (const key of keys) {
-    if (await crypto.subtle.verify("HMAC", key, sig, payload as Uint8Array<ArrayBuffer>))
-      return true
+/** The HMAC-SHA256 of `payload` under each of `keys`. */
+const expectedMacs = (keys: readonly CryptoKey[], payload: Uint8Array): Promise<Uint8Array[]> =>
+  Promise.all(
+    keys.map(
+      async (key) =>
+        new Uint8Array(await crypto.subtle.sign("HMAC", key, payload as Uint8Array<ArrayBuffer>)),
+    ),
+  )
+
+/** True iff `sig` equals one of `macs`. Every byte of a same-length MAC is visited; a MAC's length is
+ * fixed (32 bytes), so a length mismatch reveals nothing. */
+function matchesAny(macs: readonly Uint8Array[], sig: Uint8Array): boolean {
+  let matched = false
+  for (const mac of macs) {
+    if (mac.length !== sig.length) continue
+    let diff = 0
+    for (let i = 0; i < mac.length; i++) diff |= (mac[i] ?? 0) ^ (sig[i] ?? 0)
+    if (diff === 0) matched = true
   }
-  return false
+  return matched
 }
 
 // Parse a Stripe `Stripe-Signature` header: `t=<unix>,v1=<hex>[,v1=<hex>…]` (other schemes ignored).
@@ -207,14 +217,11 @@ export async function verifyWebhook(
   if (preset.timestamped) {
     const parsed = parseStripeHeader(headerValue)
     if (parsed === null) return { ok: false, reason: "malformed_signature" }
-    const signedPayload = TEXT.encode(`${parsed.t}.${payload}`)
+    const macs = await expectedMacs(keys, TEXT.encode(`${parsed.t}.${payload}`))
     let matched = false
     for (const v1 of parsed.v1) {
       const sig = decodeSignature(v1, encoding)
-      if (sig !== null && (await verifyAny(keys, sig, signedPayload))) {
-        matched = true
-        break
-      }
+      if (sig !== null && matchesAny(macs, sig)) matched = true
     }
     if (!matched) return { ok: false, reason: "invalid_signature" }
     // The signature covers `t`, so `t` is authentic once matched - now enforce the replay window.
@@ -230,6 +237,6 @@ export async function verifyWebhook(
     prefix !== "" && headerValue.startsWith(prefix) ? headerValue.slice(prefix.length) : headerValue
   const sig = decodeSignature(raw, encoding)
   if (sig === null) return { ok: false, reason: "malformed_signature" }
-  if (await verifyAny(keys, sig, read.bytes)) return { ok: true, payload }
+  if (matchesAny(await expectedMacs(keys, read.bytes), sig)) return { ok: true, payload }
   return { ok: false, reason: "invalid_signature" }
 }

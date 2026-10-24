@@ -1,4 +1,5 @@
 import { type ByteRange, type ByteRangeResult, parseByteRange } from "@nifrajs/core/range"
+import { ifNoneMatchIncludes } from "./_entity-tag.ts"
 
 // The parser lives in core because `@nifrajs/web`'s `public/` handler needs the identical answer for
 // files on disk, and web cannot depend on this package. Re-exported here so the middleware surface
@@ -48,16 +49,6 @@ function emptyResponse(status: number, headers: Headers): Response {
   return new Response(null, { status, headers })
 }
 
-function matchesIfNoneMatch(value: string, etag: string): boolean {
-  const normalized = etag.startsWith("W/") ? etag.slice(2) : etag
-  return value.split(",").some((candidate) => {
-    const item = candidate.trim()
-    if (item === "*") return true
-    const comparable = item.startsWith("W/") ? item.slice(2) : item
-    return comparable === normalized
-  })
-}
-
 function ifRangeMatches(value: string | null, options: RangeResponseOptions): boolean {
   if (value === null) return true
   const item = value.trim()
@@ -80,7 +71,7 @@ function shouldReturnNotModified(request: Request, options: RangeResponseOptions
   // representation has no ETag to compare. A non-matching tag must not be upgraded to a 304 by an
   // older If-Modified-Since value.
   if (ifNoneMatch !== null) {
-    return options.etag !== undefined && matchesIfNoneMatch(ifNoneMatch, options.etag)
+    return options.etag !== undefined && ifNoneMatchIncludes(ifNoneMatch, options.etag)
   }
   // If-Modified-Since remains a valid fallback when the request did not send If-None-Match.
   const lastModified = options.lastModified?.getTime()

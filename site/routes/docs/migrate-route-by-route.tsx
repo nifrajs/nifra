@@ -50,6 +50,11 @@ export default function MigrateRouteByRoute() {
         The platform object is forwarded as the second argument when the runtime supplies one.
       </p>
       <p>
+        An auth plugin used before the mount, such as <code>bearer()</code> or{" "}
+        <code>jwt()</code>, guards it like a route: a request it refuses never reaches the legacy
+        app. Mount before the plugin when the legacy app keeps its own auth.
+      </p>
+      <p>
         A mounted fetch handler carries HTTP only. A WebSocket upgrade under the mount reaches it as
         an ordinary request and never becomes a socket, so keep the legacy app&apos;s sockets on its own
         server until they move to <code>app.ws()</code> routes (see{" "}

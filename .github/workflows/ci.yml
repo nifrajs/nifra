@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [static, coverage, tests, cli-isolation, docs, site, packages, consumers, cold-start]
+        group: [static, coverage, tests, postgres, cli-isolation, docs, site, packages, consumers, cold-start]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -69,6 +69,24 @@ jobs:
       - name: Test suites outside the coverage run
         if: matrix.group == 'tests'
         run: bun run test:rest
+
+      # The live Postgres suites skip without a server. The runner image ships one with its service
+      # off; the password only guards a throwaway server bound to localhost.
+      - name: Start PostgreSQL
+        if: matrix.group == 'postgres'
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          # Without dblink the suite's dblink checks return early and pass.
+          test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
+
+      - name: Live Postgres suites (mcp-db and nifra db)
+        if: matrix.group == 'postgres'
+        run: bun run test:postgres
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
 
       - name: CLI fixture isolation (randomized test order)
         if: matrix.group == 'cli-isolation'

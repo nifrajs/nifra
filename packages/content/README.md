@@ -10,6 +10,21 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/content
 ```
 
+## Rendering an entry
+
+`entry.html` is `marked` output, unsanitized: raw HTML and `javascript:` links in the Markdown pass
+through. That is right for content you author. Mark it trusted for an adapter's `<Content>`:
+
+```tsx
+import { trustHtml } from "@nifrajs/web"
+import { Content } from "@nifrajs/web-react/content"
+
+<Content html={trustHtml(entry.html)} />
+```
+
+For a collection that contributors or a CMS write, pass `sanitizeHtml(entry.html, sanitizer)` with an
+allowlist sanitizer you choose instead.
+
 ## Docs
 
 - Reference: <https://nifra.dev/docs>

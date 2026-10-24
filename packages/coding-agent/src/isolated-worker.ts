@@ -17,8 +17,10 @@ if (
   !Number.isSafeInteger(maxMessageBytes) ||
   maxMessageBytes < 1024
 ) {
-  post({ type: "fatal", error: "isolated extension worker: invalid control configuration" })
-  process.exit(1)
+  await postAndExit({
+    type: "fatal",
+    error: "isolated extension worker: invalid control configuration",
+  })
 }
 
 const tools = new Map<string, ExtensionTool>()
@@ -108,12 +110,11 @@ try {
     "isolated extension worker failed to start",
     exposeErrorStacks,
   )
-  post({
+  await postAndExit({
     type: "fatal",
     error: details.message,
     ...(details.stack === undefined ? {} : { stack: details.stack }),
   })
-  process.exit(1)
 }
 
 async function handle(request: WorkerRequest): Promise<WorkerResult | undefined> {
@@ -174,4 +175,11 @@ function jsonResponse(message: WorkerResult): Response {
 
 function post(message: Record<string, unknown>): void {
   process.stdout.write(`${JSON.stringify(message)}\n`)
+}
+
+/** Post `message` and exit 1 once it is written: exiting straight after the write can drop the
+ * line, and the parent then sees only the exit code. Never settles, so nothing after it runs. */
+function postAndExit(message: Record<string, unknown>): Promise<never> {
+  process.stdout.write(`${JSON.stringify(message)}\n`, () => process.exit(1))
+  return new Promise<never>(() => {})
 }

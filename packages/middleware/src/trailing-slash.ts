@@ -77,7 +77,10 @@ export function trimTrailingSlash(options: TrailingSlashOptions = {}) {
       const path = new URL(req.url).pathname
       if (path === "/" || !path.endsWith("/")) return undefined
       if (options.ignore?.(path, req) === true) return undefined
-      return route(req, withPath(req, path.replace(/\/+$/, "") || "/"), mode, status)
+      // A charCode scan, not `/\/+$/`: the unanchored trailing-run replace backtracks quadratically.
+      let end = path.length
+      while (end > 0 && path.charCodeAt(end - 1) === 47) end--
+      return route(req, withPath(req, path.slice(0, end) || "/"), mode, status)
     }),
   )
 }

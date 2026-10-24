@@ -165,6 +165,15 @@ export default function TypesFirst() {
       </p>
       <CodeBlock code={MCP} lang="sh" />
 
+      <h2>In the editor</h2>
+      <p>
+        <code>@nifrajs/ts-plugin</code> is a TypeScript language-service plugin. Add{" "}
+        <code>{'{ "name": "@nifrajs/ts-plugin" }'}</code> to <code>compilerOptions.plugins</code> and
+        go-to-definition on a route path such as <code>"/orders"</code> opens the{" "}
+        <code>routes/</code> file that serves it. It also marks, as you type, an import the build
+        would refuse: backend code in a page, or a server package in browser code.
+      </p>
+
       <h2>Known limitations</h2>
       <ul>
         <li>

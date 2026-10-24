@@ -122,10 +122,12 @@ export class IsolatedExtensionWorker {
         stderr: "pipe",
       },
     )
-    void this.readOutput()
+    const output = this.readOutput()
     void this.readErrors()
-    // Any exit we did not ask for is a failure, a clean one included: nothing would answer.
-    void this.process.exited.then((status) => {
+    // Any exit we did not ask for is a failure, a clean one included: nothing would answer. The
+    // worker writes why it stopped just before exiting, and the exit can be seen first, so an exit
+    // fails the start only once that output is read.
+    void Promise.all([this.process.exited, output]).then(([status]) => {
       if (!this.closed) this.fail(new Error(`isolated extension worker exited with code ${status}`))
     })
     const deadline = setTimeout(() => {

@@ -1,7 +1,7 @@
 /**
  * `@nifrajs/web-solid/content` - render pre-rendered HTML (e.g. a `@nifrajs/content` collection entry's
  * `.html`) into the DOM. Solid sets `innerHTML` reactively on a `<Dynamic>` element. Pairs with content
- * collections: `<Content html={entry.html} />`. No JSX (`createComponent`/`Dynamic`), so it builds with
+ * collections: `<Content html={trustHtml(entry.html)} />`, with `trustHtml` from `@nifrajs/web`. No JSX (`createComponent`/`Dynamic`), so it builds with
  * plain `tsc`.
  *
  * Security: injects raw HTML, so `html` MUST be trusted (your own Markdown/content, rendered at

@@ -1,5 +1,6 @@
 import { pathnameOf } from "@nifrajs/core/server"
 import { isDraftEnabled } from "../draft.ts"
+import { SWAP_HEADER } from "../render-seam.ts"
 import { DATA_HEADER } from "../router.ts"
 
 /**
@@ -21,10 +22,11 @@ const REPLAYED = [
   "content-language",
   "content-security-policy",
   "content-security-policy-report-only",
+  "vary",
 ]
-// Vary values a file still answers correctly: compression is negotiated by the host, and a data request
-// never reaches the file.
-const STATIC_VARY = new Set(["accept-encoding", DATA_HEADER])
+// Vary values a file still answers correctly: compression is negotiated by the host, and a data or
+// slot-swap request never reaches the file.
+const STATIC_VARY = new Set(["accept-encoding", DATA_HEADER, SWAP_HEADER])
 
 /**
  * The headers a self-hosted server replays with a prerendered page, or `undefined` when its build-time
@@ -84,7 +86,7 @@ export function servablePrerenderedPages(
 /**
  * Wrap a page route's GET handler so a plain document request for a prerendered path is answered from
  * its file. Anything a file cannot answer the way a render would renders on demand: a query string, a
- * navigation data or component request, a draft-mode visitor, or a file the reader cannot return.
+ * navigation data, component or slot-swap request, a draft-mode visitor, or a file the reader cannot return.
  */
 export function servePrerenderedPages(
   prerendered: PrerenderedPages,
@@ -102,6 +104,7 @@ export function servePrerenderedPages(
       req.url.includes("?") ||
       req.headers.has(DATA_HEADER) ||
       req.headers.has("x-nifra-component") ||
+      req.headers.has(SWAP_HEADER) ||
       (draftSecret !== undefined && (await isDraftEnabled(req, draftSecret)))
     ) {
       return render(c)

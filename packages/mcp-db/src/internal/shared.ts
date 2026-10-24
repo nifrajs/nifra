@@ -110,13 +110,83 @@ export function isDbRefusal(value: unknown): value is DbRefusal {
 // Statement gates
 // ---------------------------------------------------------------------------------------------------
 
-const stripSqlNoise = (sql: string): string =>
-  sql
-    // Strings first so comment markers inside literals don't count.
-    .replace(/'(?:[^']|'')*'/g, "''")
-    .replace(/"(?:[^"]|"")*"/g, '""')
-    .replace(/--[^\n]*/g, " ")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
+// SQLite's four quotings, by opening delimiter: a 'literal' and the "x", `x` and [x] identifiers. Only
+// the bracket form has no doubled-delimiter escape.
+const QUOTE_CLOSE = new Map([
+  ["'", "'"],
+  ['"', '"'],
+  ["`", "`"],
+  ["[", "]"],
+])
+
+/** The index just past the quoted run opening at `start`, or the text's length when it never closes. */
+function quotedEnd(sql: string, start: number, open: string, close: string): number {
+  for (let i = start + 1; i < sql.length; i++) {
+    if (sql[i] !== close) continue
+    if (open !== "[" && sql[i + 1] === close) i++
+    else return i + 1
+  }
+  return sql.length
+}
+
+/** The index just past a comment opening at `start`, or `undefined` when none opens there. An open
+ * block comment runs to the end of the text, as SQLite reads it. */
+function commentEnd(sql: string, start: number): number | undefined {
+  if (sql[start] === "-" && sql[start + 1] === "-") {
+    const end = sql.indexOf("\n", start + 2)
+    return end === -1 ? sql.length : end + 1
+  }
+  if (sql[start] === "/" && sql[start + 1] === "*") {
+    const end = sql.indexOf("*/", start + 2)
+    return end === -1 ? sql.length : end + 2
+  }
+  return undefined
+}
+
+/** `sql` with each literal and quoted identifier emptied and each comment turned into a space. */
+function stripSqlNoise(sql: string): string {
+  let out = ""
+  let from = 0
+  let i = 0
+  while (i < sql.length) {
+    const char = sql.charAt(i)
+    const comment = commentEnd(sql, i)
+    const close = QUOTE_CLOSE.get(char)
+    if (comment !== undefined) {
+      out += `${sql.slice(from, i)} `
+      i = from = comment
+    } else if (close !== undefined) {
+      out += `${sql.slice(from, i)}${char}${close}`
+      i = from = quotedEnd(sql, i, char, close)
+    } else {
+      i++
+    }
+  }
+  return out + sql.slice(from)
+}
+
+/**
+ * Where the statement in `sql` ends: `end` is just past its last character of code (a trailing comment
+ * is not code, so the bounded wrapper's closing parenthesis can never land in one), and `terminator` is
+ * the index of its first `;` outside a literal, quoted identifier or comment, or -1.
+ */
+function statementEnd(sql: string): { readonly end: number; readonly terminator: number } {
+  let end = 0
+  let i = 0
+  while (i < sql.length) {
+    const char = sql.charAt(i)
+    if (char === ";") return { end, terminator: i }
+    const comment = commentEnd(sql, i)
+    if (comment !== undefined) {
+      i = comment
+      continue
+    }
+    const close = QUOTE_CLOSE.get(char)
+    i = close === undefined ? i + 1 : quotedEnd(sql, i, char, close)
+    if (char !== " " && char !== "\t" && char !== "\n" && char !== "\r" && char !== "\f") end = i
+  }
+  return { end, terminator: -1 }
+}
 
 // SQLite's bare-identifier alphabet. Non-ASCII is included because SQLite treats any byte >= 0x80 as
 // an identifier character; leaving it out would end a word early and split one table name into two.
@@ -167,7 +237,7 @@ function tokenizeSql(sql: string): SqlToken[] {
     tokens.push({ kind: "word", value, bare: false })
   }
   while (i < sql.length) {
-    const char = sql[i] as string
+    const char = sql.charAt(i)
     if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
       i++
     } else if (char === "-" && sql[i + 1] === "-") {
@@ -303,7 +373,6 @@ function relationNames(sql: string): string[] {
   return [...new Set(names)]
 }
 
-/** Reject multi-statement input: allow one terminator only when it is the final character. */
 /**
  * Names a statement defines as CTEs, column lists included (`WITH RECURSIVE c(x) AS (...)`), which
  * {@link gateSqliteStatement}'s relation scan does not see past. Only for callers whose own check of
@@ -334,50 +403,10 @@ export function sqliteCteNames(sql: string): string[] {
   return [...names]
 }
 
+/** Reject multi-statement input: allow one terminator only when it is the final character. */
 const isSingleStatement = (sql: string): boolean => {
-  let quote: "'" | '"' | null = null
-  let lineComment = false
-  let blockComment = false
-  for (let i = 0; i < sql.length; i++) {
-    const char = sql[i]
-    const next = sql[i + 1]
-    if (lineComment) {
-      if (char === "\n") lineComment = false
-      continue
-    }
-    if (blockComment) {
-      if (char === "*" && next === "/") {
-        blockComment = false
-        i++
-      }
-      continue
-    }
-    if (quote !== null) {
-      if (char === quote) {
-        if (next === quote) i++
-        else quote = null
-      }
-      continue
-    }
-    if (char === "'" || char === '"') {
-      quote = char
-      continue
-    }
-    if (char === "-" && next === "-") {
-      lineComment = true
-      i++
-      continue
-    }
-    if (char === "/" && next === "*") {
-      blockComment = true
-      i++
-      continue
-    }
-    if (char === ";") {
-      return sql.slice(i + 1).trim() === ""
-    }
-  }
-  return true
+  const { terminator } = statementEnd(sql)
+  return terminator === -1 || sql.slice(terminator + 1).trim() === ""
 }
 
 const isReadStatement = (sql: string): boolean => {
@@ -385,58 +414,8 @@ const isReadStatement = (sql: string): boolean => {
   return head.startsWith("select") || head.startsWith("with")
 }
 
-/** Remove one trailing statement terminator (and anything after it) while preserving literals and
- * identifiers. Wrapping the query in a bounded subquery must not let a trailing comment consume the
- * wrapper's closing parenthesis. */
-function executableSql(sql: string): string {
-  let quote: "'" | '"' | null = null
-  let lineComment = false
-  let lineCommentStart = -1
-  let blockComment = false
-  for (let i = 0; i < sql.length; i++) {
-    const char = sql[i]
-    const next = sql[i + 1]
-    if (lineComment) {
-      if (char === "\n") {
-        lineComment = false
-        lineCommentStart = -1
-      }
-      continue
-    }
-    if (blockComment) {
-      if (char === "*" && next === "/") {
-        blockComment = false
-        i++
-      }
-      continue
-    }
-    if (quote !== null) {
-      if (char === quote) {
-        if (next === quote) i++
-        else quote = null
-      }
-      continue
-    }
-    if (char === "'" || char === '"') {
-      quote = char
-      continue
-    }
-    if (char === "-" && next === "-") {
-      lineComment = true
-      lineCommentStart = i
-      i++
-      continue
-    }
-    if (char === "/" && next === "*") {
-      blockComment = true
-      i++
-      continue
-    }
-    if (char === ";") return sql.slice(0, i).trim()
-  }
-  if (lineComment && lineCommentStart >= 0) return sql.slice(0, lineCommentStart).trim()
-  return sql.trim()
-}
+/** The statement without its terminator or a trailing comment, literals and identifiers intact. */
+const executableSql = (sql: string): string => sql.slice(0, statementEnd(sql).end)
 
 /** The outcome of {@link gateSqliteStatement}. A refusal's `text` is the message `run_query` returns. */
 export type SqliteGate =
@@ -451,8 +430,8 @@ export type SqliteGate =
 /**
  * Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every
  * relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready
- * to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an
- * alias as the scan target (`users AS habits` plans as `SCAN habits`).
+ * to wrap. The compiled program ({@link unexposedProgramRelation}) remains the authority on the
+ * tables a statement reads; this check refuses a named relation before SQLite compiles anything.
  */
 export function gateSqliteStatement(
   input: string,
@@ -486,7 +465,9 @@ export function gateSqliteStatement(
 
 /**
  * The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the
- * plan spells it, or `undefined` when every scanned relation is exposed.
+ * plan spells it, or `undefined` when every scanned relation is exposed. The plan names a scan by its
+ * alias (`FROM habits h` plans as `SCAN h`, `users AS habits` as `SCAN habits`), so it cannot decide
+ * on its own which tables a statement reads: the compiled program names them by root page.
  */
 export function unexposedPlanRelation(
   planRows: readonly { readonly detail?: unknown }[],
