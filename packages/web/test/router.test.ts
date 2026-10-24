@@ -1,4 +1,5 @@
 import { describe, expect, setSystemTime, spyOn, test } from "bun:test"
+import { identityChanged } from "../src/identity.ts"
 import {
   createClientRouter,
   createMatcher,
@@ -948,6 +949,131 @@ describe("createClientRouter", () => {
     } finally {
       setSystemTime()
     }
+  })
+
+  describe("a warmed prefetch never outlives a mutation or the visitor it was loaded for", () => {
+    // `whoami` stands for the session cookie: the stubbed action below changes it.
+    const routerFor = (state: { whoami: string; version: number }) =>
+      createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => ({ id: m.params.id, ...state }),
+      })
+    const withAction = async (
+      act: () => Promise<unknown>,
+      onPost: () => void,
+      revalidate?: string,
+    ): Promise<void> => {
+      const realFetch = globalThis.fetch
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts actions through it here.
+      globalThis.fetch = (async () => {
+        onPost()
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            "content-type": "application/json",
+            ...(revalidate === undefined ? {} : { "x-nifra-revalidate": revalidate }),
+          },
+        })
+      }) as typeof fetch
+      try {
+        await act()
+      } finally {
+        globalThis.fetch = realFetch
+      }
+    }
+
+    test("a page action, and a fetcher action, drop every warmed page", async () => {
+      const state = { whoami: "alice", version: 0 }
+      const r = routerFor(state)
+      await r.prefetch("/users/7")
+      await withAction(
+        () => r.submit("/login", new URLSearchParams()),
+        () => {
+          state.whoami = "bob"
+        },
+      )
+      await r.navigate("/users/7")
+      expect(r.snapshot().data).toEqual({ id: "7", whoami: "bob", version: 0 })
+
+      await r.prefetch("/users/8")
+      await withAction(
+        () => r.fetcher("cart").submit("/cart", new URLSearchParams()),
+        () => {
+          state.version = 1
+        },
+      )
+      await r.navigate("/users/8")
+      expect(r.snapshot().data).toEqual({ id: "8", whoami: "bob", version: 1 })
+    })
+
+    test("an action's X-Nifra-Revalidate drops the warmed copy of each changed path", async () => {
+      const state = { whoami: "alice", version: 0 }
+      const r = routerFor(state)
+      await r.prefetch("/users/7")
+      await withAction(
+        () => r.submit("/", new URLSearchParams(), { revalidate: false }),
+        () => {
+          state.version = 1
+        },
+        "/users/7",
+      )
+      await r.navigate("/users/7")
+      expect(r.snapshot().data).toEqual({ id: "7", whoami: "alice", version: 1 })
+    })
+
+    test("a prefetch still in flight when an action lands is not kept", async () => {
+      const state = { whoami: "alice", version: 0 }
+      let release = (): void => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let fetches = 0
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          fetches++
+          const seen = { id: m.params.id, ...state }
+          if (fetches === 1) await held
+          return seen
+        },
+      })
+      const warming = r.prefetch("/users/7")
+      await withAction(
+        () => r.submit("/login", new URLSearchParams()),
+        () => {
+          state.whoami = "bob"
+        },
+      )
+      release()
+      await warming
+      await r.navigate("/users/7")
+      expect(r.snapshot().data).toEqual({ id: "7", whoami: "bob", version: 0 })
+    })
+
+    test("identityChanged() and a changed identity epoch drop warmed pages", async () => {
+      const state = { whoami: "alice", version: 0 }
+      const r = routerFor(state)
+      await r.prefetch("/users/7")
+      state.whoami = "bob"
+      identityChanged()
+      await r.navigate("/users/7")
+      expect(r.snapshot().data).toEqual({ id: "7", whoami: "bob", version: 0 })
+
+      const described = Object.getOwnPropertyDescriptor(globalThis, "document")
+      const cookies = { cookie: "nifra-epoch=one" }
+      Object.defineProperty(globalThis, "document", { value: cookies, configurable: true })
+      try {
+        await r.prefetch("/users/8")
+        state.whoami = "carol"
+        cookies.cookie = "nifra-epoch=two"
+        await r.navigate("/users/8")
+        expect(r.snapshot().data).toEqual({ id: "8", whoami: "carol", version: 0 })
+      } finally {
+        if (described === undefined) Reflect.deleteProperty(globalThis, "document")
+        else Object.defineProperty(globalThis, "document", described)
+      }
+    })
   })
 
   test("submit posts the action in data mode, then revalidates the active loader", async () => {

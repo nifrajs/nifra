@@ -9,6 +9,7 @@ import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryState, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
+import { epochOf, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 import { appUrl, requestPattern } from "./internal/route-path.ts"
 import { shareData } from "./internal/share-data.ts"
@@ -892,12 +893,28 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // fresh: a link warmed as it scrolled into view can be clicked minutes later.
   const MAX_PREFETCH = 10
   const PREFETCH_MAX_AGE_MS = 30_000
-  const prefetched = new Map<string, readonly [LoadedRouteData, number]>()
+  // path -> [data, when it arrived, the identity epoch it was loaded under]
+  const prefetched = new Map<string, readonly [LoadedRouteData, number, string]>()
   const inflight = new Set<string>()
+  const readEpoch = (): string => (typeof document === "undefined" ? "" : epochOf(document.cookie))
   const freshPrefetch = (path: string): LoadedRouteData | undefined => {
     const held = prefetched.get(path)
-    return held !== undefined && Date.now() - held[1] < PREFETCH_MAX_AGE_MS ? held[0] : undefined
+    return held !== undefined &&
+      Date.now() - held[1] < PREFETCH_MAX_AGE_MS &&
+      held[2] === readEpoch()
+      ? held[0]
+      : undefined
   }
+  // Warmed data was loaded before a mutation or for the previous visitor, so either one drops all of
+  // it, and the generation keeps a prefetch still in flight from storing what it read.
+  let prefetchGeneration = 0
+  const dropPrefetched = (): void => {
+    prefetchGeneration++
+    prefetched.clear()
+  }
+  onIdentityChange(dropPrefetched)
+  if (typeof BroadcastChannel !== "undefined")
+    new BroadcastChannel(IDENTITY_CHANNEL).addEventListener("message", dropPrefetched)
   // Keyed data cache (path → latest loader data + freshness). Written on every published data
   // (navigate/submit), read by `invalidate` (+ targeted revalidation and fetchers in later F16
   // increments). Bounded - evict the oldest-inserted past the cap (route data is small; this just
@@ -935,6 +952,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // `X-Nifra-Revalidate` handling in `submit`.
   const markStale = (paths: readonly string[]): void => {
     for (const p of paths) {
+      prefetched.delete(p)
       const entry = cache.get(p)
       if (entry !== undefined) {
         cache.set(p, {
@@ -1264,6 +1282,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             body,
             headers: { [DATA_HEADER]: "1" },
           })
+          dropPrefetched()
           if (!res.ok)
             throw new Error(`[nifra/web] fetcher action failed (${res.status}): ${action}`)
           const actionData = res.status === 204 ? undefined : await readResponseData(res, ac.signal)
@@ -1445,6 +1464,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         })
         // Whatever the status, the server took the POST: the action may have run before it failed.
         posted = true
+        dropPrefetched()
         if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
         if (redirectTo !== null) {
@@ -1556,8 +1576,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       // lazily on next access. A warmed prefetch of a target is dropped: it would show the old data.
       const targets = paths ?? [...cache.keys()]
       markStale(targets)
-      if (paths === undefined) prefetched.clear()
-      else for (const path of paths) prefetched.delete(path)
+      if (paths === undefined) dropPrefetched()
       // Refresh mounted readers now: the active route (when in scope - an explicit list including it,
       // or an invalidate-all) + any fetcher showing a targeted path. The active refetch rejects on
       // failure (the caller asked to refresh); fetcher refreshes are best-effort (swallowed).
@@ -1571,6 +1590,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       const matched = match(path)
       if (matched === null) return
       inflight.add(path)
+      const started = prefetchGeneration
       try {
         // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
         // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
@@ -1585,8 +1605,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         // A prefetched hole is an empty host nothing fills; the navigation fetches it, cancellably.
         const holes = Object.values(loaded.boundaries ?? {}).some((state) => state.ppr === true)
-        if (loaded.serverComponents === undefined && !holes)
-          prefetched.set(path, [loaded, Date.now()])
+        if (loaded.serverComponents === undefined && !holes && started === prefetchGeneration)
+          prefetched.set(path, [loaded, Date.now(), readEpoch()])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {
