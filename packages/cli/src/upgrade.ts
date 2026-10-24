@@ -88,6 +88,12 @@ export interface UpgradeOptions {
   readonly hooks?: boolean
   /** Proceed although a linked repository loads its own nifra at another version. Default false. */
   readonly allowLinkedSkew?: boolean
+  /**
+   * With `--write`, drop the stale `file:` entries from bun.lock. Default false: the next install then
+   * re-reads each linked package.json as it is on disk, uncommitted edits included, and can re-resolve
+   * packages that have nothing to do with the upgrade.
+   */
+  readonly pruneLinkLocks?: boolean
 }
 
 export interface PinChange {
@@ -155,7 +161,8 @@ export interface UpgradePlan {
   /** `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json
    * (as this upgrade leaves it) no longer declares. Bun never refreshes them on its own. */
   readonly linkLocks: readonly StaleLinkLock[]
-  /** Whether `--write` dropped {@link linkLocks} from bun.lock, so `bun install` re-reads them. */
+  /** Whether `--write --prune-link-locks` dropped {@link linkLocks} from bun.lock, so `bun install`
+   * re-reads them. */
   readonly lockPruned: boolean
   readonly notes: readonly string[]
   /** Releases on the way up that announce no behaviour change for the packages this project loads. */
@@ -1168,6 +1175,7 @@ export function computeUpgrade(
   allowDowngrade = false,
   exact = false,
   above: readonly AncestorPinSite[] = [],
+  pruneLocks = false,
 ): UpgradePlan {
   const pins: PinChange[] = []
   const agentPins: AgentPinChange[] = []
@@ -1198,7 +1206,7 @@ export function computeUpgrade(
   // Read against the manifests as this upgrade leaves them, so a dry run lists what --write drops.
   const linkLocks = plainFileAt(cwd, BUN_LOCK) ? staleLinkLocks(resolve(cwd), manifests) : []
   let lockPruned = false
-  if (write && linkLocks.length > 0) {
+  if (write && pruneLocks && linkLocks.length > 0) {
     const lockPath = join(cwd, BUN_LOCK)
     const pruned = pruneLinkLocks(
       readFileSync(lockPath, "utf8"),
@@ -1373,9 +1381,7 @@ function renderPlan(
     lines.push(
       plan.lockPruned
         ? `Dropped ${plan.linkLocks.length} file: package(s) from bun.lock, whose recorded dependencies Bun never refreshes; \`bun install\` reads each linked package.json again:`
-        : write
-          ? `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; run \`${linkLockUpdate(plan.linkLocks)}\`:`
-          : `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; --write drops them so \`bun install\` reads each linked package.json again:`,
+        : `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes. ${write ? "Left as it is" : "--write leaves it as it is"}; run \`${linkLockUpdate(plan.linkLocks)}\`, or add --prune-link-locks to drop them:`,
     )
     for (const entry of plan.linkLocks)
       lines.push(
@@ -1385,6 +1391,9 @@ function renderPlan(
       lines.push(
         "  Run `bun install` before committing bun.lock: until it records these packages again, `bun install --frozen-lockfile` fails.",
       )
+    lines.push(
+      "  Either way Bun reads each linked package.json as it is on disk now, uncommitted edits included, and may re-resolve other entries: review the bun.lock diff before committing it.",
+    )
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)
@@ -1615,6 +1624,28 @@ function newerCliCommand(version: string, options: UpgradeOptions): string {
 }
 
 /** CLI entry. Returns false (→ non-zero exit) on an unknown version, no project, or a failed verify. */
+/** The contracts.lock.json routes that send a body but whose request side guards nothing. A release
+ * that reads a body schema the installed one could not has `nifra check` report each as newly
+ * covered. Read routes and response sides are left out: most declare no schema there. */
+async function uncoveredContracts(cwd: string): Promise<string[]> {
+  const { blindLockEntries, DEFAULT_CONTRACTS_LOCK, parseContractsLock } = await import(
+    "./contracts.ts"
+  )
+  try {
+    const text = readFileSync(join(cwd, DEFAULT_CONTRACTS_LOCK), "utf8")
+    return (await blindLockEntries(parseContractsLock(JSON.parse(text))))
+      .filter(
+        (entry) => entry.sides.includes("request") && !/^(?:GET|HEAD|OPTIONS) /.test(entry.route),
+      )
+      .map((entry) => entry.route)
+  } catch {
+    return []
+  }
+}
+
+const uncoveredContractsNote = (routes: readonly string[]): string =>
+  `note: contracts.lock.json records no request schema for ${routes.slice(0, 3).join(", ")}${routes.length > 3 ? ` and ${routes.length - 3} more` : ""}. Where this release reads a schema the installed one could not, \`nifra check\` reports it as newly covered: review it, then run \`nifra contracts snapshot\`.`
+
 export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<boolean> {
   const cliVersion = options.cliVersion ?? listRecipeVersions().at(-1) ?? "0.0.0"
   const targets = upgradeTargets(cliVersion)
@@ -1685,6 +1716,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
   const above = (await ancestorPins(cwd)).owned
   const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact, above)
+  const pruneLocks = options.pruneLinkLocks === true
   if (preview.downgrades.length > 0) {
     if (options.json) {
       console.log(
@@ -1718,7 +1750,9 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
 
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
-  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
+  const plan = write
+    ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above, pruneLocks)
+    : preview
   const pending = write ? pendingInstall(cwd, plan) : undefined
   const hooks =
     before === undefined ? undefined : await hookScopeAcross(cwd, before, pending === undefined)
@@ -1726,9 +1760,11 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
   // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
   const verify = write && options.verify !== false && pending === undefined
+  const uncovered = await uncoveredContracts(cwd)
   if (options.json) {
     // The check result rides inside the one JSON document; its human report would break the stream.
     const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
+    if (uncovered.length > 0) report.contractsUncovered = uncovered
     if (hooks !== undefined) report.hooks = hooks
     if (pending !== undefined) report.install = pending
     let ok = true
@@ -1743,6 +1779,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     return ok
   }
   console.log(renderPlan(plan, write, from, recipe.steps))
+  if (uncovered.length > 0) console.log(uncoveredContractsNote(uncovered))
   if (plan.linkedSkew.length > 0)
     console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
   if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)

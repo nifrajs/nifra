@@ -54,3 +54,41 @@ test("an app without keepAlive routes gets no note", async () => {
   const root = app({ "@nifrajs/web": "5.0.0" }, {})
   expect((await collectDoctorResult(root)).keepAliveIdentity).toBeUndefined()
 })
+
+test("a session cookie renamed outright under a known auth integration is noted, a cookiePrefix is not", async () => {
+  const renamed = app(
+    { "@nifrajs/web": "5.0.0", "better-auth": "1.0.0" },
+    {
+      "routes/list.tsx": KEPT,
+      "lib/auth.ts": 'betterAuth({ advanced: { cookies: { session_token: { name: "sid" } } } })\n',
+    },
+  )
+  const result = await collectDoctorResult(renamed)
+  expect(result.ok).toBe(true)
+  expect(result.keepAliveIdentity).toEqual({
+    routes: ["routes/list.tsx"],
+    renamedIn: "lib/auth.ts",
+  })
+  const report = doctorReport(result).join("\n")
+  expect(report).toContain("lib/auth.ts renames the session cookie")
+  expect(report).toContain("exported from backend/framework.ts")
+
+  const prefixed = app(
+    { "@nifrajs/web": "5.0.0", "better-auth": "1.0.0" },
+    {
+      "routes/list.tsx": KEPT,
+      "lib/auth.ts": 'betterAuth({ advanced: { cookiePrefix: "orbit" } })\n',
+    },
+  )
+  expect((await collectDoctorResult(prefixed)).keepAliveIdentity).toBeUndefined()
+
+  const named = app(
+    { "@nifrajs/web": "5.0.0", "@auth/core": "0.40.0" },
+    {
+      "routes/list.tsx": KEPT,
+      "lib/auth.ts": 'Auth({ cookies: { sessionToken: { name: "sid" } } })\n',
+      "backend/framework.ts": 'export const keepAlive = { identityCookies: ["sid"] }\n',
+    },
+  )
+  expect((await collectDoctorResult(named)).keepAliveIdentity).toBeUndefined()
+})

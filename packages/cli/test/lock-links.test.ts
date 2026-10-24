@@ -286,14 +286,18 @@ describe("doctor, check, and upgrade", () => {
     ])
   })
 
-  test("a dry run lists the entries the upgrade leaves stale; --write drops them", () => {
+  test("a dry run lists the stale entries; --write leaves them, --prune-link-locks drops them", () => {
     const root = linkedApp()
     const dry = computeUpgrade(root, recipe, false)
     expect(dry.linkLocks.map((entry) => entry.package)).toEqual(["linked-kit"])
     expect(dry.lockPruned).toBe(false)
     expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(LOCK)
 
-    const written = computeUpgrade(root, recipe, true)
+    const kept = computeUpgrade(root, recipe, true)
+    expect(kept.lockPruned).toBe(false)
+    expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(LOCK)
+
+    const written = computeUpgrade(root, recipe, true, false, false, [], true)
     expect(written.lockPruned).toBe(true)
     const lock = Object(parseJsonc(readFileSync(join(root, "bun.lock"), "utf8")))
     expect(Object.keys(lock.packages)).toEqual([
@@ -311,26 +315,35 @@ describe("doctor, check, and upgrade", () => {
       '"linked-kit": [\n      "linked-kit@file:kit", {',
     )
     writeAppFile(root, "bun.lock", spread)
-    const plan = computeUpgrade(root, recipe, true)
+    const plan = computeUpgrade(root, recipe, true, false, false, [], true)
     expect(plan.lockPruned).toBe(false)
     expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(spread)
     expect(linkLockUpdate(plan.linkLocks)).toBe("bun update linked-kit")
   })
 })
 
-test("the upgrade report names what a dry run would drop and what --write dropped", async () => {
+test("the upgrade report names what it leaves, and what --prune-link-locks dropped", async () => {
   const root = linkedApp()
   const lines: string[] = []
   const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+  const options = { version: "5.0.0", cliVersion: "5.0.0", verify: false }
   try {
-    await runUpgrade(root, { version: "5.0.0", cliVersion: "5.0.0", verify: false })
-    await runUpgrade(root, { version: "5.0.0", cliVersion: "5.0.0", write: true, verify: false })
+    await runUpgrade(root, options)
+    await runUpgrade(root, { ...options, write: true })
+    expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(LOCK)
+    await runUpgrade(root, { ...options, write: true, pruneLinkLocks: true })
   } finally {
     log.mockRestore()
   }
   const out = lines.join("\n")
-  expect(out).toContain("--write drops them so `bun install` reads each linked package.json again:")
+  expect(out).toContain(
+    "--write leaves it as it is; run `bun update linked-kit`, or add --prune-link-locks to drop them:",
+  )
+  expect(out).toContain(
+    "Left as it is; run `bun update linked-kit`, or add --prune-link-locks to drop them:",
+  )
   expect(out).toContain("  linked-kit (file:kit)  @nifrajs/core 4.0.2 -> 5.0.0")
   expect(out).toContain("Dropped 1 file: package(s) from bun.lock")
   expect(out).toContain("`bun install --frozen-lockfile` fails.")
+  expect(out).toContain("uncommitted edits included, and may re-resolve other entries")
 })

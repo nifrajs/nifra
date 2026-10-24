@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { type StandardSchemaV1, server } from "@nifrajs/core"
+import { buildContractsLock } from "../src/contracts.ts"
 import { ancestorPins } from "../src/init-agents.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
@@ -1265,4 +1267,29 @@ describe("a linked repository that loads its own nifra", () => {
     const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
     expect(value).toBe(true)
   })
+})
+
+test("upgrade notes the contract lock entries that guard nothing", async () => {
+  const root = join(FIXTURES, "uncovered-contracts")
+  await mkdir(root, { recursive: true })
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "5.5.0" } }),
+  )
+  // A body schema with no JSON Schema of its own, locked as null the way an older nifra did.
+  const opaque: StandardSchemaV1 = {
+    "~standard": { version: 1, vendor: "opaque", validate: (value: unknown) => ({ value }) },
+  }
+  const lock = await buildContractsLock(
+    server()
+      .post("/kites", { body: opaque }, () => ({ ok: true }))
+      .get("/users", () => []),
+  )
+  await writeFile(join(root, "contracts.lock.json"), JSON.stringify(lock))
+  const { out } = await captureConsole(() =>
+    runUpgrade(root, { version: "5.6.0", cliVersion: "5.6.0", verify: false }),
+  )
+  expect(out).toContain(
+    "note: contracts.lock.json records no request schema for POST /kites. Where this release",
+  )
 })

@@ -6,7 +6,7 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
-import type { ReflectedRoute } from "@nifrajs/core/reflection"
+import type { ReflectedRoute, SchemaReflection } from "@nifrajs/core/reflection"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 
@@ -133,6 +133,34 @@ export async function emptySchemaDigest(): Promise<string> {
   return sha256(JSON.stringify(canonical(schemaValue(undefined, "request"))))
 }
 
+/** Per side, the digests of a route whose schema says nothing on that side: none declared, or every
+ * part declared in a form reflection cannot read (hashed as `null`). A lock entry holding one never
+ * guarded that side. */
+async function blindDigests(): Promise<Record<"request" | "response", ReadonlySet<string>>> {
+  const of = async (side: "request" | "response") =>
+    new Set([
+      await sha256(JSON.stringify(canonical(schemaValue(undefined, side)))),
+      await sha256(JSON.stringify(canonical(schemaValue({}, side)))),
+    ])
+  return { request: await of("request"), response: await of("response") }
+}
+
+const unread = (value: SchemaReflection | undefined): boolean =>
+  value !== undefined && value.jsonSchema === undefined && value.fields === undefined
+
+/** The parts of `route` that declare a schema reflection cannot read: hashed as `null`, as if absent,
+ * so the lock never notices a change to them. */
+export function unreflectedParts(route: ReflectedRoute): string[] {
+  const schema = route.schema
+  if (schema === undefined) return []
+  const parts: string[] = []
+  for (const part of ["body", "query", "params", "response", "sse"] as const)
+    if (unread(schema[part])) parts.push(part)
+  for (const [status, value] of Object.entries(schema.errors ?? {}))
+    if (unread(value)) parts.push(`errors.${status}`)
+  return parts
+}
+
 /** Whether every route in `lock` hashes to the empty-schema digest (so no route declares a schema). An
  * empty `routes` map is NOT vacuous in this sense - there is no route whose contract went unguarded. */
 export async function isVacuousLock(lock: ContractsLock): Promise<boolean> {
@@ -192,13 +220,45 @@ export function validatesBeforeAuthentication(route: ReflectedRoute): boolean {
   return auth.length > 0 && auth.every((evidence) => evidence.source !== "nifra.authenticate")
 }
 
+/** A route whose declared schema the lock records as `null` in `parts`. */
+export interface UnreflectedRoute {
+  readonly route: string
+  readonly parts: readonly string[]
+}
+
 export async function snapshotContracts(
   cwd: string,
   out = DEFAULT_CONTRACTS_LOCK,
 ): Promise<ContractsLock> {
-  const lock = await buildContractsLock(await loadBackend(cwd))
+  return (await snapshotContractsReport(cwd, out)).lock
+}
+
+/** {@link snapshotContracts}, plus each route whose declared schema the lock records as `null`. */
+export async function snapshotContractsReport(
+  cwd: string,
+  out = DEFAULT_CONTRACTS_LOCK,
+): Promise<{ lock: ContractsLock; unreflected: UnreflectedRoute[] }> {
+  const evidence = snapshotProjectEvidence(await loadBackend(cwd))
+  const lock = await buildContractsLock(undefined, evidence)
   await Bun.write(resolve(cwd, out), `${JSON.stringify(lock, null, 2)}\n`)
-  return lock
+  const unreflected = reflectedRoutesFromEvidence(evidence)
+    .map((route) => ({ route: `${route.method} ${route.path}`, parts: unreflectedParts(route) }))
+    .filter((entry) => entry.parts.length > 0)
+    .sort((a, b) => codeUnitOrder(a.route, b.route))
+  return { lock, unreflected }
+}
+
+/** The lock entries of `lock` whose request or response digest says that side was never guarded. */
+export async function blindLockEntries(
+  lock: ContractsLock,
+): Promise<Array<{ route: string; sides: Array<"request" | "response"> }>> {
+  const blind = await blindDigests()
+  const entries: Array<{ route: string; sides: Array<"request" | "response"> }> = []
+  for (const [route, digest] of Object.entries(lock.routes)) {
+    const sides = (["request", "response"] as const).filter((side) => blind[side].has(digest[side]))
+    if (sides.length > 0) entries.push({ route, sides })
+  }
+  return entries
 }
 
 export function parseContractsLock(value: unknown): ContractsLock {
@@ -230,13 +290,21 @@ export function parseContractsLock(value: unknown): ContractsLock {
   return typeof digest === "number" ? { version: 1, digest, routes } : { version: 1, routes }
 }
 
+/** One lock mismatch. `sides` names what differs for a `changed` or `newly-covered` route. */
+export interface ContractDiagnostic {
+  readonly route?: string
+  readonly kind?: "added" | "removed" | "changed" | "newly-covered"
+  readonly sides?: readonly ("request" | "response")[]
+  readonly message: string
+}
+
 export async function checkContractsLock(
   cwd: string,
   file = DEFAULT_CONTRACTS_LOCK,
 ): Promise<{
   present: boolean
   vacuous: boolean
-  diagnostics: Array<{ route?: string; message: string }>
+  diagnostics: Array<ContractDiagnostic>
   /** `METHOD /path` of every route the backend serves, read when the lock made the check load it. */
   served?: readonly string[]
   /** `METHOD /path` of each route {@link validatesBeforeAuthentication} names, read alongside `served`. */
@@ -252,7 +320,7 @@ export async function checkContractsLock(
   const inputBeforeAuth = reflectedRoutesFromEvidence(evidence)
     .filter(validatesBeforeAuthentication)
     .map((route) => `${route.method} ${route.path}`)
-  const diagnostics: Array<{ route?: string; message: string }> = []
+  const diagnostics: ContractDiagnostic[] = []
   // Digests of two formats never compare, so this still fails; it just names the real cause.
   if (parsed.digest !== undefined && parsed.digest !== CONTRACT_DIGEST_FORMAT) {
     const newer = parsed.digest > CONTRACT_DIGEST_FORMAT
@@ -261,21 +329,47 @@ export async function checkContractsLock(
     })
     return { present: true, vacuous, diagnostics, served, inputBeforeAuth }
   }
+  const blind = await blindDigests()
   const keys = new Set([...Object.keys(parsed.routes), ...Object.keys(current.routes)])
   for (const key of [...keys].sort()) {
     const before = parsed.routes[key]
     const after = current.routes[key]
-    if (
-      before === undefined ||
-      after === undefined ||
-      before.request !== after.request ||
-      before.response !== after.response
-    ) {
+    if (before === undefined || after === undefined) {
       diagnostics.push({
         route: key,
-        message: `contract changed for ${key}; if intentional run \`nifra contracts snapshot\` and include the lock update in the same change.`,
+        kind: before === undefined ? "added" : "removed",
+        message:
+          before === undefined
+            ? `${key} is served but not in ${file}; if intentional run \`nifra contracts snapshot\` and include the lock update in the same change.`
+            : `${key} is in ${file} but no longer served; if intentional run \`nifra contracts snapshot\` and include the lock update in the same change.`,
       })
+      continue
     }
+    // Between two digests that guard nothing there is nothing to compare.
+    const sides = (["request", "response"] as const).filter(
+      (side) =>
+        before[side] !== after[side] &&
+        !(blind[side].has(before[side]) && blind[side].has(after[side])),
+    )
+    if (sides.length === 0) continue
+    // The lock cannot tell an older nifra that could not read a schema from a route that declared
+    // none, so this still fails: passing it would leave the side unguarded until someone snapshots.
+    const uncovered = sides.filter((side) => blind[side].has(before[side]))
+    const changed = sides.filter((side) => !blind[side].has(before[side]))
+    if (changed.length > 0)
+      diagnostics.push({
+        route: key,
+        kind: "changed",
+        sides: changed,
+        message: `contract changed for ${key} (${changed.join(" and ")}); if intentional run \`nifra contracts snapshot\` and include the lock update in the same change.`,
+      })
+    if (uncovered.length > 0)
+      diagnostics.push({
+        route: key,
+        kind: "newly-covered",
+        sides: uncovered,
+        message: `${key} ${uncovered.join(" and ")}: ${file} records no schema there (the route declared none, or an older nifra could not read it), and the route now has one, so the lock never guarded it. Review the schema, then run \`nifra contracts snapshot\` to start guarding it.`,
+      })
   }
   if (diagnostics.length > 0 && parsed.digest === undefined) {
     diagnostics.push({

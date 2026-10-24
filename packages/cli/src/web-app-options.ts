@@ -22,6 +22,7 @@ type FrameworkWebAppOptions = Pick<
   | "i18n"
   | "hostPolicy"
   | "live"
+  | "keepAlive"
 >
 
 /** `use`, the backend as `api`, and every forwarded framework field the config sets. */

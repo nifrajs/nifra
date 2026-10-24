@@ -707,19 +707,39 @@ export function renderCheckReport(result: CheckResult): string[] {
               : `✗ ${label}: ${errors}${rest === "" ? "" : ` (+${rest})`}`,
       )
     }
+    const fix = (suggestion: NonNullable<CheckDiagnostic["suggestion"]>, label: string): void => {
+      lines.push(`      ${label}: ${suggestion.title}`)
+      if (suggestion.command !== undefined) {
+        lines.push(`      command: ${suggestion.command.join(" ")}`)
+      }
+      if (suggestion.diff !== undefined) {
+        for (const line of suggestion.diff.split("\n")) lines.push(`      ${line}`)
+      }
+      for (const step of suggestion.steps ?? []) lines.push(`      - ${step}`)
+    }
+    // A fix several findings share prints once, after them: twenty raw responses are twenty
+    // locations and one recipe, not a hundred lines.
+    const keyOf = (d: CheckDiagnostic): string | undefined =>
+      d.suggestion === undefined ? undefined : JSON.stringify(d.suggestion)
+    const shared = new Map<
+      string,
+      { suggestion: NonNullable<CheckDiagnostic["suggestion"]>; count: number }
+    >()
+    for (const d of ds) {
+      const key = keyOf(d)
+      if (key === undefined || d.suggestion === undefined) continue
+      const seen = shared.get(key)
+      if (seen === undefined) shared.set(key, { suggestion: d.suggestion, count: 1 })
+      else seen.count++
+    }
     for (const d of ds) {
       lines.push(`    ${d.file ?? ""}${d.line ? `:${d.line}` : ""}  ${d.message}`)
-      if (d.suggestion !== undefined) {
-        lines.push(`      fix: ${d.suggestion.title}`)
-        if (d.suggestion.command !== undefined) {
-          lines.push(`      command: ${d.suggestion.command.join(" ")}`)
-        }
-        if (d.suggestion.diff !== undefined) {
-          for (const line of d.suggestion.diff.split("\n")) lines.push(`      ${line}`)
-        }
-        for (const step of d.suggestion.steps ?? []) lines.push(`      - ${step}`)
-      }
+      const key = keyOf(d)
+      if (d.suggestion !== undefined && key !== undefined && (shared.get(key)?.count ?? 0) === 1)
+        fix(d.suggestion, "fix")
     }
+    for (const { suggestion, count } of shared.values())
+      if (count > 1) fix(suggestion, `fix (the ${count} above)`)
   }
   for (const [rule, label] of REPORT_SECTIONS) {
     renderSection(

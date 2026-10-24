@@ -170,6 +170,6 @@ export function staleLinkLockMessage(stale: {
     .join("; ")
   return (
     `${stale.lock} records dependencies its file: packages no longer declare, and Bun never reads a linked package.json again, so it installs those versions beside the declared ones: ${listed}. ` +
-    `Run \`${linkLockUpdate(stale.entries)}\`, or \`nifra upgrade --write\` to drop the entries, then \`bun install\`.`
+    `Run \`${linkLockUpdate(stale.entries)}\`, or \`nifra upgrade --write --prune-link-locks\` to drop the entries, then \`bun install\` and review the bun.lock diff.`
   )
 }

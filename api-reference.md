@@ -5649,7 +5649,7 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
-- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy", "live"]`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce", "i18n", "hostPolicy", "live", "keepAlive"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).

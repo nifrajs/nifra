@@ -97,6 +97,30 @@ test("`nifra build` refuses a mistyped flag before building, and `--help` prints
   expect(help.stdout).toContain("nifra build   [--out <dir>] [--report]")
 })
 
+test("a catalog command prints its own usage for --help and with a missing subcommand", async () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const run = async (args: readonly string[]) => {
+    const proc = Bun.spawn([process.execPath, cli, ...args], { stdout: "pipe", stderr: "pipe" })
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    return { stdout, stderr, exit }
+  }
+  const help = await run(["contracts", "--help"])
+  expect(help.exit).toBe(0)
+  expect(help.stdout).toStartWith("Usage:\n  nifra contracts snapshot [--out <file>]")
+  expect(help.stdout).toContain("nifra contracts check [--out <file>] [--json]")
+  const bare = await run(["contracts"])
+  expect(bare.exit).toBe(1)
+  expect(bare.stderr).toContain("[nifra] action must be snapshot or check\n\nUsage:")
+  expect(bare.stderr).toContain("nifra contracts snapshot [--out <file>]")
+  const db = await run(["db", "schema", "-h"])
+  expect(db.exit).toBe(0)
+  expect(db.stdout).toContain("nifra db schema [<table>]")
+})
+
 test("a command that fails under --json still prints one JSON document on stdout", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "nifra-json-error-"))
   try {
