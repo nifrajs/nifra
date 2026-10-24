@@ -3,6 +3,8 @@
  * conversion. Mirrors `respond.ts` but skips the undici `Response` build where the adapter can write a
  * plain-data render straight to the socket. Imports only runtime-core + respond + the spine types.
  */
+
+import { jsonText } from "./json-text.ts"
 import {
   applySetToResponse,
   applyStaticResponseHeaders,
@@ -88,7 +90,7 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     return nodeOutcomeFromResponse(applySetToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)
-  const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
+  const body = result === undefined || isBodylessStatus(status) ? null : jsonText(result)
   return {
     kind: "json",
     status,
@@ -109,10 +111,7 @@ export function plainNodeOutcome(plain: PlainRender, set: CtxSet): NodeServeOutc
     status: plain.status,
     headers: plainRenderHeaders(plain, set),
     cookies: set._cookies,
-    body:
-      plain.body === undefined || isBodylessStatus(plain.status)
-        ? null
-        : JSON.stringify(plain.body),
+    body: plain.body === undefined || isBodylessStatus(plain.status) ? null : jsonText(plain.body),
   }
 }
 

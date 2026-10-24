@@ -115,7 +115,6 @@ test("parity: a value that cannot be serialized is the same flat 500 as on core"
     },
   }
   const values: Record<string, unknown> = {
-    "/bigint": { value: 1n },
     "/circular": circular,
     "/to-json": throwing,
   }
@@ -130,6 +129,19 @@ test("parity: a value that cannot be serialized is the same flat 500 as on core"
     expect(edge.status).toBe(core.status)
     expect(await edge.text()).toBe(await core.text())
   }
+})
+
+test("parity: a bigint is its decimal string, as on core", async () => {
+  const edge = await server()
+    .get("/id", () => ({ id: 9007199254740993n }))
+    .fetch(new Request("https://x.test/id"))
+  const core = await coreServer({ logger: silent })
+    .get("/id", () => ({ id: 9007199254740993n }))
+    .fetch(new Request("https://x.test/id"))
+  expect(edge.status).toBe(200)
+  expect(edge.headers.get("content-type")).toBe(core.headers.get("content-type"))
+  expect(await edge.text()).toBe('{"id":"9007199254740993"}')
+  expect(await core.text()).toBe('{"id":"9007199254740993"}')
 })
 
 test("a validator that throws or rejects is the flat 500; a thrown Response still exits early", async () => {

@@ -18,6 +18,16 @@ afterEach(async () => {
   )
 })
 
+// What the JSON writers send: a `bigint` as its decimal string, a typed array as an index-keyed object.
+const IDS_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", pattern: "^-?(0|[1-9][0-9]*)$" },
+    data: { type: "object", additionalProperties: { type: "number" } },
+  },
+  required: ["id", "data"],
+}
+
 describe("inferOpenAPIResponses", () => {
   test("reflects inferred success and status bodies without executing the backend", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-openapi-types-test-"))
@@ -49,6 +59,7 @@ describe("inferOpenAPIResponses", () => {
         "export const backend = server()",
         '  .get("/users/:id", (c) => c.params.id === "missing" ? status(404, { error: "not_found" }) : { id: c.params.id })',
         '  .get("/empty", () => status(204))',
+        '  .get("/ids", () => ({ id: 1n, data: new Uint8Array(2) }))',
       ].join("\n"),
       "utf8",
     )
@@ -66,6 +77,7 @@ describe("inferOpenAPIResponses", () => {
       required: ["error"],
     })
     expect(result.responses["GET /empty"]?.["204"]).toEqual({})
+    expect(result.responses["GET /ids"]?.["200"]?.schema).toEqual(IDS_SCHEMA)
   })
 })
 
@@ -100,6 +112,7 @@ test("reflects response schemas through the TypeScript 7 semantic adapter", asyn
       "export const backend = server()",
       '.get("/users/:id", (c) => c.params.id === "missing" ? status(404, { error: "not_found" }) : { id: c.params.id })',
       '.get("/empty", () => status(204))',
+      '.get("/ids", () => ({ id: 1n, data: new Uint8Array(2) }))',
     ].join("\n"),
     "utf8",
   )
@@ -117,4 +130,5 @@ test("reflects response schemas through the TypeScript 7 semantic adapter", asyn
     required: ["error"],
   })
   expect(result.responses["GET /empty"]?.["204"]).toEqual({})
+  expect(result.responses["GET /ids"]?.["200"]?.schema).toEqual(IDS_SCHEMA)
 })

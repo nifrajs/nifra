@@ -31,6 +31,13 @@ const failingHook = {
 const get = (path = "/") => new Request(`http://x${path}`)
 const INTERNAL = { ok: false, error: "internal_error" }
 
+/** A value `JSON.stringify` throws on. */
+function cyclic(): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  node.self = node
+  return node
+}
+
 async function nodeShape(outcome: NodeServeOutcome): Promise<{ status: number; body: unknown }> {
   if (outcome.kind === "response") {
     return { status: outcome.response.status, body: await outcome.response.json() }
@@ -212,13 +219,13 @@ describe("an onError answer", () => {
   test("that cannot be rendered is logged and answered 500", async () => {
     const { logger, errors } = recorder()
     const app = server({ logger })
-      .onError(() => ({ id: 1n }))
+      .onError(() => ({ id: cyclic() }))
       .get("/", () => {
         throw new Error("handler broke")
       })
     const res = await app.fetch(get())
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual(INTERNAL)
-    expect(errors).toEqual(["JSON.stringify cannot serialize BigInt."])
+    expect(errors).toEqual(["JSON.stringify cannot serialize cyclic structures."])
   })
 })

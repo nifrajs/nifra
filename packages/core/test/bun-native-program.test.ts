@@ -6,6 +6,13 @@ import { responseObserver } from "../src/response-observer.ts"
 import type { StandardSchemaV1 } from "../src/schema/standard.ts"
 import { responseContract } from "../src/server/response-contract-lane.ts"
 
+/** A value `JSON.stringify` throws on. */
+function cyclic(): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  node.self = node
+  return node
+}
+
 const namedBody: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
     version: 1,
@@ -205,7 +212,7 @@ for (const validationOrder of ["validate-before-auth", "auth-before-validation"]
   })
 
   test(`an async response contract's render failure reaches onError under ${validationOrder}`, async () => {
-    type Rendered = { id: string; count: bigint }
+    type Rendered = { id: string; count: unknown }
     const isRendered = (value: unknown): value is Rendered =>
       typeof value === "object" && value !== null && "id" in value && "count" in value
     const response: StandardSchemaV1<Rendered, Rendered> = {
@@ -230,7 +237,7 @@ for (const validationOrder of ["validate-before-auth", "auth-before-validation"]
           return new Response("mapped", { status: 409 })
         })
         .get("/render", { response, validationOrder }, () => {
-          const value: Rendered = { id: "u1", count: 1n }
+          const value: Rendered = { id: "u1", count: cyclic() }
           return handlerAsync ? Promise.resolve(value) : value
         })
       const running = app.listen(0, { hostname: "127.0.0.1" })
