@@ -66,6 +66,9 @@ export interface HoleRoot {
   /** `leaving`: the page is unmounting the host, so the adapter may defer the work. A promise means
    * the host is not free until it settles. */
   dispose(leaving: boolean): void | Promise<void>
+  /** The kept page holding the host is hidden (`true`) or shown again: a root whose framework can
+   * pause what it runs keeps its state either way. */
+  hide?(hidden: boolean): void
 }
 
 export interface HoleHost {
@@ -210,9 +213,12 @@ export function holeHost(
     hiddenBy = event.target
     latest++
     runtime?.leave?.()
+    root?.hide?.(true)
   }
   const shown = (event: Event): void => {
-    if (event.target === hiddenBy) hiddenBy = undefined
+    if (event.target !== hiddenBy) return
+    hiddenBy = undefined
+    root?.hide?.(false)
   }
   host.ownerDocument.addEventListener(PAGE_HIDE_EVENT, hidden)
   host.ownerDocument.addEventListener(PAGE_SHOW_EVENT, shown)

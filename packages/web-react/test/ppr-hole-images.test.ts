@@ -61,8 +61,9 @@ test("a responsive image in a plain or an interactive hole fills it, with no res
   expect(frame("photo")).toBe(
     '{"v":1,"html":"<figure><img src=\\"/a.png\\" srcSet=\\"/a.png 1x, /a.png?dpr=2 2x\\" alt=\\"Product\\"/><\\/figure>"}',
   )
+  // In the `<Activity>` boundary the interactive hole's own root hydrates in.
   expect(frame("gallery")).toStartWith(
-    '{"v":1,"html":"<figure><img src=\\"/b.png\\" srcSet=\\"/b.png 1x, /b.png?dpr=2 2x\\" alt=\\"Product\\"/><\\/figure>","props":',
+    '{"v":1,"html":"<\\u0021--&--><figure><img src=\\"/b.png\\" srcSet=\\"/b.png 1x, /b.png?dpr=2 2x\\" alt=\\"Product\\"/><\\/figure><\\u0021--/&-->","props":',
   )
 })
 
