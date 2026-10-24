@@ -1,5 +1,5 @@
 import { createRequire } from "node:module"
-import { join, resolve } from "node:path"
+import { basename, join, resolve } from "node:path"
 import type * as TS from "typescript"
 import type { Manifest, RouteEntry } from "../../manifest.ts"
 import { type BunMetafileLike, fromBunMetafile } from "../../module-graph.ts"
@@ -299,17 +299,23 @@ async function compileShell(
           // is a call into a package, which the bundler must keep, and with it every import the
           // hole uses. Eliminating them first scopes the check to `shellLoader` and the shared
           // holes' loaders; their imports stay as bare imports, so a module with top-level effects
-          // still counts.
-          build.onLoad({ filter: new RegExp(`^${escapeRegExp(backendModule.path)}$`) }, () => ({
-            loader: "js",
-            contents: new Bun.Transpiler({
-              loader: backendModule.loader,
-              trimUnusedImports: true,
-              exports: {
-                eliminate: backendModule.exports.filter((name) => !kept.includes(name)),
-              },
-            }).transformSync(shared?.source ?? backendModule.source),
-          }))
+          // still counts. The file is matched by its `/` form: Bun hands a plugin `\` on Windows.
+          build.onLoad(
+            { filter: new RegExp(`${escapeRegExp(basename(backendModule.path))}$`) },
+            (args) =>
+              toPosix(args.path) !== backendModule.path
+                ? undefined
+                : {
+                    loader: "js",
+                    contents: new Bun.Transpiler({
+                      loader: backendModule.loader,
+                      trimUnusedImports: true,
+                      exports: {
+                        eliminate: backendModule.exports.filter((name) => !kept.includes(name)),
+                      },
+                    }).transformSync(shared?.source ?? backendModule.source),
+                  },
+          )
         },
       },
       ...plugins,
