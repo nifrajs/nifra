@@ -29,19 +29,34 @@ export default function Dashboard() {
 }`
 
 const SVELTE = `<script>
+  import { onMount } from "svelte"
   import { onPageHide, onPageShow } from "@nifrajs/web-svelte/router"
   let timer
-  const poll = () => (timer = setInterval(refresh, 5000))
-  poll()
-  onPageHide(() => clearInterval(timer))
-  onPageShow(poll)
+  const start = () => (timer = setInterval(refresh, 5000))
+  const stop = () => clearInterval(timer)
+  const offHide = onPageHide(stop)
+  const offShow = onPageShow(start)
+  // onMount runs in the browser only, so the server starts no timer.
+  onMount(() => {
+    start()
+    return () => {
+      stop()
+      offHide()
+      offShow()
+    }
+  })
 </script>`
 
 const VUE = `<script setup lang="ts">
 import { onPageHide, onPageShow } from "@nifrajs/web-vue/router"
-const socket = connect()
-onPageHide(() => socket.pause())
-onPageShow(() => socket.resume())
+import { onMounted, onUnmounted } from "vue"
+let socket: Socket | undefined
+onMounted(() => {
+  socket = connect()
+})
+onUnmounted(() => socket?.close())
+onPageHide(() => socket?.pause())
+onPageShow(() => socket?.resume())
 </script>`
 
 const ISLAND = `import { defineIsland, onPageHide, onPageShow } from "@nifrajs/web/islands"
