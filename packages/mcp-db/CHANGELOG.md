@@ -1,5 +1,24 @@
 # @nifrajs/mcp-db
 
+## 5.6.0
+
+### Patch Changes
+
+- e1abda9: Postgres queries and plans run again on Bun 1.4.4. `queryPostgres`, `explainPostgres`, `nifra db query` and the `nifra_db_query` tool had answered every statement with `NIFRA_DB_DRIVER`, because Bun.SQL now refuses a statement whose template object is not shaped like a real one.
+  
+  With `redaction`, a query that gives a table a column alias list (`FROM users AS t(a, b)`) is refused while any relation it reads holds a masked column: the plan names that table's columns by the list, so it cannot show which real column is read. `ts_stat`, `ts_rewrite`, `crosstab` and `connectby` are refused with the other functions that run SQL from a string the plan check cannot see.
+  
+  Every Postgres read runs with JIT off. The schema read's catalog queries crossed the JIT cost threshold, and compiling them ran past the timeout on a stock Ubuntu server, so `nifra db schema` and `nifra_db_schema` answered `NIFRA_DB_TIMEOUT` there.
+- 578f9dd: `run_query` answers a query that gives a table an alias (`SELECT h.name FROM habits h`). It had refused every one as touching the alias, because SQLite's query plan names a scan by its alias; the compiled statement, which names each table it opens, decides alone.
+  
+  The SQLite statement gate, behind both `run_query` and `querySqlite`, reads `` `x` `` and `[x]` identifiers as quoted, so a `;` or `--` inside one no longer refuses or cuts the query. A comment after the statement is dropped before the query is wrapped.
+  
+  `list_tables` counts rows in the same lane as `run_query`, within its time limit, and reuses the counts for 10 seconds. A count past the limit is reported as `null`. Before, every anonymous call counted every table on the serving thread with no limit.
+- Updated dependencies [0b9fed9]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [4bc7d8d]
+  - @nifrajs/mcp@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

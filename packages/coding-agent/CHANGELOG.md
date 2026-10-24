@@ -1,5 +1,42 @@
 # @nifrajs/coding-agent
 
+## 5.6.0
+
+### Minor Changes
+
+- 5950141: `OrchestrationHost`'s `policy.allowedCapabilities` now bounds every catalog step a submitted plan
+  resolves to, under any narrower `limits.allowedCapabilities`. `limits.maxChildren` counts every
+  subagent a run starts, retries included, while a child whose executor never starts takes no slot. A
+  plan with more subagent nodes than the ceiling (default 4) fails to compile with `E_MAX_CHILDREN`.
+  `SubagentRunnerOptions.children` shares one count among several runners.
+
+### Patch Changes
+
+- 2248445: `@nifrajs/agent-protocol` exports `childProcessEnv` and `childProcessBaseEnv`: the environment a host
+  hands a process it spawns, built from the platform and host environment the caller passes. The ACP
+  and Pi backends and the coding agent's isolated extension worker build their child environments with
+  it, so all three pass the same Windows set. An ACP agent on Windows now also receives `BUN_INSTALL`
+  and `USERDOMAIN`.
+- dfb59d1: `FileSessionStore` keeps token counts. A number under a plural `tokens` key (`usedTokens`,
+  `windowTokens`, `max_output_tokens`) is a usage count and is stored as written; it was replaced with
+  `"[redacted]"` along with real secrets. A key whose other words name a secret (`secretTokens`) is
+  still redacted, and so is any other value under a token-like key.
+- 8e63b16: An isolated extension whose module fails to load rejects `start()` with the module's own error, as documented. Under load it could instead reject with `isolated extension worker exited with code 1`: the worker's exit could be seen before its error line was read, and the worker could exit before that line was written. The worker now exits once the line is written, and the exit is reported only after the worker's output is read.
+- 9d131d3: `migrateLegacySession` refuses overlapping roots on Windows. A `targetRoot` inside `sourceRoot`, or the
+  reverse, was accepted there because only `/` counted as a separator; it now fails with
+  `overlapping_roots` as it does on macOS and Linux. On Windows, roots that differ only in letter case
+  also count as the same directory.
+- 668becc: On Windows under Bun, `BoundedSubagentRunner` refuses a subagent `cwd` or isolated worktree at a
+  drive root such as `"/"` or `D:\` when it lies outside the workspace `root`, and a `root` or
+  `allowedRoots` entry at a drive root covers that whole drive. A drive root was read as the current
+  directory on that drive.
+- Updated dependencies [2248445]
+  - @nifrajs/agent-protocol@5.6.0
+  - @nifrajs/pi@5.6.0
+  - @nifrajs/agent@5.6.0
+  - @nifrajs/jobs@5.6.0
+  - @nifrajs/agent-review@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

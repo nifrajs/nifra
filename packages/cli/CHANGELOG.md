@@ -1,5 +1,160 @@
 # @nifrajs/cli
 
+## 5.6.0
+
+### Minor Changes
+
+- 8315e1c: `nifra scaffold hole <route> <name>` (experimental) adds a hole to a partially prerendered route: the page gets the hole's definition, its entry in `boundaries` and a `<Hole>` where its markup ends, and the backend half a loader with its output schema. `--shared`, `--interactive` and `--timeout <ms>` shape the hole, and `--server` makes it show a new React server component. A Vue or Svelte page gets the code to paste. The MCP `nifra_scaffold` tool takes the same options as `hole`, and previews the files unless `write` is set.
+  
+  `nifra check` reports NF-C053 (error) for a partially prerendered page that calls `getContext()` or `tryGetContext()`, which the shell check refuses. `nifra fix --code NF-C053` moves a read held in one `const`, and the one element that uses it, into a new dynamic hole: the read becomes the hole's loader, with an output schema drafted from its type, and the element its render. A read it cannot move is refused with the reason, and nothing is written.
+- c65a9bb: `nifra check` matches island markup against the code that mounts it:
+  
+  - NF-C047 (warning): a `data-bind-*` attribute inside a `data-island` host names a signal its `bindIsland` setup never declares with `state("...")`, or a handler the setup does not return. Vanilla `html` templates and JSX (including the `<Island>` marker) are read; a name built at runtime is not judged, nor is an island whose setup aliases, destructures or hands off `state` or its context.
+  - NF-C048 (warning): a `data-bind-*` attribute outside every island host, or inside a host mounted with `defineIsland` or a plain enhancer, never binds.
+  - NF-C022 now checks `bindList` from `@nifrajs/web/islands`: a key that reads a second parameter (`bindList` passes none) or hands the item to `indexOf`/`findIndex`. An `indexOf` over the item's own data, such as `u.email.indexOf("@")`, is not flagged.
+  
+  NF-C021 and NF-C023 are retired: `nifra explain` says so, and the codes are never reused. `nifra scaffold --variant stateful` emits a reactive island (`bindIsland` state, `data-bind-*` markup, keyed `bindList`), and both island stubs put their `data-island-props` JSON in a quoted attribute.
+- c387fb9: A route can keep its page mounted across navigations: `export const keepAlive = true` (or `{ revalidate: false }`) in a React or Svelte route. Back and forward to a kept page show it at once with its state, scroll and focus as the visitor left them, then revalidate its data in the background unless `revalidate` is `false` (a route's `clientLoader` then runs again over the server data the page was built from). At most three pages are kept per tab, each for up to ten minutes hidden (`keepAlive: { maxAge }` changes that). Kept pages are dropped when the visitor signs in or out (an identity epoch cookie the server sets, shared across tabs, which expires with the session cookie and is renewed with a rolling one), and the page on screen as that happens is not kept; also on a hot update and when the document enters the browser's own back/forward cache. Pages are wrapped at the layouts they do not share with the routes they navigate to, so a shared layout keeps one instance. `usePageVisibility()` from `@nifrajs/web-react/router` and `onPageHide` / `onPageShow` from `@nifrajs/web-svelte/router` let a kept page pause its own work while hidden.
+  
+  `createWebApp({ keepAlive: { identityCookies, ignoreCookies } })` names the cookies that carry who the visitor is, beyond the defaults for nifra, Better Auth and Auth.js sessions; `rotateIdentityEpoch(c)` drops kept pages from a handler that changes identity another way. In development, a changed HttpOnly cookie that is neither an identity cookie nor ignored is reported once, and so is a stylesheet rule that selects a kept page as a direct child of its layout (the wrapper sits between them). `nifra doctor` names the kept routes of an app that uses an auth package.
+  
+  An app with no `keepAlive` route ships the same client code as before.
+- 05608b9: `backend/framework.ts` takes `live`, the app's live runtime (re-export it from `nifra.config.ts` when the app has both): `nifra dev` serves its socket and `nifra build` bakes its socket and load paths into the client.
+- db0bacd: `nifra check` reads slot swap markup (`@nifrajs/web/islands/swap`), judging only literal values:
+  
+  - NF-C049 (warning): `data-swap` on anything but `<a href>` or `<form>`, in JSX, or with a value other than `replace:<slot>` or `append:<slot>`.
+  - NF-C050 (warning): a `data-swap` names a slot that no `data-swap-slot` in the project declares.
+  - NF-C051 (warning): a `data-swap-slot` whose content is not its `slot()` call alone, a `slot()` placed outside its slot element, a second slot of one name in the same markup, or a malformed slot name.
+  - NF-C052 (warning): a `data-swap` URL goes to a page whose module, layouts and the local files they import render no `slot()` of that name.
+  - NF-C048 also flags a binding inside a `data-swap-slot` that belongs to an island outside it, and the island lints treat `enableSwap({ ... })` like `mountIslands({ ... })`.
+  
+  A finding in an `html` template, these and NF-C047/NF-C048 alike, now names the line of its tag rather than the template's first line.
+  
+  `nifra cdn-check` also sends a swap-shaped request and fails when the CDN answers it from cache.
+
+### Patch Changes
+
+- aa567fa: On Deno, a `Host` whose port is past 65535 is refused with 400 `invalid_host`, as `@nifrajs/node`
+  refuses it. A request with such a Host for a path holding a dot segment was answered 500.
+  
+  The release verification plan runs `check:runtime-differential`, which serves one app on Bun, Node,
+  Deno and workerd and sends each the same generated requests.
+- c403814: `@nifrajs/web/islands` now carries the reactive island runtime: `signal`, `computed`, `effect`, `batch` and `untrack` with auto-tracking, plus:
+  
+  - `bindIsland(setup)` - an enhancer driven by markup. `state(key, fallback)` seeds a signal from the island's props, the returned handlers back `data-bind-on`, and the six `data-bind-*` attributes bind text, visibility, classes, attributes, values and events by name. `onDispose(fn)` runs on unmount, also when registered later from a handler, and at once when registered after the island unmounted. `ctx.props` is `undefined` when the props attribute is absent or malformed. A setup or binding that throws stops everything the island started; on unmount a cleanup that throws is logged and the others still run.
+  - `bindList(source, container, { key, create, update })` - keyed list rendering. A surviving item keeps its node, and a reorder moves only the nodes outside the longest run already in order: swapping two rows of 1,000 moves two nodes.
+  - `resource(source, fetcher)` - an async value keyed by a getter, with a `pending`/`ready`/`error` state. A newer key aborts the older request and only the newest result lands; `refetch()` and `dispose()` are on the returned reader; once disposed, `refetch()` does nothing.
+  - `islandProps(value)` - the JSON for an island's props attribute. Emit it through an escaping renderer inside quotes: `data-island-props="${...}"`.
+  
+  Every effect, list binding and resource an enhancer creates belongs to its island and stops when `mountIslands`' disposer runs. An effect's run, the first included, finishes before the effects its writes trigger run, itself among them.
+  
+  Island hosts are any element with `data-island="<id>"`; props, strategy and media move to `data-island-props`, `data-island-strategy` and `data-island-media`. `<nifra-island data-id>` markers are no longer mounted. Hosts inside `data-island-ignore` are skipped, and a host already mounted is not mounted twice. `mountIslands` accepts enhancers with different props types in one map.
+  
+  The `@nifrajs/web-react` `<Island>` marker renders the new attributes, and `nifra scaffold` emits them.
+  
+  `@nifrajs/web/nano` and the `@nifrajs/islets` package are removed; `@nifrajs/web/islands` replaces both. `nifra upgrade` moves the imports and the dependency, and its notes map each removed name to its replacement. A signal is read by calling it, `computed` tracks what it reads, and an island's effects, lists and resources stop when it unmounts, so no disposer needs collecting.
+- 4bc7d8d: `@nifrajs/mcp/stdio` serves an MCP server over stdin and stdout on Bun, Node and Deno: `serveStdio(createMcpServer({ ... }))` resolves once stdin ends and every pending request has answered, with progress notifications and request cancellation as over HTTP. `runStdioTransport` is the newline-delimited JSON-RPC framing underneath, with an 8 MiB cap per message in each direction.
+  
+  `nifra mcp` now runs on the same transport, which changes four edge cases:
+  
+  - A line that is not valid UTF-8 is answered with `-32700 parse error` and not dispatched; the invalid bytes were previously replaced with U+FFFD and the message ran.
+  - A notification whose handler throws gets no reply, as JSON-RPC requires; it previously got an error response with a `null` id.
+  - A last line without a trailing newline when stdin closes is processed; it was previously dropped.
+  - When stdin closes, requests still running answer before the warm workers shut down; the workers previously closed at once.
+- 9ebcb1f: Every `nifra mcp` project tool carries MCP tool annotations, so a host can tell the tools that only read the project from the ones that write files or run project code and ask before those. A tool that writes only under a flag, such as `nifra_review` with `fix` and `write`, is marked as a writer. A tool that imports the project's config or backend runs its top-level code, so `nifra_routes`, `nifra_context`, `nifra_openapi`, `nifra_diff`, `nifra_prove` and the `nifra_db_*` tools are marked as running project code. Each tool's input fields that had no description now have one. The `nifra --help` line for `nifra docs-mcp` names all six tools that server offers.
+  
+  `entry.html` from `@nifrajs/content` is documented as unsanitized Markdown output: render it with `trustHtml(entry.html)` for content you wrote, or run it through `sanitizeHtml(entry.html, yourSanitizer)` when contributors or a CMS write it. The `<Content>` examples in the React, Preact and Solid adapters show the `trustHtml` call.
+- fb1cc25: Keep client-loader reloads safe for cyclic, deeply nested and symbol-bearing data. Limit the initial row-ID index to the sharing sample so replaced lists avoid allocating a full old-row map, and benchmark lightweight rotating-ID payloads.
+  
+  Preserve layout-injected child props in React and Preact and page caching and leave transitions in Vue while retaining unchanged-data render skipping.
+  
+  Vue keeps patching an unchanged layout chain in place after a layout re-renders on its own between router renders.
+  
+  Recognize Svelte's unshadowed `$state.raw()` rune without weakening SQL checks for shadowed or imported database bindings.
+- 1bb2964: The release verification plan runs `test:postgres`: the live Postgres suites of `@nifrajs/mcp-db`
+  and `nifra db`, against the throwaway server `NIFRA_TEST_POSTGRES_URL` names. Without the variable
+  they skip.
+- Updated dependencies [676a1f0]
+- Updated dependencies [f1a424d]
+- Updated dependencies [a0ae2e6]
+- Updated dependencies [0743b66]
+- Updated dependencies [671a952]
+- Updated dependencies [0ec3f30]
+- Updated dependencies [caa1ef8]
+- Updated dependencies [7c5fc94]
+- Updated dependencies [13f6b38]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [d76bc3f]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [b73319d]
+- Updated dependencies [aa567fa]
+- Updated dependencies [6b90278]
+- Updated dependencies [5ce69b2]
+- Updated dependencies [d43bc92]
+- Updated dependencies [7810dc5]
+- Updated dependencies [6126cb1]
+- Updated dependencies [ef2d101]
+- Updated dependencies [dec48fc]
+- Updated dependencies [c403814]
+- Updated dependencies [db0bacd]
+- Updated dependencies [6582724]
+- Updated dependencies [f48b257]
+- Updated dependencies [0222181]
+- Updated dependencies [f1d794e]
+- Updated dependencies [b7fb47f]
+- Updated dependencies [c387fb9]
+- Updated dependencies [8db6a2c]
+- Updated dependencies [4b196d2]
+- Updated dependencies [1b4b448]
+- Updated dependencies [f39ee8c]
+- Updated dependencies [4f40009]
+- Updated dependencies [05608b9]
+- Updated dependencies [baa926f]
+- Updated dependencies [2eabd83]
+- Updated dependencies [e1abda9]
+- Updated dependencies [578f9dd]
+- Updated dependencies [0b9fed9]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [4bc7d8d]
+- Updated dependencies [328003a]
+- Updated dependencies [a6010f9]
+- Updated dependencies [87f475d]
+- Updated dependencies [3e1e275]
+- Updated dependencies [c4cf782]
+- Updated dependencies [9efc061]
+- Updated dependencies [9889273]
+- Updated dependencies [fb1cc25]
+- Updated dependencies [23d0644]
+- Updated dependencies [15c9d60]
+- Updated dependencies [78e64e2]
+- Updated dependencies [f25a8d2]
+- Updated dependencies [778e430]
+- Updated dependencies [18c3d73]
+- Updated dependencies [7ec0f81]
+- Updated dependencies [2538b70]
+- Updated dependencies [48f78f0]
+- Updated dependencies [baaac3d]
+- Updated dependencies [740a781]
+- Updated dependencies [2c213b2]
+- Updated dependencies [db9f041]
+- Updated dependencies [033ed0f]
+- Updated dependencies [1704919]
+- Updated dependencies [375711b]
+- Updated dependencies [bb35ad0]
+- Updated dependencies [c7d233d]
+- Updated dependencies [feff82f]
+- Updated dependencies [a540dad]
+  - @nifrajs/core@5.6.0
+  - @nifrajs/client@5.6.0
+  - @nifrajs/web@5.6.0
+  - @nifrajs/schema@5.6.0
+  - @nifrajs/mcp-db@5.6.0
+  - @nifrajs/mcp@5.6.0
+  - @nifrajs/testing@5.6.0
+  - @nifrajs/i18n@5.6.0
+  - @nifrajs/agent-review@5.6.0
+  - @nifrajs/runner@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

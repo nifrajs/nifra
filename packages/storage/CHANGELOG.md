@@ -1,5 +1,20 @@
 # @nifrajs/storage
 
+## 5.6.0
+
+### Patch Changes
+
+- 60ada50: `FileStorage` no longer refuses a put or read of a key that another instance replaces at the same
+  moment. Its containment check resolves the directories above a stored object and holds the object
+  itself to a plain file, so it does not depend on the object keeping one inode while it runs. Bun
+  1.4.4 on Linux fails `realpath` for a file that a concurrent rename replaces.
+- cc6fab1: `FileStorage` keeps its bookkeeping beside the root (`<root>.nifra-state`), where staged bytes and
+  sidecars live, private to its owner, and closes such a tree left open by an earlier version on its
+  first write. On a root that is its own mount point, a put is staged next to the object under a name
+  no key can have and renamed over it, so a failed write leaves the previous object whole and a reader
+  never sees part of one; `list()` skips such names. On Windows such a root refuses the put instead of
+  writing in place.
+
 ## 5.5.1
 
 No changes in this release.

@@ -1,5 +1,13 @@
 # @nifrajs/a2a
 
+## 5.6.0
+
+### Patch Changes
+
+- dfb59d1: A request body that is not JSON, or that carries a `__proto__` key, now answers a JSON-RPC parse
+  error (`-32700`, `id: null`) like every other A2A error, instead of a plain HTTP 400
+  `{ ok: false, error: "invalid_json" }` that an A2A client cannot read as a reply.
+
 ## 5.5.1
 
 No changes in this release.

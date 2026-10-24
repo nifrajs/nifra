@@ -1,5 +1,38 @@
 # @nifrajs/middleware
 
+## 5.6.0
+
+### Minor Changes
+
+- 676a1f0: Harden idempotency replay admission and reservation handling, rate-limit capacity, and SSE resource limits.
+  
+  Idempotency covers the routes declared after it; installing it after any route that uses a covered method throws. A replay runs just before the handler, once the route's authentication, validation and every guard, registered before or after the middleware, admit the retry. A request no covered route handles, such as one a mounted app answers, releases its key. Replays without an admission marker are refused. Oversized cacheable responses retain terminal replay records, active leases renew for up to the replay retention TTL when supported, and lost reservations no longer report success. Stores without renewal reserve pending work for at least the replay retention TTL.
+  
+  `beforeHandler()` from `@nifrajs/core/server` marks a `beforeHandle` hook to run just before the handler, after every guard on the route, including guards registered after it in the same scope.
+  
+  The `idempotency()` return type is now `IdentityPlugin` rather than `Middleware`. Existing `.use(idempotency(...))` calls keep their spelling. Replace explicit `Middleware` annotations on the returned plugin with `IdentityPlugin` from `@nifrajs/core`, or let TypeScript infer the type; install the plugin directly with `.use()` instead of extracting its middleware hooks.
+  
+  Rate-limit capacity refuses new keys while preserving live quotas, and each capacity check resumes its bounded scan for expired windows where the last one stopped. SSE checks each encoded frame against the remaining byte budget, and the client stops reconnecting after HTTP 204. Server-component builds resolve public environment values consistently for browser defines and generation hashing.
+
+### Patch Changes
+
+- 68c3fc7: `compression()` does nothing on Cloudflare Workers, which compress responses themselves. Before, a body it gzipped there reached the client gzipped twice: the runtime encodes again any body sent with `Content-Encoding: gzip`.
+- 28ec36a: `@nifrajs/middleware/context-storage` does no work when imported, so a bundle that imports it without calling it leaves it out. `getContext()` outside a request now also says that a partially prerendered shell is built outside every request.
+- 2eabd83: `etag()` keeps an `ETag` the handler already set and answers `If-None-Match` against it, instead of replacing an app-managed version with a content hash. `etag()`, `conditionalResponse()` and `rangeResponse()` read an `If-None-Match` list with a comma inside a quoted ETag as one tag.
+  
+  `env.number()` reads plain decimal text only (`0x10`, `1e3` and `Infinity` are refused), and `env.number()` and `env.port()` treat a value of only spaces as unset, so a `default` applies. `env.boolean({ default })` returns the default for a variable that is set but empty.
+  
+  `serverFunctions()` mounts a second module under a namespace already in use, so `admin/todos.fn.ts` and `user/todos.fn.ts` are both served; an export name both modules use fails at boot as a duplicate route. Before, the second module was skipped and its functions answered 404. A module no app uses any more is not kept in memory by its namespace. The client build fails on a `*.fn.ts` file whose name `serverFunctions()` would refuse as a namespace, naming the file.
+  
+  `requireSession()` documents that it passes any non-empty session, which a visitor can have before signing in; `requireUser()` is the signed-in guard.
+- a6010f9: An `authenticate()` stage now gates the `mount()` and `mountFetch()` handlers registered after it, as it gates the routes declared after it. So do the required auth plugins built on one: `bearer()`, `jwt()`, `basicAuth()` and `apiKey()`. Before, `server().use(bearer(...)).mountFetch("/legacy", handler)` served `/legacy/*` to any caller, for every method, while the routes beside it answered 401. A request a stage refuses gets the stage's response and never reaches the mounted handler or child app, its WebSocket upgrades included; a stage that throws answers 503 `auth_unavailable` and logs the cause. A mount registered before the stage stays public, so mount first when the legacy app keeps its own auth.
+- f25a8d2: `compression()` gzips a streamed response as one deflate segment per chunk, joined into a single gzip member, so each chunk still reaches the client as soon as it is written at less CPU than one gzip stream flushed per chunk. Each segment may refer back into the 2 KB before it, so small chunks after a large one compress as well as before. A chunk of up to 1 KB is deflated with fixed Huffman codes without zlib's per-call setup, unless those codes cannot halve it. Bytes a producer marks with `markRepeatedPrefix`, such as a partially prerendered page's shell, are compressed once, when a second response carries them, and reused for every later response whose chunk still holds them. Where `node:zlib` has no `crc32` (Node before 22.2), it keeps one gzip stream flushed per chunk.
+- 375711b: `verifyWebhook` computes the expected HMAC once per secret and compares it to every signature the header lists, so a Stripe header carrying many `v1=` entries no longer costs one HMAC over the body per entry. `trimTrailingSlash` strips a trailing run of slashes in linear time; a long run of slashes inside the path no longer costs time quadratic in its length.
+- Updated dependencies [13f6b38]
+- Updated dependencies [9efc061]
+- Updated dependencies [740a781]
+  - @nifrajs/schema@5.6.0
+
 ## 5.5.1
 
 ### Patch Changes

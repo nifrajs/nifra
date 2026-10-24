@@ -1,5 +1,158 @@
 # @nifrajs/core
 
+## 5.6.0
+
+### Minor Changes
+
+- 676a1f0: Harden idempotency replay admission and reservation handling, rate-limit capacity, and SSE resource limits.
+  
+  Idempotency covers the routes declared after it; installing it after any route that uses a covered method throws. A replay runs just before the handler, once the route's authentication, validation and every guard, registered before or after the middleware, admit the retry. A request no covered route handles, such as one a mounted app answers, releases its key. Replays without an admission marker are refused. Oversized cacheable responses retain terminal replay records, active leases renew for up to the replay retention TTL when supported, and lost reservations no longer report success. Stores without renewal reserve pending work for at least the replay retention TTL.
+  
+  `beforeHandler()` from `@nifrajs/core/server` marks a `beforeHandle` hook to run just before the handler, after every guard on the route, including guards registered after it in the same scope.
+  
+  The `idempotency()` return type is now `IdentityPlugin` rather than `Middleware`. Existing `.use(idempotency(...))` calls keep their spelling. Replace explicit `Middleware` annotations on the returned plugin with `IdentityPlugin` from `@nifrajs/core`, or let TypeScript infer the type; install the plugin directly with `.use()` instead of extracting its middleware hooks.
+  
+  Rate-limit capacity refuses new keys while preserving live quotas, and each capacity check resumes its bounded scan for expired windows where the last one stopped. SSE checks each encoded frame against the remaining byte budget, and the client stops reconnecting after HTTP 204. Server-component builds resolve public environment values consistently for browser defines and generation hashing.
+- 13f6b38: `@nifrajs/core/file-type` exports the magic-byte detector: `detectFileType`, `DETECTABLE_MIME_TYPES`,
+  `FILE_TYPE_PREFIX_BYTES` and the `FileType` type. It imports nothing and stays out of the
+  `@nifrajs/core` entry. `t.file({ accept })` in `@nifrajs/schema/form` and `validateUpload` in
+  `@nifrajs/uploads` both judge a file by it.
+  
+  `@nifrajs/uploads` exports `validateUpload`, the signed download URLs and `stripImageMetadata`; the
+  detector's names are imported from `@nifrajs/core/file-type`, and the `@nifrajs/uploads/detect`
+  subpath is gone. `@nifrajs/uploads` takes `@nifrajs/core` as a peer dependency.
+  
+  `@nifrajs/schema` depends on `@sinclair/typebox` alone, with `@nifrajs/core` as its peer.
+- 4bc7d8d: `@nifrajs/core/tool-cli` runs tool contracts from a command line: `runToolCli(tools, process.argv.slice(2), { program, capabilities })` maps each top-level input property to a flag, takes `--input <json>` or `--input -` for the whole input, `--dry-run`, `--yes` or `--approve-level <n>` for approval, and `--json` for the result envelope, and resolves to an exit code from `TOOL_CLI_EXIT`. Every call goes through `executeTool`.
+- a6010f9: An `authenticate()` stage now gates the `mount()` and `mountFetch()` handlers registered after it, as it gates the routes declared after it. So do the required auth plugins built on one: `bearer()`, `jwt()`, `basicAuth()` and `apiKey()`. Before, `server().use(bearer(...)).mountFetch("/legacy", handler)` served `/legacy/*` to any caller, for every method, while the routes beside it answered 401. A request a stage refuses gets the stage's response and never reaches the mounted handler or child app, its WebSocket upgrades included; a stage that throws answers 503 `auth_unavailable` and logs the cause. A mount registered before the stage stays public, so mount first when the legacy app keeps its own auth.
+- 3e1e275: `multipartBody` parses a form itself, by the Fetch standard's `multipart/form-data` parser, instead
+  of handing the bytes to the runtime's own `formData()`. Those parsers disagreed: a body delimited by
+  bare line feeds, a part with no name, an upper-case `NAME`, an escaped or percent-encoded name, a
+  `filename*`, or bytes after the closing delimiter was a form on one runtime and refused or emptied
+  on another, and a file part with no `Content-Type` was `text/plain`, `application/octet-stream` or
+  `text/plain;charset=utf-8` by runtime. Now every runtime reads the same parts: a disposition must be
+  written as `form-data; name="..."` with an optional `; filename="..."`, `%0A`, `%0D` and `%22` in a
+  name are restored, a file's type defaults to `text/plain`, and a body led by a preamble is refused.
+  A file part named `filename=""` with content is a file called `file` everywhere. Parsing is also
+  faster on every runtime: 9-32% on Bun, 28-53% on Node, 70-76% on Deno for the shapes measured.
+- 9efc061: `toOpenAPI` describes routes whose schemas come from a library that implements Standard JSON Schema (`~standard.jsonSchema`, as zod 4 does): a request is described by the schema's input side, a response by its output side. A type the library cannot express, such as zod's `z.date()`, leaves that route without detail, as before. `$defs` in such a schema become components, and a `$ref` to the schema's own root points at a component of its own, so every ref resolves inside the document.
+  
+  Every operation lists the errors the framework answers before its handler runs. A route with a body lists `400`, `413` and `415` as the shared `NifraError` component (`{ ok: false, error }`), and a route with any request schema lists `422` as `NifraValidationError` (`{ ok: false, error: "validation", issues }`, at most 100 issues). The `422` is left out when a route's `onValidationError` hook or the app's `server({ onValidationError })` writes that body. A response the route or contract declares for the same status wins. A user schema whose `$id` matches one of these names gets a component of its own.
+  
+  A union whose members all require one property and pin it to distinct values (`t.union` of objects tagged by a `t.literal`, or a zod discriminated union) is emitted as a `oneOf`. When every member is a component it also gets a `discriminator` with a `mapping`; OpenAPI discriminators never consider inline members.
+  
+  `t.integer()` is bounded to the safe-integer range by default (`minimum: Number.MIN_SAFE_INTEGER`, `maximum: Number.MAX_SAFE_INTEGER`) and its JSON Schema says so. A JSON body or query value past 2^53 - 1 has already been rounded when it is parsed (`9007199254740993` arrives as `9007199254740992`), so it now fails validation with a 422 instead of reaching the handler as a different number. A bound passed to `t.integer()` replaces the default on that side.
+  
+  `reflectSchema(value, side)` from `@nifrajs/core/reflection` reads a Standard JSON Schema when the value carries no JSON Schema of its own, on the `"input"` (default) or `"output"` side, and marks the result `converted: true`. Route reflection reads response, error and SSE schemas on the output side, and sets `validationErrorHook: true` on a route whose validation failures an `onValidationError` hook answers; project evidence carries that flag. A tool whose input is such a schema now lists its real input schema instead of an empty object.
+  
+  `@nifrajs/mock` and `@nifrajs/testing` keep deriving a converted schema through their `reflectJsonSchema` hook, as before. `@nifrajs/mock` treats a safe-integer limit as an open side that still caps the range, so a `t.integer()` field still mocks a value between 0 and 100, and one whose own bound sits near a limit stays inside it.
+- f25a8d2: `@nifrajs/core/response-observer` exports `markRepeatedPrefix(chunk, source, length)` and `repeatedPrefixOf(chunk)`. A producer that streams the same leading bytes in many responses marks each chunk that starts with them, and a response observer that transforms streamed bodies, such as `compression()`, may reuse its work on those bytes after checking that the chunk still holds them.
+
+### Patch Changes
+
+- f1a424d: A request body that fails while it is read (a client that hung up inside it, which Deno hands an app)
+  is refused 400 `invalid_body` by the urlencoded form lane, multipart, custom body parsers,
+  `c.boundedBody()` and the handler's own `c.req.text()` / `c.req.bytes()`, and 400 `invalid_json` by the
+  JSON lane. These answered 500. Only a body a runtime took off a client's connection is refused this
+  way: a body built in the app's own process keeps its producer's error. `verifyWebhook` reports such a
+  body with the new reason `"invalid_body"`.
+- 0743b66: The `wsMaxPayloadBytes` docs say what Bun 1.4.4 does with a message over Bun's own frame limit: it
+  sends the client a `1009` close, where Bun 1.4.3 dropped the connection and the client saw `1006`.
+  The route's `close` handler gets `1009` "message too large" on both.
+- 671a952: On Bun, a request whose `Host` no URL can be built on (a port past 65535, an IPv6 literal the URL
+  parser refuses, a value with a space or a path in it) and whose target holds a dot segment or a
+  backslash is refused 400 `invalid_host`, as Node and Deno refuse it. Bun leaves such a target
+  unparsed, so `GET /files/../private/me` reached a `/files/*` route with `../private/me` as its
+  parameter instead of the `/private/me` route. Deno also refuses an IPv6 literal the URL parser
+  refuses.
+- 7c5fc94: `responseContract()` judges what `JSON.stringify` writes. A value's `toJSON` hooks are applied before
+  it is validated, so a hook that adds an undeclared field fails a closed schema under `enforce` and is
+  named under `warn`, while a hook that writes the declared shape, such as a value object written as a
+  string, passes. `extra: "strip"` keeps the declared fields of what a hook writes, and `warn` sends
+  the value its hooks wrote when it was checked. A `Date` is still validated as a `Date`.
+  
+  A route with an `around` hook or an `onValidationError` hook honors `formOrigins` for cross-origin
+  form posts, as every other body lane does.
+- d76bc3f: Reuse the unobserved JSON renderer for general-path responses with untouched response controls and no response hooks. This avoids unnecessary rendering bookkeeping for both reads and writes without skipping lifecycle hooks, validation, or error boundaries. On Node, `app.fetch` builds these JSON responses from the serialized string and a prebuilt init instead of undici's slower `Response.json`.
+- d76bc3f: JSON responses on apps with response hooks render faster through `app.fetch` on Node, and Deno builds JSON responses that carry response headers with its native `Response.json`. Bun and Deno servers also check a repeated `Host` header once instead of on every request.
+- aa567fa: On Deno, a `Host` whose port is past 65535 is refused with 400 `invalid_host`, as `@nifrajs/node`
+  refuses it. A request with such a Host for a path holding a dot segment was answered 500.
+  
+  The release verification plan runs `check:runtime-differential`, which serves one app on Bun, Node,
+  Deno and workerd and sends each the same generated requests.
+- 6b90278: On Deno, a request the `Request` constructor will not rebuild - a `TRACE`, `CONNECT` or `TRACK`, or a
+  lower-case `get` with a body - is routed on its resolved target when that target holds a dot segment or
+  a backslash, and gets the 404 or 405 Bun and Node give. It was answered 500.
+- d43bc92: A body the app's own `c.req.formData()` cannot parse (a multipart body with no closing delimiter or
+  the wrong boundary, a part without a name, a body that is not a form) answers the client's 400
+  `invalid_form` when the error escapes the handler, as `c.req.json()` answers `invalid_json`. It was a
+  logged 500. The app still sees the `TypeError` `Request.formData()` rejects with, and `onError`
+  hooks see it first.
+- 7810dc5: A route with several hooks, either validation order, or an asynchronous validator, hook or handler creates fewer promises per request, and an `auth-before-validation` route whose hooks and validators are all synchronous answers synchronously. On Bun, the native route table runs every eligible route's full lifecycle directly, not only the closed fast shapes, with its validation, hooks, recovery and error handling unchanged. A query string without `%` or `+` parses faster.
+  
+  On Bun's `listen()`, a custom body validator that throws now reaches the route's `onError` hooks, as it already did through `fetch` and on Node, instead of being answered as malformed JSON with a 400.
+  
+  A response that an asynchronous response-contract check accepts but that cannot be rendered (a `BigInt`, a cycle) now reaches `onError` in every validation order. Before, a synchronous handler on a `validate-before-auth` route rejected the request's promise instead.
+- 6126cb1: A request body that a handler's own `c.req.json()` cannot parse, and that the app lets escape, answers
+  400 `invalid_json` instead of a logged 500. The read still rejects with the `SyntaxError`
+  `Request.json()` rejects with, so app code and `onError` hooks that catch it are unchanged. A
+  `SyntaxError` the app raises on its own data stays a 500. A route with `bodyLimit: "unlimited"` reads
+  through the runtime's own `json()` and keeps its 500.
+- ef2d101: On Bun, an HTTP/1.0 request with no Host is served as `localhost` with its target resolved, as on Node
+  and Deno. Bun handed such a request over with its target as sent: a relative URL, so a handler that read
+  `new URL(c.req.url)` threw a 500, and dot segments left unresolved, so its route table matched
+  `GET /files/..` to `/files/:name` with the parameter `..` and `/users/../posts` missed `/posts`. The fix
+  covers `fetch`, the native route table and WebSocket handshakes; a request built in process keeps its URL.
+- dec48fc: Reduce URL-splitting overhead while preserving query and fragment semantics.
+  Reduce Node request-body listener allocations with isolated per-read state, retaining
+  body replay, abort handling, and byte-limit enforcement.
+  
+  Reduce Bun's JSON prototype-guard stack bookkeeping while retaining the same iterative security
+  checks and Node's native array stack. Avoid repeated validation callback allocations, and reduce
+  encoded-query iterator work while preserving decoding, repeated keys, and null-prototype records.
+  
+  Reuse a bounded Bun traversal buffer while clearing popped references immediately; rejected input
+  still clears pending work. Preserve Node's existing reset behavior for deeply nested bodies.
+- f48b257: A JSON body that starts with a UTF-8 byte order mark is read the way Fetch's `json()` reads it, with
+  the mark dropped, on every runtime. A body schema or `c.boundedJson()` on `@nifrajs/node` or on Deno
+  answered such a body 400 `invalid_json` where Bun and Workers parsed it.
+- 0222181: Every JSON body core renders on Deno and Workers carries `application/json`, the Content-Type those
+  runtimes' own `Response.json` writes. Some of the framework's own answers (404, 422) carried Bun's
+  `application/json;charset=utf-8` there, so one app answered in two spellings. Bun is unchanged.
+- 87f475d: The multipart parser behind `multipartBody` finds delimiters with Buffer's native search on Node and
+  Bun, where V8's typed-array `indexOf` walks one byte at a time: a 1 MiB file part parses in 560 us
+  on Node instead of 1,076.
+- 9889273: On Bun, a Host that Node and Deno refuse with 400 `invalid_host` but that Bun built the request URL on
+  anyway (a sub-delimiter such as `a!b` or `a.example,b.example`, or a percent-encoded name such as
+  `%61.example`, which Bun routed as `a.example` while the header still read `%61.example`) answers 400
+  `invalid_host` too. The check covers the native route table and WebSocket handshakes; a request built in
+  process keeps the URL its caller built unless that URL is the one Bun builds on its Host.
+- 78e64e2: On Bun, a request with two Host fields answers 400 `invalid_host`, as on Deno and `@nifrajs/node` and as
+  RFC 9112 section 3.2 requires. Bun.serve routed it on the first Host and handed the app both, joined with
+  ", ", so a handler that read Host saw an authority the request was not routed on. The check covers the
+  native route table and WebSocket handshakes too; a request built in process keeps the URL its caller
+  built, unless it pairs two Hosts with a URL on the first, as Bun hands such a request over.
+- db9f041: On Bun, a request Bun.serve received with a Host no URL can be built on (a space, a byte past ASCII,
+  an empty value, a path, a port past 65535) answers 400 `invalid_host`, as on Node and Deno. Bun left
+  the target unparsed for such a Host, so a handler or `upgrade()` that read `new URL(c.req.url)` threw
+  a 500. The check covers the native route table and WebSocket handshakes too; a request built in
+  process keeps the URL its caller built, whatever its Host header says.
+- 375711b: `verifyWebhook` computes the expected HMAC once per secret and compares it to every signature the header lists, so a Stripe header carrying many `v1=` entries no longer costs one HMAC over the body per entry. `trimTrailingSlash` strips a trailing run of slashes in linear time; a long run of slashes inside the path no longer costs time quadratic in its length.
+- bb35ad0: `ws.close(code, reason)` with a close RFC 6455 forbids - a code outside 1000-1003, 1007-1014 and
+  3000-4999, a reason over 123 UTF-8 bytes, or a reason without a code - throws a `RangeError` on every
+  runtime, and the socket stays open. Bun and Deno sent such a close on the wire; on Node, `ws` threw
+  after marking the socket closing, so its later sends were dropped and the client's close was never
+  answered; Workers threw their own error.
+- c7d233d: `ws.close()` with no code sends 1000 on every runtime, and the `close` callback hears 1000. Bun sent
+  1000 already; Node, Deno and Workers sent a close with no status, which the peer reads as 1005.
+- feff82f: A WebSocket route's `close` callback is given the server's own code and reason when the server closed
+  first - `ws.close(code, reason)`, or 1009 "message too large" for a message over the payload cap - on
+  every runtime, as on Bun. Node, Deno and Workers passed on the peer's echo of the close, which
+  usually drops the reason, and Node reported 1006 when `ws` refused a message over its cap.
+- a540dad: A WebSocket route's `upgrade()` may return `status(...)` to refuse the handshake, as the docs show,
+  with the types to match: an explicit `app.ws<Data>()` now compiles with it, and an inferred one no
+  longer counts the refusal as part of `ws.data`.
+
 ## 5.5.1
 
 ### Patch Changes
