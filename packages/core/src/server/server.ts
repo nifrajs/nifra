@@ -782,6 +782,7 @@ function compareMounts<Env>(a: FetchMount<Env>, b: FetchMount<Env>): number {
   return b.priority - a.priority || b.path.length - a.path.length || a.order - b.order
 }
 
+/** Rebase a mounted request's path without losing the authentication mark used by child caches. */
 function stripMountPrefix(request: Request, prefix: string): Request {
   if (prefix === "/") return request
   const url = new URL(request.url)

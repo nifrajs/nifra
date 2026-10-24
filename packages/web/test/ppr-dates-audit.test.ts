@@ -15,7 +15,6 @@ const sample = () => ({
   text: ISO,
   extra: { __nifra_date: ISO, label: "user data" },
   numeric: { __nifra_date: 123 },
-  invalid: { __nifra_date: "not a date" },
   ...JSON.parse(
     '{"__proto__":{"__nifra_date":"2026-01-01T00:00:00.000Z"},"constructor":{"prototype":{"safe":true}}}',
   ),
@@ -28,8 +27,6 @@ const check = (value: ReturnType<typeof sample>) => {
   expect(value.text).toBe(ISO)
   expect(value.extra).toEqual({ __nifra_date: ISO, label: "user data" })
   expect(value.numeric).toEqual({ __nifra_date: 123 })
-  expect(value.invalid).toBeInstanceOf(Date)
-  expect(Number.isNaN(Date.prototype.getTime.call(value.invalid))).toBe(true)
   expect(Object.getPrototypeOf(value)).toBe(Object.prototype)
   expect(Object.hasOwn(value, "__proto__")).toBe(true)
   expect(Reflect.get(value, "__proto__").toISOString()).toBe(ISO)
@@ -44,7 +41,11 @@ test("streamed PPR interactive props revive dates without changing user objects 
     setAttribute: (key: string, value: string) => attributes.set(key, value),
     removeAttribute: (key: string) => attributes.delete(key),
   }
-  const html = encodeHoleFrame("price", { html: "<p>price</p>", props: sample() }, 16384)
+  const html = encodeHoleFrame(
+    "price",
+    { html: "<p>price</p>", props: { ...sample(), invalid: { __nifra_date: "not a date" } } },
+    16384,
+  )
   const frame = {
     textContent: html.slice(html.indexOf(">") + 1, html.indexOf("</script>")),
     remove() {},
@@ -69,6 +70,9 @@ test("streamed PPR interactive props revive dates without changing user objects 
   })
   window.__nifraPpr("price")
   check(window.__nifraPpr.get("price").props)
+  const invalid = Reflect.get(window.__nifraPpr.get("price").props, "invalid")
+  expect(invalid).toBeInstanceOf(Date)
+  expect(Number.isNaN(Date.prototype.getTime.call(invalid))).toBe(true)
   expect(notified).toBe(true)
   expect(host.innerHTML).toBe("<p>price</p>")
   expect(await pprScriptHashes(["price"])).toContain(await hashSource(PPR_RUNTIME))
@@ -93,7 +97,18 @@ test("signed PPR cache revives server dates with browser tag semantics and proto
   const hit = await reader.get("dates")
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This fixture was written above; check validates each revived field.
   check(hit?.data as ReturnType<typeof sample>)
+  expect(() => JSON.stringify(hit?.data)).not.toThrow()
 })
+
+for (const invalid of ["not a date", "", "999999-01-01T00:00:00.000Z"]) {
+  test(`signed PPR cache rejects an invalid nested date tag ${JSON.stringify(invalid)}`, async () => {
+    const cache = new MemoryCacheStore()
+    const writer = sharedShellStore(cache, SECRET, "d1")
+    await writer.set("invalid", entry({ nested: [{ __nifra_date: invalid }] }), 60, undefined)
+    const reader = sharedShellStore(cache, SECRET, "d1")
+    expect(await reader.get("invalid")).toBeUndefined()
+  })
+}
 
 test("a second PPR server renders cached shared-hole dates and preserves tags on another response", async () => {
   const cache = new MemoryCacheStore()

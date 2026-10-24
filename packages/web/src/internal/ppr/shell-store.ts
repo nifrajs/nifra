@@ -63,6 +63,7 @@ const isStoredEntry = (value: unknown): value is StoredEntry => {
   )
 }
 
+/** Read and write signed deployment-scoped PPR entries, treating malformed data as cache misses. */
 export function sharedShellStore(
   store: CacheStore,
   secret: string,
@@ -88,9 +89,11 @@ export function sharedShellStore(
         payload = JSON.parse(cached.body, (_key, value: unknown) => {
           if (typeof value !== "object" || value === null) return value
           const tagged: unknown = Reflect.get(value, DATE_TAG)
-          return typeof tagged === "string" && Object.keys(value).length === 1
-            ? wireDate(new Date(tagged).getTime())
-            : value
+          if (typeof tagged !== "string" || Object.keys(value).length !== 1) return value
+          const time = Date.parse(tagged)
+          // An invalid wireDate would throw later from toJSON, outside this cache-miss boundary.
+          if (!Number.isFinite(time)) throw new RangeError("invalid cached date tag")
+          return wireDate(time)
         })
       } catch {
         return undefined

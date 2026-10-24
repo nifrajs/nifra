@@ -908,6 +908,41 @@ describe("keepAliveClient", () => {
       })
     }
 
+    for (const rejected of [false, true]) {
+      test(`${source} unrelated invalidation ${rejected ? "rejection" : "completion"} releases its identity capture`, async () => {
+        const alice = state("list", "/list/1", { data: { owner: "alice" } })
+        const { router, push, fake } = setup(alice)
+        if (rejected) spyOn(fake.inner, "invalidate").mockRejectedValueOnce(new Error("unrelated"))
+        const invalidation = router.invalidate(["/unrelated"])
+        if (rejected) await expect(invalidation).rejects.toThrow("unrelated")
+        else await invalidation
+        changeIdentity()
+        // A submit/hydration reload starts through the inner router, without navigate's capture.
+        fake.publish({ ...alice, pending: true })
+        fake.publish(state("list", "/list/1", { data: { owner: "bob" } }))
+        push(state("detail", "/detail"))
+        expect(keptOf(router)).toEqual(["/list/1"])
+      })
+    }
+
+    test(`${source} an older invalidation cannot clear a newer load's identity capture`, async () => {
+      const alice = state("list", "/list/1", { data: { owner: "alice" } })
+      const { router, push, fake } = setup(alice, { hooks: { detail: { keepAlive: true } } })
+      const invalidation = router.invalidate(["/unrelated"])
+      changeIdentity()
+      fakeHistory.push()
+      const release = fake.hold()
+      const navigation = router.navigate("/detail")
+      await invalidation
+      changeIdentity()
+      fake.publish({ ...alice, pending: true, pendingPath: "/detail" })
+      fake.publish(state("detail", "/detail", { data: { owner: "bob" } }))
+      release()
+      await navigation
+      push(state("item", "/item"))
+      expect(keptOf(router)).toEqual([])
+    })
+
     test(`${source} bearer identity change allows a same-instance refresh to be kept, but not across the next change`, async () => {
       const { router, push, fake, traverse } = setup(
         state("list", "/list/1", { data: { owner: "alice" } }),

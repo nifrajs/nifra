@@ -665,8 +665,11 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         markStale(paths)
         // At once when nothing is restoring: the live client names its load around this call.
         const invalidate = (): Promise<void> => {
-          loading = { identity, epoch: readEpoch() }
-          return inner.invalidate(paths)
+          const capture = { identity, epoch: readEpoch() }
+          loading = capture
+          return inner.invalidate(paths).finally(() => {
+            if (loading === capture) loading = undefined
+          })
         }
         return restoring === undefined ? invalidate() : afterRestore().then(invalidate)
       },

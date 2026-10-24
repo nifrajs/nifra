@@ -616,6 +616,7 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === name)
 }
 
+/** Encode a typed call, negotiate its response codec, and execute it under timeout/retry policy. */
 async function execute(
   base: string,
   path: string,
