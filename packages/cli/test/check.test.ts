@@ -124,6 +124,7 @@ describe("release verification", () => {
       "cross-runtime-node",
       "workerd",
       "runtime-differential",
+      "postgres-live",
       "pipeline-parity",
       "leak-matrix",
       "verification-parity",

@@ -104,6 +104,16 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
+      # The same server as ci.yml's postgres group, for the postgres-live gate in the runtimes group.
+      - name: Start PostgreSQL
+        if: matrix.group == 'runtimes'
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
+
       - name: Validate release branch and generated versions
         run: bun run release:check
 
@@ -116,6 +126,8 @@ jobs:
           RELEASE_MODE: "1"
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
+          # Empty in the other groups: core's suites would otherwise run the live files with no server.
+          NIFRA_TEST_POSTGRES_URL: ${{ matrix.group == 'runtimes' && 'postgres://postgres:nifra-ci@127.0.0.1:5432/postgres' || '' }}
 
   # Passes only when every group passed. A run cancelled by a newer push reports nothing here.
   release-verification:
