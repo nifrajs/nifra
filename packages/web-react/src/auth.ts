@@ -3,6 +3,7 @@
  * seeds the subtree with a session (from a loader on the server, refreshed in the browser) and
  * `useAuthSession()` reads it; `signIn`/`signOut` delegate to the shared client. Imports only
  * `react` + `@nifrajs/authjs/client`; no JSX (the package builds with plain `tsc`).
+ * `@nifrajs/authjs` is an optional peer, so only an app that installs it pulls Auth.js in.
  */
 import {
   type AuthClient,

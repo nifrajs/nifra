@@ -8,7 +8,7 @@ import {
   type PprServerConfig,
 } from "../src/internal/ppr/server.ts"
 import { digest, sharedShellStore } from "../src/internal/ppr/shell-store.ts"
-import { notFound } from "../src/internal/render-document.ts"
+import { notFound } from "../src/internal/status-page.ts"
 import { type CachedResponse, type CacheStore, MemoryCacheStore } from "../src/isr.ts"
 import { partialPrerendering } from "../src/ppr.ts"
 import type { RenderAdapter } from "../src/render-seam.ts"

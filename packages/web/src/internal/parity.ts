@@ -99,6 +99,9 @@ export interface IdentityParityFinding {
    * before anything loads. Reported, never fatal - see `SingleCopyCoverage`.
    */
   readonly deduplicated: boolean
+  /** Unbundled commands that still load both copies of a deduplicated package, because bunfig.toml
+   * does not preload the registrar for them. Absent when both are covered. */
+  readonly unenforced?: readonly ("bun run" | "bun test")[]
 }
 
 /**
@@ -743,11 +746,34 @@ const describeProvenance = (copies: readonly IdentityParityCopy[]): string | und
   return `reached through ${one ? "a symlink" : "symlinks"} that ${one ? "points" : "point"} outside the importer's install: ${lines.join(", ")}. Unless the importer declares ${one ? "it" : "them"} as a \`link:\` dependency, ${one ? "the link was" : "the links were"} planted by hand, by another project, or by \`bun link\` - remove ${one ? "it" : "them"} and reinstall there, so the importer resolves its own install's copy.`
 }
 
-/** What is left to do about a duplicate the declaration already covers. */
-const deduplicatedRemediation = (registration: SingleCopyRegistration): string =>
-  registration.run || registration.test
-    ? "Declared single-copy and enforced: every duplicate is rewritten to this app's copy, so one module instance loads."
-    : `Declared single-copy, so bundled output is deduplicated by the build. Unbundled runs are NOT: Bun's runtime never offers a bare specifier to a resolver, so add preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"] to bunfig.toml (and under [test]) or \`bun test\` still loads both copies.`
+/**
+ * What is left to do about a duplicate the declaration already covers. Bun reads the top-level
+ * `preload` for `bun run` (and the nifra CLI, which runs under the app's bunfig) and `[test] preload`
+ * for `bun test`, never one for the other, so each half is reported on its own.
+ */
+const deduplicatedRemediation = (registration: SingleCopyRegistration): string => {
+  if (registration.run && registration.test)
+    return "Declared single-copy and enforced: every duplicate is rewritten to this app's copy, so one module instance loads."
+  const preload = `preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`
+  const ignored =
+    registration.ignored === undefined
+      ? ""
+      : ` The ${preload} under [${registration.ignored.join("], [")}] belongs to that table, so Bun never runs it.`
+  if (registration.test)
+    return `Declared single-copy and enforced under \`bun test\` only: \`bun run\`, \`nifra dev\` and the CLI's app imports still load both copies until bunfig.toml carries ${preload} at the top level, above the first [table].${ignored}`
+  if (registration.run)
+    return `Declared single-copy and enforced under \`bun run\` only: \`bun test\` still loads both copies until bunfig.toml carries ${preload} under [test].`
+  return `Declared single-copy, so bundled output is deduplicated by the build. Unbundled runs are NOT: Bun's runtime never offers a bare specifier to a resolver, so add ${preload} to bunfig.toml above the first [table], and again under [test], or \`bun run\` and \`bun test\` still load both copies.${ignored}`
+}
+
+const unenforcedCommands = (
+  registration: SingleCopyRegistration,
+): readonly ("bun run" | "bun test")[] => {
+  const commands: ("bun run" | "bun test")[] = []
+  if (!registration.run) commands.push("bun run")
+  if (!registration.test) commands.push("bun test")
+  return commands
+}
 
 /**
  * Read the declaration and its runtime proof, preferring the directory the caller is in.
@@ -861,6 +887,7 @@ export async function collectIdentityParity(
     // so the skew stays fatal and the ranges have to be fixed.
     const covered =
       cause === "duplicate-path" && matchesSingleCopyDeclaration(singleCopy.declared, name)
+    const unenforced = covered ? unenforcedCommands(singleCopy.registration) : []
     const finding: IdentityParityFinding = {
       package: name,
       copies: resolvedCopies,
@@ -880,7 +907,9 @@ export async function collectIdentityParity(
       ...(provenance === undefined ? {} : { provenance }),
       deduplicated: covered,
     }
-    ;(covered ? deduplicated : findings).push(finding)
+    ;(covered ? deduplicated : findings).push(
+      unenforced.length === 0 ? finding : { ...finding, unenforced },
+    )
   }
   return {
     workspaceRoot: scanRoot,

@@ -1,5 +1,5 @@
 import { t } from "@nifrajs/schema"
-import { notFound } from "../../../../../../web/src/internal/render-document.ts"
+import { notFound } from "../../../../../../web/src/internal/status-page.ts"
 import {
   holdHole,
   noteSlowAbort,

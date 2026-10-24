@@ -1,5 +1,6 @@
 import type { CapabilityDefinition } from "@nifrajs/core/capabilities"
-import { isResponseResult, isStatusSignal, STATUS_SIGNAL } from "../internal/render-document.ts"
+import { isResponseResult } from "../internal/render-document.ts"
+import { isStatusSignal, STATUS_SIGNAL } from "../internal/status-page.ts"
 import {
   authorizeServerComponent,
   isServerComponent,

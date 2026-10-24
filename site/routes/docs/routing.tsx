@@ -265,7 +265,9 @@ export default function Routing() {
           data for it; a navigation that lands on one loads the URL as a document. Two route groups
           with a <code>_404</code> at one URL prefix are a boot error unless a directory containing
           both has one too. <code>gone()</code>, <code>statusPage()</code> and the{" "}
-          <code>_410.tsx</code>-style pages stay at the root, as does the 404 of a static export.
+          <code>_410.tsx</code>-style pages stay at the root, as does the 404 of a static export. A
+          helper the browser also loads imports these three from <code>@nifrajs/web/client</code>{" "}
+          rather than the root, whose server half Vite's dev server would otherwise send it.
         </li>
         <li>
           A root status page (<code>_404.tsx</code>, <code>_503.tsx</code>, ...) or an{" "}

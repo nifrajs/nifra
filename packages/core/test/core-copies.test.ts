@@ -143,3 +143,32 @@ test("whichever copy loads second is the one that warns", async () => {
     Reflect.set(globalThis, VERSIONS, versions)
   }
 })
+
+test("the duplicate warning says so when no single-copy registrar ran in the process", async () => {
+  if (here === undefined) throw new Error("this copy did not register")
+  const saved = [...registry]
+  const ACTIVE = Symbol.for("nifra.single-copy.active")
+  const active: unknown = Reflect.get(globalThis, ACTIVE)
+  const elsewhere = "file:///elsewhere/@nifrajs/core/src/server/core-copies.ts"
+  const warn = spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    Reflect.deleteProperty(globalThis, ACTIVE)
+    registry.splice(0, registry.length, elsewhere)
+    await import(`${fileURLToPath(here)}?unarmed`)
+    // Armed, the registrar reports what it could not collapse itself, so the hint would mislead.
+    Reflect.set(globalThis, ACTIVE, { root: "/app" })
+    registry.splice(0, registry.length, elsewhere)
+    await import(`${fileURLToPath(here)}?armed`)
+    const [unarmed, armed] = warn.mock.calls.map((call) => String(call[0]))
+    expect(unarmed).toContain(
+      "No single-copy registrar ran in this process: bunfig.toml must preload @nifrajs/core/single-copy/register at its top level, above any [table], for bun run, and under [test] for bun test.",
+    )
+    expect(armed).toContain("@nifrajs/core is loaded 2 times")
+    expect(armed).not.toContain("registrar")
+  } finally {
+    warn.mockRestore()
+    registry.splice(0, registry.length, ...saved)
+    if (active === undefined) Reflect.deleteProperty(globalThis, ACTIVE)
+    else Reflect.set(globalThis, ACTIVE, active)
+  }
+})

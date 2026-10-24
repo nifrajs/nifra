@@ -1248,6 +1248,29 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       expect(renderCheckReport(result).join("\n")).toContain(
         "identity-sensitive duplicate installs handled by singleCopy: @nifrajs/core",
       )
+      expect(result.identityPreflight?.deduplicated[0]?.unenforced).toEqual(["bun run", "bun test"])
+
+      // The preload line below [install] is `install.preload`: `bun test` is armed, `bun run` is not,
+      // and the report says which half and why instead of calling the declaration enforced.
+      const preload = 'preload = ["@nifrajs/core/single-copy/register"]'
+      await writeFile(
+        join(dir, "bunfig.toml"),
+        `[install]\nexact = true\n${preload}\n[test]\n${preload}\n`,
+      )
+      const misplaced = await collectCheckResult(dir, { lintsOnly: true })
+      expect(misplaced.ok).toBe(true)
+      expect(misplaced.identityPreflight?.deduplicated[0]?.unenforced).toEqual(["bun run"])
+      const report = renderCheckReport(misplaced).join("\n")
+      expect(report).toContain("enforced under `bun test` only: `bun run`, `nifra dev`")
+      expect(report).toContain(`The ${preload} under [install] belongs to that table`)
+
+      await writeFile(join(dir, "bunfig.toml"), `${preload}\n[test]\n${preload}\n`)
+      const armed = await collectCheckResult(dir, { lintsOnly: true })
+      expect(armed.identityPreflight?.deduplicated[0]?.unenforced).toBeUndefined()
+      expect(armed.identityPreflight?.deduplicated[0]?.remediation).toBe(
+        "Declared single-copy and enforced: every duplicate is rewritten to this app's copy, so one module instance loads.",
+      )
+      expect(renderCheckReport(armed).join("\n")).not.toContain("Declared single-copy")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

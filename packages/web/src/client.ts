@@ -45,6 +45,9 @@ export { identityChanged } from "./identity.ts"
  * before hydrating. The fix is for the entry not to name the server module in the first place.
  */
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
+// For route helpers shared by a loader and a component, which the browser loads too: imported from the
+// root, they put its `node:crypto` import into Vite dev's browser deps on every page.
+export { gone, notFound, statusPage } from "./internal/status-page.ts"
 export {
   closeBoundary,
   getBrowserNavigate,

@@ -107,8 +107,6 @@ export {
 } from "./internal/identity-epoch.ts"
 export type { PrerenderedPages } from "./internal/prerendered-pages.ts"
 export {
-  gone,
-  notFound,
   type RedirectOptions,
   type RenderAssemblyCache,
   type RenderedPage,
@@ -120,9 +118,7 @@ export {
   renderPage,
   renderPageResult,
   revalidate,
-  type StatusPageOptions,
   serializeData,
-  statusPage,
   unsafeInlineScript,
 } from "./internal/render-document.ts"
 export {
@@ -137,6 +133,7 @@ export {
  * stubbed by both build pipelines and waved through by the guard meant to stop it leaking.
  */
 export { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
+export { gone, notFound, type StatusPageOptions, statusPage } from "./internal/status-page.ts"
 export {
   type CreateWebAppOptions,
   createWebApp,

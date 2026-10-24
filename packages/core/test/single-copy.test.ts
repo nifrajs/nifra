@@ -156,6 +156,25 @@ test("readSingleCopyRegistration tells the run preload from the test preload", a
     // Not armed for `bun run`: a `[test]` preload covers `bun test` only, and reporting otherwise
     // would claim a guarantee the app does not have.
     expect(registration.run).toBe(false)
+    expect(registration.ignored).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a preload written below [install] arms nothing for `bun run`, and the table is named", async () => {
+  const { ground, app } = await linkedRepos("registration-install-table", {
+    declaration: ["state"],
+    bunfig:
+      '[install]\nexact = true\npreload = ["@nifrajs/core/single-copy/register"]\n[test]\npreload = ["@nifrajs/core/single-copy/register"]\n',
+  })
+  try {
+    const registration = readSingleCopyRegistration(app)
+    expect(registration).toMatchObject({ run: false, test: true, ignored: ["install"] })
+    // The line reader agrees with Bun's own parse: the key belongs to the table above it.
+    const parsed = Bun.TOML.parse(await readFile(join(app, "bunfig.toml"), "utf8"))
+    expect(parsed).not.toHaveProperty("preload")
+    expect(parsed).toHaveProperty(["install", "preload"])
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
@@ -533,16 +552,14 @@ test("the plugin builds even when the app has no duplicates to collapse", async 
 const runRegistered = async (
   app: string,
   env: Readonly<Record<string, string>> = {},
+  probeSource = 'import { seen } from "@example/ui"\nconsole.log(JSON.stringify(seen()))\n',
 ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> => {
   const register = JSON.stringify(join(import.meta.dir, "..", "src", "single-copy.ts"))
   await writeFile(
     join(app, "preload.ts"),
     `import { registerSingleCopy } from ${register};\nregisterSingleCopy();\nregisterSingleCopy();\n`,
   )
-  await writeFile(
-    join(app, "probe.ts"),
-    'import { seen } from "@example/ui"\nconsole.log(JSON.stringify(seen()))\n',
-  )
+  await writeFile(join(app, "probe.ts"), probeSource)
   const childEnv: Record<string, string | undefined> = { ...process.env, ...env }
   if (env[SINGLE_COPY_STRICT_ENV] === undefined) delete childEnv[SINGLE_COPY_STRICT_ENV]
   const probe = Bun.spawnSync({
@@ -664,6 +681,50 @@ test("a linked file with no counterpart in the app's copy is reported, and fails
   }
 })
 
+test("a CommonJS file with no counterpart keeps its exports for require() and import, run or bundled", async () => {
+  const { ground, app, theirs } = await linkedRepos("register-no-counterpart-cjs", {
+    declaration: ["state"],
+  })
+  try {
+    // CommonJS by content: the package declares no "type", so Bun reads `exports.x =` as CommonJS.
+    // Handed back as source from `onLoad`, the same text loads as an ES module and loses its exports.
+    await writeFile(join(theirs, "legacy.js"), '"use strict";\nexports.answer = 42;\n')
+    await writeFile(
+      join(ground, "sibling", "packages", "ui", "index.js"),
+      'import * as imported from "state/legacy.js"\nexport { mark, seen } from "state"\n' +
+        'export const legacy = () => [imported.answer, require("state/legacy.js").answer]\n',
+    )
+    const run = await runRegistered(
+      app,
+      {},
+      'import { legacy } from "@example/ui"\nconsole.log(JSON.stringify(legacy()))\n',
+    )
+    expect(run.stdout).toBe("[42,42]")
+    expect(run.exitCode).toBe(0)
+    expect(
+      occurrences(run.stderr, "[nifra] single-copy: state is NOT deduplicated (no-counterpart)"),
+    ).toBe(1)
+    expect(run.stderr).toContain(`linked copy: ${join(theirs, "legacy.js")} (1.0.0)`)
+
+    const bundle = await Bun.build({
+      entrypoints: [join(app, "probe.ts")],
+      outdir: join(app, "out"),
+      target: "bun",
+      plugins: [singleCopyPlugin({ cwd: app })],
+    })
+    expect(bundle.success).toBe(true)
+    const bundled = Bun.spawnSync({
+      cmd: ["bun", join(app, "out", "probe.js")],
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(bundled.stdout.toString().trim()).toBe("[42,42]")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
 test("a root that does not exist plans nothing instead of throwing", async () => {
   const ground = await realpath(await mkdtemp(join(tmpdir(), "nifra-single-copy-missing-")))
   try {
@@ -710,6 +771,8 @@ interface RecordedHook {
  */
 const hooksOf = (
   plugin: SingleCopyPlugin,
+  /** `Bun.build` sets this; `Bun.plugin` leaves it unset. */
+  config?: object,
 ): { readonly resolve: RecordedHook | undefined; readonly load: RecordedHook | undefined } => {
   const resolvers: RecordedHook[] = []
   const loaders: RecordedHook[] = []
@@ -728,6 +791,7 @@ const hooksOf = (
   plugin.setup({
     onResolve: record(resolvers),
     onLoad: record(loaders),
+    config,
   } as unknown as PluginBuilder)
   return { resolve: resolvers[0], load: loaders[0] }
 }
@@ -764,7 +828,22 @@ test("the resolve hook pins a declared name and its subpaths to the app's copy",
 
 const EXTRA = "export const extra = new Set();\n"
 
-test("the load hook re-exports the app's counterpart, and returns a file with none untouched", async () => {
+/** The module the load hook hands back in place of a linked file: a re-export of `target`. */
+const reexportOf = (target: string) => {
+  const from = JSON.stringify(target)
+  return {
+    contents:
+      `export * from ${from};\n` +
+      `import * as __singleCopy from ${from};\n` +
+      "export default __singleCopy.default ?? __singleCopy;\n",
+    loader: "js",
+  }
+}
+
+/** A linked file with no counterpart re-exports itself, under a query the hook's filter never matches. */
+const ownFile = (path: string) => reexportOf(`${path}?nifra-single-copy`)
+
+test("the load hook re-exports the app's counterpart, and a file with none from itself", async () => {
   const { ground, app, ours, theirs } = await linkedRepos("load-hook", { declaration: ["state"] })
   try {
     const extra = join(theirs, "extra.js")
@@ -785,17 +864,11 @@ test("the load hook re-exports the app's counterpart, and returns a file with no
     expect(load.filter.test(join(ours, "index.js"))).toBe(false)
     expect(load.filter.test(join(theirs, "package.json"))).toBe(false)
 
-    const target = JSON.stringify(join(ours, "index.js"))
-    expect(load.run(join(theirs, "index.js"))).toEqual({
-      contents:
-        `export * from ${target};\n` +
-        `import * as __singleCopy from ${target};\n` +
-        "export default __singleCopy.default ?? __singleCopy;\n",
-      loader: "js",
-    })
+    expect(load.run(join(theirs, "index.js"))).toEqual(reexportOf(join(ours, "index.js")))
     expect(skips).toHaveLength(0)
 
-    expect(load.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+    expect(load.run(extra)).toEqual(ownFile(extra))
+    expect(load.filter.test(`${extra}?nifra-single-copy`)).toBe(false)
     expect(skips).toEqual([
       {
         package: "state",
@@ -811,30 +884,35 @@ test("the load hook re-exports the app's counterpart, and returns a file with no
 
     // Without a listener the plugin stays silent, and still hands the file back.
     const silent = hook(hooksOf(singleCopyPlugin({ cwd: app })).load)
-    expect(silent.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+    expect(silent.run(extra)).toEqual(ownFile(extra))
+
+    // A bundler can load the file itself, so it is told to; a counterpart still redirects there.
+    const bundled = hook(hooksOf(singleCopyPlugin({ cwd: app }), { target: "bun" }).load)
+    expect(bundled.run(extra)).toBeUndefined()
+    expect(bundled.run(join(theirs, "index.js"))).toEqual(reexportOf(join(ours, "index.js")))
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
 })
 
-test("a file with no counterpart is handed back with the loader its extension names", async () => {
+test("a file with no counterpart is left to Bun's own loader, whatever its extension", async () => {
   const { ground, app, theirs } = await linkedRepos("load-hook-loader", { declaration: ["state"] })
   try {
     const load = hook(hooksOf(singleCopyPlugin({ cwd: app, onSkip: () => {} })).load)
-    const contents = "export const extra: Set<string> = new Set();\n"
-    const cases: [file: string, loader: string][] = [
-      ["extra.ts", "ts"],
-      ["extra.mts", "ts"],
-      ["extra.cts", "ts"],
-      ["extra.tsx", "tsx"],
-      ["extra.jsx", "jsx"],
-      ["extra.mjs", "js"],
-    ]
-    for (const [file, loader] of cases) {
+    for (const file of [
+      "extra.ts",
+      "extra.mts",
+      "extra.cts",
+      "extra.tsx",
+      "extra.jsx",
+      "extra.mjs",
+      "extra.cjs",
+    ]) {
       const path = join(theirs, file)
-      await writeFile(path, contents)
+      await writeFile(path, "export const extra: Set<string> = new Set();\n")
       expect(load.filter.test(path)).toBe(true)
-      expect(load.run(path)).toEqual({ contents, loader })
+      expect(load.run(path)).toEqual(ownFile(path))
+      expect(load.filter.test(`${path}?nifra-single-copy`)).toBe(false)
     }
   } finally {
     await rm(ground, { recursive: true, force: true })
@@ -923,7 +1001,7 @@ test("the registrar reports each planned skip, warns once, and installs one plug
       expect(installed[0]?.plan).toBe(first)
       expect(warnings).toHaveLength(1)
       expect(warnings[0]?.split("\n")).toEqual([
-        "[nifra] single-copy: state is NOT deduplicated (version-skew) - a second copy loads, so its module state is not shared.",
+        "[nifra] single-copy: state is NOT deduplicated (version-skew) - a second copy is installed at another version, and whatever loads it does not share this copy's module state.",
         `  app copy: ${ours} (1.0.0)`,
         `  linked copy: ${theirs} (2.0.0)`,
         "  2.0.0 there, 1.0.0 here - redirecting would serve a version that copy did not ask for",
@@ -964,7 +1042,7 @@ test("a linked tree that skews several packages at once is one report, not one p
       expect(plan.skipped.map((skip) => skip.package).sort()).toEqual(["cache", "state", "store"])
       expect(warnings).toHaveLength(1)
       expect(warnings[0]?.split("\n")).toEqual([
-        "[nifra] single-copy: 3 packages are NOT deduplicated (version-skew) - a second copy of each loads, so their module state is not shared.",
+        "[nifra] single-copy: 3 packages are NOT deduplicated (version-skew) - a second copy of each is installed at another version, and whatever loads one does not share the app copy's module state.",
         `  app copies: ${dirname(ours)} (1.0.0)`,
         `  linked copies: ${dirname(theirs)} (2.0.0)`,
         "  packages: cache, state, store",
@@ -1046,8 +1124,8 @@ test("the installed plugin warns once for a file with no counterpart, and throws
       const [plugin] = installed
       if (plugin === undefined) throw new Error("the registrar installed no plugin")
       const load = hook(hooksOf(plugin).load)
-      expect(load.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
-      expect(load.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+      expect(load.run(extra)).toEqual(ownFile(extra))
+      expect(load.run(extra)).toEqual(ownFile(extra))
       expect(skips.map((skip) => [skip.reason, skip.from])).toEqual([
         ["no-counterpart", extra],
         ["no-counterpart", extra],

@@ -78,13 +78,9 @@ export const IDENTITY_SENSITIVE_PACKAGES: readonly string[] = [
 /** Files a redirect may rewrite. Everything else in a package (json, css, wasm) loads unchanged. */
 const REDIRECTABLE = /\.(?:m|c)?[jt]sx?$/
 
-/** The loader a {@link REDIRECTABLE} file is parsed with. `.ts` is never `tsx`: under JSX rules a
- * generic arrow (`<T>(x: T) => x`) reads as an unclosed element and swallows the file. */
-function sourceLoader(path: string): "js" | "jsx" | "ts" | "tsx" {
-  if (path.endsWith(".tsx")) return "tsx"
-  if (path.endsWith(".jsx")) return "jsx"
-  return /\.[mc]?ts$/.test(path) ? "ts" : "js"
-}
+/** Appended to a linked file the load hook hands back to Bun untouched; see the hook. */
+const OWN_FILE_QUERY = "?nifra-single-copy"
+
 /** Runaway guards. A real `node_modules` top level is hundreds of entries, a repo walk is a few. */
 const MAX_SCANNED_ENTRIES = 4_096
 const MAX_ANCESTOR_DIRS = 16
@@ -233,6 +229,11 @@ export interface SingleCopyRegistration {
   readonly run: boolean
   /** `[test] preload`: covers `bun test`, the surface that runs app sources unbundled. */
   readonly test: boolean
+  /**
+   * Tables whose `preload` names the registrar although Bun reads it from neither place: below
+   * `[install]` the line is `install.preload`, so `bun run` loads every copy while the file looks armed.
+   */
+  readonly ignored?: readonly string[]
   /** The `bunfig.toml` that was read, if one exists. */
   readonly config?: string
 }
@@ -286,6 +287,7 @@ export function readSingleCopyRegistration(cwd: string): SingleCopyRegistration 
   let section = ""
   let run = false
   let test = false
+  const ignored: string[] = []
   for (const line of text.split(/\r?\n/)) {
     const match = PRELOAD_ASSIGNMENT.exec(line)
     if (match?.groups === undefined) continue
@@ -298,8 +300,9 @@ export function readSingleCopyRegistration(cwd: string): SingleCopyRegistration 
       continue
     if (section === "test") test = true
     else if (section === "") run = true
+    else if (!ignored.includes(section)) ignored.push(section)
   }
-  return { run, test, config }
+  return ignored.length === 0 ? { run, test, config } : { run, test, ignored, config }
 }
 
 /** The repository a linked checkout resolves its own dependencies from: its nearest `.git` ancestor.
@@ -598,6 +601,8 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
       // hook has to return contents for everything it matches, and re-emitting a CommonJS entry as an
       // ES module is how `Export named 'useEffect' not found` happens.
       const filter = new RegExp(`^(?:${roots})[/\\\\].*${REDIRECTABLE.source}`)
+      // `Bun.plugin` leaves `config` unset although the type says otherwise; only `Bun.build` sets it.
+      const bundling = build.config !== undefined
       build.onLoad({ filter }, (args) => {
         for (const redirect of plan.redirects) {
           const target = counterpart(redirect, args.path)
@@ -616,10 +621,13 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
             detail: `${relative(owner.from, args.path)} has no file at the same path in the app's copy, so it loads from the linked copy and its module state is not shared`,
           })
         }
-        // A runtime `onLoad` must always return an object - returning nothing fails the load rather
-        // than falling through to the default. Hand back the file as it was, at its own path, so its
-        // relative imports keep resolving exactly as they would have.
-        return { contents: readFileSync(args.path, "utf8"), loader: sourceLoader(args.path) }
+        // The file loads as it is, in its own module format. A bundler takes `undefined` for that. A
+        // runtime `onLoad` must return an object, and source returned from here loads as an ES module,
+        // which empties a CommonJS file's exports - so the runtime gets a re-export of the file under a
+        // query the filter's `$` cannot match, which Bun then loads natively from its own directory.
+        // There its `__filename` and `import.meta.url` carry the query; the bundler cannot resolve it.
+        if (bundling) return undefined
+        return { contents: reexport(`${args.path}${OWN_FILE_QUERY}`), loader: "js" }
       })
     },
   }
@@ -646,12 +654,20 @@ const processSet = (key: symbol): Set<string> => {
 const copyLine = (label: string, path: string | undefined, version: string | undefined): string =>
   `  ${label}: ${path ?? "(not installed for the app)"}${version === undefined ? "" : ` (${version})`}`
 
-/** One report per package: both copies, both versions, the reason, and the fix. */
+/**
+ * One report per package: both copies, both versions, the reason, and the fix. A version skew comes
+ * from the plan, which reads installs, so it says installed: nothing may ever load that copy, and a
+ * runtime `onLoad` cannot watch for it without re-emitting CommonJS files as ES modules.
+ */
 const describeSkips = (name: string, skips: readonly SingleCopySkip[]): string => {
   const first = skips[0]
   const reason = first?.reason ?? "version-skew"
+  const effect =
+    reason === "version-skew"
+      ? "a second copy is installed at another version, and whatever loads it does not share this copy's module state."
+      : "a second copy loads, so its module state is not shared."
   const lines = [
-    `[nifra] single-copy: ${name} is NOT deduplicated (${reason}) - a second copy loads, so its module state is not shared.`,
+    `[nifra] single-copy: ${name} is NOT deduplicated (${reason}) - ${effect}`,
     copyLine("app copy", first?.to, first?.toVersion),
   ]
   for (const skip of skips) {
@@ -683,7 +699,7 @@ const describeSkewGroup = (skips: readonly SingleCopySkip[]): string => {
   if (first === undefined || skips.length === 1) return describeSkips(first?.package ?? "", skips)
   const names = skips.map((skip) => skip.package).sort(codeUnitOrder)
   return [
-    `[nifra] single-copy: ${names.length} packages are NOT deduplicated (version-skew) - a second copy of each loads, so their module state is not shared.`,
+    `[nifra] single-copy: ${names.length} packages are NOT deduplicated (version-skew) - a second copy of each is installed at another version, and whatever loads one does not share the app copy's module state.`,
     copyLine(
       "app copies",
       first.to === undefined ? undefined : modulesDirOf(first.to),
