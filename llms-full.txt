@@ -8424,7 +8424,8 @@ export function Counter(props: { message: string }) {
 
 `@nifrajs/devtools` is a plugin that streams what each request actually did - loader
 traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
-in the browser.
+in the browser. In an app with [keep-alive](/docs/keep-alive) routes, the overlay
+also lists the pages kept hidden.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -11677,6 +11678,28 @@ A page left with a [route open in a modal](/docs/routing#modal-routes) over
 it is kept with the modal. Back to that entry shows the page and opens the modal over it
 again.
 
+### What changes when a page stays mounted
+
+-
+Code that runs when a page mounts runs once for that page, not on every visit. Back to a
+kept page does not mount it again; work that belongs to each visit goes in
+`onPageShow`. React is the exception: `<Activity>` runs the
+page's effects again each time it is shown.
+
+-
+In Preact, Solid, Svelte and Vue a hidden page keeps running: its timers fire, its
+subscriptions deliver, its stores update. Pause what should not run unseen with
+`onPageHide`.
+
+-
+State outlives the visit. Form input, a filter, an open panel are where the visitor left
+them; reset in `onPageShow` what must start fresh.
+
+-
+Each kept page holds its DOM and its components' memory, at most three per tab. In
+development, the [devtools overlay](/docs/dev#devtools) lists them with their
+path, how long each has been hidden and how many elements it renders.
+
 ### Fresh data
 
 A page comes back at once, as it was left, and reloads its data behind it. The reload is
@@ -11684,6 +11707,15 @@ shared onto the data the page already holds: what did not change keeps its ident
 nothing below an unchanged value renders again, and form input in a list survives. Set
 `revalidate: false` to skip the reload; an action submitted while the page was
 hidden still reloads it.
+
+A [partially prerendered](/docs/partial-prerendering) page that is kept stops its
+holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
+way is dropped. When the page comes back each hole reloads in place, its old content marked
+`aria-busy="true"` until the new arrives, with `revalidate: false` too.
+
+With [live refresh](/docs/live), a hidden page is not watched. When it comes back,
+what changed while it was hidden reloads, whatever `revalidate` says, and a grant
+that expired in the meantime is loaded again.
 
 ### While a page is hidden
 

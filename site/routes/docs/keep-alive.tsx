@@ -149,6 +149,30 @@ export default function KeepAlive() {
         </li>
       </ul>
 
+      <h2 id="mounted">What changes when a page stays mounted</h2>
+      <ul>
+        <li>
+          Code that runs when a page mounts runs once for that page, not on every visit. Back to a
+          kept page does not mount it again; work that belongs to each visit goes in{" "}
+          <code>onPageShow</code>. React is the exception: <code>&lt;Activity&gt;</code> runs the
+          page's effects again each time it is shown.
+        </li>
+        <li>
+          In Preact, Solid, Svelte and Vue a hidden page keeps running: its timers fire, its
+          subscriptions deliver, its stores update. Pause what should not run unseen with{" "}
+          <code>onPageHide</code>.
+        </li>
+        <li>
+          State outlives the visit. Form input, a filter, an open panel are where the visitor left
+          them; reset in <code>onPageShow</code> what must start fresh.
+        </li>
+        <li>
+          Each kept page holds its DOM and its components' memory, at most three per tab. In
+          development, the <a href="/docs/dev#devtools">devtools overlay</a> lists them with their
+          path, how long each has been hidden and how many elements it renders.
+        </li>
+      </ul>
+
       <h2>Fresh data</h2>
       <p>
         A page comes back at once, as it was left, and reloads its data behind it. The reload is
@@ -156,6 +180,17 @@ export default function KeepAlive() {
         nothing below an unchanged value renders again, and form input in a list survives. Set{" "}
         <code>revalidate: false</code> to skip the reload; an action submitted while the page was
         hidden still reloads it.
+      </p>
+      <p>
+        A <a href="/docs/partial-prerendering">partially prerendered</a> page that is kept stops its
+        holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
+        way is dropped. When the page comes back each hole reloads in place, its old content marked{" "}
+        <code>aria-busy="true"</code> until the new arrives, with <code>revalidate: false</code> too.
+      </p>
+      <p>
+        With <a href="/docs/live">live refresh</a>, a hidden page is not watched. When it comes back,
+        what changed while it was hidden reloads, whatever <code>revalidate</code> says, and a grant
+        that expired in the meantime is loaded again.
       </p>
 
       <h2>While a page is hidden</h2>
