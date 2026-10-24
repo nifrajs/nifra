@@ -509,3 +509,46 @@ test("an app WebSocket route upgrades through the Vite dev server, beside Vite's
   hmr.close()
   expect(JSON.parse(greeting)).toMatchObject({ type: "connected" })
 })
+
+test("a repeated field whose last value is empty reaches the app as Fetch joins it", async () => {
+  // Node joins `x-caller: a` + `x-caller:` to "a, ". `Headers` strips the whitespace around each value
+  // it is given, so setting that joined string read back as "a," in dev and "a, " in production.
+  const origin = await start((request) =>
+    Response.json({
+      caller: request.headers.get("x-caller"),
+      empty: request.headers.get("x-empty"),
+      cookie: request.headers.get("cookie"),
+      plain: request.headers.get("x-plain"),
+    }),
+  )
+  const { port } = new URL(origin)
+  const text = await new Promise<string>((resolve, reject) => {
+    const socket = connect(Number(port), "127.0.0.1", () => {
+      socket.write(
+        [
+          "GET /api/fields HTTP/1.1",
+          `host: 127.0.0.1:${port}`,
+          "x-caller: a\tb",
+          "x-caller:",
+          "x-empty:",
+          "x-empty:",
+          "cookie: a=1",
+          "cookie:",
+          "x-plain: one",
+          "connection: close",
+          "",
+          "",
+        ].join("\r\n"),
+      )
+    })
+    let received = ""
+    socket.setEncoding("latin1")
+    socket.on("data", (chunk: string) => {
+      received += chunk
+    })
+    socket.on("end", () => resolve(received))
+    socket.on("error", reject)
+  })
+  const body = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)
+  expect(JSON.parse(body)).toEqual({ caller: "a\tb, ", empty: ", ", cookie: "a=1; ", plain: "one" })
+})

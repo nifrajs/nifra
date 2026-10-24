@@ -2485,20 +2485,51 @@ function headersFromNode(input: IncomingHttpHeaders): Headers {
  * `Headers` (validating every name/value) and then copy it into the request's own list, validating
  * everything a second time.
  */
-function headerRecordFromNode(input: IncomingHttpHeaders): Record<string, string> {
+function headerRecordFromNode(input: IncomingHttpHeaders): NodeHeaderInit {
   const record = Object.create(null) as Record<string, string>
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue
-    record[key] = Array.isArray(value) ? value.join(", ") : value
+    const joined = Array.isArray(value) ? value.join(", ") : value
+    // Node trims every field line, so a trailing space means the last member was empty.
+    if (joined.endsWith(" ")) return headerPairsFromNode(input)
+    record[key] = joined
   }
   return record
+}
+
+type NodeHeaderInit = Record<string, string> | Array<[string, string]>
+
+/**
+ * The same bag as `[name, value]` pairs, for a request whose joined value ends in an empty member.
+ * `Headers` strips the whitespace around each value it is given, so the record's `"a, "` would read
+ * back as `"a,"`; appending the empty members one by one keeps the `"a, "` Bun and Deno show.
+ */
+function headerPairsFromNode(input: IncomingHttpHeaders): Array<[string, string]> {
+  const pairs: Array<[string, string]> = []
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined) continue
+    if (Array.isArray(value)) {
+      for (const member of value) pairs.push([key, member])
+      continue
+    }
+    const delimiter = key === "cookie" ? "; " : ", "
+    let base = value
+    let empty = 0
+    while (base.endsWith(delimiter)) {
+      base = base.slice(0, -delimiter.length)
+      empty++
+    }
+    pairs.push([key, base])
+    for (; empty > 0; empty--) pairs.push([key, ""])
+  }
+  return pairs
 }
 
 function makeWebRequest(
   req: IncomingMessage,
   method: string,
   url: string,
-  headers: Headers | Record<string, string>,
+  headers: Headers | NodeHeaderInit,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
   res?: RequestEnd,
 ): Request {
@@ -2538,16 +2569,16 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
   class LazyWebRequest {
     #method: string
     #url: string
-    #headersInit: (() => Headers | Record<string, string>) | undefined
-    #materialize: ((headers: Headers | Record<string, string>) => Request) | undefined
+    #headersInit: (() => Headers | NodeHeaderInit) | undefined
+    #materialize: ((headers: Headers | NodeHeaderInit) => Request) | undefined
     #headers: Headers | undefined
     #real: Request | undefined
 
     constructor(
       method: string,
       url: string,
-      headersInit: () => Headers | Record<string, string>,
-      materialize: (headers: Headers | Record<string, string>) => Request,
+      headersInit: () => Headers | NodeHeaderInit,
+      materialize: (headers: Headers | NodeHeaderInit) => Request,
     ) {
       this.#method = method
       this.#url = url
@@ -2569,7 +2600,7 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
         this.#headers = this.#real.headers
         return this.#headers
       }
-      const init = (this.#headersInit as () => Headers | Record<string, string>)()
+      const init = (this.#headersInit as () => Headers | NodeHeaderInit)()
       this.#headers = init instanceof Headers ? init : new Headers(init)
       return this.#headers
     }
@@ -2577,11 +2608,11 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
     /** The real undici Request, built on first demand. Named for the forwarding descriptors below. */
     get _real(): Request {
       if (this.#real === undefined) {
-        const materialize = this.#materialize as (h: Headers | Record<string, string>) => Request
+        const materialize = this.#materialize as (h: Headers | NodeHeaderInit) => Request
         // Hand the materializer the SAME Headers a hook may already have observed (and mutated),
         // so the real request reflects it; otherwise let it build from its own cheap record.
         this.#real = materialize(
-          this.#headers ?? (this.#headersInit as () => Headers | Record<string, string>)(),
+          this.#headers ?? (this.#headersInit as () => Headers | NodeHeaderInit)(),
         )
         this.#headersInit = undefined
         this.#materialize = undefined
