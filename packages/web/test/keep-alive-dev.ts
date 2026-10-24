@@ -26,6 +26,9 @@ export async function serveDev(options: {
   const dir = mkdtempSync(join(options.under, `.tmp-keep-alive-dev-${options.pipeline}-`))
   cpSync(options.fixture, dir, { recursive: true })
   writeFileSync(join(dir, "nifra.config.ts"), options.config)
+  // A full Chrome asks for /favicon.ico (the headless shell never does), and its 404 is a console error.
+  mkdirSync(join(dir, "public"), { recursive: true })
+  writeFileSync(join(dir, "public", "favicon.ico"), "")
   for (const [name, target] of Object.entries(options.links ?? {})) {
     const link = join(dir, "node_modules", name)
     mkdirSync(dirname(link), { recursive: true })
