@@ -2,7 +2,10 @@ import { expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { serverComponentsPlugin } from "../src/server-components/vite.ts"
+import {
+  type ServerComponentsPluginOptions,
+  serverComponentsPlugin,
+} from "../src/server-components/vite.ts"
 
 test("native client authorization compares Vite and filesystem path spellings", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-component-path-"))
@@ -36,4 +39,31 @@ test("native client authorization compares Vite and filesystem path spellings", 
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("only the rsc build keeps a React module's use-client directive", () => {
+  const transform = (
+    environment: string,
+    code: string,
+    id = "/app/Counter.tsx",
+    adapter: ServerComponentsPluginOptions["adapter"] = "react",
+  ) => {
+    const plugin = serverComponentsPlugin({ root: "/app", adapter })
+    if (typeof plugin.transform !== "function") throw new Error("missing compiler hooks")
+    return Reflect.apply(plugin.transform, { environment: { name: environment } }, [code, id])
+  }
+  const source = "\"use strict\"; 'use client';\nexport const a = 1"
+  const stripped = { code: `"use strict"; ${" ".repeat(13)}\nexport const a = 1`, map: null }
+  expect(transform("ssr", source)).toEqual(stripped)
+  expect(transform("client", source, "/app/Counter.tsx?nifra-native-client-reference")).toEqual(
+    stripped,
+  )
+  expect(transform("rsc", source)).toBeNull()
+  expect(transform("ssr", source, "/app/Counter.tsx", "vue")).toBeNull()
+  for (const kept of [
+    'export const a = "use client"',
+    'import x from "x"\n"use client"',
+    '// "use client"\nexport {}',
+  ])
+    expect(transform("ssr", kept)).toBeNull()
 })
