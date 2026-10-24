@@ -64,29 +64,25 @@ function bindingBound(
   return i === undefined ? undefined : { value: i, exclusive: false }
 }
 
-// The safe-integer limits say what a number can carry, not what a field means: they leave a side open.
-const fieldBound = (value: unknown): unknown =>
-  typeof value === "number" && Math.abs(value) >= Number.MAX_SAFE_INTEGER ? undefined : value
-
 // A side the schema leaves open sits 100 from the given one, so `minimum: 1900` alone is satisfiable.
+// A bound at or past the safe-integer limit on its own side says what a number can carry, not what a
+// field means: it leaves the side open but still caps the range, so `minimum: 2^53 - 2` stays safe.
 function numericBounds(schema: Record<string, unknown>): NumericBounds {
-  const lower = bindingBound(
-    fieldBound(schema.minimum),
-    fieldBound(schema.exclusiveMinimum),
-    (a, b) => a > b,
-  )
-  const upper = bindingBound(
-    fieldBound(schema.maximum),
-    fieldBound(schema.exclusiveMaximum),
-    (a, b) => a < b,
-  )
-  const min = lower?.value ?? (upper === undefined ? 0 : upper.value - 100)
-  const max = upper?.value ?? min + 100
+  const lower = bindingBound(schema.minimum, schema.exclusiveMinimum, (a, b) => a > b)
+  const upper = bindingBound(schema.maximum, schema.exclusiveMaximum, (a, b) => a < b)
+  const low =
+    lower !== undefined && lower.value > -Number.MAX_SAFE_INTEGER ? lower.value : undefined
+  const high =
+    upper !== undefined && upper.value < Number.MAX_SAFE_INTEGER ? upper.value : undefined
+  const from = low ?? (high === undefined ? 0 : high - 100)
+  const to = high ?? from + 100
+  const min = lower !== undefined && lower.value >= from ? lower : { value: from, exclusive: false }
+  const max = upper !== undefined && upper.value <= to ? upper : { value: to, exclusive: false }
   const bounds = {
-    min,
-    max,
-    minExclusive: lower?.exclusive === true,
-    maxExclusive: upper?.exclusive === true,
+    min: min.value,
+    max: max.value,
+    minExclusive: min.exclusive,
+    maxExclusive: max.exclusive,
   }
   if (min > max || (min === max && (bounds.minExclusive || bounds.maxExclusive)))
     throw new UnsupportedMockSchemaError("minimum", "Numeric schema has no satisfiable range")

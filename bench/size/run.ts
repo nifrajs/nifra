@@ -269,7 +269,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-sse": 37.9,
   "nifra-valibot": 38.0,
   "nifra-typebox-t": 62.5,
-  // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,763 B (Bun 1.4.4).
+  // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   "nifra-typebox-form": 67.2,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,

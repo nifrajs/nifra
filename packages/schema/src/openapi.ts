@@ -872,8 +872,9 @@ function sharedTag(members: readonly SchemaRecord[]): string | undefined {
 const COMPONENT_REF = /^#\/components\/schemas\/([^/]+)$/
 
 /**
- * A union whose members are told apart by one tag property, as a `oneOf` with a `discriminator`:
- * distinct required tags make the members exclusive, so `anyOf` and `oneOf` accept the same values.
+ * A union whose members are told apart by one tag property, as a `oneOf`, plus a `discriminator` with
+ * a `mapping` when every member is a component: distinct required tags make the members exclusive, so
+ * `anyOf` and `oneOf` accept the same values.
  */
 function discriminated(schema: SchemaRecord, components: SchemaRecord): SchemaRecord {
   const { oneOf, anyOf } = schema
@@ -898,9 +899,8 @@ function discriminated(schema: SchemaRecord, components: SchemaRecord): SchemaRe
   if (tag === undefined) return schema
   const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = schema
   const named = refs.filter((name): name is string => name !== undefined)
-  // A mapping can only name components; inline members are matched by their pinned values.
-  if (named.length < refs.length)
-    return { ...rest, oneOf: members, discriminator: { propertyName: tag } }
+  // A discriminator only selects components (OpenAPI 3.1 and 3.2 never consider inline members).
+  if (named.length < refs.length) return { ...rest, oneOf: members }
   const mapping = Object.fromEntries(
     resolved.map((member, index) => [
       pinnedValue(member, tag),

@@ -1134,17 +1134,17 @@ describe("the errors the framework answers before a handler runs", () => {
   })
 })
 
-describe("a tagged union gets a discriminator", () => {
+describe("a tagged union is a oneOf, with a discriminator over components", () => {
   const cat = t.object({ kind: t.literal("cat"), meows: t.boolean() })
   const dog = t.object({ kind: t.literal("dog"), barks: t.boolean() })
   const pet = t.union([cat, dog])
 
-  test("a union told apart by a required literal is a oneOf with a discriminator", () => {
+  test("a union told apart by a required literal is a oneOf; inline members get no discriminator", () => {
     const doc = toOpenAPI(server().post("/pets", { body: pet }, () => ({})))
     const schema = jsonOf(doc, "/pets", "post")
     expect(schema).not.toHaveProperty("anyOf")
     expect(schema).toHaveProperty("oneOf", [expect.any(Object), expect.any(Object)])
-    expect(schema).toHaveProperty("discriminator", { propertyName: "kind" })
+    expect(schema).not.toHaveProperty("discriminator")
     expect(pet.jsonSchema.anyOf).toHaveLength(2)
   })
 
@@ -1185,20 +1185,36 @@ describe("a tagged union gets a discriminator", () => {
         () => ({ items: [] }),
       ),
     )
+    const pair = [expect.any(Object), expect.any(Object)]
     expect(jsonOf(doc, "/x", "post")).toMatchObject({
-      properties: { default: { discriminator: { propertyName: "kind" } } },
+      properties: { default: { oneOf: pair } },
     })
     expect(jsonOf(doc, "/x", "post", "200")).toMatchObject({
-      properties: { items: { items: { discriminator: { propertyName: "kind" } } } },
+      properties: { items: { items: { oneOf: pair } } },
     })
   })
 
-  test("a zod discriminated union keeps its oneOf and gains the discriminator", () => {
-    const body = z.discriminatedUnion("kind", [
+  test("a zod discriminated union keeps its oneOf, with a discriminator once its members are components", () => {
+    const inline = z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("a") }),
       z.object({ kind: z.literal("b") }),
     ])
-    const doc = toOpenAPI(server().post("/x", { body }, () => ({})))
-    expect(jsonOf(doc, "/x", "post")).toMatchObject({ discriminator: { propertyName: "kind" } })
+    const named = z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("a") }).meta({ id: "A" }),
+      z.object({ kind: z.literal("b") }).meta({ id: "B" }),
+    ])
+    const inlineDoc = toOpenAPI(server().post("/x", { body: inline }, () => ({})))
+    expect(jsonOf(inlineDoc, "/x", "post")).toHaveProperty("oneOf", [
+      expect.any(Object),
+      expect.any(Object),
+    ])
+    expect(jsonOf(inlineDoc, "/x", "post")).not.toHaveProperty("discriminator")
+    const namedDoc = toOpenAPI(server().post("/x", { body: named }, () => ({})))
+    expect(jsonOf(namedDoc, "/x", "post")).toMatchObject({
+      discriminator: {
+        propertyName: "kind",
+        mapping: { a: "#/components/schemas/A", b: "#/components/schemas/B" },
+      },
+    })
   })
 })

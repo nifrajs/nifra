@@ -145,8 +145,10 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
   `NifraError` (`{ ok: false, error }`) and `NifraValidationError` (`{ ok: false, error: "validation",
   issues }`) components: `400`, `413` and `415` on a route with a body, `422` on any route with a request
   schema (left out when an `onValidationError` hook writes that body). A declared response wins.
-- **Discriminators** - a union whose members all pin one required property to distinct values is
-  emitted as a `oneOf` with a `discriminator`, so a client generator can build a tagged union.
+- **Tagged unions** - a union whose members all pin one required property to distinct values is
+  emitted as a `oneOf`. When every member is a component (a `$id`) it also gets a `discriminator`
+  with a `mapping`, so a client generator can build a tagged union; OpenAPI discriminators never
+  consider inline members.
 - Per-operation **`summary`**, **`description`**, **`tags`**, **`deprecated`** - declared on the contract op.
 
 A **contract** is richest (its ops carry all of the above); in **app** mode a route's response is a
