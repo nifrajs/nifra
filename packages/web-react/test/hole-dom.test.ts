@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { PAGE_HIDE_EVENT } from "@nifrajs/web/keep-alive"
 import { GlobalWindow } from "happy-dom"
 import { act, createElement, type ReactNode, useState } from "react"
 import type { Root } from "react-dom/client"
@@ -52,7 +53,11 @@ interface Frame {
 function runtime(fills: Record<string, Fill> = {}) {
   const waiting = new Map<string, (fill: Fill) => void>()
   const unsubscribed: string[] = []
+  const left = { count: 0 }
   const api = Object.assign(() => {}, {
+    leave() {
+      left.count++
+    },
     get: (name: string) => fills[name],
     subscribe(name: string, callback: (fill: Fill) => void) {
       waiting.set(name, callback)
@@ -69,7 +74,7 @@ function runtime(fills: Record<string, Fill> = {}) {
     },
   })
   Reflect.set(globalThis, "__nifraPpr", api)
-  return { waiting, unsubscribed }
+  return { waiting, unsubscribed, left }
 }
 
 function Counter(props: { readonly start: number }): ReactNode {
@@ -169,6 +174,14 @@ const settle = async (promise: Promise<unknown>) =>
 const unmount = async (root: Root | undefined) => {
   await act(async () => root?.unmount())
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+}
+
+/** The event a keep-alive view sends from a page it hides, made by the document (Bun's own event
+ * class is not one happy-dom dispatches). */
+const pageHide = (): Event => {
+  const event = document.createEvent("Event")
+  event.initEvent(PAGE_HIDE_EVENT, true, false)
+  return event
 }
 
 const click = async (host: Element) => {
@@ -286,6 +299,34 @@ describe("Hole in the browser", () => {
     await settle(older.promise)
     expect(host.textContent).toBe("cart 9 clicked 1")
     await unmount(root)
+  })
+
+  test("a kept page hidden behind another leaves the document's holes and drops the refill on its way", async () => {
+    const { left } = runtime({ cart: { props: { count: 2 }, error: false } })
+    const { host, root, container } = await hydratePage(tally, { count: 2 })
+    await click(host)
+    const inflight = deferredFill()
+    await reload(root, tally, inflight.fill)
+    const other = document.createElement("section")
+    document.body.append(other)
+    other.dispatchEvent(pageHide())
+    expect(left.count).toBe(0)
+    container.dispatchEvent(pageHide())
+    expect(left.count).toBe(1)
+    inflight.resolve({ html: "", props: { count: 7 } })
+    await settle(inflight.promise)
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("true")
+    // Shown again: the page's reload refills the host in place.
+    await reload(root, tally, { html: "", props: { count: 8 } })
+    await settle(Promise.resolve())
+    expect(host.textContent).toBe("cart 8 clicked 1")
+    expect(host.getAttribute("aria-busy")).toBe("false")
+    await unmount(root)
+    other.dispatchEvent(pageHide())
+    container.dispatchEvent(pageHide())
+    expect(left.count).toBe(1)
+    other.remove()
   })
 
   test("a refill replaces a server-only host's HTML, and a failed one shows the error slot", async () => {

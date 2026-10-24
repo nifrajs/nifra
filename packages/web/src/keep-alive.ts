@@ -206,14 +206,26 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       target === undefined
         ? envelopeOf(restore.kept)
         : { v: 1, data: target.data, live: target.live }
-    if (!restore.reload) return kept()
+    // The page's hole hosts reload as fills, applied in place on the roots kept with it, even when
+    // the route keeps its own data.
+    const holes = target === undefined ? hostsOf(restore.kept) : []
+    if (!restore.reload && holes.length === 0) return kept()
     let payload: unknown
     try {
-      payload = await base(path, match, signal, navigation, purpose, hosts, read)
+      payload = await base(
+        path,
+        match,
+        signal,
+        navigation,
+        purpose,
+        holes.length === 0 ? hosts : holes,
+        read,
+      )
     } catch (error) {
       if (signal?.aborted === true || hasRedirect(error)) throw error
       return kept()
     }
+    if (!restore.reload) return fillsOnto(restore.kept, payload, holes)
     const hooks = routeHooks[target === undefined ? restore.kept.routeId : match.routeId]
     // `read` itself answers a reload whose response text is what the path shows, which the router
     // keeps unparsed.
@@ -534,10 +546,12 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         }
       },
       hydrate: () => inner.hydrate(),
-      invalidate: async (paths) => {
+      invalidate: (paths) => {
         markStale(paths)
-        await afterRestore()
-        return inner.invalidate(paths)
+        // At once when nothing is restoring: the live client names its load around this call.
+        return restoring === undefined
+          ? inner.invalidate(paths)
+          : afterRestore().then(() => inner.invalidate(paths))
       },
       prefetch: (path) => inner.prefetch(path),
       fetcher: (key) => {
@@ -589,8 +603,27 @@ const targetOnto = (shown: unknown, payload: unknown, plainJson: boolean): unkno
   return { ...payload, data: shareData(shown, payload.data, plainJson) }
 }
 
+/** The holes of `state`'s page that are hosts a partially prerendered document left open. */
+const hostsOf = (state: RouterState): string[] =>
+  Object.values(state.boundaries ?? {})
+    .filter((held) => held.ppr === true)
+    .map((held) => held.name)
+
+/** What `kept` shows, with the fills `payload` carries for its hole hosts `holes` and nothing else
+ * of it. */
+const fillsOnto = (kept: RouterState, payload: unknown, holes: readonly string[]): unknown => {
+  const envelope = envelopeOf(kept)
+  if (!isRouteDataEnvelope(payload) || payload.status !== undefined) return envelope
+  const boundaries = { ...kept.boundaries }
+  for (const name of holes) {
+    const fill = payload.boundaries?.[name]
+    if (fill?.ppr === true) boundaries[name] = fill
+  }
+  return { ...envelope, boundaries }
+}
+
 /** A route data envelope that publishes exactly `state`'s data. */
-const envelopeOf = (state: RouterState): unknown => {
+const envelopeOf = (state: RouterState): Record<string, unknown> => {
   const envelope: Record<string, unknown> = {
     v: 1,
     data: state.data,

@@ -543,6 +543,56 @@ describe("keepAliveClient", () => {
     expect(requests).toEqual(["/list/1"])
   })
 
+  test("a restored page's hole hosts reload as fills, taken even when the route keeps its data", async () => {
+    const empty: BoundaryState = { name: "cart", mode: "dynamic", status: "pending", ppr: true }
+    const host = (fill?: unknown): BoundaryState =>
+      fill === undefined ? empty : { ...empty, fill }
+    const side: BoundaryState = { name: "side", mode: "static", status: "ready", data: { a: 1 } }
+    const kept = state("list", "/list/1", { boundaries: { cart: host(), side } })
+    const sent: (readonly string[] | undefined)[] = []
+    let respond = (): unknown => ({
+      v: 1,
+      data: { fresh: true },
+      boundaries: { cart: host({ v: 1, html: "<p>2</p>" }), side: { ...side, data: { a: 2 } } },
+    })
+    const once = async (revalidate: boolean, check: (client: Setup["client"]) => Promise<void>) => {
+      const { router, push, fake, client } = setup(kept, {
+        hooks: { list: { keepAlive: { revalidate } } },
+        fetchData: async (_path, _match, _signal, _navigation, _purpose, hosts) => {
+          sent.push(hosts)
+          return respond()
+        },
+      })
+      push(state("detail", "/detail"))
+      const release = fake.hold()
+      fakeHistory.go(-1)
+      const restoring = router.navigate("/list/1")
+      await check(client)
+      release()
+      await restoring
+    }
+    const match: RouteMatch = { routeId: "list", params: {} }
+
+    await once(true, async (client) => {
+      const payload = await client.fetchData("/list/1", match)
+      expect(at(payload, "data")).toEqual({ fresh: true })
+      expect(at(payload, "boundaries", "cart", "fill")).toEqual({ v: 1, html: "<p>2</p>" })
+    })
+    await once(false, async (client) => {
+      expect(at(await client.fetchData("/list/1", match), "boundaries")).toEqual({
+        cart: host({ v: 1, html: "<p>2</p>" }),
+        side,
+      })
+      respond = () => ({ v: 1, data: null, status: 404 })
+      expect(at(await client.fetchData("/list/1", match), "boundaries")).toEqual(kept.boundaries)
+      respond = () => {
+        throw new Error("offline")
+      }
+      expect(at(await client.fetchData("/list/1", match), "data")).toBe(kept.data)
+    })
+    expect(sent).toEqual([["cart"], ["cart"], ["cart"], ["cart"]])
+  })
+
   test("a restore's reload is shared onto the kept data, and falls back to it on failure", async () => {
     const kept = state("list", "/list/1", {
       data: { rows: [{ id: 1 }], title: "a" },
@@ -686,6 +736,9 @@ describe("keepAliveClient", () => {
     await Promise.all([restoring, submit, invalidated])
     expect(fake.submits).toEqual(["/list/2"])
     expect(fake.invalidations).toEqual([["/list/1"]])
+    // With nothing restoring, an invalidation reaches the router in the caller's own turn.
+    void router.invalidate(["/list/2"])
+    expect(fake.invalidations).toEqual([["/list/1"], ["/list/2"]])
   })
 
   test("a fetcher's submit marks kept pages stale; the rest passes through", async () => {

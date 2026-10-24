@@ -7,6 +7,7 @@
  */
 import type { ComponentClientAdapter, ComponentClientRoot } from "../server-components/client.ts"
 import type { ComponentRecord } from "../server-components/types.ts"
+import { PAGE_HIDE_EVENT } from "./page-events.ts"
 
 /** One hole's fill, as the PPR runtime keeps it. */
 export interface HoleFill {
@@ -23,6 +24,8 @@ interface PprRuntime {
   get(name: string): HoleFill | undefined
   subscribe(name: string, callback: (fill: HoleFill) => void): () => void
   put(name: string, frame: unknown, host: Element): void
+  /** Stop filling holes from the document, and cancel the ones still loading on the server. */
+  leave?(): void
 }
 
 /** The error slot a failed, timed-out or refused hole shows. Constant: no thrown message reaches it. */
@@ -188,6 +191,15 @@ export function holeHost(
       ? runtime?.subscribe(name, start)
       : undefined
   if (now !== undefined) start(now)
+  // A `keepAlive` page hidden behind another has been left: the document's holes stop filling and
+  // the ones still loading are cancelled, and a refill already on its way is dropped. The page's
+  // reload when it is shown again refills the host.
+  const hidden = (event: Event): void => {
+    if (!(event.target instanceof Node) || !event.target.contains(host)) return
+    latest++
+    runtime?.leave?.()
+  }
+  host.ownerDocument.addEventListener(PAGE_HIDE_EVENT, hidden)
   const apply = (frame: unknown, mine: number, inPlace: boolean): void => {
     if (!isRecord(frame)) return
     const failed = frame.error === true
@@ -230,6 +242,7 @@ export function holeHost(
     },
     dispose() {
       disposed = true
+      host.ownerDocument.removeEventListener(PAGE_HIDE_EVENT, hidden)
       unsubscribe?.()
       Promise.resolve(root?.dispose(true)).catch(() => {})
       root = undefined
