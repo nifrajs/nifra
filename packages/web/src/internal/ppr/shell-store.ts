@@ -5,7 +5,9 @@
  * fails the check is a miss.
  */
 import type { CachedResponse, CacheStore } from "../../isr.ts"
+import { DATE_TAG } from "../revive-dates.ts"
 import { storeSigner } from "../store-signature.ts"
+import { wireDate } from "../wire-date.ts"
 
 /** A shell or a shared hole's frame as the shared store holds it: everything a process needs to
  * serve it. */
@@ -81,7 +83,15 @@ export function sharedShellStore(
       }
       let payload: unknown
       try {
-        payload = JSON.parse(cached.body)
+        // Match page-data revival, but keep the server's tagged toJSON for subsequent responses.
+        // JSON.parse defines own properties (including __proto__) without invoking setters.
+        payload = JSON.parse(cached.body, (_key, value: unknown) => {
+          if (typeof value !== "object" || value === null) return value
+          const tagged: unknown = Reflect.get(value, DATE_TAG)
+          return typeof tagged === "string" && Object.keys(value).length === 1
+            ? wireDate(new Date(tagged).getTime())
+            : value
+        })
       } catch {
         return undefined
       }

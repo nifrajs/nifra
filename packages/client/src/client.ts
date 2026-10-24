@@ -657,9 +657,10 @@ async function execute(
     } else if (body !== undefined) {
       // The codec labels the bytes it wrote; a type set by hand would name a different encoding.
       assignHeaders(headers, { "content-type": codec.mediaType })
-      if (options.transport !== undefined && !hasHeader(headers, "accept"))
-        headers.accept = codec.mediaType
     }
+    // Response negotiation is independent of whether the request carries JSON, a form, or no body.
+    if (options.transport !== undefined && !hasHeader(headers, "accept"))
+      headers.accept = codec.mediaType
     return headers
   }
   const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)

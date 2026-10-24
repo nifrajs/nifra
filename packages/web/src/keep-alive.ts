@@ -106,6 +106,7 @@ interface Kept {
   readonly page: KeptPage
   readonly index: number
   readonly epoch: string
+  readonly identity: number
   readonly sources: Sources
   readonly hiddenAt: number
   readonly maxAge: number
@@ -118,6 +119,7 @@ interface Active {
   readonly index: number
   readonly settled: RouterState
   readonly epoch: string
+  readonly identity: number
   readonly sources: Sources
 }
 
@@ -281,6 +283,8 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     const wrappedFetchers = new Map<string, Fetcher>()
     let keptPages: readonly KeptPage[] | undefined
     let lastEpoch = readEpoch()
+    // Explicit identity signals also cover bearer auth, where the cookie never changes.
+    let identity = 0
 
     const first = readEntry()
     const initial = inner.snapshot()
@@ -294,6 +298,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       index: first.index,
       settled: initial,
       epoch: lastEpoch,
+      identity,
       sources: sourcesOf(initial),
     }
     stampEntry(active.instance)
@@ -385,8 +390,15 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       dropKept("identity")
     }
 
-    const keep = ({ instance, index, settled: state, epoch, sources }: Active): void => {
-      if (!keepable(state) || epoch !== readEpoch()) return
+    const keep = ({
+      instance,
+      index,
+      settled: state,
+      epoch,
+      identity: loadedIdentity,
+      sources,
+    }: Active): void => {
+      if (!keepable(state) || epoch !== readEpoch() || loadedIdentity !== identity) return
       const setting = keepAliveOf(state.routeId)
       const settings = typeof setting === "object" ? setting : {}
       records.delete(instance)
@@ -394,6 +406,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         page: { instance, state },
         index,
         epoch,
+        identity: loadedIdentity,
         sources,
         hiddenAt: now(),
         maxAge: settings.maxAge ?? KEEP_ALIVE_MAX_AGE_MS,
@@ -404,8 +417,13 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       if (records.size > max) drop([...records.keys()].slice(0, records.size - max), "lru")
     }
 
+    let loading: { readonly identity: number; readonly epoch: string } | undefined
+
     const settle = (next: RouterState): void => {
       const entry = readEntry()
+      const loadedIdentity = loading?.identity ?? identity
+      const loadedEpoch = loading?.epoch ?? readEpoch()
+      loading = undefined
       if (sameInstance(active.settled, next)) {
         // Data the router did not load again is still the data it was loaded with.
         const same = next.data === active.settled.data
@@ -413,7 +431,8 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           instance: active.instance,
           index: entry.index,
           settled: next,
-          epoch: same ? active.epoch : readEpoch(),
+          epoch: same ? active.epoch : loadedEpoch,
+          identity: same ? active.identity : loadedIdentity,
           sources: same ? active.sources : sourcesOf(next),
         }
       } else {
@@ -437,7 +456,8 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           instance: reuse ?? newInstance(),
           index: entry.index,
           settled: next,
-          epoch: readEpoch(),
+          epoch: loadedEpoch,
+          identity: loadedIdentity,
           sources: sourcesOf(next),
         }
       }
@@ -489,6 +509,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
             index: active.index,
             settled: next,
             epoch: restore.reload ? readEpoch() : active.epoch,
+            // A restore started before an identity signal must not bless its old data, even if
+            // its reload failed and fell back to the kept response.
+            identity: active.identity,
             // A reload that failed shows the kept data, from the kept sources.
             sources: sourcesOf(next) ?? active.sources,
           }
@@ -504,6 +527,8 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         settle(next)
         return
       }
+      // A response belongs to the identity that started its load, not the visitor at arrival.
+      loading ??= { identity, epoch: readEpoch() }
       shown = next
       flags = undefined
       leaving = next.routeId !== active.settled.routeId && !leftGone && keepable(active.settled)
@@ -511,13 +536,21 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     })
 
     const restore = (path: string, instance: string, record: Kept): Promise<void> => {
+      loading = undefined
       const entry = readEntry()
       records.delete(instance)
       keptPages = undefined
       if (!leftGone) keep(active)
       const kept = record.page.state
       const { sources } = record
-      active = { instance, index: entry.index, settled: kept, epoch: record.epoch, sources }
+      active = {
+        instance,
+        index: entry.index,
+        settled: kept,
+        epoch: record.epoch,
+        identity: record.identity,
+        sources,
+      }
       fresh.clear()
       // Data a client loader built is shown again only from what it was built from.
       const unsourced =
@@ -572,6 +605,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           return restore(path, instance, record)
       }
       endRestore()
+      loading = { identity, epoch: readEpoch() }
       return inner.navigate(path)
     }
 
@@ -594,6 +628,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(IDENTITY_CHANNEL)
     const identityDrop = (): void => {
       lastEpoch = readEpoch()
+      identity++
       dropKept("identity")
     }
     channel?.addEventListener("message", identityDrop)
@@ -629,9 +664,11 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       invalidate: (paths) => {
         markStale(paths)
         // At once when nothing is restoring: the live client names its load around this call.
-        return restoring === undefined
-          ? inner.invalidate(paths)
-          : afterRestore().then(() => inner.invalidate(paths))
+        const invalidate = (): Promise<void> => {
+          loading = { identity, epoch: readEpoch() }
+          return inner.invalidate(paths)
+        }
+        return restoring === undefined ? invalidate() : afterRestore().then(invalidate)
       },
       prefetch: (path) => inner.prefetch(path),
       fetcher: (key) => {

@@ -31,7 +31,13 @@ export function fromPrecompiled<T extends TSchema>(
         for (const error of Errors(schema, value)) {
           issues.push({
             message: error.message,
-            path: error.path === "" ? undefined : error.path.slice(1).split("/"),
+            path:
+              error.path === ""
+                ? undefined
+                : error.path
+                    .slice(1)
+                    .split("/")
+                    .map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~")),
           })
           if (issues.length === 100) break
         }

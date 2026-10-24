@@ -279,6 +279,8 @@ const NOT_LAYERS: Readonly<Record<string, string>> = {
   "packages/core/src/index.ts": "re-exports",
   "packages/core/src/server.ts": "re-exports",
   "packages/core/src/server/auth.ts": "defines the authenticated-request mark the layers read",
+  "packages/core/src/server/server.ts":
+    "preserves authenticated-request metadata across mount requests; stores no responses",
   "packages/middleware/src/index.ts": "re-exports",
   "packages/web/src/index.ts": "re-exports",
   "packages/web/src/draft.ts": "draft mode tells withISR to bypass; it stores nothing",

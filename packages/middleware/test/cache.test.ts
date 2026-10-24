@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { authenticated, rejected } from "@nifrajs/core/server"
+import { authenticated, isAuthenticatedRequest, rejected } from "@nifrajs/core/server"
 import { createTransportCodecRegistry, plainJsonCodec } from "@nifrajs/core/transport-codec"
 import { richWireCodec } from "@nifrajs/core/transport-codec-rich"
 import { transportCodecs } from "@nifrajs/core/transport-plugin"
@@ -13,6 +13,41 @@ import {
 } from "../src/index.ts"
 
 describe("cache() response freshness", () => {
+  test("a stripped child bypasses shared caching for parent custom-session authentication", async () => {
+    let calls = 0
+    const seen: boolean[] = []
+    const child = server()
+      .onRequest((request) => {
+        seen.push(isAuthenticatedRequest(request))
+      })
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/profile", (c) => {
+        calls++
+        return c.req.headers.get("x-session")
+      })
+    const app = server()
+      .authenticate({
+        id: "session",
+        mode: "sync",
+        run: (input) =>
+          input.headers.has("x-session")
+            ? authenticated({ id: input.headers.get("x-session") })
+            : rejected("unauthenticated"),
+      })
+      .mount({ path: "/private", app: child, stripPrefix: true })
+    for (const session of ["alice", "bob", "alice"]) {
+      const response = await app.fetch(
+        new Request("http://x/private/profile", {
+          headers: { "x-session": session },
+        }),
+      )
+      expect(await response.json()).toBe(session)
+      expect(response.headers.get("x-nifra-cache")).toBe("BYPASS")
+    }
+    expect(seen).toEqual([true, true, true])
+    expect(calls).toBe(3)
+  })
+
   for (const directive of [
     "no-cache",
     'no-cache="etag"',

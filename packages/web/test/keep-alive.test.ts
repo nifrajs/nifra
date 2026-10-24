@@ -867,6 +867,85 @@ describe("keepAliveClient", () => {
     expect(keptOf(router)).toEqual(["/list/2"])
   })
 
+  for (const source of ["local", "broadcast"] as const) {
+    const changeIdentity = (): void => {
+      if (source === "local") identityChanged()
+      else new FakeChannel("nifra-identity-v1").postMessage("changed")
+    }
+
+    test(`${source} bearer identity change prevents Back restoring the active visitor's data`, async () => {
+      const alice = state("list", "/list/1", { data: { owner: "alice" } })
+      const { router, push, fake } = setup(alice, {
+        hooks: { list: { keepAlive: { revalidate: false } } },
+      })
+      changeIdentity()
+      // Action-only publishes must not bless the old data under the new identity.
+      fake.publish({ ...alice, actionData: { ok: true } })
+      push(state("detail", "/detail"))
+      expect(keptOf(router)).toEqual([])
+      fakeHistory.go(-1)
+      await router.navigate("/list/1")
+      expect(router.snapshot().restored).toBeUndefined()
+      expect(fake.navigations).toEqual(["/list/1"])
+      expect(fakeDocument.cookie).toBe("")
+    })
+
+    for (const navigation of [false, true]) {
+      test(`${source} identity change during a pending ${navigation ? "navigation" : "refresh"} does not bless its late data`, () => {
+        const alice = state("list", "/list/1", { data: { owner: "alice" } })
+        const { router, push, fake } = setup(alice, {
+          hooks: { list: { keepAlive: { revalidate: false } }, detail: { keepAlive: true } },
+        })
+        const late = navigation
+          ? state("detail", "/detail", { data: { owner: "alice-late" } })
+          : state("list", "/list/1", { data: { owner: "alice-late" } })
+        if (navigation) fakeHistory.push()
+        fake.publish({ ...alice, pending: true, pendingPath: late.path })
+        changeIdentity()
+        fake.publish(late)
+        push(state("item", "/item"))
+        expect(keptOf(router)).toEqual([])
+      })
+    }
+
+    test(`${source} bearer identity change allows a same-instance refresh to be kept, but not across the next change`, async () => {
+      const { router, push, fake, traverse } = setup(
+        state("list", "/list/1", { data: { owner: "alice" } }),
+        { hooks: { list: { keepAlive: { revalidate: false } } } },
+      )
+      changeIdentity()
+      const bob = state("list", "/list/1", { data: { owner: "bob" } })
+      fake.publish(bob)
+      push(state("detail", "/detail"))
+      expect(keptOf(router)).toEqual(["/list/1"])
+      await traverse(-1, bob)
+      expect(router.snapshot().data).toEqual({ owner: "bob" })
+      changeIdentity()
+      fake.publish({ ...bob, actionData: { ok: true } })
+      push(state("detail", "/detail"))
+      expect(keptOf(router)).toEqual([])
+    })
+  }
+
+  test("an identity signal during a restore does not make its fallback data keepable again", async () => {
+    const alice = state("list", "/list/1", { data: { owner: "alice" } })
+    const { router, push, fake } = setup(alice)
+    push(state("detail", "/detail"))
+    fakeHistory.go(-1)
+    const release = fake.hold()
+    const restoring = router.navigate("/list/1")
+    identityChanged()
+    // A failed reload republishes the kept response.
+    fake.publish(alice)
+    release()
+    await restoring
+    push(state("detail", "/detail"))
+    expect(keptOf(router)).toEqual([])
+    fakeHistory.go(-1)
+    await router.navigate("/list/1")
+    expect(router.snapshot().restored).toBeUndefined()
+  })
+
   test("another tab's sign-out, identityChanged() and a visible tab's new epoch each drop", () => {
     const { router, push, drops } = setup(state("list", "/list/1"))
     const other = new FakeChannel("nifra-identity-v1")

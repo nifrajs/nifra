@@ -41,6 +41,19 @@ describe("static schema compilation", () => {
     expect(compiled).toHaveProperty("jsonSchema")
   })
 
+  test("issue paths decode JSON Pointer tokens exactly once in both validators", async () => {
+    const source = t.object({
+      "a/b": t.object({ "c~d": t.string() }),
+      "~1": t.string(),
+      "": t.string(),
+    })
+    const compiled = await generated(source)
+    for (const schema of [source, compiled]) {
+      const outcome = result(schema, { "a/b": { "c~d": 1 }, "~1": 2, "": 3 })
+      expect(outcome.issues?.map((issue) => issue.path)).toEqual([["a/b", "c~d"], ["~1"], [""]])
+    }
+  })
+
   test("property: unknown inputs match the normal validator", async () => {
     const source = t.object({
       name: t.string(),
