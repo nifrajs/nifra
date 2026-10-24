@@ -1312,8 +1312,8 @@ describe("how query, header and cookie values are read", () => {
       expect((await read(`/coerced?flag=${word}`)).status).toBe(422)
   })
 
-  test("a schema that does not coerce lists no literals", () => {
-    expect(param("/strict", "flag")).not.toHaveProperty("x-nifra-boolean-literals")
+  test("a t.object reads the same literals in a query, and a zod schema lists none", () => {
+    expect(param("/strict", "flag")).toHaveProperty("x-nifra-boolean-literals")
     expect(param("/zod", "flag")).not.toHaveProperty("x-nifra-boolean-literals")
   })
 

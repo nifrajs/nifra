@@ -206,14 +206,14 @@ export const t = {
       { coerce: true },
     ),
   /** A request-query schema with string->scalar COERCION on. Query values always arrive as strings
-   * (`?limit=20` -> `"20"`), so a plain `t.object({ limit: t.integer() })` in a `query` slot fails to
-   * validate; use `t.query` and `t.integer()`/`t.number()`/`t.boolean()` fields become real numbers/
-   * booleans in `c.query`. **Open by default** (unknown query fields pass through - `additionalProperties:
+   * (`?limit=20` -> `"20"`), so `t.integer()`/`t.number()`/`t.boolean()` fields become real numbers/
+   * booleans in `c.query`. A `t.object` in a `query` slot is converted the same way, and stays closed.
+   * **Open by default** (unknown query fields pass through - `additionalProperties:
    * true`): query params are read by name, not spread into a DB write, so unknown params (UTM tracking,
    * `fbclid`, etc.) passing through is safe, and rejecting them is a production-only footgun (ad/social
    * traffic appends params your schema never declares, causing 422s that never appear in dev/CI). Pass
-   * `{ additionalProperties: false }` to enforce a strict allowlist. This is the query-slot constructor;
-   * `t.object` stays the constructor for body slots (no coercion, a JSON body is already typed). */
+   * `{ additionalProperties: false }` to enforce a strict allowlist. A body slot converts nothing: a
+   * JSON body is already typed. */
   query: textFields("t.query"),
   /** A request-cookie schema for the `cookies` route slot, with the same string->scalar COERCION as
    * `t.query` (cookie values always arrive as strings). **Open by default**: a browser sends every
@@ -223,7 +223,7 @@ export const t = {
   /** A request-header schema for the `headers` route slot, with the same string->scalar COERCION as
    * `t.query` (header values always arrive as strings). **Open**: it receives every header the client
    * sent, names lower-cased, so the declared names must be lower-case too. A closed `t.object` in the
-   * slot also works, but validates only the names it declares and does not coerce. */
+   * slot also works: it validates only the names it declares, converted from text the same way. */
   headers: <P extends Props>(props: P, options?: ObjectOptions) => {
     for (const name of Object.keys(props)) {
       if (name !== name.toLowerCase())

@@ -258,6 +258,12 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
       "export const shellLoader = () => ({})\n",
       "utf8",
     )
+    // A zod coerce.boolean() in a query schema, for NF-C055.
+    await writeFile(
+      join(root, "routes", "notes.server.ts"),
+      'import { z } from "zod"\nexport const notes = app.get("/notes", { query: z.object({ archived: z.coerce.boolean() }) }, () => [])\n',
+      "utf8",
+    )
 
     const result = await collectCheckResult(root, { lintsOnly: true })
     const codes = new Set(result.structuredDiagnostics?.map((finding) => finding.code))
@@ -278,6 +284,7 @@ test("runs the full check pipeline on a project TypeScript 7 install", async () 
       "NF-C051",
       "NF-C052",
       "NF-C053",
+      "NF-C055",
     ]) {
       expect(codes.has(code)).toBe(true)
     }
