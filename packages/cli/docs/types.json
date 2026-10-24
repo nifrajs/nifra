@@ -1567,26 +1567,26 @@
   {
     "name": "AuthSession",
     "kind": "interface",
-    "package": "@nifrajs/web-react",
+    "package": "@nifrajs/authjs",
     "signature": "export interface AuthSession {\n    readonly status: AuthStatus;\n    readonly session: Session | null;\n    /** Re-read the session from the server (after an out-of-band change, for example). */\n    readonly refresh: () => Promise<void>;\n    readonly signIn: (providerId: string, options?: SignInOptions) => Promise<void>;\n    readonly signOut: (options?: SignOutOptions) => Promise<void>;\n}"
   },
   {
     "name": "AuthSessionProvider",
     "kind": "function",
-    "package": "@nifrajs/web-react",
+    "package": "@nifrajs/authjs",
     "signature": "export declare function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode;",
     "doc": "/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new\n * `initialSession` (a loader re-run on navigation) replaces the session, as a remount would. */"
   },
   {
     "name": "AuthSessionProviderProps",
     "kind": "interface",
-    "package": "@nifrajs/web-react",
+    "package": "@nifrajs/authjs",
     "signature": "export interface AuthSessionProviderProps {\n    /** Shared client (base path, custom fetch). Default `createAuthClient()`. */\n    readonly client?: AuthClient;\n    /** SSR seed from a loader (`await getSession(request, config)`). `undefined` (default) fetches\n     * on mount instead - the subtree renders `loading` until it resolves. */\n    readonly initialSession?: Session | null;\n    readonly children?: ReactNode;\n}"
   },
   {
     "name": "AuthStatus",
     "kind": "type",
-    "package": "@nifrajs/web-react",
+    "package": "@nifrajs/authjs",
     "signature": "export type AuthStatus = \"loading\" | \"authenticated\" | \"unauthenticated\";"
   },
   {
@@ -25096,7 +25096,7 @@
   {
     "name": "useAuthSession",
     "kind": "function",
-    "package": "@nifrajs/web-react",
+    "package": "@nifrajs/authjs",
     "signature": "export declare function useAuthSession(): AuthSession;",
     "doc": "/** Read the Auth.js session (`{ status, session }`). Throws if no `<AuthSessionProvider>` is above. */"
   },

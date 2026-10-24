@@ -19,9 +19,8 @@
  *   .get("/me", async (c) => ({ user: await requireAuthUser(c.req, auth) }))
  * ```
  *
- * Frontend half: `createAuthClient` in `@nifrajs/authjs/client`, plus `<AuthSessionProvider>` /
- * `useAuthSession()` in `@nifrajs/web-react/auth` (other adapters wrap the agnostic client the
- * same way `@nifrajs/web-react/i18n` wraps `@nifrajs/i18n`).
+ * Frontend half: `createAuthClient` in `@nifrajs/authjs/client` for any framework, plus
+ * `<AuthSessionProvider>` / `useAuthSession()` in `@nifrajs/authjs/react`.
  */
 
 import type { AuthConfig, setEnvDefaults } from "@auth/core"

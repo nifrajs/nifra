@@ -57,8 +57,7 @@
   },
   "devDependencies": {
     "@nifrajs/core": "workspace:*",
-    "@nifrajs/schema": "workspace:*",
-    "@nifrajs/test-utils": "workspace:*"
+    "@nifrajs/schema": "workspace:*"
   },
   "repository": {
     "type": "git",

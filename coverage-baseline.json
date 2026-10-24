@@ -147,6 +147,10 @@
     "functions": 100,
     "lines": 98.38709677419355
   },
+  "packages/authjs/src/react.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/aws-lambda/src/index.ts": {
     "functions": 100,
     "lines": 95.73170731707317
@@ -1672,10 +1676,6 @@
     "lines": 100
   },
   "packages/web-preact/src/server-components/server.ts": {
-    "functions": 100,
-    "lines": 100
-  },
-  "packages/web-react/src/auth.ts": {
     "functions": 100,
     "lines": 100
   },

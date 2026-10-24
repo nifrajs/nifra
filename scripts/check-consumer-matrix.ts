@@ -125,7 +125,8 @@ const TARGETS: readonly Target[] = [
   { name: "@nifrajs/core", entries: ["@nifrajs/core", "@nifrajs/core/server"] },
   {
     name: "@nifrajs/authjs",
-    entries: ["@nifrajs/authjs", "@nifrajs/authjs/client"],
+    entries: ["@nifrajs/authjs", "@nifrajs/authjs/client", "@nifrajs/authjs/react"],
+    consumerDependencies: { "@types/react": "^19.0.0" },
     // Auth Core publishes provider declarations with optional peer imports; skip third-party
     // declaration checking while still typechecking the Auth.js public entrypoints themselves.
     tsconfig: { skipLibCheck: true },

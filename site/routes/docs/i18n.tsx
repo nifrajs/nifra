@@ -515,7 +515,8 @@ export default function I18n() {
           portable core.</li>
         <li><code>&lt;I18nProvider&gt;</code> + <code>useT()</code> ship for <b>all five adapters</b>
           (React, Preact, Vue, Solid, Svelte) - import from <code>@nifrajs/web-&lt;framework&gt;/i18n</code>;
-          each is a thin binding over the agnostic <code>createFormatter</code>.</li>
+          each is a thin binding over the agnostic <code>createFormatter</code>. <code>@nifrajs/i18n</code>{" "}
+          is an optional peer of every adapter, so the app installs it beside the adapter.</li>
       </ul>
     </div>
   )

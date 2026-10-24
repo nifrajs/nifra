@@ -29,6 +29,11 @@
       "bun": "./src/client.ts",
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
+    },
+    "./react": {
+      "bun": "./src/react.ts",
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
     }
   },
   "files": [
@@ -48,10 +53,20 @@
     "@auth/core": "^0.41.3"
   },
   "peerDependencies": {
-    "@nifrajs/core": "workspace:^"
+    "@nifrajs/core": "workspace:^",
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "repository": {
     "type": "git",
