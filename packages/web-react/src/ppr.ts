@@ -40,17 +40,19 @@ const leaving =
     else driven.dispose()
   }
 
-// React writes an `<Activity>` as a pair of comments around its content. A host's HTML without that
-// pair (rendered by a React that has no `<Activity>`) hydrates without one: React never finishes
-// hydrating an `<Activity>` the HTML holds no boundary for.
+// React writes an `<Activity>` as a pair of comments around its content, after any `<title>` the
+// content renders. A host's HTML without that pair (rendered by a React that has no `<Activity>`)
+// hydrates without one: React never finishes hydrating an `<Activity>` the HTML holds no boundary for.
 const activityBoundary = (target: Element): boolean => {
-  const { firstChild, lastChild } = target
+  let first = target.firstChild
+  while (first instanceof Element && first.localName === "title") first = first.nextSibling
+  const last = target.lastChild
   return (
-    firstChild !== lastChild &&
-    firstChild instanceof Comment &&
-    firstChild.data === "&" &&
-    lastChild instanceof Comment &&
-    lastChild.data === "/&"
+    first !== last &&
+    first instanceof Comment &&
+    first.data === "&" &&
+    last instanceof Comment &&
+    last.data === "/&"
   )
 }
 
