@@ -2,6 +2,7 @@ import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole
 import { createElement, type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
 import { hydrateRoot } from "react-dom/client"
 import { Await } from "./await.ts"
+import { inActivity } from "./slot.ts"
 
 /** The fields of a route's boundary declaration a hole renders from. */
 export interface HoleDefinition<Data> {
@@ -38,6 +39,22 @@ const leaving =
     if (driven.park()) parked.current = { element, driven }
     else driven.dispose()
   }
+
+// React writes an `<Activity>` as a pair of comments around its content, after any `<title>` the
+// content renders. A host's HTML without that pair (rendered by a React that has no `<Activity>`)
+// hydrates without one: React never finishes hydrating an `<Activity>` the HTML holds no boundary for.
+const activityBoundary = (target: Element): boolean => {
+  let first = target.firstChild
+  while (first instanceof Element && first.localName === "title") first = first.nextSibling
+  const last = target.lastChild
+  return (
+    first !== last &&
+    first instanceof Comment &&
+    first.data === "&" &&
+    last instanceof Comment &&
+    last.data === "/&"
+  )
+}
 
 export interface HoleProps<Data> {
   readonly of: HoleDefinition<Data>
@@ -82,20 +99,37 @@ export function Hole<Data>(props: HoleProps<Data>): ReactNode {
       element,
       interactive
         ? (target, data) => {
-            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
-            const root = hydrateRoot(target, render(data as Data), {
-              identifierPrefix: `nifra-${name}-`,
-            })
+            let props = data
+            let hidden = false
+            // In an `<Activity>` when the server rendered the HTML in one: hidden with its page,
+            // the root's effects clean up and its state stays.
+            const paused = activityBoundary(target)
+            const view = (): ReactNode => {
+              // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
+              const content = render(props as Data)
+              return paused ? inActivity(hidden, content) : content
+            }
+            const root = hydrateRoot(target, view(), { identifierPrefix: `nifra-${name}-` })
             return {
               update: (next) => {
-                // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
-                root.render(render(next as Data))
+                props = next
+                root.render(view())
                 return true
               },
+              hide: (next) => {
+                if (!paused || hidden === next) return
+                hidden = next
+                root.render(view())
+              },
               dispose: (leaving) => {
+                const unmount = (): void => {
+                  root.unmount()
+                  // The `<Activity>` boundary's comments, which React leaves behind.
+                  if (paused) target.replaceChildren()
+                }
                 // Unmounting a root while the parent commits warns in React; the next task is outside it.
-                if (leaving) setTimeout(() => root.unmount(), 0)
-                else root.unmount()
+                if (leaving) setTimeout(unmount, 0)
+                else unmount()
               },
             }
           }

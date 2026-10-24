@@ -178,12 +178,13 @@ export interface RenderAdapter {
    * Render one piece of UI (a boundary's `render` result or `fallback`) to an HTML string on its own,
    * outside the route chain. `ui` produces it: call it inside the render, since a framework whose
    * markup is made as it is evaluated (Solid) needs its render context there. `idPrefix` namespaces
-   * any ids the framework generates, so two fragments rendered separately never collide. Required for
-   * partial prerendering; optional otherwise.
+   * any ids the framework generates, so two fragments rendered separately never collide. `hydrates`
+   * is set when the client hydrates the fragment as a root of its own (an interactive hole). Required
+   * for partial prerendering; optional otherwise.
    */
   renderFragment?(
     ui: () => unknown,
-    options: { readonly idPrefix?: string },
+    options: { readonly idPrefix?: string; readonly hydrates?: boolean },
   ): string | Promise<string>
   /**
    * Set when a render can produce markup that belongs outside the app root. Every render is then

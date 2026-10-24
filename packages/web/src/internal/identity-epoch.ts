@@ -4,8 +4,8 @@
  *
  * A header-only hook reads each response's `Set-Cookie`: when an identity cookie's value differs from
  * the request's, or the cookie is deleted, the response also sets a fresh epoch with the same lifetime,
- * so the epoch expires with an idle session. A rolling session re-sending the same value rotates
- * nothing.
+ * so the epoch expires with an idle session. A rolling session re-sending the same value with a new
+ * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together.
  */
 import { type CookieOptions, parseCookies } from "@nifrajs/core/server"
 import { EPOCH_COOKIE, LOCAL_EPOCH_COOKIE } from "../identity.ts"
@@ -117,18 +117,23 @@ const randomEpoch = (): string => {
   return hex
 }
 
+const EPOCH_VALUE = /^[0-9a-f]{32}$/
+
 // A forwarded protocol only picks the cookie's name: a client that lies about it loses its own epoch.
-const servedOverHttps = (request: RequestView): boolean => {
-  if (request.url.startsWith("https:")) return true
+// A browser sends a `__Host-` cookie only over https, so carrying one says so behind a TLS proxy that
+// forwards nothing, and the client, which reads that one first, must see the new value there.
+const servedOverHttps = (request: RequestView, sent: Readonly<Record<string, string>>): boolean => {
+  if (request.url.startsWith("https:") || sent[EPOCH_COOKIE] !== undefined) return true
   const forwarded = request.header("x-forwarded-proto")
   return forwarded?.split(",")[0]?.trim().toLowerCase() === "https"
 }
 
 const epochCookie = (
   secure: boolean,
+  value: string,
   lifetime: { readonly maxAge?: string | undefined; readonly expires?: string | undefined },
 ): string => {
-  let cookie = `${secure ? EPOCH_COOKIE : LOCAL_EPOCH_COOKIE}=${randomEpoch()}; Path=/; SameSite=Lax`
+  let cookie = `${secure ? EPOCH_COOKIE : LOCAL_EPOCH_COOKIE}=${value}; Path=/; SameSite=Lax`
   if (secure) cookie += "; Secure"
   if (lifetime.maxAge !== undefined) cookie += `; Max-Age=${lifetime.maxAge}`
   if (lifetime.expires !== undefined) cookie += `; Expires=${lifetime.expires}`
@@ -151,11 +156,21 @@ export function identityEpochHook(
     if (joined === null || joined === "") return
     const sent = parseCookies(request.header("cookie") ?? null)
     let changed: SetCookie | undefined
+    let renewed: SetCookie | undefined
     for (const cookie of parseSetCookies(joined, Date.now())) {
       if (cookie.name === EPOCH_COOKIE || cookie.name === LOCAL_EPOCH_COOKIE) return
       const now = cookie.deleted ? "" : cookie.value
-      if (now === (sent[cookie.name] ?? "")) continue
       const base = baseName(cookie.name)
+      if (now === (sent[cookie.name] ?? "")) {
+        if (
+          renewed === undefined &&
+          !cookie.deleted &&
+          (cookie.maxAge !== undefined || cookie.expires !== undefined) &&
+          identity.has(base)
+        )
+          renewed = cookie
+        continue
+      }
       if (identity.has(base)) {
         // The first identity cookie still set gives the lifetime; a sign-out deletes them all.
         if (changed === undefined || (changed.deleted && !cookie.deleted)) changed = cookie
@@ -167,13 +182,29 @@ export function identityEpochHook(
         `[nifra/web] NIFRA_KEEPALIVE_IDENTITY_COOKIE: this app keeps pages alive, and a response changed the HttpOnly cookie "${cookie.name}", which nifra does not know as a sign-in cookie. If it says who is signed in, add it to createWebApp({ keepAlive: { identityCookies: ["${base}"] } }) so a sign-in or sign-out drops the pages kept for the previous visitor; if it does not, add it to keepAlive.ignoreCookies.`,
       )
     }
-    if (changed === undefined) return
+    if (changed !== undefined) {
+      headers.append(
+        "set-cookie",
+        epochCookie(
+          changed.secure || servedOverHttps(request, sent),
+          randomEpoch(),
+          changed.deleted ? {} : { maxAge: changed.maxAge, expires: changed.expires },
+        ),
+      )
+      return
+    }
+    if (renewed === undefined) return
+    const lifetime = { maxAge: renewed.maxAge, expires: renewed.expires }
+    for (const secure of [true, false]) {
+      const held = sent[secure ? EPOCH_COOKIE : LOCAL_EPOCH_COOKIE]
+      if (held === undefined || !EPOCH_VALUE.test(held)) continue
+      headers.append("set-cookie", epochCookie(secure, held, lifetime))
+      return
+    }
+    // An epoch that already expired, or was never set: a fresh one, so pages kept without one drop.
     headers.append(
       "set-cookie",
-      epochCookie(
-        changed.secure || servedOverHttps(request),
-        changed.deleted ? {} : { maxAge: changed.maxAge, expires: changed.expires },
-      ),
+      epochCookie(renewed.secure || servedOverHttps(request, sent), randomEpoch(), lifetime),
     )
   }
 }
@@ -191,7 +222,10 @@ export interface IdentityEpochContext {
  */
 export function rotateIdentityEpoch(c: IdentityEpochContext): void {
   const request = c.request
-  const secure = servedOverHttps({ url: request.url, header: (name) => request.headers.get(name) })
+  const secure = servedOverHttps(
+    { url: request.url, header: (name) => request.headers.get(name) },
+    parseCookies(request.headers.get("cookie")),
+  )
   c.set.cookie(secure ? EPOCH_COOKIE : LOCAL_EPOCH_COOKIE, randomEpoch(), {
     path: "/",
     sameSite: "lax",

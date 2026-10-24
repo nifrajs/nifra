@@ -1,4 +1,5 @@
 import { setHoleComponents } from "../internal/hole-runtime.ts"
+import { onPageRelease } from "../internal/page-events.ts"
 import { ServerComponentError } from "./error.ts"
 import { readComponentFrames } from "./frames.ts"
 import {
@@ -65,6 +66,8 @@ interface Mounted {
   abort: AbortController
   root?: ComponentClientRoot
   ready: Promise<void>
+  // Cancels the release a parked instance waits on from its page.
+  unwatch?: (() => void) | undefined
 }
 function sameRecord(a: ComponentRecord, b: ComponentRecord): boolean {
   return (
@@ -125,6 +128,8 @@ export class ComponentController {
   }
   async #mount(host: Element, instance: string, fresh: boolean): Promise<void> {
     await this.#teardown.get(host)
+    // The page that parked it takes it back when it is shown again.
+    if (this.isParked(instance, host)) return
     if (this.#disposed || this.#mounted.has(instance))
       throw new ServerComponentError("component_contract")
     const record = this.state.records.find((record) => record.instance === instance)
@@ -454,6 +459,9 @@ export class ComponentController {
       if (page.contains(mounted.host)) {
         this.#mounted.delete(mounted.record.instance)
         this.#parked.add(mounted)
+        mounted.unwatch = onPageRelease(page, () => {
+          void this.#release(mounted).catch(() => this.reportError("component_failed"))
+        })
         mounted.abort.abort()
         mounted.abort = new AbortController()
         mounted.generation++
@@ -469,6 +477,7 @@ export class ComponentController {
         continue
       }
       this.#parked.delete(mounted)
+      mounted.unwatch?.()
       if (mounted.root !== undefined) this.#mounted.set(id, mounted)
       // Hidden while it hydrated, which `park` cancelled: mount it again.
       else
@@ -477,8 +486,19 @@ export class ComponentController {
         )
     }
   }
+  /**
+   * Whether `instance` at `host` is parked with its hidden page. An outlet whose framework cleans up a
+   * hidden page's effects (React's `<Activity>`) leaves it parked: the page takes it back when shown
+   * again, and releases it when dropped.
+   */
+  isParked(instance: string, host: Element): boolean {
+    for (const mounted of this.#parked)
+      if (mounted.host === host && mounted.record.instance === instance) return true
+    return false
+  }
   async #release(mounted: Mounted): Promise<void> {
     if (!this.#parked.delete(mounted)) return
+    mounted.unwatch?.()
     for (const child of this.#parked)
       if (mounted.host.contains(child.host)) await this.#release(child)
     mounted.abort.abort()

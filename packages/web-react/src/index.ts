@@ -8,7 +8,7 @@ import type { ReactNode } from "react"
 import { compose } from "./compose.ts"
 import { reactDomServer } from "./react-dom-server.ts"
 import { explainRenderError } from "./render-error.ts"
-import { slottedChain } from "./slot.ts"
+import { inActivity, slottedChain } from "./slot.ts"
 
 // The marker opening a Suspense boundary the server gave up on. Markup can't forge it: React escapes
 // text, and a comment only comes from React itself or `dangerouslySetInnerHTML`.
@@ -58,7 +58,14 @@ export const reactAdapter: RenderAdapter = {
     const { renderToString } = await reactDomServer()
     try {
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns React output; the seam erases it to unknown.
-      const html = renderToString(ui() as ReactNode, { identifierPrefix: options.idPrefix ?? "" })
+      const content = ui() as ReactNode
+      // A hole's own root hydrates in an `<Activity>`, so a kept page can pause it.
+      const html = renderToString(
+        options.hydrates === true ? inActivity(false, content) : content,
+        {
+          identifierPrefix: options.idPrefix ?? "",
+        },
+      )
       return html.replace(LEADING_PRELOADS, "")
     } catch (error) {
       throw explainRenderError(error)
