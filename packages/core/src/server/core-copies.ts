@@ -20,7 +20,7 @@ if (!copies.includes(here) && copies.push(here) > 1) {
   // armed here, most often because bunfig.toml's preload line sits below a [table] header. Bun-only and
   // behind the inline NODE_ENV literal, so a production bundle drops the hint.
   console.warn(
-    `[nifra] @nifrajs/core is loaded ${copies.length} times; \`nifra check\` names each importer:\n  ${copies.join("\n  ")}${typeof Bun !== "undefined" && process.env.NODE_ENV !== "production" && !(Symbol.for("nifra.single-copy.active") in globalThis) ? "\n  No single-copy registrar ran in this process: bunfig.toml must preload @nifrajs/core/single-copy/register above its first [table]." : ""}`,
+    `[nifra] @nifrajs/core is loaded ${copies.length} times; \`nifra check\` names each importer:\n  ${copies.join("\n  ")}${typeof Bun !== "undefined" && process.env.NODE_ENV !== "production" && !(Symbol.for("nifra.single-copy.active") in globalThis) ? "\n  No single-copy registrar ran in this process: bunfig.toml must preload @nifrajs/core/single-copy/register at its top level, above any [table], for bun run, and under [test] for bun test." : ""}`,
   )
 }
 
