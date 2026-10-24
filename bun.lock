@@ -763,12 +763,12 @@
       "version": "5.6.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
-        "@nifrajs/schema": "workspace:*",
         "@nifrajs/web": "workspace:*",
       },
       "devDependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
+        "@nifrajs/schema": "workspace:*",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
         "@vitejs/plugin-rsc": "0.5.35",

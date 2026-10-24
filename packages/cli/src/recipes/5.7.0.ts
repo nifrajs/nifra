@@ -18,6 +18,7 @@ export const recipe: UpgradeRecipe = {
   notes: [
     "`<AuthSessionProvider>` and `useAuthSession()` are imported from `@nifrajs/authjs/react`; `@nifrajs/web-react/auth` is removed. An app using them already installs `@nifrajs/authjs`, which now takes `react` as an optional peer. The useAuthSession error outside a provider reads `[nifra/authjs]`, where it read `[nifra/web-react]`.",
     "`@nifrajs/image` and `@nifrajs/i18n` are optional peers of `@nifrajs/web-react`, `web-vue`, `web-svelte`, `web-solid` and `web-preact`, where they were dependencies. An app importing an adapter's `/image` entry adds `@nifrajs/image` to its dependencies, and one importing `/i18n` adds `@nifrajs/i18n`; without it the import fails to resolve. An app that already lists the package needs no change.",
+    "`@nifrajs/web-react` no longer depends on `@nifrajs/schema`, so an app that imports `@nifrajs/schema` without listing it in its own dependencies has to add it.",
   ],
   affects: [
     "@nifrajs/authjs",
