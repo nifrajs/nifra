@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { buildOpenApiDocument, openapi, type RouteLike } from "@nifrajs/middleware"
+import { assure, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import {
+  buildOpenApiDocument,
+  MemoryStore,
+  openapi,
+  type RouteLike,
+  rateLimit,
+} from "@nifrajs/middleware"
 import { t } from "@nifrajs/schema"
 
 const stubSchema = { body: { "~standard": {} }, query: { "~standard": {} } }
@@ -10,7 +17,14 @@ interface Operation {
   requestBody?: { required?: boolean; content: Record<string, { schema: unknown }> }
   description?: string
   summary?: string
-  responses?: Record<string, { description: string; content?: Record<string, { schema: unknown }> }>
+  responses?: Record<
+    string,
+    {
+      description: string
+      headers?: Record<string, { description: string; schema: unknown }>
+      content?: Record<string, { schema: unknown }>
+    }
+  >
 }
 interface Doc {
   openapi: string
@@ -48,7 +62,13 @@ describe("buildOpenApiDocument()", () => {
     expect(doc.paths["/users/{id}"]?.get?.parameters).toEqual([
       { name: "id", in: "path", required: true, schema: { type: "string" } },
     ])
-    expect(doc.paths["/health"]?.get?.responses).toEqual({ "200": { description: "OK" } })
+    expect(doc.paths["/health"]?.get?.responses).toEqual({
+      "200": { description: "OK" },
+      "500": {
+        description: "Internal Server Error",
+        content: { "application/json": { schema: { $ref: "#/components/schemas/NifraError" } } },
+      },
+    })
   })
 
   test("emits full field-level schemas for `t` routes (body, query params, response)", () => {
@@ -173,5 +193,37 @@ describe("openapi() plugin", () => {
       .get("/", () => ({ ok: true }))
     expect((await app.fetch(new Request("http://x/openapi.json"))).status).toBe(200)
     expect((await app.fetch(new Request("http://x/internal/openapi.json"))).status).toBe(200)
+  })
+})
+
+describe("a rate-limited route", () => {
+  test("lists the limiter's 429 and its Retry-After, and the limiter answers that body", async () => {
+    const app = server()
+      .use(rateLimit({ store: new MemoryStore(), max: 1, windowMs: 60_000, key: () => "k" }))
+      .get("/limited", () => ({ ok: true }))
+    const doc = build([...app.routes()])
+    const limited = doc.paths["/limited"]?.get?.responses?.["429"]
+    expect(limited).toEqual({
+      description: "Too Many Requests",
+      headers: {
+        "Retry-After": {
+          description: "Seconds until the limit's window resets.",
+          schema: { type: "integer", minimum: 0 },
+        },
+      },
+      content: { "application/json": { schema: { $ref: "#/components/schemas/NifraError" } } },
+    })
+    await app.fetch(new Request("http://x/limited"))
+    const refused = await app.fetch(new Request("http://x/limited"))
+    expect(refused.status).toBe(429)
+    expect(Number(refused.headers.get("retry-after"))).toBeGreaterThanOrEqual(0)
+    expect(await refused.json()).toEqual({ ok: false, error: "rate_limited" })
+  })
+
+  test("a limit only declared with assure() lists no 429: nifra cannot see what answers it", () => {
+    const app = server().get("/declared", () => ({ ok: true }))
+    assure(app, { id: NIFRA_ASSURANCE.RATE_LIMITED, source: "edge-gateway" })
+    const doc = build([...app.routes()])
+    expect(doc.paths["/declared"]?.get?.responses?.["429"]).toBeUndefined()
   })
 })
