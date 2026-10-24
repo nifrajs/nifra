@@ -652,7 +652,7 @@ describe("query layers over a scripted client", () => {
       redactedColumns: [],
     })
     expect(log[0]).toBe(
-      "BEGIN READ ONLY; SET LOCAL statement_timeout = 2000; SET LOCAL lock_timeout = 2000; SET LOCAL idle_in_transaction_session_timeout = 2000",
+      "BEGIN READ ONLY; SET LOCAL statement_timeout = 2000; SET LOCAL lock_timeout = 2000; SET LOCAL idle_in_transaction_session_timeout = 2000; SELECT pg_catalog.set_config('jit', 'off', true) WHERE pg_catalog.current_setting('server_version_num')::int >= 110000",
     )
     expect(log[2]).toStartWith(
       "DECLARE nifra_c NO SCROLL CURSOR FOR SELECT (SELECT json_agg(nifra_k)",

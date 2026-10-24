@@ -229,7 +229,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     }
   })
 
-  test("every session starts read-only with the timeouts set", async () => {
+  test("every session starts read-only with the timeouts set and JIT off", async () => {
     const client = engineClient(ROLE.reader, 2_500)
     const connection = await client.reserve()
     try {
@@ -243,9 +243,14 @@ describe.skipIf(SKIP)(SUITE, () => {
     const inside = await inReadOnlyTransaction(client, 1_234, async (tx) => {
       const [readOnly] = records(await tx`SHOW transaction_read_only`)
       const [timeout] = records(await tx`SHOW statement_timeout`)
-      return { readOnly: readOnly?.transaction_read_only, timeout: timeout?.statement_timeout }
+      const [jit] = records(await tx`SHOW jit`)
+      return {
+        readOnly: readOnly?.transaction_read_only,
+        timeout: timeout?.statement_timeout,
+        jit: jit?.jit,
+      }
     })
-    expect(inside).toEqual({ readOnly: "on", timeout: "1234ms" })
+    expect(inside).toEqual({ readOnly: "on", timeout: "1234ms", jit: "off" })
   })
 
   test("the cursor accepts only SELECT and VALUES; a data-modifying WITH is refused by the server", async () => {

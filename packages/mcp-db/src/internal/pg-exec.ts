@@ -100,6 +100,10 @@ function millis(timeoutMs: number): number {
  * Run `work` inside `BEGIN READ ONLY` on one reserved connection, with the statement, lock and
  * idle-in-transaction timeouts set for this transaction only. Always rolls back, so nothing a call
  * does (a `set_config`, a session setting) outlives it.
+ *
+ * JIT is off too: the catalog reads' recursive subplans cross `jit_above_cost`, and compiling them
+ * took past the timeout on a stock Ubuntu server where running them takes under a millisecond.
+ * PostgreSQL 10 has no `jit` setting, so the version is checked first.
  */
 export async function inReadOnlyTransaction<T>(
   client: PostgresClient,
@@ -116,7 +120,7 @@ export async function inReadOnlyTransaction<T>(
   try {
     // nifra-expect sql-dynamic: fixed statements; the one interpolation is a validated integer of milliseconds
     await connection.unsafe(
-      `BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}; SET LOCAL lock_timeout = ${ms}; SET LOCAL idle_in_transaction_session_timeout = ${ms}`,
+      `BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}; SET LOCAL lock_timeout = ${ms}; SET LOCAL idle_in_transaction_session_timeout = ${ms}; SELECT pg_catalog.set_config('jit', 'off', true) WHERE pg_catalog.current_setting('server_version_num')::int >= 110000`,
     )
     return await work(connection)
   } catch (error) {
