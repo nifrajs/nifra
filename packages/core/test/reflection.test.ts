@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { type StandardSchemaV1, server } from "../src/index.ts"
 import { reflectRoutes, reflectSchema } from "../src/reflection.ts"
 
@@ -88,6 +89,19 @@ describe("reflectSchema", () => {
     const circular: Record<string, unknown> = { type: "object" }
     circular.self = circular
     expect(reflectSchema(circular).jsonSchema).toBeUndefined()
+  })
+})
+
+describe("reflectSchema - coercion", () => {
+  test("marks a schema that coerces text values, and only that one", () => {
+    for (const schema of [
+      t.query({ a: t.boolean() }),
+      t.headers({ a: t.boolean() }),
+      t.cookies({ a: t.boolean() }),
+    ])
+      expect(reflectSchema(schema).coerces).toBe(true)
+    expect(reflectSchema(t.object({ a: t.boolean() }))).not.toHaveProperty("coerces")
+    expect(reflectSchema({ type: "object" })).not.toHaveProperty("coerces")
   })
 })
 

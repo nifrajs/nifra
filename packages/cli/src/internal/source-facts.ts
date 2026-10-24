@@ -19,6 +19,14 @@ export interface UntypedResponseRoutes {
   readonly indirectReturns: readonly number[]
 }
 
+/** A route registration of one file that declares no `response`, from {@link SourceFacts.undeclaredResponseRoutes}. */
+export interface UndeclaredResponseRoute {
+  /** The start of the registration's method name (`get` in `.get("/x", h)`). */
+  readonly position: number
+  readonly method: string
+  readonly path: string
+}
+
 export interface SourceFacts {
   parse(file: string, content: string): TSApi.SourceFile | undefined
   isValueImportAt(
@@ -61,6 +69,13 @@ export interface SourceFacts {
     source: TSApi.SourceFile,
     importReturnsResponse?: (specifier: string, name: string) => boolean,
   ): UntypedResponseRoutes
+  /**
+   * The `.get("/path", …)` registrations (and the other methods) whose options are all object
+   * literals and none declares `response`, leaving out those whose handlers {@link untypedResponseRoutes}
+   * reports: a raw `Response` has no JSON body to declare. One whose options are a variable or a call is
+   * left out too, since the file does not show whether it declares one.
+   */
+  undeclaredResponseRoutes(source: TSApi.SourceFile): readonly UndeclaredResponseRoute[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -618,6 +633,42 @@ export function createSourceFacts(
     }
   }
 
+  const undeclaredResponseRoutes = (
+    source: TSApi.SourceFile,
+  ): readonly UndeclaredResponseRoute[] => {
+    const locals = localFunctions(ts, source)
+    const raw = untypedResponseRoutes(source)
+    const routes: UndeclaredResponseRoute[] = []
+    const visit = (node: TSApi.Node): void => {
+      ts.forEachChild(node, visit)
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
+      const method = node.expression.name.text
+      const [first, ...rest] = node.arguments
+      if (
+        !REGISTRATION_METHODS.has(method) ||
+        first === undefined ||
+        !ts.isStringLiteralLike(first)
+      )
+        return
+      const handlers: FunctionNode[] = []
+      for (const argument of rest.map((value) => unwrapExpression(ts, value))) {
+        const local = ts.isIdentifier(argument) ? locals.get(argument.text) : undefined
+        if (isFunctionValue(ts, argument)) handlers.push(argument)
+        else if (local !== undefined) handlers.push(...local)
+        else if (!ts.isObjectLiteralExpression(argument) || declaresResponse(ts, argument)) return
+      }
+      if (handlers.length > 0 && handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
+        return
+      routes.push({
+        position: node.expression.name.getStart(source),
+        method: method.toUpperCase(),
+        path: first.text,
+      })
+    }
+    visit(source)
+    return routes.sort((a, b) => a.position - b.position)
+  }
+
   const exportReturnsResponse = (source: TSApi.SourceFile, name: string): boolean => {
     const local = exportedLocal(ts, source, name)
     if (local === undefined) return false
@@ -655,6 +706,7 @@ export function createSourceFacts(
     isFunctionRouteCallAt,
     isResponseSyntaxAt,
     untypedResponseRoutes,
+    undeclaredResponseRoutes,
     exportReturnsResponse,
     isDynamicImportAt,
   }

@@ -279,6 +279,11 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     command: "nifra fix --code NF-C053",
     docs: "/docs/partial-prerendering",
   },
+  "NF-C054": {
+    why: "The project builds an OpenAPI document from its running routes (openapi(), buildOpenApiDocument or toOpenAPI), and a route declares no response schema. The document can only say it answers 200, so a client generated from it, in any language, has no type for the body. nifra's typed client is unaffected: it reads the handler's TypeScript type.",
+    fix: "Declare `{ response: ... }` on the route, or build the document with `nifra openapi`, which reads each handler's return type. A route kept out on purpose takes `// nifra-expect NF-C054: <reason>` above the registration.",
+    docs: "/docs/api",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

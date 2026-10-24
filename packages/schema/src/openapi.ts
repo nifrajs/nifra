@@ -1,3 +1,4 @@
+import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import type { ContractShape } from "@nifrajs/core/contract"
 import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "@nifrajs/core/evidence"
 import {
@@ -28,9 +29,15 @@ import type { Server } from "@nifrajs/core/server"
  * `security`, additional `responses`, etc.; an **app** emits request shapes + a generic `200` (an
  * inline handler has no response *schema* to serialize), enrichable via `options.operations`.
  *
- * Every operation also lists the errors the framework answers before its handler runs, as the shared
- * `NifraError` / `NifraValidationError` components: 400, 413 and 415 for a body, 422 for any request
- * schema (left out when an `onValidationError` hook writes that body). A declared response wins.
+ * Every operation also lists the errors the framework answers itself, as the shared `NifraError` /
+ * `NifraValidationError` components: 400, 413 and 415 for a body, 422 for any request schema (left out
+ * when an `onValidationError` hook writes that body), 404 for a path whose parameter has a pattern a
+ * value can miss, 429 where `rateLimit()` covers the route, and 500 for a handler that throws. A
+ * declared response wins.
+ *
+ * A query list is read from repeated keys (`?tag=a&tag=b`), declared as `style: form, explode: true`;
+ * `?tag=a,b` is the one value `"a,b"`. A boolean read by `t.query`, `t.headers` or `t.cookies` also
+ * accepts `1`/`0` and either case, which `x-nifra-boolean-literals` lists.
  * A union whose members all pin one required property to distinct values becomes a `oneOf` with a
  * `discriminator`, so a generator can emit a tagged union instead of trying each member in turn.
  *
@@ -110,7 +117,20 @@ interface OpenAPIParameter {
   readonly in: "path" | "query" | "header" | "cookie"
   readonly required: boolean
   readonly schema: JsonSchema
+  readonly style?: "form"
+  readonly explode?: true
+  readonly "x-nifra-boolean-literals"?: typeof BOOLEAN_LITERALS
 }
+
+/**
+ * The text a coercing schema (`t.query`, `t.headers`, `t.cookies`) reads as a boolean: TypeBox's
+ * `Value.Convert`, which it coerces with. Anything else, `yes` or an empty value, is a 422.
+ */
+const BOOLEAN_LITERALS = Object.freeze({
+  true: Object.freeze(["true", "1"]),
+  false: Object.freeze(["false", "0", "-0"]),
+  caseInsensitive: true,
+})
 
 export type OpenAPIVersion = "3.1.0" | "3.2.0"
 
@@ -126,8 +146,14 @@ interface OpenAPIRequestBody {
   readonly content: Record<string, OpenAPIMediaType>
 }
 
+interface OpenAPIHeader {
+  readonly description?: string
+  readonly schema: JsonSchema
+}
+
 interface OpenAPIResponse {
   description: string
+  headers?: Record<string, OpenAPIHeader>
   content?: Record<string, OpenAPIMediaType>
 }
 
@@ -484,6 +510,15 @@ function templatedPath(path: string): {
 
 type Fields = readonly ReflectedSchemaField[] | undefined
 
+const typeOf = (schema: JsonSchema): unknown => (isRecord(schema) ? schema.type : undefined)
+
+/** Whether a field reads booleans: a boolean, or a list of them. */
+const readsBoolean = (schema: JsonSchema): boolean =>
+  typeOf(schema) === "boolean" ||
+  (typeOf(schema) === "array" &&
+    isRecord(schema) &&
+    typeOf(recordOf(schema.items) ?? {}) === "boolean")
+
 function pathParameters(path: string, paramsFields: Fields): OpenAPIParameter[] {
   // Build a lookup of per-field schemas from the declared params schema (if any).
   const fieldSchemas = new Map<string, JsonSchema>()
@@ -508,36 +543,33 @@ function pathParameters(path: string, paramsFields: Fields): OpenAPIParameter[] 
   }))
 }
 
-function queryParameters(fields: Fields): OpenAPIParameter[] {
-  // Only an introspectable object schema decomposes into individual query parameters.
+/**
+ * The query, header or cookie parameters `fields` declares, with how the server reads their text. A
+ * header name is listed lowercase; a cookie name is case-sensitive, so it keeps its case.
+ */
+function valueParameters(
+  fields: Fields,
+  location: "query" | "header" | "cookie",
+  coerces: boolean,
+): OpenAPIParameter[] {
+  // Only an introspectable object schema decomposes into individual parameters.
   if (fields === undefined) return []
-  return fields.map((field) => ({
-    name: field.name,
-    in: "query",
-    required: field.required,
-    schema: field.schema,
-  }))
-}
-
-function headerParameters(fields: Fields): OpenAPIParameter[] {
-  if (fields === undefined) return []
-  return fields.map((field) => ({
-    name: field.name.toLowerCase(),
-    in: "header" as const,
-    required: field.required,
-    schema: field.schema,
-  }))
-}
-
-/** Cookie names are case-sensitive, so each declared field keeps its name as written. */
-function cookieParameters(fields: Fields): OpenAPIParameter[] {
-  if (fields === undefined) return []
-  return fields.map((field) => ({
-    name: field.name,
-    in: "cookie" as const,
-    required: field.required,
-    schema: field.schema,
-  }))
+  return fields.map((field) => {
+    const parameter: { -readonly [K in keyof OpenAPIParameter]: OpenAPIParameter[K] } = {
+      name: location === "header" ? field.name.toLowerCase() : field.name,
+      in: location,
+      required: field.required,
+      schema: field.schema,
+    }
+    // The query parser collects repeated keys and never splits a value on commas.
+    if (location === "query" && typeOf(field.schema) === "array") {
+      parameter.style = "form"
+      parameter.explode = true
+    }
+    if (coerces && readsBoolean(field.schema))
+      parameter["x-nifra-boolean-literals"] = BOOLEAN_LITERALS
+    return parameter
+  })
 }
 
 interface OperationInput {
@@ -553,6 +585,8 @@ interface OperationInput {
   readonly sse?: SchemaReflection | undefined
   /** An `onValidationError` hook writes this route's 422 body, so the default envelope is not it. */
   readonly validationErrorHook?: boolean | undefined
+  /** `rateLimit()` covers the route, so it can answer 429. */
+  readonly rateLimited?: boolean | undefined
   readonly operationId: string | undefined
   // `| undefined` (not just `?`) so a contract op's optional fields - `string | undefined` etc. - are
   // assignable under `exactOptionalPropertyTypes` when spread into this literal.
@@ -596,6 +630,11 @@ const ERROR_ENVELOPE: JsonSchema = {
   properties: { ok: { type: "boolean", const: false }, error: { type: "string" } },
 }
 
+const RETRY_AFTER: OpenAPIHeader = {
+  description: "Seconds until the limit's window resets.",
+  schema: { type: "integer", minimum: 0 },
+}
+
 const VALIDATION_ERROR_ENVELOPE: JsonSchema = {
   type: "object",
   required: ["ok", "error", "issues"],
@@ -618,17 +657,24 @@ const VALIDATION_ERROR_ENVELOPE: JsonSchema = {
   },
 }
 
-/** The errors the framework answers for this operation before its handler runs. */
+/** The errors the framework answers for this operation itself, around whatever its handler returns. */
 function frameworkResponses(
   input: OperationInput,
   store: SchemaStore,
 ): Record<string, OpenAPIResponse> {
   const responses: Record<string, OpenAPIResponse> = {}
-  const answer = (status: string, component: string, schema: JsonSchema): void => {
-    responses[status] = {
+  const answer = (
+    status: string,
+    component: string,
+    schema: JsonSchema,
+    headers?: Record<string, OpenAPIHeader>,
+  ): void => {
+    const response: OpenAPIResponse = {
       description: STATUS_TEXT[status] ?? "Error",
       content: { "application/json": { schema: store.shared(component, schema) } },
     }
+    if (headers !== undefined) response.headers = headers
+    responses[status] = response
   }
   if (input.body !== undefined) {
     answer("400", "NifraError", ERROR_ENVELOPE)
@@ -640,6 +686,12 @@ function frameworkResponses(
   )
   if (validates && input.validationErrorHook !== true)
     answer("422", "NifraValidationError", VALIDATION_ERROR_ENVELOPE)
+  // A value outside a parameter's pattern matches no route, so the router answers it.
+  if (templatedPath(input.path).parameters.some((parameter) => parameter.constraint !== undefined))
+    answer("404", "NifraError", ERROR_ENVELOPE)
+  if (input.rateLimited === true)
+    answer("429", "NifraError", ERROR_ENVELOPE, { "Retry-After": RETRY_AFTER })
+  answer("500", "NifraError", ERROR_ENVELOPE)
   return responses
 }
 
@@ -786,9 +838,9 @@ function buildOperation(
 
   const parameters = [
     ...pathParameters(input.path, store.fields(input.params)),
-    ...queryParameters(store.fields(input.query)),
-    ...headerParameters(store.fields(input.headers)),
-    ...cookieParameters(store.fields(input.cookies)),
+    ...valueParameters(store.fields(input.query), "query", input.query?.coerces === true),
+    ...valueParameters(store.fields(input.headers), "header", input.headers?.coerces === true),
+    ...valueParameters(store.fields(input.cookies), "cookie", input.cookies?.coerces === true),
   ]
   if (parameters.length > 0) operation.parameters = parameters
 
@@ -997,6 +1049,10 @@ export function toOpenAPI(
           response: route.schema?.response,
           sse: route.schema?.sse,
           validationErrorHook: route.schema?.validationErrorHook === true,
+          rateLimited: route.assurance?.some(
+            (evidence) =>
+              evidence.id === NIFRA_ASSURANCE.RATE_LIMITED && evidence.provenance === "runtime",
+          ),
           // …and an `errors` contract - emit each as a non-2xx response.
           responses: reflectedErrorsToResponses(route.schema?.errors),
           inferredResponses:
