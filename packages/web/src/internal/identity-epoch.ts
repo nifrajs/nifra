@@ -14,8 +14,8 @@ import { EPOCH_COOKIE, LOCAL_EPOCH_COOKIE } from "../identity.ts"
 export interface KeepAliveServerOptions {
   /**
    * Cookies whose change means a different visitor, on top of the session cookies of
-   * `@nifrajs/auth`, Better Auth and Auth.js under their default names. Name a custom session cookie
-   * here, or kept pages survive a sign-in or sign-out through it.
+   * `@nifrajs/auth` and Auth.js under their default names and Better Auth's under any `cookiePrefix`.
+   * Name a custom session cookie here, or kept pages survive a sign-in or sign-out through it.
    */
   readonly identityCookies?: readonly string[]
   /** `HttpOnly` cookies that say nothing about who is signed in; development stops asking about them. */
@@ -33,16 +33,9 @@ interface RequestView {
 }
 
 // Session cookies by their default names, without a `__Secure-` / `__Host-` prefix.
-const IDENTITY_DEFAULTS = [
-  "nifra_session",
-  "better-auth.session_token",
-  "authjs.session-token",
-  "next-auth.session-token",
-]
+const IDENTITY_DEFAULTS = ["nifra_session", "authjs.session-token", "next-auth.session-token"]
 // `HttpOnly` cookies the same integrations write that carry no identity of their own.
 const IGNORE_DEFAULTS = [
-  "better-auth.session_data",
-  "better-auth.dont_remember",
   "authjs.csrf-token",
   "authjs.callback-url",
   "authjs.pkce.code_verifier",
@@ -55,6 +48,11 @@ const IGNORE_DEFAULTS = [
   "next-auth.nonce",
   "__nifra_draft",
 ]
+
+// Better Auth names its cookies `<advanced.cookiePrefix>.<name>`, "better-auth" unless the app sets
+// one, so these count under any prefix.
+const BETTER_AUTH_SESSION = ".session_token"
+const BETTER_AUTH_IGNORED = [".session_data", ".dont_remember"]
 
 // `__Secure-a.0` and `__Host-a` are the cookie `a`: a prefix, then Auth.js's chunk index.
 const baseName = (name: string): string =>
@@ -148,8 +146,14 @@ export function identityEpochHook(
   options: KeepAliveServerOptions,
   development: boolean,
 ): (headers: HeaderView, request: RequestView) => void {
-  const identity = new Set([...IDENTITY_DEFAULTS, ...(options.identityCookies ?? []).map(baseName)])
-  const ignored = new Set([...IGNORE_DEFAULTS, ...(options.ignoreCookies ?? []).map(baseName)])
+  const named = new Set([...IDENTITY_DEFAULTS, ...(options.identityCookies ?? []).map(baseName)])
+  const told = new Set((options.ignoreCookies ?? []).map(baseName))
+  const ignored = new Set([...IGNORE_DEFAULTS, ...told])
+  // An app's own `ignoreCookies` entry outranks the Better Auth suffix, never a name it listed.
+  const isIdentity = (base: string): boolean =>
+    named.has(base) || (base.endsWith(BETTER_AUTH_SESSION) && !told.has(base))
+  const isIgnored = (base: string): boolean =>
+    ignored.has(base) || BETTER_AUTH_IGNORED.some((suffix) => base.endsWith(suffix))
   const reported = new Set<string>()
   return (headers, request) => {
     const joined = headers.get("set-cookie")
@@ -166,20 +170,20 @@ export function identityEpochHook(
           renewed === undefined &&
           !cookie.deleted &&
           (cookie.maxAge !== undefined || cookie.expires !== undefined) &&
-          identity.has(base)
+          isIdentity(base)
         )
           renewed = cookie
         continue
       }
-      if (identity.has(base)) {
+      if (isIdentity(base)) {
         // The first identity cookie still set gives the lifetime; a sign-out deletes them all.
         if (changed === undefined || (changed.deleted && !cookie.deleted)) changed = cookie
         continue
       }
-      if (!development || !cookie.httpOnly || ignored.has(base) || reported.has(base)) continue
+      if (!development || !cookie.httpOnly || isIgnored(base) || reported.has(base)) continue
       reported.add(base)
       console.warn(
-        `[nifra/web] NIFRA_KEEPALIVE_IDENTITY_COOKIE: this app keeps pages alive, and a response changed the HttpOnly cookie "${cookie.name}", which nifra does not know as a sign-in cookie. If it says who is signed in, add it to createWebApp({ keepAlive: { identityCookies: ["${base}"] } }) so a sign-in or sign-out drops the pages kept for the previous visitor; if it does not, add it to keepAlive.ignoreCookies.`,
+        `[nifra/web] NIFRA_KEEPALIVE_IDENTITY_COOKIE: this app keeps pages alive, and a response changed the HttpOnly cookie "${cookie.name}", which nifra does not know as a sign-in cookie. If it says who is signed in, name it in keepAlive: { identityCookies: ["${base}"] } so a sign-in or sign-out drops the pages kept for the previous visitor; if it does not, in keepAlive.ignoreCookies. An app run by \`nifra dev\` and \`nifra build\` exports keepAlive from backend/framework.ts; a server you write passes it to createWebApp.`,
       )
     }
     if (changed !== undefined) {

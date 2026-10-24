@@ -291,8 +291,8 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     docs: "/docs/troubleshooting#mixed-versions",
   },
   "NF-D003": {
-    why: "bun.lock records dependencies a file: package no longer declares. Bun never reads that package.json again, so it installs the recorded versions beside the declared ones.",
-    fix: "Run `bun update <package>` for each package the finding names; `nifra upgrade --write` drops the entries before the next install.",
+    why: "bun.lock records dependencies a file: package no longer declares. Bun 1.4.2 never reads that package.json again, so it installs the recorded versions beside the declared ones.",
+    fix: "Run `bun update <package>` for each package the finding names: it refreshes those entries and keeps every other pin. Deleting an entry by hand makes the next install re-resolve the whole lock.",
     docs: "/docs/troubleshooting#stale-file-links",
   },
   "NF-A001": {

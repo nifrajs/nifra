@@ -152,3 +152,40 @@ describe("renderCheckReport parity", () => {
     expect(text).toContain("showing 1 of 41 diagnostics (truncated)")
   })
 })
+
+test("a fix several findings share prints once, after them", () => {
+  const suggestion = {
+    kind: "manual" as const,
+    title: "Return a typed value instead of a raw Response",
+    steps: ["Return the data", "Set status with c.set.status"],
+  }
+  const raw = (line: number) => ({
+    rule: "response-route",
+    severity: "warning" as const,
+    message: "returns a raw Response",
+    file: "backend/app.ts",
+    line,
+    suggestion,
+  })
+  const lines = renderCheckReport(
+    result({
+      diagnostics: [
+        raw(3),
+        raw(9),
+        raw(14),
+        {
+          ...raw(20),
+          file: "backend/b.ts",
+          suggestion: { kind: "manual" as const, title: "Own fix" },
+        },
+      ],
+    }),
+  )
+  const text = lines.join("\n")
+  expect(text.split(suggestion.title)).toHaveLength(2)
+  expect(text).toContain(`fix (the 3 above): ${suggestion.title}`)
+  expect(text).toContain("      fix: Own fix")
+  const at = (needle: string) => lines.findIndex((line) => line.includes(needle))
+  expect(at("backend/app.ts:14")).toBeLessThan(at("fix (the 3 above)"))
+  expect(lines.filter((line) => line === "      - Return the data")).toHaveLength(1)
+})

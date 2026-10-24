@@ -272,7 +272,7 @@ export default function Cli() {
             <td>
               <code>nifra contracts snapshot | check</code>
             </td>
-            <td>Write the deterministic route contract lock, <code>contracts.lock.json</code>, or check the current routes against it.</td>
+            <td>Write the deterministic route contract lock, <code>contracts.lock.json</code>, or check the current routes against it. The lock records each declared part (body, query, params, headers, cookies, response, sse, each error status) with its top-level fields, so a failing check names the part and the fields that moved.</td>
           </tr>
           <tr>
             <td>

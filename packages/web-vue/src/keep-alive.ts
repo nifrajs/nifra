@@ -192,7 +192,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
         if (first.wrapped && instance !== null) {
           const entry: Kept = { slot: page, instance, view: undefined, showing: false }
           kept.set(key, entry)
-          if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+          if (process.env.NODE_ENV !== "production")
             noteKeptView(key, () => elementsOf(instance.subTree))
           onActivated(() => {
             if (!entry.showing) return
@@ -205,8 +205,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
           onUnmounted(() => {
             if (kept.get(key) !== entry) return
             kept.delete(key)
-            if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
-              noteKeptView(key, undefined)
+            if (process.env.NODE_ENV !== "production") noteKeptView(key, undefined)
           })
         }
         return () => {

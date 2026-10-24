@@ -7358,7 +7358,7 @@ The breaking-change gate. A new required request field or a removed response fie
 
 `nifra contracts snapshot | check`
 
-Write the deterministic route contract lock, `contracts.lock.json`, or check the current routes against it.
+Write the deterministic route contract lock, `contracts.lock.json`, or check the current routes against it. The lock records each declared part (body, query, params, headers, cookies, response, sse, each error status) with its top-level fields, so a failing check names the part and the fields that moved.
 
 `nifra assure [--config <file>]`
 
@@ -9363,17 +9363,20 @@ followed, and a group package installed by a link from outside the root is liste
 ### "records dependencies its file: packages no longer declare"
 
 A `file:` dependency's own dependencies are recorded in `bun.lock` when
-Bun first installs it, and Bun does not read that package's `package.json` again:
+Bun installs it, and Bun 1.4.2 does not read that package's `package.json` again:
 after the linked package moves to a new version of a dependency, `bun install`
 (even with `--force`) keeps installing the recorded one beside it, so the app can
-load two copies of the same package. `nifra doctor` (and `nifra check`,
+load two copies of the same package. Bun 1.4.4 reads it on every install.
+`nifra doctor` (and `nifra check`,
 as the `NF-D003` warning) compares each recorded entry with the linked
 `package.json` and names every dependency that moved.
 
-Run `bun update <package>` for each named package. `nifra upgrade`
-reads the lock against the manifests it is about to write, and with `--write` drops
-those entries so the next `bun install` records them again; run that install
-before committing `bun.lock`, or `bun install --frozen-lockfile` fails.
+Run `bun update <package>` for each named package: it records the linked
+`package.json` as it is on disk, uncommitted edits included, and keeps every other
+entry. Do not delete the entries by hand: an install that finds one missing re-resolves every
+package in the lock to the newest version its range allows, and Bun 1.4.4 also rewrites a
+`lockfileVersion` 1 lock as 2. `nifra upgrade` lists the entries against
+the manifests it is about to write and leaves `bun.lock` as it is.
 
 ### Still stuck?
 
@@ -9481,7 +9484,8 @@ written down: `nifra fix --code NF-C035` adds
 
 With both files, `nifra dev` and `nifra build` take
 `apiPrefix`, `apiStrip`, `mounts`, `csp`,
-`nonce`, `serverComponents`, `i18n`, `use` and
+`nonce`, `serverComponents`, `i18n`, `hostPolicy`,
+`live`, `keepAlive`, `use` and
 `publicEnvPrefix` from `backend/framework.ts` when
 `nifra.config.ts` does not set them, so the
 server entry and the dev server read one value without a re-export. A hand-written
@@ -9501,7 +9505,8 @@ mount in front of the page router.
 
 An app run by `nifra dev` and `nifra build` sets these options from
 `backend/framework.ts`: `apiPrefix`, `apiStrip`, `mounts`,
-`csp`, `nonce` and `i18n`. The generated server entry imports them from there, so
+`csp`, `nonce`, `i18n`, `hostPolicy`, `live` and
+`keepAlive`. The generated server entry imports them from there, so
 export them from `framework.ts` (and re-export from `nifra.config.ts` when
 both exist). A `mounts` entry hands a path to another app; a single extra URL
 outside the prefix, such as a sitemap, is a plain route registered in `use`:
@@ -12163,20 +12168,19 @@ tells the other tabs of the origin to do the same. A sign-out by a native form p
 session that expires while the visitor is away, is covered the same way: back compares the
 epoch before it shows a kept page.
 
-The session cookies of `@nifrajs/auth`, Better Auth and Auth.js count under their
-default names. Name any other in `identityCookies`:
+The session cookies of `@nifrajs/auth` and Auth.js count under their default
+names, and Better Auth's under any `cookiePrefix`. Name any other, such as one
+renamed through Better Auth's `advanced.cookies`, in
+`identityCookies`. `nifra dev` and `nifra build` read it
+from `backend/framework.ts`; a server you write passes the same object to
+`createWebApp({ keepAlive })`:
 
 ```ts
-// doc-check: skip - adapter, manifest and clientEntry are the app's own.
-const app = createWebApp({
-  adapter,
-  manifest,
-  clientEntry,
-  keepAlive: {
-    identityCookies: ["sid"], // your own session cookie
-    ignoreCookies: ["cart"], // HttpOnly, but says nothing about who is signed in
-  },
-})
+// backend/framework.ts
+export const keepAlive = {
+  identityCookies: ["sid"], // your own session cookie
+  ignoreCookies: ["cart"], // HttpOnly, but says nothing about who is signed in
+}
 ```
 
 In development, an `HttpOnly` cookie that changes and is in neither list is

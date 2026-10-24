@@ -1338,6 +1338,7 @@ export const SERVER_ENTRY_OPTIONS = [
   "i18n",
   "hostPolicy",
   "live",
+  "keepAlive",
 ] as const
 export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
 /** Each importable option mapped to the specifier of the module that exports it. */

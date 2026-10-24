@@ -527,6 +527,8 @@ interface RouteDiffCommandOutput extends DiffCommandOutput {
 interface ContractsCommandOutput {
   readonly ok: boolean
   readonly lock?: ContractsLock
+  /** `snapshot`: each route whose declared schema the lock records as `null`. */
+  readonly unreflected?: readonly { readonly route: string; readonly parts: readonly string[] }[]
   readonly diagnostics?: readonly unknown[]
   readonly present?: boolean
   readonly vacuous?: boolean
@@ -1989,14 +1991,29 @@ const contractsSpec: CommandSpec<ContractsInput, ContractsCommandOutput> = {
   async run(value, ctx) {
     const mod = await import("./contracts.ts")
     if (value.action === "snapshot")
-      return { ok: true, lock: await mod.snapshotContracts(ctx.cwd, value.out) }
-    const result = await mod.checkContractsLock(ctx.cwd)
+      return { ok: true, ...(await mod.snapshotContractsReport(ctx.cwd, value.out)) }
+    const result = await mod.checkContractsLock(ctx.cwd, value.out)
     return { ok: result.present && result.diagnostics.length === 0, ...result }
   },
-  render: (out) => [
-    out.ok ? "✓ contracts are current" : "✖ contract drift",
-    ...(out.diagnostics ?? []).map((d) => `  ${(d as { message: string }).message}`),
-  ],
+  render: (out, input) => {
+    const file = input?.out ?? "contracts.lock.json"
+    if (input?.action === "snapshot")
+      return [
+        `✓ wrote ${file} (${Object.keys(out.lock?.routes ?? {}).length} routes)`,
+        ...(out.unreflected ?? []).map(
+          (entry) =>
+            `  ⚠ ${entry.route}: ${entry.parts.join(", ")} declares a schema nifra cannot read, locked as null - a change to it goes unnoticed`,
+        ),
+      ]
+    return [
+      out.ok
+        ? "✓ contracts are current"
+        : out.present === false
+          ? `✖ no ${file}: run \`nifra contracts snapshot\``
+          : "✖ contract drift",
+      ...(out.diagnostics ?? []).map((d) => `  ${(d as { message: string }).message}`),
+    ]
+  },
   success: (out) => out.ok,
 }
 
