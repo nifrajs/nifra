@@ -938,24 +938,24 @@ const compoundsOf = (
   let depth = 0
   let start = 0
   let combinator = ""
-  for (let i = 0; i <= selector.length; i++) {
-    const char = selector[i]
-    if (char === "(" || char === "[") depth++
-    else if (char === ")" || char === "]") depth--
-    if (
-      depth > 0 ||
-      (char !== undefined && char !== " " && char !== ">" && char !== "+" && char !== "~")
-    )
-      continue
-    const compound = selector.slice(start, i).trim()
+  const flush = (end: number): void => {
+    const compound = selector.slice(start, end).trim()
     if (compound !== "") {
       parts.push({ compound, before: combinator })
       combinator = ""
     }
-    if (char === ">" || char === "+" || char === "~") combinator = char
-    else if (char === " " && combinator === "") combinator = " "
+  }
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]
+    if (char === "(" || char === "[") depth++
+    else if (char === ")" || char === "]") depth--
+    if (depth > 0 || (char !== " " && char !== ">" && char !== "+" && char !== "~")) continue
+    flush(i)
+    if (char !== " ") combinator = char
+    else if (combinator === "") combinator = " "
     start = i + 1
   }
+  if (depth <= 0) flush(selector.length)
   return parts
 }
 
