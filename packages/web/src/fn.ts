@@ -217,12 +217,18 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
   // A plugin name per module: the same module mounted twice stays one mount, while a second module
   // under a taken namespace mounts too, so its functions are served, or a name both modules export
   // fails as a duplicate route instead of the second module silently answering nothing.
-  const modules = MODULES_BY_NAMESPACE.get(namespace) ?? []
-  MODULES_BY_NAMESPACE.set(namespace, modules)
-  if (!modules.includes(module)) modules.push(module)
-  const index = modules.indexOf(module)
+  const indexes = MODULE_INDEXES.get(module) ?? new Map<string, number>()
+  MODULE_INDEXES.set(module, indexes)
+  let index = indexes.get(namespace)
+  if (index === undefined) {
+    index = NEXT_MODULE_INDEX.get(namespace) ?? 0
+    NEXT_MODULE_INDEX.set(namespace, index + 1)
+    indexes.set(namespace, index)
+  }
   const suffix = index === 0 ? "" : `#${index + 1}`
   return defineIdentityPlugin(`nifra:server-fn:${namespace}${suffix}`, apply)
 }
 
-const MODULES_BY_NAMESPACE = new Map<string, ServerFnModule[]>()
+// Weak, so a module an app no longer uses (a dev reload, a discarded test app) is not held here.
+const MODULE_INDEXES = new WeakMap<ServerFnModule, Map<string, number>>()
+const NEXT_MODULE_INDEX = new Map<string, number>()

@@ -895,7 +895,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const PREFETCH_MAX_AGE_MS = 30_000
   // path -> [data, when it arrived, the identity epoch it was loaded under]
   const prefetched = new Map<string, readonly [LoadedRouteData, number, string]>()
-  const inflight = new Set<string>()
+  // path -> the token of the prefetch loading it; a prefetch stores what it read only while its
+  // token is still there, so dropping the token discards a load that started before the drop.
+  const inflight = new Map<string, object>()
   // Read without the DOM types: this module also builds in tsconfigs that leave the DOM lib out.
   const readEpoch = (): string => {
     const cookie: unknown = Reflect.get(Reflect.get(globalThis, "document") ?? {}, "cookie")
@@ -910,10 +912,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       : undefined
   }
   // Warmed data was loaded before a mutation or for the previous visitor, so either one drops all of
-  // it, and the generation keeps a prefetch still in flight from storing what it read.
-  let prefetchGeneration = 0
+  // it, along with what a prefetch still in flight read.
   const dropPrefetched = (): void => {
-    prefetchGeneration++
+    inflight.clear()
     prefetched.clear()
   }
   onIdentityChange(dropPrefetched)
@@ -957,6 +958,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const markStale = (paths: readonly string[]): void => {
     for (const p of paths) {
       prefetched.delete(p)
+      inflight.delete(p)
       const entry = cache.get(p)
       if (entry !== undefined) {
         cache.set(p, {
@@ -1593,8 +1595,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (inflight.has(path) || freshPrefetch(path) !== undefined) return
       const matched = match(path)
       if (matched === null) return
-      inflight.add(path)
-      const started = prefetchGeneration
+      const token = {}
+      inflight.set(path, token)
+      const epoch = readEpoch()
       try {
         // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
         // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
@@ -1609,12 +1612,17 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         // A prefetched hole is an empty host nothing fills; the navigation fetches it, cancellably.
         const holes = Object.values(loaded.boundaries ?? {}).some((state) => state.ppr === true)
-        if (loaded.serverComponents === undefined && !holes && started === prefetchGeneration)
-          prefetched.set(path, [loaded, Date.now(), readEpoch()])
+        if (
+          loaded.serverComponents === undefined &&
+          !holes &&
+          inflight.get(path) === token &&
+          epoch === readEpoch()
+        )
+          prefetched.set(path, [loaded, Date.now(), epoch])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {
-        inflight.delete(path)
+        if (inflight.get(path) === token) inflight.delete(path)
       }
     },
     fetcher: (key) => {

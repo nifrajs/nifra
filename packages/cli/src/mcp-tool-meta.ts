@@ -2,8 +2,10 @@
  * What each `nifra mcp` project tool may do, as MCP tool annotations, and a description for each
  * input field its definition leaves bare. A host reads the annotations to decide which calls need
  * the user's confirmation, so a tool that can write a file or run project code must never look
- * read-only. The hints describe the tool for any input: a tool that writes only under a flag is a
- * writer. mcp-tool-meta.test.ts fails on a tool or a field missing here.
+ * read-only. Importing the project's config or backend runs its top-level code, so a tool that
+ * imports either runs project code. The hints describe the tool for any input: a tool that writes
+ * only under a flag is a writer. mcp-tool-meta.test.ts fails on a tool or a field missing here, and
+ * on a read-only tool that imports the project.
  */
 import type { McpTool, McpToolAnnotations } from "./mcp-protocol.ts"
 
@@ -112,7 +114,7 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
     },
   },
   nifra_routes: {
-    annotations: READ,
+    annotations: EXECUTE,
     fields: {
       json: JSON_RESULT,
       graph: "Render the public route surface as a Mermaid graph.",
@@ -124,7 +126,7 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
     },
   },
   nifra_context: {
-    annotations: READ,
+    annotations: EXECUTE,
     fields: {
       path: "Only the routes whose path starts with this.",
       kind: "Only the API routes or only the page routes.",
@@ -158,7 +160,7 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
     },
   },
   nifra_diff: {
-    annotations: READ,
+    annotations: EXECUTE,
     fields: {
       baseline: "The project-relative snapshot to compare with. Default api-snapshot.json.",
       json: JSON_RESULT,
@@ -177,7 +179,7 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
   nifra_sync_manifest: { annotations: WRITE, fields: { json: JSON_RESULT, dir: DIR } },
   nifra_sync_routes: { annotations: WRITE, fields: { json: JSON_RESULT, dir: DIR } },
   nifra_prove: {
-    annotations: READ,
+    annotations: EXECUTE,
     fields: {
       files: "The changed files to plan proofs for, project-relative.",
       minLevel: "The verification level (0 to 4) the stop condition requires.",
@@ -217,14 +219,14 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
       source: "Only the server's or only the browser's lines.",
     },
   },
-  nifra_db_schema: { annotations: READ, fields: { json: JSON_RESULT } },
-  nifra_db_query: { annotations: READ, fields: { json: JSON_RESULT } },
-  nifra_db_role: { annotations: READ, fields: { json: JSON_RESULT } },
+  nifra_db_schema: { annotations: EXECUTE, fields: { json: JSON_RESULT } },
+  nifra_db_query: { annotations: EXECUTE, fields: { json: JSON_RESULT } },
+  nifra_db_role: { annotations: EXECUTE, fields: { json: JSON_RESULT } },
   nifra_verify: { annotations: EXECUTE },
   nifra_contract_proof: { annotations: READ },
   nifra_explain: { annotations: READ },
   nifra_inspect: { annotations: READ },
-  nifra_openapi: { annotations: READ },
+  nifra_openapi: { annotations: EXECUTE },
   nifra_run: {
     annotations: EXECUTE,
     fields: {

@@ -89,6 +89,19 @@ describe("mounting", () => {
     expect(() => serverFunctions("Has Spaces", fns)).toThrow(/namespace/)
   })
 
+  test("a module no app uses any more is not kept alive by its namespace", async () => {
+    const register = (): WeakRef<object> => {
+      const module = { probe: serverFn({}, () => ({})) }
+      serverFunctions("gc-probe", module)
+      return new WeakRef(module)
+    }
+    const ref = register()
+    // A WeakRef keeps its target for the rest of the job that made it, so collect on a later turn.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    Bun.gc(true)
+    expect(ref.deref()).toBeUndefined()
+  })
+
   test("two modules under one namespace both mount; the same module twice stays one mount", async () => {
     const admin = {
       add: serverFn({ output: t.object({ by: t.string() }) }, () => ({ by: "admin" })),

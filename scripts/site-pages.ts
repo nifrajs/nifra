@@ -82,6 +82,12 @@ export async function pageProblems(
       problems.push(`${path}: its data answered ${data.status} ${type}, not JSON`)
       continue
     }
+    try {
+      JSON.parse(json)
+    } catch {
+      problems.push(`${path}: its data is not valid JSON: ${json.slice(0, 200)}`)
+      continue
+    }
     files.set(htmlFileOf(path), body)
     files.set(dataFileOf(path), json)
   }

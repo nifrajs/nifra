@@ -2117,8 +2117,8 @@ the server answers each from its file instead of rendering it. The file is serve
 page route, so `use` middleware still runs first and a gate in front of the page
 still applies. A request with a query string, a navigation data request, a slot swap, or a
 draft-mode visitor renders on demand. So does a page whose build-time render set a cookie, was private or
-`no-store`, or varied on a request header, and every page of an app with a
-`nonce`. The Vite pipeline and the edge targets render every page on demand.
+`no-store`, or varied on a request header other than `Accept-Encoding`
+and nifra's own data and slot-swap headers, and every page of an app with a `nonce`. The Vite pipeline and the edge targets render every page on demand.
 
 ### ISR - cache with stale-while-revalidate
 
@@ -7583,7 +7583,9 @@ nifra_levels            # { achieved, levels[] } - the ladder
 ### Every tool
 
 Each tool's MCP annotations say which of these it is, so a client can ask before a call that
-writes a file or runs project code. A tool that writes only under a flag counts as writing.
+writes a file or runs project code. A tool that writes only under a flag counts as writing,
+and one that imports the project's config or backend, which runs its top-level code, counts
+as running project code.
 
 Tool
 May
@@ -17952,8 +17954,8 @@ const app = server()
   .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
-  // Keyed by the caller IP the server resolved. MemoryStore is for development: it refuses to run
-  // in production, where every instance must share one store.
+  // Keyed by the caller IP the server resolved. MemoryStore refuses production unless given
+  // { allowInProduction: true } for a single instance; several instances need one shared store.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
   .use(timing())
   .get("/", () => ({ ok: true }))

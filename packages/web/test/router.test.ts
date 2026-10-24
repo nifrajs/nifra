@@ -1048,6 +1048,66 @@ describe("createClientRouter", () => {
       expect(r.snapshot().data).toEqual({ id: "7", whoami: "bob", version: 0 })
     })
 
+    test("invalidating a path drops a prefetch of it still in flight", async () => {
+      const state = { whoami: "alice", version: 0 }
+      let release = (): void => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let fetches = 0
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          fetches++
+          const seen = { id: m.params.id, ...state }
+          if (fetches === 1) await held
+          return seen
+        },
+      })
+      const warming = r.prefetch("/users/7")
+      state.version = 1
+      await r.invalidate(["/users/7"])
+      release()
+      await warming
+      await r.navigate("/users/7")
+      expect(r.snapshot().data).toEqual({ id: "7", whoami: "alice", version: 1 })
+    })
+
+    test("a prefetch whose identity epoch changes while it loads is not kept", async () => {
+      const state = { whoami: "alice", version: 0 }
+      let release = (): void => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let fetches = 0
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          fetches++
+          const seen = { id: m.params.id, ...state }
+          if (fetches === 1) await held
+          return seen
+        },
+      })
+      const described = Object.getOwnPropertyDescriptor(globalThis, "document")
+      const cookies = { cookie: "nifra-epoch=one" }
+      Object.defineProperty(globalThis, "document", { value: cookies, configurable: true })
+      try {
+        const warming = r.prefetch("/users/7")
+        state.whoami = "bob"
+        cookies.cookie = "nifra-epoch=two"
+        release()
+        await warming
+        await r.navigate("/users/7")
+        expect(r.snapshot().data).toEqual({ id: "7", whoami: "bob", version: 0 })
+      } finally {
+        if (described === undefined) Reflect.deleteProperty(globalThis, "document")
+        else Object.defineProperty(globalThis, "document", described)
+      }
+    })
+
     test("identityChanged() and a changed identity epoch drop warmed pages", async () => {
       const state = { whoami: "alice", version: 0 }
       const r = routerFor(state)

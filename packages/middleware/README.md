@@ -25,8 +25,8 @@ const app = server()
   .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
-  // Keyed by the caller IP the server resolved. MemoryStore is for development: it refuses to run
-  // in production, where every instance must share one store.
+  // Keyed by the caller IP the server resolved. MemoryStore refuses production unless given
+  // { allowInProduction: true } for a single instance; several instances need one shared store.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
   .use(timing())
   .get("/", () => ({ ok: true }))

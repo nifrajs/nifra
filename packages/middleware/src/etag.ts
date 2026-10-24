@@ -4,6 +4,7 @@ import {
   type Middleware,
   type ResponseBodyReplacement,
 } from "@nifrajs/core/server"
+import { ifNoneMatchIncludes } from "./_entity-tag.ts"
 import { weakFingerprint } from "./_fingerprint.ts"
 
 /** Whether `body` is over `maxBytes` as UTF-8. A UTF-16 unit is 1 to 3 bytes, so only a string
@@ -209,16 +210,5 @@ function notModified(source: Headers): Response {
 }
 
 function matchesIfNoneMatch(value: string | null, tag: string): boolean {
-  if (value === null) return false
-  const normalizedTag = weakComparableTag(tag)
-  for (const part of value.split(",")) {
-    const candidate = part.trim()
-    if (candidate === "*") return true
-    if (weakComparableTag(candidate) === normalizedTag) return true
-  }
-  return false
-}
-
-function weakComparableTag(tag: string): string {
-  return tag.startsWith("W/") ? tag.slice(2) : tag
+  return value !== null && ifNoneMatchIncludes(value, tag)
 }

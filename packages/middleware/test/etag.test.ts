@@ -176,6 +176,25 @@ describe("etag", () => {
     }
   })
 
+  test("a handler's ETag with a comma inside its quotes still revalidates", async () => {
+    const app = server()
+      .use(etag())
+      .get("/doc", (c) => {
+        c.set.headers.etag = '"v,42"'
+        return { version: 42 }
+      })
+      .get("/raw", () => new Response("raw", { headers: { etag: 'W/"r,7"' } }))
+    for (const [path, tag] of [
+      ["/doc", '"v,42"'],
+      ["/raw", 'W/"r,7"'],
+    ] as const) {
+      const revalidated = await app.fetch(
+        new Request(`http://x${path}`, { headers: { "if-none-match": `"other", ${tag}` } }),
+      )
+      expect({ path, status: revalidated.status }).toEqual({ path, status: 304 })
+    }
+  })
+
   test("a handler's own ETag is kept, and If-None-Match is checked against it", async () => {
     let cancelled = false
     const versioned = server()

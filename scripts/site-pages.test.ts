@@ -80,12 +80,17 @@ test("given a file map, each page's document and loader data are recorded where 
       if (request.headers.get("x-nifra-data") === null) return new Response(`<p>${path}</p>`)
       if (path === "/docs/stream")
         return new Response("{}\n", { headers: { "content-type": "application/x-ndjson" } })
+      if (path === "/docs/torn")
+        return new Response('{"path":', { headers: { "content-type": "application/json" } })
       return Response.json({ path })
     },
   }
   const files = new Map<string, string>()
-  expect(await pageProblems(worker, ["/", "/docs", "/docs/api", "/docs/stream"], files)).toEqual([
+  expect(
+    await pageProblems(worker, ["/", "/docs", "/docs/api", "/docs/stream", "/docs/torn"], files),
+  ).toEqual([
     "/docs/stream: its data answered 200 application/x-ndjson, not JSON",
+    '/docs/torn: its data is not valid JSON: {"path":',
   ])
   expect(Object.fromEntries(files)).toEqual({
     "index.html": "<p>/</p>",

@@ -60,26 +60,18 @@ nifra_levels            # { achieved, levels[] } - the ladder`
 // Every tool `nifra mcp` serves, by what it may do: the same classes its MCP annotations declare
 // (packages/cli/src/mcp-tool-meta.ts). packages/cli/test/mcp-tool-meta.test.ts holds this to the server.
 const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
-  ["nifra_context", "reads", "The route index and conventions, sliced by path or kind."],
-  ["nifra_routes", "reads", "Every route served: a list, a graph, render modes, or the hooks each runs."],
-  ["nifra_openapi", "reads", "The backend's OpenAPI 3.1 document."],
   ["nifra_docs", "reads", "The docs sections matching a query."],
   ["nifra_example", "reads", "A verified, typechecked example for a task."],
   ["nifra_types", "reads", "The exact declaration of an export."],
   ["nifra_learn", "reads", "The guided build-an-app path."],
   ["nifra_frontend", "reads", "Frontend guidance for a framework and topic."],
   ["nifra_check", "reads", "Typecheck and contract lints, each with a structured fix."],
-  ["nifra_diff", "reads", "The API contract against its snapshot; fails on a breaking change."],
   ["nifra_contract_proof", "reads", "Each changed route, joined to its assurance and capability evidence."],
-  ["nifra_prove", "reads", "The cheapest proofs for the changed files, and when to stop."],
   ["nifra_port", "reads", "Which features each deploy target supports, with file:line evidence."],
   ["nifra_errors", "reads", "What the dev server caught, as structured diagnostics."],
   ["nifra_logs", "reads", "The dev server's console, server and browser."],
   ["nifra_inspect", "reads", "One trace per request the dev server answered."],
   ["nifra_explain", "reads", "An error as a structured diagnostic with its fix."],
-  ["nifra_db_schema", "reads", "The declared dev database's tables, columns, keys and indexes."],
-  ["nifra_db_query", "reads", "One read-only SELECT or its plan, rows capped and masked."],
-  ["nifra_db_role", "reads", "The SQL for a read-only Postgres role. Runs nothing."],
   ["nifra_fix", "writes files", "Applies the registered mechanical fixes."],
   ["nifra_review", "writes files", "An evidence-backed review; with fix and write, applies its recipes."],
   ["nifra_doctor", "writes files", "Dependency and readiness checks; autoFix edits package.json."],
@@ -90,6 +82,14 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_sync_manifest", "writes files", "Regenerates the server-manifest route tables."],
   ["nifra_sync_routes", "writes files", "Regenerates nifra-routes.d.ts."],
   ["nifra_scaffold", "writes files", "The route files for a URL path; with write, creates them."],
+  ["nifra_context", "runs project code", "The route index and conventions, sliced by path or kind."],
+  ["nifra_routes", "runs project code", "Every route served: a list, a graph, render modes, or the hooks each runs."],
+  ["nifra_openapi", "runs project code", "The backend's OpenAPI 3.1 document."],
+  ["nifra_diff", "runs project code", "The API contract against its snapshot; fails on a breaking change."],
+  ["nifra_prove", "runs project code", "The cheapest proofs for the changed files, and when to stop."],
+  ["nifra_db_schema", "runs project code", "The declared dev database's tables, columns, keys and indexes."],
+  ["nifra_db_query", "runs project code", "One read-only SELECT or its plan, rows capped and masked."],
+  ["nifra_db_role", "runs project code", "The SQL for a read-only Postgres role. Runs no SQL."],
   ["nifra_run", "runs project code", "Requests through the backend: status, headers, parsed body."],
   ["nifra_render", "runs project code", "SSR of a page route."],
   ["nifra_ws", "runs project code", "A WebSocket route, exercised on an ephemeral port."],
@@ -352,7 +352,9 @@ export default function Agents() {
       <h2 id="all-tools">Every tool</h2>
       <p>
         Each tool's MCP annotations say which of these it is, so a client can ask before a call that
-        writes a file or runs project code. A tool that writes only under a flag counts as writing.
+        writes a file or runs project code. A tool that writes only under a flag counts as writing,
+        and one that imports the project's config or backend, which runs its top-level code, counts
+        as running project code.
       </p>
       <table>
         <thead>

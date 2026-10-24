@@ -284,7 +284,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 19,431 -> 19,550 B (Bun 1.4.4). Each old row pairing with at most one new one, so duplicate IDs
   // never share an object, tracked in an index array (a Set was 69 B smaller but slowed a reordered
   // 1,000-row list 8-11%, against 3-4%): 19,648 B (Bun 1.4.4). A warmed prefetch is dropped when
-  // the visitor's identity changes and when an action revalidates its path: 19,648 -> 19,854 B
+  // the visitor's identity changes and when an action revalidates its path: 19,648 -> 19,844 B
   // (Bun 1.4.4).
   "nifra-web-client": 19.4,
   "nifra-i18n": 4.3,
