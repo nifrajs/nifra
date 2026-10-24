@@ -114,7 +114,10 @@ export default function Structure() {
               <code>routes/x.tsx</code> (<code>.svelte</code>, <code>.vue</code>, <code>.mdx</code>)
             </td>
             <td>
-              a page: the component, <code>meta</code>
+              a page: the component, <code>meta</code>,{" "}
+              <a href="/docs/keep-alive">
+                <code>keepAlive</code>
+              </a>
             </td>
             <td>yes</td>
           </tr>
@@ -125,6 +128,8 @@ export default function Structure() {
             <td>
               that page's <code>loader</code>, <code>action</code>, <code>loaderOutput</code>,{" "}
               <code>actionOutput</code>, <code>hydrate</code>, <code>revalidate</code>,{" "}
+              <code>shellLoader</code> and <code>boundaryLoaders</code> (a{" "}
+              <a href="/docs/partial-prerendering">partially prerendered</a> page),{" "}
               <code>middleware</code> (in <code>_layout.backend.ts</code>)
             </td>
             <td>never</td>

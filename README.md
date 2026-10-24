@@ -123,6 +123,14 @@ Change a route and every caller stops compiling until it is updated. Add loaders
 `defer()`/`<Await>`, islands, query cache, progressive-enhancement forms, and server functions when
 the app grows. The same web layer runs on React, Vue, Solid, Svelte, or Preact.
 
+The web layer also keeps pages fresh and fast without a second data layer:
+
+- [**Live refresh**](https://nifra.dev/docs/live) - a loader names the keys it read with `live(...)`; a publish reloads only those loaders on every open tab, through the same middleware, gates and loaders a navigation runs.
+- [**Partial prerendering**](https://nifra.dev/docs/partial-prerendering) (experimental) - the part of a page every visitor shares is served from a cache at once, and each per-visitor hole streams in as its loader settles.
+- [**Server components**](https://nifra.dev/docs/server-components) on all five adapters - React RSC/Flight, and native server-rendered ranges for the others.
+- [**Keep-alive**](https://nifra.dev/docs/keep-alive) - back and forward bring a page back with its state, scroll and focus.
+- **SSG and ISR** with tag purges that clear data caches, the page store, live pages and the CDN in order, so a writer reads its own write.
+
 ## Agentic backend: bounded, typed, observable
 
 Nifra also provides the runtime for applications whose product is an agent. The model provider,
@@ -238,11 +246,13 @@ The package map is organized by job:
 | Layer | Packages |
 |---|---|
 | Backend | [`core`](packages/core) · [`schema`](packages/schema) · [`client`](packages/client) · [`middleware`](packages/middleware) |
-| Full-stack web | [`web`](packages/web) · `web-react` · `web-vue` · `web-solid` · `web-svelte` · `web-preact` |
+| Full-stack web | [`web`](packages/web) · `web-react` · `web-vue` · `web-solid` · `web-svelte` · `web-preact` · `web-vanilla` · [`cache`](packages/cache) · [`i18n`](packages/i18n) · [`image`](packages/image) · [`content`](packages/content) |
+| Runtimes | [`node`](packages/node) · [`deno`](packages/deno) · [`edge`](packages/edge) · [`workers`](packages/workers) · [`aws-lambda`](packages/aws-lambda) |
 | Agent runtime | [`agent`](packages/agent) · [`prompt`](packages/prompt) · [`runner`](packages/runner) · [`agent-telemetry`](packages/agent-telemetry) |
 | Agent UI and protocols | [`webmcp`](packages/webmcp) · [`agent-app`](packages/agent-app) · [`mcp`](packages/mcp) · [`a2a`](packages/a2a) · [`ag-ui`](packages/ag-ui) |
 | Coding agents | [`coding-agent`](packages/coding-agent) · [`agent-protocol`](packages/agent-protocol) · [`pi`](packages/pi) · [`acp`](packages/acp) · [`skills`](packages/skills) |
-| App services and quality | [`auth`](packages/auth) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`testing`](packages/testing) · [`mock`](packages/mock) · [`otel`](packages/otel) |
+| App services and quality | [`auth`](packages/auth) · [`better-auth`](packages/better-auth) · [`authjs`](packages/authjs) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`testing`](packages/testing) · [`mock`](packages/mock) · [`otel`](packages/otel) |
+| Tooling | [`cli`](packages/cli) · [`create-nifra`](packages/create-nifra) · [`devtools`](packages/devtools) · [`ts-plugin`](packages/ts-plugin) |
 
 All packages are optional and typed. Start with the core, then add only the surfaces your product
 needs. [Browse the complete documentation](https://nifra.dev/docs).

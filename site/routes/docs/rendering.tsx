@@ -223,8 +223,10 @@ export default function Rendering() {
       <CodeBlock code={PROGRESSIVE} lang="ts" />
       <CodeBlock code={PROGRESSIVE_PAGE} />
       <p>
-        This is request-time progressive SSR/partial rendering. It is distinct from build-time SSG:
-        the shell is not a precomputed PPR artifact, and deferred values remain request-scoped.
+        This is request-time progressive SSR: the whole page, shell included, renders for each
+        request, and deferred values remain request-scoped. To serve the part that is the same for
+        every visitor from a cache and stream only the per-visitor parts, use{" "}
+        <a href="/docs/partial-prerendering">partial prerendering</a> (experimental).
       </p>
 
       <h2>SSG - prerender at build</h2>
@@ -258,6 +260,12 @@ export default function Rendering() {
         draft-mode visitor renders on demand. So does a page whose build-time render set a cookie, was private or{" "}
         <code>no-store</code>, or varied on a request header other than <code>Accept-Encoding</code>{" "}
         and nifra's own data and slot-swap headers, and every page of an app with a <code>nonce</code>. The Vite pipeline and the edge targets render every page on demand.
+      </p>
+      <p>
+        A site with no server at all builds with <code>nifra build --target static</code>: it writes
+        the prerendered pages, the client bundle and the <code>public/</code> files, for any static
+        host, and fails when no route opts in. A route that is not prerendered has nothing to answer
+        it there.
       </p>
 
       <h2>ISR - cache with stale-while-revalidate</h2>
@@ -475,8 +483,10 @@ export default function Rendering() {
       <p>
         Content that's the same for everyone and changes rarely → <b>SSG</b>. Content that changes
         occasionally and can tolerate seconds-to-minutes of staleness → <b>ISR</b>. Per-request or
-        per-user content → plain <b>SSR</b> (the default). You can mix all three in one app, route by
-        route.
+        per-user content → plain <b>SSR</b> (the default). A page that is mostly shared with a few
+        per-visitor parts → <a href="/docs/partial-prerendering">partial prerendering</a>{" "}
+        (experimental). You can mix them in one app, route by route. A page that must update while it
+        is open, without a reload, adds <a href="/docs/live">live refresh</a> to any of them.
       </p>
     </div>
   )

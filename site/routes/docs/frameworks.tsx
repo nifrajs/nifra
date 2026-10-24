@@ -225,6 +225,11 @@ export default function Frameworks() {
         </li>
         <li>Optimistic UI, targeted revalidation, hover-prefetch, and scroll restoration.</li>
         <li>
+          <a href="/docs/live">Live refresh</a>, <a href="/docs/keep-alive">keep-alive</a> pages,{" "}
+          <a href="/docs/server-components">server components</a>, and{" "}
+          <a href="/docs/partial-prerendering">partial prerendering</a> (experimental).
+        </li>
+        <li>
           True HMR in dev for all five (<code>@nifrajs/web/vite</code>) - see{" "}
           <a href="/docs/dev">Dev &amp; HMR</a>.
         </li>

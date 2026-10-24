@@ -160,6 +160,11 @@ export default function Deployment() {
         </tbody>
       </table>
       <p>
+        <code>nifra build --target static</code> also builds a site with no server: the prerendered
+        pages, the client bundle and <code>public/</code>, for any static host. See{" "}
+        <a href="/docs/rendering">SSG &amp; ISR</a>.
+      </p>
+      <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
         Cloudflare and Vercel the platform serves it.
       </p>
@@ -246,7 +251,10 @@ export default function Deployment() {
         <code>app.listen(PORT, {"{ reusePort: true }"})</code>; the kernel load-balances connections
         across them (Linux balances ~evenly). A supervisor that spawns + restarts workers is ~20
         lines - see <code>examples/cluster.ts</code>. Anything shared across workers (rate limits,
-        sessions, pub/sub) needs a shared store, as in any multi-instance deploy.
+        sessions, pub/sub) needs a shared store, as in any multi-instance deploy. So do an ISR page
+        store (signed with one <code>storeSecret</code> in every process - see{" "}
+        <a href="/docs/rendering">SSG &amp; ISR</a>) and{" "}
+        <a href="/docs/live">live refresh</a> (one Redis Streams bus for every process).
       </p>
 
       <h2>Node &amp; Deno</h2>

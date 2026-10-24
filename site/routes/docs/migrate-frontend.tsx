@@ -109,6 +109,41 @@ export default function MigrateFrontend() {
               <code>export const meta</code> (or a <code>meta()</code> function of the loader data)
             </td>
           </tr>
+          <tr>
+            <td>`revalidatePath` · `revalidateTag`</td>
+            <td>
+              an action&apos;s <code>revalidate(paths, data, &#123; tags &#125;)</code>, or{" "}
+              <code>revalidateEndpoint</code> for a webhook - see{" "}
+              <a href="/docs/rendering">SSG &amp; ISR</a>
+            </td>
+          </tr>
+          <tr>
+            <td>Server Components · `"use client"`</td>
+            <td>
+              opt-in <a href="/docs/server-components">server components</a> on all five adapters
+            </td>
+          </tr>
+          <tr>
+            <td>Partial prerendering (Cache Components)</td>
+            <td>
+              a <code>shellLoader</code> and holes - see{" "}
+              <a href="/docs/partial-prerendering">Partial prerendering</a> (experimental)
+            </td>
+          </tr>
+          <tr>
+            <td>Intercepting routes (`(.)photo`)</td>
+            <td>
+              a boundary with <code>{`{ intercept: "/photos/:id" }`}</code> - see{" "}
+              <a href="/docs/routing#modal-routes">Opening a route in a modal</a>
+            </td>
+          </tr>
+          <tr>
+            <td>`keepalive` in `definePageMeta`</td>
+            <td>
+              <code>export const keepAlive = true</code> - see{" "}
+              <a href="/docs/keep-alive">Keep-alive</a>
+            </td>
+          </tr>
         </tbody>
       </table>
 

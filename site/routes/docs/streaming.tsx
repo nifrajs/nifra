@@ -111,7 +111,14 @@ export default function Streaming() {
       <p>
         The same <code>defer()</code> works in actions and across client-side soft navigations (an
         NDJSON stream settles the deferred values), and it's framework-agnostic - React{" "}
-        <code>&lt;Suspense&gt;</code> and Solid's streaming both drive it from one core.
+        <code>&lt;Suspense&gt;</code> and Solid's streaming both drive it from one core. See{" "}
+        <a href="/docs/frameworks">Frameworks</a> for which adapters stream the boundary in the
+        server HTML.
+      </p>
+      <p>
+        <a href="/docs/partial-prerendering">Partial prerendering</a> (experimental) streams the same
+        way from a cached shell: the part of the page every visitor shares goes out at once from the
+        cache, and each per-visitor hole streams in as its loader settles.
       </p>
 
       <h2>Server-Sent Events</h2>

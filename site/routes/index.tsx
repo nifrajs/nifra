@@ -158,6 +158,7 @@ const REPLACE_GROUPS: ReadonlyArray<{
     rows: [
       ["tRPC / OpenAPI client codegen", "@nifrajs/client"],
       ["TanStack Query (loader cache + mutations)", "@nifrajs/web"],
+      ["socket.io + refetch glue (live page data)", "@nifrajs/web/live"],
     ],
   },
   {

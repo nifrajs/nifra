@@ -687,7 +687,7 @@ const parts: string[] = [
   SUMMARY,
   "",
   CONVENTIONS,
-  "Optional server components (post-4.0): React, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.",
+  "Optional server components (all five adapters): React, Preact, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.",
   "",
   "---",
   "",
