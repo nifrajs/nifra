@@ -9,7 +9,7 @@
   "private": true,
   "devDependencies": {
     "@elysiajs/node": "^1.4.5",
-    "@fastify/http-proxy": "^11.6.4",
+    "@fastify/http-proxy": "^11.6.5",
     "@nifrajs/client": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/middleware": "workspace:*",
@@ -30,13 +30,13 @@
     "hono": "^4.13.13",
     "memoirist": "^1.2.3",
     "playwright": "1.63.0",
-    "preact": "^11.0.1",
+    "preact": "^11.0.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "solid-js": "^1.9.17",
     "svelte": "^5.57.2",
     "typescript": "^6.0.3",
-    "undici": "^8.12.2",
+    "undici": "^8.12.3",
     "vite": "^8.3.4",
     "vue": "^3.5.40"
   }
