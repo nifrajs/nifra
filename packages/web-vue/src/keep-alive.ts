@@ -35,9 +35,11 @@ import {
   onScopeDispose,
   onUnmounted,
   provide,
+  reactive,
   ref,
   shallowRef,
   type VNode,
+  watchEffect,
 } from "vue"
 import { pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
@@ -96,6 +98,7 @@ const pageChain = (chain: readonly unknown[], depth: number, props: RenderProps)
 }
 
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
+const ROOT = "\0root"
 
 const dispatch = (elements: readonly Element[], type: string): void => {
   for (const element of elements) element.dispatchEvent(new CustomEvent(type, { bubbles: true }))
@@ -121,6 +124,22 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   }
   const kept = new Map<string, Kept>()
   let rendered: readonly SlotNode[] | undefined
+  const state = shallowRef(router.snapshot())
+  const tree = computed(() => slotTree(state.value, matchChains, table, rendered))
+  // Parent key → the slots under it, in the router's latest state. A level a hidden branch holds is
+  // not rendered again, so it reads which of its slots are still kept from here.
+  const live = computed(() => {
+    const children = new Map<string, readonly SlotNode[]>([[ROOT, tree.value]])
+    const visit = (list: readonly SlotNode[]): void => {
+      for (const node of list) {
+        if (node.children === undefined) continue
+        children.set(node.key, node.children)
+        visit(node.children)
+      }
+    }
+    visit(tree.value)
+    return children
+  })
 
   // Before Vue renders the next state, while the page it hides is still laid out.
   router.beforePublish((next) => {
@@ -157,8 +176,9 @@ export function mountRouter(options: KeepAliveMountOptions): void {
       setup(slotProps) {
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue declares the prop as a plain Object; the level passes a SlotNode
         const first = slotProps.node as SlotNode
+        // Only a wrapped slot is hidden and shown; the slots inside it see its visibility.
         const page: PageSlot = { hidden: ref(first.hidden), hide: new Set(), show: new Set() }
-        provide(PAGE_KEY, page)
+        if (first.wrapped) provide(PAGE_KEY, page)
         // What the router hooks read, from this slot's own state. Provided here rather than by a
         // `RouteContextProvider`, whose render is a fragment the server's chain does not have.
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue declares the prop as a plain Object; the level passes a SlotNode
@@ -200,7 +220,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
                 // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
                 chain[node.depth] as Component,
                 { data: props.layoutData?.[node.depth] ?? null, boundaries: props.boundaries },
-                { default: () => h(Level, { nodes: node.children }) },
+                { default: () => h(Level, { nodes: node.children, parent: node.key }) },
               )
         }
       },
@@ -212,19 +232,29 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   // One level of the tree: the slot it shows, inside a `<KeepAlive>` that holds the kept ones.
   const Level: Component = defineComponent({
     name: "NifraKeepAliveLevel",
-    props: { nodes: { type: Array, required: true } },
+    props: {
+      nodes: { type: Array, required: true },
+      parent: { type: String, required: true },
+    },
     setup(levelProps) {
-      return () => {
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue declares the prop as a plain Array; its callers pass a level of the slot tree
-        const nodes = levelProps.nodes as readonly SlotNode[]
-        const shown = nodes.find((node) => !node.hidden) ?? nodes.at(-1)
-        if (shown === undefined) return null
-        const include = nodes
+      // Updated in place, which `<KeepAlive>` watches deeply: a slot the router drops leaves its cache
+      // even while this level is inside a hidden branch.
+      const include = reactive<string[]>([])
+      watchEffect(() => {
+        const names = (live.value.get(levelProps.parent) ?? [])
           .filter((node) => node.wrapped)
           .map((node) => {
             // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every slot component is defined with a name
             return (slotOf(node.key) as { name: string }).name
           })
+        if (names.length !== include.length || names.some((name, at) => include[at] !== name))
+          include.splice(0, include.length, ...names)
+      })
+      return () => {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue declares the prop as a plain Array; its callers pass a level of the slot tree
+        const nodes = levelProps.nodes as readonly SlotNode[]
+        const shown = nodes.find((node) => !node.hidden) ?? nodes.at(-1)
+        if (shown === undefined) return null
         return h(
           KeepAlive,
           { include },
@@ -236,30 +266,23 @@ export function mountRouter(options: KeepAliveMountOptions): void {
 
   const Root = defineComponent({
     setup() {
-      const state = shallowRef(router.snapshot())
       onScopeDispose(
         router.subscribe(() => {
           state.value = router.snapshot()
         }),
       )
-      const tree = computed(() => slotTree(state.value, matchChains, table, rendered))
       return () => {
         const nodes = tree.value
         rendered = nodes
         // A slot's component goes with its key; a key that comes back later gets a new one.
-        const live = new Set<string>()
-        const visit = (list: readonly SlotNode[]): void => {
-          for (const node of list) {
-            live.add(node.key)
-            if (node.children !== undefined) visit(node.children)
-          }
-        }
-        visit(nodes)
-        for (const key of slots.keys()) if (!live.has(key)) slots.delete(key)
+        const keys = new Set(
+          [...live.value.values()].flatMap((list) => list.map((node) => node.key)),
+        )
+        for (const key of slots.keys()) if (!keys.has(key)) slots.delete(key)
         return h(
           RouteContextProvider,
           { value: propsOf(state.value) },
-          { default: () => h(Level, { nodes }) },
+          { default: () => h(Level, { nodes, parent: ROOT }) },
         )
       }
     },

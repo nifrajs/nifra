@@ -90,6 +90,8 @@ function ComponentRange(props: {
       .mount(element, record.instance)
       .catch(() => lifecycle.current.onError?.("component_failed"))
     return () => {
+      // `<Activity>` hiding a kept page: its parked root stays until the page is shown or dropped.
+      if (options.controller?.isParked(record.instance, element) === true) return
       void (
         options.controller === undefined
           ? controller.dispose()

@@ -1,9 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { createSlotParking, PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "@nifrajs/web/keep-alive"
 import { GlobalWindow } from "happy-dom"
 import * as React from "react"
 import { act, type ComponentType, createElement, type ReactNode, useState } from "react"
 import type { Root } from "react-dom/client"
+import { reactAdapter } from "../src/index.ts"
 import type { HoleDefinition, HoleProps } from "../src/ppr.ts"
 
 // The client half of `Hole`, in a happy-dom document: what a browser runs once the PPR runtime has put
@@ -142,9 +143,7 @@ async function hydratePage(
   const host = container.querySelector(`[data-nifra-hole="${of.name}"]`)
   if (host === null) throw new Error("the shell has no host")
   if (served !== undefined) {
-    host.innerHTML = server.renderToString(of.render(served), {
-      identifierPrefix: `nifra-${of.name}-`,
-    })
+    host.innerHTML = await fragment(of.render(served))
   }
   let root: Root | undefined
   await act(async () => {
@@ -164,6 +163,10 @@ const reload = async (root: Root, of: HoleDefinition<{ readonly count: number }>
       }),
     )
   })
+
+/** A cart hole's HTML as the server frames it, for the PPR runtime to put into its host. */
+const fragment = async (ui: ReactNode): Promise<string> =>
+  (await reactAdapter.renderFragment?.(() => ui, { idPrefix: "nifra-cart-", hydrates: true })) ?? ""
 
 /** Lets a settled fill's promise reactions, and the renders they start, run. */
 const settle = async (promise: Promise<unknown>) =>
@@ -209,9 +212,7 @@ describe("Hole in the browser", () => {
     const { host, root } = await hydratePage(cart)
     const deliver = waiting.get("cart")
     expect(deliver).toBeDefined()
-    host.innerHTML = server.renderToString(cart.render({ count: 5 }), {
-      identifierPrefix: "nifra-cart-",
-    })
+    host.innerHTML = await fragment(cart.render({ count: 5 }))
     await act(async () => deliver?.(fill))
     await click(host)
     expect(host.textContent).toBe("cart 6")
@@ -357,9 +358,7 @@ describe("Hole in the browser", () => {
     const kept = container.querySelector("section")
     const host = container.querySelector('[data-nifra-hole="cart"]')
     if (kept === null || host === null) throw new Error("the shell has no host")
-    host.innerHTML = server.renderToString(tally.render({ count: 2 }), {
-      identifierPrefix: "nifra-cart-",
-    })
+    host.innerHTML = await fragment(tally.render({ count: 2 }))
     let root: Root | undefined
     await act(async () => {
       root = client.hydrateRoot(container, page("visible"))
@@ -391,6 +390,114 @@ describe("Hole in the browser", () => {
     container.remove()
   })
 
+  // React writes a hole's `<title>` ahead of the rest of its HTML, the `<Activity>` boundary included.
+  for (const titled of [false, true]) {
+    test(`an interactive hole's own effects stop while its kept page is hidden, and its state stays${titled ? ", with a <title> of its own" : ""}`, async () => {
+      runtime({ cart: { props: { count: 2 }, error: false } })
+      const errors = spyOn(console, "error")
+      // The effects running: each adds its name as it runs and takes it out as it cleans up.
+      const running = new Set<string>()
+      const Running = ({ name }: { readonly name: string }) => {
+        React.useEffect(() => {
+          running.add(name)
+          return () => {
+            running.delete(name)
+          }
+        }, [name])
+        return null
+      }
+      const busy: HoleDefinition<{ readonly count: number }> = {
+        name: "cart",
+        interactive: true,
+        render: (data) =>
+          createElement(
+            React.Fragment,
+            null,
+            titled ? createElement("title", null, "Cart") : null,
+            createElement(Tally, { count: data.count }),
+            createElement(Running, { name: "hole" }),
+          ),
+      }
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: React 19.2's own export, which the keep-alive mount renders
+      const Activity = Reflect.get(React, "Activity") as ComponentType<{
+        readonly mode: "hidden" | "visible"
+        readonly children?: ReactNode
+      }>
+      const page = (mode: "hidden" | "visible") =>
+        createElement(
+          "section",
+          null,
+          createElement(
+            Activity,
+            { mode },
+            createElement(Running, { name: "page" }),
+            createElement(Hole<{ readonly count: number }>, {
+              of: busy,
+              state: { status: "pending", ppr: true },
+            }),
+          ),
+        )
+      const container = document.createElement("main")
+      container.innerHTML = server.renderToString(page("visible"))
+      document.body.append(container)
+      const kept = container.querySelector("section")
+      const host = container.querySelector('[data-nifra-hole="cart"]')
+      if (kept === null || host === null) throw new Error("the shell has no host")
+      host.innerHTML = await fragment(busy.render({ count: 2 }))
+      let root: Root | undefined
+      await act(async () => {
+        root = client.hydrateRoot(container, page("visible"))
+      })
+      await click(host)
+      expect([...running].sort()).toEqual(["hole", "page"])
+
+      // The page event, then the commit that hides the page; the commit that shows it, then the event.
+      await act(async () => {
+        kept.dispatchEvent(pageHide())
+      })
+      await act(async () => root?.render(page("hidden")))
+      expect([...running]).toEqual([])
+      await act(async () => {
+        root?.render(page("visible"))
+      })
+      await act(async () => {
+        kept.dispatchEvent(pageEvent(PAGE_SHOW_EVENT))
+      })
+      expect([...running].sort()).toEqual(["hole", "page"])
+      expect(host.querySelector("button")?.textContent).toBe("cart 2 clicked 1")
+      expect(errors).not.toHaveBeenCalled()
+      errors.mockRestore()
+      await unmount(root)
+      container.remove()
+    })
+  }
+
+  test("a host whose HTML holds no Activity boundary, as a React without one renders it, hydrates without one", async () => {
+    runtime({ cart: { props: { count: 2 }, error: false } })
+    const props: HoleProps<{ readonly count: number }> = {
+      of: tally,
+      state: { status: "pending", ppr: true },
+    }
+    const container = document.createElement("main")
+    container.innerHTML = server.renderToString(
+      createElement(Hole<{ readonly count: number }>, props),
+    )
+    document.body.append(container)
+    const host = container.querySelector('[data-nifra-hole="cart"]')
+    if (host === null) throw new Error("the shell has no host")
+    host.innerHTML = server.renderToString(tally.render({ count: 2 }), {
+      identifierPrefix: "nifra-cart-",
+    })
+    let root: Root | undefined
+    await act(async () => {
+      root = client.hydrateRoot(container, createElement(Hole<{ readonly count: number }>, props))
+    })
+    await click(host)
+    expect(host.textContent).toBe("cart 2 clicked 1")
+    await unmount(root)
+    container.remove()
+  })
+
   test("a refill replaces a server-only host's HTML, and a failed one shows the error slot", async () => {
     runtime({ cart: { error: false } })
     const inert = { ...cart, interactive: false }
@@ -416,9 +523,7 @@ describe("Hole in the browser", () => {
     await reload(root, tally, { html: "<p>unavailable</p>", error: true })
     await settle(Promise.resolve())
     expect(host.innerHTML).toBe("<p>unavailable</p>")
-    const served = server.renderToString(tally.render({ count: 3 }), {
-      identifierPrefix: "nifra-cart-",
-    })
+    const served = await fragment(tally.render({ count: 3 }))
     await reload(root, tally, { html: served, props: { count: 3 } })
     await settle(Promise.resolve())
     expect(host.textContent).toBe("cart 3 clicked 0")
@@ -442,12 +547,14 @@ describe("Hole in the browser", () => {
         slow: { status: "pending" as const, ppr: true as const },
       },
     })
-    // The cart's server HTML, as the hole's frame carries it.
+    // The cart's server HTML, in the boundary the hole's frame carries it in.
     const whole = server.renderToString(
       createElement(page.default, states({ status: "ready", data: { count: 2 } })),
     )
-    const served = /<button id="cart"[\s\S]*?<\/button>/.exec(whole)?.[0]
-    if (served === undefined) throw new Error("the page rendered no cart")
+    const button = /<button id="cart"[\s\S]*?<\/button>/.exec(whole)?.[0]
+    if (button === undefined) throw new Error("the page rendered no cart")
+    const [open = "", close = ""] = (await fragment(createElement("hr"))).split("<hr/>")
+    const served = open + button + close
     runtime({ cart: { props: { count: 2 }, error: false } })
     const shell = states({ status: "pending", ppr: true })
     const container = document.createElement("main")

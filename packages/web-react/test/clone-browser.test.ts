@@ -50,3 +50,40 @@ for (const nested of [false, true]) {
     30_000,
   )
 }
+
+test.skipIf(chrome === undefined)(
+  "layout cloneElement overrides reach the pages a keep-alive app shows and restores",
+  async () => {
+    if (page === undefined) throw new Error("[test] no browser")
+    const browser = page
+    const state = { data: null, params: {}, path: "/page", search: {}, pending: false }
+    const markup = await reactAdapter.renderToString?.([Layout, Page], state, { slots: [1] })
+    expect(markup).toContain("from-layout")
+    const fixture = await serveFixture({
+      entry: join(import.meta.dir, "fixtures/clone-keep-alive-client.ts"),
+      markup: markup ?? "",
+    })
+    const until = (condition: string) =>
+      browser.evaluate(
+        `new Promise((resolve) => { const check = () => (${condition}) ? resolve(true) : setTimeout(check, 10); check() })`,
+      )
+    const text = (id: string) => browser.evaluate(`document.getElementById("${id}").textContent`)
+    try {
+      const errorAt = browser.errors.length
+      await browser.goto(`${fixture.url}page`)
+      await until("document.getElementById('result') !== null")
+      await browser.evaluate(
+        "(() => { const a = document.createElement('a'); a.href = '/other'; document.body.append(a); a.click() })()",
+      )
+      await until("document.getElementById('other') !== null")
+      expect(await text("other")).toBe("from-layout")
+      await browser.evaluate("history.back()")
+      await until("document.getElementById('result')?.isConnected === true")
+      expect(await text("result")).toBe("from-layout")
+      expect(browser.errors.slice(errorAt)).toEqual([])
+    } finally {
+      fixture.stop()
+    }
+  },
+  30_000,
+)

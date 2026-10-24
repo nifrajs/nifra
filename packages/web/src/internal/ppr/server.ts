@@ -994,7 +994,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
       adapter,
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
       () => hole.render(data as never),
-      { idPrefix: `nifra-${hole.name}-` },
+      { idPrefix: `nifra-${hole.name}-`, hydrates: hole.interactive === true },
     )
     validateHoleHtml(html)
     // A component that copied the nonce into the frame would hand it to every visitor.
@@ -1371,7 +1371,7 @@ export function createPprServer(config: PprServerConfig): PprServer {
         adapter,
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineBoundary binds render to its own load's output; the registration erases that generic, and the value came from that load.
         () => hole.render(run.value as never),
-        { idPrefix: `nifra-${hole.name}-` },
+        { idPrefix: `nifra-${hole.name}-`, hydrates: hole.interactive === true },
       )
       if (options.holeHtmlValidation === "always" || !isProduction()) validateHoleHtml(html)
       return encodeHoleFrame(

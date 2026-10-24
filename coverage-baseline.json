@@ -1731,6 +1731,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web-react/src/server-components/outlet.ts": {
+    "functions": 50,
+    "lines": 77.63157894736842
+  },
   "packages/web-solid/src/compose.ts": {
     "functions": 100,
     "lines": 100

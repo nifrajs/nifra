@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
+import { releasePage } from "../src/internal/page-events.ts"
 import {
   type ComponentClientAdapter,
   ComponentController,
@@ -857,6 +858,34 @@ test("a page shown again whose component its state no longer holds reports the f
     controller.unpark(page(host))
     await Bun.sleep(0)
     expect([errors, trace]).toEqual([["component_failed"], []])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a parked root waits for its page: mounted again, shown, or dropped", async () => {
+  const { trace, adapter } = hostAdapter()
+  const host = outletHost("a")
+  const kept = page(host)
+  const controller = new ComponentController({ state: state(), adapter })
+  try {
+    await controller.mount(host, "instance_1")
+    controller.park(kept)
+    expect(controller.isParked("instance_1", host)).toBe(true)
+    expect(controller.isParked("instance_1", outletHost("b"))).toBe(false)
+    // An outlet whose effects ran again before the page was shown keeps the parked root.
+    await controller.mount(host, "instance_1")
+    controller.unpark(kept)
+    expect(controller.isParked("instance_1", host)).toBe(false)
+    releasePage(kept)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(trace).toEqual(["hydrate:a:public"])
+
+    controller.park(kept)
+    releasePage(kept)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(trace).toEqual(["hydrate:a:public", "dispose:a:public"])
+    expect(controller.isParked("instance_1", host)).toBe(false)
   } finally {
     await controller.dispose()
   }

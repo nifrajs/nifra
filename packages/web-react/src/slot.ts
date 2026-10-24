@@ -12,18 +12,32 @@ type ActivityComponent = ComponentType<{
   readonly children?: ReactNode
 }>
 
+const foundActivity = (): ActivityComponent | undefined =>
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: React's own export, read by name so an older React, which has none, still loads
+  Reflect.get(React, "Activity") as ActivityComponent | undefined
+
 let activity: ActivityComponent | undefined
 const activityOf = (): ActivityComponent => {
   if (activity !== undefined) return activity
-  const found = Reflect.get(React, "Activity")
+  const found = foundActivity()
   if (found === undefined) {
     throw new Error(
       `[nifra/web-react] keepAlive needs React 19.2 or later, which has <Activity>; this app runs React ${React.version}. Upgrade react and react-dom, or remove the keepAlive export.`,
     )
   }
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: React's own export, read by name so an older React fails with the message above rather than at import
-  activity = found as ActivityComponent
+  activity = found
   return activity
+}
+
+/**
+ * `content` inside an `<Activity>` where React has one (19.2 on), else as it is. A partially
+ * prerendered hole renders in one on the server and hydrates its own root in one, so the root can
+ * pause its effects while a kept page hides it.
+ */
+export function inActivity(hidden: boolean, content: ReactNode): ReactNode {
+  const Activity = foundActivity()
+  if (Activity === undefined) return content
+  return createElement(Activity, { mode: hidden ? "hidden" : "visible" }, content)
 }
 
 /** `content` inside the slot wrappers, hidden or shown. */
