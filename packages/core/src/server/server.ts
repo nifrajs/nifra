@@ -1528,7 +1528,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       opaque: options.opaque,
       authStages: [...this.authStages],
     }
-    if (this.authStages.length > 0) noteAuthenticatedMount(this)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production" && this.authStages.length > 0)
+      noteAuthenticatedMount(this)
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
     return this
@@ -1586,7 +1587,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       app,
       authStages: [...this.authStages],
     }
-    if (this.authStages.length > 0) noteAuthenticatedMount(this)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production" && this.authStages.length > 0)
+      noteAuthenticatedMount(this)
     // Mounts run before routes: a request under this prefix that no mount on the way strips comes back
     // here unchanged until the stack overflows, which takes the process down. Dev-time only, like the
     // hook audit: a production define folds this away, and the first dev request would hit it anyway.
@@ -3987,12 +3989,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           mount.authStages.length === 0
             ? upgrade()
             : thenMaybe(
-                authenticateMount(
-                  mount.authStages,
-                  request,
-                  platform,
-                  this.reportMountAuth(request),
-                ),
+                authenticateMount(mount.authStages, request, platform, this.logger),
                 (refusal): MaybePromise<WebSocketUpgradeOutcome> =>
                   refusal === undefined ? upgrade() : refuse(refusal),
               )
@@ -4474,16 +4471,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     )
   }
 
-  /** Where a mount's failed `authenticate()` stage goes: the logger, like a route error no hook answers. */
-  private reportMountAuth(request: Request): (error: unknown) => void {
-    return (error) =>
-      this.logger.error("authenticate() stage failed before a mount", {
-        method: request.method,
-        path: pathnameOf(request.url),
-        error: error instanceof Error ? error.message : String(error),
-      })
-  }
-
   private fetchMount(
     pathname: string,
     source: RequestSource,
@@ -4529,7 +4516,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         mount.authStages.length === 0
           ? run()
           : thenMaybe(
-              authenticateMount(mount.authStages, request, platform, this.reportMountAuth(request)),
+              authenticateMount(mount.authStages, request, platform, this.logger),
               (refusal) => refusal ?? run(),
             )
       if (!replayable || !mount.fallbackOn404) return outcome

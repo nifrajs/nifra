@@ -246,7 +246,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // An HTTP/1.0 request with no Host served as localhost on Bun, its target resolved: bare
   // 37,345 -> 37,422 B, effect-ledger 39,393 -> 39,454, mcp 37,617 -> 37,689, valibot 38,354 ->
   // 38,413, typebox-form 68,184 -> 68,264 (Bun 1.4.3); +0.1 KiB on the five caps it crosses.
-  "nifra-bare": 36.6,
+  // `authenticate()` stages gate the `mount()` and `mountFetch()` handlers registered after them,
+  // WebSocket upgrades included: bare 37,428 -> 37,778 B, idempotency 41,834 -> 42,212,
+  // effect-ledger 39,461 -> 39,815, sse 38,296 -> 38,670, mcp 37,696 -> 38,052, valibot 38,418 ->
+  // 38,802, typebox-form 68,298 -> 68,675 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
+  "nifra-bare": 36.9,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -255,14 +259,14 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 40.9,
-  "nifra-effect-ledger": 38.6,
-  "nifra-mcp": 36.9,
+  "nifra-idempotency": 41.3,
+  "nifra-effect-ledger": 38.9,
+  "nifra-mcp": 37.2,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 37.4,
-  "nifra-valibot": 37.6,
+  "nifra-sse": 37.8,
+  "nifra-valibot": 37.9,
   "nifra-typebox-t": 62.5,
-  "nifra-typebox-form": 66.7,
+  "nifra-typebox-form": 67.1,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -279,8 +283,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // `identityChanged()`, which drops kept pages on a token sign-in or sign-out in every tab:
   // 19,431 -> 19,550 B (Bun 1.4.4). Each old row pairing with at most one new one, so duplicate IDs
   // never share an object, tracked in an index array (a Set was 69 B smaller but slowed a reordered
-  // 1,000-row list 8-11%, against 3-4%): 19,648 B (Bun 1.4.4).
-  "nifra-web-client": 19.2,
+  // 1,000-row list 8-11%, against 3-4%): 19,648 B (Bun 1.4.4). A warmed prefetch is dropped when
+  // the visitor's identity changes and when an action revalidates its path: 19,648 -> 19,854 B
+  // (Bun 1.4.4).
+  "nifra-web-client": 19.4,
   "nifra-i18n": 4.3,
 }
 

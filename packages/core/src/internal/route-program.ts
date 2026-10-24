@@ -11,6 +11,7 @@ import type { StandardSchemaV1 } from "../schema/standard.ts"
 import { markAuthenticatedRequest } from "../server/auth.ts"
 import { declaredHeaderNames } from "../server/headers.ts"
 import { pathnameOf } from "../server/http.ts"
+import type { Logger } from "../server/logger.ts"
 import { queryObjectOf } from "../server/query.ts"
 import type { Registry } from "../server/registry.ts"
 import { toResponse } from "../server/respond.ts"
@@ -266,13 +267,14 @@ function authenticationInputOf(
 /**
  * Run the `authenticate()` stages a mount was registered after, in order, against the request the
  * mount would receive: `undefined` once each one authenticated, else the response that refuses it. A
- * stage that throws or decides nothing valid answers 503, and its cause goes to `report`.
+ * stage that throws or decides nothing valid answers 503, and its cause goes to `logger`, as a route
+ * error no hook answers does.
  */
 export function authenticateMount(
   stages: readonly RawAuthStage[],
   request: Request,
   platform: { readonly env?: unknown; readonly clientIp?: string | undefined } | undefined,
-  report: (error: unknown) => void,
+  logger: Logger,
 ): MaybePromise<Response | undefined> {
   let query: Readonly<Record<string, string | readonly string[]>> | undefined
   const search = (() => {
@@ -295,25 +297,18 @@ export function authenticateMount(
     signal: request.signal,
   })
   const unavailable = (error: unknown): Response => {
-    report(error)
+    logger.error("authenticate() stage failed before a mount", {
+      method: request.method,
+      path: input.pathname,
+      error: error instanceof Error ? error.message : String(error),
+    })
     return toResponse(defaultAuthenticationResponse("unavailable"), EMPTY_RESPONSE_CONTROLS)
   }
   const decide = (
     index: number,
     result: import("../server/auth.ts").AuthenticationResult<unknown>,
   ): MaybePromise<Response | undefined> => {
-    if (
-      result === null ||
-      typeof result !== "object" ||
-      (result.kind === "rejected"
-        ? !validAuthenticationFailureReason(result.reason) ||
-          (result.response !== undefined &&
-            !(result.response instanceof Response) &&
-            !isResponseResult(result.response))
-        : result.kind !== "authenticated" ||
-          result.principal === null ||
-          result.principal === undefined)
-    ) {
+    if (!isAuthenticationDecision(result)) {
       const id = stages[index]?.id
       return unavailable(new TypeError(`authenticate() stage "${id}" returned an invalid decision`))
     }
@@ -346,6 +341,25 @@ function defaultAuthenticationResponse(
   if (reason === "forbidden") return status(403, { ok: false, error: "forbidden" })
   if (reason === "unavailable") return status(503, { ok: false, error: "auth_unavailable" })
   return status(401, { ok: false, error: "unauthorized" })
+}
+
+/** Whether a stage returned a decision it may: a rejection with a known reason and a response, if
+ * any, that answers; or a principal. */
+function isAuthenticationDecision(
+  result: import("../server/auth.ts").AuthenticationResult<unknown>,
+): boolean {
+  return (
+    result !== null &&
+    typeof result === "object" &&
+    (result.kind === "rejected"
+      ? validAuthenticationFailureReason(result.reason) &&
+        (result.response === undefined ||
+          result.response instanceof Response ||
+          isResponseResult(result.response))
+      : result.kind === "authenticated" &&
+        result.principal !== null &&
+        result.principal !== undefined)
+  )
 }
 
 function validAuthenticationFailureReason(
@@ -488,18 +502,7 @@ function finishAuthentication<T>(
   next: number,
   validationComplete = false,
 ): ProgramResult<T> {
-  if (
-    result === null ||
-    typeof result !== "object" ||
-    (result.kind === "rejected"
-      ? !validAuthenticationFailureReason(result.reason) ||
-        (result.response !== undefined &&
-          !(result.response instanceof Response) &&
-          !isResponseResult(result.response))
-      : result.kind !== "authenticated" ||
-        result.principal === null ||
-        result.principal === undefined)
-  ) {
+  if (!isAuthenticationDecision(result)) {
     const id = program.authStages[next - 1]!.id
     const error = new TypeError(`authenticate() stage "${id}" returned an invalid decision`)
     return failAuthentication(host, entry, ctx, finalize, wrapResponse, error)

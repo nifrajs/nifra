@@ -898,8 +898,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const inflight = new Set<string>()
   // Read without the DOM types: this module also builds in tsconfigs that leave the DOM lib out.
   const readEpoch = (): string => {
-    const doc: unknown = Reflect.get(globalThis, "document")
-    const cookie = typeof doc === "object" && doc !== null ? Reflect.get(doc, "cookie") : undefined
+    const cookie: unknown = Reflect.get(Reflect.get(globalThis, "document") ?? {}, "cookie")
     return typeof cookie === "string" ? epochOf(cookie) : ""
   }
   const freshPrefetch = (path: string): LoadedRouteData | undefined => {
