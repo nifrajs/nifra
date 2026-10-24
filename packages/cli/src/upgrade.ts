@@ -52,6 +52,7 @@ import {
 } from "./hooks-report.ts"
 import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { gitIgnoredSync } from "./internal/git-ignored.ts"
 import {
   BUN_LOCK,
   describeChange,
@@ -650,7 +651,9 @@ function scan(cwd: string, pattern: string, dot = false): string[] {
   for (const path of glob.scanSync({ cwd, dot, followSymlinks: false })) {
     if (!isIgnored(path)) out.push(path.replaceAll("\\", "/"))
   }
-  return out.sort() // deterministic order
+  // A gitignored copy (a backup, a generated app) is not the project: never edited, never reported.
+  const ignored = gitIgnoredSync(cwd, out)
+  return (ignored.size === 0 ? out : out.filter((path) => !ignored.has(path))).sort()
 }
 
 // The fixed version group: every package released together at one version.

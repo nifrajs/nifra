@@ -1800,6 +1800,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
+- **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
+  A request's matched route template (`/users/:id`, never `/users/42`), or `undefined` when no route serves it. The matcher is built on first use: by serving time every route is registered, so `app.routes()` is complete, where building it when a plugin is applied would miss later routes.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
@@ -3094,6 +3096,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
+- **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
+  A request's matched route template (`/users/:id`, never `/users/42`), or `undefined` when no route serves it. The matcher is built on first use: by serving time every route is registered, so `app.routes()` is complete, where building it when a plugin is applied would miss later routes.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
@@ -3370,6 +3374,8 @@ _No named exports (side-effect entrypoint)._
 ## @nifrajs/deno
 
 - **DenoServer** _(interface)_ - `interface DenoServer`
+- **DenoStopOptions** _(interface)_ - `interface DenoStopOptions`
+  How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes.
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
   Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
@@ -4250,6 +4256,12 @@ _No named exports (side-effect entrypoint)._
 - **RateLimitTier** _(interface)_ - `interface RateLimitTier`
   One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it.
 - **RateLimitTiersOptions** _(interface)_ - `interface RateLimitTiersOptions`
+- **ReadinessCheck** _(type)_ - `type ReadinessCheck = (signal: AbortSignal) => MaybePromise<boolean>`
+  One readiness check: resolve `true` when the dependency can serve. A `false`, a throw and a timeout all fail it. `signal` aborts at the check's timeout, so a ping can cancel its own I/O instead of leaving a connection half-used.
+- **ReadinessCheckOptions** _(interface)_ - `interface ReadinessCheckOptions`
+- **ReadinessCheckResult** _(interface)_ - `interface ReadinessCheckResult`
+- **ReadinessCheckStatus** _(type)_ - `type ReadinessCheckStatus = "pass" | "fail" | "timeout"`
+- **ReadinessReport** _(interface)_ - `interface ReadinessReport`
 - **RequestIdOptions** _(interface)_ - `interface RequestIdOptions`
 - **RequestLogFields** _(interface)_ - `interface RequestLogFields`
   Structured fields logged per request.
@@ -4304,7 +4316,7 @@ _No named exports (side-effect entrypoint)._
 - **etag** _(function)_ - `etag: (options?: ETagOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged responses. Built on the portable `onResponseBody` tier: the hook receives the final framework-ser…
 - **healthcheck** _(function)_ - `healthcheck: (options?: HealthcheckOptions) => IdentityPlugin`
-  Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
+  Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs every check concurrently, each under its own timeout, and answers a {@link ReadinessReport}: `200` while every required check passes, `503` otherwise. Both are…
 - **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => IdentityPlugin`
   Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ - `ipRestriction: (options: IpRestrictionOptions) => Middleware`
@@ -4315,7 +4327,7 @@ _No named exports (side-effect entrypoint)._
 - **language** _(function)_ - `language: <const L extends readonly string[]>(options: LanguageOptions<L>) => ContextPlugin<{ language: L[number]; languageMatch: LanguageMatch; }>`
   Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.
 - **logger** _(function)_ - `logger: (options?: LoggerOptions) => IdentityPlugin`
-  A {@link defineIdentityPlugin} plugin that logs one structured line per request - method, path, status, and duration - via `onRequest`/`onResponse` (so it covers 404s and errors too). The start time is paired to the request through a `WeakMap` (no per-request allocation leak). Idempotent.
+  A {@link defineIdentityPlugin} plugin that logs one structured line per request - method, route, status, and duration - via `onRequest`/`onResponse` (so it covers 404s and errors too). The query string is never logged. The start time is paired to the request through a `WeakMap` (no per-request allo…
 - **methodOverride** _(function)_ - `methodOverride: (options?: MethodOverrideOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   HTTP method override for clients that can only send `POST`. The middleware rewrites the request before routing, so handlers, validation, and response hooks all see the overridden method.
 - **multipartResponse** _(function)_ - `multipartResponse: (parts: Iterable<MultipartPart> | AsyncIterable<MultipartPart>, options?: MultipartResponseOptions) => Response`
@@ -4389,6 +4401,8 @@ _No named exports (side-effect entrypoint)._
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
   Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
 - **NodeServer** _(interface)_ - `interface NodeServer`
+- **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
+  How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes.
 - **RequestProtocol** _(type)_ - `type RequestProtocol = "http" | "https"`
 - **RequestProtocolOption** _(type)_ - `type RequestProtocolOption = | RequestProtocol | ((request: IncomingMessage) => RequestProtocol)`
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
@@ -6242,8 +6256,12 @@ _No named exports (side-effect entrypoint)._
 - **LiveOptions** _(interface)_ - `interface LiveOptions`
 - **LiveRevocation** _(interface)_ - `interface LiveRevocation`
   Grants issued before this event stop working: every grant (`sub` and `key` null), one subject's (`key` null), or, with `key`, any grant holding that key (for everyone, or for `sub`).
+- **LiveStatus** _(interface)_ - `interface LiveStatus`
+  What one process's live runtime is doing now; counters run from its start.
 - **live** _(function)_ - `live: (options: LiveOptions) => Live`
   Create the live runtime for one app.
+- **livePublisher** _(function)_ - `livePublisher: (bus: Pick<LiveBus, "append">) => (...keys: string[]) => Promise<void>`
+  Publish changes from a process that serves no live pages: a worker, or another app whose writes change what the pages show. Give it the bus the serving processes read; each applies the change as if it had published it. It needs no grant secret, and reads nothing from the bus.
 - **memoryBus** _(function)_ - `memoryBus: () => LiveBus`
   The single-process bus: an in-memory clock, events delivered to every subscriber before `append` resolves. Processes do not share it; run several behind a shared bus instead.
 - **nextSeq** _(const)_ - `nextSeq: (last: number, nowMs: number) => number`
@@ -8004,6 +8022,8 @@ _No named exports (side-effect entrypoint)._
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
+- **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
+  A request's matched route template (`/users/:id`, never `/users/42`), or `undefined` when no route serves it. The matcher is built on first use: by serving time every route is registered, so `app.routes()` is complete, where building it when a plugin is applied would miss later routes.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`

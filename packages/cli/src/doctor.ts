@@ -781,7 +781,7 @@ async function collectDoctorReadiness(
       : configured(
           "graceful-lifecycle",
           "graceful lifecycle",
-          /\bgracefulSignals\s*:\s*(?:true\b|\{)|\bonStop\s*\(/,
+          /\bgracefulSignals\s*:\s*(?:true\b|\{)|\bonStop(?:ping)?\s*\(/,
         ),
   ]
   return {

@@ -10,6 +10,7 @@ import {
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
+  LIVE_GLOBAL,
   LOCALES_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
@@ -354,7 +355,11 @@ export function generateClientEntry(
     "const handover = handovers[handovers.length - 1]",
     "if (handover !== undefined) {",
     '  const state = JSON.parse(handover.textContent || "{}")',
-    `  for (const key of ${jsValueLiteral(options.copyChunks === true ? [...HANDOVER_GLOBALS, COPY_CHUNKS_GLOBAL] : HANDOVER_GLOBALS)}) {`,
+    `  for (const key of ${jsValueLiteral([
+      ...HANDOVER_GLOBALS,
+      ...(options.copyChunks === true ? [COPY_CHUNKS_GLOBAL] : []),
+      ...(live === undefined ? [] : [LIVE_GLOBAL]),
+    ])}) {`,
     "    if (Object.prototype.hasOwnProperty.call(state, key)) Reflect.set(window, key, state[key])",
     "  }",
     "}",
@@ -386,6 +391,8 @@ export function generateClientEntry(
     `  layoutData: window.${LAYOUT_DATA_GLOBAL} && window.${LAYOUT_DATA_GLOBAL}.map(mapDeferred),`,
     `  boundaries: mapDeferred(window.${BOUNDARY_GLOBAL}),`,
     `  serverComponents: window.${COMPONENT_GLOBAL},`,
+    // The seed the server rendered the page with: the live client exchanges it for its first grant.
+    ...(live === undefined ? [] : [`  live: window.${LIVE_GLOBAL},`]),
     // actionData (only set after a form POST) is in the initial state so the binding hydrates
     // consistently with the server-rendered markup; mapped through `mapDeferred` too so a deferred
     // action's placeholders become registry markers (a no-op when the action didn't defer).

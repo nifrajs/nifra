@@ -329,6 +329,12 @@ export default function Auth() {
         <code>Origin</code>/<code>Referer</code> doesn't match an allowed origin - the recommended
         defense for cookie-auth. Pair it with the rate-limit middleware on your login route.
       </p>
+      <p>
+        A route no browser calls, such as a payment provider's webhook, arrives with no{" "}
+        <code>Origin</code> at all. List it in <code>exempt</code>, written as the route is (
+        <code>{'csrf({ exempt: ["/inbound/:vendor"] })'}</code>), and verify the provider's
+        signature in its handler. Exempt nothing that acts on a session cookie.
+      </p>
 
       <h2>Cookie Security Defaults</h2>
       <p>

@@ -148,7 +148,7 @@ import { requestId, logger, etag } from "@nifrajs/middleware"
 
 const app = server()
   .use(requestId())   // reuse/generate x-request-id → c.requestId (typed) + response header
-  .use(logger())      // one structured line/request: { method, path, status, ms }
+  .use(logger())      // one structured line/request: { method, path: route, status, ms }
   .use(etag())        // content-hash ETag on GET 200s → 304 on matching If-None-Match`
 
 const AUTHN = `// doc-check: skip - fragment: \`app\`, \`lookupUser\`, and the \`db\` lookup are your application's.
@@ -181,8 +181,15 @@ const OPS = `// doc-check: skip - fragment: \`app\`, \`db\`, and \`redis\` are y
 import { healthcheck, openapi } from "@nifrajs/middleware"
 
 app
-  // Liveness + readiness. /ready runs each check concurrently → 200 (all pass) or 503.
-  .use(healthcheck({ checks: { db: () => db.ping(), cache: () => redis.ping() } }))
+  // Liveness + readiness. /ready runs each check concurrently, each under a timeout whose
+  // signal it can pass on → 200 (required checks pass) or 503; 503 too once stop() begins.
+  .use(healthcheck({
+    checks: {
+      db: (signal) => db.ping({ signal }),
+      // The app still serves without it: a failure reports "degraded" and keeps 200.
+      cache: { check: () => redis.ping(), optional: true, timeoutMs: 500 },
+    },
+  }))
   // GET /openapi.json from your routes (paths, methods, params); ui adds a Scalar page at /reference.
   .use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))`
 
@@ -526,7 +533,10 @@ export default function Plugins() {
         </li>
         <li>
           <code>logger()</code> - one structured line per request (method, path, status, duration);
-          covers 404s and errors; route it to your own sink via <code>log</code>.
+          covers 404s and errors; route it to your own sink via <code>log</code>. The path is the
+          matched route template (<code>/share/:token</code>), so ids and tokens in a URL stay out of
+          the logs, and the query string is never logged; <code>rawPath: true</code> logs the real
+          path.
         </li>
         <li>
           <code>etag()</code> - adds a content-hash <code>ETag</code> to <code>GET</code> <code>200</code>s
@@ -577,7 +587,15 @@ export default function Plugins() {
       <h2>Operations &amp; docs</h2>
       <p>
         <code>healthcheck()</code> adds liveness (<code>/health</code>) and readiness (<code>/ready</code>)
-        endpoints - apply it <b>before</b> any auth guard so they stay public. <code>openapi()</code>{" "}
+        endpoints - apply it <b>before</b> any auth guard so they stay public. Each check gets a
+        timeout (<code>timeoutMs</code>, default 2 s) and an <code>AbortSignal</code> that fires at
+        it; the report names every check's status (<code>pass</code>, <code>fail</code>,{" "}
+        <code>timeout</code>) and duration. Probes that arrive together share one run, and a result
+        answers later probes for <code>cacheMs</code> (default 1 s), so a public <code>/ready</code>{" "}
+        cannot be used to hammer the database. A check moving between passing and failing is logged.
+        From the moment <code>stop()</code> begins, <code>/ready</code> answers{" "}
+        <code>503 stopping</code>; see graceful shutdown in the custom-server guide.{" "}
+        <code>openapi()</code>{" "}
         serves an OpenAPI 3.1 document at <code>/openapi.json</code>, generated from your routes - add{" "}
         <code>ui: true</code> for a Scalar API-reference page at <code>/reference</code>. The page
         loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own

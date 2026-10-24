@@ -654,6 +654,7 @@ export function createWebApp<Env = unknown>(
     ...(ppr === undefined ? {} : { ppr }),
     invalidate,
     liveLoadOf: liveAttachment?.loadOf,
+    liveSeedOf: liveAttachment?.seedOf,
   })
   if (ppr !== undefined) {
     Object.defineProperty(app, PPR_SERVER, { value: ppr.server })

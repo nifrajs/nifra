@@ -3707,7 +3707,7 @@ import { requestId, logger, etag } from "@nifrajs/middleware"
 
 const app = server()
   .use(requestId())   // reuse/generate x-request-id → c.requestId (typed) + response header
-  .use(logger())      // one structured line/request: { method, path, status, ms }
+  .use(logger())      // one structured line/request: { method, path: route, status, ms }
   .use(etag())        // content-hash ETag on GET 200s → 304 on matching If-None-Match
 ```
 
@@ -3717,7 +3717,10 @@ threads it as `c.requestId`, and echoes the header.
 
 -
 `logger()` - one structured line per request (method, path, status, duration);
-covers 404s and errors; route it to your own sink via `log`.
+covers 404s and errors; route it to your own sink via `log`. The path is the
+matched route template (`/share/:token`), so ids and tokens in a URL stay out of
+the logs, and the query string is never logged; `rawPath: true` logs the real
+path.
 
 -
 `etag()` - adds a content-hash `ETag` to `GET` `200`s
@@ -3789,7 +3792,15 @@ const app = server()
 ### Operations & docs
 
 `healthcheck()` adds liveness (`/health`) and readiness (`/ready`)
-endpoints - apply it **before** any auth guard so they stay public. `openapi()`
+endpoints - apply it **before** any auth guard so they stay public. Each check gets a
+timeout (`timeoutMs`, default 2 s) and an `AbortSignal` that fires at
+it; the report names every check's status (`pass`, `fail`,
+`timeout`) and duration. Probes that arrive together share one run, and a result
+answers later probes for `cacheMs` (default 1 s), so a public `/ready`
+cannot be used to hammer the database. A check moving between passing and failing is logged.
+From the moment `stop()` begins, `/ready` answers
+`503 stopping`; see graceful shutdown in the custom-server guide.
+`openapi()`
 serves an OpenAPI 3.1 document at `/openapi.json`, generated from your routes - add
 `ui: true` for a Scalar API-reference page at `/reference`. The page
 loads an exact Scalar version from jsDelivr under a Subresource Integrity hash; serve your own
@@ -3808,8 +3819,15 @@ exported for build-time generation too.
 import { healthcheck, openapi } from "@nifrajs/middleware"
 
 app
-  // Liveness + readiness. /ready runs each check concurrently → 200 (all pass) or 503.
-  .use(healthcheck({ checks: { db: () => db.ping(), cache: () => redis.ping() } }))
+  // Liveness + readiness. /ready runs each check concurrently, each under a timeout whose
+  // signal it can pass on → 200 (required checks pass) or 503; 503 too once stop() begins.
+  .use(healthcheck({
+    checks: {
+      db: (signal) => db.ping({ signal }),
+      // The app still serves without it: a failure reports "degraded" and keeps 200.
+      cache: { check: () => redis.ping(), optional: true, timeoutMs: 500 },
+    },
+  }))
   // GET /openapi.json from your routes (paths, methods, params); ui adds a Scalar page at /reference.
   .use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))
 ```
@@ -5549,6 +5567,11 @@ bundle. A page that needs the user reads it from its loader data, which
 `app.use(csrf({ origins }))` rejects any unsafe-method request whose
 `Origin`/`Referer` doesn't match an allowed origin - the recommended
 defense for cookie-auth. Pair it with the rate-limit middleware on your login route.
+
+A route no browser calls, such as a payment provider's webhook, arrives with no
+`Origin` at all. List it in `exempt`, written as the route is (
+`csrf({ exempt: ["/inbound/:vendor"] })`), and verify the provider's
+signature in its handler. Exempt nothing that acts on a session cookie.
 
 ### Cookie Security Defaults
 
@@ -11013,6 +11036,15 @@ should stop routing to the instance first, as most platforms do before they send
 Deno, pass
 `signals: { drainMs }` to `serve()` instead, as above.
 
+When the platform sends `SIGTERM` without taking the instance out of rotation first,
+add `delayMs`. The stop then runs the app's `onStopping` hooks, keeps
+serving for `delayMs`, and only then drains. `healthcheck()` answers
+`503 stopping` on `/ready` from the moment the stop begins, so the
+delay is the time a load balancer gets to see that and route elsewhere. Register your own
+`app.onStopping(fn)` to stop a poller or queue consumer at the same point;
+`app.onStop(fn)` still runs after the drain, on Bun, Node and Deno alike.
+`delayMs + drainMs` has to fit in the kill grace period.
+
 ### Letting check and assure read the app
 
 `nifra check`, `assure`, `routes` and the other commands that
@@ -12225,6 +12257,13 @@ const app = createWebApp({ adapter, manifest, clientEntry: build.entry, live: li
 await buildClient({ routesDir, outDir, clientModule, live: liveRuntime.clientEntry })
 ```
 
+A server-rendered page carries a seed: the grant for what its loaders declared, bound to no
+socket yet. Once the tab's socket opens, one live load trades it for that socket's grant and
+keeps every owner, so no loader runs again; only gates do. A seed is refused after a minute,
+for another viewer, another page or a renewal, and then the page loads as it would without
+one. Partially prerendered pages, server-component routes and Workers apps render without a
+seed.
+
 ### Declare keys
 
 `live(...keys)` in any loader, page or layout, names what its data reads. A key
@@ -12304,6 +12343,42 @@ export const liveRuntime = live({
 })
 ```
 
+Each process reports through `logger` (default: JSON lines on stderr) when the bus
+stops answering, when it answers again and when events were lost to a trim.
+`liveRuntime.status()` has the same state to poll - `down`, open
+`sockets`, running `loads`, applied `events`, the
+`changed` frames sent as `notified`, and `lagMs` - for a
+readiness check or metrics. `close()` stops the reader and closes the sockets;
+call it before closing the bus's connections. Another process can publish to the same stream
+with `livePublisher` and a bus that has `send` only. Any client with a
+raw-command call works: with ioredis, `(command, args) => redis.call(command,
+        ...args)`.
+
+```ts
+// doc-check: skip - app, liveRuntime, send and read are the ones set up above.
+import { healthcheck } from "@nifrajs/middleware"
+import { livePublisher } from "@nifrajs/web/live"
+import { redisLiveBus } from "@nifrajs/web/live-redis"
+
+app.use(
+  healthcheck({
+    checks: {
+      // Pages poll while the bus is down: report it without leaving rotation.
+      live: { check: () => !liveRuntime.status().down, optional: true },
+    },
+  }),
+)
+app.onStop(async () => {
+  await liveRuntime.close() // stop reading first, so closing its connection is no outage
+  read.close()
+  send.close()
+})
+
+// A process that only publishes - a worker, another app - needs no reader and no secret.
+const publish = livePublisher(redisLiveBus({ send: (command, args) => send.send(command, [...args]) }))
+await publish("org:42")
+```
+
 ### Cloudflare Workers
 
 On Workers, one hibernating Durable Object per app owns the log and holds every socket.
@@ -12367,7 +12442,10 @@ another `grantTtl` plus a minute has passed.
 
 -
 Grants are sealed with AES-256-GCM and bound to one socket, path, frame and viewer. They
-expire (`grantTtl`, default 10 minutes, at most an hour); tabs renew them.
+expire (`grantTtl`, default 10 minutes, at most an hour); tabs renew them. A
+page's seed is bound to no socket, so no socket accepts it; only a load of its own page, for
+its own viewer, within a minute of the render, exchanges it. A shared cache that stores the
+page stores a seed nobody else can use.
 
 -
 The load endpoint and the socket check `Origin`; allow other origins with
@@ -19956,7 +20034,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `writableResponse`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `writableResponse`
 
 ## @nifrajs/cron
 
@@ -19964,7 +20042,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/deno
 
-`DenoServer`, `FetchHandler`, `ServeOptions`, `serve`
+`DenoServer`, `DenoStopOptions`, `FetchHandler`, `ServeOptions`, `serve`
 
 ## @nifrajs/devtools
 
@@ -20012,7 +20090,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `ReadinessCheck`, `ReadinessCheckOptions`, `ReadinessCheckResult`, `ReadinessCheckStatus`, `ReadinessReport`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
 
 ## @nifrajs/mock
 
@@ -20020,7 +20098,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/node
 
-`FetchHandler`, `NodeServer`, `RequestProtocol`, `RequestProtocolOption`, `ServeOptions`, `ServeStaticOptions`, `serve`
+`FetchHandler`, `NodeServer`, `NodeStopOptions`, `RequestProtocol`, `RequestProtocolOption`, `ServeOptions`, `ServeStaticOptions`, `serve`
 
 ## @nifrajs/otel
 

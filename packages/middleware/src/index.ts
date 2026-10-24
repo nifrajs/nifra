@@ -55,7 +55,15 @@ export {
 } from "./csrf.ts"
 export { type DurableCommandOptions, durableCommand } from "./durable-command.ts"
 export { type ETagOptions, etag } from "./etag.ts"
-export { type HealthcheckOptions, healthcheck } from "./healthcheck.ts"
+export {
+  type HealthcheckOptions,
+  healthcheck,
+  type ReadinessCheck,
+  type ReadinessCheckOptions,
+  type ReadinessCheckResult,
+  type ReadinessCheckStatus,
+  type ReadinessReport,
+} from "./healthcheck.ts"
 export {
   type IdempotencyClaim,
   type IdempotencyOptions,

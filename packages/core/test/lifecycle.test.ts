@@ -158,6 +158,95 @@ describe("graceful shutdown", () => {
         process.removeListener("SIGINT", h)
     }
   })
+
+  test("onStopping hooks run while the server still serves, before the drain and onStop", async () => {
+    const events: string[] = []
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered!: () => void
+    const stopping = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const app = server()
+      .onStopping(async () => {
+        events.push("stopping")
+        entered()
+        await held
+      })
+      .onStop(() => {
+        events.push("stopped")
+      })
+      .get("/", () => "ok")
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
+    const stopped = app.stop()
+    await stopping
+    const res = await fetch(`http://127.0.0.1:${srv.port}/`)
+    events.push(`served ${res.status}`)
+    release()
+    await stopped
+    expect(events).toEqual(["stopping", "served 200", "stopped"])
+  })
+
+  test("stop({ delayMs }) keeps serving for the delay before it drains", async () => {
+    let stoppingAt = 0
+    let stoppedAt = 0
+    let entered!: () => void
+    const stopping = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const app = server()
+      .onStopping(() => {
+        stoppingAt = performance.now()
+        entered()
+      })
+      .onStop(() => {
+        stoppedAt = performance.now()
+      })
+      .get("/", () => "ok")
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
+    const stopped = app.stop({ delayMs: 500 })
+    await stopping
+    // Inside the delay: only a lower bound is asserted, so a slow machine cannot fail it.
+    expect((await fetch(`http://127.0.0.1:${srv.port}/`)).status).toBe(200)
+    await stopped
+    expect(stoppedAt - stoppingAt).toBeGreaterThanOrEqual(490)
+    const refused = await fetch(`http://127.0.0.1:${srv.port}/`)
+      .then(() => false)
+      .catch(() => true)
+    expect(refused).toBe(true)
+  })
+
+  test("a group's onStopping and onStop hooks run with its parent's", async () => {
+    const events: string[] = []
+    const app = server()
+      .onStopping(() => {
+        events.push("root stopping")
+      })
+      .group("/admin", (admin) =>
+        admin
+          .onStopping(() => {
+            events.push("group stopping")
+          })
+          .onStop(() => {
+            events.push("group stopped")
+          })
+          .get("/", () => "admin"),
+      )
+    app.listen(0, { hostname: "127.0.0.1" })
+    await app.stop()
+    expect(events).toEqual(["root stopping", "group stopping", "group stopped"])
+  })
+
+  test("onStopping refuses a non-function and a sealed server", () => {
+    const fresh = server()
+    expect(() => Reflect.apply(fresh.onStopping, fresh, [1])).toThrow(TypeError)
+    const app = server().get("/", () => "ok")
+    app.listen(0, { hostname: "127.0.0.1" })
+    expect(() => app.onStopping(() => {})).toThrow(/sealed/)
+    return app.stop()
+  })
 })
 
 describe("request timeout", () => {
