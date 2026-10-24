@@ -183,7 +183,15 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
   // A restored page's reload: its kept data, unrequested, when it needs no reload; otherwise the
   // response shared onto the kept data, so what did not change keeps the identity it has on screen.
   // A reload that fails shows the kept data instead of loading the page as a document.
-  const fetchData: FetchRouteData = async (path, match, signal, navigation, read) => {
+  const fetchData: FetchRouteData = async (
+    path,
+    match,
+    signal,
+    navigation,
+    purpose,
+    hosts,
+    read,
+  ) => {
     const restore = reloading
     const held = restore?.kept.intercepted
     // A page kept with a boundary open reloads twice: its own data, then the target the boundary holds.
@@ -192,7 +200,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         ? restore.kept.boundaries?.[held.boundary]
         : undefined
     if (restore === undefined || (path !== restore.pagePath && target === undefined)) {
-      return base(path, match, signal, navigation, read)
+      return base(path, match, signal, navigation, purpose, hosts, read)
     }
     const kept = (): unknown =>
       target === undefined
@@ -201,15 +209,20 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     if (!restore.reload) return kept()
     let payload: unknown
     try {
-      payload = await base(path, match, signal, navigation, read)
+      payload = await base(path, match, signal, navigation, purpose, hosts, read)
     } catch (error) {
       if (signal?.aborted === true || hasRedirect(error)) throw error
       return kept()
     }
-    if (target !== undefined) return targetOnto(target.data, payload)
-    return routeHooks[restore.kept.routeId]?.shareData === false
-      ? payload
-      : sharedOnto(restore.kept, payload)
+    const hooks = routeHooks[target === undefined ? restore.kept.routeId : match.routeId]
+    // `read` itself answers a reload whose response text is what the path shows, which the router
+    // keeps unparsed.
+    if (payload === read || hooks?.shareData === false) return payload
+    // The router's transport records the text of a plain JSON response, a tree with no symbol keys.
+    const plainJson = read?.text !== undefined && hooks?.clientLoader === undefined
+    return target === undefined
+      ? sharedOnto(restore.kept, payload, plainJson)
+      : targetOnto(target.data, payload, plainJson)
   }
 
   const attach = (inner: ClientRouter): KeepAliveRouter => {
@@ -570,10 +583,10 @@ const hasRedirect = (error: unknown): boolean =>
   typeof Reflect.get(error, "redirectTo") === "string"
 
 /** A held target's reload, its data shared onto what the boundary shows. */
-const targetOnto = (shown: unknown, payload: unknown): unknown => {
-  if (!isRouteDataEnvelope(payload)) return shareData(shown, payload)
+const targetOnto = (shown: unknown, payload: unknown, plainJson: boolean): unknown => {
+  if (!isRouteDataEnvelope(payload)) return shareData(shown, payload, plainJson)
   if (payload.status !== undefined) return payload
-  return { ...payload, data: shareData(shown, payload.data) }
+  return { ...payload, data: shareData(shown, payload.data, plainJson) }
 }
 
 /** A route data envelope that publishes exactly `state`'s data. */
@@ -591,20 +604,20 @@ const envelopeOf = (state: RouterState): unknown => {
 
 /** `payload` with every part equal to what `kept` shows replaced by that part. A layout the server
  * skipped (`retained`) takes the value on screen, as on any navigation. */
-const sharedOnto = (kept: RouterState, payload: unknown): unknown => {
-  if (!isRouteDataEnvelope(payload)) return shareData(kept.data, payload)
+const sharedOnto = (kept: RouterState, payload: unknown, plainJson: boolean): unknown => {
+  if (!isRouteDataEnvelope(payload)) return shareData(kept.data, payload, plainJson)
   if (payload.status !== undefined) return payload
   const retained = new Set(payload.retained ?? [])
   return {
     ...payload,
-    data: shareData(kept.data, payload.data),
+    data: shareData(kept.data, payload.data, plainJson),
     layoutData: payload.layoutData?.map((value, index) =>
-      retained.has(index) ? value : shareData(kept.layoutData?.[index], value),
+      retained.has(index) ? value : shareData(kept.layoutData?.[index], value, plainJson),
     ),
     ...(payload.boundaries === undefined
       ? {}
-      : { boundaries: shareData(kept.boundaries, payload.boundaries) }),
-    serverComponents: shareData(kept.serverComponents, payload.serverComponents),
+      : { boundaries: shareData(kept.boundaries, payload.boundaries, plainJson) }),
+    serverComponents: shareData(kept.serverComponents, payload.serverComponents, plainJson),
   }
 }
 
@@ -1016,24 +1029,24 @@ const compoundsOf = (
   let depth = 0
   let start = 0
   let combinator = ""
-  for (let i = 0; i <= selector.length; i++) {
-    const char = selector[i]
-    if (char === "(" || char === "[") depth++
-    else if (char === ")" || char === "]") depth--
-    if (
-      depth > 0 ||
-      (char !== undefined && char !== " " && char !== ">" && char !== "+" && char !== "~")
-    )
-      continue
-    const compound = selector.slice(start, i).trim()
+  const flush = (end: number): void => {
+    const compound = selector.slice(start, end).trim()
     if (compound !== "") {
       parts.push({ compound, before: combinator })
       combinator = ""
     }
-    if (char === ">" || char === "+" || char === "~") combinator = char
-    else if (char === " " && combinator === "") combinator = " "
+  }
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]
+    if (char === "(" || char === "[") depth++
+    else if (char === ")" || char === "]") depth--
+    if (depth > 0 || (char !== " " && char !== ">" && char !== "+" && char !== "~")) continue
+    flush(i)
+    if (char !== " ") combinator = char
+    else if (combinator === "") combinator = " "
     start = i + 1
   }
+  if (depth <= 0) flush(selector.length)
   return parts
 }
 

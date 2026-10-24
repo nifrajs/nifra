@@ -47,7 +47,7 @@
     "check:server-components:types": "bun scripts/check-server-components-types.ts",
     "check:server-components:performance": "bun scripts/check-server-components-performance.ts",
     "check:server-components:consumers": "bun scripts/check-server-components-consumers.ts",
-    "check:workerd": "bun run scripts/check-workerd.ts && bun run scripts/check-workerd-live.ts",
+    "check:workerd": "bun run scripts/check-workerd.ts && bun run scripts/check-workerd-live.ts && bun run scripts/check-workerd-ppr.ts",
     "check:runtime-differential": "bun run scripts/check-runtime-differential.ts",
     "check:core-performance": "bun run bench/http/_fetch-micro.ts --check",
     "check:middleware-overhead": "bun run bench/http/middleware-overhead.ts --check",
@@ -69,6 +69,9 @@
     "bench:ssr": "bun run bench/ssr/run.ts",
     "bench:content": "bun bench/content-index.ts",
     "bench:prerender": "bun run bench/ssr/prerender-ttfb.ts",
+    "bench:ppr": "bun run bench/ppr/cost.ts && bun run bench/ppr/shared-hole.ts",
+    "bench:ppr:gzip": "PPR_GZIP=1 bun run bench/ppr/cost.ts",
+    "bench:ppr:saturation": "bun run bench/ppr/saturation.ts",
     "bench:size": "bun run bench/size/run.ts",
     "bench:workers": "bun run bench/workers/run.ts",
     "gen:llms": "bun run scripts/gen-llms.ts && bun run gen:cards",
@@ -120,13 +123,19 @@
     "check:coverage": "bun run scripts/coverage-ratchet.ts"
   },
   "overrides": {
+    "@fastify/reply-from": {
+      "undici": "7.30.1"
+    },
     "@hono/node-server": "2.1.5",
-    "body-parser": "2.3.0",
+    "@upstash/context7-mcp": {
+      "undici": "7.30.1"
+    },
+    "body-parser": "2.4.0",
     "esbuild": "0.28.1",
     "find-my-way": "9.7.0",
     "immutable": "5.1.8",
     "miniflare": {
-      "undici": "7.29.1"
+      "undici": "7.30.1"
     },
     "nanoid": "3.3.18",
     "preact": "11.0.1",
@@ -167,7 +176,7 @@
     "elysia": "^1.4.30",
     "express": "^5.3.0",
     "fast-check": "^4.8.0",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "fastify": "^5.12.7",
     "hono": "^4.13.13",
     "mdsvex": "^0.12",

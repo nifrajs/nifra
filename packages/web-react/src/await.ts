@@ -28,7 +28,10 @@ class AwaitBoundary extends Component<
   { fallback: (error: unknown) => ReactNode; children?: ReactNode },
   { caught: boolean; error: unknown }
 > {
-  override state: { caught: boolean; error: unknown } = { caught: false, error: undefined }
+  constructor(props: { fallback: (error: unknown) => ReactNode; children?: ReactNode }) {
+    super(props)
+    this.state = { caught: false, error: undefined }
+  }
   static getDerivedStateFromError(error: unknown): { caught: boolean; error: unknown } {
     return { caught: true, error }
   }

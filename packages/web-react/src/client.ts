@@ -93,16 +93,25 @@ const levelAt = (depth: number): ReactElement => {
 // One level of the chain as `compose` builds it, memoized on its own props: a reload that kept the data
 // (the router shares what it did not change) re-renders a layout or the page only for a prop of its own
 // that moved, such as the page's `pending`.
-function Level({ depth }: { readonly depth: number }): ReactNode {
+function Level({ depth, ...overrides }: { readonly depth: number }): ReactNode {
   const { chain, props } = useContext(ChainContext)
   if (depth === chain.length - 1)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain holds the route's modules' default exports, its last entry the page component
-    return createElement(memoPage(chain[depth] as ComponentType<RenderProps>), props)
+    return createElement(memoPage(chain[depth] as ComponentType<RenderProps>), {
+      ...props,
+      ...overrides,
+    })
   return createElement(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
     memoLayout(chain[depth] as ComponentType<LayoutProps>),
-    { data: props.layoutData?.[depth] ?? null, boundaries: props.boundaries },
-    levelAt(depth + 1),
+    // Layouts may clone their child with extra props, including `children`, just as in SSR compose.
+    {
+      data: props.layoutData?.[depth] ?? null,
+      boundaries: props.boundaries,
+      // biome-ignore lint/correctness/noChildrenProp: cloneElement overrides must be able to replace the default child, including with undefined
+      children: levelAt(depth + 1),
+      ...overrides,
+    },
   )
 }
 

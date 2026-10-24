@@ -4,11 +4,13 @@
     // Frontend adapter: needs DOM types (client hydrate casts the container to `Element`).
     // Excluded from the root typecheck; checked via the `typecheck` script.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    // The keep-alive fixture's routes are .tsx, which route discovery requires.
+    // The keep-alive and partial prerendering fixtures' routes are Preact JSX, in .tsx files as route
+    // discovery requires.
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
+      "@nifrajs/web-preact/ppr": ["./src/ppr.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
       "@nifrajs/core/mount": ["../core/src/mount.ts"],
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"],

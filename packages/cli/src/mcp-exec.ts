@@ -617,6 +617,36 @@ export function projectTools(
             description:
               "When true, create both files if a verified ready-to-write page stub exists. Refuses overwrite.",
           },
+          hole: {
+            type: "object",
+            description:
+              "Add a partially prerendered hole to the existing route at `path` instead of a new page: its definition and <Hole> in the page, its loader in the backend half. The route's backend half must export shellLoader. A Vue or Svelte page gets the snippet to paste.",
+            properties: {
+              name: {
+                type: "string",
+                description:
+                  "1 to 32 lowercase letters, digits and single hyphens, starting with a letter.",
+              },
+              shared: {
+                type: "boolean",
+                description: "The same for every visitor, cached on its own revalidate.",
+              },
+              interactive: {
+                type: "boolean",
+                description: "Ships its props and hydrates as its own root.",
+              },
+              timeout: {
+                type: "integer",
+                description: "The hole's deadline in milliseconds, 1 to 30000.",
+              },
+              server: {
+                type: "boolean",
+                description: "Show a React server component, built by the coordinated compiler.",
+              },
+            },
+            required: ["name"],
+            additionalProperties: false,
+          },
           variant: {
             type: "string",
             enum: ["default", "stateful"],
@@ -628,12 +658,52 @@ export function projectTools(
         additionalProperties: false,
       },
       handler: async (args) => {
-        const { path, write, variant } = args as {
+        const { path, write, variant, hole } = args as {
           path?: string
           write?: boolean
+          hole?: {
+            name?: string
+            shared?: boolean
+            interactive?: boolean
+            timeout?: number
+            server?: boolean
+          }
           variant?: "default" | "stateful"
         }
         if (typeof path !== "string" || path.length === 0) return "scaffold: `path` is required."
+        if (hole !== undefined) {
+          if (typeof hole.name !== "string") return "scaffold: `hole.name` is required."
+          const { frameworkFromClientModule } = await import("./scaffold.ts")
+          const { holeRouteFiles, renderHoleScaffold, routeTypeScript, scaffoldHole } =
+            await import("./scaffold-hole.ts")
+          const framework = frameworkFromClientModule(
+            (await loadAppCached()).framework.clientModule,
+          )
+          const { page, backend } = holeRouteFiles(path, framework)
+          const loaded = await routeTypeScript(cwd, [page, backend])
+          if (loaded.unsupported !== undefined) return loaded.unsupported.message
+          if (loaded.compiler === undefined)
+            return "scaffold: a hole is placed through the route's syntax tree, so it needs TypeScript (`bun add -d typescript`)."
+          try {
+            const result = await scaffoldHole(
+              cwd,
+              path,
+              hole.name,
+              framework,
+              {
+                shared: hole.shared,
+                interactive: hole.interactive,
+                timeout: hole.timeout,
+                server: hole.server,
+              },
+              loaded.compiler,
+              write === true,
+            )
+            return renderHoleScaffold(hole.name, framework, result)
+          } finally {
+            await loaded.session?.close()
+          }
+        }
         const flavour = variant === "stateful" ? "stateful" : "default"
         const { frameworkFromClientModule, renderScaffold, writeScaffoldRoute } = await import(
           "./scaffold.ts"

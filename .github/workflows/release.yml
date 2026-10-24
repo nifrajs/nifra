@@ -19,6 +19,9 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  # A merge-queue run only reports the required release-verification check, as skipped: release PRs are
+  # verified on their pull_request run, and no publish job runs without prove-release.
+  merge_group:
   # Only prove-release reads this event, and only for a push-event CI run on this repository's main; it
   # takes no artifact or PR-controlled value from the triggering run.
   workflow_run: # zizmor: ignore[dangerous-triggers]
@@ -39,11 +42,11 @@ on:
 permissions:
   contents: read
 
-# Publish runs queue and run one at a time. A pull request run gets a group of its own, so it never
-# waits in that queue; its verification job cancels a superseded one instead (queue: max cannot be
-# combined with cancel-in-progress).
+# Publish runs queue and run one at a time. A pull request or merge-queue run gets a group of its own,
+# so it never waits in that queue; a release PR's verification job cancels a superseded one instead
+# (queue: max cannot be combined with cancel-in-progress).
 concurrency:
-  group: release-${{ github.event_name != 'pull_request' && 'publish' || github.run_id }}
+  group: release-${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && 'publish' || github.run_id }}
   queue: max
   cancel-in-progress: false
 

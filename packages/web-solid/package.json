@@ -46,6 +46,11 @@
       "types": "./dist/await.d.ts",
       "default": "./dist/await.js"
     },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./fetcher": {
       "bun": "./src/fetcher.ts",
       "types": "./dist/fetcher.d.ts",
@@ -146,6 +151,7 @@
   "devDependencies": {
     "@babel/types": "7.29.7",
     "@types/babel__core": "^7.20.5",
+    "happy-dom": "21.0.4",
     "solid-js": "^1.9.3"
   },
   "repository": {

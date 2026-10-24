@@ -47,6 +47,11 @@
       "types": "./dist/await.d.ts",
       "default": "./dist/await.js"
     },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./fetcher": {
       "bun": "./src/fetcher.ts",
       "types": "./dist/fetcher.d.ts",
@@ -133,6 +138,7 @@
   },
   "devDependencies": {
     "@vue/compiler-sfc": "^3.5.0",
+    "happy-dom": "21.0.4",
     "vue": "^3.5.0"
   },
   "repository": {

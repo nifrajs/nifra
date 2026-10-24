@@ -7239,6 +7239,10 @@ Regenerate `nifra-routes.d.ts` so `navigate({ to, search })` is typed by each ro
 
 Regenerate a committed `server-manifest.ts` from `routes/` without a full build.
 
+`nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server]`
+
+Experimental. Add a hole to a [partially prerendered](/docs/partial-prerendering) route: its definition, `boundaries` entry and `Hole` in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.
+
 `nifra openapi [--format json | yaml] [--path <prefix>]`
 
 The backend's OpenAPI document, including response types inferred at build time.
@@ -11911,7 +11915,9 @@ await buildClient({ routesDir, outDir, clientModule, live: liveRuntime.clientEnt
 `live(...keys)` in any loader, page or layout, names what its data reads. A key
 is your own name for a piece of data, such as `post:42`: a letter, then up to
 127 of `A-Z a-z 0-9 . _ : / -`. A frame holds at most 64. A live load returns
-an encrypted grant for its keys beside the data.
+an encrypted grant for its keys beside the data. A hole of a
+[partially prerendered page](/docs/partial-prerendering) declares its own the
+same way, and a change reloads that hole alone.
 
 ```ts
 // doc-check: skip - a route's backend half; db is the app's own.
@@ -13014,6 +13020,627 @@ span's child, next to the cache span rather than under it.
 No span carries a request body, a job payload, an event payload, a raw cache key or error text.
 Without a tracer configured, the cache and the queue run the code they ran before: no clock
 reads, no events, no extra frames.
+
+## Nifra - Partial prerendering (experimental)
+
+> Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, server components in holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.
+
+Most of a product page is the same for everyone: the title, the description, the layout. A
+partially prerendered route serves that part from a cached shell at once, then streams each
+per-visitor part, a hole, into it as its own loader settles.
+
+[!WARNING] Experimental. It is enabled through `experimental.ppr`, and its API may
+change in any release.
+
+### Set it up
+
+`compileShells` bundles each route's shell and refuses one whose emitted code
+reaches a module that reads the visitor. The shell is the page's and its layouts' whole
+modules, `meta` included, and the backend half's `shellLoader`. A route missing from its record, or from a record
+made for another deployment, renders whole. Run it in your build (Bun), and pass the record
+to `partialPrerendering`. A Svelte, Vue or Solid app passes its server plugin, such
+as `plugins: [svelteBunPlugin("ssr")]`.
+
+```ts
+import { createCspPolicy, createWebApp } from "@nifrajs/web"
+import { discoverRoutes } from "@nifrajs/web/fs"
+import { compileShells, partialPrerendering } from "@nifrajs/web/ppr"
+import { reactAdapter } from "@nifrajs/web-react"
+
+const routesDir = "./routes"
+const manifest = discoverRoutes(routesDir)
+// The content-hashed client entry from your build; a shell check record is valid for it only.
+const clientEntry = "/assets/entry-4c5ndncr.js"
+
+// Fails a route whose shell reaches a module that reads the visitor. That route renders whole.
+const shellChecks = await compileShells({
+  routesDir,
+  manifest,
+  deployment: clientEntry,
+  requestScoped: (file) => file.endsWith("/lib/session.ts"),
+  onFailure: (routeId, error) => console.warn(routeId, error),
+})
+
+export const app = createWebApp({
+  adapter: reactAdapter,
+  manifest,
+  clientEntry,
+  // Hashes, not a nonce: a shell is one document for every visitor.
+  csp: createCspPolicy({
+    header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,
+  }),
+  experimental: {
+    ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }),
+  },
+})
+```
+
+The route's backend half exports the shell loader and one loader per hole. The shell loader
+gets params, locale, the declared variations, `origin` from config and the
+in-process `api`, never the request. With
+`satisfies Route.BoundaryLoaders`, a misspelt or missing hole is a type error
+when the page is a `.tsx` file whose boundary names are literal types; the
+manifest refuses an unknown key at startup either way.
+
+```ts
+import { t } from "@nifrajs/schema"
+import type { BoundaryRequestCtx } from "@nifrajs/web"
+import { defineShellLoader } from "@nifrajs/web/ppr"
+import type { Route } from "./+types/[id]"
+
+const titles: Readonly<Record<string, string>> = { "1": "Sencha", "2": "Hojicha" }
+const cartCount = (request: Request): number => (request.headers.has("cookie") ? 2 : 0)
+
+// The shell: no request, no cookies. It is built once and shared by every visitor.
+export const shellLoader = defineShellLoader(async ({ params }) => ({
+  title: titles[params.id ?? ""] ?? "Tea",
+}))
+export const shellOutput = t.object({ title: t.string() })
+export const revalidate = 60
+export const revalidateTags = ["catalog"]
+export const shellVariations = { search: { size: ["50g", "100g"] } }
+
+// The holes: each runs per request, under its own deadline.
+export const boundaryLoaders = {
+  cart: {
+    load: (ctx: BoundaryRequestCtx) => ({ count: cartCount(ctx.request) }),
+    output: t.object({ count: t.number() }),
+  },
+} satisfies Route.BoundaryLoaders
+```
+
+The page places each hole with the adapter's hole component.
+
+```tsx
+// routes/tea/[id].tsx
+import type { BoundaryStates } from "@nifrajs/web"
+import { Hole } from "@nifrajs/web-react/ppr"
+import { Cart } from "../../frontend/cart"
+
+// `as const` keeps the name literal, so Route.BoundaryLoaders can check the backend half's keys.
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true, // ships its props and hydrates as its own root
+  render: (data: { readonly count: number }) => <Cart count={data.count} />,
+  fallback: <p>Loading your cart</p>,
+} as const
+export const boundaries = [cart]
+
+export default function Tea(props: { data: { title: string }; boundaries?: BoundaryStates }) {
+  return (
+    <main>
+      <h1>{props.data.title}</h1>
+      <Hole of={cart} state={props.boundaries?.cart} />
+    </main>
+  )
+}
+```
+
+A Preact page is the same, with `/** @jsxImportSource preact */` at the top and
+`Hole` from `@nifrajs/web-preact/ppr`. Svelte places a hole with its
+own component and wraps each render in `ui(Component, props)`.
+
+```svelte
+<!-- routes/tea/[id].svelte -->
+<script module>
+  import Hole from "@nifrajs/web-svelte/hole"
+  import { ui } from "@nifrajs/web-svelte/ppr"
+  import Cart from "../../frontend/Cart.svelte"
+  import Loading from "../../frontend/Loading.svelte"
+
+  const cart = {
+    name: "cart",
+    mode: "dynamic",
+    interactive: true,
+    render: (data) => ui(Cart, { count: data.count }),
+    fallback: ui(Loading, { text: "Loading your cart" }),
+  }
+  export const boundaries = [cart]
+</script>
+
+<script>
+  let { data, boundaries: states } = $props()
+</script>
+
+<main>
+  <h1>{data.title}</h1>
+  <Hole of={cart} state={states?.cart} />
+</main>
+```
+
+A Vue page builds its holes with `h()` and places them in its template; the
+hole's `error` slot shows when its loader failed.
+
+```vue
+<!-- routes/tea/[id].vue -->
+<script lang="ts">
+import { Hole } from "@nifrajs/web-vue/ppr"
+import { h } from "vue"
+import Cart from "../../frontend/Cart.vue"
+
+// A hole renders h() output; the page around it is an ordinary template.
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true,
+  render: (data: { readonly count: number }) => h(Cart, { count: data.count }),
+  fallback: h("p", "Loading your cart"),
+} as const
+export const boundaries = [cart]
+</script>
+
+<script setup lang="ts">
+const props = defineProps(["data", "boundaries"])
+</script>
+
+<template>
+  <main>
+    <h1>{{ props.data.title }}</h1>
+    <Hole :of="cart" :state="props.boundaries?.cart" />
+  </main>
+</template>
+```
+
+A Solid page's `fallback` is a function returning JSX, so each place that shows
+it gets its own nodes.
+
+```tsx
+// routes/tea/[id].tsx
+import type { BoundaryStates } from "@nifrajs/web"
+import { Hole } from "@nifrajs/web-solid/ppr"
+import { Cart } from "../../frontend/cart"
+
+const cart = {
+  name: "cart",
+  mode: "dynamic",
+  interactive: true,
+  render: (data: { readonly count: number }) => <Cart count={data.count} />,
+  // A function: JSX evaluated at import would be one DOM node every page shares.
+  fallback: () => <p>Loading your cart</p>,
+} as const
+export const boundaries = [cart]
+
+export default function Tea(props: { data: { title: string }; boundaries?: BoundaryStates }) {
+  return (
+    <main>
+      <h1>{props.data.title}</h1>
+      <Hole of={cart} state={props.boundaries?.cart} />
+    </main>
+  )
+}
+```
+
+`nifra scaffold hole <route> <name>` writes a hole into both halves:
+its definition, its `boundaries` entry and the `Hole` in a JSX page,
+and a loader with its output schema in the backend half. `--shared`,
+`--interactive` and `--timeout <ms>` shape it, and
+`--server` makes it show a new React server component. A Vue or Svelte page gets
+the code to paste. `nifra check` reports a page that calls
+`getContext()` or `tryGetContext()` (NF-C053), and
+`nifra fix --code NF-C053` moves a read held in one `const`, with the
+one element that uses it, into a new dynamic hole whose loader makes the read.
+
+The import check cannot see visitor data an app keeps in module state, such as a variable
+middleware writes. `checkShellCanaries` requests each path once with unique values
+in a cookie, `Authorization`, a header and the query, and reports each value found
+in the shared shell or in a shared hole's frame (the finding names the hole).
+
+```ts
+// doc-check: skip - continues the server snippet above (`app`).
+import { checkShellCanaries } from "@nifrajs/web/ppr"
+
+// Run before the app serves traffic: a shell already cached was built without the canaries.
+const leaks = await checkShellCanaries(app, ["/tea/1", "/tea/2"])
+if (leaks.length > 0) throw new Error(`visitor data in a shared shell: ${JSON.stringify(leaks)}`)
+```
+
+### Which routes qualify
+
+-
+The backend half exports `shellLoader`, and not `loader` or
+`prerender = true`.
+
+-
+It declares 1 to 32 `dynamic` or `shared` boundaries, each with a
+`boundaryLoaders` entry. Names are 1-32 lowercase letters, digits and single
+hyphens, start with a letter and do not end with a hyphen.
+
+-
+A hole's `timeout` is 1 to 30000 ms (default 5000). The response ends by the
+largest timeout plus one second, at most 30 seconds.
+
+-
+A layout above it may have a loader only as a `gate`: the gate runs to redirect
+or refuse, and its data reaches no response. Intercepting boundaries are not supported.
+
+-
+`shellVariations` lists closed sets of query values that each select their own
+shell. Any other parameter or value shares the default shell.
+
+-
+The app uses `csp: createCspPolicy(...)`, not `nonce`. Under enforced
+Trusted Types, its `trusted-types` directive lists `nifra-ppr`,
+beside any policy the UI framework creates (Svelte's is `svelte-trusted-html`,
+Vue's `vue`). Solid's client renders new DOM from plain strings under no policy,
+so a Solid app cannot enforce Trusted Types.
+
+### What each request gets
+
+Request
+Response
+
+A browser's first load
+The shell at once, each hole's fallback in place, then each hole as it settles
+
+A client navigation
+The shell data, then each hole as a streamed value; leaving cancels the rest
+
+A hover prefetch
+The shell data only; no hole loader starts
+
+A listed bot (`blockingFor`), a draft, or a route whose shell is unchecked
+or at its build limit
+
+The whole page, every hole rendered in place
+
+Once the shell store is full, a page whose shell key has had fewer requests than
+`shellAfterRequests` (default 2)
+
+The whole page streamed, each hole as it settles; no shell is built
+
+A hole cannot redirect or set a status: the shell's status and headers are already sent, so a
+hole whose loader returns or throws a redirect or a status renders its error state. A page
+cache such as `withISR` never stores the route's response, however it rendered.
+
+Before a hole's HTML is framed, the server checks the markup a component may have inserted
+unescaped (`dangerouslySetInnerHTML`, `{@html}`,
+`v-html`): no `script`, `iframe`, `object`,
+`embed`, `style`, `link`, `meta`,
+`base` or `template` element, no `on*` handler or
+`srcdoc`, and no `javascript:`, `vbscript:` or
+`data:` URL. A hole that fails it renders its error state, and the failure is
+logged with the route and hole names only. The check costs about 20 us per KB of hole HTML.
+`holeHtmlValidation: "development"` skips it in production for per-visitor holes;
+set that only when the app's CSP already blocks inline scripts and handlers, since without
+the check only the CSP stops unescaped markup from running as script. Shared holes and
+server components are always checked.
+
+A shell older than `revalidate` is served while one rebuild runs; a failing
+rebuild keeps the old one for up to ten times `revalidate`, at most a day. A shell
+loader's `notFound()` is remembered for 60 seconds. A shell or shared hole build
+that runs past `maxHoleTimeoutMs` fails every request waiting on it and keeps
+nothing it returns later; until its loader does end, it still counts against the route's
+`shellBuildConcurrency`.
+
+### Shared holes
+
+A part that is the same for every visitor but changes faster than the shell, such as a price
+or a stock level, is a `shared` hole. Its loader gets the shell's context, never
+the request, so a hole that should have been per visitor shows generic content, never one
+visitor's data to another. It is built once per route, params, locale and variations, and
+kept on its own `revalidate` (required, in seconds) and
+`revalidateTags`, apart from the shell.
+
+```tsx
+// doc-check: skip - an excerpt of the React page above, beside its cart hole.
+const price = {
+  name: "price",
+  mode: "shared", // the same for every visitor: built once, cached on its own
+  render: (data: { readonly amount: string }) => <p>{data.amount}</p>,
+  fallback: <p>Loading the price</p>,
+} as const
+export const boundaries = [cart, price]
+```
+
+```ts
+import { t } from "@nifrajs/schema"
+import type { ShellCtx } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
+
+const prices: Readonly<Record<string, string>> = { "1": "$12.00", "2": "$9.50" }
+
+export const boundaryLoaders = {
+  // Inline, with revalidate: the build checks this loader with the shell, so its frame is stored.
+  price: {
+    load: async ({ params }: ShellCtx) => ({ amount: prices[params.id ?? ""] ?? "-" }),
+    output: t.object({ amount: t.string() }),
+    revalidate: 10,
+    revalidateTags: ({ params }) => [`price:${params.id}`],
+  },
+} satisfies Route.BoundaryLoaders
+```
+
+-
+A frame this process holds goes out with the shell, in its first write. On a miss the
+visitor waits up to the hole's `timeout`, then gets the error slot while the
+build finishes for the next visitor.
+
+-
+An older frame is served while one rebuild runs. A failed build is never stored: the old
+frame stays for up to ten times `revalidate`, at most a day.
+
+-
+Builds count against the route's `shellBuildConcurrency`; past it, a missing
+frame is built anyway as hole work under `maxHoleWork`, and stored.
+
+-
+`compileShells` bundles each shared loader with the shell and refuses the route
+if it reaches a module that reads the visitor. It finds an entry written inline in
+`boundaryLoaders` with `revalidate`; any other shared hole loads for
+every visitor and warns once in development.
+
+- A draft loads it fresh and never reads or fills the cache.
+
+### When the page reloads
+
+After an action posted from the page, and when a live key its holes read changes (
+`createWebApp({ live })`), the router reloads the page on screen. A page
+the partially prerendered document filled keeps its holes where they are: each hole's new
+HTML, with props for an interactive one, goes into its host in place.
+
+-
+An interactive hole's own root renders the new props and keeps its state. A Solid root gets
+object props through a store, so a component that reads them in JSX updates; Svelte keeps
+the root while the render picks the same component.
+
+-
+The old content stays until the new arrives. A hole whose reload fails shows its error
+slot, never content from before the action. A reload overtaken by a newer one is dropped,
+and leaving the page aborts its hole loaders on the server.
+
+-
+After a client navigation the holes render as streamed boundaries, and reload as they do.
+
+A hole loader declares its live keys with `ctx.live(...)`, as a page loader does.
+A change reloads only the holes whose keys changed; the live load keeps the rest. The page's
+grant comes after its holes, in one trailing frame of the reload, and holds each hole that
+loaded: a hole that failed or timed out is not watched until it loads again. The shell and
+the first document carry no grant. A shared hole's keys are kept with its stored entry, and
+the entry answers the reload until it is dropped, so publish a shared hole's key together
+with a purge of its tag.
+
+```ts
+// doc-check: skip - an excerpt of a backend half, on an app created with `live`.
+export const boundaryLoaders = {
+  cart: {
+    load: async ({ api, params, live }: BoundaryRequestCtx) => {
+      live(`cart:${params.id}`)
+      return api.cart.get({ id: params.id })
+    },
+    output: t.object({ count: t.number() }),
+  },
+  price: {
+    // Kept with the stored entry: publish this key with a purge of the price tag.
+    load: async ({ params, live }: SharedHoleCtx) => {
+      live(`price:${params.id}`)
+      return { amount: await priceOf(params.id) }
+    },
+    output: t.object({ amount: t.string() }),
+    revalidate: 10,
+    revalidateTags: ({ params }) => [`price:${params.id}`],
+  },
+} satisfies Route.BoundaryLoaders
+```
+
+### Server components in holes
+
+A `dynamic` hole can show a server component: `serverHole(Basket)`, from
+`@nifrajs/web/server-components/hole`, is its `render`. The hole's loader
+returns the component's input; the component authorizes, loads and renders on the server for
+each request. The browser gets its HTML and the code of its client islands, never its view or
+anything its loader returned beyond its props. Like every server component, it needs the
+coordinated compiler (`buildServerComponents`).
+
+```tsx
+// doc-check: skip - excerpts of a component file, a page, its backend half and both entries.
+// Basket.component.server.tsx
+export const Basket = defineServerComponent({
+  input: t.object({ id: t.string() }),
+  props: t.object({ title: t.string(), count: t.number() }),
+  authorize: ({ request }) => requireVisitor(request),
+  load: async ({ request }, input) => basketOf(request, input.id),
+  view: ({ props }) => (
+    <section>
+      <h2>{props.title}</h2>
+      <AddButton count={props.count} /> {/* a "use client" island */}
+    </section>
+  ),
+})
+
+// routes/tea/[id].tsx
+const basket = { name: "basket", mode: "dynamic", render: serverHole(Basket) } as const
+export const boundaries = [cart, basket]
+
+// routes/tea/[id].backend.ts: the hole's loader returns the component's input
+export const boundaryLoaders = {
+  basket: {
+    load: ({ params }: BoundaryRequestCtx) => ({ id: params.id ?? "" }),
+    output: t.object({ id: t.string() }),
+  },
+} satisfies Route.BoundaryLoaders
+
+// The server entry: the components each route's holes may show.
+createServerComponents({ build, adapter, owners: {}, holes: { "tea/[id]": { components: [Basket] } } })
+
+// The client entry, before the router mounts.
+holeComponents(reactComponentClient())
+```
+
+-
+List each route's hole components in `createServerComponents({ holes })`.
+A route that shows a server component the list leaves out fails, and a route either owns
+server components or shows them in holes, never both.
+
+-
+The hole is not interactive. Its loader declares an `output` like any hole's: its
+value reaches the browser as the component's input.
+
+-
+The component reads the visitor's request, under the hole's timeout and admission. It cannot
+set a cookie or a header, since the shell sent them already: a component that tries shows
+the error slot, as does an input or authorization it refuses.
+
+-
+Call `holeComponents` in the client entry before the router mounts, with the
+adapter's component client, such as `reactComponentClient()` or
+`vueComponentClient({ islands })`. Without it the hole shows its error
+slot.
+
+-
+The hole is a host on every load: a client navigation mounts it from its fill, and a
+crawler's blocking render has its HTML in the host. A reload puts the new HTML in and mounts
+its islands afresh, so they do not keep their state.
+
+### Across processes
+
+Each process keeps its own shells and shared frames. Give `partialPrerendering` a
+`store` the processes share, such as Workers KV, and a process that has not built
+an entry reads it from there. Every entry is signed with `storeSecret` over its key,
+deployment and contents, so a store other services can write cannot hand visitors a page this
+app did not build; one that fails the check is a miss. Entries are kept apart per deployment:
+the client build, each route's checked shell code and the optional `deployment`
+name all go into the key. A route whose tags the store cannot drop keeps its entries in the
+process, with one warning. A process reads an entry it holds from the store again once
+`sharedRecheckMs` (default 1000) has passed, so a purge made on another process
+reaches it within that time; a store that does not answer within `holeTimeoutMs`
+counts as a miss.
+
+```ts
+// doc-check: skip - a Worker's partialPrerendering call, with the server snippet's records.
+import { KVCacheStore } from "@nifrajs/web"
+
+partialPrerendering({
+  shellChecks,
+  store: new KVCacheStore(env.SHELLS),
+  storeSecret: env.PPR_STORE_SECRET, // at least 32 characters, the same in every process
+  deployment: env.CF_VERSION_METADATA.id,
+})
+```
+
+### Runtimes
+
+- Bun and Node serve it as they serve any nifra app.
+
+-
+Deno serves it through `@nifrajs/deno`; a hang-up aborts the holes still
+running.
+
+-
+On Cloudflare Workers, the shell store defaults to 8 MB and the cancel beacon is off, since
+it would reach another isolate: a hole the visitor left stops at its deadline. Rebuilds and
+store writes run through `waitUntil`. Workers compress responses themselves, so
+`compression()` leaves them alone there. A shell that imports
+`cloudflare:workers` fails its check: that module hands any code the Worker's
+`env`.
+
+```ts
+// doc-check: skip - continues the server snippet above (`app`) on Deno.
+import { serve } from "@nifrajs/deno"
+
+await serve(app, { port: 8000 })
+```
+
+### Without JavaScript
+
+A hole's HTML arrives as inert data that the inline runtime inserts, so a browser with
+scripts off sees the shell and each hole's fallback, never the hole. Nothing in a single
+streamed response can fill a hole without script. Listed bots get the whole page instead. If
+a route's per-visitor part must work without JavaScript, do not partially prerender it. In
+development, a hole whose fallback renders empty warns once per route.
+
+### Behind a proxy
+
+-
+The stream must reach the browser as it is written. Responses carry
+`X-Accel-Buffering: no`, which nginx honors; turn response buffering off for
+other proxies.
+
+-
+Compression in front of the app must flush after every write, or the holes arrive with the
+last one. `compression()` from `@nifrajs/middleware` does.
+
+-
+Responses are `Cache-Control: private, no-store`: the holes are per visitor. The
+shell is cached in the server process, keyed by deployment, route, locale, path and
+declared variations.
+
+-
+Leaving a page posts a cancel beacon to `/__nifra/ppr/cancel`; forward it.
+
+-
+Set `origin`: the shell and its `meta` never read the Host header.
+
+-
+A proxy's read timeout must exceed the response deadline: the largest hole timeout plus
+one second, plus `writeGraceMs` (5 s) for a slow reader.
+
+### Connection limits are yours to set
+
+Each document holds its connection open until its slowest hole ends. nifra bounds the work
+behind those connections: `maxHoleWork` responses with hole loaders running per
+process; a loader that ignores its abort stops being admitted; a response whose client stops
+reading sends its later holes as errors once 1 MB is unsent, and the slowest readers are cut
+off when the process's unsent bytes pass 64 MB. It does not bound the number of open
+sockets. Set a connection limit at the proxy or load balancer, or
+in the runtime where it offers one (Node's `server.maxConnections`).
+
+### Limits and defaults
+
+Every number above is a default in `PPR_DEFAULTS`, overridden per app through
+`options`; contradicting limits throw at startup.
+
+```ts
+// doc-check: skip - an excerpt of the server snippet's partialPrerendering call.
+partialPrerendering({
+  shellChecks,
+  options: { holeTimeoutMs: 3_000, maxHoleWork: 256, holeHtmlValidation: "always" },
+})
+```
+
+### Invalidation and metrics
+
+`pprShells(app)` is the app's shell cache. Give it to
+`createInvalidator` as a data cache, so a purge by tag also drops the shells and
+shared hole frames built from the purged data; a shell or shared hole build already running
+when the purge lands is not kept.
+
+A `revalidateTags` function on the route or on a shared hole is given the shell's
+URL, not the visitor's: the configured `origin` (`http://shell.invalid`
+without one), the path and the declared variations, and no other query. Tags are read once
+per build and kept with the entry, so they can only follow what keys it.
+
+```ts
+// doc-check: skip - continues the server snippet above (`app`) with an app-owned `store`.
+import { createInvalidator } from "@nifrajs/web/cdn"
+import { pprShells } from "@nifrajs/web/ppr"
+
+const shells = pprShells(app)
+const { invalidate } = createInvalidator({ store, origin: "https://shop.example", dataCaches: [shells] })
+
+await invalidate({ tags: ["catalog"] }) // shells listing "catalog" are rebuilt on their next request
+console.log(shells.stats()) // admitted, denied and shed holes, aborted slow readers, unsent bytes
+```
 
 ## Nifra security posture vs Hono, Fastify, Express, Elysia
 
@@ -18994,7 +19621,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

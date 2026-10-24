@@ -496,6 +496,8 @@ interface ProbeRoute {
   readonly file: string
   readonly fns: readonly RouteFn[]
   readonly schemas: readonly OutputExport[]
+  /** Holes whose `boundaryLoaders` entry's `load` return type to read. */
+  readonly holes?: readonly string[]
 }
 
 /** Shapes keyed `<file>#<export>`: a route function's return type, or a schema's output type. */
@@ -532,6 +534,13 @@ function probeSource(routes: readonly ProbeRoute[]): {
       names.set(name, `${route.file}#${schema}`)
       lines.push(`declare const ${name}: __NifraDeclared<typeof __nifra_m${i}, "${schema}">`)
     }
+    route.holes?.forEach((hole, j) => {
+      const name = `__nifra_h${i}_${j}`
+      names.set(name, `${route.file}#boundaryLoaders.${hole}`)
+      lines.push(
+        `declare const ${name}: __NifraReturned<(typeof __nifra_m${i})["boundaryLoaders"][${JSON.stringify(hole)}], "load">`,
+      )
+    })
   })
   return { text: `${lines.join("\n")}\n`, names }
 }
@@ -1145,6 +1154,25 @@ export async function planOutputSchemas(
   }
   entries.sort((a, b) => codeUnitOrder(a.file, b.file) || a.line - b.line)
   return { entries, edits, warnings }
+}
+
+/**
+ * What hole `hole`'s loader in the backend half `file` returns, with `text` read as that file: the
+ * data a fix that writes the loader drafts its output schema from.
+ */
+export async function holeLoaderShape(
+  root: string,
+  file: string,
+  hole: string,
+  text: string,
+): Promise<{ readonly shape?: Shape; readonly warnings: readonly string[] }> {
+  const { shapes, warnings } = await readShapes(
+    root,
+    [{ file, fns: [], schemas: [], holes: [hole] }],
+    new Map([[file, text]]),
+  )
+  const shape = shapes.get(`${file}#boundaryLoaders.${hole}`)
+  return shape === undefined ? { warnings } : { shape: dataShape(shape), warnings }
 }
 
 // ---- entry points ------------------------------------------------------------------------------

@@ -10,7 +10,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 
 ## Public entrypoints
 
-`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/keep-alive` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/server-components` · `@nifrajs/web-vue/server-components/client` · `@nifrajs/web-vue/server-components/outlet` · `@nifrajs/web-vue/svg`
+`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/keep-alive` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/ppr` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/server-components` · `@nifrajs/web-vue/server-components/client` · `@nifrajs/web-vue/server-components/outlet` · `@nifrajs/web-vue/svg`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>` · from `@nifrajs/web-vue/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-vue/fetcher`
 
-_…and 34 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 37 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

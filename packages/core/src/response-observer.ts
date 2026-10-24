@@ -5,6 +5,12 @@ import {
 } from "./server/response-observer-runtime.ts"
 import type { AnyServer } from "./server/server.ts"
 
+export {
+  markRepeatedPrefix,
+  type RepeatedPrefix,
+  repeatedPrefixOf,
+} from "./server/repeated-prefix.ts"
+
 export type {
   NodeResponseBodyHook,
   ResponseBodyHook,

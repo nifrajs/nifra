@@ -6,8 +6,14 @@ import type { RenderAdapter } from "@nifrajs/web"
  * `@nifrajs/web-preact/client`. Preact uses `h()` render functions, so no JSX/build plugin is needed
  * (contrast `@nifrajs/web-solid`'s Babel plugin).
  */
+import type { ComponentChildren } from "preact"
 import { compose } from "./compose.ts"
-import { preactRenderToStream, preactRenderToString } from "./preact-render.ts"
+import { idScope } from "./id-scope.ts"
+import {
+  type PreactRenderToString,
+  preactRenderToStream,
+  preactRenderToString,
+} from "./preact-render.ts"
 import { slottedChain } from "./slot.ts"
 
 const ISLAND_RUNTIME_OPEN = "<script>(function(){"
@@ -65,6 +71,12 @@ function renderUnlessSuspended(
   }
 }
 
+/** `render` with the string renderer: synchronous once it is loaded, after its lazy load before. */
+function withStringRenderer<T>(render: (renderer: PreactRenderToString) => T): T | Promise<T> {
+  const loaded = preactRenderToString()
+  return loaded instanceof Promise ? loaded.then(render) : render(loaded)
+}
+
 /** The Preact server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const preactAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). The sync
@@ -79,11 +91,15 @@ export const preactAdapter: RenderAdapter = {
       options?.slots === undefined ? chain : slottedChain(chain, options.slots),
       props,
     )
-    const loaded = preactRenderToString()
-    if (loaded instanceof Promise) {
-      return loaded.then(({ renderToString }) => renderUnlessSuspended(renderToString, tree))
-    }
-    return renderUnlessSuspended(loaded.renderToString, tree)
+    return withStringRenderer(({ renderToString }) => renderUnlessSuspended(renderToString, tree))
+  },
+  // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
+  // with the page's, which the client root it hydrates into repeats.
+  async renderFragment(ui, options) {
+    return withStringRenderer(({ renderToString }) =>
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Preact output; the seam erases it to unknown.
+      renderToString(idScope(ui() as ComponentChildren, options.idPrefix)),
+    )
   },
   async renderToStream(chain, props, options) {
     // `renderToReadableStream` yields a Web ReadableStream<Uint8Array>; <Suspense> boundaries

@@ -11,11 +11,22 @@
 import { parsePageData } from "../../packages/web/src/internal/revive-dates.ts"
 import { shareData } from "../../packages/web/src/internal/share-data.ts"
 
-type Kind = "unchanged" | "one row" | "every row" | "prepend"
-const KINDS: readonly Kind[] = ["unchanged", "one row", "every row", "prepend"]
+type Kind = "unchanged" | "one row" | "every row" | "prepend" | "rotating ids"
+const KINDS: readonly Kind[] = ["unchanged", "one row", "every row", "prepend", "rotating ids"]
 
 // A list page's response text, as the server writes it: rows with a nested owner and a dated field.
-const page = (rows: number, kind: Kind | "base"): string => {
+const page = (rows: number, kind: Kind | "base" | "small"): string => {
+  // Minimal rows make indexing overhead visible instead of hiding it behind Date revival.
+  if (kind === "small" || kind === "rotating ids")
+    return JSON.stringify({
+      v: 1,
+      data: {
+        items: Array.from({ length: rows }, (_, i) => ({
+          id: i + (kind === "rotating ids" ? rows : 0),
+          label: `row ${i}`,
+        })),
+      },
+    })
   const items = []
   const start = kind === "prepend" ? -1 : 0
   for (let i = start; i < rows + start; i++)
@@ -63,14 +74,14 @@ const kept = (prev: unknown, next: unknown): string => {
 export function runCost(log: (line: string) => void, rounds = 7): void {
   log("rows (KiB) | reload | today ms | sharing ms | sharing / today | rows kept")
   for (const rows of [1000, 5000, 50000]) {
-    const shownText = page(rows, "base")
-    const shown = parsePageData(shownText)
     const budget = rows >= 50000 ? 150 : 60
     for (const kind of KINDS) {
+      const shownText = page(rows, kind === "rotating ids" ? "small" : "base")
+      const shown = parsePageData(shownText)
       // A new string with the same content, as a second response is.
       const text = kind === "unchanged" ? `${page(rows, "base")} `.trimEnd() : page(rows, kind)
       const sharing = (): unknown =>
-        text === shownText ? shown : shareData(shown, parsePageData(text))
+        text === shownText ? shown : shareData(shown, parsePageData(text), true)
       const today: number[] = []
       const now: number[] = []
       for (let round = 0; round < rounds; round++) {

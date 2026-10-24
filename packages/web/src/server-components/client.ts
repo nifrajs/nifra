@@ -1,3 +1,4 @@
+import { setHoleComponents } from "../internal/hole-runtime.ts"
 import { ServerComponentError } from "./error.ts"
 import { readComponentFrames } from "./frames.ts"
 import {
@@ -9,7 +10,7 @@ import {
 import { registerComponentController, unregisterComponentController } from "./registry.ts"
 import { componentResponseFailure } from "./response.ts"
 import { BoundedComponentTasks } from "./scheduler.ts"
-import { parseComponentState } from "./state.ts"
+import { parseComponentRecord, parseComponentState } from "./state.ts"
 import { readComponentBytes } from "./stream.ts"
 import type { ComponentKey, ComponentRecord, ComponentState, ServerComponent } from "./types.ts"
 import { componentInputKey, componentValue } from "./value.ts"
@@ -705,6 +706,15 @@ export function resolveComponentRecord<Input>(
   return matches[0]!
 }
 
+/**
+ * Experimental: how the client islands inside partially prerendered holes that show server
+ * components mount, as the adapter's component client, such as `vueComponentClient({ islands })`;
+ * `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a
+ * hole shows its error slot.
+ */
+export function holeComponents(client: ComponentClientAdapter | undefined): void {
+  setHoleComponents(client === undefined ? undefined : { client, record: parseComponentRecord })
+}
 export { invalidateComponentScope } from "./registry.ts"
 export { bindComponentRouter, refreshAfterComponentMutation } from "./router-integration.ts"
 export { parseComponentState } from "./state.ts"

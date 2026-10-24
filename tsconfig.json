@@ -120,6 +120,18 @@
     // options (no JSX) do not apply to it.
     "examples/launch-video",
     "bench/ssr",
+    // React routes and browser-side scripts, each checked by its own project (scripts/typecheck.ts).
+    "bench/ppr",
+    "packages/web/test/fixtures/ppr/app/routes",
+    "packages/web/test/fixtures/ppr/app-browser.ts",
+    "packages/web/test/fixtures/ppr/runtime-browser.ts",
+    "packages/web/test/fixtures/ppr/transport-cost.ts",
+    "packages/web/test/fixtures/ppr/refresh-app/routes",
+    "packages/web/test/fixtures/ppr/refresh-browser.ts",
+    "packages/web/test/fixtures/ppr/components",
+    "packages/web/test/fixtures/ppr/components-browser.ts",
+    // Run by Deno only, and it imports packages/deno, which uses the `Deno` global.
+    "packages/web/test/fixtures/ppr/app/deno-server.ts",
     "bench/keep-alive",
     "bench/http/serve-deno.ts",
     "bench/http/serve-deno-static-headers.ts",

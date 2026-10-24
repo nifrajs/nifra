@@ -20,9 +20,11 @@ import {
 import { BoundedComponentTasks, componentAbort } from "./scheduler.ts"
 import { componentValue } from "./schema.ts"
 import type {
+  ComponentHoles,
   ComponentInstance,
   ComponentOwner,
   ComponentRecord,
+  ComponentRender,
   ServerComponent,
   ServerComponentContext,
   ServerComponentHandle,
@@ -42,6 +44,11 @@ export interface ServerComponentsOptions {
   readonly build: string
   readonly adapter: ServerComponentRenderAdapter
   readonly owners: Readonly<Record<string, ComponentOwner>>
+  /**
+   * Experimental: route id to the server components its partially prerendered holes may show, each
+   * through `serverHole`. A route is an owner or hosts holes, never both.
+   */
+  readonly holes?: Readonly<Record<string, ComponentHoles>>
   readonly capabilities?: readonly CapabilityDefinition[]
   readonly assets?: readonly string[]
 }
@@ -103,20 +110,19 @@ export function createServerComponents(options: ServerComponentsOptions): Server
   )
   if (capabilities.size !== (options.capabilities?.length ?? 0))
     throw new ServerComponentError("component_contract")
-  for (const [routeId, owner] of Object.entries(options.owners)) {
-    if (
-      typeof owner.instances !== "function" ||
-      (owner.scope !== "anonymous" && typeof owner.scope !== "function")
-    )
-      throw new ServerComponentError("component_contract")
+  /** A route's component allowlist, by reference, each within the capabilities the route grants. */
+  const allowlist = (
+    list: readonly ServerComponentHandle[],
+    granted: readonly string[] = [],
+  ): ReadonlyMap<string, ServerComponentHandle> => {
     const components = new Map<string, ServerComponentHandle>()
-    const allowed = new Set(owner.capabilities ?? [])
+    const allowed = new Set(granted)
     for (const capability of allowed) {
       const declared = capabilities.get(capability)
       if (declared === undefined || (declared.zone === "domain" && declared.access !== "read"))
         throw new ServerComponentError("component_contract")
     }
-    for (const component of owner.components) {
+    for (const component of list) {
       if (
         !isServerComponent(component) ||
         component.reference === undefined ||
@@ -128,11 +134,106 @@ export function createServerComponents(options: ServerComponentsOptions): Server
       if (serverComponentCapabilities(component).some((capability) => !allowed.has(capability)))
         throw new ServerComponentError("component_contract")
     }
-    owners.set(routeId, { owner, components })
+    return components
+  }
+  for (const [routeId, owner] of Object.entries(options.owners)) {
+    if (
+      typeof owner.instances !== "function" ||
+      (owner.scope !== "anonymous" && typeof owner.scope !== "function")
+    )
+      throw new ServerComponentError("component_contract")
+    owners.set(routeId, { owner, components: allowlist(owner.components, owner.capabilities) })
+  }
+  const holes = new Map<
+    string,
+    { capabilities: readonly string[]; components: ReadonlyMap<string, ServerComponentHandle> }
+  >()
+  for (const [routeId, entry] of Object.entries(options.holes ?? {})) {
+    // An owner route renders whole, so its holes never run.
+    if (owners.has(routeId) || !Array.isArray(entry.components))
+      throw new ServerComponentError("component_contract")
+    holes.set(routeId, {
+      capabilities: entry.capabilities ?? [],
+      components: allowlist(entry.components, entry.capabilities),
+    })
+  }
+  /** A rendered instance as a record: its range HTML checked, its payload and island props public. */
+  const recordOf = (
+    instance: {
+      readonly id: string
+      readonly reference: string
+      readonly key: ComponentRecord["key"]
+      readonly parent?: string | undefined
+      readonly input: ComponentRecord["input"]
+    },
+    rendered: ComponentRender,
+  ): ComponentRecord => {
+    const record: ComponentRecord = {
+      instance: instance.id,
+      reference: instance.reference,
+      key: instance.key,
+      parent: instance.parent ?? null,
+      input: instance.input,
+      html: componentRangeHTML(rendered.html, assets),
+    }
+    if (rendered.payload !== undefined)
+      Object.assign(record, {
+        payload: componentValue(rendered.payload, COMPONENT_LIMITS.outputBytes),
+      })
+    if (rendered.islands !== undefined)
+      Object.assign(record, {
+        islands: rendered.islands.map((island) => ({
+          ...island,
+          props: componentValue(island.props),
+        })),
+      })
+    return record
   }
   return {
     owns: (routeId) => owners.has(routeId),
-    capabilities: (routeId) => owners.get(routeId)?.owner.capabilities ?? [],
+    capabilities: (routeId) =>
+      owners.get(routeId)?.owner.capabilities ?? holes.get(routeId)?.capabilities ?? [],
+    hosts: (routeId) => holes.has(routeId),
+    async hole(routeId, component, key, input, context) {
+      const reference = isServerComponent(component) ? component.reference : undefined
+      const handle =
+        reference === undefined ? undefined : holes.get(routeId)?.components.get(reference)
+      if (
+        reference === undefined ||
+        handle === undefined ||
+        handle !== component ||
+        !componentKey(key)
+      )
+        throw new ServerComponentError("component_contract")
+      const signal = AbortSignal.any([
+        context.signal,
+        AbortSignal.timeout(COMPONENT_LIMITS.executionMs),
+      ])
+      const ctx: ServerComponentContext = Object.create(context, {
+        signal: { value: signal, enumerable: true },
+      })
+      const value = componentValue(input, COMPONENT_LIMITS.inputBytes)
+      const id = await serverComponentIdentity(routeId, handle, key, null)
+      return admission.run(signal, async () => {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The route's hole allowlist identifies this handle; authorization validates the input before any callback runs.
+        const authorized = await authorizeServerComponent(handle as ServerComponent, value, ctx)
+        const prepared = await prepareAuthorizedServerComponent(authorized)
+        const rendered = await options.adapter.render(prepared.view, prepared.props, {
+          reference,
+          instance: id,
+          signal,
+          children: [],
+        })
+        if (signal.aborted) throw componentAbort(signal)
+        if (typeof rendered.html !== "string") throw new ServerComponentError("component_contract")
+        if ((rendered.islands?.length ?? 0) > COMPONENT_LIMITS.instances)
+          throw new ServerComponentError("component_limit", 413)
+        const record = recordOf({ id, reference, key, input: value }, rendered)
+        if (encoder.encode(JSON.stringify(record)).length > COMPONENT_LIMITS.outputBytes)
+          throw new ServerComponentError("component_limit", 413)
+        return record
+      })
+    },
     classify(request, routeId) {
       const selection = readComponentRequest(request)
       if (selection === undefined) return undefined
@@ -275,29 +376,10 @@ export function createServerComponents(options: ServerComponentsOptions): Server
               if (signal.aborted) throw componentAbort(signal)
               if (typeof rendered.html !== "string")
                 throw new ServerComponentError("component_contract")
-              const html = componentRangeHTML(rendered.html, assets)
+              const record = recordOf({ ...instance, id }, rendered)
               count += rendered.islands?.length ?? 0
               if (count > COMPONENT_LIMITS.instances)
                 throw new ServerComponentError("component_limit", 413)
-              const record: ComponentRecord = {
-                instance: id,
-                reference: instance.reference,
-                key: instance.key,
-                parent: instance.parent ?? null,
-                input: instance.input,
-                html,
-              }
-              if (rendered.payload !== undefined)
-                Object.assign(record, {
-                  payload: componentValue(rendered.payload, COMPONENT_LIMITS.outputBytes),
-                })
-              if (rendered.islands !== undefined)
-                Object.assign(record, {
-                  islands: rendered.islands.map((island) => ({
-                    ...island,
-                    props: componentValue(island.props),
-                  })),
-                })
               const size = encoder.encode(JSON.stringify(record)).length
               bytes += size
               if (

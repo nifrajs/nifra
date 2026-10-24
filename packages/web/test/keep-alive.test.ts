@@ -19,6 +19,7 @@ import type { MatchChain } from "../src/render-seam.ts"
 import {
   type ClientRouter,
   createClientRouter,
+  type DataText,
   type Fetcher,
   type FetchRouteData,
   type RouteMatch,
@@ -373,13 +374,13 @@ describe("keepAliveClient", () => {
       boundaries: { photo },
     })
     const requests: string[] = []
-    let respond = (path: string): unknown => ({ v: 1, data: { path } })
+    let respond = (path: string, _read?: DataText): unknown => ({ v: 1, data: { path } })
     const once = async (revalidate: boolean, check: (client: Setup["client"]) => Promise<void>) => {
       const { router, push, fake, client } = setup(state("list", "/list/1"), {
         hooks: { list: { keepAlive: { revalidate } } },
-        fetchData: async (path) => {
+        fetchData: async (path, _match, _signal, _navigation, _purpose, _hosts, read) => {
           requests.push(path)
-          return respond(path)
+          return respond(path, read)
         },
       })
       push(modal)
@@ -409,6 +410,11 @@ describe("keepAliveClient", () => {
       expect(await client.fetchData("/photo/3", match)).toBe(photo.data)
       respond = () => ({ v: 1, data: null, status: 404 })
       expect(await client.fetchData("/photo/3", match)).toEqual({ v: 1, data: null, status: 404 })
+      respond = (_path, read) => read
+      const read: DataText = { previous: '{"tags":[1]}' }
+      expect(
+        await client.fetchData("/photo/3", match, undefined, undefined, undefined, undefined, read),
+      ).toBe(read)
       respond = () => {
         throw new Error("offline")
       }
@@ -418,7 +424,7 @@ describe("keepAliveClient", () => {
         live: undefined,
       })
     })
-    expect(requests).toEqual(["/photo/3", "/photo/3", "/photo/3", "/photo/3"])
+    expect(requests).toEqual(["/photo/3", "/photo/3", "/photo/3", "/photo/3", "/photo/3"])
   })
 
   test("a modal restore that the router does not answer on the page ends there", async () => {
@@ -544,8 +550,12 @@ describe("keepAliveClient", () => {
       boundaries: { modal: { name: "modal", mode: "static", status: "ready", data: { x: 1 } } },
     })
     let respond: () => unknown = () => ({})
+    let seen: readonly unknown[] = []
     const { router, push, fake, client } = setup(kept, {
-      fetchData: async () => respond(),
+      fetchData: async (...args) => {
+        seen = args
+        return respond()
+      },
     })
     const match: RouteMatch = { routeId: "list", params: {} }
     push(state("detail", "/detail"))
@@ -591,6 +601,14 @@ describe("keepAliveClient", () => {
     // Another path goes straight to the transport.
     respond = () => "other"
     expect(await client.fetchData("/detail", match)).toBe("other")
+    // The transport gets every argument, and its answer for a response text the path already shows
+    // (the `read` object itself) comes back unshared.
+    const read: DataText = { previous: "{}" }
+    respond = () => read
+    expect(
+      await client.fetchData("/list/1", match, undefined, undefined, "prefetch", ["h"], read),
+    ).toBe(read)
+    expect(seen.slice(4)).toEqual(["prefetch", ["h"], read])
     release()
     await restoring
   })

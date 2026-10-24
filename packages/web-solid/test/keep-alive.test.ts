@@ -39,7 +39,8 @@ test("a keep-alive app's document renders the page inside the slot wrappers its 
     params: {},
     search: { q: "s" },
   }
-  const html = solidAdapter.renderToString?.([layout("outer"), Page], props, { slots: [1] }) ?? ""
+  const html =
+    (await solidAdapter.renderToString?.([layout("outer"), Page], props, { slots: [1] })) ?? ""
   expect(textOf(html)).toContain("outer:l:undefined")
   expect(textOf(html)).toContain("page:d:true:s")
   expect([count(html, "data-nifra-entry"), count(html, "data-nifra-page")]).toEqual([1, 1])
@@ -47,7 +48,7 @@ test("a keep-alive app's document renders the page inside the slot wrappers its 
 
   const chain = [layout("outer"), layout("inner"), Page]
   const streamed = await new Response(
-    solidAdapter.renderToStream(chain, props, { slots: [0] }),
+    await solidAdapter.renderToStream(chain, props, { slots: [0] }),
   ).text()
   expect(textOf(streamed)).toContain("inner:m:undefined")
   expect(count(streamed, "data-nifra-entry")).toBe(1)

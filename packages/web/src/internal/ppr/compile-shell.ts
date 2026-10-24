@@ -1,0 +1,373 @@
+import { createRequire } from "node:module"
+import { join, resolve } from "node:path"
+import type * as TS from "typescript"
+import type { Manifest, RouteEntry } from "../../manifest.ts"
+import { type BunMetafileLike, fromBunMetafile } from "../../module-graph.ts"
+import { isTypeScriptCompiler } from "../typescript-api.ts"
+
+/**
+ * Which routes passed the shell check for one deployment. The server shares a shell only for a route
+ * listed here under its own deployment; anything else renders blocking (fail closed).
+ */
+export interface ShellCheckRecord {
+  readonly v: 1
+  readonly deployment: string
+  /** Route id to the sha256 of the checked shell bundle. */
+  readonly routes: Readonly<Record<string, string>>
+  /** Route id to the shared holes whose loaders were checked in that bundle: only these are stored. */
+  readonly sharedHoles?: Readonly<Record<string, readonly string[]>>
+}
+
+export class ShellCheckError extends Error {
+  override readonly name = "ShellCheckError"
+  constructor(
+    readonly routeId: string,
+    readonly chain: readonly string[],
+  ) {
+    super(
+      `[nifra/web] ppr: the shell of route "${routeId}" reaches request-scoped module "${chain.at(-1)}" through ${chain.join(" -> ")}. Move that read into a dynamic boundary's loader: a shared boundary's loader is part of the shell`,
+    )
+  }
+}
+
+export interface CompileShellsOptions {
+  readonly routesDir: string
+  readonly manifest: Manifest
+  /** The deployment the record is for: the server refuses a record made for another one. */
+  readonly deployment: string
+  /** True for a module (absolute path, `/` separators) whose code reads the visitor's request. */
+  readonly requestScoped: (moduleId: string) => boolean
+  /** Called for each route that fails; the route is left out of the record. Default: rethrow. */
+  readonly onFailure?: (routeId: string, error: unknown) => void
+  /** Bun plugins the server build uses for route files, such as `svelteBunPlugin("ssr")`. */
+  readonly plugins?: readonly import("bun").BunPlugin[]
+}
+
+const NAMESPACE = "nifra-ppr-shell"
+
+const toPosix = (path: string): string => path.replaceAll("\\", "/")
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/**
+ * nifra's own modules that read the visitor's request from async context. Packages stay external in
+ * the shell bundle, so these are bundled in instead: the output graph then shows whether shell code
+ * calls them, not merely whether a module beside it imports them.
+ */
+const NIFRA_REQUEST_SCOPED: readonly string[] = ["@nifrajs/middleware/context-storage"]
+const NIFRA_REQUEST_SCOPED_FILTER = new RegExp(
+  `^(?:${NIFRA_REQUEST_SCOPED.map(escapeRegExp).join("|")})$`,
+)
+
+/** Hands any module the Worker's `env`, its secrets included, with no request in sight. */
+const PLATFORM_ENV = /^cloudflare:workers$/
+
+/** The import chain from `root` to the first request-scoped module it reaches, breadth first. */
+function requestScopedChain(
+  root: string,
+  next: ReadonlyMap<string, readonly string[]>,
+  scoped: ReadonlySet<string>,
+): string[] | undefined {
+  const parent = new Map<string, string | undefined>([[root, undefined]])
+  const queue = [root]
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const module = queue[cursor]
+    if (module === undefined) break
+    if (scoped.has(module)) {
+      const chain: string[] = []
+      for (let at: string | undefined = module; at !== undefined; at = parent.get(at))
+        chain.push(at)
+      return chain.reverse()
+    }
+    for (const child of next.get(module) ?? []) {
+      if (!parent.has(child)) {
+        parent.set(child, module)
+        queue.push(child)
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Bundle each route's shell (its page and layout modules, its backend `shellLoader`, and nothing else)
+ * and refuse it when the emitted code reaches a request-scoped module. A module counts only
+ * when its code reached the output, so an import only a hole loader uses is not a leak. Routes whose
+ * backend half has no `shellLoader` are skipped. Bun only.
+ */
+export async function compileShells(options: CompileShellsOptions): Promise<ShellCheckRecord> {
+  const dir = resolve(options.routesDir)
+  const routes: Record<string, string> = {}
+  const sharedHoles: Record<string, readonly string[]> = {}
+  const parser = typeScriptFor(dir)
+  for (const route of options.manifest.routes) {
+    if (route.backend === undefined) continue
+    try {
+      const checked = await compileShell(
+        dir,
+        options.manifest,
+        route,
+        route.backend,
+        options.requestScoped,
+        options.plugins ?? [],
+        parser,
+      )
+      if (checked === undefined) continue
+      routes[route.id] = checked.hash
+      if (checked.sharedHoles.length > 0) sharedHoles[route.id] = checked.sharedHoles
+    } catch (error) {
+      if (options.onFailure === undefined) throw error
+      options.onFailure(route.id, error)
+    }
+  }
+  return Object.keys(sharedHoles).length === 0
+    ? { v: 1, deployment: options.deployment, routes }
+    : { v: 1, deployment: options.deployment, routes, sharedHoles }
+}
+
+/** The app's TypeScript compiler, read only when a backend half has boundary loaders to sort. */
+function typeScriptFor(dir: string): () => typeof TS | undefined {
+  let loaded: typeof TS | undefined
+  let tried = false
+  return () => {
+    if (tried) return loaded
+    tried = true
+    let ts: unknown
+    try {
+      ts = createRequire(join(dir, "package.json"))("typescript")
+    } catch {
+      ts = undefined
+    }
+    if (isTypeScriptCompiler(ts)) loaded = ts
+    else {
+      console.warn(
+        "[nifra/web] ppr: no shared hole's loader is checked, so each loads for every visitor: finding them reads boundaryLoaders with the TypeScript compiler API, which the app's TypeScript does not have (TypeScript 7 ships none; install typescript@^6 as a dev dependency)",
+      )
+    }
+    return loaded
+  }
+}
+
+/** `node` without the `satisfies`, `as` and parentheses around it. */
+function unwrapped(ts: typeof TS, node: TS.Expression): TS.Expression {
+  let at = node
+  while (ts.isSatisfiesExpression(at) || ts.isAsExpression(at) || ts.isParenthesizedExpression(at))
+    at = at.expression
+  return at
+}
+
+/**
+ * The backend half with `boundaryLoaders` cut down to its shared entries, and their names. A shared
+ * entry is one written inline with `revalidate`, which only a shared boundary's entry may have; one the
+ * source does not spell out that way is left out, so its hole is not stored (fail closed). A per-visitor
+ * entry's loader may read the request, so it never joins the shell bundle.
+ */
+function sharedLoaders(
+  ts: typeof TS,
+  module: SourceModule,
+): { readonly source: string; readonly names: readonly string[] } | undefined {
+  const file = ts.createSourceFile(
+    module.path,
+    module.source,
+    ts.ScriptTarget.Latest,
+    true,
+    module.loader === "tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "boundaryLoaders")
+        continue
+      const initializer = declaration.initializer && unwrapped(ts, declaration.initializer)
+      if (initializer === undefined || !ts.isObjectLiteralExpression(initializer)) return undefined
+      const names: string[] = []
+      const kept: string[] = []
+      for (const property of initializer.properties) {
+        if (!ts.isPropertyAssignment(property)) continue
+        const { name } = property
+        if (!ts.isIdentifier(name) && !ts.isStringLiteral(name)) continue
+        const entry = unwrapped(ts, property.initializer)
+        if (!ts.isObjectLiteralExpression(entry)) continue
+        const shared = entry.properties.some(
+          (field) =>
+            field.name !== undefined &&
+            (ts.isIdentifier(field.name) || ts.isStringLiteral(field.name)) &&
+            field.name.text === "revalidate",
+        )
+        if (!shared) continue
+        names.push(name.text)
+        kept.push(module.source.slice(property.getStart(file), property.getEnd()))
+      }
+      if (names.length === 0) return undefined
+      const source = `${module.source.slice(0, initializer.getStart(file))}{ ${kept.join(", ")} }${module.source.slice(initializer.getEnd())}`
+      return { source, names }
+    }
+  }
+  return undefined
+}
+
+interface SourceModule {
+  readonly path: string
+  readonly loader: "ts" | "tsx"
+  readonly source: string
+  /** The names it exports, read from its source without running it. */
+  readonly exports: readonly string[]
+}
+
+async function readModule(dir: string, file: string): Promise<SourceModule> {
+  const path = toPosix(resolve(dir, file))
+  const loader = /\.[cm]?tsx$|\.jsx$/.test(path) ? "tsx" : "ts"
+  const source = await Bun.file(path).text()
+  return { path, loader, source, exports: new Bun.Transpiler({ loader }).scan(source).exports }
+}
+
+async function compileShell(
+  dir: string,
+  manifest: Manifest,
+  route: RouteEntry,
+  backend: string,
+  requestScoped: (moduleId: string) => boolean,
+  plugins: readonly import("bun").BunPlugin[],
+  parser: () => typeof TS | undefined,
+): Promise<{ readonly hash: string; readonly sharedHoles: readonly string[] } | undefined> {
+  const backendModule = await readModule(dir, backend)
+  if (!backendModule.exports.includes("shellLoader")) return undefined
+  const ts = backendModule.exports.includes("boundaryLoaders") ? parser() : undefined
+  const shared = ts === undefined ? undefined : sharedLoaders(ts, backendModule)
+  const kept = shared === undefined ? ["shellLoader"] : ["shellLoader", "boundaryLoaders"]
+  // A gate's loader runs for its redirect or refusal and its data never reaches the shell; any other
+  // layout loader reads the request for data the shell would show every visitor.
+  for (const id of route.layoutIds) {
+    const layoutBackend = manifest.layouts[id]?.backend
+    if (layoutBackend === undefined) continue
+    const names = (await readModule(dir, layoutBackend)).exports
+    if (names.includes("loader") && !names.includes("gate")) {
+      throw new Error(
+        `[nifra/web] ppr: route "${route.id}" has a shellLoader, but its layout "${id}" has a loader that is not a gate. Its output would be in a shell shared by every visitor; move that data into a dynamic boundary, or mark the layout \`gate\` if it loads only to redirect or refuse`,
+      )
+    }
+  }
+  const at = (file: string): string => JSON.stringify(toPosix(resolve(dir, file)))
+  // A page's and each layout's module whole: the shell runs `meta`, `handle` and `searchSchema` as
+  // well as the component, and an import only one of them uses must not escape the check.
+  const lines = [
+    `export { ${kept.join(", ")} } from ${at(backend)}`,
+    `export * as page from ${at(route.file)}`,
+  ]
+  route.layoutIds.forEach((id, index) => {
+    const layout = manifest.layouts[id]
+    if (layout !== undefined) lines.push(`export * as layout${index} from ${at(layout.file)}`)
+  })
+  const nifraScoped = new Set<string>()
+  const envImporters = new Set<string>()
+  const result = await Bun.build({
+    // Bun reads a `/` in an entry name as a directory, and route ids have them.
+    entrypoints: [`${NAMESPACE}:${encodeURIComponent(route.id)}`],
+    target: "bun",
+    packages: "external",
+    metafile: true,
+    throw: false,
+    plugins: [
+      // Ours first: its resolve and load hooks claim the entry and the backend half before theirs.
+      {
+        name: NAMESPACE,
+        setup(build) {
+          build.onResolve({ filter: new RegExp(`^${NAMESPACE}:`) }, (args) => ({
+            path: args.path,
+            namespace: NAMESPACE,
+          }))
+          build.onLoad({ filter: /.*/, namespace: NAMESPACE }, () => ({
+            loader: "ts",
+            contents: lines.join("\n"),
+          }))
+          build.onResolve({ filter: NIFRA_REQUEST_SCOPED_FILTER }, (args) => {
+            let path: string
+            try {
+              path = toPosix(Bun.resolveSync(args.path, args.resolveDir))
+            } catch {
+              // Not installed, so no shell code can call it.
+              return undefined
+            }
+            nifraScoped.add(path)
+            return { path }
+          })
+          build.onResolve({ filter: PLATFORM_ENV }, (args) => {
+            envImporters.add(toPosix(resolve(args.importer)))
+            return { path: args.path, external: true }
+          })
+          // The backend half's other exports are not shell code. A hole loader's `output: t.object()`
+          // is a call into a package, which the bundler must keep, and with it every import the
+          // hole uses. Eliminating them first scopes the check to `shellLoader` and the shared
+          // holes' loaders; their imports stay as bare imports, so a module with top-level effects
+          // still counts.
+          build.onLoad({ filter: new RegExp(`^${escapeRegExp(backendModule.path)}$`) }, () => ({
+            loader: "js",
+            contents: new Bun.Transpiler({
+              loader: backendModule.loader,
+              trimUnusedImports: true,
+              exports: {
+                eliminate: backendModule.exports.filter((name) => !kept.includes(name)),
+              },
+            }).transformSync(shared?.source ?? backendModule.source),
+          }))
+        },
+      },
+      ...plugins,
+    ],
+  })
+  if (!result.success) {
+    throw new AggregateError(
+      result.logs,
+      `[nifra/web] ppr: the shell of "${route.id}" failed to build`,
+    )
+  }
+  // biome-ignore lint/plugin/noChainedTypeAssertions: Bun returns the metafile when `metafile: true`; @types/bun does not name it yet, and fromBunMetafile fails closed on a missing one.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Bun returns the metafile when `metafile: true`; @types/bun does not name it yet, and fromBunMetafile fails closed on a missing one.
+  const meta = (result as unknown as { readonly metafile?: BunMetafileLike }).metafile
+  const graph = fromBunMetafile(meta)
+  const entry = Object.values(meta?.outputs ?? {}).find((output) =>
+    output.entryPoint?.startsWith(`${NAMESPACE}:`),
+  )
+  if (entry === undefined)
+    throw new Error(`[nifra/web] ppr: no output for the shell of "${route.id}"`)
+  // Re-exports and the virtual entry have zero bytes too, so every edge stays and only the
+  // request-scoped test reads bytes.
+  const emitted = (id: string): boolean => {
+    const input = entry.inputs?.[id]
+    return (
+      typeof input === "object" &&
+      input !== null &&
+      "bytesInOutput" in input &&
+      typeof input.bytesInOutput === "number" &&
+      input.bytesInOutput > 0
+    )
+  }
+  const absolute = (id: string): string =>
+    id.startsWith(`${NAMESPACE}:`) ? id : toPosix(resolve(id))
+  const next = new Map<string, string[]>()
+  const scoped = new Set<string>()
+  let root: string | undefined
+  for (const [id, module] of Object.entries(graph.modules)) {
+    const from = absolute(id)
+    if (id.startsWith(`${NAMESPACE}:`)) root = from
+    if (emitted(id) && (nifraScoped.has(from) || envImporters.has(from) || requestScoped(from)))
+      scoped.add(from)
+    next.set(
+      from,
+      module.imports.flatMap((edge) => (edge.path === undefined ? [] : [absolute(edge.path)])),
+    )
+  }
+  if (root === undefined) throw new Error(`[nifra/web] ppr: no entry module for "${route.id}"`)
+  const chain = requestScopedChain(root, next, scoped)
+  if (chain !== undefined) throw new ShellCheckError(route.id, chain.slice(1))
+  const output = result.outputs.find((artifact) => artifact.kind === "entry-point")
+  if (output === undefined)
+    throw new Error(`[nifra/web] ppr: no bundle for the shell of "${route.id}"`)
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(await output.text())),
+  )
+  return {
+    hash: Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+    sharedHoles: shared?.names ?? [],
+  }
+}

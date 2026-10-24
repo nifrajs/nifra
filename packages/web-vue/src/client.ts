@@ -18,6 +18,7 @@ import {
   provide,
   type Ref,
   shallowRef,
+  type VNode,
 } from "vue"
 import { compose, pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
@@ -65,29 +66,66 @@ export const hydrationAssuranceHook = Object.freeze({
 
 type View = { readonly chain: readonly unknown[]; readonly props: RenderProps }
 const VIEW_KEY: InjectionKey<Readonly<Ref<View>>> = Symbol("nifra.web-vue.view")
+const NO_VIEW: View = { chain: [], props: { data: null } }
 
-// One level of the chain as `compose` builds it. A layout gets the next level as a STABLE slot, so Vue
-// re-renders it only when its own props change, and the level inside follows the view on its own: a
-// reload that kept the data (the router shares what it did not change) re-renders a layout or the page
-// only for a prop of its own that moved, such as the page's `pending`.
-const Level = defineComponent({
-  name: "NifraLevel",
-  props: { depth: { type: Number, required: true } },
-  setup(props) {
-    const view = inject(VIEW_KEY)
-    return () => {
-      const { chain, props: route } = view?.value ?? { chain: [], props: { data: null } }
-      const component = chain[props.depth]
-      if (props.depth === chain.length - 1) return pageNode(component, route)
-      return h(
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
-        component as Component,
-        { data: route.layoutData?.[props.depth] ?? null, boundaries: route.boundaries },
-        { default: () => h(Level, { depth: props.depth + 1 }), $stable: true },
-      )
-    }
-  },
-})
+const nameOf = (component: object): string | undefined => {
+  const name: unknown =
+    Reflect.get(component, "name") ||
+    Reflect.get(component, "displayName") ||
+    Reflect.get(component, "__name")
+  return typeof name === "string" && name !== "" ? name : undefined
+}
+
+// One level of the chain as `compose` builds it, one wrapper component per chain component and named
+// after it: a `KeepAlive` or `Transition` in a layout sees the page or layout below change, and
+// `include` matches its name. The wrapper follows the view on its own, and hands its layout the
+// level below as a STABLE slot while that stays the same component, so a reload that kept the data
+// (the router shares what it did not change) re-renders a layout only for a prop of its own that
+// moved, and the page only for one of its own, such as `pending`.
+const levels = new WeakMap<object, Component>()
+// The key of a chain entry that is no component, such as a route module that failed to load.
+const NOT_A_COMPONENT = {}
+const levelOf = (component: unknown): Component => {
+  const key =
+    (typeof component === "object" && component !== null) || typeof component === "function"
+      ? component
+      : NOT_A_COMPONENT
+  const held = levels.get(key)
+  if (held !== undefined) return held
+  const level = defineComponent({
+    name: (key === NOT_A_COMPONENT ? undefined : nameOf(key)) ?? "NifraLevel",
+    props: { depth: { type: Number, required: true } },
+    setup(props) {
+      const view = inject(VIEW_KEY)
+      let below: Component | undefined
+      let shown: VNode | undefined
+      const slot = (): VNode | undefined =>
+        below === undefined ? undefined : h(below, { depth: props.depth + 1 })
+      return () => {
+        const { chain, props: route } = view?.value ?? NO_VIEW
+        // Held by a `KeepAlive`, or by a `Transition` until it has left, while another component
+        // has its place: it shows what it last showed.
+        if (chain[props.depth] !== component && shown !== undefined) return shown
+        if (props.depth === chain.length - 1) {
+          shown = pageNode(component, route)
+          return shown
+        }
+        const next = levelOf(chain[props.depth + 1])
+        const stable = next === below
+        below = next
+        shown = h(
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
+          component as Component,
+          { data: route.layoutData?.[props.depth] ?? null, boundaries: route.boundaries },
+          { default: slot, $stable: stable },
+        )
+        return shown
+      }
+    },
+  })
+  levels.set(key, level)
+  return level
+}
 
 /**
  * Hydrate a stateful Vue Router. A `shallowRef` holds the store snapshot; `router.subscribe` writes
@@ -116,7 +154,7 @@ export function mountRouter(options: MountRouterOptions): void {
         h(
           RouteContextProvider,
           { value: view.value.props },
-          { default: () => h(Level, { depth: 0 }) },
+          { default: () => h(levelOf(view.value.chain[0]), { depth: 0 }) },
         )
     },
   })

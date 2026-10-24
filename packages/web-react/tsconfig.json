@@ -8,6 +8,7 @@
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
       "@nifrajs/web/islands": ["../web/src/islands.ts"],
+      "@nifrajs/web/ppr": ["../web/src/ppr.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
       "@nifrajs/core/mount": ["../core/src/mount.ts"],
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"],
@@ -19,5 +20,7 @@
       "@nifrajs/i18n": ["../i18n/src/index.ts"]
     }
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*"],
+  // Built by the coordinated compiler; checked by its own project (scripts/typecheck.ts).
+  "exclude": ["test/fixtures/ppr-components"]
 }

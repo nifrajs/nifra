@@ -82,6 +82,11 @@
       "types": "./dist/cdn.d.ts",
       "default": "./dist/cdn.js"
     },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./diagnostic-prompt": {
       "bun": "./src/diagnostic-prompt.ts",
       "types": "./dist/diagnostic-prompt.d.ts",
@@ -243,6 +248,11 @@
       "types": "./dist/internal/query-runtime.d.ts",
       "default": "./dist/internal/query-runtime.js"
     },
+    "./internal/hole-runtime": {
+      "bun": "./src/internal/hole-runtime.ts",
+      "types": "./dist/internal/hole-runtime.d.ts",
+      "default": "./dist/internal/hole-runtime.js"
+    },
     "./internal/fetcher-runtime": {
       "bun": "./src/internal/fetcher-runtime.ts",
       "types": "./dist/internal/fetcher-runtime.d.ts",
@@ -307,6 +317,11 @@
       "bun": "./src/server-components/islands.ts",
       "types": "./dist/server-components/islands.d.ts",
       "default": "./dist/server-components/islands.js"
+    },
+    "./server-components/hole": {
+      "bun": "./src/server-components/hole.ts",
+      "types": "./dist/server-components/hole.d.ts",
+      "default": "./dist/server-components/hole.js"
     },
     "./server-components/range": {
       "bun": "./src/server-components/range.ts",

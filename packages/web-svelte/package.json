@@ -47,6 +47,17 @@
       "svelte": "./dist/Await.svelte",
       "default": "./dist/Await.svelte"
     },
+    "./hole": {
+      "types": "./dist/Hole.svelte.d.ts",
+      "bun": "./src/Hole.svelte",
+      "svelte": "./dist/Hole.svelte",
+      "default": "./dist/Hole.svelte"
+    },
+    "./ppr": {
+      "bun": "./src/ppr.ts",
+      "types": "./dist/ppr.d.ts",
+      "default": "./dist/ppr.js"
+    },
     "./fetcher": {
       "bun": "./src/fetcher.ts",
       "types": "./dist/fetcher.d.ts",
@@ -138,6 +149,7 @@
     }
   },
   "devDependencies": {
+    "happy-dom": "21.0.4",
     "svelte": "^5.3.0",
     "svelte2tsx": "0.7.61"
   },

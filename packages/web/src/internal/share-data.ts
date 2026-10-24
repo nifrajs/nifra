@@ -1,42 +1,103 @@
 const isPlain = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype
 
+const TOO_DEEP = Symbol("data too deep")
+
+// Client loaders may return graphs, unlike JSON. Check the whole graph before comparing: a cycle
+// inside a new subtree or beyond the array sample must not acquire copied parents. Shared references
+// and accessors also keep the fresh result intact, rather than changing aliases or invoking getters.
+function isTree(value: unknown, seen: Set<object>, depth: number): boolean {
+  if (!Array.isArray(value) && !isPlain(value)) return true
+  if (depth >= 128 || seen.has(value)) return false
+  seen.add(value)
+  for (const key of Reflect.ownKeys(value)) {
+    const field = Object.getOwnPropertyDescriptor(value, key)
+    if (
+      field === undefined ||
+      !("value" in field) ||
+      (!field.enumerable && !(Array.isArray(value) && key === "length")) ||
+      !isTree(field.value, seen, depth + 1)
+    )
+      return false
+  }
+  return true
+}
+
 /**
- * Structural sharing for reloaded route data: the result equals `next`, but every part of it equal to
- * the same place in `prev` is `prev`'s own object, and it is `prev` itself when nothing changed. A
- * reload then keeps the identity of what it did not change, so a renderer keyed on identity (Solid's
- * `<For>`, a memoized row, a Vue child component) leaves those parts as they are on screen.
+ * Structural sharing for reloaded route data. Plain objects and arrays compare by content and Dates
+ * by time; other values and symbol-bearing objects come from `next`. Non-tree client data stays
+ * intact. `plainJson` is only for freshly parsed JSON, before any client-loader transformation.
  *
- * Plain objects and arrays compare by content and Dates by time (a revived `t.date()` field is a new
- * `Date` on every parse); anything else, such as a class instance, a `Map`, a promise or an object
- * without a prototype, is taken from `next`. An array element with an `id` pairs with the old element
- * of that `id` before the one at its index, so a prepend or a reorder still keeps every unchanged row.
- * An array whose first 32 elements keep nothing is taken from `next` whole: a reload that changed every
- * row stops walking early.
+ * Array elements with an `id` pair by it before position, preserving unchanged rows on a prepend or
+ * reorder. An array whose first 32 elements keep nothing is taken whole, without a full old-row index.
  */
-export function shareData<T>(prev: unknown, next: T): T
-export function shareData(prev: unknown, next: unknown): unknown {
+export function shareData<T>(prev: unknown, next: T, plainJson?: boolean): T
+export function shareData(prev: unknown, next: unknown, plainJson = false): unknown {
   if (Object.is(prev, next)) return prev
-  if (prev instanceof Date && next instanceof Date)
-    return prev.getTime() === next.getTime() ? prev : next
-  if (Array.isArray(prev) && Array.isArray(next)) {
+  if (!plainJson && !isTree(next, new Set(), 0)) return next
+  try {
+    return share(prev, next, 0, plainJson)
+  } catch (error) {
+    if (error === TOO_DEEP) return next
+    throw error
+  }
+}
+
+// Client loaders can attach metadata that an enumerable-string-key copy would lose. Parsed JSON has
+// no symbol keys, and the check would cost a third of a reload that changed one row.
+const hasSymbols = (a: object, b: object): boolean =>
+  Object.getOwnPropertySymbols(a).length > 0 || Object.getOwnPropertySymbols(b).length > 0
+
+function share(prev: unknown, next: unknown, depth: number, json: boolean): unknown {
+  if (Object.is(prev, next)) return prev
+  if (prev instanceof Date)
+    return next instanceof Date && prev.getTime() === next.getTime() ? prev : next
+  if (Array.isArray(next)) {
+    if (!Array.isArray(prev) || (!json && hasSymbols(prev, next))) return next
+    if (depth >= 128) throw TOO_DEEP
     const out: unknown[] = []
     let same = prev.length === next.length
     let byId: Map<unknown, unknown> | undefined
+    let completeIndex = false
     let kept = 0
     let i = 0
-    // `for...of` rather than a counted loop: the walk stops at the end of `next` whatever `i` does.
     for (const item of next) {
       let old: unknown = prev[i]
       const id = isPlain(item) ? item.id : undefined
       if (id !== undefined && !(isPlain(old) && old.id === id)) {
-        if (byId === undefined) {
+        if (byId === undefined || (i >= 32 && !completeIndex)) {
+          // Index only IDs needed by the sample until a kept row makes a full index worthwhile.
+          const wanted =
+            i < 32
+              ? new Set(next.slice(0, 32).map((value) => (isPlain(value) ? value.id : undefined)))
+              : undefined
+          completeIndex = wanted === undefined
+          let min = Number.POSITIVE_INFINITY
+          let max = Number.NEGATIVE_INFINITY
+          for (const key of wanted ?? []) {
+            if (typeof key !== "number" || Number.isNaN(key)) {
+              min = Number.NEGATIVE_INFINITY
+              max = Number.POSITIVE_INFINITY
+              break
+            }
+            min = Math.min(min, key)
+            max = Math.max(max, key)
+          }
           byId = new Map()
-          for (const entry of prev) if (isPlain(entry)) byId.set(entry.id, entry)
+          for (const entry of prev) {
+            if (!isPlain(entry)) continue
+            const entryId = entry.id
+            if (
+              wanted === undefined ||
+              ((typeof entryId !== "number" || !(entryId < min || entryId > max)) &&
+                wanted.has(entryId))
+            )
+              byId.set(entryId, entry)
+          }
         }
         old = byId.get(id)
       }
-      const value = shareData(old, item)
+      const value = share(old, item, depth + 1, json)
       out.push(value)
       if (value === old) kept++
       else if (i === 31 && kept === 0) return next
@@ -45,20 +106,18 @@ export function shareData(prev: unknown, next: unknown): unknown {
     }
     return same ? prev : out
   }
-  if (isPlain(prev) && isPlain(next)) {
-    const keys = Object.keys(next)
-    let same = keys.length === Object.keys(prev).length
-    const out: Record<string, unknown> = {}
-    for (const key of keys) {
-      // A parsed payload can own a `__proto__` key, which a copy would turn into its prototype.
-      if (key === "__proto__") return next
-      const old = prev[key]
-      const value = shareData(old, next[key])
-      // A missing key reads `undefined` too.
-      if (value !== old || (old === undefined && !Object.hasOwn(prev, key))) same = false
-      out[key] = value
-    }
-    return same ? prev : out
+  if (!isPlain(prev) || !isPlain(next) || (!json && hasSymbols(prev, next))) return next
+  if (depth >= 128) throw TOO_DEEP
+  const keys = Object.keys(next)
+  let same = keys.length === Object.keys(prev).length
+  const out: Record<string, unknown> = {}
+  for (const key of keys) {
+    // A parsed payload can own a `__proto__` key, which a copy would turn into its prototype.
+    if (key === "__proto__") return next
+    const old = prev[key]
+    const value = share(old, next[key], depth + 1, json)
+    if (value !== old || (old === undefined && !Object.hasOwn(prev, key))) same = false
+    out[key] = value
   }
-  return next
+  return same ? prev : out
 }
