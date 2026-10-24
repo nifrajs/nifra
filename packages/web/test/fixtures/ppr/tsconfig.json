@@ -4,6 +4,7 @@
   "compilerOptions": { "types": ["bun", "react"] },
   "include": [
     "app/routes/**/*.tsx",
+    "kept/routes/**/*.tsx",
     "refresh-app/routes/**/*.tsx",
     "app-browser.ts",
     "refresh-browser.ts",

@@ -116,3 +116,7 @@ export async function startPprApp(
     },
   }
 }
+
+/** The product page again with `keepAlive`, in a routes tree of its own so the app above keeps none. */
+export const startKeptPprApp = (): Promise<PprApp> =>
+  startPprApp({ ...REACT, routesDir: `${import.meta.dir}/../kept/routes` })
