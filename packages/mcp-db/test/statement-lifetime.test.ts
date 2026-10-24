@@ -1,20 +1,11 @@
 import { Database } from "bun:sqlite"
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { openReadOnlySqlite } from "../src/engine.ts"
 
-function finalizedSample(db: Database): WeakRef<object>[] {
-  return Array.from({ length: 100 }, () => {
-    const statement = db.prepare("SELECT 1 AS n")
-    statement.all()
-    statement.finalize()
-    return new WeakRef(statement)
-  })
-}
-
-test("read-only connections release finalized statements and close live ones", async () => {
+test("read-only connections untrack finalized statements and close live ones", async () => {
   const dir = mkdtempSync(join(tmpdir(), "nifra-statement-lifetime-"))
   const file = join(dir, "app.db")
   const seed = new Database(file)
@@ -22,17 +13,21 @@ test("read-only connections release finalized statements and close live ones", a
   seed.close(true)
   const db = await openReadOnlySqlite(file)
   try {
-    const refs = finalizedSample(db)
-    // WeakRef targets stay alive until the end of their creation job.
-    await Bun.sleep(0)
-    for (let i = 0; i < 3; i++) {
-      Bun.gc(true)
-      await Bun.sleep(0)
-    }
-    expect(refs.filter((ref) => ref.deref() !== undefined)).toHaveLength(0)
+    // Keep these statements reachable deliberately: close must no longer visit them, independent
+    // of whether this runtime's collector happens to reclaim a weak target during the test.
+    const finalized = Array.from({ length: 100 }, () => {
+      const statement = db.prepare("SELECT 1 AS n")
+      const finalize = spyOn(statement, "finalize")
+      statement.all()
+      statement.finalize()
+      return finalize
+    })
     const live = db.prepare("SELECT 1 AS n")
+    const finalizeLive = spyOn(live, "finalize")
     expect(live.get()).toEqual({ n: 1n })
     db.close(true)
+    for (const finalize of finalized) expect(finalize).toHaveBeenCalledTimes(1)
+    expect(finalizeLive).toHaveBeenCalledTimes(1)
     expect(() => live.get()).toThrow()
   } finally {
     db.close()
