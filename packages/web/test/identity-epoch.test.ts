@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { epochOf } from "../src/identity.ts"
 import {
   buildManifest,
   createWebApp,
@@ -58,9 +59,34 @@ describe("the identity epoch hook", () => {
     expect(first?.split(";")[0]).not.toBe(second?.split(";")[0])
   })
 
-  test("a rolling session that re-sends its value rotates nothing", () => {
+  test("a rolling session that re-sends its value renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
     expect(
       run(["nifra_session=abc.sig; Max-Age=600; HttpOnly; Secure"], {
+        cookie: `theme=dark; nifra_session=abc.sig; __Host-nifra-epoch=${held}`,
+      }),
+    ).toBe(`__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`)
+    const expires = "Wed, 21 Oct 2099 07:28:00 GMT"
+    expect(
+      run([`nifra_session=abc.sig; Expires=${expires}; HttpOnly`], {
+        cookie: `nifra_session=abc.sig; nifra-epoch=${held}`,
+        url: "http://localhost:3000/",
+      }),
+    ).toBe(`nifra-epoch=${held}; Path=/; SameSite=Lax; Expires=${expires}`)
+  })
+
+  test("a renewal whose epoch is gone or not one nifra wrote sets a fresh one", () => {
+    for (const cookie of ["nifra_session=abc.sig", "nifra_session=abc.sig; __Host-nifra-epoch=x"]) {
+      const epoch = run(["nifra_session=abc.sig; Max-Age=600; HttpOnly; Secure"], { cookie })
+      expect(epoch).toMatch(EPOCH)
+      expect(epoch).not.toStartWith("__Host-nifra-epoch=x;")
+      expect(epoch).toEndWith("; Max-Age=600")
+    }
+  })
+
+  test("a session re-sent without a lifetime leaves the epoch alone", () => {
+    expect(
+      run(["nifra_session=abc.sig; HttpOnly; Secure", "theme=dark; Max-Age=60"], {
         cookie: "theme=dark; nifra_session=abc.sig",
       }),
     ).toBeUndefined()
@@ -140,6 +166,17 @@ describe("the identity epoch hook", () => {
     expect(
       run(["nifra_session=a; HttpOnly"], { url: "http://app.internal/", forwardedProto: "https" }),
     ).toMatch(EPOCH)
+  })
+
+  test("a sign-out behind a TLS proxy that forwards nothing rotates the prefixed epoch the client reads", () => {
+    const epoch = run(["nifra_session=; Path=/; Max-Age=0"], {
+      url: "http://app.internal/logout",
+      cookie: "nifra_session=abc.sig; __Host-nifra-epoch=0123456789abcdef0123456789abcdef",
+    })
+    expect(epoch).toMatch(EPOCH)
+    expect(epochOf(`${epoch?.split(";")[0]}; nifra-epoch=stale`)).not.toBe(
+      "0123456789abcdef0123456789abcdef",
+    )
   })
 
   test("a response that already sets the epoch gets no second one", () => {
@@ -269,5 +306,16 @@ describe("createWebApp and the identity epoch", () => {
       expect(cookies[0]).toMatch(pattern)
       expect(cookies[0]).not.toContain("HttpOnly")
     }
+  })
+
+  test("rotateIdentityEpoch keeps the prefixed epoch behind a TLS proxy that forwards nothing", async () => {
+    const response = await appOf(false).fetch(
+      new Request("http://app.internal/switch", {
+        headers: { cookie: "__Host-nifra-epoch=0123456789abcdef0123456789abcdef" },
+      }),
+    )
+    expect(response.headers.getSetCookie()[0]).toMatch(
+      /^__Host-nifra-epoch=[0-9a-f]{32}; Path=\/; Secure; SameSite=Lax$/,
+    )
   })
 })
