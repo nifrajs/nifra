@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test"
-import type { AuthClient, Session } from "@nifrajs/authjs/client"
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import type { AuthClient, Session } from "../src/client.ts"
 
 // This suite has no DOM renderer, and a server render never shows a later state change. So the
 // provider's state updates are recorded where React hands out the setters, then passed through.
@@ -23,7 +23,7 @@ afterAll(() => {
   mock.module("react", () => real)
 })
 
-const { AuthSessionProvider, useAuthSession } = await import("../src/auth.ts")
+const { AuthSessionProvider, useAuthSession } = await import("../src/react.ts")
 
 test("signing out with redirect: false leaves the subtree unauthenticated", async () => {
   const signedOut: unknown[] = []

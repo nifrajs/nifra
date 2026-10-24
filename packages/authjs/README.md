@@ -24,8 +24,8 @@ export const app = server()
   mount's `authUrl`, `trustProxy` and `basePath` so the session is read where the mount serves it.
 - `requireAuthUser(req, config, { redirectTo? })` - returns the user or throws a 401/redirect.
 - `@nifrajs/authjs/client` - `createAuthClient()` (session, sign-in, sign-out) for any frontend.
-- `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()`. This package is an optional
-  peer of `@nifrajs/web-react`, so install it in the app alongside.
+- `@nifrajs/authjs/react` - `<AuthSessionProvider>` + `useAuthSession()` over that client. `react`
+  is an optional peer; only this entry imports it.
 
 Auth.js itself does the security-critical work (PKCE, state, token verification); this package
 is the nifra-shaped surface over `@auth/core`. See `/docs/auth` (Auth.js section) for the full

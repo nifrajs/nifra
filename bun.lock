@@ -255,10 +255,18 @@
       },
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
       },
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",
+        "react": "^19.0.0",
       },
+      "optionalPeers": [
+        "react",
+      ],
     },
     "packages/aws-lambda": {
       "name": "@nifrajs/aws-lambda",
@@ -757,7 +765,6 @@
         "@nifrajs/web": "workspace:*",
       },
       "devDependencies": {
-        "@nifrajs/authjs": "workspace:*",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
         "@vitejs/plugin-rsc": "0.5.35",
@@ -768,14 +775,12 @@
         "vite": "8.3.4",
       },
       "peerDependencies": {
-        "@nifrajs/authjs": "workspace:^",
         "@vitejs/plugin-rsc": "0.5.35",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "react-server-dom-webpack": "19.3.1",
       },
       "optionalPeers": [
-        "@nifrajs/authjs",
         "@vitejs/plugin-rsc",
         "react-server-dom-webpack",
       ],

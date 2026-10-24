@@ -51,7 +51,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 // Frontend - any framework via the agnostic client, or React bindings:
 // import { createAuthClient } from "@nifrajs/authjs/client"
 // await createAuthClient().signIn("github")
-// import { AuthSessionProvider, useAuthSession } from "@nifrajs/web-react/auth"`
+// import { AuthSessionProvider, useAuthSession } from "@nifrajs/authjs/react"`
 
 const SETUP = `// backend/auth.ts - one session manager, created on first use so the secret is read at request time.
 // Store mode keeps data server-side; cookie mode (no store) is stateless.
@@ -185,7 +185,7 @@ export default function Auth() {
         the user, or throws a 401/redirect). The frontend half is a framework-agnostic client
         (<code>createAuthClient()</code> - session, sign-in, sign-out) plus{" "}
         <code>&lt;AuthSessionProvider&gt;</code> / <code>useAuthSession()</code> in{" "}
-        <code>@nifrajs/web-react/auth</code>.
+        <code>@nifrajs/authjs/react</code>.
       </p>
       <CodeBlock code={AUTHJS} />
       <p>
