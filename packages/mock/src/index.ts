@@ -64,10 +64,22 @@ function bindingBound(
   return i === undefined ? undefined : { value: i, exclusive: false }
 }
 
+// The safe-integer limits say what a number can carry, not what a field means: they leave a side open.
+const fieldBound = (value: unknown): unknown =>
+  typeof value === "number" && Math.abs(value) >= Number.MAX_SAFE_INTEGER ? undefined : value
+
 // A side the schema leaves open sits 100 from the given one, so `minimum: 1900` alone is satisfiable.
 function numericBounds(schema: Record<string, unknown>): NumericBounds {
-  const lower = bindingBound(schema.minimum, schema.exclusiveMinimum, (a, b) => a > b)
-  const upper = bindingBound(schema.maximum, schema.exclusiveMaximum, (a, b) => a < b)
+  const lower = bindingBound(
+    fieldBound(schema.minimum),
+    fieldBound(schema.exclusiveMinimum),
+    (a, b) => a > b,
+  )
+  const upper = bindingBound(
+    fieldBound(schema.maximum),
+    fieldBound(schema.exclusiveMaximum),
+    (a, b) => a < b,
+  )
   const min = lower?.value ?? (upper === undefined ? 0 : upper.value - 100)
   const max = upper?.value ?? min + 100
   const bounds = {
@@ -501,7 +513,9 @@ export function createMockServer(
     const key = `${route.method.toUpperCase()} ${route.path}`
     const rng = seededRandom(seed)
     const response = route.schema?.response
-    let responseSchema = response?.jsonSchema
+    // A converter's own output may carry `$ref`, which the generator cannot follow; the hook asks it
+    // for the inline form instead.
+    let responseSchema = response?.converted === true ? undefined : response?.jsonSchema
     // Backfill an inspectable schema for an opaque validator (zod/valibot) so its routes mock real data
     // instead of `{}`. Fail-safe: a throwing hook falls back to `{}`, exactly as before the hook existed.
     const reflectJsonSchema = options?.reflectJsonSchema ?? autoReflectJsonSchema

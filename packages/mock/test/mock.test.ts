@@ -31,6 +31,17 @@ describe("generateMockValue", () => {
     expect(generateMockValue({ type: "integer", exclusiveMinimum: 0 }, undefined, () => 0)).toBe(1)
   })
 
+  test("the safe-integer limits leave a side open, like no bound", () => {
+    const safe = {
+      type: "integer",
+      minimum: Number.MIN_SAFE_INTEGER,
+      maximum: Number.MAX_SAFE_INTEGER,
+    }
+    expect(generateMockValue(safe, undefined, () => 0)).toBe(0)
+    expect(generateMockValue(safe, undefined, () => 1)).toBe(100)
+    expect(generateMockValue({ ...safe, minimum: 1900 }, undefined, () => 1)).toBe(2000)
+  })
+
   test("exclusive bounds are never reached", () => {
     const at = (schema: Record<string, unknown>, r: number): unknown =>
       generateMockValue(schema, undefined, () => r)

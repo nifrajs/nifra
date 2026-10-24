@@ -37,6 +37,49 @@ describe("reflectSchema", () => {
     expect(direct.fields).toEqual(reflected.fields)
   })
 
+  test("reads a Standard JSON Schema on the side asked for", () => {
+    const sided = {
+      "~standard": {
+        ...standard["~standard"],
+        jsonSchema: {
+          input: () => ({
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: { n: { type: "number", default: 1 } },
+          }),
+          output: () => ({
+            type: "object",
+            properties: { n: { type: "number" } },
+            required: ["n"],
+          }),
+        },
+      },
+    }
+    expect(reflectSchema(sided).jsonSchema).toMatchObject({ properties: { n: { default: 1 } } })
+    expect(reflectSchema(sided).converted).toBe(true)
+    expect(reflectSchema(sided, "output").jsonSchema).toMatchObject({ required: ["n"] })
+    expect(reflectSchema(sided).fields).toEqual([
+      { name: "n", required: false, schema: { type: "number", default: 1 } },
+    ])
+
+    const throwing = {
+      "~standard": {
+        ...standard["~standard"],
+        jsonSchema: {
+          input: () => {
+            throw new Error("Date cannot be represented in JSON Schema")
+          },
+          output: () => ({}),
+        },
+      },
+    }
+    expect(reflectSchema(throwing).jsonSchema).toBeUndefined()
+    // A carried `.jsonSchema` stays the source of truth.
+    const carried = reflectSchema({ ...sided, jsonSchema: { type: "string" } })
+    expect(carried.jsonSchema).toEqual({ type: "string" })
+    expect(carried.converted).toBeUndefined()
+  })
+
   test("supports boolean schemas and rejects invalid carriers", () => {
     expect(reflectSchema(false).jsonSchema).toBe(false)
     expect(reflectSchema({ ...standard, jsonSchema: null }).jsonSchema).toBeUndefined()
@@ -49,6 +92,21 @@ describe("reflectSchema", () => {
 })
 
 describe("reflectRoutes", () => {
+  test("marks the routes whose validation failures an onValidationError hook answers", () => {
+    const body = { ...standard, jsonSchema: { type: "object", properties: {} } }
+    const hook = () => new Response("no", { status: 400 })
+    const plain = reflectRoutes(
+      server()
+        .post("/a", { body }, () => ({}))
+        .post("/b", { body, onValidationError: hook }, () => ({})),
+    )
+    expect(plain.map((route) => route.schema?.validationErrorHook)).toEqual([undefined, true])
+    const appWide = reflectRoutes(
+      server({ onValidationError: hook }).post("/a", { body }, () => ({})),
+    )
+    expect(appWide[0]?.schema?.validationErrorHook).toBe(true)
+  })
+
   test("normalizes contracts, error schemas, and tool metadata", () => {
     const routes = reflectRoutes({
       routes: () => [

@@ -54,6 +54,11 @@ export interface SchemaReflection {
   readonly standard: StandardSchemaV1 | undefined
   /** Raw JSON Schema metadata, when the value exposes it or is itself a raw JSON Schema. */
   readonly jsonSchema: JsonSchema | undefined
+  /**
+   * Set when `jsonSchema` came from the schema's Standard JSON Schema converter (`~standard.jsonSchema`)
+   * rather than from metadata it carries. Such output may use `$defs` and `$ref`.
+   */
+  readonly converted?: true
   /** Top-level object fields, or `undefined` when the JSON Schema is absent/non-object. */
   readonly fields: readonly ReflectedSchemaField[] | undefined
   /**
@@ -83,7 +88,15 @@ export interface ReflectedRouteSchema {
   readonly errors?: Readonly<Record<string, SchemaReflection>>
   /** The SSE event-payload schema of a typed streaming route (`app.sse()`). */
   readonly sse?: SchemaReflection
+  /**
+   * Set when an `onValidationError` hook (the route's own, or the app-wide default) answers this
+   * route's validation failures, so its 422 body is whatever the hook returns.
+   */
+  readonly validationErrorHook?: true
 }
+
+/** Which side of a schema to describe: the value a request sends, or the value a response carries. */
+export type SchemaSide = "input" | "output"
 
 export interface ReflectedRoute {
   readonly method: string
@@ -116,6 +129,22 @@ const standardOf = (value: unknown): StandardSchemaV1 | undefined => {
   return standard?.version === 1 && typeof standard.validate === "function"
     ? (value as StandardSchemaV1)
     : undefined
+}
+
+/** The JSON Schema a Standard JSON Schema (`~standard.jsonSchema`) converts `side` to, if it has one. */
+const standardJsonSchemaOf = (
+  standard: StandardSchemaV1,
+  side: SchemaSide,
+): JsonSchema | undefined => {
+  const converters = recordOf(recordOf(standard["~standard"])?.jsonSchema)
+  const convert = converters?.[side]
+  if (typeof convert !== "function") return undefined
+  try {
+    return normalizeJsonSchema(Reflect.apply(convert, converters, [{ target: "draft-2020-12" }]))
+  } catch {
+    // A library throws for a type JSON Schema cannot express (zod's `z.date()`); the schema stays opaque.
+    return undefined
+  }
 }
 
 const jsonSchemaOf = (
@@ -197,14 +226,21 @@ const mediaTypesOf = (value: unknown): readonly string[] | undefined => {
 /**
  * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.
  * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
+ * A Standard JSON Schema is read on `side`, since a default or a transform makes the two differ.
  */
-export function reflectSchema(value: unknown): SchemaReflection {
+export function reflectSchema(value: unknown, side: SchemaSide = "input"): SchemaReflection {
   const standard = standardOf(value)
-  const jsonSchema = jsonSchemaOf(value, standard)
+  const carried = jsonSchemaOf(value, standard)
+  const converted =
+    carried === undefined && standard !== undefined
+      ? standardJsonSchemaOf(standard, side)
+      : undefined
+  const jsonSchema = carried ?? converted
   const mediaTypes = mediaTypesOf(value)
   return {
     standard,
     jsonSchema,
+    ...(converted !== undefined ? { converted: true as const } : {}),
     fields: fieldsOf(jsonSchema),
     ...(mediaTypes !== undefined ? { mediaTypes } : {}),
   }
@@ -222,14 +258,17 @@ const routeCandidates = (source: unknown): readonly unknown[] => {
   }
 }
 
-const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined => {
+const reflectedRouteSchema = (
+  value: unknown,
+  appValidationHook: boolean,
+): ReflectedRouteSchema | undefined => {
   const schema = recordOf(value)
   if (schema === undefined) return undefined
   const errors = recordOf(schema.errors)
   const reflectedErrors: Record<string, SchemaReflection> = {}
   if (errors !== undefined) {
     for (const [status, errorSchema] of Object.entries(errors)) {
-      reflectedErrors[status] = reflectSchema(errorSchema)
+      reflectedErrors[status] = reflectSchema(errorSchema, "output")
     }
   }
   return {
@@ -249,9 +288,14 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
     ...(schema.body !== undefined ? { body: reflectSchema(schema.body) } : {}),
     ...(schema.query !== undefined ? { query: reflectSchema(schema.query) } : {}),
     ...(schema.params !== undefined ? { params: reflectSchema(schema.params) } : {}),
-    ...(schema.response !== undefined ? { response: reflectSchema(schema.response) } : {}),
+    ...(schema.response !== undefined
+      ? { response: reflectSchema(schema.response, "output") }
+      : {}),
     ...(Object.keys(reflectedErrors).length > 0 ? { errors: reflectedErrors } : {}),
-    ...(schema.sse !== undefined ? { sse: reflectSchema(schema.sse) } : {}),
+    ...(schema.sse !== undefined ? { sse: reflectSchema(schema.sse, "output") } : {}),
+    ...(appValidationHook || typeof schema.onValidationError === "function"
+      ? { validationErrorHook: true as const }
+      : {}),
   }
 }
 
@@ -326,10 +370,12 @@ const reflectedSockets = (source: unknown): ReflectedRoute[] => {
  */
 export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
   const reflected: ReflectedRoute[] = []
+  // The app-wide `server({ onValidationError })` lives on the server, not on each route descriptor.
+  const appValidationHook = typeof recordOf(source)?.defaultOnValidationError === "function"
   for (const candidate of routeCandidates(source)) {
     const route = recordOf(candidate)
     if (typeof route?.method !== "string" || typeof route.path !== "string") continue
-    const schema = reflectedRouteSchema(route.schema)
+    const schema = reflectedRouteSchema(route.schema, appValidationHook)
     const tool = reflectedTool(route.tool)
     const assurance = reflectedAssurance(route.assurance)
     const capabilities = normalizeRouteCapabilities(

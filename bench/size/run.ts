@@ -262,7 +262,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-sse": 37.4,
   "nifra-valibot": 37.6,
   "nifra-typebox-t": 62.5,
-  "nifra-typebox-form": 66.7,
+  // t.integer() bounded to the safe-integer range: typebox-form 68,298 -> 68,330 B (Bun 1.4.4).
+  "nifra-typebox-form": 66.8,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

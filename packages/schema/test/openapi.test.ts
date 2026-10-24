@@ -6,7 +6,11 @@ import { defineContract } from "@nifrajs/core/contract"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { all, method } from "@nifrajs/core/methods"
 import { streaming } from "@nifrajs/core/sse"
-import { t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
+import { z } from "zod"
+import { type OpenAPIDocument, t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
+
+// What `t.integer()` is bounded to unless told otherwise.
+const safeRange = { minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }
 
 // A BYO Standard Schema: validates at runtime but exposes no JSON Schema.
 const byo: StandardSchemaV1 = {
@@ -56,7 +60,7 @@ describe("toOpenAPI(contract)", () => {
       name: "limit",
       in: "query",
       required: true,
-      schema: { type: "integer" },
+      schema: { type: "integer", ...safeRange },
     })
   })
 
@@ -453,7 +457,7 @@ describe("params schema → enriched path parameters", () => {
       name: "id",
       in: "path",
       required: true,
-      schema: { type: "integer", minimum: 1 },
+      schema: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     })
   })
 
@@ -516,7 +520,7 @@ describe("cookie schema → cookie parameters", () => {
     )
     expect(doc.paths["/dashboard"]?.get?.parameters).toEqual([
       { name: "sessionId", in: "cookie", required: true, schema: { type: "string" } },
-      { name: "page", in: "cookie", required: false, schema: { type: "integer" } },
+      { name: "page", in: "cookie", required: false, schema: { type: "integer", ...safeRange } },
     ])
   })
 
@@ -871,5 +875,330 @@ describe("typed SSE routes", () => {
     expect(
       toOpenAPIFromEvidence(snapshotProjectEvidence(posted), { openapiVersion: "3.2.0" }),
     ).toEqual(doc)
+  })
+})
+
+const jsonOf = (doc: OpenAPIDocument, path: string, method: "get" | "post", status?: string) => {
+  const operation = doc.paths[path]?.[method]
+  return status === undefined
+    ? operation?.requestBody?.content["application/json"]?.schema
+    : operation?.responses[status]?.content?.["application/json"]?.schema
+}
+
+// A BYO Standard Schema that carries its JSON Schema the way nifra's own schemas do.
+const carrier = (jsonSchema: Record<string, unknown>) => ({ ...byo, jsonSchema })
+
+describe("a Standard JSON Schema (zod) is described on its own side", () => {
+  const Owner = z.object({ id: z.string() }).meta({ id: "Owner" })
+  const app = server()
+    .post(
+      "/pets",
+      {
+        body: z.object({ name: z.string(), owner: Owner, legs: z.number().default(4) }),
+        response: z.object({ id: z.string(), legs: z.number().default(4) }),
+      },
+      () => ({ id: "1", legs: 4 }),
+    )
+    .post("/owners", { body: z.object({ owner: Owner }) }, () => ({}))
+  const doc = toOpenAPI(app)
+
+  test("the request body is its input side, the 200 its output side", () => {
+    expect(jsonOf(doc, "/pets", "post")).toMatchObject({
+      type: "object",
+      required: ["name", "owner"],
+    })
+    expect(jsonOf(doc, "/pets", "post", "200")).toMatchObject({
+      required: ["id", "legs"],
+      additionalProperties: false,
+    })
+  })
+
+  test("its $defs become one component, and every ref points at it", () => {
+    expect(doc.components?.schemas?.Owner).toEqual({
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    })
+    expect(jsonOf(doc, "/owners", "post")).toMatchObject({
+      properties: { owner: { $ref: "#/components/schemas/Owner" } },
+    })
+    const text = JSON.stringify(doc)
+    expect(text).not.toContain("$defs")
+    expect(text).not.toContain("$schema")
+  })
+
+  test("a definition key reused for another shape gets a component of its own", () => {
+    const withX = (x: Record<string, unknown>) =>
+      carrier({ type: "object", properties: { x: { $ref: "#/$defs/X" } }, $defs: { X: x } })
+    const doc = toOpenAPI(
+      server()
+        .post("/a", { body: withX({ type: "string" }) }, () => ({}))
+        .post("/b", { body: withX({ type: "string" }) }, () => ({}))
+        .post("/c", { body: withX({ type: "number" }) }, () => ({})),
+    )
+    expect(doc.components?.schemas).toEqual({
+      X: { type: "string" },
+      X_2: { type: "number" },
+      NifraError: expect.any(Object),
+      NifraValidationError: expect.any(Object),
+    })
+    expect(jsonOf(doc, "/b", "post")).toMatchObject({
+      properties: { x: { $ref: "#/components/schemas/X" } },
+    })
+    expect(jsonOf(doc, "/c", "post")).toMatchObject({
+      properties: { x: { $ref: "#/components/schemas/X_2" } },
+    })
+  })
+
+  test("a root that refers to itself becomes a component its refs point at", () => {
+    const Node: z.ZodType<{ name: string; children: unknown[] }> = z.object({
+      name: z.string(),
+      get children() {
+        return z.array(Node)
+      },
+    })
+    const doc = toOpenAPI(
+      server()
+        .post("/a", { body: Node }, () => ({}))
+        .post("/b", { body: Node }, () => ({})),
+    )
+    expect(jsonOf(doc, "/a", "post")).toEqual({ $ref: "#/components/schemas/Schema" })
+    expect(jsonOf(doc, "/b", "post")).toEqual({ $ref: "#/components/schemas/Schema" })
+    expect(doc.components?.schemas?.Schema).toMatchObject({
+      properties: { children: { items: { $ref: "#/components/schemas/Schema" } } },
+    })
+  })
+
+  test("a ref that already names a document component is left as it is", () => {
+    const doc = toOpenAPI(
+      server().post(
+        "/a",
+        {
+          body: carrier({ type: "object", properties: { u: { $ref: "#/components/schemas/U" } } }),
+        },
+        () => ({}),
+      ),
+    )
+    expect(jsonOf(doc, "/a", "post")).toEqual({
+      type: "object",
+      properties: { u: { $ref: "#/components/schemas/U" } },
+    })
+  })
+
+  test("a type JSON Schema cannot express leaves the route without detail, not broken", () => {
+    const doc = toOpenAPI(server().post("/at", { body: z.object({ at: z.date() }) }, () => ({})))
+    expect(doc.paths["/at"]?.post?.requestBody).toBeUndefined()
+  })
+
+  test("a parameter schema's refs point at the hoisted components", () => {
+    const Sort = z.enum(["asc", "desc"]).meta({ id: "Sort" })
+    const doc = toOpenAPI(server().get("/list", { query: z.object({ sort: Sort }) }, () => []))
+    expect(doc.paths["/list"]?.get?.parameters).toEqual([
+      { name: "sort", in: "query", required: true, schema: { $ref: "#/components/schemas/Sort" } },
+    ])
+    expect(doc.components?.schemas?.Sort).toEqual({ type: "string", enum: ["asc", "desc"] })
+  })
+
+  test("an evidence snapshot renders the same document", () => {
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(toOpenAPIFromEvidence(evidence)).toEqual(doc)
+  })
+})
+
+describe("the errors the framework answers before a handler runs", () => {
+  const error = { $ref: "#/components/schemas/NifraError" }
+  const validation = { $ref: "#/components/schemas/NifraValidationError" }
+  const app = server({ maxBodyBytes: 64 })
+    .post("/items", { body: t.object({ tags: t.array(t.string()) }) }, () => ({}))
+    .get("/items", { query: t.query({ page: t.integer() }) }, () => [])
+    .get("/health", () => "ok")
+    .post(
+      "/declared",
+      { body: t.object({ name: t.string() }), errors: { 422: t.object({ message: t.string() }) } },
+      () => ({}),
+    )
+  const doc = toOpenAPI(app)
+
+  test("a body route lists the body errors and the validation error", () => {
+    expect(Object.keys(doc.paths["/items"]?.post?.responses ?? {})).toEqual([
+      "200",
+      "400",
+      "413",
+      "415",
+      "422",
+    ])
+    for (const status of ["400", "413", "415"]) {
+      expect(jsonOf(doc, "/items", "post", status)).toEqual(error)
+    }
+    expect(jsonOf(doc, "/items", "post", "422")).toEqual(validation)
+  })
+
+  test("a query route lists the validation error; a route without schemas lists none", () => {
+    expect(Object.keys(doc.paths["/items"]?.get?.responses ?? {})).toEqual(["200", "422"])
+    expect(Object.keys(doc.paths["/health"]?.get?.responses ?? {})).toEqual(["200"])
+  })
+
+  test("a declared error wins", () => {
+    expect(jsonOf(doc, "/declared", "post", "422")).toMatchObject({
+      properties: { message: { type: "string" } },
+    })
+  })
+
+  test("the components describe the bodies the server sends", async () => {
+    const components = doc.components?.schemas ?? {}
+    expect(components.NifraValidationError).toMatchObject({ required: ["ok", "error", "issues"] })
+    expect(components.NifraError).toMatchObject({ required: ["ok", "error"] })
+    const post = (body: string) =>
+      app.fetch(
+        new Request("http://x/items", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        }),
+      )
+    const invalid: unknown = await (
+      await post(JSON.stringify({ tags: Array.from({ length: 20 }, (_, i) => i) }))
+    ).json()
+    expect(Object.keys(invalid ?? {}).sort()).toEqual(["error", "issues", "ok"])
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: "validation",
+      issues: expect.arrayContaining([{ message: expect.any(String), path: ["tags", "0"] }]),
+    })
+    const tooLarge = await post(JSON.stringify({ tags: ["x".repeat(100)] }))
+    expect(tooLarge.status).toBe(413)
+    const tooLargeBody: unknown = await tooLarge.json()
+    expect(Object.keys(tooLargeBody ?? {}).sort()).toEqual(["error", "ok"])
+    const many = server()
+      .post("/n", { body: t.object({ list: t.array(t.string()) }) }, () => ({}))
+      .fetch(
+        new Request("http://x/n", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ list: Array.from({ length: 150 }, (_, i) => i) }),
+        }),
+      )
+    const listed: unknown = await (await many).json()
+    const count = Object.keys(Object(Object(listed).issues)).length
+    expect(count).toBeGreaterThan(0)
+    expect(components.NifraValidationError).toMatchObject({
+      properties: { issues: { maxItems: count } },
+    })
+  })
+
+  test("an onValidationError hook - the route's or the app's - takes the 422 out", () => {
+    const hook = () => new Response("bad", { status: 400 })
+    const routeHook = toOpenAPI(
+      server().post(
+        "/a",
+        { body: t.object({ name: t.string() }), onValidationError: hook },
+        () => ({}),
+      ),
+    )
+    expect(Object.keys(routeHook.paths["/a"]?.post?.responses ?? {})).toEqual([
+      "200",
+      "400",
+      "413",
+      "415",
+    ])
+    const hooked = server({ onValidationError: hook }).get(
+      "/b",
+      { query: t.query({ page: t.integer() }) },
+      () => [],
+    )
+    const appHook = toOpenAPI(hooked)
+    expect(Object.keys(appHook.paths["/b"]?.get?.responses ?? {})).toEqual(["200"])
+    expect(
+      toOpenAPIFromEvidence(JSON.parse(JSON.stringify(snapshotProjectEvidence(hooked)))),
+    ).toEqual(appHook)
+  })
+
+  test("a user schema named like a generated component keeps a component of its own", () => {
+    const doc = toOpenAPI(
+      server().post(
+        "/a",
+        { body: t.object({ name: t.string() }, { $id: "NifraError" }) },
+        () => ({}),
+      ),
+    )
+    expect(jsonOf(doc, "/a", "post")).toEqual({ $ref: "#/components/schemas/NifraError_2" })
+    expect(doc.components?.schemas?.NifraError_2).toMatchObject({
+      properties: { name: { type: "string" } },
+    })
+    expect(doc.components?.schemas?.NifraError).toMatchObject({ required: ["ok", "error"] })
+  })
+
+  test("an evidence snapshot renders the same document", () => {
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(toOpenAPIFromEvidence(evidence)).toEqual(doc)
+  })
+})
+
+describe("a tagged union gets a discriminator", () => {
+  const cat = t.object({ kind: t.literal("cat"), meows: t.boolean() })
+  const dog = t.object({ kind: t.literal("dog"), barks: t.boolean() })
+  const pet = t.union([cat, dog])
+
+  test("a union told apart by a required literal is a oneOf with a discriminator", () => {
+    const doc = toOpenAPI(server().post("/pets", { body: pet }, () => ({})))
+    const schema = jsonOf(doc, "/pets", "post")
+    expect(schema).not.toHaveProperty("anyOf")
+    expect(schema).toHaveProperty("oneOf", [expect.any(Object), expect.any(Object)])
+    expect(schema).toHaveProperty("discriminator", { propertyName: "kind" })
+    expect(pet.jsonSchema.anyOf).toHaveLength(2)
+  })
+
+  test("members that are components get a mapping", () => {
+    const named = z.union([
+      z.object({ kind: z.literal("cat") }).meta({ id: "Cat" }),
+      z.object({ kind: z.literal("dog") }).meta({ id: "Dog" }),
+    ])
+    const doc = toOpenAPI(server().post("/pets", { body: named }, () => ({})))
+    expect(jsonOf(doc, "/pets", "post")).toEqual({
+      oneOf: [{ $ref: "#/components/schemas/Cat" }, { $ref: "#/components/schemas/Dog" }],
+      discriminator: {
+        propertyName: "kind",
+        mapping: { cat: "#/components/schemas/Cat", dog: "#/components/schemas/Dog" },
+      },
+    })
+  })
+
+  test("a union with no tag of its own keeps its anyOf", () => {
+    const untagged = [
+      t.union([t.string(), t.number()]),
+      t.union([t.object({ kind: t.literal("a") }), t.object({ kind: t.literal("a") })]),
+      t.union([t.object({ kind: t.optional(t.literal("a")) }), t.object({ kind: t.literal("b") })]),
+    ]
+    for (const body of untagged) {
+      const doc = toOpenAPI(server().post("/x", { body }, () => ({})))
+      const schema = jsonOf(doc, "/x", "post")
+      expect(schema).toHaveProperty("anyOf", [expect.anything(), expect.anything()])
+      expect(schema).not.toHaveProperty("discriminator")
+    }
+  })
+
+  test("a nested union is found, under a property named like a keyword too", () => {
+    const doc = toOpenAPI(
+      server().post(
+        "/x",
+        { body: t.object({ default: pet }), response: t.object({ items: t.array(pet) }) },
+        () => ({ items: [] }),
+      ),
+    )
+    expect(jsonOf(doc, "/x", "post")).toMatchObject({
+      properties: { default: { discriminator: { propertyName: "kind" } } },
+    })
+    expect(jsonOf(doc, "/x", "post", "200")).toMatchObject({
+      properties: { items: { items: { discriminator: { propertyName: "kind" } } } },
+    })
+  })
+
+  test("a zod discriminated union keeps its oneOf and gains the discriminator", () => {
+    const body = z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("a") }),
+      z.object({ kind: z.literal("b") }),
+    ])
+    const doc = toOpenAPI(server().post("/x", { body }, () => ({})))
+    expect(jsonOf(doc, "/x", "post")).toMatchObject({ discriminator: { propertyName: "kind" } })
   })
 })

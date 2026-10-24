@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
+import { z } from "zod"
 import { createRequestLedger } from "../src/ledger.ts"
 import type { StandardSchemaV1 } from "../src/schema/standard.ts"
 import {
@@ -313,6 +314,15 @@ describe("tool input JSON Schema", () => {
       type: "object",
       properties: {},
       additionalProperties: false,
+    })
+  })
+
+  test("reads a schema's Standard JSON Schema, so a zod input lists its fields", () => {
+    const zodInput = z.object({ name: z.string().min(1) })
+    expect(toolInputJsonSchema(defineTool({ ...base, input: zodInput }))).toMatchObject({
+      type: "object",
+      properties: { name: { type: "string", minLength: 1 } },
+      required: ["name"],
     })
   })
 })
