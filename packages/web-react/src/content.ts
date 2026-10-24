@@ -1,7 +1,7 @@
 /**
  * `@nifrajs/web-react/content` - render pre-rendered HTML (e.g. a `@nifrajs/content` collection entry's
  * `.html`, or any Markdown→HTML string) into the DOM via `dangerouslySetInnerHTML`. Pairs with content
- * collections: `<Content html={entry.html} />`.
+ * collections: `<Content html={trustHtml(entry.html)} />`, with `trustHtml` from `@nifrajs/web`.
  *
  * Security: this injects raw HTML, so the `html` MUST be trusted (your own Markdown/content, rendered
  * at build/server time) - never pass user-supplied HTML without sanitizing it first.

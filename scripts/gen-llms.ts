@@ -142,8 +142,56 @@ interface Example {
   readonly code: string
 }
 
+/**
+ * The prose of an MDX docs page as corpus Markdown: each `<CodeBlock code={NAME} />` filled from the
+ * page's exported template constant, a `<Callout>` as a quote, and its headings one level down so
+ * they sit under the page's own, as a `.tsx` page's do.
+ */
+function mdxToMarkdown(file: string, src: string): string {
+  const consts = new Map<string, string>()
+  for (const m of src.matchAll(/^export const (\w+) = `((?:[^`\\]|\\.)*)`/gm)) {
+    consts.set(m[1] as string, (m[2] as string).replaceAll("\\`", "`").replaceAll("\\${", "${"))
+  }
+  const open = src.indexOf('<div className="prose">')
+  const close = src.lastIndexOf("</div>")
+  if (open === -1 || close < open) throw new Error(`${file}: no <div className="prose"> body`)
+  const lines: string[] = []
+  let quote = false
+  for (const line of src.slice(src.indexOf("\n", open) + 1, close).split("\n")) {
+    const trimmed = line.trim()
+    if (trimmed === "<Callout>" || trimmed === "</Callout>") {
+      quote = trimmed === "<Callout>"
+      continue
+    }
+    if (line.startsWith("# ")) continue // the page's title, which the corpus heading already gives
+    const block = /^<CodeBlock code=\{(\w+)\} \/>$/.exec(trimmed)
+    if (block !== null) {
+      const code = consts.get(block[1] as string)
+      if (code === undefined) throw new Error(`${file}: <CodeBlock> names an unknown ${block[1]}`)
+      lines.push("```ts", code.trim(), "```")
+      continue
+    }
+    if (/^#{2,5} /.test(line)) lines.push(`#${line}`)
+    else lines.push(quote && trimmed !== "" ? `> ${trimmed}` : line)
+  }
+  return lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
 const docs: DocPage[] = []
 const examples: Example[] = []
+for (const file of new Glob("site/routes/docs/*.mdx").scanSync(ROOT)) {
+  const slug = basename(file, ".mdx")
+  const src = read(`${ROOT}/${file}`)
+  docs.push({
+    slug,
+    route: `/docs/${slug}`,
+    ...extractMeta(src),
+    markdown: mdxToMarkdown(file, src),
+  })
+}
 for (const file of new Glob("site/routes/docs/*.tsx").scanSync(ROOT)) {
   const slug = basename(file, ".tsx")
   if (slug.startsWith("_")) continue // _layout etc.

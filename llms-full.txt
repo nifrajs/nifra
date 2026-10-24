@@ -2888,7 +2888,9 @@ A host's `data-island-strategy` defers its enhancer: `load`
 (default), `idle`, `visible` (mount when it scrolls into view), or
 `media` with the query in `data-island-media`. A host with no matching
 enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
-never a runtime error.
+never a runtime error. The scheduling itself is `@nifrajs/island-trigger`'s
+`scheduleTrigger`, which has no DOM or framework dependency, for a runtime of
+your own.
 
 ## Nifra - Streaming
 
@@ -7542,6 +7544,10 @@ nifra init-agents --sync-mcp
 The generated files are additive and the command will not overwrite an existing one, so it is
 safe to re-run after a Nifra upgrade.
 
+For an agent that loads skills from a `skills/` directory,
+`@nifrajs/skills` packages Nifra's contracts, boundaries and gates as
+`SKILL.md` bundles, each read only when it applies.
+
 ### The loop
 
 ```bash
@@ -7573,6 +7579,20 @@ nifra_db_query  {sql}   # one read-only SELECT (or its plan), rows capped and ma
 nifra_assure            # every route's required evidence, and what is missing
 nifra_levels            # { achieved, levels[] } - the ladder
 ```
+
+### Every tool
+
+Each tool's MCP annotations say which of these it is, so a client can ask before a call that
+writes a file or runs project code. A tool that writes only under a flag counts as writing.
+
+Tool
+May
+What it does
+
+`{name}`
+
+{effect}
+{what}
 
 ### What the running app saw
 
@@ -7652,7 +7672,10 @@ served, and every answer says so, so an agent treats a log line that reads like 
 as the data it is.
 
 `nifra_run` returns the same evidence for the requests it makes: each result carries the
-console output and the structured errors that request produced.
+console output and the structured errors that request produced. Its engine is
+`@nifrajs/runner`: `runApp(app, requests)` runs requests through any
+app's `fetch` and never throws, in the browser (it backs the playground), Bun,
+Node, Deno or the edge.
 
 ### The development database
 
@@ -7862,8 +7885,8 @@ does not exist. `nifra_db_schema` lists what is exposed.
 
 #### NIFRA_DB_COLUMN_REFUSED
 
-The query reads a masked column: a credential name, or one in `redactColumns`. It
-cannot be read in any form, so select the other columns by name (`SELECT *` on that
+The query reads a masked column: a credential name, or one in `redactColumns`. A
+query is refused wherever its plan reads one, so select the other columns by name (`SELECT *` on that
 table is refused too), or list the column in `revealColumns` if it holds no secret.
 
 #### NIFRA_DB_TIMEOUT
@@ -7996,6 +8019,13 @@ export const app = server().use(agentTelemetry({ exporter: consoleAgentExporter(
 serves a SQLite database as its own MCP server, fail-closed: allowlisted schema tools by
 default, and read-only queries only when you opt in, with plan verification. Handing a model a
 database connection is not the same as handing it a query tool, and this is the second one.
+
+**
+`@nifrajs/agent-review`
+**
+is the bounded review-report contract `nifra review` emits: scope, checks,
+findings and a digest, with no source content. A tool of your own can compose and parse the
+same report.
 
 ### Run a coding agent
 
@@ -9713,6 +9743,79 @@ A failed check records the error _class_ only. Provider messages routinely carry
 connection strings, tokens, and payload fragments, and evidence is meant to be shared, so it
 never becomes a place credentials leak. Cleanup errors cannot turn a failed functional check
 into a pass.
+
+## Nifra - Content & MDX
+
+> Typed content collections + MDX - author docs and blogs in Markdown with embedded components.
+
+Nifra ships **typed content collections** and **MDX** - the backbone of a docs site, blog, or changelog,
+without hand-rolling `readdir` and a frontmatter parser.
+
+> **This very page is written in MDX.** The note you're reading is a real `<Callout>` React component
+> embedded directly in the Markdown prose and server-rendered by nifra.
+
+### Content collections
+
+`defineCollection` turns a folder of Markdown into a typed, schema-validated source. The frontmatter is
+validated against a `t` schema, so a typo'd or missing field fails the build - not production - and the
+entries are fully typed into your loaders:
+
+```ts
+import { defineCollection } from "@nifrajs/content/fs"
+import { t } from "@nifrajs/schema"
+
+export const blog = defineCollection({
+  dir: "content/blog",
+  schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),
+})
+
+// in a loader - typed + validated entries (a typo'd field fails the build, not production):
+const posts = (await blog.all()).filter((p) => !p.frontmatter.draft)
+```
+
+`all()` lists the folder and checks each file for changes on every call, so an edit shows without a
+restart. When the content ships with the build, pass `watch: false` to read it once and reuse that
+snapshot; `get(slug)` still checks its one file.
+
+### MDX routes
+
+Add the MDX plugin to your build and any `routes/**/*.mdx` file becomes a page - Markdown that can
+`import` and render components inline, and `export const meta`, exactly like a `.tsx` route:
+
+```ts
+import { mdxBunPlugin } from "@nifrajs/content/mdx"
+
+// build.ts - every routes/**/*.mdx file compiles to a component for your framework
+await buildClient({
+  routesDir: "./routes",
+  clientModule: "@nifrajs/web-react/client",
+  plugins: [mdxBunPlugin({ jsxImportSource: "react" })],
+})
+```
+
+### MDX on all five frameworks
+
+MDX is framework-agnostic in Nifra - same as everything else. Each framework gets a build plugin that
+compiles `.mdx` to *its* component model:
+
+```ts
+// React / Preact / Vue - one plugin, pick the JSX runtime:
+import { mdxBunPlugin } from "@nifrajs/content/mdx"
+mdxBunPlugin({ jsxImportSource: "react" }) // or "preact" | "vue"
+
+// Solid - compile-time transform + an intrinsics runtime:
+import { solidMdxBunPlugin } from "@nifrajs/web-solid/mdx"
+solidMdxBunPlugin("ssr") // "dom" for the client build
+
+// Svelte - through mdsvex (Svelte's own Markdown compiler):
+import { svelteMdxBunPlugin } from "@nifrajs/web-svelte/mdx"
+svelteMdxBunPlugin("ssr")
+```
+
+React, Preact, and Vue share one plugin (their JSX runtimes differ only by `jsxImportSource`). Solid
+needs its compile-time transform, so `@nifrajs/web-solid/mdx` runs `babel-preset-solid` over the MDX and
+maps intrinsic tags through `<Dynamic>`. Svelte has no JSX, so `@nifrajs/web-svelte/mdx` routes MDX through
+`mdsvex` - Svelte's own Markdown compiler. All five server-render and hydrate.
 
 ## Nifra - Framework contract
 
@@ -11631,6 +11734,14 @@ the framework itself: contribute typed context to every handler (`c.stripe`, a
 session, a tenant), mount routes of its own, or hook the request lifecycle. That is
 `definePlugin` - a few lines, typed end-to-end. For everything else, an import
 at the top of the file is the whole integration.
+
+### GraphQL
+
+`@nifrajs/graphql` mounts a GraphQL-over-HTTP endpoint with
+`mountGraphql`, executed by the `graphql` package's own parser and
+executor, with your typed nifra context passed to the resolvers. Subscriptions run over
+nifra's WebSocket lane with `graphql-ws`. The request body goes through the same
+bounded parser as every other route, and the query text is never logged.
 
 ## Nifra - Keep-alive
 
@@ -14807,6 +14918,14 @@ $ nifra context        # the same contract as compact text - pipe into any agent
 $ nifra mcp            # the same data over an MCP server - Claude Code & Cursor read it
 ```
 
+### In the editor
+
+`@nifrajs/ts-plugin` is a TypeScript language-service plugin. Add
+`{ "name": "@nifrajs/ts-plugin" }` to `compilerOptions.plugins` and
+go-to-definition on a route path such as `"/orders"` opens the
+`routes/` file that serves it. It also marks, as you type, an import the build
+would refuse: backend code in a page, or a server package in browser code.
+
 ### Known limitations
 
 -
@@ -16487,6 +16606,21 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/content
 ```
 
+## Rendering an entry
+
+`entry.html` is `marked` output, unsanitized: raw HTML and `javascript:` links in the Markdown pass
+through. That is right for content you author. Mark it trusted for an adapter's `<Content>`:
+
+```tsx
+import { trustHtml } from "@nifrajs/web"
+import { Content } from "@nifrajs/web-react/content"
+
+<Content html={trustHtml(entry.html)} />
+```
+
+For a collection that contributors or a CMS write, pass `sanitizeHtml(entry.html, sanitizer)` with an
+allowlist sanitizer you choose instead.
+
 ## Docs
 
 - Reference: <https://nifra.dev/docs>
@@ -17818,12 +17952,9 @@ const app = server()
   .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
-  .use(rateLimit({
-    store: new MemoryStore(),
-    max: 100,
-    windowMs: 60_000,
-    key: (req) => req.headers.get("x-user-id") ?? "anonymous",
-  }))
+  // Keyed by the caller IP the server resolved. MemoryStore is for development: it refuses to run
+  // in production, where every instance must share one store.
+  .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
   .use(timing())
   .get("/", () => ({ ok: true }))
 ```
@@ -18362,7 +18493,7 @@ const upstream = createProxy({ upstream: "http://127.0.0.1:8081" })
 const app = server().mountFetch("/api", upstream, { stripPrefix: true })
 ```
 
-The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Every inbound `Forwarded` and `X-Forwarded-*` header is dropped; caller IP/protocol metadata is re-added only under `forwardClientIp: true`, and any other forwarding header only as a fixed `headers` entry. The inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
+The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Every inbound `Forwarded` and `X-Forwarded-*` header is dropped; caller IP/protocol metadata is re-added only under `forwardClientIp: true`, and any other forwarding header only as a fixed `headers` entry. The one exception is `trustForwardedFor: true` (with `forwardClientIp`), which keeps the inbound `X-Forwarded-For` chain and appends the caller: set it only behind a proxy you control, since any caller that reaches this one directly can forge the leading entries. The inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
 
 ## Docs
 

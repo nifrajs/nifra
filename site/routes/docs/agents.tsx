@@ -57,6 +57,51 @@ nifra_db_query  {sql}   # one read-only SELECT (or its plan), rows capped and ma
 nifra_assure            # every route's required evidence, and what is missing
 nifra_levels            # { achieved, levels[] } - the ladder`
 
+// Every tool `nifra mcp` serves, by what it may do: the same classes its MCP annotations declare
+// (packages/cli/src/mcp-tool-meta.ts). packages/cli/test/mcp-tool-meta.test.ts holds this to the server.
+const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
+  ["nifra_context", "reads", "The route index and conventions, sliced by path or kind."],
+  ["nifra_routes", "reads", "Every route served: a list, a graph, render modes, or the hooks each runs."],
+  ["nifra_openapi", "reads", "The backend's OpenAPI 3.1 document."],
+  ["nifra_docs", "reads", "The docs sections matching a query."],
+  ["nifra_example", "reads", "A verified, typechecked example for a task."],
+  ["nifra_types", "reads", "The exact declaration of an export."],
+  ["nifra_learn", "reads", "The guided build-an-app path."],
+  ["nifra_frontend", "reads", "Frontend guidance for a framework and topic."],
+  ["nifra_check", "reads", "Typecheck and contract lints, each with a structured fix."],
+  ["nifra_diff", "reads", "The API contract against its snapshot; fails on a breaking change."],
+  ["nifra_contract_proof", "reads", "Each changed route, joined to its assurance and capability evidence."],
+  ["nifra_prove", "reads", "The cheapest proofs for the changed files, and when to stop."],
+  ["nifra_port", "reads", "Which features each deploy target supports, with file:line evidence."],
+  ["nifra_errors", "reads", "What the dev server caught, as structured diagnostics."],
+  ["nifra_logs", "reads", "The dev server's console, server and browser."],
+  ["nifra_inspect", "reads", "One trace per request the dev server answered."],
+  ["nifra_explain", "reads", "An error as a structured diagnostic with its fix."],
+  ["nifra_db_schema", "reads", "The declared dev database's tables, columns, keys and indexes."],
+  ["nifra_db_query", "reads", "One read-only SELECT or its plan, rows capped and masked."],
+  ["nifra_db_role", "reads", "The SQL for a read-only Postgres role. Runs nothing."],
+  ["nifra_fix", "writes files", "Applies the registered mechanical fixes."],
+  ["nifra_review", "writes files", "An evidence-backed review; with fix and write, applies its recipes."],
+  ["nifra_doctor", "writes files", "Dependency and readiness checks; autoFix edits package.json."],
+  ["nifra_snapshot", "writes files", "Writes the API contract baseline."],
+  ["nifra_contracts", "writes files", "Writes or checks contracts.lock.json."],
+  ["nifra_capabilities", "writes files", "Writes, checks or explains the capability lockfile."],
+  ["nifra_manifest", "writes files", "Emits or diffs the route trust manifest."],
+  ["nifra_sync_manifest", "writes files", "Regenerates the server-manifest route tables."],
+  ["nifra_sync_routes", "writes files", "Regenerates nifra-routes.d.ts."],
+  ["nifra_scaffold", "writes files", "The route files for a URL path; with write, creates them."],
+  ["nifra_run", "runs project code", "Requests through the backend: status, headers, parsed body."],
+  ["nifra_render", "runs project code", "SSR of a page route."],
+  ["nifra_ws", "runs project code", "A WebSocket route, exercised on an ephemeral port."],
+  ["nifra_test", "runs project code", "bun test, with bounded structured results."],
+  ["nifra_hydrate", "runs project code", "The hydration gate."],
+  ["nifra_smoke", "runs project code", "The declared production smoke checks."],
+  ["nifra_assure", "runs project code", "Each route's required evidence; bundle builds and checks it."],
+  ["nifra_levels", "runs project code", "The L0 to L4 verification ladder, running the invariants."],
+  ["nifra_replay", "runs project code", "Replays a verification metadata file against its gate."],
+  ["nifra_verify", "runs project code", "The repository's verification plan, running its scripts."],
+]
+
 const FEED = `nifra_errors                                  # every open error, newest last
 nifra_errors  {since: 41}                     # only what happened after a previous call's cursor
 nifra_errors  {category: ["hydration"], includeStale: false}
@@ -295,9 +340,40 @@ export default function Agents() {
         The generated files are additive and the command will not overwrite an existing one, so it is
         safe to re-run after a Nifra upgrade.
       </p>
+      <p>
+        For an agent that loads skills from a <code>skills/</code> directory,{" "}
+        <code>@nifrajs/skills</code> packages Nifra's contracts, boundaries and gates as{" "}
+        <code>SKILL.md</code> bundles, each read only when it applies.
+      </p>
 
       <h2>The loop</h2>
       <CodeBlock code={LOOP} lang="bash" />
+
+      <h2 id="all-tools">Every tool</h2>
+      <p>
+        Each tool's MCP annotations say which of these it is, so a client can ask before a call that
+        writes a file or runs project code. A tool that writes only under a flag counts as writing.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>May</th>
+            <th>What it does</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ALL_TOOLS.map(([name, effect, what]) => (
+            <tr key={name}>
+              <td>
+                <code>{name}</code>
+              </td>
+              <td>{effect}</td>
+              <td>{what}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <h2>What the running app saw</h2>
       <p>
@@ -350,7 +426,10 @@ export default function Agents() {
       </ul>
       <p>
         <code>nifra_run</code> returns the same evidence for the requests it makes: each result carries the
-        console output and the structured errors that request produced.
+        console output and the structured errors that request produced. Its engine is{" "}
+        <code>@nifrajs/runner</code>: <code>runApp(app, requests)</code> runs requests through any
+        app's <code>fetch</code> and never throws, in the browser (it backs the playground), Bun,
+        Node, Deno or the edge.
       </p>
 
       <h2 id="dev-database">The development database</h2>
@@ -553,8 +632,8 @@ export default function Agents() {
       </p>
       <h3 id="db-column-refused">NIFRA_DB_COLUMN_REFUSED</h3>
       <p>
-        The query reads a masked column: a credential name, or one in <code>redactColumns</code>. It
-        cannot be read in any form, so select the other columns by name (<code>SELECT *</code> on that
+        The query reads a masked column: a credential name, or one in <code>redactColumns</code>. A
+        query is refused wherever its plan reads one, so select the other columns by name (<code>SELECT *</code> on that
         table is refused too), or list the column in <code>revealColumns</code> if it holds no secret.
       </p>
       <h3 id="db-timeout">NIFRA_DB_TIMEOUT</h3>
@@ -652,6 +731,14 @@ export default function Agents() {
         serves a SQLite database as its own MCP server, fail-closed: allowlisted schema tools by
         default, and read-only queries only when you opt in, with plan verification. Handing a model a
         database connection is not the same as handing it a query tool, and this is the second one.
+      </p>
+      <p>
+        <strong>
+          <code>@nifrajs/agent-review</code>
+        </strong>{" "}
+        is the bounded review-report contract <code>nifra review</code> emits: scope, checks,
+        findings and a digest, with no source content. A tool of your own can compose and parse the
+        same report.
       </p>
 
       <h2>Run a coding agent</h2>

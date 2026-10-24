@@ -5799,7 +5799,7 @@
     "name": "Entry",
     "kind": "interface",
     "package": "@nifrajs/content",
-    "signature": "export interface Entry<Frontmatter> {\n    /** Identifier (e.g. the filename without extension). */\n    readonly slug: string;\n    /** Frontmatter, validated + typed by the collection's schema. */\n    readonly frontmatter: Frontmatter;\n    /** The body rendered to HTML (Markdown → HTML). */\n    readonly html: string;\n    /** The raw Markdown body, with the frontmatter block stripped. */\n    readonly body: string;\n}",
+    "signature": "export interface Entry<Frontmatter> {\n    /** Identifier (e.g. the filename without extension). */\n    readonly slug: string;\n    /** Frontmatter, validated + typed by the collection's schema. */\n    readonly frontmatter: Frontmatter;\n    /**\n     * The body rendered to HTML (Markdown → HTML), unsanitized: raw HTML and `javascript:` links in the\n     * Markdown pass through. Render it as-is only for content you author, with\n     * `<Content html={trustHtml(entry.html)} />`; run anything contributors or a CMS write through\n     * `sanitizeHtml(entry.html, yourSanitizer)` (both from `@nifrajs/web`).\n     */\n    readonly html: string;\n    /** The raw Markdown body, with the frontmatter block stripped. */\n    readonly body: string;\n}",
     "doc": "/** A parsed content entry: its slug, validated frontmatter, rendered HTML, and the raw Markdown body. */"
   },
   {

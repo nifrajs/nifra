@@ -207,7 +207,8 @@ Usage:
                                          nifra_db_role (the declared dev database, read-only),
                                          nifra_explain (structured errors), nifra_inspect (request
                                          traces), nifra_learn (guided build path).
-  nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) -
+  nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs, nifra_example,
+                                         nifra_types, nifra_learn, nifra_frontend, nifra_gallery) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
                                          no arg for the step index, a number for one step's goal/do/verify.
