@@ -20,6 +20,7 @@ import {
   MAX_OUTBOUND_BYTES,
   MAX_WATCHES_PER_MINUTE,
   RECONNECT_WINDOW_MS,
+  SWEEP_MS,
   tagCache,
 } from "../src/live/hub.ts"
 import {
@@ -757,6 +758,17 @@ test("the sweep closes expired, silent and slow sockets", async () => {
   setSystemTime(new Date(start + 601_000))
   r.hub.sweep()
   expect(expiring.closed?.code).toBe(CLOSE_BAD_GRANT)
+})
+
+test("the first open starts a sweep that runs every SWEEP_MS on its own", async () => {
+  const r = await rig()
+  jest.useFakeTimers()
+  const slow = connect(r)
+  slow.buffered = MAX_OUTBOUND_BYTES + 1
+  jest.advanceTimersByTime(SWEEP_MS - 1)
+  expect(slow.closed).toBeUndefined()
+  jest.advanceTimersByTime(1)
+  expect(slow.closed?.code).toBe(CLOSE_CAPACITY)
 })
 
 test("a socket that holds no tag for a minute closes 1000; a tag stops the clock, an empty watch starts it", async () => {
