@@ -7,7 +7,7 @@
  */
 import type { ComponentClientAdapter, ComponentClientRoot } from "../server-components/client.ts"
 import type { ComponentRecord } from "../server-components/types.ts"
-import { PAGE_HIDE_EVENT } from "./page-events.ts"
+import { onPageRelease, PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./page-events.ts"
 
 /** One hole's fill, as the PPR runtime keeps it. */
 export interface HoleFill {
@@ -74,6 +74,14 @@ export interface HoleHost {
    * host was rendered with (`initialHtml`) hydrates its islands over that HTML. */
   refill(fill: unknown): void
   dispose(): void
+  /**
+   * For an adapter whose hidden page cleans its effects up (React's `Activity`): while a kept page
+   * hides the host, keep it, root and all, for the page's return, and dispose it only if the page is
+   * dropped. `false` when nothing hides the host, and disposing is the adapter's.
+   */
+  park(): boolean
+  /** The parked host is the adapter's again. */
+  unpark(): void
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -170,6 +178,9 @@ export function holeHost(
   let root: HoleRoot | undefined
   let disposed = false
   let latest = 0
+  // The kept page hiding the host, and what disposes the host if that page is dropped.
+  let hiddenBy: Element | undefined
+  let release: (() => void) | undefined
   const put = (frame: Record<string, unknown>): void => {
     if (runtime !== undefined) runtime.put(name, frame, host)
     else errorSlot(host)
@@ -195,11 +206,16 @@ export function holeHost(
   // the ones still loading are cancelled, and a refill already on its way is dropped. The page's
   // reload when it is shown again refills the host.
   const hidden = (event: Event): void => {
-    if (!(event.target instanceof Node) || !event.target.contains(host)) return
+    if (!(event.target instanceof Element) || !event.target.contains(host)) return
+    hiddenBy = event.target
     latest++
     runtime?.leave?.()
   }
+  const shown = (event: Event): void => {
+    if (event.target === hiddenBy) hiddenBy = undefined
+  }
   host.ownerDocument.addEventListener(PAGE_HIDE_EVENT, hidden)
+  host.ownerDocument.addEventListener(PAGE_SHOW_EVENT, shown)
   const apply = (frame: unknown, mine: number, inPlace: boolean): void => {
     if (!isRecord(frame)) return
     const failed = frame.error === true
@@ -225,6 +241,16 @@ export function holeHost(
     if (gone instanceof Promise) gone.then(fill, fill)
     else fill()
   }
+  const dispose = (): void => {
+    disposed = true
+    release?.()
+    release = undefined
+    host.ownerDocument.removeEventListener(PAGE_HIDE_EVENT, hidden)
+    host.ownerDocument.removeEventListener(PAGE_SHOW_EVENT, shown)
+    unsubscribe?.()
+    Promise.resolve(root?.dispose(true)).catch(() => {})
+    root = undefined
+  }
   return {
     refill(fill) {
       // A blocking render's settled fill is the server HTML the host already shows.
@@ -240,12 +266,15 @@ export function holeHost(
         },
       )
     },
-    dispose() {
-      disposed = true
-      host.ownerDocument.removeEventListener(PAGE_HIDE_EVENT, hidden)
-      unsubscribe?.()
-      Promise.resolve(root?.dispose(true)).catch(() => {})
-      root = undefined
+    dispose,
+    park() {
+      if (disposed || hiddenBy === undefined) return false
+      release ??= onPageRelease(hiddenBy, dispose)
+      return true
+    },
+    unpark() {
+      release?.()
+      release = undefined
     },
   }
 }

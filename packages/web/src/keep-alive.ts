@@ -11,7 +11,7 @@
  */
 import { epochOf, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
 import type { KeepAliveTable } from "./internal/keep-alive-table.ts"
-import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./internal/page-events.ts"
+import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT, releasePage } from "./internal/page-events.ts"
 import { shareData } from "./internal/share-data.ts"
 import type { ClientRouteHooks, KeepAliveOptions } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
@@ -1089,6 +1089,8 @@ export function createSlotParking(): SlotParking {
       }
       for (const key of [...slots.keys()]) {
         if (live.has(key)) continue
+        const page = slots.get(key)?.page
+        if (page !== undefined) releasePage(page)
         slots.delete(key)
         entryRefs.delete(key)
         pageRefs.delete(key)
