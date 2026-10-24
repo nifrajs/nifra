@@ -7,5 +7,3 @@ export const Nested = ({ children, injected }: Props) =>
   h("section", null, cloneElement(children, { injected: `${injected}/nested` }))
 export const Page = ({ injected }: { injected?: string }) =>
   h("p", { id: "result" }, injected ?? "MISSING")
-export const Other = ({ injected }: { injected?: string }) =>
-  h("p", { id: "other" }, injected ?? "MISSING")

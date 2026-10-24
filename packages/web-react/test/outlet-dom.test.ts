@@ -68,79 +68,127 @@ const component: ComponentHandle = {
   props: any,
 }
 
-test("a server component on a kept page keeps its root while <Activity> hides the page", async () => {
+// Each hydrate and dispose the native roots see, with a gate on the next one.
+const traced = () => {
   const trace: string[] = []
+  let next = Promise.withResolvers<void>()
+  const note = (entry: string) => {
+    trace.push(entry)
+    next.resolve()
+    next = Promise.withResolvers<void>()
+  }
   const root = () => ({
     update() {},
-    dispose() {
-      trace.push("dispose")
-    },
+    dispose: () => note("dispose"),
   })
   const adapter: ComponentClientAdapter = {
     name: "react",
     prepare: (record) => record.html,
     hydrate: () => {
-      trace.push("hydrate")
+      note("hydrate")
       return root()
     },
     create: () => {
-      trace.push("create")
+      note("create")
       return root()
     },
     update: () => {},
   }
-  const controller = new ComponentController({ state, adapter })
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: React's own export, read by name as the keep-alive mount does
-  const Activity = Reflect.get(React, "Activity") as ComponentType<{
-    readonly mode: "hidden" | "visible"
-    readonly children?: ReactNode
-  }>
-  const tree = (mode: "hidden" | "visible") =>
-    createElement(
-      Activity,
-      { mode },
-      createElement(
-        "section",
-        { id: "page" },
-        createElement(ServerComponent, {
-          state,
-          component,
-          instanceKey: "stable",
-          input: {},
-          controller,
-        }),
-      ),
-    )
+  return { trace, adapter, next: () => next.promise }
+}
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: React's own export, read by name as the keep-alive mount does
+const Activity = Reflect.get(React, "Activity") as ComponentType<{
+  readonly mode: "hidden" | "visible"
+  readonly children?: ReactNode
+}>
+const outlet = (
+  options: Pick<ServerComponentProps<unknown, unknown, unknown>, "controller" | "clientAdapter">,
+) =>
+  createElement(
+    "section",
+    { id: "page" },
+    createElement(ServerComponent, {
+      state,
+      component,
+      instanceKey: "stable",
+      input: {},
+      ...options,
+    }),
+  )
+const rendered = async (run: (view: ReturnType<typeof client.createRoot>) => Promise<void>) => {
   const container = document.createElement("div")
   document.body.append(container)
   const view = client.createRoot(container)
   try {
-    await act(async () => view.render(tree("visible")))
-    await controller.whenReady("instance_1")
-    const page = document.getElementById("page")
-    if (page === null) throw new Error("[test] no page")
-    // The page events come before React hides the page and after it shows the page again.
-    const hide = async () => {
-      controller.park(page)
-      await act(async () => view.render(tree("hidden")))
-    }
-    await hide()
-    await act(async () => view.render(tree("visible")))
-    controller.unpark(page)
-    await controller.whenReady("instance_1")
-    expect(trace).toEqual(["hydrate"])
-
-    // Hidden again, then dropped: the view's slot leaves, and the root goes with it.
-    const parking = createSlotParking()
-    parking.page("\0kept")(page)
-    await hide()
-    expect(trace).toEqual(["hydrate"])
-    parking.after([])
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    expect(trace).toEqual(["hydrate", "dispose"])
+    await run(view)
   } finally {
     await act(async () => view.unmount())
     container.remove()
+  }
+}
+
+test("a server component on a kept page keeps its root while <Activity> hides the page", async () => {
+  const { trace, adapter } = traced()
+  const controller = new ComponentController({ state, adapter })
+  const tree = (mode: "hidden" | "visible") =>
+    createElement(Activity, { mode }, outlet({ controller }))
+  try {
+    await rendered(async (view) => {
+      await act(async () => view.render(tree("visible")))
+      await controller.whenReady("instance_1")
+      const page = document.getElementById("page")
+      if (page === null) throw new Error("[test] no page")
+      // The page events come before React hides the page and after it shows the page again.
+      const hide = async () => {
+        controller.park(page)
+        await act(async () => view.render(tree("hidden")))
+      }
+      await hide()
+      await act(async () => view.render(tree("visible")))
+      controller.unpark(page)
+      await controller.whenReady("instance_1")
+      expect(trace).toEqual(["hydrate"])
+
+      // Hidden again, then dropped: the view's slot leaves, and the root goes with it.
+      const parking = createSlotParking()
+      parking.page("\0kept")(page)
+      await hide()
+      expect(trace).toEqual(["hydrate"])
+      parking.after([])
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      expect(trace).toEqual(["hydrate", "dispose"])
+    })
+  } finally {
     await controller.dispose()
   }
+})
+
+test("an outlet React removes from a shown page takes its root along", async () => {
+  // With the page's controller, which unmounts the root and stays.
+  const shared = traced()
+  const controller = new ComponentController({ state, adapter: shared.adapter })
+  try {
+    await rendered(async (view) => {
+      await act(async () => view.render(outlet({ controller })))
+      await controller.whenReady("instance_1")
+      const disposed = shared.next()
+      await act(async () => view.render(null))
+      await disposed
+      expect(shared.trace).toEqual(["hydrate", "dispose"])
+    })
+  } finally {
+    await controller.dispose()
+  }
+
+  // Without one, the outlet's own controller goes too.
+  const own = traced()
+  await rendered(async (view) => {
+    const hydrated = own.next()
+    await act(async () => view.render(outlet({ clientAdapter: own.adapter })))
+    await hydrated
+    const disposed = own.next()
+    await act(async () => view.render(null))
+    await disposed
+    expect(own.trace).toEqual(["hydrate", "dispose"])
+  })
 })
