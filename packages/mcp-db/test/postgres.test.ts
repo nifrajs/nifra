@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { SQL } from "bun"
 import { isDbRefusal } from "../src/engine.ts"
 import {
+  extended,
   inReadOnlyTransaction,
   type PgConnection,
   type PgQuery,
@@ -8,7 +10,12 @@ import {
   planDocument,
   planReads,
 } from "../src/internal/pg-exec.ts"
-import { lexPostgres, lintPostgres, withoutTerminator } from "../src/internal/pg-lexer.ts"
+import {
+  lexPostgres,
+  lintPostgres,
+  tableAliasLists,
+  withoutTerminator,
+} from "../src/internal/pg-lexer.ts"
 import {
   connectPostgres,
   explainPostgres,
@@ -233,6 +240,61 @@ describe("tokenizer layer", () => {
       kind: "function",
       name: "dblink_connect",
     })
+  })
+
+  test("refuses the functions that run SQL from a string", () => {
+    for (const [sql, name] of [
+      ["SELECT word FROM ts_stat('SELECT to_tsvector(api_key) FROM secrets')", "ts_stat"],
+      ["SELECT ts_rewrite('a'::tsquery, 'SELECT q, s FROM secrets')", "ts_rewrite"],
+      ["SELECT * FROM public.crosstab('SELECT 1, 2, 3') AS c(a int, b int)", "crosstab"],
+      ["SELECT * FROM connectby('secrets', 'id', 'parent', '1', 0) AS c(a int)", "connectby"],
+    ] as const) {
+      expect({ sql, lint: lintPostgres(sql) }).toMatchObject({
+        sql,
+        lint: { kind: "function", name },
+      })
+    }
+  })
+
+  test("tableAliasLists finds a table given a column alias list, and nothing else", () => {
+    const listed = (sql: string) =>
+      tableAliasLists(sql).map(({ table, alias }) => `${table} ${alias}`)
+    for (const [sql, found] of [
+      ["SELECT c FROM users AS t(a, b, c)", "users t"],
+      ["SELECT c FROM public.users t(a, b, c)", "users t"],
+      ["SELECT * FROM ONLY users t(a)", "users t"],
+      ["SELECT * FROM ONLY (public.users) AS t(a)", "users t"],
+      ["SELECT * FROM users * t(a)", "users t"],
+      ['SELECT * FROM "Users" "T"(a)', "Users T"],
+      ["SELECT 1 FROM orders o JOIN users AS t(a, b) ON true", "users t"],
+      ["SELECT 1 FROM orders o, users t(a)", "users t"],
+      ["SELECT 1 FROM (orders o JOIN users t(a) ON true)", "users t"],
+      ["SELECT (SELECT c FROM users t(a, b, c) LIMIT 1) FROM (SELECT 1) t", "users t"],
+      ["WITH x AS (SELECT c FROM users t(a, b, c)) SELECT * FROM x", "users t"],
+    ] as const) {
+      expect({ sql, found: listed(sql) }).toEqual({ sql, found: [found] })
+    }
+    for (const sql of [
+      "SELECT * FROM users u WHERE (u.id = 1)",
+      "SELECT * FROM users WHERE (id = 1)",
+      "SELECT * FROM users LIMIT (5)",
+      "SELECT * FROM users TABLESAMPLE SYSTEM (10)",
+      "SELECT * FROM orders JOIN users USING (id)",
+      "SELECT * FROM users WINDOW w AS (PARTITION BY id)",
+      "SELECT * FROM generate_series(1, 3) AS g(n)",
+      "SELECT * FROM pg_catalog.generate_series(1, 3) g(n)",
+      "SELECT * FROM unnest(ARRAY[1]) WITH ORDINALITY AS u(x, n)",
+      "SELECT * FROM ROWS FROM (generate_series(1, 2)) AS r(n)",
+      "SELECT * FROM users, LATERAL unnest(tags) AS tag(t)",
+      "SELECT * FROM (SELECT * FROM users) AS s(a, b)",
+      "WITH a AS (SELECT 1), b AS MATERIALIZED (SELECT 2) SELECT * FROM a, b",
+      "WITH a(x) AS (SELECT 1) SELECT * FROM a",
+      "SELECT CAST(price AS numeric(10, 2)), substring(name FROM 1 FOR 2) FROM orders",
+      "SELECT extract(year FROM placed), a IS DISTINCT FROM b FROM orders",
+      "SELECT 'FROM users t(a)'",
+    ]) {
+      expect({ sql, found: listed(sql) }).toEqual({ sql, found: [] })
+    }
   })
 
   test("lexes offsets, parameters and quoted words", () => {
@@ -524,6 +586,43 @@ const plan = (
 
 const QUERY = { timeoutMs: 2_000, maxRows: 2, maxResultBytes: 4096, exclude: ["secrets"] }
 
+describe("extended", () => {
+  test("hands Bun.SQL a template object it takes as one statement", async () => {
+    const seen: TemplateStringsArray[] = []
+    const query: PgQuery = {
+      // biome-ignore lint/suspicious/noThenProperty: a PgQuery is awaitable by contract
+      then: (onFulfilled, onRejected) => Promise.resolve([]).then(onFulfilled, onRejected),
+      values: () => Promise.resolve([]),
+    }
+    const connection: PgConnection = Object.assign(
+      (strings: TemplateStringsArray) => {
+        seen.push(strings)
+        return query
+      },
+      { unsafe: () => query, release: () => {} },
+    )
+    await extended(connection, "SELECT 1")
+    const [strings] = seen
+    if (strings === undefined) throw new Error("extended never called the connection")
+    expect({
+      keys: Object.keys(strings),
+      raw: strings.raw,
+      frozen: Object.isFrozen(strings),
+    }).toEqual({ keys: ["0"], raw: ["SELECT 1"], frozen: true })
+    // Bun.SQL checks the template object as it builds the query, which runs only once awaited.
+    const sql = new SQL({ hostname: "127.0.0.1", port: 1, username: "nifra", database: "nifra" })
+    let refusal: unknown
+    try {
+      sql(strings)
+    } catch (error) {
+      refusal = error
+    } finally {
+      await sql.close()
+    }
+    expect(refusal).toBeUndefined()
+  })
+})
+
 describe("query layers over a scripted client", () => {
   test("a query runs BEGIN READ ONLY, the role read, the cursor, the plan scope and one FETCH", async () => {
     const { client, log } = fakeClient([
@@ -733,6 +832,53 @@ describe("query layers over a scripted client", () => {
       expect(code(explained)).toBe("NIFRA_DB_COLUMN_REFUSED")
       expect(log.some((line) => /^EXPLAIN \((ANALYZE, )?FORMAT JSON\)/.test(line))).toBe(false)
     }
+  })
+
+  test("a table's column alias list hides which column the plan reads: refused while a read relation holds a masked one", async () => {
+    // `users AS t(a, b, id)` hands password_hash the name id; the plan prints `t.id`.
+    const renamed = {
+      rows: [
+        {
+          "QUERY PLAN": [
+            {
+              Plan: {
+                "Node Type": "Seq Scan",
+                "Relation Name": "users",
+                Schema: "public",
+                Alias: "t",
+                Output: ["t.id"],
+              },
+            },
+          ],
+        },
+      ],
+    }
+    const run = (column: (name: string) => boolean) => {
+      const { client } = fakeClient([
+        [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        [/^EXPLAIN \(VERBOSE/, renamed],
+        [/WITH RECURSIVE planned/, { rows: [] }],
+        [
+          /pg_catalog\.pg_attribute/,
+          {
+            rows: ["id", "email", "password_hash"].map((name) => ({
+              schema: "public",
+              name: "users",
+              column: name,
+            })),
+          },
+        ],
+        [/^EXPLAIN \(FORMAT JSON\)/, { rows: [{ "QUERY PLAN": [{ Plan: {} }] }] }],
+      ])
+      return explainPostgres(client, "SELECT id FROM users AS t(a, b, id)", {
+        ...QUERY,
+        redaction: { column },
+      })
+    }
+    const refused = await run((name) => name === "password_hash")
+    expect(code(refused)).toBe("NIFRA_DB_COLUMN_REFUSED")
+    expect(isDbRefusal(refused) ? refused.message : "").toContain("alias list t(...)")
+    expect(code(await run((name) => name === "api_key"))).toBeUndefined()
   })
 })
 

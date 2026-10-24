@@ -478,10 +478,11 @@ export default function Agents() {
         <li>
           <strong>Secret columns refused.</strong> A query that reads a column whose name says
           credential (<code>password</code>, <code>token</code>, <code>secret</code>,{" "}
-          <code>api_key</code>, ...) or one in <code>redactColumns</code> is refused, in any form:
-          selected under another name, inside an expression, in a filter, or through a view. Every
-          other value goes through the same redactor as the dev feed: keys, tokens, JWTs and the
-          project's environment values.
+          <code>api_key</code>, ...) or one in <code>redactColumns</code> is refused wherever the
+          query plan uses it: selected under another name, inside an expression, in a filter, through
+          a view, or renamed by a table's column alias list. Functions that run SQL from a string,
+          which the plan cannot see, are refused outright. Every other value goes through the same
+          redactor as the dev feed: keys, tokens, JWTs and the project's environment values.
         </li>
         <li>
           <strong>Data, not instructions.</strong> Rows, and names from the schema, are marked{" "}

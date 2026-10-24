@@ -78,8 +78,9 @@ Each layer refuses on its own, in this order:
 1. **Host.** Only loopback, `*.localhost` and unix sockets connect unless `allowHosts` names the host.
    URL parameters other than host, port, user, password, database and `sslmode` are ignored.
 2. **Tokenizer.** One SELECT, WITH, VALUES or TABLE statement; row-locking clauses, unicode-escaped
-   identifiers and functions that reach outside a query (server files, `dblink`, `set_config`,
-   advisory locks, `pg_notify`, `nextval`, `query_to_xml`, backend signals) are refused.
+   identifiers, functions that reach outside a query (server files, `dblink`, `set_config`, advisory
+   locks, `pg_notify`, `nextval`, backend signals) and functions that run SQL from a string the plan
+   check cannot see (`query_to_xml`, `ts_stat`, `ts_rewrite`, `crosstab`, `connectby`) are refused.
 3. **Read-only transaction.** `BEGIN READ ONLY` with `statement_timeout`, `lock_timeout` and
    `idle_in_transaction_session_timeout` set to `timeoutMs`, always rolled back. Sessions also start
    with `default_transaction_read_only = on`.
@@ -94,7 +95,9 @@ Each layer refuses on its own, in this order:
    every `pg_catalog` function scanned in FROM must sit in `schemas` (default `public`) and outside
    `exclude`. With `redaction`, a column `redaction.column` matches that any plan expression uses
    (output, filter, join, sort or index condition), or a whole row holding one, is refused
-   (`NIFRA_DB_COLUMN_REFUSED`).
+   (`NIFRA_DB_COLUMN_REFUSED`). A plan names a scan's columns by the table's column alias list
+   (`FROM users AS t(a, b)`), so while any relation the query reads holds a matching column, a query
+   that gives a table one is refused as well.
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`

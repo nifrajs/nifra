@@ -42,8 +42,10 @@ export interface PostgresClient {
 
 /** Run caller text as ONE extended-protocol statement with no parameters. */
 export function extended(connection: PgConnection, text: string): PgQuery {
-  const strings: TemplateStringsArray = Object.assign([text], { raw: [text] })
-  return connection(strings)
+  const strings = Object.assign([text], { raw: Object.freeze([text]) })
+  // Shaped like a real template object: Bun.SQL (1.4.4+) refuses one whose `raw` is enumerable.
+  Object.defineProperty(strings, "raw", { enumerable: false })
+  return connection(Object.freeze(strings))
 }
 
 const WRITE_KEYWORD =
