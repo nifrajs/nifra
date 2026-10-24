@@ -95,7 +95,7 @@ describe("importOpenAPI - inventory import", () => {
           ],
           hasBody: false,
           requestBodyRequired: false,
-          responseStatuses: ["200"],
+          responseStatuses: ["200", "422"],
           notes: [],
         },
         {
@@ -105,7 +105,7 @@ describe("importOpenAPI - inventory import", () => {
           query: [],
           hasBody: true,
           requestBodyRequired: true,
-          responseStatuses: ["200"],
+          responseStatuses: ["200", "400", "413", "415", "422"],
           notes: [],
         },
         {
@@ -115,7 +115,7 @@ describe("importOpenAPI - inventory import", () => {
           query: [],
           hasBody: true,
           requestBodyRequired: true,
-          responseStatuses: ["200", "404"],
+          responseStatuses: ["200", "400", "404", "413", "415", "422"],
           notes: [],
         },
       ],

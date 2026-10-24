@@ -109,7 +109,16 @@ const textFields =
 export const t = {
   string: (options?: StringOptions) => fromTypeBox(Type.String(options)),
   number: (options?: NumberOptions) => fromTypeBox(Type.Number(options)),
-  integer: (options?: IntegerOptions) => fromTypeBox(Type.Integer(options)),
+  // Bounded to the safe range by default: past 2^53 - 1 a parsed JSON or query number has already
+  // been rounded (`9007199254740993` arrives as `...992`), so a larger value is refused, not changed.
+  integer: (options?: IntegerOptions) =>
+    fromTypeBox(
+      Type.Integer({
+        minimum: Number.MIN_SAFE_INTEGER,
+        maximum: Number.MAX_SAFE_INTEGER,
+        ...options,
+      }),
+    ),
   boolean: () => fromTypeBox(Type.Boolean()),
   null: () => fromTypeBox(Type.Null()),
   literal: <const L extends TLiteralValue>(value: L) => fromTypeBox(Type.Literal(value)),

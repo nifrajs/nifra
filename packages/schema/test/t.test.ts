@@ -22,6 +22,26 @@ describe("primitives", () => {
     expect((await validateStandard(t.integer(), 3.14)).ok).toBe(false)
   })
 
+  test("integer refuses what a JSON or query number cannot carry exactly", async () => {
+    // `JSON.parse` already turned 9007199254740993 into this value: it must not pass as the original.
+    const rounded: number = JSON.parse("9007199254740993")
+    expect((await validateStandard(t.integer(), rounded)).ok).toBe(false)
+    expect((await validateStandard(t.integer(), -rounded)).ok).toBe(false)
+    expect(await validateStandard(t.integer(), Number.MAX_SAFE_INTEGER)).toEqual({
+      ok: true,
+      value: Number.MAX_SAFE_INTEGER,
+    })
+    expect(t.integer().jsonSchema).toMatchObject({
+      minimum: Number.MIN_SAFE_INTEGER,
+      maximum: Number.MAX_SAFE_INTEGER,
+    })
+    // A bound of the caller's own replaces the default on that side only.
+    expect(t.integer({ minimum: 0 }).jsonSchema).toMatchObject({
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+    })
+  })
+
   test("boolean / literal / null", async () => {
     expect(await validateStandard(t.boolean(), true)).toEqual({ ok: true, value: true })
     expect(await validateStandard(t.literal("active"), "active")).toEqual({
@@ -114,7 +134,14 @@ describe("jsonSchema (the OpenAPI substrate)", () => {
     const json = JSON.parse(JSON.stringify(schema.jsonSchema))
     expect(json).toEqual({
       type: "object",
-      properties: { name: { type: "string" }, age: { type: "integer" } },
+      properties: {
+        name: { type: "string" },
+        age: {
+          type: "integer",
+          minimum: Number.MIN_SAFE_INTEGER,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
+      },
       required: ["name", "age"],
       additionalProperties: false, // t.object is strict by default
     })
@@ -137,6 +164,10 @@ describe("t.query (coercing query-slot schema)", () => {
     expect((await validateStandard(q, { city_id: "abc", active: "true", name: "x" })).ok).toBe(
       false,
     )
+    // Past the safe range the coerced number is not the one sent, so it is refused, not rounded.
+    expect(
+      (await validateStandard(q, { city_id: "9007199254740993", active: "true", name: "x" })).ok,
+    ).toBe(false)
   })
 
   test("a plain t.object in a query slot does NOT coerce - the footgun t.query fixes", async () => {

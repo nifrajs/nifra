@@ -2739,6 +2739,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The hooks a path under `prefix` that no route matches still runs - its 404s and 405s.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **SchemaSide** _(type)_ - `type SchemaSide = "input" | "output"`
+  Which side of a schema to describe: the value a request sends, or the value a response carries.
 - **declaredHeaderNames** _(function)_ - `declaredHeaderNames: (schema: object) => readonly string[] | undefined`
   The names a closed header schema declares, or `undefined` when it is open or lists no names. Every client sends headers no route declares (`host`, `user-agent`, `accept`), so a closed schema fed the whole record would refuse all real traffic; it is fed the names it declares instead, which is also h…
 - **reflectHooks** _(function)_ - `reflectHooks: (source: unknown) => ReflectedHookReport`
@@ -2751,8 +2753,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Where each route was registered: `METHOD /path` (`WS` for a socket) mapped to the `file:line:col` of the call outside nifra's core that registered it, through every `group()` and `merge()`. Recorded only by a development load with `NIFRA_ROUTE_SITES=1` (the CLI sets it while it loads `nifra.assuran…
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array, and a server's WebSocket routes under the pseudo-method `"WS"`. Invalid entries are ignored; a missing/throwing `routes()` method yields only the sockets.
-- **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
-  Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
+- **reflectSchema** _(function)_ - `reflectSchema: (value: unknown, side?: SchemaSide) => SchemaReflection`
+  Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse. A Standard JSON Schema is read on `side`, since a default or a transform makes the two differ.
 
 ### `@nifrajs/core/replay`
 

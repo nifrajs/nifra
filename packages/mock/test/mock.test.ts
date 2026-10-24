@@ -31,6 +31,37 @@ describe("generateMockValue", () => {
     expect(generateMockValue({ type: "integer", exclusiveMinimum: 0 }, undefined, () => 0)).toBe(1)
   })
 
+  test("the safe-integer limits leave a side open, like no bound", () => {
+    const safe = {
+      type: "integer",
+      minimum: Number.MIN_SAFE_INTEGER,
+      maximum: Number.MAX_SAFE_INTEGER,
+    }
+    expect(generateMockValue(safe, undefined, () => 0)).toBe(0)
+    expect(generateMockValue(safe, undefined, () => 1)).toBe(100)
+    expect(generateMockValue({ ...safe, minimum: 1900 }, undefined, () => 1)).toBe(2000)
+  })
+
+  test("a safe-integer limit still caps a range that reaches it", () => {
+    const at = (schema: Record<string, unknown>, r: number): unknown =>
+      generateMockValue({ type: "integer", ...schema }, undefined, () => r)
+    const top = Number.MAX_SAFE_INTEGER
+    expect(at({ minimum: top - 1, maximum: top }, 1)).toBe(top)
+    expect(at({ minimum: top - 1, exclusiveMaximum: top }, 1)).toBe(top - 1)
+    expect(at({ minimum: -top, maximum: -top + 1 }, 0)).toBe(-top)
+    expect(at({ exclusiveMinimum: -top, maximum: -top + 2 }, 0)).toBe(-top + 1)
+  })
+
+  test("a safe-integer limit on the far side of a field is its bound", () => {
+    const top = Number.MAX_SAFE_INTEGER
+    for (const r of [0, 0.5, 1]) {
+      const below = generateMockValue({ type: "integer", maximum: -top }, undefined, () => r)
+      const above = generateMockValue({ type: "integer", minimum: top }, undefined, () => r)
+      expect(below).toBeLessThanOrEqual(-top)
+      expect(above).toBeGreaterThanOrEqual(top)
+    }
+  })
+
   test("exclusive bounds are never reached", () => {
     const at = (schema: Record<string, unknown>, r: number): unknown =>
       generateMockValue(schema, undefined, () => r)

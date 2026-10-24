@@ -9,6 +9,7 @@ import {
 import {
   type JsonSchema,
   type ReflectedRouteSchema,
+  type ReflectedSchemaField,
   reflectRoutes,
   reflectSchema,
   type SchemaReflection,
@@ -20,11 +21,18 @@ import type { Server } from "@nifrajs/core/server"
  * and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and
  * non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
  *
- * Schemas carry full detail only for `t`/TypeBox inputs (they expose a JSON Schema); a BYO Standard
- * Schema validates at runtime but exposes no JSON Schema, so its route is emitted without body/response
- * detail. A **contract** is richest - its operations carry `response`, `tags`, `security`, additional
- * `responses`, etc.; an **app** emits request shapes + a generic `200` (an inline handler has no
- * response *schema* to serialize), enrichable via `options.operations`.
+ * Schemas carry full detail for `t`/TypeBox schemas and for a Standard Schema that also implements
+ * Standard JSON Schema (`~standard.jsonSchema`, as zod 4 does): requests are described by its input
+ * side, responses by its output side. One that exposes neither validates at runtime but is emitted
+ * without body/response detail. A **contract** is richest - its operations carry `response`, `tags`,
+ * `security`, additional `responses`, etc.; an **app** emits request shapes + a generic `200` (an
+ * inline handler has no response *schema* to serialize), enrichable via `options.operations`.
+ *
+ * Every operation also lists the errors the framework answers before its handler runs, as the shared
+ * `NifraError` / `NifraValidationError` components: 400, 413 and 415 for a body, 422 for any request
+ * schema (left out when an `onValidationError` hook writes that body). A declared response wins.
+ * A union whose members all pin one required property to distinct values becomes a `oneOf` with a
+ * `discriminator`, so a generator can emit a tagged union instead of trying each member in turn.
  *
  * A typed SSE route (`app.sse()`) answers `text/event-stream`, and its event payload becomes a named
  * component (`<OperationId>Event`, or one named after the path) so a client generator emits a type
@@ -150,6 +158,131 @@ export interface OpenAPIDocument {
   readonly components?: OpenAPIComponents
 }
 
+type SchemaRecord = Readonly<Record<string, unknown>>
+
+const isRecord = (value: unknown): value is SchemaRecord =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const recordOf = (value: unknown): SchemaRecord | undefined => (isRecord(value) ? value : undefined)
+
+// Plain assignment would run the `__proto__` setter for a key spelled that way.
+const setOwn = (target: Record<string, unknown>, key: string, value: unknown): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+}
+
+// Keywords whose values are data, and keywords whose keys are names; a walk reads neither as keywords.
+const DATA_KEYWORDS: ReadonlySet<string> = new Set([
+  "const",
+  "default",
+  "enum",
+  "example",
+  "examples",
+])
+const NAME_MAPS: ReadonlySet<string> = new Set([
+  "properties",
+  "patternProperties",
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+])
+
+function mapValues(
+  record: SchemaRecord,
+  map: (value: unknown) => unknown,
+): SchemaRecord | undefined {
+  let copy: Record<string, unknown> | undefined
+  for (const [key, value] of Object.entries(record)) {
+    const next = map(value)
+    if (next === value) continue
+    copy ??= { ...record }
+    setOwn(copy, key, next)
+  }
+  return copy
+}
+
+type Visit = (schema: SchemaRecord) => SchemaRecord
+
+/** `node` rebuilt bottom-up through `visit`, copying only the nodes that change. */
+function mapSchema(node: unknown, visit: Visit): unknown {
+  if (Array.isArray(node)) {
+    const next = node.map((item) => mapSchema(item, visit))
+    return next.some((item, index) => item !== node[index]) ? next : node
+  }
+  return isRecord(node) ? mapSchemaRecord(node, visit) : node
+}
+
+function mapSchemaRecord(record: SchemaRecord, visit: Visit): SchemaRecord {
+  let changed: Record<string, unknown> | undefined
+  for (const [key, value] of Object.entries(record)) {
+    if (DATA_KEYWORDS.has(key)) continue
+    const names = NAME_MAPS.has(key) ? recordOf(value) : undefined
+    const next =
+      names === undefined
+        ? mapSchema(value, visit)
+        : (mapValues(names, (entry) => mapSchema(entry, visit)) ?? names)
+    if (next === value) continue
+    changed ??= { ...record }
+    setOwn(changed, key, next)
+  }
+  return visit(changed ?? record)
+}
+
+const DEFINITION_REF = /^#\/\$defs\/([^/]*)(.*)$/
+
+/** A `#` pointer into the schema's own root: not into its `$defs`, and not a document `components` ref. */
+const isRootRef = (ref: string): boolean =>
+  (ref === "#" || ref.startsWith("#/")) &&
+  !DEFINITION_REF.test(ref) &&
+  !ref.startsWith("#/components/")
+
+const pointerToken = (token: string): string => token.replaceAll("~1", "/").replaceAll("~0", "~")
+
+/** The `$defs` keys a node refers to through `#/$defs/<key>`. */
+function definitionRefs(node: unknown): string[] {
+  const keys: string[] = []
+  mapSchema(node, (schema) => {
+    const match = typeof schema.$ref === "string" ? DEFINITION_REF.exec(schema.$ref) : null
+    if (match !== null) keys.push(pointerToken(match[1] ?? ""))
+    return schema
+  })
+  return keys
+}
+
+/** Whether a node points into its own root (`#`, `#/properties/...`). */
+function refersToRoot(node: unknown): boolean {
+  let found = false
+  mapSchema(node, (schema) => {
+    if (typeof schema.$ref === "string" && isRootRef(schema.$ref)) found = true
+    return schema
+  })
+  return found
+}
+
+/** `key`'s definition and every definition it reaches, keyed and sorted: equal means interchangeable. */
+function definitionClosure(key: string, defs: SchemaRecord): string {
+  const reached = new Set([key])
+  const pending = [key]
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    for (const ref of definitionRefs(defs[next])) {
+      if (!reached.has(ref) && Object.hasOwn(defs, ref)) {
+        reached.add(ref)
+        pending.push(ref)
+      }
+    }
+  }
+  return JSON.stringify([key, [...reached].sort().map((name) => [name, defs[name]])])
+}
+
+const componentBase = (id: string): string =>
+  /^[A-Za-z0-9._-]+$/.test(id)
+    ? id
+    : `Schema_${[...new TextEncoder().encode(id)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
+
 /**
  * Collects schemas that carry a `$id` into `components.schemas`, returning a `$ref` in their place -
  * so a schema used by N operations is emitted once. Schemas without a `$id` stay inline (the existing
@@ -159,17 +292,39 @@ class SchemaStore {
   readonly schemas: Record<string, JsonSchema> = {}
   private readonly componentNames = new Map<string, string>()
   private readonly componentIds = new Map<string, string>()
+  // Names the generator chose itself; a user `$id` spelled the same must not resolve to one of them.
+  private readonly reserved = new Set<string>()
+  private readonly definitionNames = new Map<string, string>()
+  private readonly rootNames = new Map<string, string>()
+  private readonly sharedRefs = new Map<string, JsonSchema>()
+
+  private taken(name: string): boolean {
+    return (
+      Object.hasOwn(this.schemas, name) || this.componentIds.has(name) || this.reserved.has(name)
+    )
+  }
+
+  private freeName(base: string): string {
+    let name = base
+    let suffix = 2
+    while (this.taken(name)) {
+      name = `${base}_${suffix}`
+      suffix += 1
+    }
+    this.reserved.add(name)
+    return name
+  }
 
   private componentName(id: string): string {
     const known = this.componentNames.get(id)
     if (known !== undefined) return known
-    const encoded = [...new TextEncoder().encode(id)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("")
-    const base = /^[A-Za-z0-9._-]+$/.test(id) ? id : `Schema_${encoded}`
+    const base = componentBase(id)
     let name = base
     let suffix = 2
-    while (this.componentIds.has(name) && this.componentIds.get(name) !== id) {
+    while (
+      (this.componentIds.has(name) && this.componentIds.get(name) !== id) ||
+      this.reserved.has(name)
+    ) {
       name = `${base}_${suffix}`
       suffix += 1
     }
@@ -178,22 +333,78 @@ class SchemaStore {
     return name
   }
 
+  /**
+   * `schema` without its dialect and `$defs`, each definition kept as a component and every
+   * `#/$defs/...` ref pointed at it: inside an OpenAPI document a `#` pointer resolves against the
+   * document, so a definition left in place is unreachable. A root that refers to itself (`#`) is
+   * kept as a component too, and a `$ref` to it comes back in its place.
+   */
+  private withoutDefinitions(schema: SchemaRecord): SchemaRecord {
+    const selfReferent = refersToRoot(schema)
+    if (!selfReferent && !Object.hasOwn(schema, "$schema") && !Object.hasOwn(schema, "$defs"))
+      return schema
+    const { $schema: _dialect, $defs, ...rest } = schema
+    const defs = recordOf($defs) ?? {}
+    const names = new Map<string, string>()
+    for (const key of Object.keys(defs)) {
+      const signature = definitionClosure(key, defs)
+      let name = this.definitionNames.get(signature)
+      if (name === undefined) {
+        name = this.freeName(componentBase(key))
+        this.definitionNames.set(signature, name)
+      }
+      names.set(key, name)
+    }
+    let root: string | undefined
+    if (selfReferent) {
+      const signature = JSON.stringify(schema)
+      root =
+        typeof rest.$id === "string"
+          ? this.componentName(rest.$id)
+          : (this.rootNames.get(signature) ?? this.freeName("Schema"))
+      this.rootNames.set(signature, root)
+    }
+    const rewriteRef: Visit = (current) => {
+      const ref = current.$ref
+      if (typeof ref !== "string" || !ref.startsWith("#")) return current
+      const match = DEFINITION_REF.exec(ref)
+      if (match !== null) {
+        const name = names.get(pointerToken(match[1] ?? ""))
+        return name === undefined
+          ? current
+          : { ...current, $ref: `#/components/schemas/${name}${match[2] ?? ""}` }
+      }
+      return root === undefined || !isRootRef(ref)
+        ? current
+        : { ...current, $ref: `#/components/schemas/${root}${ref.slice(1)}` }
+    }
+    for (const [key, name] of names) {
+      if (!Object.hasOwn(this.schemas, name)) {
+        const definition = defs[key]
+        if (typeof definition === "boolean") setOwn(this.schemas, name, definition)
+        else if (isRecord(definition))
+          setOwn(this.schemas, name, mapSchemaRecord(definition, rewriteRef))
+      }
+    }
+    const local = mapSchemaRecord(rest, rewriteRef)
+    // A root with a `$id` is hoisted under that name by `collect`, like any other.
+    if (root === undefined || typeof local.$id === "string") return local
+    if (!Object.hasOwn(this.schemas, root)) setOwn(this.schemas, root, local)
+    return { $ref: `#/components/schemas/${root}` }
+  }
+
   /** Hoist a schema with a `$id` into components + return a `$ref`; otherwise return it inline. */
   collect(schema: JsonSchema | undefined): JsonSchema | undefined {
     if (schema === undefined) return undefined
     if (typeof schema === "boolean") return schema
-    const id = typeof schema.$id === "string" ? schema.$id : undefined
-    if (id === undefined) return schema
+    const local = this.withoutDefinitions(schema)
+    const id = typeof local.$id === "string" ? local.$id : undefined
+    if (id === undefined) return local
     const componentName = this.componentName(id)
     if (!Object.hasOwn(this.schemas, componentName)) {
-      const hoisted = { ...schema }
+      const hoisted = { ...local }
       delete hoisted.$id // the component key is the name; drop the redundant base-URI hint
-      Object.defineProperty(this.schemas, componentName, {
-        value: hoisted,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      })
+      setOwn(this.schemas, componentName, hoisted)
     }
     return { $ref: `#/components/schemas/${componentName}` }
   }
@@ -202,20 +413,32 @@ class SchemaStore {
   named(base: string, schema: JsonSchema): JsonSchema {
     const collected = this.collect(schema) ?? schema
     if (typeof collected === "object" && typeof collected.$ref === "string") return collected
-    let name = base
-    let suffix = 2
-    while (Object.hasOwn(this.schemas, name) || this.componentIds.has(name)) {
-      name = `${base}_${suffix}`
-      suffix += 1
-    }
-    this.componentIds.set(name, name)
-    Object.defineProperty(this.schemas, name, {
-      value: collected,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    })
+    const name = this.freeName(base)
+    setOwn(this.schemas, name, collected)
     return { $ref: `#/components/schemas/${name}` }
+  }
+
+  /** One component for a schema the generator itself contributes, added on first use. */
+  shared(base: string, schema: JsonSchema): JsonSchema {
+    const known = this.sharedRefs.get(base)
+    if (known !== undefined) return known
+    const ref = this.named(base, schema)
+    this.sharedRefs.set(base, ref)
+    return ref
+  }
+
+  /** A parameter schema's fields, read through the same `$defs` hoisting as a body schema. */
+  fields(schema: SchemaReflection | undefined): readonly ReflectedSchemaField[] | undefined {
+    const json = recordOf(schema?.jsonSchema)
+    if (schema?.fields === undefined || json === undefined || !Object.hasOwn(json, "$defs"))
+      return schema?.fields
+    const properties = recordOf(this.withoutDefinitions(json).properties) ?? {}
+    return schema.fields.map((field) => {
+      const hoisted = properties[field.name]
+      return typeof hoisted === "boolean" || isRecord(hoisted)
+        ? { ...field, schema: hoisted }
+        : field
+    })
   }
 }
 
@@ -259,11 +482,13 @@ function templatedPath(path: string): {
   return { template: `/${template}`, parameters }
 }
 
-function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIParameter[] {
+type Fields = readonly ReflectedSchemaField[] | undefined
+
+function pathParameters(path: string, paramsFields: Fields): OpenAPIParameter[] {
   // Build a lookup of per-field schemas from the declared params schema (if any).
   const fieldSchemas = new Map<string, JsonSchema>()
-  if (paramsSchema?.fields !== undefined) {
-    for (const field of paramsSchema.fields) {
+  if (paramsFields !== undefined) {
+    for (const field of paramsFields) {
       fieldSchemas.set(field.name, field.schema)
     }
   }
@@ -283,9 +508,7 @@ function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIP
   }))
 }
 
-function queryParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
-  if (schema === undefined) return []
-  const fields = schema.fields
+function queryParameters(fields: Fields): OpenAPIParameter[] {
   // Only an introspectable object schema decomposes into individual query parameters.
   if (fields === undefined) return []
   return fields.map((field) => ({
@@ -296,9 +519,9 @@ function queryParameters(schema: SchemaReflection | undefined): OpenAPIParameter
   }))
 }
 
-function headerParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
-  if (schema?.fields === undefined) return []
-  return schema.fields.map((field) => ({
+function headerParameters(fields: Fields): OpenAPIParameter[] {
+  if (fields === undefined) return []
+  return fields.map((field) => ({
     name: field.name.toLowerCase(),
     in: "header" as const,
     required: field.required,
@@ -307,9 +530,9 @@ function headerParameters(schema: SchemaReflection | undefined): OpenAPIParamete
 }
 
 /** Cookie names are case-sensitive, so each declared field keeps its name as written. */
-function cookieParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
-  if (schema?.fields === undefined) return []
-  return schema.fields.map((field) => ({
+function cookieParameters(fields: Fields): OpenAPIParameter[] {
+  if (fields === undefined) return []
+  return fields.map((field) => ({
     name: field.name,
     in: "cookie" as const,
     required: field.required,
@@ -328,6 +551,8 @@ interface OperationInput {
   readonly response: SchemaReflection | undefined
   /** A typed SSE route's event payload schema. */
   readonly sse?: SchemaReflection | undefined
+  /** An `onValidationError` hook writes this route's 422 body, so the default envelope is not it. */
+  readonly validationErrorHook?: boolean | undefined
   readonly operationId: string | undefined
   // `| undefined` (not just `?`) so a contract op's optional fields - `string | undefined` etc. - are
   // assignable under `exactOptionalPropertyTypes` when spread into this literal.
@@ -356,12 +581,66 @@ const STATUS_TEXT: Readonly<Record<string, string>> = {
   "405": "Method Not Allowed",
   "409": "Conflict",
   "410": "Gone",
+  "413": "Content Too Large",
   "415": "Unsupported Media Type",
   "422": "Unprocessable Entity",
   "429": "Too Many Requests",
   "500": "Internal Server Error",
   "502": "Bad Gateway",
   "503": "Service Unavailable",
+}
+
+const ERROR_ENVELOPE: JsonSchema = {
+  type: "object",
+  required: ["ok", "error"],
+  properties: { ok: { type: "boolean", const: false }, error: { type: "string" } },
+}
+
+const VALIDATION_ERROR_ENVELOPE: JsonSchema = {
+  type: "object",
+  required: ["ok", "error", "issues"],
+  properties: {
+    ok: { type: "boolean", const: false },
+    error: { type: "string", const: "validation" },
+    issues: {
+      type: "array",
+      // Core's 422 lists at most this many issues.
+      maxItems: 100,
+      items: {
+        type: "object",
+        required: ["message"],
+        properties: {
+          message: { type: "string" },
+          path: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+}
+
+/** The errors the framework answers for this operation before its handler runs. */
+function frameworkResponses(
+  input: OperationInput,
+  store: SchemaStore,
+): Record<string, OpenAPIResponse> {
+  const responses: Record<string, OpenAPIResponse> = {}
+  const answer = (status: string, component: string, schema: JsonSchema): void => {
+    responses[status] = {
+      description: STATUS_TEXT[status] ?? "Error",
+      content: { "application/json": { schema: store.shared(component, schema) } },
+    }
+  }
+  if (input.body !== undefined) {
+    answer("400", "NifraError", ERROR_ENVELOPE)
+    answer("413", "NifraError", ERROR_ENVELOPE)
+    answer("415", "NifraError", ERROR_ENVELOPE)
+  }
+  const validates = [input.body, input.query, input.params, input.headers, input.cookies].some(
+    (schema) => schema !== undefined,
+  )
+  if (validates && input.validationErrorHook !== true)
+    answer("422", "NifraValidationError", VALIDATION_ERROR_ENVELOPE)
+  return responses
 }
 
 function reflectedErrorsToResponses(
@@ -437,6 +716,7 @@ function buildResponses(
   } else {
     responses["200"] = { description: "OK" }
   }
+  Object.assign(responses, frameworkResponses(input, store))
   // Additional (or overriding) responses declared on the contract op.
   if (input.responses !== undefined) {
     for (const [status, def] of Object.entries(input.responses)) {
@@ -505,10 +785,10 @@ function buildOperation(
   if (input.security !== undefined) operation.security = input.security // `[]` ⇒ explicitly public
 
   const parameters = [
-    ...pathParameters(input.path, input.params),
-    ...queryParameters(input.query),
-    ...headerParameters(input.headers),
-    ...cookieParameters(input.cookies),
+    ...pathParameters(input.path, store.fields(input.params)),
+    ...queryParameters(store.fields(input.query)),
+    ...headerParameters(store.fields(input.headers)),
+    ...cookieParameters(store.fields(input.cookies)),
   ]
   if (parameters.length > 0) operation.parameters = parameters
 
@@ -562,6 +842,126 @@ function addOperation(
   pathItem[field] = operation
 }
 
+/** The one string `member` pins property `name` to, by `const` or a one-value `enum`. */
+function pinnedValue(member: SchemaRecord, name: string): string | undefined {
+  const property = recordOf(recordOf(member.properties)?.[name])
+  if (property === undefined) return undefined
+  if (typeof property.const === "string") return property.const
+  const values = property.enum
+  return Array.isArray(values) && values.length === 1 && typeof values[0] === "string"
+    ? values[0]
+    : undefined
+}
+
+/** The property every member requires and pins to a value of its own, if there is one. */
+function sharedTag(members: readonly SchemaRecord[]): string | undefined {
+  for (const name of Object.keys(recordOf(members[0]?.properties) ?? {})) {
+    const values = new Set<string>()
+    const tags = members.every((member) => {
+      const required = Array.isArray(member.required) && member.required.includes(name)
+      const value = required ? pinnedValue(member, name) : undefined
+      if (value === undefined || values.has(value)) return false
+      values.add(value)
+      return true
+    })
+    if (tags) return name
+  }
+  return undefined
+}
+
+const COMPONENT_REF = /^#\/components\/schemas\/([^/]+)$/
+
+/**
+ * A union whose members are told apart by one tag property, as a `oneOf`, plus a `discriminator` with
+ * a `mapping` when every member is a component: distinct required tags make the members exclusive, so
+ * `anyOf` and `oneOf` accept the same values.
+ */
+function discriminated(schema: SchemaRecord, components: SchemaRecord): SchemaRecord {
+  const { oneOf, anyOf } = schema
+  const members: readonly unknown[] | undefined =
+    Array.isArray(oneOf) && anyOf === undefined
+      ? oneOf
+      : Array.isArray(anyOf) && oneOf === undefined
+        ? anyOf
+        : undefined
+  if (members === undefined || members.length < 2 || schema.discriminator !== undefined)
+    return schema
+  const refs = members.map((member) => {
+    const ref = recordOf(member)?.$ref
+    return typeof ref === "string" ? COMPONENT_REF.exec(ref)?.[1] : undefined
+  })
+  const resolved = members.map((member, index) => {
+    const name = refs[index]
+    return recordOf(name === undefined ? member : components[name])
+  })
+  if (!resolved.every((member): member is SchemaRecord => member !== undefined)) return schema
+  const tag = sharedTag(resolved)
+  if (tag === undefined) return schema
+  const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = schema
+  const named = refs.filter((name): name is string => name !== undefined)
+  // A discriminator only selects components (OpenAPI 3.1 and 3.2 never consider inline members).
+  if (named.length < refs.length) return { ...rest, oneOf: members }
+  const mapping = Object.fromEntries(
+    resolved.map((member, index) => [
+      pinnedValue(member, tag),
+      `#/components/schemas/${named[index]}`,
+    ]),
+  )
+  return { ...rest, oneOf: members, discriminator: { propertyName: tag, mapping } }
+}
+
+/** Every schema in the document - parameters, bodies, responses, components - through `discriminated`. */
+function discriminateDocument(
+  paths: Record<string, Record<string, OpenAPIOperation>>,
+  components: Record<string, JsonSchema>,
+): void {
+  const visit = (schema: JsonSchema): JsonSchema =>
+    typeof schema === "boolean"
+      ? schema
+      : mapSchemaRecord(schema, (node) => discriminated(node, components))
+  // Copies, never edits: a merged `options.operations` override may hand in the caller's own objects.
+  const media = (content: Record<string, OpenAPIMediaType>): Record<string, OpenAPIMediaType> =>
+    Object.fromEntries(
+      Object.entries(content).map(([type, entry]) => [
+        type,
+        {
+          ...entry,
+          ...(entry.schema === undefined ? {} : { schema: visit(entry.schema) }),
+          ...(entry.itemSchema === undefined ? {} : { itemSchema: visit(entry.itemSchema) }),
+          ...(entry["x-itemSchema"] === undefined
+            ? {}
+            : { "x-itemSchema": visit(entry["x-itemSchema"]) }),
+        },
+      ]),
+    )
+  for (const [name, schema] of Object.entries(components)) setOwn(components, name, visit(schema))
+  for (const pathItem of Object.values(paths)) {
+    for (const operation of Object.values(pathItem)) {
+      if (operation.parameters !== undefined) {
+        operation.parameters = operation.parameters.map((parameter) => ({
+          ...parameter,
+          schema: visit(parameter.schema),
+        }))
+      }
+      if (operation.requestBody !== undefined) {
+        operation.requestBody = {
+          ...operation.requestBody,
+          content: media(operation.requestBody.content),
+        }
+      }
+      if (operation.responses === undefined) continue
+      operation.responses = Object.fromEntries(
+        Object.entries(operation.responses).map(([status, response]) => [
+          status,
+          response.content === undefined
+            ? response
+            : { ...response, content: media(response.content) },
+        ]),
+      )
+    }
+  }
+}
+
 function isApp(input: ContractShape | Server): input is Server {
   // Duck-typed so @nifrajs/schema keeps @nifrajs/core a type-only dependency. A contract
   // is a plain record of operations; only a Server exposes a `routes()` method.
@@ -596,6 +996,7 @@ export function toOpenAPI(
           // A route may now declare a `response` contract - emit it as the 200 body schema.
           response: route.schema?.response,
           sse: route.schema?.sse,
+          validationErrorHook: route.schema?.validationErrorHook === true,
           // …and an `errors` contract - emit each as a non-2xx response.
           responses: reflectedErrorsToResponses(route.schema?.errors),
           inferredResponses:
@@ -623,7 +1024,7 @@ export function toOpenAPI(
                   status,
                   {
                     ...metadata,
-                    ...(schema === undefined ? {} : { schema: reflectSchema(schema) }),
+                    ...(schema === undefined ? {} : { schema: reflectSchema(schema, "output") }),
                   },
                 ]
               }),
@@ -639,7 +1040,7 @@ export function toOpenAPI(
             headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
             cookies: op.cookies === undefined ? undefined : reflectSchema(op.cookies),
             params: op.params === undefined ? undefined : reflectSchema(op.params),
-            response: op.response === undefined ? undefined : reflectSchema(op.response),
+            response: op.response === undefined ? undefined : reflectSchema(op.response, "output"),
             operationId: path === forms[forms.length - 1] ? name : undefined,
             summary: op.summary,
             description: op.description,
@@ -661,6 +1062,7 @@ export function toOpenAPI(
     }
   }
 
+  discriminateDocument(paths, store.schemas)
   const components: OpenAPIComponents = {}
   if (Object.keys(store.schemas).length > 0) components.schemas = store.schemas
   if (options.securitySchemes !== undefined) components.securitySchemes = options.securitySchemes

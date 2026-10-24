@@ -65,16 +65,24 @@ function bindingBound(
 }
 
 // A side the schema leaves open sits 100 from the given one, so `minimum: 1900` alone is satisfiable.
+// A bound at or past the safe-integer limit on its own side says what a number can carry, not what a
+// field means: it leaves the side open but still caps the range, so `minimum: 2^53 - 2` stays safe.
 function numericBounds(schema: Record<string, unknown>): NumericBounds {
   const lower = bindingBound(schema.minimum, schema.exclusiveMinimum, (a, b) => a > b)
   const upper = bindingBound(schema.maximum, schema.exclusiveMaximum, (a, b) => a < b)
-  const min = lower?.value ?? (upper === undefined ? 0 : upper.value - 100)
-  const max = upper?.value ?? min + 100
+  const low =
+    lower !== undefined && lower.value > -Number.MAX_SAFE_INTEGER ? lower.value : undefined
+  const high =
+    upper !== undefined && upper.value < Number.MAX_SAFE_INTEGER ? upper.value : undefined
+  const from = low ?? (high === undefined ? 0 : high - 100)
+  const to = high ?? from + 100
+  const min = lower !== undefined && lower.value >= from ? lower : { value: from, exclusive: false }
+  const max = upper !== undefined && upper.value <= to ? upper : { value: to, exclusive: false }
   const bounds = {
-    min,
-    max,
-    minExclusive: lower?.exclusive === true,
-    maxExclusive: upper?.exclusive === true,
+    min: min.value,
+    max: max.value,
+    minExclusive: min.exclusive,
+    maxExclusive: max.exclusive,
   }
   if (min > max || (min === max && (bounds.minExclusive || bounds.maxExclusive)))
     throw new UnsupportedMockSchemaError("minimum", "Numeric schema has no satisfiable range")
@@ -501,7 +509,9 @@ export function createMockServer(
     const key = `${route.method.toUpperCase()} ${route.path}`
     const rng = seededRandom(seed)
     const response = route.schema?.response
-    let responseSchema = response?.jsonSchema
+    // A converter's own output may carry `$ref`, which the generator cannot follow; the hook asks it
+    // for the inline form instead.
+    let responseSchema = response?.converted === true ? undefined : response?.jsonSchema
     // Backfill an inspectable schema for an opaque validator (zod/valibot) so its routes mock real data
     // instead of `{}`. Fail-safe: a throwing hook falls back to `{}`, exactly as before the hook existed.
     const reflectJsonSchema = options?.reflectJsonSchema ?? autoReflectJsonSchema

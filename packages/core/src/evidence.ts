@@ -46,6 +46,8 @@ export interface ProjectEvidenceSchema {
   readonly response?: ProjectEvidenceSchemaPart
   readonly errors?: Readonly<Record<string, ProjectEvidenceSchemaPart>>
   readonly sse?: ProjectEvidenceSchemaPart
+  /** Set when an `onValidationError` hook answers the route's validation failures. */
+  readonly validationErrorHook?: true
 }
 
 export interface ProjectEvidenceSourceLocation {
@@ -173,6 +175,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
     ...(response !== undefined ? { response } : {}),
     ...(Object.keys(errors).length > 0 ? { errors: Object.freeze(errors) } : {}),
     ...(sse !== undefined ? { sse } : {}),
+    ...(source.validationErrorHook === true ? { validationErrorHook: true as const } : {}),
   }
   return Object.freeze(schema)
 }
@@ -518,6 +521,7 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
     ...(response !== undefined ? { response } : {}),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
     ...(sse !== undefined ? { sse } : {}),
+    ...(schema.validationErrorHook === true ? { validationErrorHook: true as const } : {}),
   }
 }
 

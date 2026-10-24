@@ -719,9 +719,14 @@ const queryInput = (value: unknown): unknown | undefined => {
  * that throws is swallowed - the schema stays opaque, exactly as before the hook existed. This is what
  * lets an opaque validator (zod/valibot) get witness synthesis + constraint-driven mutations. */
 const withReflectedJsonSchema = (
-  reflection: SchemaReflection,
+  declared: SchemaReflection,
   reflect: AdversarialContractOptions["reflectJsonSchema"],
 ): SchemaReflection => {
+  // A converter's own output may carry `$ref`, which mutation generation cannot follow, so the hook
+  // reads such a schema the way it reads one that carries nothing.
+  const { converted, ...carried } = declared
+  const reflection: SchemaReflection =
+    converted === true ? { ...carried, jsonSchema: undefined, fields: undefined } : declared
   if (
     reflect === undefined ||
     reflection.jsonSchema !== undefined ||

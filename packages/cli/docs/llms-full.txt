@@ -18578,8 +18578,9 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
 - **Validating string formats** - `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
   validate *and* annotate; register more with `registerFormat`.
 - **`toOpenAPI`** - richest from a contract (it carries `response` schemas + op names →
-  `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
-  emitted without a detailed schema (Standard Schema exposes no JSON Schema).
+  `operationId`s); also works on a live app. A Standard Schema that also implements Standard JSON
+  Schema (zod 4 does) is described like `t`; one that exposes no JSON Schema is emitted without a
+  detailed schema.
 
 ### Static validators for edge runtimes
 
@@ -18672,8 +18673,9 @@ cost - TypeBox carries the whole JSON Schema type system, so `t` adds meaningful
 nifra validates through **Standard Schema**, so any Standard-Schema validator works on a route with
 no adapter - `{ body: v.object({ ... }) }` with valibot, for instance. A validated app built on a
 lean validator like valibot is a fraction of the size (measured ~16 KB gzipped), which matters for
-edge/Workers cold-starts. The trade is the one noted above: a bring-your-own validator exposes no
-JSON Schema, so those routes carry no OpenAPI/MCP detail.
+edge/Workers cold-starts. The trade is the one noted above: a validator that exposes no JSON Schema
+(valibot without a Standard JSON Schema wrapper) gives those routes no OpenAPI/MCP detail. One that
+implements Standard JSON Schema (`~standard.jsonSchema`, as zod 4 does) is described from it.
 
 Rule of thumb: reach for `t` when you want the contract (OpenAPI/MCP) for free; bring valibot (or any
 Standard-Schema validator) when bundle size on the edge is the priority. Both are first-class - the
@@ -18689,13 +18691,22 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
 - **Non-200 responses** and **non-JSON content** - a contract op's `responses` map declares extra status
   codes; `requestContentType` / `responseContentType` set media types other than `application/json`.
 - **`$ref` reuse** - a schema with a `$id` (`t.object({…}, { $id: "User" })`) is hoisted into
-  `components.schemas` once and referenced by `$ref` everywhere it's used.
+  `components.schemas` once and referenced by `$ref` everywhere it's used. A Standard JSON Schema's
+  `$defs` are hoisted the same way, so its refs resolve inside the document.
+- **Framework errors** - the responses the server answers before a handler runs, as the shared
+  `NifraError` (`{ ok: false, error }`) and `NifraValidationError` (`{ ok: false, error: "validation",
+  issues }`) components: `400`, `413` and `415` on a route with a body, `422` on any route with a request
+  schema (left out when an `onValidationError` hook writes that body). A declared response wins.
+- **Tagged unions** - a union whose members all pin one required property to distinct values is
+  emitted as a `oneOf`. When every member is a component (a `$id`) it also gets a `discriminator`
+  with a `mapping`, so a client generator can build a tagged union; OpenAPI discriminators never
+  consider inline members.
 - Per-operation **`summary`**, **`description`**, **`tags`**, **`deprecated`** - declared on the contract op.
 
 A **contract** is richest (its ops carry all of the above); in **app** mode a route's response is a
 generic `200` with no schema - declare a `defineContract` with `response` schemas, or pass
-`options.operations` (keyed by `"METHOD /path"`) to enrich app routes. Routes using a BYO Standard Schema
-are still emitted without body/response detail (Standard Schema exposes no JSON Schema).
+`options.operations` (keyed by `"METHOD /path"`) to enrich app routes. Routes using a schema that
+exposes no JSON Schema are still emitted without body/response detail.
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
 
