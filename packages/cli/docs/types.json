@@ -14855,7 +14855,7 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
-    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, the build transform replaces this module with typed stubs\n * that POST to the mounted route.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, this module becomes typed stubs that POST under its\n * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it\n * under that name.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
   },
   {
     "name": "ServerFnConfig",
