@@ -4092,7 +4092,7 @@ _No named exports (side-effect entrypoint)._
 - **fitToBytes** _(function)_ - `fitToBytes: <T>(count: number, build: (shown: number) => T, maxBytes: number) => { readonly value: T; readonly serialized: string; readonly shown: number; } | undefined`
   Serialize `build(shown)` for the largest `shown <= count` (halving from `count`) whose JSON fits `maxBytes`. `undefined` when even `build(0)` does not fit.
 - **gateSqliteStatement** _(function)_ - `gateSqliteStatement: (input: string, exposed: (relation: string) => boolean) => SqliteGate`
-  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an…
+  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN`/`IN` exposed. Returns the statement without its terminator, ready to wrap. The compiled program ({@link unexposedProgramRelation}) remains the authority on the …
 - **isDbRefusal** _(function)_ - `isDbRefusal: (value: unknown) => value is DbRefusal`
   True for a value {@link dbRefusal} built.
 - **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>`
@@ -4110,7 +4110,7 @@ _No named exports (side-effect entrypoint)._
 - **toJsonCell** _(function)_ - `toJsonCell: (value: unknown, redaction?: DbRedaction, depth?: number) => unknown`
   One database value as JSON: bytes become `<n bytes>`, a bigint outside the safe range a string, a date an ISO string, a non-finite number a string. Strings go through `redaction.text`, and a key inside a JSON value that `redaction.column` matches is masked.
 - **unexposedPlanRelation** _(function)_ - `unexposedPlanRelation: (planRows: readonly { readonly detail?: unknown; }[], exposed: (relation: string) => boolean) => string | undefined`
-  The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed.
+  The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed. The plan names a scan by its alias (`FROM habits h` plans as `SCAN h`, `users AS habits` as `SCAN habits`), so it cannot decide o…
 
 ### `@nifrajs/mcp-db/postgres`
 

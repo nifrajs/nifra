@@ -124,6 +124,36 @@ describe("statement gates", () => {
     })
   })
 
+  test("every SQLite quoting hides a terminator or comment marker, and trailing comments are cut", () => {
+    const gate = (sql: string) => gateSqliteStatement(sql, exposed)
+    expect(gate("SELECT `a;b` FROM orders")).toEqual({
+      ok: true,
+      query: "SELECT `a;b` FROM orders",
+    })
+    expect(gate("SELECT [a;b] FROM orders")).toEqual({
+      ok: true,
+      query: "SELECT [a;b] FROM orders",
+    })
+    expect(gate("SELECT `x--y`, [p/*q] FROM orders")).toEqual({
+      ok: true,
+      query: "SELECT `x--y`, [p/*q] FROM orders",
+    })
+    expect(gate("SELECT `a``;` FROM orders")).toMatchObject({ ok: true })
+    expect(gate("SELECT * FROM orders -- all\n")).toEqual({
+      ok: true,
+      query: "SELECT * FROM orders",
+    })
+    expect(gate("SELECT * FROM orders /* all */ ; ")).toEqual({
+      ok: true,
+      query: "SELECT * FROM orders",
+    })
+    expect(gate("SELECT '`' FROM orders; SELECT 2")).toMatchObject({ reason: "multiple" })
+    expect(gate("SELECT [`] FROM orders; SELECT 2")).toMatchObject({ reason: "multiple" })
+    expect(gate("SELECT 1; /* x */ SELECT 2")).toMatchObject({ reason: "multiple" })
+    expect(gate("/* SELECT */ DELETE FROM orders")).toMatchObject({ reason: "not-read" })
+    expect(gate("SELECT * FROM `users`")).toMatchObject({ reason: "unexposed", relation: "users" })
+  })
+
   test("the plan check skips planner pseudo-nodes and reads the last dotted segment", () => {
     expect(unexposedPlanRelation([{ detail: "SCAN CONSTANT ROW" }], exposed)).toBeUndefined()
     expect(unexposedPlanRelation([{ detail: "SCAN SUBQUERY 1" }], exposed)).toBeUndefined()

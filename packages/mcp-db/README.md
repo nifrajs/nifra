@@ -18,8 +18,10 @@ const mcp = serveDatabaseAsMcp(new Database("app.db"), {
 ```
 
 Only `list_tables` and `describe_table` are exposed by default, restricted to the explicit table
-allowlist. `run_query` requires an authorization hook and is guarded by SQLite query-only mode,
-single-statement/read-only checks, query-plan verification, and bounded output. D1 is not supported
+allowlist. `list_tables` counts rows in the same lane as `run_query`, within its time limit, and
+reuses the counts for 10 seconds. `run_query` requires an authorization hook and is guarded by SQLite
+query-only mode, single-statement/read-only checks, verification of the compiled statement, and
+bounded output. D1 is not supported
 because it cannot provide the same engine-level read-only guarantee.
 
 ## The engine: `@nifrajs/mcp-db/engine`
