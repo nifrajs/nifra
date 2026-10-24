@@ -94,16 +94,40 @@ const childrenOf = (tree: readonly SlotNode[]): Map<string, readonly SlotNode[]>
   return nodes
 }
 
+// What a layout adds to its `children` with `cloneElement`, for the slot it shows: a hidden slot
+// keeps what it last had, so its memo holds.
+type Added = Readonly<Record<string, unknown>> | undefined
+const sameAdded = (a: Added, b: Added): boolean => {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.is(a[key], b[key]))
+}
+const addedTo = (held: Map<string, Added>, nodes: readonly SlotNode[], shown: Added) => {
+  for (const key of held.keys()) if (!nodes.some((node) => node.key === key)) held.delete(key)
+  return (node: SlotNode): Added => {
+    const last = held.get(node.key)
+    if (held.has(node.key) && (node.hidden || sameAdded(last, shown))) return last
+    held.set(node.key, shown)
+    return shown
+  }
+}
+
 // The slots under one parent, read from the view: a layout's `children` is one element per parent,
 // created once, so the layout's memo compares equal while the slots under it still update.
-function Slots({ parent }: { readonly parent: string }): ReactNode {
+function Slots({ parent, ...rest }: { readonly parent: string }): ReactNode {
   const nodes = useContext(NodesContext).get(parent) ?? []
+  const added = addedTo(
+    useRef(new Map<string, Added>()).current,
+    nodes,
+    Object.keys(rest).length === 0 ? undefined : rest,
+  )
   // One slot renders as a lone child, not an array: an array forks the tree `useId` reads, and the
   // server's single chain has no fork, so ids would no longer hydrate. Keys keep the fiber either way.
   const [only] = nodes
   if (nodes.length === 1 && only !== undefined)
-    return createElement(Slot, { key: only.key, node: only })
-  return nodes.map((node) => createElement(Slot, { key: node.key, node }))
+    return createElement(Slot, { key: only.key, node: only, added: added(only) })
+  return nodes.map((node) => createElement(Slot, { key: node.key, node, added: added(node) }))
 }
 const slotsElements = new Map<string, ReactElement>()
 const slotsOf = (parent: string): ReactElement => {
@@ -115,33 +139,47 @@ const slotsOf = (parent: string): ReactElement => {
   return element
 }
 
-// The page's own chain from `depth` on: an `_error` boundary, then the page.
-const pageChain = (chain: readonly unknown[], depth: number, props: RenderProps): ReactNode => {
+// The page's own chain from `depth` on: an `_error` boundary, then the page. `added` goes to the first.
+const pageChain = (
+  chain: readonly unknown[],
+  depth: number,
+  props: RenderProps,
+  added?: Added,
+): ReactNode => {
   if (depth >= chain.length - 1)
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain holds the route's modules' default exports, its last entry the page component
-    return createElement(memoPage(chain[chain.length - 1] as ComponentType<RenderProps>), props)
+    return createElement(
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain holds the route's modules' default exports, its last entry the page component
+      memoPage(chain[chain.length - 1] as ComponentType<RenderProps>),
+      added === undefined ? props : { ...props, ...added },
+    )
   return createElement(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an entry between the layouts and the page is the `_error` boundary component
     memoLayout(chain[depth] as ComponentType<LayoutProps>),
-    { data: props.layoutData?.[depth] ?? null, boundaries: props.boundaries },
+    { data: props.layoutData?.[depth] ?? null, boundaries: props.boundaries, ...added },
     pageChain(chain, depth + 1, props),
   )
 }
 
 // One node, memoized on its identity: the tree keeps a node that did not change, so a hidden page
 // never renders while it is hidden.
-const Slot = memo(function Slot({ node }: { readonly node: SlotNode }): ReactNode {
+const Slot = memo(function Slot({
+  node,
+  added,
+}: {
+  readonly node: SlotNode
+  readonly added: Added
+}): ReactNode {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every slot renders under the mount's provider
   const view = useContext(MountContext) as Mount
   const props = view.propsOf(node.state)
   const chain = view.chainOf(node.state)
   const content =
     node.children === undefined
-      ? pageChain(chain, node.depth, props)
+      ? pageChain(chain, node.depth, props, added)
       : createElement(
           // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
           memoLayout(chain[node.depth] as ComponentType<LayoutProps>),
-          { data: props.layoutData?.[node.depth] ?? null, boundaries: props.boundaries },
+          { data: props.layoutData?.[node.depth] ?? null, boundaries: props.boundaries, ...added },
           slotsOf(node.key),
         )
   if (!node.wrapped) return content
