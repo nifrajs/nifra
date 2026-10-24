@@ -5618,6 +5618,8 @@ loader at a CDN and the runtime stays tiny. Or self-host: the optional
 mark the LCP image with `priority` to get `eager` +
 `fetchpriority="high"`. Extra DOM props (`className`, `style`,
 `id`, `data-*`) pass straight through to the `<img>`.
+Each adapter's `/image` entry takes `@nifrajs/image` as an optional
+peer, so the app installs it beside the adapter.
 
 ```ts
 import { Image } from "@nifrajs/web-react/image"
@@ -6351,7 +6353,8 @@ portable core.
 
 - `<I18nProvider>` + `useT()` ship for **all five adapters**
 (React, Preact, Vue, Solid, Svelte) - import from `@nifrajs/web-<framework>/i18n`;
-each is a thin binding over the agnostic `createFormatter`.
+each is a thin binding over the agnostic `createFormatter`. `@nifrajs/i18n`
+is an optional peer of every adapter, so the app installs it beside the adapter.
 
 ## Nifra - Edge & bindings
 
