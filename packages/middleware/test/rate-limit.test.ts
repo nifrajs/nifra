@@ -123,6 +123,71 @@ describe("rateLimit", () => {
     expect((await app.fetch(new Request("http://x/"))).status).toBe(429)
   })
 
+  test("an async key separates callers that share one IP", async () => {
+    const app = appWith({
+      store: new MemoryStore(),
+      max: 1,
+      windowMs: 60_000,
+      key: async (req) => {
+        await Promise.resolve()
+        return `session:${req.headers.get("x-session")}`
+      },
+    })
+    const as = (session: string) =>
+      app.fetch(new Request("http://x/", { headers: { "x-session": session } }), {
+        clientIp: "1.1.1.1",
+      })
+    const first = await as("a")
+    expect([first.status, first.headers.get("ratelimit-limit")]).toEqual([200, "1"])
+    expect((await as("b")).status).toBe(200)
+    expect((await as("a")).status).toBe(429)
+  })
+
+  test("a key that throws or rejects is charged to the client IP, and fails closed without one", async () => {
+    const hits: string[] = []
+    const inner = new MemoryStore()
+    const store = {
+      hit(key: string, ms: number) {
+        hits.push(key)
+        return inner.hit(key, ms)
+      },
+    }
+    const app = appWith({
+      store,
+      max: 1,
+      windowMs: 60_000,
+      key: (req) => {
+        if (req.headers.get("x-mode") === "throw") throw new Error("unverified")
+        return Promise.reject(new Error("unverified"))
+      },
+    })
+    const from = (clientIp: string | undefined, mode: string) =>
+      app.fetch(
+        new Request("http://x/", { headers: { "x-mode": mode } }),
+        clientIp === undefined ? undefined : { clientIp },
+      )
+    expect((await from("1.1.1.1", "throw")).status).toBe(200)
+    expect((await from("1.1.1.1", "reject")).status).toBe(429)
+    expect((await from("2.2.2.2", "reject")).status).toBe(200)
+    expect(hits).toEqual(["1.1.1.1", "1.1.1.1", "2.2.2.2"])
+
+    const unkeyed = await from(undefined, "reject")
+    expect(unkeyed.status).toBe(500)
+    expect(await unkeyed.json()).toEqual({ ok: false, error: "rate_limit_key_unavailable" })
+
+    // The fallback is the key the limiter's own trust options derive, here a trusted header.
+    hits.length = 0
+    const behindProxy = appWith({
+      store,
+      max: 5,
+      windowMs: 60_000,
+      header: "x-real-ip",
+      key: () => Promise.reject(new Error("unverified")),
+    })
+    await behindProxy.fetch(new Request("http://x/", { headers: { "x-real-ip": "3.3.3.3" } }))
+    expect(hits).toEqual(["3.3.3.3"])
+  })
+
   test("default key is the server-resolved client IP, never a client-sent header", async () => {
     const app = appWith({ store: new MemoryStore(), max: 1, windowMs: 60_000 })
     const from = (clientIp: string, xff = "6.6.6.6") =>

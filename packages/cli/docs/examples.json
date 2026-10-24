@@ -546,6 +546,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { idempotency, MemoryIdempotencyStore } from \"@nifrajs/middleware\"\n\n// A retried POST with the same Idempotency-Key replays the first response instead of\n// re-running the side effect. Shared store in production (atomic claim); dev-only memory store.\nconst app = server()\napp.use(idempotency({ store: new MemoryIdempotencyStore() }))"
   },
   {
+    "name": "SESSION_TIERS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { MemoryStore, rateLimitTiers } from \"@nifrajs/middleware\"\n\n// Resolves to the session id once the cookie's signature checks out, and rejects otherwise.\ndeclare function verifiedSessionId(req: Request): Promise<string>\n\n// No floor: the edge already limits every request, so a path no tier claims is not charged\n// again and gets no RateLimit-* headers.\nconst app = server().use(\n  rateLimitTiers({\n    store: new MemoryStore(),\n    tiers: [\n      {\n        prefix: \"/api\",\n        max: 90,\n        windowMs: 60_000,\n        // A forged or expired cookie rejects, and is charged to the client IP.\n        key: async (req) => `session:${await verifiedSessionId(req)}`,\n      },\n    ],\n  }),\n)"
+  },
+  {
     "name": "SHAPING",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

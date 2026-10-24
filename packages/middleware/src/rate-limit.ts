@@ -165,8 +165,13 @@ export interface RateLimitOptions {
    * Bucket key for a request. Overrides the default key entirely - e.g. an authenticated user id.
    * `platform.clientIp` is the caller the app's `clientIp` trust declaration derived (the socket peer
    * when none is declared).
+   *
+   * It may return a promise, for a key that needs async work such as verifying a signed session
+   * cookie with WebCrypto. A key that throws or rejects is charged to the client IP the default key
+   * derives, so a forged or expired credential never earns a bucket of its own; when no client IP is
+   * known either, the request is refused with a `500`, as an unkeyable request always is.
    */
-  readonly key?: (req: Request, platform?: Platform) => string
+  readonly key?: (req: Request, platform?: Platform) => string | Promise<string>
   /**
    * Leave a request uncharged: it is not counted and carries no `RateLimit-*` headers. Runs before
    * the key is derived, so a health check or an internal probe never touches the store.
@@ -180,13 +185,18 @@ export interface RateLimitTier {
   readonly prefix: string
   readonly max: number
   readonly windowMs: number
-  /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. */
-  readonly key?: (req: Request, platform?: Platform) => string
+  /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. Like
+   * {@link RateLimitOptions.key} it may be async, and a throw or rejection is charged to the client IP. */
+  readonly key?: (req: Request, platform?: Platform) => string | Promise<string>
 }
 
 export interface RateLimitTiersOptions extends Omit<RateLimitOptions, "max" | "windowMs"> {
-  /** The bucket for every request no tier claims. */
-  readonly floor: { readonly max: number; readonly windowMs: number }
+  /**
+   * The bucket for every request no tier claims. Omit it when something in front of the app already
+   * applies a base limit: a request no tier claims is then not charged and gets no `RateLimit-*`
+   * headers, and the rate-limit route evidence covers only the routes under a tier.
+   */
+  readonly floor?: { readonly max: number; readonly windowMs: number }
   readonly tiers: readonly RateLimitTier[]
 }
 
@@ -265,8 +275,10 @@ interface Bucket {
   readonly max: number
   readonly windowMs: number
   readonly scope: string
-  readonly key: (req: Request, platform?: Platform) => string | null
+  readonly key: (req: Request, platform?: Platform) => string | null | Promise<string>
   readonly nativeKey: ((req: NodeRequestContext, platform?: Platform) => string | null) | undefined
+  /** The derived client-IP key, charged when a custom `key` throws or rejects. */
+  readonly ipKey: (req: Request, platform?: Platform) => string | null
 }
 
 function assertWindow(max: number, windowMs: number, label: string): void {
@@ -276,11 +288,11 @@ function assertWindow(max: number, windowMs: number, label: string): void {
   }
 }
 
-/** The shared keying options, validated once, as the default key pair every bucket starts from. */
+/** The shared keying options, validated once, as the default keys every bucket starts from. */
 function defaultKeys(
   options: RateLimitOptions | RateLimitTiersOptions,
   label: string,
-): Pick<Bucket, "key" | "nativeKey"> {
+): Pick<Bucket, "key" | "nativeKey" | "ipKey"> {
   const trustedProxies = options.trustedProxies ?? 0
   if (!Number.isInteger(trustedProxies) || trustedProxies < 0) {
     throw new Error(`${label}: trustedProxies must be a non-negative integer`)
@@ -288,23 +300,27 @@ function defaultKeys(
   const header = options.header?.trim().toLowerCase()
   if (header !== undefined && header.trim() === "") throw new Error(`${label}: header is empty`)
   const allowGlobalKey = options.allowGlobalKey === true
-  if (options.key !== undefined) return { key: options.key, nativeKey: undefined }
+  const ipKey = (req: Request, platform?: Platform): string | null =>
+    defaultKey(req, platform, trustedProxies, header, allowGlobalKey)
+  if (options.key !== undefined) return { key: options.key, nativeKey: undefined, ipKey }
   return {
-    key: (req, platform) => defaultKey(req, platform, trustedProxies, header, allowGlobalKey),
+    key: ipKey,
     nativeKey: (req, platform) => nativeKey(req, platform, trustedProxies, header, allowGlobalKey),
+    ipKey,
   }
 }
 
 /**
  * The limiter both public factories build: `bucketFor` picks the one bucket a request is charged to,
- * from its pathname when `pathAware`. The Node twins exist only when every bucket can key the
- * allocation-light native request and nothing needs a real `Request` (`skip`, a custom `key`).
+ * from its pathname when `pathAware`, or none to leave it uncharged. The Node twins exist only when
+ * every bucket can key the allocation-light native request and nothing needs a real `Request`
+ * (`skip`, a custom `key`).
  */
 function limiter(
   name: string,
   store: RateLimitStore,
   buckets: readonly Bucket[],
-  bucketFor: (pathname: string) => Bucket,
+  bucketFor: (pathname: string) => Bucket | undefined,
   pathAware: boolean,
   skip: RateLimitOptions["skip"],
 ): Middleware {
@@ -345,7 +361,23 @@ function limiter(
     async onRequest(req, platform) {
       if (skip?.(req, platform) === true) return undefined
       const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
-      const outcome = await charge(bucket, bucket.key(req, platform))
+      if (bucket === undefined) return undefined
+      // A key that fails is charged to the client IP: falling open would let a forged credential
+      // skip the limit, and a bucket per failure would let it mint fresh ones.
+      let key: string | null | Promise<string>
+      try {
+        key = bucket.key(req, platform)
+      } catch {
+        key = bucket.ipKey(req, platform)
+      }
+      if (typeof key !== "string" && key !== null) {
+        try {
+          key = await key
+        } catch {
+          key = bucket.ipKey(req, platform)
+        }
+      }
+      const outcome = await charge(bucket, key)
       if (outcome instanceof Response) return outcome
       quota.set(req, outcome.info)
       return outcome.reject
@@ -368,6 +400,7 @@ function limiter(
       ? {
           onNodeRequest: async (req: NodeRequestContext, platform?: Platform) => {
             const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
+            if (bucket === undefined) return undefined
             const outcome = await charge(bucket, bucket.nativeKey?.(req, platform) ?? null)
             if (outcome instanceof Response) return outcome
             nativeQuota.set(req, outcome.info)
@@ -461,29 +494,32 @@ function assertTierPrefix(prefix: unknown): asserts prefix is string {
 
 /**
  * Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is
- * charged to exactly one bucket: the tier with the longest `prefix` that is the request's path or an
- * ancestor of it, else the `floor`. Tiers never stack, so a tier may sit above the floor
- * (`600/min` for `/api/public` under a `120/min` floor). It runs in `onRequest`, before routing, so
- * a 404, a 405 or a body that fails validation is charged too. Prefixes are validated here; each
- * tier counts in its own keys, so tiers can share one store.
+ * charged to at most one bucket: the tier with the longest `prefix` that is the request's path or an
+ * ancestor of it, else the `floor`, else none when there is no floor. Tiers never stack, so a tier
+ * may sit above the floor (`600/min` for `/api/public` under a `120/min` floor). It runs in
+ * `onRequest`, before routing, so a 404, a 405 or a body that fails validation is charged too.
+ * Prefixes are validated here; each tier counts in its own keys, so tiers can share one store.
  */
 export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
   const label = "rateLimitTiers"
-  if (options.floor === null || typeof options.floor !== "object") {
+  if (
+    options.floor !== undefined &&
+    (options.floor === null || typeof options.floor !== "object")
+  ) {
     throw new TypeError(`${label}: floor must be { max, windowMs }`)
   }
   if (!Array.isArray(options.tiers)) throw new TypeError(`${label}: tiers must be an array`)
   if (options.skip !== undefined && typeof options.skip !== "function") {
     throw new TypeError(`${label}: skip must be a function`)
   }
-  assertWindow(options.floor.max, options.floor.windowMs, `${label} floor`)
-  const keys = defaultKeys(options, label)
-  const floor: Bucket = {
-    max: options.floor.max,
-    windowMs: options.floor.windowMs,
-    scope: "floor:",
-    ...keys,
+  if (options.floor !== undefined) {
+    assertWindow(options.floor.max, options.floor.windowMs, `${label} floor`)
   }
+  const keys = defaultKeys(options, label)
+  const floor: Bucket | undefined =
+    options.floor === undefined
+      ? undefined
+      : { max: options.floor.max, windowMs: options.floor.windowMs, scope: "floor:", ...keys }
   const seen = new Set<string>()
   const tiers: (Bucket & { readonly prefix: string })[] = []
   for (const tier of options.tiers) {
@@ -503,11 +539,15 @@ export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
       scope: `tier:${tier.prefix}:`,
       key: tier.key ?? keys.key,
       nativeKey: tier.key === undefined ? keys.nativeKey : undefined,
+      ipKey: keys.ipKey,
     })
+  }
+  if (floor === undefined && tiers.length === 0) {
+    throw new Error(`${label}: needs a floor or at least one tier`)
   }
   // Longest first, so the first tier whose prefix holds the path is the most specific one.
   tiers.sort((a, b) => b.prefix.length - a.prefix.length)
-  const bucketFor = (pathname: string): Bucket => {
+  const bucketFor = (pathname: string): Bucket | undefined => {
     for (const tier of tiers) {
       if (
         pathname.startsWith(tier.prefix) &&
@@ -521,14 +561,17 @@ export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
   const middleware = limiter(
     guardName("rate-limit-tiers"),
     options.store,
-    [floor, ...tiers],
+    floor === undefined ? tiers : [floor, ...tiers],
     bucketFor,
     true,
     options.skip,
   )
-  return withRouteAssurance(middleware, {
+  const evidence: { id: string; source: string; scope: "global"; paths?: string[] } = {
     id: NIFRA_ASSURANCE.RATE_LIMITED,
     source: "rate-limit-tiers",
     scope: "global",
-  })
+  }
+  // With no floor a path no tier claims is never charged, so the evidence must not cover it.
+  if (floor === undefined) evidence.paths = tiers.map((tier) => `${tier.prefix}/**`)
+  return withRouteAssurance(middleware, evidence)
 }
