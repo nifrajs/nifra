@@ -25,6 +25,17 @@ const reactRuntime = "\0nifra-component-react-runtime"
 // Vite uses forward slashes for module IDs even when the filesystem uses backslashes.
 const bare = (id: string): string => (id.split("?")[0] ?? id).replaceAll("\\", "/")
 
+// Blanked with spaces rather than cut, so later offsets still point at the source.
+function withoutUseClient(source: string, path: string): string {
+  for (const statement of sourceFile(source, path).statements) {
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break
+    if (statement.expression.text !== "use client") continue
+    const start = statement.getStart()
+    return `${source.slice(0, start)}${" ".repeat(statement.end - start)}${source.slice(statement.end)}`
+  }
+  return source
+}
+
 export interface ServerComponentsPluginOptions {
   readonly root: string
   readonly adapter: "react" | "vue" | "svelte" | "solid" | "preact"
@@ -224,23 +235,31 @@ export function serverComponentsPlugin(
       return null
     },
     transform(source, id) {
-      if (id.includes(nativeQuery) || internal.has(bare(id))) return null
       const path = bare(id)
       let code = source
-      if (componentFile.test(path)) {
-        code = compileComponentModule(source, path, options.root, this.environment.name).code
-        componentModules.add(path)
+      if (!id.includes(nativeQuery) && !internal.has(path)) {
+        if (componentFile.test(path)) {
+          code = compileComponentModule(source, path, options.root, this.environment.name).code
+          componentModules.add(path)
+        }
+        if (islandFile.test(path))
+          code = compileComponentModule(
+            source,
+            path,
+            options.root,
+            this.environment.name,
+            "island",
+          ).code
+        if (this.environment.name === "rsc" && options.adapter === "react")
+          code = guardCreateElementCalls(code, path)
       }
-      if (islandFile.test(path))
-        code = compileComponentModule(
-          source,
-          path,
-          options.root,
-          this.environment.name,
-          "island",
-        ).code
-      if (this.environment.name === "rsc" && options.adapter === "react")
-        code = guardCreateElementCalls(code, path)
+      // Only the rsc build acts on "use client"; the client and ssr bundles would warn about it.
+      if (
+        this.environment.name !== "rsc" &&
+        options.adapter === "react" &&
+        code.includes("use client")
+      )
+        code = withoutUseClient(code, path)
       return code === source ? null : { code, map: null }
     },
   }
