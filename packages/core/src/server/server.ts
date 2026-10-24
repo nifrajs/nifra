@@ -69,6 +69,7 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
+import { withAnswerSteps } from "./answer-step.ts"
 import {
   type AuthenticationStage,
   isAuthenticatedRequest,
@@ -2624,6 +2625,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       lanes,
       routeAssurance,
     } = compiled
+    handler = withAnswerSteps(schema, method, path, handler)
     if (idempotent !== undefined && this.idempotencyRuntime !== undefined) {
       handler = this.idempotencyRuntime.wrapHandler(handler)
     }

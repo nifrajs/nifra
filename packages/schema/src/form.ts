@@ -45,6 +45,7 @@ import {
   Type,
 } from "@sinclair/typebox"
 import { fromTypeBox, type NifraSchema } from "./adapter.ts"
+import { markAnswerStep } from "./answer-step.ts"
 import { FILE, FILE_OPS, type FileOps, isFileSchema } from "./file-kind.ts"
 import { t as base } from "./t.ts"
 
@@ -80,6 +81,7 @@ const matches = (mime: string, pattern: string): boolean =>
   pattern === mime || (pattern.endsWith("/*") && mime.startsWith(pattern.slice(0, -1)))
 
 function custom<T extends TSchema>(jsonSchema: T, validate: Validate): NifraSchema<T> {
+  markAnswerStep(validate, jsonSchema)
   return {
     "~standard": {
       version: 1,

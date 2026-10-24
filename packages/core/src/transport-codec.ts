@@ -3,6 +3,8 @@
  * remains the zero-configuration fast path; rich wire is explicit and preserves non-JSON values.
  */
 
+import { jsonText } from "./server/json-text.ts"
+
 const DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 const TOKEN = /^[a-z][a-z0-9_.-]{0,63}$/
 
@@ -81,7 +83,7 @@ export const plainJsonCodec: TransportCodec = Object.freeze({
   version: 1,
   mediaType: "application/json",
   encode(value: unknown): string {
-    const encoded = JSON.stringify(value)
+    const encoded = jsonText(value)
     if (encoded === undefined) throw new TransportCodecError("value is not JSON serializable")
     return encoded
   },

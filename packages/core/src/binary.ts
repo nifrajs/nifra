@@ -51,6 +51,23 @@ declare const NIFRA_RAW: unique symbol
  */
 export type RawResponse<T> = Response & { readonly [NIFRA_RAW]: T }
 
+/**
+ * Marker on a `t.bytes()` field's TYPE. Declared OPTIONAL, unlike the two above: the handler returns a
+ * plain `Uint8Array` (or a `Buffer`), so the field's type has to accept one. Every `Uint8Array` meets an
+ * optional brand, so `extends` cannot test it; `Jsonify` asks whether the key is present instead, which
+ * only the declared field's type answers yes to.
+ */
+declare const NIFRA_BASE64: unique symbol
+
+/** The key `Jsonify` looks for to tell a {@link Base64Bytes} field from any other `Uint8Array`. */
+export type Base64BytesBrand = typeof NIFRA_BASE64
+
+/** A `t.bytes()` field: a `Uint8Array` in the handler, a base64 string on the wire and in the client. */
+export type Base64Bytes = Uint8Array & { readonly [NIFRA_BASE64]?: true }
+
+export type { AnswerStep, JsonReplyContext } from "./server/answer-step.ts"
+export { withBase64Bytes } from "./server/base64-answers.ts"
+
 /** What can be sent as bytes without being re-encoded on the way out. */
 export type BinaryBody = ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>
 

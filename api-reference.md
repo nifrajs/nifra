@@ -1888,11 +1888,18 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/binary`
 
+- **AnswerStep** _(interface)_ - `interface AnswerStep`
+- **Base64Bytes** _(type)_ - `type Base64Bytes = Uint8Array & { readonly [NIFRA_BASE64]?: true }`
+  A `t.bytes()` field: a `Uint8Array` in the handler, a base64 string on the wire and in the client.
+- **Base64BytesBrand** _(type)_ - `type Base64BytesBrand = typeof NIFRA_BASE64`
+  The key `Jsonify` looks for to tell a {@link Base64Bytes} field from any other `Uint8Array`.
 - **BinaryBody** _(type)_ - `type BinaryBody = ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>`
   What can be sent as bytes without being re-encoded on the way out.
 - **BinaryResponse** _(type)_ - `type BinaryResponse = Response & { readonly [NIFRA_BYTES]: true }`
   A `Response` a route declared as binary. `Jsonify` maps this to `Blob`.
 - **BytesOptions** _(interface)_ - `interface BytesOptions`
+- **JsonReplyContext** _(interface)_ - `interface JsonReplyContext`
+  The part of a request's context a step reads: the `c.json(...)` reply it made, and its value.
 - **NIFRA_BINARY_HEADER** _(const)_ - `NIFRA_BINARY_HEADER: "x-nifra-binary"`
   Runtime marker paired with the type-only brand so clients do not have to guess from media type.
 - **RawResponse** _(type)_ - `type RawResponse<T> = Response & { readonly [NIFRA_RAW]: T }`
@@ -1900,6 +1907,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **bytes** _(function)_ - `bytes: (body: BinaryBody, options?: BytesOptions) => BinaryResponse`
 - **raw** _(function)_ - `raw: <T>(response: Response) => RawResponse<T>`
   Brand a hand-built `Response` with the payload type `T` its body serializes to, so a route that must return a `Response` directly still types `res.data` as `Jsonify<T>` on the client instead of `never`. Use it for the endpoints that build their own `Response` - a token minted by a third-party SDK, …
+- **withBase64Bytes** _(function)_ - `withBase64Bytes: <C extends JsonReplyContext>(handler: (context: C) => unknown) => (context: C) => unknown`
+  Wrap a route handler so every `Uint8Array` in its answer leaves as base64.
 
 ### `@nifrajs/core/body-parser`
 
@@ -2335,6 +2344,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
   Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
+- **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit) => Response`
+  `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it.
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.

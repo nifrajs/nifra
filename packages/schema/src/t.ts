@@ -1,3 +1,4 @@
+import type { Base64Bytes } from "@nifrajs/core/binary"
 import {
   type ArrayOptions,
   CloneType,
@@ -16,6 +17,7 @@ import {
   TypeRegistry,
 } from "@sinclair/typebox"
 import { fromTypeBox, type NifraSchema } from "./adapter.ts"
+import { BYTES_KEY } from "./answer-step.ts"
 import { fileOps, refuseFile } from "./file-kind.ts"
 
 type Props = Record<string, NifraSchema>
@@ -48,6 +50,9 @@ export type JsonValue =
 
 const JSON_KIND = "NifraJson"
 const DATE_KIND = "NifraDate"
+const BYTES_KIND = "NifraBytes"
+// Padded standard base64: what a `t.bytes()` field is written as.
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 // Deeper than any real payload; it also ends a walk into a cycle, which JSON cannot carry.
 const MAX_JSON_DEPTH = 256
 
@@ -67,6 +72,10 @@ function isJsonValue(value: unknown, depth: number): boolean {
 
 const isValidDate = (_: unknown, value: unknown): boolean =>
   value instanceof Date && !Number.isNaN(value.getTime())
+
+// The handler's value, or the base64 a response contract sees once the route has written it.
+const isBytes = (_: unknown, value: unknown): boolean =>
+  value instanceof Uint8Array || (typeof value === "string" && BASE64.test(value))
 
 /**
  * Pull each property's raw TypeBox schema out of its `NifraSchema` wrapper. `where` names the calling
@@ -278,6 +287,23 @@ export const t = {
         type: "string",
         format: "date-time",
         "x-nifra-date": true,
+      }),
+    )
+  },
+  /**
+   * Bytes in a JSON response, as a base64 string. The handler returns a `Uint8Array` (or a `Buffer`); a
+   * route whose `response` or `errors` declares this field writes every `Uint8Array` in its answer as
+   * base64, and the typed client reads a `string`. Response-only for now: a request or `sse` schema
+   * that declares it is refused when the route is registered.
+   */
+  bytes: (): NifraSchema<TUnsafe<Base64Bytes>> => {
+    if (!TypeRegistry.Has(BYTES_KIND)) TypeRegistry.Set(BYTES_KIND, isBytes)
+    return fromTypeBox(
+      Type.Unsafe<Base64Bytes>({
+        [Kind]: BYTES_KIND,
+        type: "string",
+        contentEncoding: "base64",
+        [BYTES_KEY]: true,
       }),
     )
   },

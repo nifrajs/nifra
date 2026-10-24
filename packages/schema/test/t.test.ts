@@ -253,3 +253,25 @@ describe("t.date", () => {
     })
   })
 })
+
+describe("t.bytes", () => {
+  test("accepts a Uint8Array and the base64 it is written as", async () => {
+    const bytes = new Uint8Array([0, 1, 2, 250, 255])
+    expect(await validateStandard(t.bytes(), bytes)).toEqual({ ok: true, value: bytes })
+    expect((await validateStandard(t.bytes(), Buffer.from(bytes))).ok).toBe(true)
+    for (const value of ["AAEC+v8=", "", "AAECAw==", "AAECAwQ="]) {
+      expect((await validateStandard(t.bytes(), value)).ok).toBe(true)
+    }
+    for (const value of ["AAEC+v8", "AAE=C+v8", "AAEC-v8_", "not base64!", 1, null, [1, 2]]) {
+      expect((await validateStandard(t.bytes(), value)).ok).toBe(false)
+    }
+  })
+
+  test("describes itself as a base64 string", () => {
+    expect(JSON.parse(JSON.stringify(t.bytes().jsonSchema))).toEqual({
+      type: "string",
+      contentEncoding: "base64",
+      "x-nifra-bytes": true,
+    })
+  })
+})

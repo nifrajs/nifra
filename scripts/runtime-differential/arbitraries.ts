@@ -16,6 +16,8 @@ export const ROUTE_IDS = [
   "userPost",
   "files",
   "whoami",
+  "ids",
+  "bytes",
   "headers",
   "search",
   "session",
@@ -712,6 +714,8 @@ const drafts: fc.Arbitrary<Draft> = fc.oneof(
     (rest): Draft => ({ route: "files", method: "GET", path: pathOf("files", ...rest) }),
   ),
   fc.constant<Draft>({ route: "whoami", method: "GET", path: "/whoami" }),
+  fc.constant<Draft>({ route: "ids", method: "GET", path: "/ids" }),
+  fc.constant<Draft>({ route: "bytes", method: "GET", path: "/bytes" }),
   fc
     .array(fc.constantFrom("0", "9", "10", "-1", "abc", "1.5", " 3 ", "", "١"), { maxLength: 2 })
     .map(
