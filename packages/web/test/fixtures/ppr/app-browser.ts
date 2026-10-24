@@ -42,7 +42,11 @@ if (RUNTIME !== "bun" && (RUNTIME !== "deno" || FRAMEWORK !== "react")) {
 // the warnings asserted at the end are that app's.
 const kept: PprApp | undefined =
   FRAMEWORK === "react" && RUNTIME === "bun"
-    ? await (await import("./app/server.ts")).startKeptPprApp()
+    ? await import("./app/server.ts").then(({ REACT, startPprApp }) =>
+        // The product page again with `keepAlive`, in a routes tree of its own so the app the other
+        // checks use keeps none.
+        startPprApp({ ...REACT, routesDir: `${import.meta.dir}/kept/routes` }),
+      )
     : undefined
 assert.deepEqual(kept?.shellFailures ?? [], [], "the kept page's shell passes its check")
 const app =
