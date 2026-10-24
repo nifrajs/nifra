@@ -78,13 +78,9 @@ export const IDENTITY_SENSITIVE_PACKAGES: readonly string[] = [
 /** Files a redirect may rewrite. Everything else in a package (json, css, wasm) loads unchanged. */
 const REDIRECTABLE = /\.(?:m|c)?[jt]sx?$/
 
-/** The loader a {@link REDIRECTABLE} file is parsed with. `.ts` is never `tsx`: under JSX rules a
- * generic arrow (`<T>(x: T) => x`) reads as an unclosed element and swallows the file. */
-function sourceLoader(path: string): "js" | "jsx" | "ts" | "tsx" {
-  if (path.endsWith(".tsx")) return "tsx"
-  if (path.endsWith(".jsx")) return "jsx"
-  return /\.[mc]?ts$/.test(path) ? "ts" : "js"
-}
+/** Appended to a linked file the load hook hands back to Bun untouched; see the hook. */
+const OWN_FILE_QUERY = "?nifra-single-copy"
+
 /** Runaway guards. A real `node_modules` top level is hundreds of entries, a repo walk is a few. */
 const MAX_SCANNED_ENTRIES = 4_096
 const MAX_ANCESTOR_DIRS = 16
@@ -605,6 +601,8 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
       // hook has to return contents for everything it matches, and re-emitting a CommonJS entry as an
       // ES module is how `Export named 'useEffect' not found` happens.
       const filter = new RegExp(`^(?:${roots})[/\\\\].*${REDIRECTABLE.source}`)
+      // `Bun.plugin` leaves `config` unset although the type says otherwise; only `Bun.build` sets it.
+      const bundling = build.config !== undefined
       build.onLoad({ filter }, (args) => {
         for (const redirect of plan.redirects) {
           const target = counterpart(redirect, args.path)
@@ -623,10 +621,13 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
             detail: `${relative(owner.from, args.path)} has no file at the same path in the app's copy, so it loads from the linked copy and its module state is not shared`,
           })
         }
-        // A runtime `onLoad` must always return an object - returning nothing fails the load rather
-        // than falling through to the default. Hand back the file as it was, at its own path, so its
-        // relative imports keep resolving exactly as they would have.
-        return { contents: readFileSync(args.path, "utf8"), loader: sourceLoader(args.path) }
+        // The file loads as it is, in its own module format. A bundler takes `undefined` for that. A
+        // runtime `onLoad` must return an object, and source returned from here loads as an ES module,
+        // which empties a CommonJS file's exports - so the runtime gets a re-export of the file under a
+        // query the filter's `$` cannot match, which Bun then loads natively from its own directory.
+        // There its `__filename` and `import.meta.url` carry the query; the bundler cannot resolve it.
+        if (bundling) return undefined
+        return { contents: reexport(`${args.path}${OWN_FILE_QUERY}`), loader: "js" }
       })
     },
   }
