@@ -68,11 +68,13 @@
 {/snippet}
 
 {#if node.wrapped}
-  <div data-nifra-entry style="display:contents" {@attach attachEntry}>
-    <div data-nifra-page style="display:contents" {@attach attachPage}>
+  <!-- A `<slot>` lays out as `display: contents`, with no inline style a CSP could block; Svelte
+    keeps the tag name itself for its own slots. -->
+  <svelte:element this={"slot"} data-nifra-entry {@attach attachEntry}>
+    <svelte:element this={"slot"} data-nifra-page {@attach attachPage}>
       {@render content()}
-    </div>
-  </div>
+    </svelte:element>
+  </svelte:element>
 {:else}
   {@render content()}
 {/if}

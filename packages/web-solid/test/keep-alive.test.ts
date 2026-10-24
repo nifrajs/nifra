@@ -55,7 +55,8 @@ test("a keep-alive app's document renders the page inside the slot wrappers its 
   expect(textOf(html)).toContain("outer:l:undefined")
   expect(textOf(html)).toContain("page:d:true:s")
   expect([count(html, "data-nifra-entry"), count(html, "data-nifra-page")]).toEqual([1, 1])
-  expect(html).toContain('style="display:contents"')
+  expect(html).toMatch(/<slot [^>]*data-nifra-entry[^>]*><slot [^>]*data-nifra-page/)
+  expect(html).not.toContain("style=")
 
   const chain = [layout("outer"), layout("inner"), Page]
   const streamed = await new Response(

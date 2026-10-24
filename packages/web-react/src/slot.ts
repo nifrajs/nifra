@@ -1,12 +1,11 @@
 /**
  * The two wrappers a kept page renders inside, shared by the server render and the keep-alive mount so
  * the markup a document carries is the markup the browser hydrates. `Activity` sits between them: a
- * hidden page's effects clean up, and the inner wrapper is the element taken out of the document.
+ * hidden page's effects clean up, and the inner wrapper is the element taken out of the document. Each
+ * is a `<slot>`, which browsers lay out as `display: contents` with no inline style a CSP could block.
  */
 import * as React from "react"
 import { type ComponentType, createElement, type ReactNode, type Ref } from "react"
-
-const CONTENTS = { display: "contents" } as const
 
 type ActivityComponent = ComponentType<{
   readonly mode: "hidden" | "visible"
@@ -31,16 +30,16 @@ const activityOf = (): ActivityComponent => {
 export function inSlot(
   hidden: boolean,
   content: ReactNode,
-  entryRef?: Ref<HTMLDivElement>,
-  pageRef?: Ref<HTMLDivElement>,
+  entryRef?: Ref<HTMLSlotElement>,
+  pageRef?: Ref<HTMLSlotElement>,
 ): ReactNode {
   return createElement(
-    "div",
-    { "data-nifra-entry": "", style: CONTENTS, ref: entryRef },
+    "slot",
+    { "data-nifra-entry": "", ref: entryRef },
     createElement(
       activityOf(),
       { mode: hidden ? "hidden" : "visible" },
-      createElement("div", { "data-nifra-page": "", style: CONTENTS, ref: pageRef }, content),
+      createElement("slot", { "data-nifra-page": "", ref: pageRef }, content),
     ),
   )
 }

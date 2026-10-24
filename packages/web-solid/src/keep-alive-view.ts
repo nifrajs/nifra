@@ -48,7 +48,6 @@ type LayoutProps = {
 }
 
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
-const CONTENTS = "display:contents"
 
 // The providers `compose` puts around a chain, for one slot's props.
 const withRouteContext = (props: RenderProps, children: () => JSX.Element): JSX.Element =>
@@ -144,15 +143,13 @@ function Slot(props: {
     }),
   )
   return createComponent(Dynamic, {
-    component: "div",
+    component: "slot",
     "data-nifra-entry": "",
-    style: CONTENTS,
     ref: mount.entry(key),
     get children() {
       return createComponent(Dynamic, {
-        component: "div",
+        component: "slot",
         "data-nifra-page": "",
-        style: CONTENTS,
         ref: mount.page(key),
         get children() {
           return createComponent(PageContext.Provider, {

@@ -1,22 +1,21 @@
 /**
  * The two wrappers a kept page renders inside, shared by the server render and the keep-alive mount so
  * the markup a document carries is the markup the browser hydrates. The inner wrapper is the element
- * taken out of the document while the page is hidden.
+ * taken out of the document while the page is hidden. Each is a `<slot>`, which browsers lay out as
+ * `display: contents` with no inline style a CSP could block.
  */
 import { type ComponentChildren, type FunctionComponent, h, type Ref } from "preact"
-
-const CONTENTS = { display: "contents" } as const
 
 /** `content` inside the slot wrappers. */
 export function inSlot(
   content: ComponentChildren,
-  entryRef?: Ref<HTMLDivElement>,
-  pageRef?: Ref<HTMLDivElement>,
+  entryRef?: Ref<HTMLSlotElement>,
+  pageRef?: Ref<HTMLSlotElement>,
 ): ComponentChildren {
   return h(
-    "div",
-    { "data-nifra-entry": "", style: CONTENTS, ref: entryRef },
-    h("div", { "data-nifra-page": "", style: CONTENTS, ref: pageRef }, content),
+    "slot",
+    { "data-nifra-entry": "", ref: entryRef },
+    h("slot", { "data-nifra-page": "", ref: pageRef }, content),
   )
 }
 

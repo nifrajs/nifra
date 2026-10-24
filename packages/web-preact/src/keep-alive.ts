@@ -74,8 +74,8 @@ const ROOT = "\0root"
 interface Mount {
   readonly chainOf: (state: RouterState) => readonly unknown[]
   readonly propsOf: (state: RouterState) => RenderProps
-  readonly entryRef: (key: string) => (element: HTMLDivElement | null) => void
-  readonly pageRef: (key: string) => (element: HTMLDivElement | null) => void
+  readonly entryRef: (key: string) => (element: HTMLSlotElement | null) => void
+  readonly pageRef: (key: string) => (element: HTMLSlotElement | null) => void
 }
 const MountContext = createContext<Mount | undefined>(undefined)
 // Parent key → the slots under it, for the current render.
