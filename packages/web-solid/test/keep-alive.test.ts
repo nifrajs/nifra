@@ -27,7 +27,18 @@ const Page = (props: { data: unknown }): JSX.Element => {
   onPageHide(() => {})
   return `page:${String(props.data)}:${String(visible())}:${String(search().q)}`
 }
-const textOf = (html: string): string => html.replace(/<!--[^>]*-->/g, "")
+// The markup without Solid's hydration comments, in one scan: a regex pass can leave a comment opener
+// that two overlapping ones form.
+const textOf = (html: string): string => {
+  let text = ""
+  let at = 0
+  for (let open = html.indexOf("<!--"); open >= 0; open = html.indexOf("<!--", at)) {
+    text += html.slice(at, open)
+    const close = html.indexOf("-->", open + 4)
+    at = close < 0 ? html.length : close + 3
+  }
+  return text + html.slice(at)
+}
 const count = (html: string, attribute: string): number =>
   html.match(new RegExp(attribute, "g"))?.length ?? 0
 
