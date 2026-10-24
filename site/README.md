@@ -21,10 +21,15 @@ bun run site:build        # from the repo root  (or: cd site && bun run build)
 
 Produces `site/dist/`, a Cloudflare-Pages-ready directory:
 
+- `<path>.html` and `<path>/_data.json` - every page of the sitemap, rendered through the built
+  worker at build time, and its loader data for a client navigation. `404.html` is the 404 page.
 - `_worker.js` - the nifra SSR worker (edge build: `workerd`/`edge-light` conditions,
-  `react-dom/server.edge`). Handles page routes.
-- `_routes.json` - `{ exclude: ["/assets/*"] }`, so Pages serves the client bundle statically from
-  its CDN and only page routes hit the worker.
+  `react-dom/server.edge`). Answers what no file does: `/.well-known/*`, `/agents.md`, `/mcp`, and
+  any unknown path outside a page section.
+- `_routes.json` - excludes the pages, the client bundle and the static files, so Pages serves them
+  from its CDN without invoking the worker.
+- `_headers` and `_redirects` - the security headers (the worker adds the same set to its own
+  answers), immutable caching for the hashed fonts, and `/docs/nano`'s redirect.
 - `assets/*` - the content-hashed client bundle (hydration JS), served at `/assets/*`.
 
 ## Develop / verify locally (on workerd, no account needed)
@@ -33,9 +38,8 @@ Produces `site/dist/`, a Cloudflare-Pages-ready directory:
 cd site && bun run dev    # wrangler pages dev → http://localhost:8788
 ```
 
-This runs the exact Pages setup on workerd (Cloudflare's runtime) locally - SSR + static assets +
-hydration - without deploying. Verified: `/` SSRs the landing page, `/assets/*` serves the bundle,
-the page hydrates with no console errors.
+This runs the exact Pages setup on workerd (Cloudflare's runtime) locally - static pages, the
+worker, `_routes.json`, `_headers` and `_redirects` - without deploying.
 
 ## Deploy to Cloudflare Pages
 

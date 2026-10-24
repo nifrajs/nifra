@@ -81,6 +81,25 @@ export const MCP_DISCOVERY = {
 
 export const MCP_DISCOVERY_JSON = `${JSON.stringify(MCP_DISCOVERY, null, 2)}\n`
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * RFC 9116 contact file. `Expires` is set from the request so a site left undeployed never serves
+ * a stale one; the contacts are SECURITY.md's.
+ */
+export function securityTxt(now: number = Date.now()): string {
+  const expires = new Date(Math.floor(now / DAY_MS) * DAY_MS + 180 * DAY_MS).toISOString()
+  return [
+    "Contact: https://github.com/nifrajs/nifra/security/advisories/new",
+    "Contact: mailto:security@nifra.dev",
+    `Expires: ${expires}`,
+    "Preferred-Languages: en",
+    "Canonical: https://nifra.dev/.well-known/security.txt",
+    "Policy: https://github.com/nifrajs/nifra/blob/main/SECURITY.md",
+    "",
+  ].join("\n")
+}
+
 export function machineSurfaceResponse(body: string, contentType: string): Response {
   return new Response(body, {
     headers: {
@@ -96,5 +115,7 @@ export function machineSurfaceFor(request: Request): Response | undefined {
     return machineSurfaceResponse(AGENTS_MD, "text/markdown; charset=utf-8")
   if (pathname === "/.well-known/mcp")
     return machineSurfaceResponse(MCP_DISCOVERY_JSON, "application/json; charset=utf-8")
+  if (pathname === "/.well-known/security.txt")
+    return machineSurfaceResponse(securityTxt(), "text/plain; charset=utf-8")
   return undefined
 }

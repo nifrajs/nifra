@@ -71,3 +71,29 @@ export default { fetch(request) {
     "/docs/guide: expected 200, got 500 /docs/guide",
   ])
 })
+
+test("given a file map, each page's document and loader data are recorded where Pages serves them", async () => {
+  const worker: SiteWorker = {
+    fetch(request) {
+      const path = new URL(request.url).pathname
+      if (path === MISSING_PAGE) return new Response("<p>404</p>", { status: 404 })
+      if (request.headers.get("x-nifra-data") === null) return new Response(`<p>${path}</p>`)
+      if (path === "/docs/stream")
+        return new Response("{}\n", { headers: { "content-type": "application/x-ndjson" } })
+      return Response.json({ path })
+    },
+  }
+  const files = new Map<string, string>()
+  expect(await pageProblems(worker, ["/", "/docs", "/docs/api", "/docs/stream"], files)).toEqual([
+    "/docs/stream: its data answered 200 application/x-ndjson, not JSON",
+  ])
+  expect(Object.fromEntries(files)).toEqual({
+    "index.html": "<p>/</p>",
+    "_data.json": '{"path":"/"}',
+    "docs.html": "<p>/docs</p>",
+    "docs/_data.json": '{"path":"/docs"}',
+    "docs/api.html": "<p>/docs/api</p>",
+    "docs/api/_data.json": '{"path":"/docs/api"}',
+    "404.html": "<p>404</p>",
+  })
+})
