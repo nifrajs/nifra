@@ -95,6 +95,29 @@ const app = server().use(
   }),
 )`
 
+const SESSION_TIERS = `import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+// Resolves to the session id once the cookie's signature checks out, and rejects otherwise.
+declare function verifiedSessionId(req: Request): Promise<string>
+
+// No floor: the edge already limits every request, so a path no tier claims is not charged
+// again and gets no RateLimit-* headers.
+const app = server().use(
+  rateLimitTiers({
+    store: new MemoryStore(),
+    tiers: [
+      {
+        prefix: "/api",
+        max: 90,
+        windowMs: 60_000,
+        // A forged or expired cookie rejects, and is charged to the client IP.
+        key: async (req) => \`session:\${await verifiedSessionId(req)}\`,
+      },
+    ],
+  }),
+)`
+
 const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
 import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
@@ -631,6 +654,16 @@ export default function Plugins() {
         serves them all. <code>skip</code>, on both limiters, leaves a request uncharged.
       </p>
       <CodeBlock code={TIERS} />
+      <p>
+        A <code>key</code>, on either limiter or on one tier, may be async, so a bucket can follow a
+        session whose signed cookie is checked with WebCrypto first. A key that throws or rejects is
+        charged to the client IP, so an unverified cookie never mints a bucket of its own. Leave out
+        the <code>floor</code> when an edge or a shell in front of the app already applies a base
+        limit: a path no tier claims is then not charged twice and carries no{" "}
+        <code>RateLimit-*</code> headers, and the limiter's rate-limit evidence covers only the routes
+        under its tiers.
+      </p>
+      <CodeBlock code={SESSION_TIERS} />
 
       <h2>A shared store in production</h2>
       <p>

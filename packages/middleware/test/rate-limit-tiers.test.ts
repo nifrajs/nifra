@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import { t } from "@nifrajs/schema"
 import {
   MemoryStore,
@@ -263,5 +264,162 @@ describe("rateLimitTiers", () => {
     expect(() => rateLimitTiers({ store, floor: { max: 0, windowMs: 1000 }, tiers: [] })).toThrow(
       /max must be a positive integer/,
     )
+  })
+})
+
+const secret = await crypto.subtle.importKey(
+  "raw",
+  new TextEncoder().encode("rate-limit-tiers-test-secret-0123"),
+  { name: "HMAC", hash: "SHA-256" },
+  false,
+  ["sign", "verify"],
+)
+
+/** A `sid=<id>.<hex hmac>` cookie value, signed the way an app's session middleware would. */
+async function sessionCookie(id: string): Promise<string> {
+  const mac = await crypto.subtle.sign("HMAC", secret, new TextEncoder().encode(id))
+  return `sid=${id}.${Buffer.from(mac).toString("hex")}`
+}
+
+/** The session bucket, only for a cookie whose signature verifies; anything else rejects. */
+async function signedSessionKey(req: Request): Promise<string> {
+  const value = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.get("cookie") ?? "")?.[1]
+  const dot = value?.lastIndexOf(".") ?? -1
+  if (value === undefined || dot < 1) throw new Error("unsigned cookie")
+  const id = value.slice(0, dot)
+  const mac = Buffer.from(value.slice(dot + 1), "hex")
+  if (!(await crypto.subtle.verify("HMAC", secret, mac, new TextEncoder().encode(id)))) {
+    throw new Error("forged session")
+  }
+  return `session:${id}`
+}
+
+describe("rateLimitTiers async keys", () => {
+  test("a verified session cookie keys its own bucket, so two sessions on one IP stay apart", async () => {
+    const store = recordingStore()
+    const app = server()
+      .use(
+        rateLimitTiers({
+          store,
+          floor: { max: 100, windowMs: 60_000 },
+          tiers: [{ prefix: "/api", max: 1, windowMs: 60_000, key: signedSessionKey }],
+        }),
+      )
+      .get("/api/notes", () => "notes")
+    const as = (cookie: string | undefined) =>
+      app.fetch(
+        new Request("http://x/api/notes", cookie === undefined ? {} : { headers: { cookie } }),
+        { clientIp: "203.0.113.9" },
+      )
+    const a = await sessionCookie("a")
+    const b = await sessionCookie("b")
+    expect((await as(a)).status).toBe(200)
+    expect((await as(b)).status).toBe(200)
+    expect((await as(a)).status).toBe(429)
+    expect(store.hits).toEqual([
+      "tier:/api:session:a",
+      "tier:/api:session:b",
+      "tier:/api:session:a",
+    ])
+  })
+
+  test("a forged or missing session is charged to the client IP, never a bucket of its own", async () => {
+    const store = recordingStore()
+    const app = server().use(
+      rateLimitTiers({
+        store,
+        floor: { max: 100, windowMs: 60_000 },
+        tiers: [{ prefix: "/api", max: 2, windowMs: 60_000, key: signedSessionKey }],
+      }),
+    )
+    const forged = `${(await sessionCookie("a")).slice(0, -4)}0000`
+    const statuses: number[] = []
+    for (const cookie of [forged, "sid=b.00", undefined]) {
+      const init = cookie === undefined ? {} : { headers: { cookie } }
+      const res = await app.fetch(new Request("http://x/api/notes", init), {
+        clientIp: "203.0.113.9",
+      })
+      statuses.push(res.status)
+    }
+    expect(statuses).toEqual([404, 404, 429])
+    expect(store.hits).toEqual(Array(3).fill("tier:/api:203.0.113.9"))
+  })
+})
+
+describe("rateLimitTiers without a floor", () => {
+  const floorless = (store: RateLimitStore) =>
+    rateLimitTiers({ store, tiers: [{ prefix: "/api", max: 1, windowMs: 60_000 }] })
+
+  test("a path no tier claims is neither charged nor given quota headers", async () => {
+    const store = recordingStore()
+    const app = server()
+      .use(floorless(store))
+      .get("/", () => "home")
+      .get("/api/x", () => "x")
+    for (let i = 0; i < 3; i++) {
+      const res = await app.fetch(new Request("http://x/"), { clientIp: "203.0.113.9" })
+      expect([res.status, res.headers.get("ratelimit-limit")]).toEqual([200, null])
+    }
+    const first = await app.fetch(new Request("http://x/api/x"), { clientIp: "203.0.113.9" })
+    expect([first.status, first.headers.get("ratelimit-limit")]).toEqual([200, "1"])
+    const over = await app.fetch(new Request("http://x/api/x"), { clientIp: "203.0.113.9" })
+    expect(over.status).toBe(429)
+    expect(store.hits).toEqual(["tier:/api:203.0.113.9", "tier:/api:203.0.113.9"])
+  })
+
+  test("the Node lane leaves an unclaimed path uncharged too", async () => {
+    const store = recordingStore()
+    const middleware = floorless(store)
+    const request = (url: string) => ({ method: "GET", url, header: () => null })
+    const platform = { clientIp: "203.0.113.9" }
+    for (const url of ["/", "/apix", "/api/x"]) {
+      const req = request(url)
+      expect(await middleware.onNodeRequest?.(req, platform)).toBeUndefined()
+      const res = { status: 200, headers: undefined, cookies: undefined, body: null }
+      middleware.onNodeResponse?.(res, req)
+      expect([url, res.headers?.["ratelimit-limit"]]).toEqual([
+        url,
+        url === "/api/x" ? "1" : undefined,
+      ])
+    }
+    expect(store.hits).toEqual(["tier:/api:203.0.113.9"])
+  })
+
+  test("rate-limit evidence covers only the routes under a tier", () => {
+    const ids = (app: ReturnType<typeof server>, path: string) =>
+      app
+        .routes()
+        .find((route) => route.path === path)
+        ?.assurance?.map((item) => item.id) ?? []
+    const app = server()
+      .use(floorless(new MemoryStore()))
+      .get("/", () => "home")
+      .get("/apix", () => "beside")
+      .get("/api", () => "root")
+      .get("/api/:id", () => "item")
+    expect(ids(app, "/")).not.toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+    expect(ids(app, "/apix")).not.toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+    expect(ids(app, "/api")).toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+    expect(ids(app, "/api/:id")).toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+    const withFloor = server()
+      .use(tiered(new MemoryStore()))
+      .get("/", () => "home")
+    expect(ids(withFloor, "/")).toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+  })
+
+  test("prefixes are still validated when it is built, and it needs a tier", () => {
+    const store = new MemoryStore()
+    expect(() =>
+      rateLimitTiers({ store, tiers: [{ prefix: "/api/", max: 1, windowMs: 1000 }] }),
+    ).toThrow(/rateLimitTiers: tier prefix "\/api\/"/)
+    expect(() => rateLimitTiers({ store, tiers: [] })).toThrow(/needs a floor or at least one tier/)
+    expect(() =>
+      rateLimitTiers({
+        store,
+        // @ts-expect-error a null floor is refused, unlike an omitted one
+        floor: null,
+        tiers: [{ prefix: "/a", max: 1, windowMs: 1 }],
+      }),
+    ).toThrow(/floor must be/)
   })
 })
