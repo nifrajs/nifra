@@ -52,11 +52,11 @@ import {
 } from "./hooks-report.ts"
 import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { gitIgnoredSync } from "./internal/git-ignored.ts"
 import {
   BUN_LOCK,
   describeChange,
   linkLockUpdate,
-  pruneLinkLocks,
   type StaleLinkLock,
   staleLinkLocks,
 } from "./lock-links.ts"
@@ -153,10 +153,9 @@ export interface UpgradePlan {
   /** Other versions pinned outside package.json. Never edited. */
   readonly strayPins: readonly StrayPin[]
   /** `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json
-   * (as this upgrade leaves it) no longer declares. Bun never refreshes them on its own. */
+   * (as this upgrade leaves it) no longer declares. Bun 1.4.2 never refreshes them on its own. Never
+   * edited: an install that finds one missing re-resolves every package in the lock. */
   readonly linkLocks: readonly StaleLinkLock[]
-  /** Whether `--write` dropped {@link linkLocks} from bun.lock, so `bun install` re-reads them. */
-  readonly lockPruned: boolean
   readonly notes: readonly string[]
   /** Releases on the way up that announce no behaviour change for the packages this project loads. */
   readonly unaffected: readonly UnaffectedRelease[]
@@ -650,7 +649,9 @@ function scan(cwd: string, pattern: string, dot = false): string[] {
   for (const path of glob.scanSync({ cwd, dot, followSymlinks: false })) {
     if (!isIgnored(path)) out.push(path.replaceAll("\\", "/"))
   }
-  return out.sort() // deterministic order
+  // A gitignored copy (a backup, a generated app) is not the project: never edited, never reported.
+  const ignored = gitIgnoredSync(cwd, out)
+  return (ignored.size === 0 ? out : out.filter((path) => !ignored.has(path))).sort()
 }
 
 // The fixed version group: every package released together at one version.
@@ -1195,20 +1196,8 @@ export function computeUpgrade(
     }
   }
 
-  // Read against the manifests as this upgrade leaves them, so a dry run lists what --write drops.
+  // Read against the manifests as this upgrade leaves them.
   const linkLocks = plainFileAt(cwd, BUN_LOCK) ? staleLinkLocks(resolve(cwd), manifests) : []
-  let lockPruned = false
-  if (write && linkLocks.length > 0) {
-    const lockPath = join(cwd, BUN_LOCK)
-    const pruned = pruneLinkLocks(
-      readFileSync(lockPath, "utf8"),
-      linkLocks.map((entry) => entry.package),
-    )
-    if (pruned !== undefined) {
-      writeFileSync(lockPath, pruned)
-      lockPruned = true
-    }
-  }
 
   for (const { change, text, abs } of agentPinEdits(cwd, recipe.version, above)) {
     agentPins.push(change)
@@ -1260,7 +1249,6 @@ export function computeUpgrade(
     linkedSkew: linkedSkew(cwd, recipe.version),
     strayPins: strayPins(cwd, recipe.version, planned),
     linkLocks,
-    lockPruned,
     notes: recipe.notes ?? [],
     unaffected: unaffectedReleases(
       "steps" in recipe && Array.isArray(recipe.steps) ? recipe.steps : [recipe.version],
@@ -1371,20 +1359,15 @@ function renderPlan(
   }
   if (plan.linkLocks.length > 0) {
     lines.push(
-      plan.lockPruned
-        ? `Dropped ${plan.linkLocks.length} file: package(s) from bun.lock, whose recorded dependencies Bun never refreshes; \`bun install\` reads each linked package.json again:`
-        : write
-          ? `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; run \`${linkLockUpdate(plan.linkLocks)}\`:`
-          : `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes; --write drops them so \`bun install\` reads each linked package.json again:`,
+      `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s). ${write ? "Left as it is" : "--write leaves it as it is"}; run \`${linkLockUpdate(plan.linkLocks)}\`, which refreshes those entries and keeps every other pin:`,
     )
     for (const entry of plan.linkLocks)
       lines.push(
         `  ${entry.package} (file:${entry.path})  ${entry.changes.map(describeChange).join(", ")}`,
       )
-    if (plan.lockPruned)
-      lines.push(
-        "  Run `bun install` before committing bun.lock: until it records these packages again, `bun install --frozen-lockfile` fails.",
-      )
+    lines.push(
+      "  Bun records each linked package.json as it is on disk, uncommitted edits included: review the bun.lock diff before committing it.",
+    )
     lines.push("")
   }
   for (const note of plan.notes) lines.push(`note: ${note}`)
@@ -1463,14 +1446,13 @@ const INSTALL_COMMANDS: readonly (readonly [lockfile: string, command: string])[
 
 /**
  * Whether the project needs an install before a check can judge the target: `--write` changed what
- * package.json declares or what bun.lock records, or node_modules holds a group package at another
- * version. A link from outside the root is left out; installing here does not move it.
+ * package.json declares, or node_modules holds a group package at another version. A link from outside the root is left out; installing here does not move it.
  */
 export function pendingInstall(cwd: string, plan: UpgradePlan): PendingInstall | undefined {
   const installed = installedGroupPackages(cwd)
     .filter((entry) => entry.inside && entry.version !== plan.version)
     .map(({ package: name, version }) => ({ package: name, version }))
-  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0 || plan.lockPruned
+  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0
   if (!edited && installed.length === 0) return undefined
   const command =
     INSTALL_COMMANDS.find(([lockfile]) => existsSync(join(cwd, lockfile)))?.[1] ?? "bun install"
@@ -1615,6 +1597,28 @@ function newerCliCommand(version: string, options: UpgradeOptions): string {
 }
 
 /** CLI entry. Returns false (→ non-zero exit) on an unknown version, no project, or a failed verify. */
+/** The contracts.lock.json routes that send a body but whose request side guards nothing. A release
+ * that reads a body schema the installed one could not has `nifra check` report each as newly
+ * covered. Read routes and response sides are left out: most declare no schema there. */
+async function uncoveredContracts(cwd: string): Promise<string[]> {
+  const { blindLockEntries, DEFAULT_CONTRACTS_LOCK, parseContractsLock } = await import(
+    "./contracts.ts"
+  )
+  try {
+    const text = readFileSync(join(cwd, DEFAULT_CONTRACTS_LOCK), "utf8")
+    return (await blindLockEntries(parseContractsLock(JSON.parse(text))))
+      .filter(
+        (entry) => entry.sides.includes("request") && !/^(?:GET|HEAD|OPTIONS) /.test(entry.route),
+      )
+      .map((entry) => entry.route)
+  } catch {
+    return []
+  }
+}
+
+const uncoveredContractsNote = (routes: readonly string[]): string =>
+  `note: contracts.lock.json records no request schema for ${routes.slice(0, 3).join(", ")}${routes.length > 3 ? ` and ${routes.length - 3} more` : ""}. Where this release reads a schema the installed one could not, \`nifra check\` reports it as newly covered: review it, then run \`nifra contracts snapshot\`.`
+
 export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<boolean> {
   const cliVersion = options.cliVersion ?? listRecipeVersions().at(-1) ?? "0.0.0"
   const targets = upgradeTargets(cliVersion)
@@ -1726,9 +1730,11 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
   // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
   const verify = write && options.verify !== false && pending === undefined
+  const uncovered = await uncoveredContracts(cwd)
   if (options.json) {
     // The check result rides inside the one JSON document; its human report would break the stream.
     const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
+    if (uncovered.length > 0) report.contractsUncovered = uncovered
     if (hooks !== undefined) report.hooks = hooks
     if (pending !== undefined) report.install = pending
     let ok = true
@@ -1743,6 +1749,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     return ok
   }
   console.log(renderPlan(plan, write, from, recipe.steps))
+  if (uncovered.length > 0) console.log(uncoveredContractsNote(uncovered))
   if (plan.linkedSkew.length > 0)
     console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
   if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)

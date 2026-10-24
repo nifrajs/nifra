@@ -196,6 +196,7 @@ import {
   NODE_NATIVE_MOUNT,
   REPORT_ERROR,
   RESOLVE_NODE_MOUNT,
+  SERVER_LIFECYCLE,
 } from "./install.ts"
 import type { EffectLedgerRuntime } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
@@ -238,6 +239,7 @@ import type {
   RunningServer,
   ServerOptions,
   StopHook,
+  StopOptions,
   ToolAnnotations,
 } from "./server-types.ts"
 import type { SSEInit, TypedSSEStream } from "./sse.ts"
@@ -577,6 +579,7 @@ export type {
   RunningServer,
   ServerOptions,
   StopHook,
+  StopOptions,
   ToolAnnotations,
 }
 
@@ -1277,8 +1280,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly acceptInboundDeadlines: boolean
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
-  private readonly gracefulSignals: { readonly drainMs?: number } | undefined
+  private readonly gracefulSignals: StopOptions | undefined
   private readonly stopHooks: StopHook[]
+  private readonly stoppingHooks: StopHook[]
   private readonly fetchMounts: FetchMount<EnvOf<Ctx>>[]
   private mountOrder: number
   /** Number of composed mounts that must run before the parent route table. Keeps legacy mounts off the hot path. */
@@ -1441,6 +1445,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.gracefulSignals =
       options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
     this.stopHooks = []
+    this.stoppingHooks = []
     this.fetchMounts = []
     this.mountOrder = 0
     this.preRouteMountCount = 0
@@ -1513,6 +1518,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("onStop()")
     if (typeof fn !== "function") throw new TypeError("onStop callback must be a function")
     this.stopHooks.push(fn)
+    return this
+  }
+
+  /**
+   * Register a callback awaited as soon as `stop()` begins, while the server still serves: readiness
+   * should fail from here, and work that outlives a request (a poller, a queue consumer) should stop
+   * taking more. Hung callbacks are bounded.
+   */
+  onStopping(fn: StopHook): this {
+    this.assertConfigurable("onStopping()")
+    if (typeof fn !== "function") throw new TypeError("onStopping callback must be a function")
+    this.stoppingHooks.push(fn)
     return this
   }
 
@@ -3199,6 +3216,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Cleanup the source registered (a pool, a queue consumer) belongs to the server that now runs
     // its routes; dropping it would leak the resource past `stop()`.
     this.stopHooks.push(...source.stopHooks)
+    this.stoppingHooks.push(...source.stoppingHooks)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
   }
@@ -7221,11 +7239,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * The Bun semantics: poll `pendingRequests` (awaiting
    * `stop()`'s promise drops in-flight requests), and decide graceful-vs-forced in
    * ONE call (Bun can't escalate an already-graceful `stop()` to a forced close).
-   * New connections may be accepted during the drain window; in a real deploy the
-   * load balancer has already stopped routing here, and `drainMs` bounds it. Open WebSockets
-   * get a 1001 close at once and the same window to finish it, before any `onStop` hook runs.
+   * New connections may be accepted during the drain window; `delayMs` is the time a load balancer
+   * gets to stop routing here first. The `onStopping` hooks run before that delay, the `onStop`
+   * hooks after the drain. Open WebSockets get a 1001 close when the drain starts and the same
+   * window to finish it; a socket opened after `stop()` began is closed at once.
    */
-  async stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
+  async stop({ drainMs = DEFAULT_DRAIN_MS, delayMs = 0 }: StopOptions = {}): Promise<void> {
     const onSignal = this.signalHandler
     if (onSignal !== undefined) {
       this.signalHandler = undefined
@@ -7234,6 +7253,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const server = this.bunServer
     if (server === undefined) return
     this.bunServer = undefined
+    await this[SERVER_LIFECYCLE]("stopping")
+    if (delayMs > 0) await Bun.sleep(delayMs)
     const sockets = this.bunSockets
     this.bunSockets = undefined
     if (sockets !== undefined) for (const ws of sockets) ws.close(1001)
@@ -7243,16 +7264,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       await Bun.sleep(DRAIN_POLL_MS)
     }
     server.stop(busy()) // force-close iff stragglers remain past the deadline
-    if (this.stopHooks.length === 0) return
-    const callbacks = this.stopHooks.map((hook) => Promise.resolve().then(hook))
-    const settled = Promise.allSettled(callbacks)
-    await Promise.race([
-      settled,
-      new Promise<void>((resolve) => setTimeout(resolve, STOP_HOOK_TIMEOUT_MS)),
-    ])
+    await this[SERVER_LIFECYCLE]("stopped")
   }
 
-  private installSignalHandlers(drain: { readonly drainMs?: number }): void {
+  /**
+   * @internal Run the `onStopping` or the `onStop` hooks, each bounded. A runtime adapter that drains
+   * its own listener calls it on either side of the drain, as `stop()` does here.
+   */
+  async [SERVER_LIFECYCLE](phase: "stopping" | "stopped"): Promise<void> {
+    const hooks = phase === "stopping" ? this.stoppingHooks : this.stopHooks
+    if (hooks.length === 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      Promise.allSettled(hooks.map((hook) => Promise.resolve().then(hook))),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, STOP_HOOK_TIMEOUT_MS)
+      }),
+    ])
+    // A pending bound would hold the event loop open after every hook settled.
+    clearTimeout(timer)
+  }
+
+  private installSignalHandlers(drain: StopOptions): void {
     // Drain, then let the process exit naturally - the stopped server no longer
     // holds the event loop open. Opt-in (`gracefulSignals`), so taking over the
     // signals is consented; we don't force `process.exit`.

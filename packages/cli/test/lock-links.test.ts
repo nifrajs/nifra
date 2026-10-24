@@ -4,11 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { bindCommandArgv, findCommandSpec } from "../src/command-catalog.ts"
 import { collectDoctorResult } from "../src/doctor.ts"
-import { parseJsonc } from "../src/internal/project-specifiers.ts"
 import {
   bunLockDir,
   linkLockUpdate,
-  pruneLinkLocks,
   staleLinkLockMessage,
   staleLinkLocks,
 } from "../src/lock-links.ts"
@@ -193,45 +191,6 @@ describe("stale file: entries in bun.lock", () => {
   })
 })
 
-describe("pruneLinkLocks", () => {
-  test("drops the entries and what is scoped under them; the rest parses unchanged", () => {
-    const pruned = pruneLinkLocks(LOCK, ["linked-kit", "@scope/kit"])
-    expect(pruned).toBeDefined()
-    const before = Object(parseJsonc(LOCK))
-    const after = Object(parseJsonc(pruned ?? ""))
-    expect(Object.keys(after.packages)).toEqual(["@nifrajs/core", "dep-a"])
-    expect(after.workspaces).toEqual(before.workspaces)
-    expect(after.lockfileVersion).toBe(1)
-  })
-
-  test("a workspaces key that shares a dropped name is kept", () => {
-    const lock = LOCK.replace(
-      '    "": {',
-      '    "linked-kit": {\n      "name": "member",\n    },\n    "": {',
-    )
-    const pruned = pruneLinkLocks(lock, ["linked-kit"])
-    expect(Object.keys(Object(parseJsonc(pruned ?? "")).workspaces)).toEqual(["linked-kit", ""])
-  })
-
-  test("refuses a lock not laid out one entry per line", () => {
-    const spread = LOCK.replace(
-      '"linked-kit": ["linked-kit@file:kit", {',
-      '"linked-kit": [\n      "linked-kit@file:kit", {',
-    )
-    expect(pruneLinkLocks(spread, ["linked-kit"])).toBeUndefined()
-    expect(pruneLinkLocks("{}", ["linked-kit"])).toBeUndefined()
-  })
-
-  test("refuses when a dropped line carries an entry it was not asked to drop", () => {
-    const shared = LOCK.replace(
-      '""],\n\n    "linked-kit/inner"',
-      '""], "kept": ["kept@1.0.0", "", {}, ""],\n\n    "linked-kit/inner"',
-    )
-    expect(shared).not.toBe(LOCK)
-    expect(pruneLinkLocks(shared, ["linked-kit"])).toBeUndefined()
-  })
-})
-
 describe("doctor, check, and upgrade", () => {
   const recipe: UpgradeRecipe = {
     version: "5.0.0",
@@ -282,55 +241,42 @@ describe("doctor, check, and upgrade", () => {
     )
     const drift = collectVersionDrift(root)
     expect(drift?.versions.find((entry) => entry.version === "4.0.2")?.sources).toEqual([
-      "recorded for linked-kit in bun.lock, which Bun never refreshes (NF-D003)",
+      "recorded for linked-kit in bun.lock, stale until `bun update linked-kit` (NF-D003)",
     ])
   })
 
-  test("a dry run lists the entries the upgrade leaves stale; --write drops them", () => {
+  // An install that finds a file: entry missing re-resolves every package in the lock (Bun 1.4.2 and
+  // 1.4.4), so upgrade lists the entries and never edits bun.lock.
+  test("a dry run and --write list the stale entries and leave bun.lock as it is", () => {
     const root = linkedApp()
     const dry = computeUpgrade(root, recipe, false)
     expect(dry.linkLocks.map((entry) => entry.package)).toEqual(["linked-kit"])
-    expect(dry.lockPruned).toBe(false)
     expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(LOCK)
-
     const written = computeUpgrade(root, recipe, true)
-    expect(written.lockPruned).toBe(true)
-    const lock = Object(parseJsonc(readFileSync(join(root, "bun.lock"), "utf8")))
-    expect(Object.keys(lock.packages)).toEqual([
-      "@nifrajs/core",
-      "@scope/kit",
-      "@scope/kit/dep-a",
-      "dep-a",
-    ])
-  })
-
-  test("--write leaves a lock it cannot prune safely and names the update instead", () => {
-    const root = linkedApp()
-    const spread = LOCK.replace(
-      '"linked-kit": ["linked-kit@file:kit", {',
-      '"linked-kit": [\n      "linked-kit@file:kit", {',
-    )
-    writeAppFile(root, "bun.lock", spread)
-    const plan = computeUpgrade(root, recipe, true)
-    expect(plan.lockPruned).toBe(false)
-    expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(spread)
-    expect(linkLockUpdate(plan.linkLocks)).toBe("bun update linked-kit")
+    expect(linkLockUpdate(written.linkLocks)).toBe("bun update linked-kit")
+    expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(LOCK)
   })
 })
 
-test("the upgrade report names what a dry run would drop and what --write dropped", async () => {
+test("the upgrade report names the stale entries and the update that refreshes them", async () => {
   const root = linkedApp()
   const lines: string[] = []
   const log = spyOn(console, "log").mockImplementation((...args) => lines.push(args.join(" ")))
+  const options = { version: "5.0.0", cliVersion: "5.0.0", verify: false }
   try {
-    await runUpgrade(root, { version: "5.0.0", cliVersion: "5.0.0", verify: false })
-    await runUpgrade(root, { version: "5.0.0", cliVersion: "5.0.0", write: true, verify: false })
+    await runUpgrade(root, options)
+    await runUpgrade(root, { ...options, write: true })
   } finally {
     log.mockRestore()
   }
+  expect(readFileSync(join(root, "bun.lock"), "utf8")).toBe(LOCK)
   const out = lines.join("\n")
-  expect(out).toContain("--write drops them so `bun install` reads each linked package.json again:")
+  expect(out).toContain(
+    "--write leaves it as it is; run `bun update linked-kit`, which refreshes those entries and keeps every other pin:",
+  )
+  expect(out).toContain(
+    "Left as it is; run `bun update linked-kit`, which refreshes those entries and keeps every other pin:",
+  )
   expect(out).toContain("  linked-kit (file:kit)  @nifrajs/core 4.0.2 -> 5.0.0")
-  expect(out).toContain("Dropped 1 file: package(s) from bun.lock")
-  expect(out).toContain("`bun install --frozen-lockfile` fails.")
+  expect(out).toContain("uncommitted edits included: review the bun.lock diff")
 })

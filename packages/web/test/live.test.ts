@@ -9,6 +9,7 @@ import {
   type RenderAdapter,
 } from "../src/index.ts"
 import { queryDigester } from "../src/internal/query-digest.ts"
+import type { LiveHubNamespace } from "../src/live/hub-protocol.ts"
 import { createKeyring, type GrantInput, type LiveSecrets } from "../src/live/keyring.ts"
 import { type Live, type LiveBus, type LiveOptions, live, memoryBus, nextSeq } from "../src/live.ts"
 import type { LoaderContext } from "../src/manifest.ts"
@@ -829,10 +830,15 @@ test("a publish this process never reads back resolves after 2 s, and says so on
     append: async () => ++last,
     subscribe: async () => ({ head: 0, close: () => {} }),
   }
-  const runtime = live({ secret: SECRET, subject: () => null, bus: stalled })
+  const errors: string[] = []
+  const logger = {
+    debug() {},
+    info() {},
+    warn() {},
+    error: (message: string) => errors.push(message),
+  }
+  const runtime = live({ secret: SECRET, subject: () => null, bus: stalled, logger })
   await runtime.ready
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  spies.push(errors)
   jest.useFakeTimers()
   let resolved = 0
   for (const key of ["post:1", "post:2"]) void runtime.publish(key).then(() => resolved++)
@@ -843,8 +849,9 @@ test("a publish this process never reads back resolves after 2 s, and says so on
   jest.advanceTimersByTime(1)
   await turns()
   expect(resolved).toBe(2)
-  expect(errors).toHaveBeenCalledTimes(1)
-  expect(String(errors.mock.calls[0]?.[0])).toContain("did not read a publish back")
+  expect(errors).toEqual([
+    "live publish not read back from the bus: this process's sockets miss changes until its reader recovers",
+  ])
 })
 
 test("an expired grant, a forged one or another app's keeps nothing", async () => {
@@ -1556,3 +1563,132 @@ test("an environment the runtime cannot read counts as production: a secret is r
     Object.defineProperty(process, "env", env)
   }
 })
+
+// --- Seeds: the grant a rendered page carries --------------------------------------------------------
+
+/** Render the page as a browser's first request does, and read the seed from its handover. */
+const renderSeed = async (
+  fx: Fixture,
+  path = "/posts/42",
+  cookie = "user=alice",
+): Promise<{ readonly html: string; readonly seed: LiveJson["live"] | undefined }> => {
+  const res = await fx.app.fetch(new Request(`${ORIGIN}${path}`, { headers: { cookie } }))
+  const html = await res.text()
+  const handover = /<script type="application\/json" id="__nifra-handover">(.*?)<\/script>/s.exec(
+    html,
+  )?.[1]
+  const state: { readonly __NIFRA_LIVE__?: LiveJson["live"] } =
+    handover === undefined ? {} : JSON.parse(handover)
+  return { html, seed: state.__NIFRA_LIVE__ }
+}
+
+test("a rendered page carries a seed, and the first load trades it for a grant without a loader", async () => {
+  const fx = fixture()
+  await fx.runtime.ready
+  const { seed } = await renderSeed(fx)
+  expect(fx.calls).toEqual({ root: 1, posts: 1, gate: 1, page: 1 })
+  expect(seed?.grant).toBeDefined()
+  expect(seed?.ttl).toBe(600)
+  expect(
+    Object.values(seed?.tags ?? {})
+      .flat()
+      .sort(),
+  ).toEqual([...ALL, PAGE].sort())
+  const claims = await opened(seed?.grant)
+  expect(claims).toMatchObject({ sid: "", sub: "alice", path: "/posts/42", frame: "page" })
+  for (const key of Object.keys(fx.calls)) delete fx.calls[key]
+  const { json } = await load(fx.app, { retain: ALL, grants: [seed?.grant] })
+  // Only the gate, which always runs: the exchange decides nothing a gate would.
+  expect(fx.calls).toEqual({ gate: 1 })
+  expect(json.live?.page).toBe("retained")
+  expect(json.retained).toEqual([0, 1])
+  const bound = await opened(json.live?.grant)
+  expect(bound).toMatchObject({ sid: SID, sub: "alice", path: "/posts/42" })
+  expect(bound?.owners).toEqual(claims?.owners)
+})
+
+test("a seed is no grant for anything but that first load of its page", async () => {
+  const fx = fixture()
+  await fx.runtime.ready
+  const { seed } = await renderSeed(fx)
+  const grant = seed?.grant
+  const runs = async (body: LoadBody, headers: Record<string, string> = {}) => {
+    for (const key of Object.keys(fx.calls)) delete fx.calls[key]
+    await load(fx.app, { retain: ALL, grants: [grant], ...body }, headers)
+    return { ...fx.calls }
+  }
+  const everything = { root: 1, posts: 1, gate: 1, page: 1 }
+  // Another viewer, another page, or a renewal: every loader decides again.
+  expect(await runs({}, { cookie: "user=bob" })).toEqual(everything)
+  expect(await runs({ path: "/posts/7" })).toEqual(everything)
+  expect(await runs({ mode: "renew" })).toEqual(everything)
+  // A minute after the render it is spent.
+  setSystemTime(new Date(Date.now() + 61_000))
+  try {
+    expect(await runs({})).toEqual(everything)
+  } finally {
+    setSystemTime()
+  }
+})
+
+test("no seed when it could not be honoured: the bus down, a data request, a closed runtime", async () => {
+  const bus = new ToggledBus()
+  const fx = fixture({ live: { bus } })
+  await fx.runtime.ready
+  expect((await renderSeed(fx)).seed?.grant).toBeDefined()
+  bus.listener?.down()
+  await Promise.resolve()
+  expect((await renderSeed(fx)).seed).toBeUndefined()
+  bus.listener?.gap(nowSeq())
+  await Promise.resolve()
+  expect((await renderSeed(fx)).seed?.grant).toBeDefined()
+  const data = await fx.app.fetch(
+    new Request(`${ORIGIN}/posts/42`, { headers: { cookie: "user=alice", [DATA_HEADER]: "1" } }),
+  )
+  expect(JSON.stringify(await data.json())).not.toContain("subjects")
+  await fx.runtime.close()
+  expect((await renderSeed(fx)).seed).toBeUndefined()
+})
+
+test("on Workers, where the hub holds the log, a rendered page carries no seed", async () => {
+  const hub: LiveHubNamespace = {
+    idFromName: () => ({}),
+    get: () => ({ fetch: async () => Response.json({ seq: nowSeq(), subjects: [], keys: [] }) }),
+  }
+  const fx = fixture({ live: { hub } })
+  await fx.runtime.ready
+  expect((await renderSeed(fx)).seed).toBeUndefined()
+})
+
+test("a page rendered before the runtime started carries no seed and still renders", async () => {
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const slow: LiveBus = {
+    append: async () => nowSeq(),
+    subscribe: async () => {
+      await held
+      return { head: nowSeq(), close: () => {} }
+    },
+  }
+  const fx = fixture({ live: { bus: slow } })
+  const { html, seed } = await renderSeed(fx)
+  expect(seed).toBeUndefined()
+  expect(html).toContain('{"id":"42"}')
+  release()
+  await fx.runtime.ready
+  expect((await renderSeed(fx)).seed?.grant).toBeDefined()
+})
+
+/** A bus whose outage a test switches on and off. */
+class ToggledBus implements LiveBus {
+  listener: import("../src/live.ts").LiveBusListener | undefined
+  async append(): Promise<number> {
+    return nowSeq()
+  }
+  async subscribe(listener: import("../src/live.ts").LiveBusListener) {
+    this.listener = listener
+    return { head: nowSeq(), close: () => {} }
+  }
+}

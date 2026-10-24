@@ -2,8 +2,9 @@
  * A `file:` dependency's own dependencies, as bun.lock records them. Bun records them when it first
  * installs the linked package and does not read its package.json again, so once the linked package
  * moves to another version of a dependency the lock still names the old one and Bun installs a second
- * copy under the linked package. Checked on Bun 1.4.2: `bun install --force` keeps the stale entry;
- * `bun update <name>`, or dropping the entry and its scoped entries before `bun install`, clears it.
+ * copy under the linked package. Checked on Bun 1.4.2: `bun install --force` keeps the stale entry, and
+ * `bun update <name>` refreshes it alone; Bun 1.4.4 refreshes it on any install. Deleting the entry
+ * instead makes either re-resolve every package in the lock, and 1.4.4 rewrites lockfileVersion 1 as 2.
  */
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -113,45 +114,6 @@ export function staleLinkLocks(
 export const describeChange = (change: LinkLockChange): string =>
   `${change.name} ${change.recorded ?? "(none)"} -> ${change.declared ?? "(none)"}`
 
-const ENTRY_KEY = /^ {4}("(?:[^"\\]|\\.)*"): \[/
-
-/**
- * bun.lock text without the `packages` entries of `names` and the dependencies scoped under them,
- * so the next `bun install` reads each linked package.json again. `undefined` unless the text is laid
- * out one entry per line, as Bun writes it, and the result parses to the same lock less those
- * entries: the caller names `bun update` instead.
- */
-export function pruneLinkLocks(text: string, names: readonly string[]): string | undefined {
-  const lines = text.split("\n")
-  const start = lines.findIndex((line) => /^ {2}"packages": \{\s*$/.test(line))
-  if (start === -1) return undefined
-  const end = lines.findIndex((line, index) => index > start && /^ {2}\}/.test(line))
-  if (end === -1) return undefined
-  const dropped = (key: string): boolean =>
-    names.some((name) => key === name || key.startsWith(`${name}/`))
-  const kept = lines.filter((line, index) => {
-    if (index <= start || index >= end) return true
-    const key = ENTRY_KEY.exec(line)?.[1]
-    return key === undefined || !dropped(String(JSON.parse(key)))
-  })
-  const pruned = kept.join("\n")
-  try {
-    const before = recordOf(parseJsonc(text))
-    const after = recordOf(parseJsonc(pruned))
-    const expected = Object.fromEntries(
-      Object.entries(recordOf(before.packages)).filter(([key]) => !dropped(key)),
-    )
-    const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
-    if (!same(recordOf(after.packages), expected)) return undefined
-    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      if (key !== "packages" && !same(before[key], after[key])) return undefined
-    }
-  } catch {
-    return undefined
-  }
-  return pruned
-}
-
 /** The `bun update` that makes Bun read each linked package.json again. */
 export const linkLockUpdate = (entries: readonly StaleLinkLock[]): string =>
   `bun update ${entries.map((entry) => entry.package).join(" ")}`
@@ -169,7 +131,7 @@ export function staleLinkLockMessage(stale: {
     })
     .join("; ")
   return (
-    `${stale.lock} records dependencies its file: packages no longer declare, and Bun never reads a linked package.json again, so it installs those versions beside the declared ones: ${listed}. ` +
-    `Run \`${linkLockUpdate(stale.entries)}\`, or \`nifra upgrade --write\` to drop the entries, then \`bun install\`.`
+    `${stale.lock} records dependencies its file: packages no longer declare, and Bun 1.4.2 never reads a linked package.json again, so it installs those versions beside the declared ones: ${listed}. ` +
+    `Run \`${linkLockUpdate(stale.entries)}\`: it refreshes those entries and keeps every other pin, where deleting them makes the next install re-resolve the whole lock. Review the bun.lock diff: Bun records each linked package.json as it is on disk, uncommitted edits included.`
   )
 }

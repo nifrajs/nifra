@@ -19,6 +19,8 @@ import { redisLiveBus } from "../src/live-redis.ts"
 import type { LoaderContext } from "../src/manifest.ts"
 import { memoryRedis } from "./memory-redis.ts"
 
+const quiet = { debug() {}, info() {}, warn() {}, error() {} }
+
 const SECRET = "socket-test-secret-0123456789abcdef-1"
 const OLD_SECRET = "socket-test-secret-0123456789abcdef-2"
 const APP_ID = "socket-test"
@@ -497,21 +499,76 @@ test("an unreachable bus closes sockets, refuses new ones, and loads issue and h
 test("a bus event the process cannot apply closes every socket to resync", async () => {
   const bus = new SharedBus()
   const process = bus.process(true)
-  const served = serve({ runtime: runtimeOn(process) })
+  const errors: string[] = []
+  const logger = { ...quiet, error: (message: string) => errors.push(message) }
+  const served = serve({ runtime: runtimeOn(process, { logger }) })
   await served.runtime.ready
   const client = await connect(served.base)
   await watching(served, client)
-  const error = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const broken = JSON.parse(
-      `{"type":"change","keys":null,"seq":${nextSeq(bus.head, Date.now())}}`,
-    )
-    process.deliver(broken)
-    expect(await client.closed).toBe(1013)
-    expect(String(error.mock.calls[0]?.[0])).toContain("could not be applied")
-  } finally {
-    error.mockRestore()
-  }
+  const broken = JSON.parse(`{"type":"change","keys":null,"seq":${nextSeq(bus.head, Date.now())}}`)
+  process.deliver(broken)
+  expect(await client.closed).toBe(1013)
+  expect(errors).toEqual(["live bus event could not be applied: live sockets resync"])
+})
+
+test("status() counts sockets, applied events and the frames sent; close() ends them with 1001", async () => {
+  const served = serve()
+  await served.runtime.ready
+  expect(served.runtime.status()).toEqual({
+    ready: true,
+    down: false,
+    downSince: undefined,
+    sockets: 0,
+    loads: 0,
+    events: 0,
+    notified: 0,
+    lagMs: undefined,
+  })
+  const client = await connect(served.base)
+  await watching(served, client)
+  await served.runtime.publish("post:42")
+  expect(await client.next()).toMatchObject({ t: "changed" })
+  expect(served.runtime.status()).toMatchObject({
+    down: false,
+    sockets: 1,
+    events: 1,
+    notified: 1,
+    lagMs: expect.any(Number),
+  })
+  await served.runtime.close()
+  expect(await client.closed).toBe(1001)
+  const after = served.runtime.status()
+  expect(after).toMatchObject({ down: true, sockets: 0, downSince: expect.any(Number) })
+  await expect(served.runtime.publish("post:42")).rejects.toThrow(/closed/)
+  // Idempotent, and a socket opened after it is refused.
+  await served.runtime.close()
+  const late = await connect(served.base)
+  expect(await late.closed).toBe(1013)
+})
+
+test("the bus going down and coming back is logged once each way, and status() follows it", async () => {
+  const bus = new SharedBus()
+  const process = bus.process(true)
+  const lines: string[] = []
+  const at = (level: string) => (message: string) => lines.push(`${level} ${message}`)
+  const logger = { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") }
+  const served = serve({ runtime: runtimeOn(process, { logger }) })
+  await served.runtime.ready
+  const client = await connect(served.base)
+  await watching(served, client)
+  process.down()
+  process.down()
+  expect(await client.closed).toBe(1013)
+  expect(served.runtime.status()).toMatchObject({ down: true, downSince: expect.any(Number) })
+  process.gap()
+  await Promise.resolve()
+  expect(served.runtime.status()).toMatchObject({ down: false, downSince: undefined })
+  process.gap()
+  expect(lines).toEqual([
+    "error live bus unreachable: live sockets closed, open pages poll until it answers",
+    "info live bus answering again: live sockets resume",
+    "warn live bus lost events before this process read them: live sockets resync",
+  ])
 })
 
 test("a malformed revocation from the bus fails closed", async () => {

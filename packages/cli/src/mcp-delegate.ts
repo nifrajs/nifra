@@ -12,9 +12,10 @@
  *      instead of answering for the wrong release.
  */
 
-import { existsSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { McpTool, McpToolResult } from "./mcp-protocol.ts"
 import type { ToolingDrift } from "./mcp-root.ts"
 
@@ -31,9 +32,11 @@ export const VERSION_SENSITIVE_TOOLS: ReadonlySet<string> = new Set([
   "nifra_contracts",
 ])
 
-/** The project's own CLI: its version and, when it is on disk, the script its `bin` names. */
+/** The project's own CLI: its version, its package directory, and, when it is on disk, the script
+ * its `bin` names. */
 export interface ProjectCli {
   readonly version: string
+  readonly dir: string
   readonly bin?: string
 }
 
@@ -60,8 +63,8 @@ export async function findProjectCli(root: string): Promise<ProjectCli | undefin
         const script = binScript(meta.bin)
         const bin = script === undefined ? undefined : join(pkg, script)
         return bin !== undefined && existsSync(bin)
-          ? { version: meta.version, bin }
-          : { version: meta.version }
+          ? { version: meta.version, dir: pkg, bin }
+          : { version: meta.version, dir: pkg }
       }
     } catch {
       // Not installed at this level - keep walking up.
@@ -73,11 +76,25 @@ export async function findProjectCli(root: string): Promise<ProjectCli | undefin
   return undefined
 }
 
+/** This CLI's package directory: the parent of `src/` or `dist/`, where this module sits. */
+export const OWN_CLI_DIR = fileURLToPath(new URL("..", import.meta.url))
+
+/** Whether `dir` is another install than this CLI's own: a version can match while the copy, and the
+ * `@nifrajs/core` beside it, does not. */
+export function isOtherInstall(dir: string): boolean {
+  try {
+    return realpathSync(dir) !== realpathSync(OWN_CLI_DIR)
+  } catch {
+    return false
+  }
+}
+
 /**
- * Hand this stdio session to the project's own CLI when it installs a different version. Resolves to
- * the child's exit code once the session ends, or `undefined` when this process should serve itself
- * (versions agree, no project CLI or bin, already a hand-off, or the spawn failed). Must run before
- * anything reads stdin: the child inherits the descriptor and owns the whole conversation.
+ * Hand this stdio session to the project's own CLI when it installs a different version, or the same
+ * version from another directory. Resolves to the child's exit code once the session ends, or
+ * `undefined` when this process should serve itself (this is the project's CLI, no project CLI or
+ * bin, already a hand-off, or the spawn failed). Must run before anything reads stdin: the child
+ * inherits the descriptor and owns the whole conversation.
  */
 export async function delegateToProjectCli(options: {
   readonly cwd: string
@@ -87,7 +104,11 @@ export async function delegateToProjectCli(options: {
 }): Promise<number | undefined> {
   if (process.env[MCP_DELEGATED_ENV] === "1") return undefined
   const cli = await findProjectCli(options.root)
-  if (cli === undefined || cli.version === options.version || cli.bin === undefined)
+  if (
+    cli === undefined ||
+    cli.bin === undefined ||
+    (cli.version === options.version && !isOtherInstall(cli.dir))
+  )
     return undefined
   // Not the `.bin` shim: its `bun` would load the project's `.env`, and the inherited
   // NIFRA_MCP_WITHOUT_ENV_FILES then tells that CLI the values are already gone.

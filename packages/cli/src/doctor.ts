@@ -219,17 +219,18 @@ export interface DoctorResult {
   }
   /**
    * `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json no
-   * longer declares: Bun never refreshes them, so it installs a second copy under the linked package.
+   * longer declares: Bun 1.4.2 never refreshes them, so it installs a second copy under the linked package.
    * Advisory (never folded into `ok`). `lock` is the lockfile, relative to the project.
    */
   readonly staleLinkLocks?: { readonly lock: string; readonly entries: readonly StaleLinkLock[] }
   /**
    * Route files that export `keepAlive` in an app where nothing names its sign-in cookie: no
-   * `@nifrajs/auth`, Better Auth or Auth.js dependency, no `identityCookies`, `rotateIdentityEpoch()`
-   * or `identityChanged()`. A sign-out there may leave the previous visitor's kept pages. Advisory
-   * (never folded into `ok`).
+   * `identityCookies`, `rotateIdentityEpoch()` or `identityChanged()`, and either no `@nifrajs/auth`,
+   * Better Auth or Auth.js dependency or a source file (`renamedIn`) that gives the session cookie a
+   * name of its own. A sign-out there may leave the previous visitor's kept pages. Advisory (never
+   * folded into `ok`).
    */
-  readonly keepAliveIdentity?: { readonly routes: readonly string[] }
+  readonly keepAliveIdentity?: { readonly routes: readonly string[]; readonly renamedIn?: string }
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /** The explicit source boundary used by the dependency scan. */
@@ -781,7 +782,7 @@ async function collectDoctorReadiness(
       : configured(
           "graceful-lifecycle",
           "graceful lifecycle",
-          /\bgracefulSignals\s*:\s*(?:true\b|\{)|\bonStop\s*\(/,
+          /\bgracefulSignals\s*:\s*(?:true\b|\{)|\bonStop(?:ping)?\s*\(/,
         ),
   ]
   return {
@@ -872,6 +873,11 @@ const KNOWN_AUTH_PACKAGES = [
   "next-auth",
 ]
 const IDENTITY_SIGNAL = /\b(?:identityCookies\s*:|rotateIdentityEpoch\s*\(|identityChanged\s*\()/
+// A session cookie renamed outright: Better Auth's `advanced.cookies.session_token.name`, Auth.js's
+// `cookies.sessionToken.name`, `@nifrajs/auth`'s `cookieName`. A Better Auth `cookiePrefix` keeps the
+// suffix the identity epoch matches, so it is not one.
+const RENAMED_SESSION =
+  /\b(?:session_token|sessionToken)\s*:\s*\{[^}]*\bname\s*:|\bcookieName\s*:\s*["'`]/
 
 function keepAliveRoutes(cwd: string): readonly string[] {
   const routesDir = join(cwd, "routes")
@@ -898,6 +904,7 @@ export async function collectDoctorResult(
   const findings: DoctorFinding[] = []
   const manifestLists: ManifestList[] = []
   let identitySignal = false
+  let renamedIn: string | undefined
   // A standalone app owns its tests, so they remain in the declaration check. A workspace root owns
   // the published package source while its root devDependencies intentionally own shared tests,
   // benchmarks, and scaffold copy-surfaces. Keep that boundary explicit instead of reporting a
@@ -930,6 +937,7 @@ export async function collectDoctorResult(
       }
       manifestLists.push(...manifestListsIn(rel, content))
       if (!identitySignal && IDENTITY_SIGNAL.test(content)) identitySignal = true
+      if (renamedIn === undefined && RENAMED_SESSION.test(content)) renamedIn = rel
     },
     { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
@@ -950,10 +958,15 @@ export async function collectDoctorResult(
   const lockDir = bunLockDir(cwd)
   const linkLocks = lockDir === undefined ? [] : staleLinkLocks(lockDir)
   const handBuilt = handBuiltManifests(cwd, manifestLists)
+  const knownAuth = KNOWN_AUTH_PACKAGES.some((name) => dependencySpec(pkg, name) !== undefined)
   const unnamedIdentity =
-    identitySignal || KNOWN_AUTH_PACKAGES.some((name) => dependencySpec(pkg, name) !== undefined)
-      ? []
-      : keepAliveRoutes(cwd)
+    identitySignal || (knownAuth && renamedIn === undefined) ? [] : keepAliveRoutes(cwd)
+  const keepAliveIdentity =
+    unnamedIdentity.length === 0
+      ? undefined
+      : knownAuth && renamedIn !== undefined
+        ? { routes: unnamedIdentity, renamedIn }
+        : { routes: unnamedIdentity }
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
@@ -973,7 +986,7 @@ export async function collectDoctorResult(
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
     ...(versionDrift !== undefined ? { versionDrift } : {}),
     ...(handBuilt.length > 0 ? { handBuiltManifests: handBuilt } : {}),
-    ...(unnamedIdentity.length > 0 ? { keepAliveIdentity: { routes: unnamedIdentity } } : {}),
+    ...(keepAliveIdentity !== undefined ? { keepAliveIdentity } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(lockDir !== undefined && linkLocks.length > 0
       ? {
@@ -1182,9 +1195,12 @@ export function doctorReport(result: DoctorResult, cliVersion?: string): string[
     lines.push(`⚠ ${handBuiltManifestMessage(finding)}\n`)
   }
   if (result.keepAliveIdentity !== undefined) {
+    const { routes, renamedIn } = result.keepAliveIdentity
     lines.push(
-      `⚠ ${result.keepAliveIdentity.routes.join(", ")} keep pages alive, and nothing names this app's sign-in cookie (no @nifrajs/auth, Better Auth or Auth.js, no identityCookies): a sign-out may leave the previous visitor's pages one back away`,
-      "      fix: name the session cookie in createWebApp({ keepAlive: { identityCookies } }), or call identityChanged() from @nifrajs/web/client for token auth - /docs/keep-alive#sign-in\n",
+      renamedIn === undefined
+        ? `⚠ ${routes.join(", ")} keep pages alive, and nothing names this app's sign-in cookie (no @nifrajs/auth, Better Auth or Auth.js, no identityCookies): a sign-out may leave the previous visitor's pages one back away`
+        : `⚠ ${routes.join(", ")} keep pages alive, and ${renamedIn} renames the session cookie, which nifra knows only by its default name (no identityCookies): a sign-out may leave the previous visitor's pages one back away`,
+      "      fix: name the session cookie in keepAlive.identityCookies - exported from backend/framework.ts, or passed to createWebApp in a server you write - or call identityChanged() from @nifrajs/web/client for token auth - /docs/keep-alive#sign-in\n",
     )
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old

@@ -24,9 +24,16 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
 import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
-import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
+import {
+  bindCommandArgv,
+  type CommandSpec,
+  commandUsage,
+  findCommandSpec,
+  renderCommandCatalogHelp,
+} from "./command-catalog.ts"
 import { applyEnvFiles, forgetAutoLoadedEnv, REFLECT_ENV, takeEnvFileFlags } from "./env-file.ts"
 import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
+import { PROJECT_COMMANDS, runThroughLocalCli } from "./local-cli.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 import {
   frameworkMountPaths,
@@ -246,7 +253,7 @@ Usage:
                                          skip and exits non-zero unless its verdict is green. --strict,
                                          --hydration, --interact and --out imply --bundle.
   nifra contracts snapshot [--out <file>] Write the deterministic route contract lock.
-  nifra contracts check [--json]          Check the current routes against contracts.lock.json.
+  nifra contracts check [--out <file>] [--json]  Check the current routes against the lock.
   nifra replay <file>                     Replay a token-only verification metadata file.
   nifra capabilities snapshot [--out <file>] [--config <file>]
                                          Write the deterministic, token-only capability lockfile, but
@@ -289,7 +296,7 @@ Usage:
                                          version, a rollback (--allow-downgrade overrides), or a
                                          linked repository that loads its own nifra at another
                                          version (--allow-linked-skew overrides). Deterministic +
-                                         idempotent.
+                                         idempotent. Leaves bun.lock alone.
   nifra migrate layout [--write] [--zones] [--json]
                                          Move an app onto the frontend/backend split: split each route
                                          into x.tsx + x.backend.ts, fold _middleware.ts into
@@ -393,6 +400,25 @@ export function formatCliError(err: unknown): string {
 }
 
 /** A failed command's message on stderr and, for a `--json` caller parsing stdout, as JSON there. */
+/** One catalog command's usage: its lines from {@link HELP} when it has them, else the catalog's. */
+export function commandHelp<Input, Output>(spec: CommandSpec<Input, Output>): string {
+  const name = spec.name.replace(/^db-/, "db ")
+  const lines: string[] = []
+  let inside = false
+  for (const line of HELP.split("\n")) {
+    if (line.startsWith(`  nifra ${name} `) || line === `  nifra ${name}`) inside = true
+    else if (!inside || !/^ {3,}\S/.test(line)) {
+      // The first block is the hand-written one; the catalog's one-line summary repeats it below.
+      if (lines.length > 0) break
+      continue
+    }
+    lines.push(line)
+  }
+  if (lines.length > 0) return ["Usage:", ...lines].join("\n")
+  const usage = commandUsage(spec)
+  return `Usage:\n  nifra ${name}${usage === "" ? "" : ` ${usage}`}  ${spec.summary}`
+}
+
 function reportFailure(err: unknown, argv: readonly string[]): void {
   const message = formatCliError(err)
   console.error(message)
@@ -1171,6 +1197,22 @@ async function main(): Promise<void> {
     console.log(`nifra (@nifrajs/cli) ${CLI_VERSION}`)
     return
   }
+  if (
+    PROJECT_COMMANDS.has(command) &&
+    !argv.includes("--help") &&
+    !argv.includes("-h") &&
+    !isBunDevReexecChild()
+  ) {
+    const exitCode = await runThroughLocalCli({
+      cwd: process.cwd(),
+      version: CLI_VERSION,
+      args: cliArgv(),
+    })
+    if (exitCode !== undefined) {
+      process.exitCode = exitCode
+      return
+    }
+  }
   // `mcp` runs a long-lived stdio server and loads the project lazily per-tool - it must not go through
   // the eager `loadApp` below (which would fail fast on a project that's API-only / not yet built).
   if (command === "mcp") {
@@ -1246,12 +1288,23 @@ async function main(): Promise<void> {
   }
   const catalogSpec = findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
   if (catalogSpec?.transports.includes("cli")) {
+    const commandArgs = argv.slice(dbSub === undefined ? 1 : 2)
+    if (commandArgs.includes("--help") || commandArgs.includes("-h")) {
+      console.log(commandHelp(catalogSpec))
+      return
+    }
     const markReflecting = installReflectionExitHint()
     if (READ_ONLY_COMMANDS.has(command) || (command === "assure" && !assureBundleRequested(argv))) {
       process.env[REFLECT_ENV] = command
     }
     try {
-      const input = bindCommandArgv(catalogSpec, argv.slice(dbSub === undefined ? 1 : 2))
+      let input: unknown
+      try {
+        input = bindCommandArgv(catalogSpec, commandArgs)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(`[nifra] ${message}\n\n${commandHelp(catalogSpec)}`)
+      }
       markReflecting(command)
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
       markReflecting(undefined)

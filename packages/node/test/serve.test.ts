@@ -5,7 +5,7 @@ import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/c
 import { authenticated, server } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { status } from "@nifrajs/core/server"
-import { compression } from "@nifrajs/middleware"
+import { compression, logger, type RequestLogFields } from "@nifrajs/middleware"
 import { requestTargetApp, requestTargetMismatches } from "../../core/test/request-target-matrix.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 
@@ -261,6 +261,22 @@ test("node-direct JSON preserves an explicit content-type override", async () =>
   const res = await fetch(`http://127.0.0.1:${running.port}/custom-type`)
   expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
   expect(await res.json()).toEqual({ ok: true })
+})
+
+test("the request logger logs route templates on the Node-direct path", async () => {
+  const lines: RequestLogFields[] = []
+  const app = server()
+    .use(logger({ log: (fields) => lines.push(fields) }))
+    .get("/share/:token", (c) => ({ token: c.params.token }))
+
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const res = await fetch(`http://127.0.0.1:${running.port}/share/k7qx9?sig=abc`)
+  expect(await res.json()).toEqual({ token: "k7qx9" })
+  await fetch(`http://127.0.0.1:${running.port}/missing/k7qx9`)
+  expect(lines.map(({ path, status }) => ({ path, status }))).toEqual([
+    { path: "/share/:token", status: 200 },
+    { path: "/missing/k7qx9", status: 404 },
+  ])
 })
 
 test("native response middleware keeps JSON on the Node-direct path", async () => {
@@ -1032,6 +1048,39 @@ test("stop() drains an in-flight request, then is idempotent", async () => {
   await running.stop({ drainMs: 1000 })
   expect(await inflight).toEqual({ done: true })
   await running.stop() // second call is a no-op (idempotent)
+})
+
+test("stop() runs the app's onStopping hooks, serves through delayMs, then runs onStop", async () => {
+  const events: string[] = []
+  let entered!: () => void
+  const stopping = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let stoppingAt = 0
+  const app = server()
+    .onStopping(() => {
+      events.push("stopping")
+      stoppingAt = performance.now()
+      entered()
+    })
+    .onStop(() => {
+      events.push(
+        `stopped after ${performance.now() - stoppingAt >= 290 ? "the delay" : "too soon"}`,
+      )
+    })
+    .get("/", () => ({ ok: true }))
+  const node = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const stopped = node.stop({ delayMs: 300, drainMs: 1000 })
+  await stopping
+  const res = await fetch(`http://127.0.0.1:${node.port}/`)
+  events.push(`served ${res.status}`)
+  await stopped
+  expect(events).toEqual(["stopping", "served 200", "stopped after the delay"])
+})
+
+test("stop() on a plain { fetch } handler has no hooks to run", async () => {
+  const node = await serve({ fetch: () => new Response("ok") }, { hostname: "127.0.0.1", port: 0 })
+  await expect(node.stop({ drainMs: 0 })).resolves.toBeUndefined()
 })
 
 test("inherits the app-level requestTimeoutMs (503) through app.fetch", async () => {

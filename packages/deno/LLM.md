@@ -12,6 +12,7 @@ Run a nifra app on Deno via Deno.serve - graceful stop() + opt-in signals.
 
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<DenoServer>`
 - **DenoServer** _(interface)_ - `interface DenoServer`
+- **DenoStopOptions** _(interface)_ - `interface DenoStopOptions`
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
 

@@ -11,6 +11,7 @@ import { isServerPackageSpecifier } from "@nifrajs/web/zones"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { gitIgnored } from "./internal/git-ignored.ts"
 import { scriptKindOf } from "./internal/script-kind.ts"
 import type { SourceFacts } from "./internal/source-facts.ts"
 import {
@@ -3483,35 +3484,6 @@ const RAW_RESPONSE_EXPECTATION = ["NF-C007", "raw-response"]
  * `includeTests` widens the surface to `*.test.ts`/`*.spec.ts`, which the default excludes. It exists
  * for `nifra doctor`: `tsc` compiles tests, so a test importing a package no manifest declares is a
  * build that a clean install cannot produce - the exact false confidence doctor is for. */
-/**
- * Paths git considers ignored under `cwd`, in ONE batched `git check-ignore` call - so `.gitignore`
- * (root + nested + the global excludesfile) is honoured, not just the built-in {@link IGNORED} list. This
- * is what keeps the scan out of generated/build trees that live under a repo but aren't source: a monorepo
- * that gitignores, say, `builder/projects/` (238 generated apps) would otherwise be walked in full - 40k+
- * findings, a 50 MB+ result that overwhelms the caller. Returns an EMPTY set when there's no git / not a
- * repo / git errors, so the scan simply degrades to the {@link IGNORED} regex - never throws, never blocks.
- */
-async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<string>> {
-  if (rels.length === 0) return new Set()
-  try {
-    const proc = Bun.spawn(["git", "check-ignore", "--stdin", "-z"], {
-      cwd,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    })
-    proc.stdin.write(`${rels.join("\0")}\0`)
-    await proc.stdin.end()
-    // -z keeps both directions literal: Git otherwise C-quotes Unicode/escapes on output and
-    // interprets quoted input. Only matching paths are emitted; exit 1 means none matched.
-    const out = await new Response(proc.stdout).text()
-    await proc.exited
-    return new Set(out.split("\0").filter((path) => path !== ""))
-  } catch {
-    return new Set()
-  }
-}
-
 export async function walkSource(
   cwd: string,
   visit: (rel: string, content: string) => void,

@@ -244,6 +244,8 @@ export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 /** Dynamic-boundary states for hydration; absent when a route declares no boundaries. */
 export const BOUNDARY_GLOBAL = "__NIFRA_BOUNDARIES__"
 export const COMPONENT_GLOBAL = "__NIFRA_COMPONENTS__"
+/** A live app's seed for the page: the client exchanges it for a grant once its socket opens. */
+export const LIVE_GLOBAL = "__NIFRA_LIVE__"
 /** Locale key -> copy chunk URL, in a production build that split copy tables by locale. The name
  * `@nifrajs/i18n/copy` reads. */
 export const COPY_CHUNKS_GLOBAL = "__NIFRA_COPY__"

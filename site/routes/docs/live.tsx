@@ -59,6 +59,29 @@ export const liveRuntime = live({
   instances: 4, // processes serving the app, for spreading reloads
 })`
 
+const OPERATE = `// doc-check: skip - app, liveRuntime, send and read are the ones set up above.
+import { healthcheck } from "@nifrajs/middleware"
+import { livePublisher } from "@nifrajs/web/live"
+import { redisLiveBus } from "@nifrajs/web/live-redis"
+
+app.use(
+  healthcheck({
+    checks: {
+      // Pages poll while the bus is down: report it without leaving rotation.
+      live: { check: () => !liveRuntime.status().down, optional: true },
+    },
+  }),
+)
+app.onStop(async () => {
+  await liveRuntime.close() // stop reading first, so closing its connection is no outage
+  read.close()
+  send.close()
+})
+
+// A process that only publishes - a worker, another app - needs no reader and no secret.
+const publish = livePublisher(redisLiveBus({ send: (command, args) => send.send(command, [...args]) }))
+await publish("org:42")`
+
 const WORKERS = `// doc-check: skip - Env, adapter, manifest and the client entry are the worker's own.
 import { live } from "@nifrajs/web/live"
 import { liveHub } from "@nifrajs/web/live-hub"
@@ -108,6 +131,14 @@ export default function Live() {
         <code>nifra dev</code> serves its socket, and <code>nifra build</code> does both.
       </p>
       <CodeBlock code={APP} />
+      <p>
+        A server-rendered page carries a seed: the grant for what its loaders declared, bound to no
+        socket yet. Once the tab's socket opens, one live load trades it for that socket's grant and
+        keeps every owner, so no loader runs again; only gates do. A seed is refused after a minute,
+        for another viewer, another page or a renewal, and then the page loads as it would without
+        one. Partially prerendered pages, server-component routes and Workers apps render without a
+        seed.
+      </p>
 
       <h2>Declare keys</h2>
       <p>
@@ -152,6 +183,19 @@ export default function Live() {
         answering (<code>readTimeoutMs</code>), resyncs its sockets rather than miss a change.
       </p>
       <CodeBlock code={REDIS} />
+      <p>
+        Each process reports through <code>logger</code> (default: JSON lines on stderr) when the bus
+        stops answering, when it answers again and when events were lost to a trim.{" "}
+        <code>liveRuntime.status()</code> has the same state to poll - <code>down</code>, open{" "}
+        <code>sockets</code>, running <code>loads</code>, applied <code>events</code>, the{" "}
+        <code>changed</code> frames sent as <code>notified</code>, and <code>lagMs</code> - for a
+        readiness check or metrics. <code>close()</code> stops the reader and closes the sockets;
+        call it before closing the bus's connections. Another process can publish to the same stream
+        with <code>livePublisher</code> and a bus that has <code>send</code> only. Any client with a
+        raw-command call works: with ioredis, <code>(command, args) =&gt; redis.call(command,
+        ...args)</code>.
+      </p>
+      <CodeBlock code={OPERATE} />
 
       <h2>Cloudflare Workers</h2>
       <p>
@@ -191,7 +235,10 @@ export default function Live() {
       <ul>
         <li>
           Grants are sealed with AES-256-GCM and bound to one socket, path, frame and viewer. They
-          expire (<code>grantTtl</code>, default 10 minutes, at most an hour); tabs renew them.
+          expire (<code>grantTtl</code>, default 10 minutes, at most an hour); tabs renew them. A
+          page's seed is bound to no socket, so no socket accepts it; only a load of its own page, for
+          its own viewer, within a minute of the render, exchanges it. A shared cache that stores the
+          page stores a seed nobody else can use.
         </li>
         <li>
           The load endpoint and the socket check <code>Origin</code>; allow other origins with{" "}

@@ -18,6 +18,11 @@ export const MAX_KEYS_PER_FRAME = 64
 /** The cache-tag charset: a letter, then up to 127 of `A-Z a-z 0-9 . _ : / -`. */
 export const KEY_PATTERN = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
 export const SID_PATTERN = /^[0-9a-f]{32}$/
+/**
+ * The socket id of a seed: the grant a server-rendered page carries before it has a socket. No socket
+ * has it, so no watch accepts a seed; the load endpoint exchanges one for a grant bound to a socket.
+ */
+export const SEED_SID = ""
 
 const KID_BYTES = 16
 const NONCE_BYTES = 12
@@ -309,7 +314,7 @@ function validClaims(
   if (!isRecord(value)) return false
   const { v, sid, sub, path, frame, owners, s, r, iat, exp, aud } = value
   if (v !== 1 || aud !== appId) return false
-  if (typeof sid !== "string" || !SID_PATTERN.test(sid)) return false
+  if (typeof sid !== "string" || (sid !== SEED_SID && !SID_PATTERN.test(sid))) return false
   if (sub !== null && typeof sub !== "string") return false
   if (typeof path !== "string" || typeof frame !== "string") return false
   if (!isCount(s) || !isCount(r) || !isInteger(iat) || !isInteger(exp)) return false
