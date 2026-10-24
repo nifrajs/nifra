@@ -1005,6 +1005,81 @@ describe("keepAliveClient over the client router", () => {
     })
     expect(server.calls).toEqual(["/photos/1", "/about", "/", "/photos/1"])
   })
+
+  // A `revalidate: false` page whose client loader wraps the server's data once.
+  const wrapping = (initial: string) => {
+    const calls: string[] = []
+    const routeHooks: Record<string, ClientRouteHooks> = {
+      list: {
+        keepAlive: { revalidate: false },
+        clientLoader: async ({ serverLoader }) => ({ wrapped: await serverLoader() }),
+      },
+    }
+    const keep = keepAliveClient({
+      table: { routes: ["list"], layouts: [] },
+      routeHooks,
+      matchChains: { list: chain("list"), about: chain("about") },
+      fetchData: async (path) => {
+        calls.push(path)
+        return { v: 1, data: `raw ${calls.length}` }
+      },
+    })
+    const router = keep.attach(
+      createClientRouter({
+        patterns: [
+          { routeId: "list", pattern: "/list" },
+          { routeId: "about", pattern: "/about" },
+        ],
+        initial: {
+          routeId: initial,
+          params: {},
+          path: `/${initial}`,
+          data: "raw 0",
+          pending: false,
+        },
+        fetchData: keep.fetchData,
+        routeHooks,
+      }),
+    )
+    return { calls, router }
+  }
+
+  test("a client loader's page restored without a reload is built once from its server data", async () => {
+    const { calls, router } = wrapping("about")
+    fakeHistory.push()
+    await router.navigate("/list")
+    expect(router.snapshot().data).toEqual({ wrapped: "raw 1" })
+    fakeHistory.push()
+    await router.navigate("/about")
+    fakeHistory.go(-1)
+    await router.navigate("/list")
+    expect(router.snapshot().data).toEqual({ wrapped: "raw 1" })
+    expect(calls).toEqual(["/list", "/about"])
+
+    // The document's own page, wrapped as the router hydrates.
+    const hydrated = wrapping("list")
+    await hydrated.router.hydrate()
+    expect(hydrated.router.snapshot().data).toEqual({ wrapped: "raw 0" })
+    fakeHistory.push()
+    await hydrated.router.navigate("/about")
+    fakeHistory.go(-1)
+    await hydrated.router.navigate("/list")
+    expect(hydrated.router.snapshot().data).toEqual({ wrapped: "raw 0" })
+    expect(hydrated.calls).toEqual(["/about"])
+  })
+
+  test("a client loader's page built from data the transport never saw reloads on restore", async () => {
+    const { calls, router } = wrapping("about")
+    await router.prefetch("/list")
+    fakeHistory.push()
+    await router.navigate("/list")
+    fakeHistory.push()
+    await router.navigate("/about")
+    fakeHistory.go(-1)
+    await router.navigate("/list")
+    expect(router.snapshot().data).toEqual({ wrapped: "raw 3" })
+    expect(calls).toEqual(["/list", "/about", "/list"])
+  })
 })
 
 describe("slotTree", () => {

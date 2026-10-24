@@ -99,14 +99,26 @@ interface Entry {
   readonly instance: string | undefined
 }
 
+// The server data a client loader built a page's data from, by the path it was loaded under.
+type Sources = ReadonlyMap<string, unknown> | undefined
+
 interface Kept {
   readonly page: KeptPage
   readonly index: number
   readonly epoch: string
+  readonly sources: Sources
   readonly hiddenAt: number
   readonly maxAge: number
   readonly revalidate: boolean
   stale: boolean
+}
+
+interface Active {
+  readonly instance: string
+  readonly index: number
+  readonly settled: RouterState
+  readonly epoch: string
+  readonly sources: Sources
 }
 
 interface Restore {
@@ -116,6 +128,7 @@ interface Restore {
   readonly pagePath: string
   readonly kept: RouterState
   readonly reload: boolean
+  readonly sources: Sources
 }
 
 const pathnameOf = (path: string): string => {
@@ -179,6 +192,21 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
   const wrappedLayouts = new Set(table.layouts)
   // The restore whose reload the router is running, which the transport answers.
   let reloading: Restore | undefined
+  const ownsLoader = (routeId: string | undefined): boolean =>
+    routeId !== undefined && routeHooks[routeId]?.clientLoader !== undefined
+  // What client-loader routes loaded since the page on screen settled. A restore that loads nothing
+  // runs the client loader over the kept page's own, as a navigation over prefetched data does.
+  const fresh = new Map<string, unknown>()
+  const noteSource = (path: string, payload: unknown): void => {
+    if (!isRouteDataEnvelope(payload)) fresh.set(path, payload)
+    else if (payload.status === undefined) fresh.set(path, payload.data)
+  }
+  const sourcesOf = (state: RouterState): Sources => {
+    const sources = new Map<string, unknown>()
+    for (const path of [pagePathOf(state), state.path])
+      if (fresh.has(path)) sources.set(path, fresh.get(path))
+    return sources.size === 0 ? undefined : sources
+  }
 
   // A restored page's reload: its kept data, unrequested, when it needs no reload; otherwise the
   // response shared onto the kept data, so what did not change keeps the identity it has on screen.
@@ -200,12 +228,20 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         ? restore.kept.boundaries?.[held.boundary]
         : undefined
     if (restore === undefined || (path !== restore.pagePath && target === undefined)) {
-      return base(path, match, signal, navigation, purpose, hosts, read)
+      if (purpose === "prefetch" || !ownsLoader(match.routeId))
+        return base(path, match, signal, navigation, purpose, hosts, read)
+      const payload = await base(path, match, signal, navigation, purpose, hosts, read)
+      noteSource(path, payload)
+      return payload
     }
-    const kept = (): unknown =>
-      target === undefined
-        ? envelopeOf(restore.kept)
-        : { v: 1, data: target.data, live: target.live }
+    const sourced = restore.sources?.has(path) === true
+    const kept = (): Record<string, unknown> => {
+      const data = sourced ? restore.sources?.get(path) : target?.data
+      if (target !== undefined) return { v: 1, data, live: target.live }
+      const envelope = envelopeOf(restore.kept)
+      if (sourced) envelope.data = data
+      return envelope
+    }
     // The page's hole hosts reload as fills, applied in place on the roots kept with it, even when
     // the route keeps its own data.
     const holes = target === undefined ? hostsOf(restore.kept) : []
@@ -225,7 +261,8 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       if (signal?.aborted === true || hasRedirect(error)) throw error
       return kept()
     }
-    if (!restore.reload) return fillsOnto(restore.kept, payload, holes)
+    if (!restore.reload) return fillsOnto(kept(), restore.kept, payload, holes)
+    if (ownsLoader(match.routeId)) noteSource(path, payload)
     const hooks = routeHooks[target === undefined ? restore.kept.routeId : match.routeId]
     // `read` itself answers a reload whose response text is what the path shows, which the router
     // keeps unparsed.
@@ -246,13 +283,18 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     let lastEpoch = readEpoch()
 
     const first = readEntry()
-    // `epoch` is the one the page's data was loaded under: a page left after a sign-in or sign-out
-    // shows the previous visitor's data, so it is not kept.
-    let active = {
+    const initial = inner.snapshot()
+    // A client loader runs over the document's own data as the router hydrates.
+    if (ownsLoader(initial.routeId)) fresh.set(initial.path, initial.data)
+    // Where the page's data came from: `epoch` is the one it was loaded under (a page left after a
+    // sign-in or sign-out shows the previous visitor's data, so it is not kept), and `sources` what
+    // a client loader built it from.
+    let active: Active = {
       instance: first.instance ?? newInstance(),
       index: first.index,
-      settled: inner.snapshot(),
+      settled: initial,
       epoch: lastEpoch,
+      sources: sourcesOf(initial),
     }
     stampEntry(active.instance)
     if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
@@ -343,7 +385,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       dropKept("identity")
     }
 
-    const keep = (instance: string, index: number, state: RouterState, epoch: string): void => {
+    const keep = ({ instance, index, settled: state, epoch, sources }: Active): void => {
       if (!keepable(state) || epoch !== readEpoch()) return
       const setting = keepAliveOf(state.routeId)
       const settings = typeof setting === "object" ? setting : {}
@@ -352,6 +394,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         page: { instance, state },
         index,
         epoch,
+        sources,
         hiddenAt: now(),
         maxAge: settings.maxAge ?? KEEP_ALIVE_MAX_AGE_MS,
         revalidate: settings.revalidate !== false,
@@ -365,8 +408,14 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       const entry = readEntry()
       if (sameInstance(active.settled, next)) {
         // Data the router did not load again is still the data it was loaded with.
-        const epoch = next.data === active.settled.data ? active.epoch : readEpoch()
-        active = { instance: active.instance, index: entry.index, settled: next, epoch }
+        const same = next.data === active.settled.data
+        active = {
+          instance: active.instance,
+          index: entry.index,
+          settled: next,
+          epoch: same ? active.epoch : readEpoch(),
+          sources: same ? active.sources : sourcesOf(next),
+        }
       } else {
         // The page on screen was left: by a push (a fresh entry above it), a traversal (an entry that
         // already carries an instance), or a replace (its own entry rewritten), which discards it.
@@ -376,8 +425,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
             "forward",
           )
         }
-        if (entry.index !== active.index && !leftGone)
-          keep(active.instance, active.index, active.settled, active.epoch)
+        if (entry.index !== active.index && !leftGone) keep(active)
         const reuse =
           entry.index !== active.index &&
           entry.instance !== undefined &&
@@ -390,8 +438,10 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
           index: entry.index,
           settled: next,
           epoch: readEpoch(),
+          sources: sourcesOf(next),
         }
       }
+      fresh.clear()
       stampEntry(active.instance)
       sweep()
       shown = next
@@ -439,7 +489,10 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
             index: active.index,
             settled: next,
             epoch: restore.reload ? readEpoch() : active.epoch,
+            // A reload that failed shows the kept data, from the kept sources.
+            sources: sourcesOf(next) ?? active.sources,
           }
+          fresh.clear()
           shown = { ...next, params: shareData(restore.kept.params, next.params) }
           flags = undefined
           refresh()
@@ -461,10 +514,18 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       const entry = readEntry()
       records.delete(instance)
       keptPages = undefined
-      if (!leftGone) keep(active.instance, active.index, active.settled, active.epoch)
+      if (!leftGone) keep(active)
       const kept = record.page.state
-      active = { instance, index: entry.index, settled: kept, epoch: record.epoch }
-      const reload = record.revalidate || record.stale || kept.path !== path
+      const { sources } = record
+      active = { instance, index: entry.index, settled: kept, epoch: record.epoch, sources }
+      fresh.clear()
+      // Data a client loader built is shown again only from what it was built from.
+      const unsourced =
+        (ownsLoader(kept.routeId) && sources?.has(pagePathOf(kept)) !== true) ||
+        (kept.intercepted !== undefined &&
+          ownsLoader(inner.match(kept.path)?.routeId) &&
+          sources?.has(kept.path) !== true)
+      const reload = record.revalidate || record.stale || kept.path !== path || unsourced
       const modal = kept.intercepted
       const pagePath = modal === undefined ? path : modal.pagePath
       let done = (): void => {}
@@ -472,9 +533,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         done = resolve
       })
       endRestore()
-      const mine = { path, pagePath, kept, reload, done, ended }
+      const mine = { path, pagePath, kept, reload, sources, done, ended }
       restoring = mine
-      reloading = { path, pagePath, kept, reload }
+      reloading = { path, pagePath, kept, reload, sources }
       stampEntry(instance)
       shown = kept
       flags = { restored: true, revalidating: reload }
@@ -628,10 +689,14 @@ const hostsOf = (state: RouterState): string[] =>
     .filter((held) => held.ppr === true)
     .map((held) => held.name)
 
-/** What `kept` shows, with the fills `payload` carries for its hole hosts `holes` and nothing else
- * of it. */
-const fillsOnto = (kept: RouterState, payload: unknown, holes: readonly string[]): unknown => {
-  const envelope = envelopeOf(kept)
+/** `envelope`, what `kept` shows, with the fills `payload` carries for its hole hosts `holes` and
+ * nothing else of it. */
+const fillsOnto = (
+  envelope: Record<string, unknown>,
+  kept: RouterState,
+  payload: unknown,
+  holes: readonly string[],
+): unknown => {
   if (!isRouteDataEnvelope(payload) || payload.status !== undefined) return envelope
   const boundaries = { ...kept.boundaries }
   for (const name of holes) {
