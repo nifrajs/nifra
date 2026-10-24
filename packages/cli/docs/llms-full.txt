@@ -7335,7 +7335,7 @@ The breaking-change gate. A new required request field or a removed response fie
 
 `nifra contracts snapshot | check`
 
-Write the deterministic route contract lock, `contracts.lock.json`, or check the current routes against it.
+Write the deterministic route contract lock, `contracts.lock.json`, or check the current routes against it. The lock records each declared part (body, query, params, headers, cookies, response, sse, each error status) with its top-level fields, so a failing check names the part and the fields that moved.
 
 `nifra assure [--config <file>]`
 
@@ -9340,17 +9340,20 @@ followed, and a group package installed by a link from outside the root is liste
 ### "records dependencies its file: packages no longer declare"
 
 A `file:` dependency's own dependencies are recorded in `bun.lock` when
-Bun first installs it, and Bun does not read that package's `package.json` again:
+Bun installs it, and Bun 1.4.2 does not read that package's `package.json` again:
 after the linked package moves to a new version of a dependency, `bun install`
 (even with `--force`) keeps installing the recorded one beside it, so the app can
-load two copies of the same package. `nifra doctor` (and `nifra check`,
+load two copies of the same package. Bun 1.4.4 reads it on every install.
+`nifra doctor` (and `nifra check`,
 as the `NF-D003` warning) compares each recorded entry with the linked
 `package.json` and names every dependency that moved.
 
-Run `bun update <package>` for each named package. `nifra upgrade`
-reads the lock against the manifests it is about to write, and with `--write` drops
-those entries so the next `bun install` records them again; run that install
-before committing `bun.lock`, or `bun install --frozen-lockfile` fails.
+Run `bun update <package>` for each named package: it records the linked
+`package.json` as it is on disk, uncommitted edits included, and keeps every other
+entry. Do not delete the entries by hand: an install that finds one missing re-resolves every
+package in the lock to the newest version its range allows, and Bun 1.4.4 also rewrites a
+`lockfileVersion` 1 lock as 2. `nifra upgrade` lists the entries against
+the manifests it is about to write and leaves `bun.lock` as it is.
 
 ### Still stuck?
 

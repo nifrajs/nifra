@@ -18,7 +18,8 @@ const HYDRATION_HEAD = generateHydrationScript()
 
 // An unset NODE_ENV counts as production, as for the framework's own error pages.
 const showsErrors = (): boolean => {
-  const nodeEnv = typeof process === "undefined" ? undefined : process.env?.NODE_ENV
+  // No `?.`: a bundler's NODE_ENV define replaces only the plain member read.
+  const nodeEnv = typeof process === "undefined" ? undefined : process.env.NODE_ENV
   return nodeEnv === "development" || nodeEnv === "test"
 }
 

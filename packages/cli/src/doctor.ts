@@ -219,7 +219,7 @@ export interface DoctorResult {
   }
   /**
    * `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json no
-   * longer declares: Bun never refreshes them, so it installs a second copy under the linked package.
+   * longer declares: Bun 1.4.2 never refreshes them, so it installs a second copy under the linked package.
    * Advisory (never folded into `ok`). `lock` is the lockfile, relative to the project.
    */
   readonly staleLinkLocks?: { readonly lock: string; readonly entries: readonly StaleLinkLock[] }

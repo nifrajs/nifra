@@ -56,7 +56,6 @@ import {
   BUN_LOCK,
   describeChange,
   linkLockUpdate,
-  pruneLinkLocks,
   type StaleLinkLock,
   staleLinkLocks,
 } from "./lock-links.ts"
@@ -88,12 +87,6 @@ export interface UpgradeOptions {
   readonly hooks?: boolean
   /** Proceed although a linked repository loads its own nifra at another version. Default false. */
   readonly allowLinkedSkew?: boolean
-  /**
-   * With `--write`, drop the stale `file:` entries from bun.lock. Default false: the next install then
-   * re-reads each linked package.json as it is on disk, uncommitted edits included, and can re-resolve
-   * packages that have nothing to do with the upgrade.
-   */
-  readonly pruneLinkLocks?: boolean
 }
 
 export interface PinChange {
@@ -159,11 +152,9 @@ export interface UpgradePlan {
   /** Other versions pinned outside package.json. Never edited. */
   readonly strayPins: readonly StrayPin[]
   /** `file:` entries of the project's bun.lock whose recorded dependencies the linked package.json
-   * (as this upgrade leaves it) no longer declares. Bun never refreshes them on its own. */
+   * (as this upgrade leaves it) no longer declares. Bun 1.4.2 never refreshes them on its own. Never
+   * edited: an install that finds one missing re-resolves every package in the lock. */
   readonly linkLocks: readonly StaleLinkLock[]
-  /** Whether `--write --prune-link-locks` dropped {@link linkLocks} from bun.lock, so `bun install`
-   * re-reads them. */
-  readonly lockPruned: boolean
   readonly notes: readonly string[]
   /** Releases on the way up that announce no behaviour change for the packages this project loads. */
   readonly unaffected: readonly UnaffectedRelease[]
@@ -1175,7 +1166,6 @@ export function computeUpgrade(
   allowDowngrade = false,
   exact = false,
   above: readonly AncestorPinSite[] = [],
-  pruneLocks = false,
 ): UpgradePlan {
   const pins: PinChange[] = []
   const agentPins: AgentPinChange[] = []
@@ -1203,20 +1193,8 @@ export function computeUpgrade(
     }
   }
 
-  // Read against the manifests as this upgrade leaves them, so a dry run lists what --write drops.
+  // Read against the manifests as this upgrade leaves them.
   const linkLocks = plainFileAt(cwd, BUN_LOCK) ? staleLinkLocks(resolve(cwd), manifests) : []
-  let lockPruned = false
-  if (write && pruneLocks && linkLocks.length > 0) {
-    const lockPath = join(cwd, BUN_LOCK)
-    const pruned = pruneLinkLocks(
-      readFileSync(lockPath, "utf8"),
-      linkLocks.map((entry) => entry.package),
-    )
-    if (pruned !== undefined) {
-      writeFileSync(lockPath, pruned)
-      lockPruned = true
-    }
-  }
 
   for (const { change, text, abs } of agentPinEdits(cwd, recipe.version, above)) {
     agentPins.push(change)
@@ -1268,7 +1246,6 @@ export function computeUpgrade(
     linkedSkew: linkedSkew(cwd, recipe.version),
     strayPins: strayPins(cwd, recipe.version, planned),
     linkLocks,
-    lockPruned,
     notes: recipe.notes ?? [],
     unaffected: unaffectedReleases(
       "steps" in recipe && Array.isArray(recipe.steps) ? recipe.steps : [recipe.version],
@@ -1379,20 +1356,14 @@ function renderPlan(
   }
   if (plan.linkLocks.length > 0) {
     lines.push(
-      plan.lockPruned
-        ? `Dropped ${plan.linkLocks.length} file: package(s) from bun.lock, whose recorded dependencies Bun never refreshes; \`bun install\` reads each linked package.json again:`
-        : `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s), which Bun never refreshes. ${write ? "Left as it is" : "--write leaves it as it is"}; run \`${linkLockUpdate(plan.linkLocks)}\`, or add --prune-link-locks to drop them:`,
+      `bun.lock records stale dependencies for ${plan.linkLocks.length} file: package(s). ${write ? "Left as it is" : "--write leaves it as it is"}; run \`${linkLockUpdate(plan.linkLocks)}\`, which refreshes those entries and keeps every other pin:`,
     )
     for (const entry of plan.linkLocks)
       lines.push(
         `  ${entry.package} (file:${entry.path})  ${entry.changes.map(describeChange).join(", ")}`,
       )
-    if (plan.lockPruned)
-      lines.push(
-        "  Run `bun install` before committing bun.lock: until it records these packages again, `bun install --frozen-lockfile` fails.",
-      )
     lines.push(
-      "  Either way Bun reads each linked package.json as it is on disk now, uncommitted edits included, and may re-resolve other entries: review the bun.lock diff before committing it.",
+      "  Bun records each linked package.json as it is on disk, uncommitted edits included: review the bun.lock diff before committing it.",
     )
     lines.push("")
   }
@@ -1472,14 +1443,13 @@ const INSTALL_COMMANDS: readonly (readonly [lockfile: string, command: string])[
 
 /**
  * Whether the project needs an install before a check can judge the target: `--write` changed what
- * package.json declares or what bun.lock records, or node_modules holds a group package at another
- * version. A link from outside the root is left out; installing here does not move it.
+ * package.json declares, or node_modules holds a group package at another version. A link from outside the root is left out; installing here does not move it.
  */
 export function pendingInstall(cwd: string, plan: UpgradePlan): PendingInstall | undefined {
   const installed = installedGroupPackages(cwd)
     .filter((entry) => entry.inside && entry.version !== plan.version)
     .map(({ package: name, version }) => ({ package: name, version }))
-  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0 || plan.lockPruned
+  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0
   if (!edited && installed.length === 0) return undefined
   const command =
     INSTALL_COMMANDS.find(([lockfile]) => existsSync(join(cwd, lockfile)))?.[1] ?? "bun install"
@@ -1716,7 +1686,6 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
   const above = (await ancestorPins(cwd)).owned
   const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact, above)
-  const pruneLocks = options.pruneLinkLocks === true
   if (preview.downgrades.length > 0) {
     if (options.json) {
       console.log(
@@ -1750,9 +1719,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
 
   const captureHooks = write && options.hooks !== false
   const before = captureHooks ? await hookReportBefore(cwd) : undefined
-  const plan = write
-    ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above, pruneLocks)
-    : preview
+  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
   const pending = write ? pendingInstall(cwd, plan) : undefined
   const hooks =
     before === undefined ? undefined : await hookScopeAcross(cwd, before, pending === undefined)

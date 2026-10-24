@@ -179,8 +179,9 @@ const pendingStates = (holes: readonly HoleRegistration[]): BoundaryStates => {
 const shellKey = (deployment: string, request: PprRequest): string =>
   `ppr:v1|${deployment}|${request.routeId}|${request.locale ?? ""}|${request.path}|${variationQuery(request.variations)}`
 
+// No `?.`: a bundler's NODE_ENV define replaces only the plain member read, and this runs per request.
 const isProduction = (): boolean =>
-  typeof process !== "undefined" && process.env?.NODE_ENV === "production"
+  typeof process !== "undefined" && process.env.NODE_ENV === "production"
 
 const concat = (chunks: readonly Uint8Array[]): Uint8Array => {
   let length = 0

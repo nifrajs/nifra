@@ -296,8 +296,7 @@ Usage:
                                          version, a rollback (--allow-downgrade overrides), or a
                                          linked repository that loads its own nifra at another
                                          version (--allow-linked-skew overrides). Deterministic +
-                                         idempotent. Leaves bun.lock alone;
-                [--prune-link-locks]     with --write, drops its stale file: entries.
+                                         idempotent. Leaves bun.lock alone.
   nifra migrate layout [--write] [--zones] [--json]
                                          Move an app onto the frontend/backend split: split each route
                                          into x.tsx + x.backend.ts, fold _middleware.ts into
@@ -1408,7 +1407,6 @@ async function main(): Promise<void> {
         hooks: !argv.includes("--no-hooks"),
         allowDowngrade: argv.includes("--allow-downgrade"),
         allowLinkedSkew: argv.includes("--allow-linked-skew"),
-        pruneLinkLocks: argv.includes("--prune-link-locks"),
         exact: argv.includes("--exact"),
         cliVersion: CLI_VERSION,
       })
