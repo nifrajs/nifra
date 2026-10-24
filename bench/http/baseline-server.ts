@@ -10,7 +10,7 @@
  *   oha -z 10s http://localhost:3000/          # or:
  *   autocannon -d 10 -c 64 http://localhost:3000/
  *
- * Phase 1 adds the same load test pointed at the framework + at Elysia/Hono so
+ * bench/http/ runs the same load test against the framework and Elysia/Hono so
  * the three are compared on identical hardware and payload.
  */
 const server = Bun.serve({

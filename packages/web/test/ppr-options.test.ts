@@ -15,7 +15,7 @@ const withAgent = (agent: string | undefined): Request =>
   )
 
 describe("PPR options", () => {
-  test("defaults match the plan's signed-off numbers", () => {
+  test("defaults keep their pinned numbers", () => {
     expect(PPR_DEFAULTS).toEqual({
       holeTimeoutMs: 5000,
       maxHoleTimeoutMs: 30000,

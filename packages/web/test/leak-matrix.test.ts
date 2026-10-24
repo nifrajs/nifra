@@ -338,7 +338,7 @@ const ROWS: readonly LeakPath[] = [
         'String(new Worker(new URL("../backend/job.ts", import.meta.url), { type: "module" }))',
       ),
     },
-    // Bun does not bundle workers, so nothing of the file is emitted (Phase 0).
+    // Bun does not bundle workers, so nothing of the file is emitted.
     expect: { "vite-build": "backend/job.ts: it is backend code" },
   },
   {

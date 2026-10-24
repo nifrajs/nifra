@@ -1,5 +1,5 @@
 /**
- * Type-level proof for Phase 5's context extension: `derive`/`decorate` extend the
+ * Type-level proof for the context extension: `derive`/`decorate` extend the
  * handler context for DOWNSTREAM routes, are order-scoped, and compose. Verified
  * by `tsc` (each handler body that reads an extended field is itself the check).
  */

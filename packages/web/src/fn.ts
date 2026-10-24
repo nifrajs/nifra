@@ -78,8 +78,9 @@ export interface ServerFnConfig<Input> {
 
 /**
  * A declared server function. Callable directly on the server (the same value your own server-side
- * code can await); on the client, phase 2's build transform replaces this module with typed stubs
- * that POST to the mounted route.
+ * code can await); in a client build, this module becomes typed stubs that POST under its
+ * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it
+ * under that name.
  *
  * This is the SERVER declaration type, so context is required. Client builds replace the module with
  * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.
@@ -156,7 +157,8 @@ export type ServerFnModule = Readonly<Record<string, unknown>>
  *
  * The namespace is explicit rather than derived from the file path: a path-derived one would put the
  * build machine's layout in a public URL, and this keeps the route readable in logs and greppable in
- * the codebase. Phase 2's transform supplies it automatically from the file's location in the project.
+ * the codebase. The client build's stubs call the namespace named by the module's file (`todos.fn.ts`
+ * calls `todos`), so pass that same word here.
  *
  * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.
  */

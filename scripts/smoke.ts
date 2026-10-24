@@ -1,5 +1,5 @@
 /**
- * Clean-dir install-and-use smoke (the Phase 8 exit criterion). Builds + packs every
+ * Clean-dir install-and-use smoke. Builds + packs every
  * library, installs the tarballs into a fresh directory with no workspace, and runs a
  * small app that exercises core + client + schema + middleware end-to-end - proving the
  * *published* packages work for a real consumer. Runs it twice:

@@ -199,7 +199,7 @@ export interface PprIntegration {
   shellData(request: PprRequest, signal: AbortSignal): Promise<unknown>
   /** `variations` as the shell's own query string. */
   variationQuery(variations: Readonly<Record<string, string>>): string
-  /** Throws for a route the plan's rules keep off the PPR path: its layouts, holes and their limits. */
+  /** Throws for a route the PPR rules keep off the PPR path: its layouts, holes and their limits. */
   assertRoute(
     route: RouteEntry,
     layouts: LoadedLayoutModules,

@@ -722,7 +722,7 @@ test("a navigation never offers a layout whose keys changed", async () => {
   r.stop()
 })
 
-// --- Intercept boundaries (G7) ---------------------------------------------------------------------
+// --- Intercept boundaries --------------------------------------------------------------------------
 
 test("an open boundary watches beside the page; its change reloads the target alone", async () => {
   const r = await connected("/")

@@ -6039,7 +6039,7 @@ _No named exports (side-effect entrypoint)._
 - **SERVER_FN_PREFIX** _(const)_ - `SERVER_FN_PREFIX: "/_nifra/fn"`
   The URL prefix every mounted function lives under. Namespaced per mount, then by export name.
 - **ServerFn** _(interface)_ - `interface ServerFn<Input, Output>`
-  A declared server function. Callable directly on the server (the same value your own server-side code can await); on the client, phase 2's build transform replaces this module with typed stubs that POST to the mounted route.
+  A declared server function. Callable directly on the server (the same value your own server-side code can await); in a client build, this module becomes typed stubs that POST under its file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it under that name.
 - **ServerFnConfig** _(interface)_ - `interface ServerFnConfig<Input>`
   What a server function declares about itself.
 - **ServerFnHost** _(interface)_ - `interface ServerFnHost`
