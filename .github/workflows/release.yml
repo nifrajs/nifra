@@ -230,7 +230,7 @@ jobs:
 
           release_checks="$(gh api \
             --header 'Accept: application/vnd.github+json' \
-            "repos/${REPOSITORY}/commits/${release_head_sha}/check-runs")"
+            "repos/${REPOSITORY}/commits/${release_head_sha}/check-runs?check_name=release-verification&per_page=100")"
           release_verification="$(jq -r \
             --arg head_sha "$release_head_sha" \
             'any(.check_runs[]?;
