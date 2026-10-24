@@ -65,6 +65,9 @@ schema whose `validate` does more than check its `jsonSchema`, custom registry k
 runtime-only metadata, and known TypeBox compiler escape hazards. Use the ordinary `t` adapter for
 these shapes. This opt-in build step leaves the existing validation API and runtime behavior intact.
 
+A compiled schema in a route's `query`, `headers` or `cookies` slot reads the text there the way the
+schema it was compiled from does: `?archived=true` is `true` for both.
+
 ### Forms and files - `@nifrajs/schema/form`
 
 The `t` exported from `@nifrajs/schema/form` is the same builder plus `t.file` and `t.form`. A
@@ -150,9 +153,10 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
   route. A declared response wins, so an app whose `onError` or `notFound()` writes another body
   declares it in `errors`.
 - **Query, header and cookie values** - a list is read from repeated keys and declared as
-  `style: form, explode: true` (`?tag=a,b` is the one value `"a,b"`). A boolean that `t.query`,
-  `t.headers` or `t.cookies` reads also accepts `1`/`0` and either case, listed on the parameter as
-  `x-nifra-boolean-literals`; a schema that does not coerce lists none.
+  `style: form, explode: true` (`?tag=a,b` is the one value `"a,b"`). A boolean read from that text
+  (by `t.query`, `t.headers`, `t.cookies`, or a `t.object` in one of those slots) also accepts
+  `1`/`0` and either case, listed on the parameter as `x-nifra-boolean-literals`; another Standard
+  Schema lists none.
 - **Tagged unions** - a union whose members all pin one required property to distinct values is
   emitted as a `oneOf`. When every member is a component (a `$id`) it also gets a `discriminator`
   with a `mapping`, so a client generator can build a tagged union; OpenAPI discriminators never
