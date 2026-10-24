@@ -737,10 +737,15 @@ export function createWebApp<Env = unknown>(
 
   // Last, after every hook the caller's `use` added: a cookie any of them sets is seen here.
   if (manifest.routes.some((route) => route.keepAlive === true)) {
-    const nodeEnv = typeof process === "undefined" ? undefined : process.env.NODE_ENV
+    // As for error details: only a run that says it is development or test reports, and an unset
+    // NODE_ENV (an unbuilt `bun app.ts`, a Worker) counts as production.
+    const nodeEnv = typeof process === "undefined" ? undefined : process.env?.NODE_ENV
     app.use(
       withResponseObserver({
-        onResponseHeaders: identityEpochHook(options.keepAlive ?? {}, nodeEnv !== "production"),
+        onResponseHeaders: identityEpochHook(
+          options.keepAlive ?? {},
+          nodeEnv === "development" || nodeEnv === "test",
+        ),
       }),
     )
   }

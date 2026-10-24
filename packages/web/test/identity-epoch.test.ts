@@ -215,6 +215,10 @@ const appOf = (keepAlive: boolean) =>
         .get("/switch", (c) => {
           rotateIdentityEpoch(c)
           return "ok"
+        })
+        .get("/tracker", (c) => {
+          c.set.cookie("tracker", "x", { httpOnly: true })
+          return "ok"
         }),
   })
 
@@ -225,6 +229,25 @@ describe("createWebApp and the identity epoch", () => {
     expect(cookies).toHaveLength(2)
     expect(cookies[1]).toMatch(EPOCH)
     expect(cookies[1]).toEndWith("; Max-Age=300")
+  })
+
+  test("it reports unknown cookies only when NODE_ENV says development or test", async () => {
+    warn = spyOn(console, "warn").mockImplementation(() => {})
+    const before = process.env.NODE_ENV
+    const reports: Record<string, number> = {}
+    try {
+      for (const mode of ["development", "test", "production", undefined]) {
+        if (mode === undefined) delete process.env.NODE_ENV
+        else process.env.NODE_ENV = mode
+        warn.mockClear()
+        await appOf(true).fetch(new Request("https://app.test/tracker"))
+        reports[mode ?? "unset"] = warn.mock.calls.length
+      }
+    } finally {
+      if (before === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = before
+    }
+    expect(reports).toEqual({ development: 1, test: 1, production: 0, unset: 0 })
   })
 
   test("an app without one adds nothing", async () => {
