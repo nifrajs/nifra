@@ -104,7 +104,7 @@ const STREAM_HINT =
 const SERVER_IMPORT_HINT =
   "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too"
 const RESPONSE_ROUTE_HINT =
-  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect NF-C007: <reason>` comment to mark it and silence this"
+  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; for a file or other binary body return `bytes(body, { type, filename })` from @nifrajs/core/binary (the client reads it as a Blob); for a Response you must build yourself, wrap it as `raw<T>(response)` from the same module to keep `data` typed. For a redirect, add `{ response: t.… }` or a `// nifra-expect NF-C007: <reason>` comment to mark it and silence this"
 const PIPELINE_DOC_HINT =
   "nifra runs one bundler per phase - `vitePlugins` feed Vite, `clientPlugins`/`serverPlugins` feed Bun, and the file `nifra build` imports the adapter from is bundled into the server. See the Gotchas section of the Dev & HMR guide."
 const UNDECLARED_DEP_HINT =

@@ -34,6 +34,7 @@ import {
   DATA_GLOBAL,
   HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
+  LIVE_GLOBAL,
   LOCALES_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
@@ -109,6 +110,11 @@ export interface RenderPageOptions {
   /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized
    * for the client so post-POST hydration matches. Omit on GETs. */
   readonly actionData?: unknown
+  /**
+   * A live runtime's seed for this page (`createWebApp({ live })` sets it): handed to the client
+   * entry, which exchanges it for a grant instead of loading the page again.
+   */
+  readonly live?: unknown
   /**
    * URL of the built client entry (loaded as a module script).
    *
@@ -417,6 +423,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     options.serverComponents === undefined
       ? ""
       : `,"__NIFRA_COMPONENTS__":${serializeData(options.serverComponents)}`
+  const liveTail =
+    options.live === undefined ? "" : `,"${LIVE_GLOBAL}":${serializeData(options.live)}`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
@@ -529,7 +537,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Tail - the page-state handover + the client module. Module scripts defer (run after parse), so
   // the handover + every streamed deferred resolution are in the document before the entry hydrates.
   const tailHtml = hydrate
-    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${componentTail}${slot.tailPost}`
+    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${componentTail}${liveTail}${slot.tailPost}`
     : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   if (locale !== undefined) headers["content-language"] = lang

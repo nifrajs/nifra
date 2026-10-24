@@ -69,6 +69,8 @@ const CONNECTS_BEFORE_POLLING = 3
 const MAX_SPREAD_MS = 5_000
 const PAGE = "page"
 const SID = /^[0-9a-f]{32}$/
+/** The socket id of a seed: the grant the server rendered the page with, bound to no socket yet. */
+const SEED = ""
 
 /**
  * What a live load handed the router, carried in its state beside the data it loaded. A load whose
@@ -124,6 +126,8 @@ interface Frame {
   dirty: Set<string>
   /** Every owner reloads: there is no grant to keep any of them by. */
   whole: boolean
+  /** The frame holds a seed and a socket is open: one load keeping every owner trades it for a grant. */
+  exchange: boolean
   /** The watch generation that installed this frame's grant, once `ready` confirmed it. */
   installed: boolean
   /** Set while a watch carrying this frame's grant waits for its `ready`. */
@@ -247,7 +251,10 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
         if (id !== undefined && page?.dirty.has(`L:${id}`) === false) retain.push(`L:${id}`)
       }
     }
-    const grant = held?.grant !== undefined && held.sid === bound ? held.grant : undefined
+    const grant =
+      held?.grant !== undefined && (held.sid === bound || held.sid === SEED)
+        ? held.grant
+        : undefined
     const res = await send(appUrl(loadPath), {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -323,6 +330,30 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     }
   }
 
+  /**
+   * The server-rendered page's seed, in the router's initial state: held as the page's load, it is
+   * traded for a socket's grant once one opens. Anything else there is ignored.
+   */
+  const adoptSeed = (state: { readonly routeId: string; readonly live?: unknown }): void => {
+    const value = state.live
+    if (typeof value !== "object" || value === null || issued.has(value)) return
+    const live = envelopeOf(value)
+    if (live?.grant === undefined) return
+    const loaded: Loaded = {
+      routeId: state.routeId,
+      sid: SEED,
+      grant: undefined,
+      tags: new Map(),
+      expiresAt: Number.POSITIVE_INFINITY,
+      ttlMs: Number.POSITIVE_INFINITY,
+      tick: advanceLiveTick(),
+      query: undefined,
+      trailing: false,
+    }
+    settleLoaded(loaded, live)
+    issued.set(value, loaded)
+  }
+
   /** A trailing grant arrived, or will not: the frame holding `loaded` watches or polls from now. */
   const granted = (loaded: Loaded, live: ServerEnvelope | undefined): void => {
     settleLoaded(loaded, live)
@@ -367,6 +398,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       shownAt: now,
       dirty: new Set(),
       whole: false,
+      exchange: false,
       installed: false,
       pending: undefined,
       loading: false,
@@ -416,7 +448,9 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
         !tried.has(`${sid}\n${frame.path}`)
       ) {
         tried.add(`${sid}\n${frame.path}`)
-        frame.whole = true
+        // A seed needs no loader to run: the server keeps every owner and binds a grant to this socket.
+        if (frame.loaded?.sid === SEED) frame.exchange = true
+        else frame.whole = true
         // A new socket is a new chance: no backoff carries over, only the spread it was given.
         frame.failures = 0
         frame.retryAt = welcomeSpread > 0 ? now + Math.random() * welcomeSpread : 0
@@ -450,7 +484,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     const now = Date.now()
     for (const frame of frames) {
       if (frame.loading || wakeOf(frame) > now) continue
-      if (frame.whole || frame.dirty.size > 0) reload(frame, "load")
+      if (frame.whole || frame.exchange || frame.dirty.size > 0) reload(frame, "load")
       else if (watchable(frame)) reload(frame, "renew")
       else reload(frame, "load", true)
       // One load at a time: the router runs it, and its next state runs this again.
@@ -465,7 +499,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
    */
   const wakeOf = (frame: Frame): number => {
     let due: number
-    if (frame.whole || frame.dirty.size > 0) due = 0
+    if (frame.whole || frame.exchange || frame.dirty.size > 0) due = 0
     // Its grant trails the holes still loading; it arrives with or without one, and runs this again.
     else if (frame.loaded?.trailing === true) due = Number.POSITIVE_INFINITY
     // A renewal waits for the pending watch's `ready`, which runs this again.
@@ -494,7 +528,9 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     const state = current.snapshot()
     const page = frame.slot === PAGE
     const whole = frame.whole
-    const held = whole ? undefined : frame.loaded
+    const exchange = frame.exchange
+    // A poll is for fresh data: no change notice reaches the frame, so no owner can be kept.
+    const held = whole || polled ? undefined : frame.loaded
     intent = {
       path: frame.path,
       mode: held === undefined ? "load" : mode,
@@ -511,6 +547,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     }
     frame.loading = true
     frame.whole = false
+    frame.exchange = false
     let running: Promise<void>
     try {
       running = current.invalidate([frame.path])
@@ -527,8 +564,8 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
       }
       if (!ok && !watchable(frame))
         pollFailures.set(frame.path, (pollFailures.get(frame.path) ?? 0) + 1)
-      // Still no grant to keep an owner by: the retry loads the frame whole again.
-      if (whole) frame.whole = true
+      // Still no grant to keep an owner by, or a seed it could not trade: the retry loads it whole.
+      if (whole || exchange) frame.whole = true
       frame.failures++
       // Backs off to five minutes, never further: a frame that gives up shows stale data for good.
       // A change, a visibility change or a new socket tries again at once.
@@ -843,6 +880,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
     attach(target) {
       router = target
       stopped = false
+      adoptSeed(target.snapshot())
       const unsubscribe = target.subscribe(reconcile)
       unwatchQueries = watchLiveQueries(scheduleMatch)
       globalThis.document?.addEventListener("visibilitychange", onVisible)

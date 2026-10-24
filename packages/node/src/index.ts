@@ -223,6 +223,18 @@ interface NodeFastHandler extends FetchHandler {
 }
 
 const RESOLVE_NODE_MOUNT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.resolveNodeMount)
+/** Agrees with core's `SERVER_LIFECYCLE` by the string alone; the stop tests fail on drift. */
+const SERVER_LIFECYCLE = Symbol.for("@nifrajs/core/server-lifecycle")
+
+/** The app's stop hooks when it is a nifra server; a plain `{ fetch }` handler has none. */
+function lifecycleOf(app: object): (phase: "stopping" | "stopped") => Promise<void> {
+  const run: unknown = Reflect.get(app, SERVER_LIFECYCLE)
+  return typeof run === "function"
+    ? async (phase) => {
+        await Reflect.apply(run, app, [phase])
+      }
+    : async () => {}
+}
 
 /**
  * The `Content-Type` the host runtime's `Response.json` emits - Node's undici uses `application/json`,
@@ -812,16 +824,14 @@ export interface ServeOptions {
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
-   * mirroring nifra's Bun `listen({ gracefulSignals })`.
-   * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed
-   * (default 10_000).
+   * mirroring nifra's Bun `listen({ gracefulSignals })`. The object form is passed to `stop()`.
    *
    * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap
    * are *not* set here - they live inside `app.fetch`, so they already apply through
    * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /
    * `headersTimeout` (60s) defaults.
    */
-  readonly signals?: boolean | { readonly drainMs?: number }
+  readonly signals?: boolean | NodeStopOptions
   /**
    * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
    * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
@@ -844,15 +854,27 @@ export interface ServeOptions {
   readonly fastResponse?: boolean
 }
 
+/** How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes. */
+export interface NodeStopOptions {
+  /** How long in-flight requests get to finish before the stop forces them closed. Default 10_000. */
+  readonly drainMs?: number
+  /**
+   * How long the server keeps serving after `stop()` began, before it stops accepting connections:
+   * the time a load balancer takes to see readiness fail. Default 0.
+   */
+  readonly delayMs?: number
+}
+
 export interface NodeServer {
   /** The bound port (resolved when `port: 0` is requested). */
   readonly port: number
   /**
-   * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then
-   * force-close stragglers + idle keep-alives. Open WebSockets get a 1001 close at once and are
+   * Run the app's `onStopping` hooks, keep serving for `delayMs`, then stop accepting connections,
+   * let in-flight requests drain (up to `drainMs`), force-close stragglers + idle keep-alives, and
+   * run the app's `onStop` hooks. Open WebSockets get a 1001 close when the drain starts and are
    * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.
    */
-  stop(options?: { drainMs?: number }): Promise<void>
+  stop(options?: NodeStopOptions): Promise<void>
 }
 
 const DEFAULT_DRAIN_MS = 10_000
@@ -1511,7 +1533,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     void stop(signals)
   }
 
-  async function stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
+  const lifecycle = lifecycleOf(app)
+  async function stop({
+    drainMs = DEFAULT_DRAIN_MS,
+    delayMs = 0,
+  }: NodeStopOptions = {}): Promise<void> {
     if (closed) return // idempotent
     closed = true
     if (signals !== undefined) {
@@ -1519,6 +1545,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
     }
+    await lifecycle("stopping")
+    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs))
     server.close() // stop accepting new connections; existing requests continue
     // A WebSocket gets a close handshake now and the drain window to finish it.
     for (const ws of upgraded) ws.close(1001, "server shutting down")
@@ -1529,6 +1557,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     server.closeAllConnections() // force-close stragglers + idle keep-alive sockets
     for (const socket of answering) socket.destroy()
     for (const ws of upgraded) ws.terminate()
+    await lifecycle("stopped")
   }
 
   return new Promise((resolve) => {

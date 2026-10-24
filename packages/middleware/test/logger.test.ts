@@ -25,6 +25,38 @@ describe("logger", () => {
     expect(lines[0]).toMatchObject({ path: "/missing", status: 404 })
   })
 
+  test("logs the matched route template, never the ids or tokens in the path", async () => {
+    const lines: RequestLogFields[] = []
+    const app = server()
+      .use(logger({ log: (f) => lines.push(f) }))
+      .get("/share/:token", (c) => ({ token: c.params.token }))
+      .get("/files/*", () => ({ ok: true }))
+
+    await app.fetch(new Request("http://x/share/k7qx9?sig=abc"))
+    await app.fetch(new Request("http://x/files/a/b.txt"))
+    await app.fetch(new Request("http://x/share/k7qx9", { method: "HEAD" }))
+    expect(lines.map((line) => line.path)).toEqual(["/share/:token", "/files/*", "/share/:token"])
+  })
+
+  test("routes registered after the logger are matched too", async () => {
+    const lines: RequestLogFields[] = []
+    const app = server().use(logger({ log: (f) => lines.push(f) }))
+    app.get("/orders/:id", (c) => ({ id: c.params.id }))
+
+    await app.fetch(new Request("http://x/orders/42"))
+    expect(lines[0]).toMatchObject({ path: "/orders/:id", status: 200 })
+  })
+
+  test("rawPath logs the request's pathname, still without its query", async () => {
+    const lines: RequestLogFields[] = []
+    const app = server()
+      .use(logger({ log: (f) => lines.push(f), rawPath: true }))
+      .get("/share/:token", (c) => ({ token: c.params.token }))
+
+    await app.fetch(new Request("http://x/share/k7qx9?sig=abc"))
+    expect(lines[0]).toMatchObject({ path: "/share/k7qx9" })
+  })
+
   test("default sink writes a JSON line to console", async () => {
     const original = console.log
     const captured: string[] = []

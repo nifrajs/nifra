@@ -120,6 +120,7 @@ export type {
 } from "./server/registry.ts"
 export { replacedRequestOf } from "./server/request-lineage.ts"
 export { writableResponse } from "./server/respond.ts"
+export { routeTemplateOf } from "./server/route-template.ts"
 export {
   type PlainRender,
   type ResponseResult,

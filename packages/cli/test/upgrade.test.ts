@@ -525,6 +525,28 @@ describe("computeUpgrade / runUpgrade", () => {
       expect(await readFile(join(root, path), "utf8")).toBe(text)
   })
 
+  test("a gitignored copy of the project is neither edited nor reported", async () => {
+    const root = await scaffold()
+    expect(Bun.spawnSync(["git", "init", "-q"], { cwd: root }).exitCode).toBe(0)
+    const files: Record<string, string> = {
+      ".gitignore": "old-copy/\nsnapshots/\n",
+      "old-copy/2026-10-01/package.json": '{ "dependencies": { "@nifrajs/core": "^1.7.0" } }\n',
+      "old-copy/2026-10-01/compose.yml": "services:\n  app:\n    command: bunx nifra@1.7.0 dev\n",
+      "snapshots/old/package.json": '{ "dependencies": { "@nifrajs/web": "1.7.0" } }\n',
+      "snapshots/old/src/app.ts": 'import { x } from "old-lib"\n',
+    }
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(join(root, path, ".."), { recursive: true })
+      await writeFile(join(root, path), text)
+    }
+    const plan = computeUpgrade(root, RECIPE, true)
+    expect(plan.pins).toHaveLength(2)
+    expect(plan.importMoves).toHaveLength(1)
+    expect(plan.strayPins).toEqual([])
+    for (const [path, text] of Object.entries(files))
+      expect(await readFile(join(root, path), "utf8")).toBe(text)
+  })
+
   const registry = (version: string): string =>
     `{\n  "mcpServers": {\n    "nifra": { "command": "bunx", "args": ["@nifrajs/cli@${version}", "mcp"] }\n  }\n}\n`
   const agentFiles = (version: string): Record<string, string> => ({

@@ -52,5 +52,8 @@ export const RESOLVE_NODE_MOUNT: unique symbol = Symbol.for(
   NODE_BRIDGE_MARKER_KEYS.resolveNodeMount,
 )
 
+/** @internal Run a server's `onStopping` or `onStop` hooks; see `Server.stop()`. */
+export const SERVER_LIFECYCLE: unique symbol = Symbol.for("@nifrajs/core/server-lifecycle")
+
 /** @internal Marker on a mounted handler that knows how to serve a native Node request/response. */
 export const NODE_NATIVE_MOUNT: unique symbol = Symbol.for("@nifrajs/core/node-native-mount")

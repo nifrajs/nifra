@@ -411,6 +411,8 @@ export interface PageExecutionOptions<Env = unknown> {
   ) => Promise<void> | undefined
   /** The live load a request belongs to; only set when the app configures `live`. */
   readonly liveLoadOf?: ((request: Request) => LiveLoad | undefined) | undefined
+  /** The seed a rendered document collects its keys into; only set when the app configures `live`. */
+  readonly liveSeedOf?: ((request: Request, routeId: string) => LiveLoad | undefined) | undefined
   readonly onLoaderError?: (
     error: unknown,
     ctx: {
@@ -546,6 +548,7 @@ export function createPageRequestExecutor<Env = unknown>(
   )
   const routeById = new Map(manifest.routes.map((route) => [route.id, route]))
   const liveLoadOf = options.liveLoadOf
+  const liveSeedOf = options.liveSeedOf
 
   /** A live load holds one admission slot from before its middleware until its body is complete. */
   const admitLive =
@@ -1347,6 +1350,7 @@ export function createPageRequestExecutor<Env = unknown>(
     personalized: boolean,
     serverComponents?: import("../server-components/types.ts").ComponentState,
     live?: LiveEnvelope | Deferred<LiveEnvelope>,
+    liveSeed?: LiveEnvelope,
   ): Promise<PageResponse> => {
     // Every layout loader settled before the page rendered, so a status or error page can reuse them.
     const settled: LayoutChainSource = async (_page, count) =>
@@ -1438,6 +1442,7 @@ export function createPageRequestExecutor<Env = unknown>(
         ...localeOption(req),
       }
       if (serverComponents !== undefined) page.serverComponents = serverComponents
+      if (liveSeed?.grant !== undefined) page.live = liveSeed
       if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
       const swapSlot = swapSlotOf(req)
       if (swapSlot !== undefined) page.swapSlot = swapSlot
@@ -1798,7 +1803,7 @@ export function createPageRequestExecutor<Env = unknown>(
         c: PageRouteContext<Env>,
         controls: PageResponseControls,
       ): Promise<PageResponse> => {
-        const live = liveLoadOf?.(c.req)
+        let live = liveLoadOf?.(c.req)
         const componentRuntime = options.serverComponents
         const componentOwner = componentRuntime?.owns(route.id) === true
         let componentRequest:
@@ -1815,6 +1820,17 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         const loaded = loadModule(route)
         const mod = cacheModules && !(loaded instanceof Promise) ? loaded : await loaded
+        // A document's loaders declare their keys into a seed, which the page exchanges for a grant
+        // once its socket opens, instead of loading itself again. Partially prerendered pages, whose
+        // holes settle after the shell, and server-component routes load as before.
+        const seeding =
+          live === undefined &&
+          liveSeedOf !== undefined &&
+          !componentOwner &&
+          componentRequest === undefined &&
+          (options.ppr === undefined || mod.shellLoader === undefined) &&
+          !isDataRequest(c)
+        if (seeding) live = liveSeedOf(c.req, route.id)
         const draft = await draftFlag(c.req)
         // Unpublished content is the editor's alone: whatever cache-control a loader sets, no cache keeps it.
         if (draft) controls.personalize()
@@ -2096,7 +2112,7 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         const isData = isDataRequest(c)
         const liveEnvelope =
-          live === undefined || !isData || isStatusSignal(data) || isControlFlow(data)
+          live === undefined || (!isData && !seeding) || isStatusSignal(data) || isControlFlow(data)
             ? undefined
             : await liveEnvelopeOf(
                 live,
@@ -2127,7 +2143,10 @@ export function createPageRequestExecutor<Env = unknown>(
           responseHeaders,
           controls.personalized,
           componentState,
-          liveEnvelope,
+          seeding ? undefined : liveEnvelope,
+          seeding && liveEnvelope !== undefined && !("__nifra_deferred" in liveEnvelope)
+            ? liveEnvelope
+            : undefined,
         )
       }
       return withResponseControls(liveLoadOf === undefined ? page : admitLive(page))

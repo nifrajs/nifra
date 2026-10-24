@@ -30,6 +30,11 @@ export interface LiveAttachment {
   readonly onRequest: (req: Request) => Promise<Request | Response> | undefined
   /** The live load a page request belongs to, or `undefined` for every request that is not one. */
   readonly loadOf: (req: Request) => LiveLoad | undefined
+  /**
+   * The seed a server-rendered page of `routeId` collects its keys into, or `undefined` when none can
+   * be issued now (the runtime not started, the bus down, Workers). Never admitted: it is no live load.
+   */
+  readonly seedOf: (req: Request, routeId: string) => LiveLoad | undefined
 }
 
 /** One live load, from the page handler's side. */
