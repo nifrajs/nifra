@@ -17,6 +17,7 @@ import {
   servablePrerenderedPages,
 } from "../src/internal/prerendered-pages.ts"
 import { createNonceResolver } from "../src/nonce.ts"
+import { SWAP_HEADER } from "../src/render-seam.ts"
 import { DATA_HEADER } from "../src/router.ts"
 
 const stub: RenderAdapter = {
@@ -71,7 +72,9 @@ describe("prerenderedDocumentHeaders", () => {
       "content-security-policy": "script-src 'sha256-x'",
       "content-security-policy-report-only": "default-src 'self'",
     })
-    expect(headersOf({ vary: `Accept-Encoding, ${DATA_HEADER}` })).toEqual({})
+    expect(headersOf({ vary: `Accept-Encoding, ${DATA_HEADER}, ${SWAP_HEADER}` })).toEqual({
+      vary: `Accept-Encoding, ${DATA_HEADER}, ${SWAP_HEADER}`,
+    })
   })
 
   test("a render specific to its request is not servable as a file", () => {
@@ -140,6 +143,28 @@ describe("createWebApp prerenderedPages", () => {
     expect(await statusText(res)).toBe(`200 ${FILE_HTML}`)
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8")
     expect(res.headers.get("content-language")).toBe("en")
+  })
+
+  test("a page whose adapter swaps slots is answered from the file; a swap request renders its slot", async () => {
+    const swapping: RenderAdapter = { ...stub, renderSlot: () => "<p>slot</p>" }
+    const built = await createWebApp({ adapter: swapping, manifest, clientEntry: "/c.js" }).fetch(
+      new Request("http://x/"),
+    )
+    await built.body?.cancel()
+    const serveHeaders = prerenderedDocumentHeaders(built.status, built.headers)
+    expect(serveHeaders?.vary).toContain(SWAP_HEADER)
+    const app = createWebApp({
+      adapter: swapping,
+      manifest,
+      clientEntry: "/c.js",
+      prerenderedPages: { pages: { "/": serveHeaders ?? {} }, read: async () => FILE_HTML },
+    })
+    const file = await app.fetch(new Request("http://x/"))
+    expect(await statusText(file)).toBe(`200 ${FILE_HTML}`)
+    expect(file.headers.get("vary")).toBe(built.headers.get("vary"))
+    const slot = await app.fetch(new Request("http://x/", { headers: { [SWAP_HEADER]: "main" } }))
+    expect(slot.headers.get(SWAP_HEADER)).toBe("main")
+    expect(await slot.text()).toContain("<p>slot</p>")
   })
 
   test("HEAD reports the file's byte length without a body", async () => {
