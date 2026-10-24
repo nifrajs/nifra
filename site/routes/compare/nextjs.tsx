@@ -79,8 +79,8 @@ export default function VsNextjs() {
         Next.js brings the largest React ecosystem, years of production hardening at scale, and
         first-party Vercel integration. Nifra's optional{" "}
         <a href="/docs/server-components">server-components pipeline</a> uses native React
-        RSC/Flight and corresponding Vue, Svelte and Solid implementations. It is intended for the
-        release after 4.0.0, with its own certified compiler tuple and explicit support limits.
+        RSC/Flight and corresponding Vue, Svelte, Solid and Preact implementations, with its own
+        certified compiler tuple and explicit support limits.
       </p>
 
       <h2>Where Nifra wins</h2>

@@ -67,7 +67,7 @@ await registerWebMcpTools([addToCart])
 ```
 
 The same `addToCart.tool` can be projected into Nifra's remote MCP adapter or called by an agent
-runner. Predictions are deterministic application code—not LLM guesses—and commit, rollback, conflict,
+runner. Predictions are deterministic application code - not LLM guesses - and commit, rollback, conflict,
 expiry, and authoritative reconciliation are explicit outcomes.
 
 See the [WebMCP and predictive UI guide](https://nifra.dev/docs/webmcp) and the
@@ -106,7 +106,7 @@ export const app = server()
   }))
 ```
 
-The client is inferred from the server type—no codegen, no duplicated schema, no stale SDK:
+The client is inferred from the server type - no codegen, no duplicated schema, no stale SDK:
 
 ```ts
 import { client } from "@nifrajs/client"
@@ -185,13 +185,13 @@ claude mcp add nifra -- bunx nifra mcp
 nifra init-agents
 
 nifra context       # live route and convention map
-nifra run           # real request through the current app
+nifra smoke         # real SSR, API, auth and hydration requests against the build
 nifra check         # typecheck, drift, and bundle-boundary gate
 nifra assure        # route security evidence gate
 nifra levels        # cumulative proof level and next missing rung
 ```
 
-The local server runs where your code lives—your source never reaches Nifra. The teaching tools are
+The local server runs where your code lives - your source never reaches Nifra. The teaching tools are
 also hosted at [`mcp.nifra.dev`](https://mcp.nifra.dev) for agents that only need the verified Nifra
 corpus. Skills are available for [Pi](packages/skills) and [Claude Code](packages/skills).
 
@@ -251,9 +251,9 @@ needs. [Browse the complete documentation](https://nifra.dev/docs).
 
 ```sh
 bun install
-bun run check          # lint, typecheck, tests, and coverage
+bun run check          # lint, typecheck, tests, docs, corpus, and size gates
 bun run build          # emit dist/ for all packages
 bun run bench:http     # reproducible HTTP matrix
 ```
 
-Contributions welcome—see [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
+Contributions welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.

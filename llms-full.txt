@@ -221,10 +221,9 @@ implementation, secrets and database handles off the browser and use the same va
 mutation API across the supported UI libraries.
 
 The optional [server-components pipeline](/docs/server-components) adds
-server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte
-and Solid use their native islands in validated server-rendered ranges. The feature is
-intended for the release after 4.0.0 and requires all four adapters to pass certification.
-Server functions remain the mutation API; native React `"use server"` actions
+server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
+Solid and Preact use their native islands in validated server-rendered ranges. It shipped in
+5.0.0, and all five adapters pass the same certification. Server functions remain the mutation API; native React `"use server"` actions
 are unsupported.
 
 ### Also a standalone backend (vs. Hono & Elysia)
@@ -1737,7 +1736,8 @@ export async function loader() {
 ```
 
 For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
-on both React and Solid.
+on all five adapters: see [fetchers](/docs/mutations) and
+[the query cache](/docs/query).
 
 ## Nifra - Server functions
 
@@ -1819,11 +1819,7 @@ in the module that is not a server function is ignored rather than mounted.
 
 One thing worth knowing: the namespace you pass here and the `*.fn.ts` filename are
 not statically checked against each other. If they disagree the call 404s, and the generated
-stub names the mismatch - but the compiler will not catch it for you. The build fails on a
-filename that is not a valid namespace (`todoItems.fn.ts`; use
-`todo-items.fn.ts`). Two files with one basename (`admin/todos.fn.ts`
-and `user/todos.fn.ts`) share the namespace: both mount, and an export name they
-both use fails at boot as a duplicate route.
+stub names the mismatch - but the compiler will not catch it for you.
 
 ### Calling it
 
@@ -1966,7 +1962,8 @@ function toggle() {
 
 ### Concurrent fetchers
 
-`useFetcher(key)` (React) / `createFetcher(key)` (Solid) is an
+`useFetcher(key)` (React, Preact, Vue, Svelte) / `createFetcher(key)`
+(Solid), from each adapter's `/fetcher` entry, is an
 independent submission state machine - perfect for row-level actions or side-channel loads
 that shouldn't block navigation. `useFetchers()` exposes the live collection for
 global pending indicators. After a mutation, targeted revalidation refreshes just the
@@ -2115,10 +2112,10 @@ On a server you run yourself, `nifra build --target bun` or `node`
 prerenders the same routes into `_prerendered/` beside `server.js`, and
 the server answers each from its file instead of rendering it. The file is served from the
 page route, so `use` middleware still runs first and a gate in front of the page
-still applies. A request with a query string, a navigation data request, a slot swap, or a
-draft-mode visitor renders on demand. So does a page whose build-time render set a cookie, was private or
-`no-store`, or varied on a request header other than `Accept-Encoding`
-and nifra's own data and slot-swap headers, and every page of an app with a `nonce`. The Vite pipeline and the edge targets render every page on demand.
+still applies. A request with a query string, a navigation data request, or a draft-mode
+visitor renders on demand. So does a page whose build-time render set a cookie, was private or
+`no-store`, or varied on a request header, and every page of an app with a
+`nonce`. The Vite pipeline and the edge targets render every page on demand.
 
 ### ISR - cache with stale-while-revalidate
 
@@ -2888,9 +2885,7 @@ A host's `data-island-strategy` defers its enhancer: `load`
 (default), `idle`, `visible` (mount when it scrolls into view), or
 `media` with the query in `data-island-media`. A host with no matching
 enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
-never a runtime error. The scheduling itself is `@nifrajs/island-trigger`'s
-`scheduleTrigger`, which has no DOM or framework dependency, for a runtime of
-your own.
+never a runtime error.
 
 ## Nifra - Streaming
 
@@ -2998,7 +2993,8 @@ immediately, even if no further frame is sent.
 `body` is a POST stream: the body validates as on any POST, and
 `.subscribe(onEvent, { body })` sends it. A GET stream reconnects after a
 drop and resumes with `Last-Event-ID`; a POST stream does not reconnect unless you
-pass `reconnect: true`, since a reconnect sends the body again. The client's
+pass `reconnect: true`, since a reconnect sends the body again. A
+`204` answer closes the stream for good. The client's
 `onRequest` hook runs before each connect, so a refreshed token reaches the stream.
 
 ```ts
@@ -3037,14 +3033,16 @@ feed.close()
 > Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.
 
 For client-side data that isn't a route loader - lists, widgets, anything refetchable -
-Nifra ships a keyed query cache (TanStack-Query-style), agnostic across React and Solid.
+Nifra ships a keyed query cache (TanStack-Query-style), agnostic across all five adapters.
 
 ### useQuery / createQuery
 
-`useQuery(key, fn)` (React) and `createQuery(key, fn)` (Solid) subscribe
-a component to a cached, keyed query. Concurrent reads of the same key **dedup** into one
-in-flight fetch; results are cached with a `staleTime`, a background refetch, and
-bounded GC.
+`useQuery(key, fn)` (React, Preact, Vue and Svelte) and
+`createQuery(key, fn)` (Solid), each from the adapter's `/query`
+entry, subscribe a component to a cached, keyed query. Concurrent reads of the same key
+**dedup** into one in-flight fetch; results are cached with a `staleTime` (the
+third argument's option), a background refetch, and bounded GC. React also has
+`useMutation`, `useInfiniteQuery` and `HydrationBoundary`.
 
 ```ts
 import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
@@ -3076,9 +3074,9 @@ In an app with [live refresh](/docs/live), a query can name the live keys its da
 depends on: `useQuery(key, fn, { live: [`post:${id}`] })` refetches whenever
 the server publishes one of them.
 
-It's the same agnostic core under both adapters: the cache, dedup, and invalidation logic
-live in `@nifrajs/web`; the bindings are thin `useSyncExternalStore` /
-signal wrappers.
+It's the same agnostic core under every adapter: the cache, dedup, and invalidation logic
+live in `@nifrajs/web`; each binding is a thin wrapper in its framework's own
+reactivity (`useSyncExternalStore`, a signal, a `shallowRef`, a store).
 
 ## Nifra - Frameworks
 
@@ -3237,7 +3235,7 @@ const fetcher = useFetcher("save")          // fetcher.submit(...), fetcher.pend
 const q = useQuery(["todos"], loadTodos)    // q.data, q.isFetching, q.refetch()
 
 // Vue - composables (refs):           const f = useFetcher("save"); f.state.value.pending
-// Solid - signals:                    const q = useQuery(...);       q().data
+// Solid - signals:                    const q = createQuery(...);    q.state().data
 // Svelte - stores (read with $):      const f = useFetcher("save");  $f.pending
 ```
 
@@ -3490,13 +3488,6 @@ hooks.
 -
 `around`, `derive`, and `beforeHandle` apply only to
 routes declared after them.
-
--
-An `authenticate()` stage, and a required auth plugin built on one (
-`bearer()`, `jwt()`, `basicAuth()`,
-`apiKey()`), guards the routes **and** the `mount()` and
-`mountFetch()` handlers declared after it. A mount declared before it stays
-public.
 
 -
 A **WebSocket** route, listed as `WS /path`, runs the request hooks, then the
@@ -4249,8 +4240,8 @@ never build a path from the name.
 **
 Without `accept`, `file.type` is the client's too.
 **
-Some runtimes derive it from the file extension. Only a type that `accept` matched is
-one the bytes proved.
+It is the part's `Content-Type`, lower-cased, or `text/plain` when
+the part names none. Only a type that `accept` matched is one the bytes proved.
 
 -
 **Serve uploads as downloads.** Send `content-disposition: attachment` and
@@ -5285,11 +5276,8 @@ app.post("/api/logout", async (c) => {
 ### Guard a route
 
 `requireSession` / `requireUser` throw a `status(...)` render
-(a 302 to `redirectTo`, or a 401) when the session is empty, or when it lacks the
-key a login sets - Nifra renders a thrown control-flow value as-is, so the guard
-short-circuits the loader. A session can hold data before anyone signs in (a cart, a return
-path), and `requireSession` passes it, so guard a signed-in page with
-`requireUser`. It is plain data, not
+(a 302 to `redirectTo`, or a 401) when the session is missing - Nifra renders a
+thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
 a `Response`: same bytes on the wire, on the lane an ordinary return takes. To guard
 every page under a directory, run the same check in the `middleware` export of that
 directory's `_layout.backend.ts` - see [Route middleware](/docs/routing#middleware).
@@ -6304,8 +6292,9 @@ Size is the other edge axis. `t` is TypeBox-backed - it carries the whole JSON
 Schema type system - so a validated app on `t` is heavier than one on a lean
 validator. Validation is per route, so reach for `t` where you want the contract
 (OpenAPI/MCP for free) and Valibot where the Workers cold-start bundle is what matters: a
-Valibot-validated Nifra app measures **~16 KB gzipped**. Both are first-class, and you can
-mix them in one app.
+minimal Valibot-validated Nifra app measures **about 38 KB gzipped**, against about 62 KB
+on `t` (`bun run bench:size`). Both are first-class, and you can mix
+them in one app.
 
 ### Scheduled (cron)
 
@@ -6675,6 +6664,12 @@ it). Install it when you use `app.ws()`; without it a WS upgrade gets a clean
 ```ts
 npm i ws
 ```
+
+`nifra dev` serves `app.ws()` routes too, on the Bun pipeline and under
+Vite, through each route's own `upgrade()` guard and `Origin`
+check. Under Vite the upgrade goes through Node's `upgrade` event, so it
+needs `ws` as well; without it a WS upgrade gets a `501` naming the
+package, and a path no WebSocket route takes stays with Vite's HMR.
 
 `server({ wsMaxPayloadBytes })` caps one inbound message (default
 `maxBodyBytes`, 1 MB): a socket that sends more is closed with `1009`
@@ -7175,7 +7170,7 @@ The declared production smoke checks: SSR, the mounted API, 404s, headers, auth,
 
 `nifra cdn-check <url>`
 
-Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations getting page data rather than the cached document.
+Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations and slot swaps getting their own answer rather than the cached document.
 
 `nifra i18n check [entry] [--strict]`
 
@@ -7544,10 +7539,6 @@ nifra init-agents --sync-mcp
 The generated files are additive and the command will not overwrite an existing one, so it is
 safe to re-run after a Nifra upgrade.
 
-For an agent that loads skills from a `skills/` directory,
-`@nifrajs/skills` packages Nifra's contracts, boundaries and gates as
-`SKILL.md` bundles, each read only when it applies.
-
 ### The loop
 
 ```bash
@@ -7579,22 +7570,6 @@ nifra_db_query  {sql}   # one read-only SELECT (or its plan), rows capped and ma
 nifra_assure            # every route's required evidence, and what is missing
 nifra_levels            # { achieved, levels[] } - the ladder
 ```
-
-### Every tool
-
-Each tool's MCP annotations say which of these it is, so a client can ask before a call that
-writes a file or runs project code. A tool that writes only under a flag counts as writing,
-and one that imports the project's config or backend, which runs its top-level code, counts
-as running project code.
-
-Tool
-May
-What it does
-
-`{name}`
-
-{effect}
-{what}
 
 ### What the running app saw
 
@@ -7674,10 +7649,7 @@ served, and every answer says so, so an agent treats a log line that reads like 
 as the data it is.
 
 `nifra_run` returns the same evidence for the requests it makes: each result carries the
-console output and the structured errors that request produced. Its engine is
-`@nifrajs/runner`: `runApp(app, requests)` runs requests through any
-app's `fetch` and never throws, in the browser (it backs the playground), Bun,
-Node, Deno or the edge.
+console output and the structured errors that request produced.
 
 ### The development database
 
@@ -7800,11 +7772,10 @@ untrusted language is refused too, unless `allowExtensions` names it.
 -
 **Secret columns refused.** A query that reads a column whose name says
 credential (`password`, `token`, `secret`,
-`api_key`, ...) or one in `redactColumns` is refused wherever the
-query plan uses it: selected under another name, inside an expression, in a filter, through
-a view, or renamed by a table's column alias list. Functions that run SQL from a string,
-which the plan cannot see, are refused outright. Every other value goes through the same
-redactor as the dev feed: keys, tokens, JWTs and the project's environment values.
+`api_key`, ...) or one in `redactColumns` is refused, in any form:
+selected under another name, inside an expression, in a filter, or through a view. Every
+other value goes through the same redactor as the dev feed: keys, tokens, JWTs and the
+project's environment values.
 
 -
 **Data, not instructions.** Rows, and names from the schema, are marked
@@ -7887,8 +7858,8 @@ does not exist. `nifra_db_schema` lists what is exposed.
 
 #### NIFRA_DB_COLUMN_REFUSED
 
-The query reads a masked column: a credential name, or one in `redactColumns`. A
-query is refused wherever its plan reads one, so select the other columns by name (`SELECT *` on that
+The query reads a masked column: a credential name, or one in `redactColumns`. It
+cannot be read in any form, so select the other columns by name (`SELECT *` on that
 table is refused too), or list the column in `revealColumns` if it holds no secret.
 
 #### NIFRA_DB_TIMEOUT
@@ -8021,13 +7992,6 @@ export const app = server().use(agentTelemetry({ exporter: consoleAgentExporter(
 serves a SQLite database as its own MCP server, fail-closed: allowlisted schema tools by
 default, and read-only queries only when you opt in, with plan verification. Handing a model a
 database connection is not the same as handing it a query tool, and this is the second one.
-
-**
-`@nifrajs/agent-review`
-**
-is the bounded review-report contract `nifra review` emits: scope, checks,
-findings and a digest, with no source content. A tool of your own can compose and parse the
-same report.
 
 ### Run a coding agent
 
@@ -9745,79 +9709,6 @@ A failed check records the error _class_ only. Provider messages routinely carry
 connection strings, tokens, and payload fragments, and evidence is meant to be shared, so it
 never becomes a place credentials leak. Cleanup errors cannot turn a failed functional check
 into a pass.
-
-## Nifra - Content & MDX
-
-> Typed content collections + MDX - author docs and blogs in Markdown with embedded components.
-
-Nifra ships **typed content collections** and **MDX** - the backbone of a docs site, blog, or changelog,
-without hand-rolling `readdir` and a frontmatter parser.
-
-> **This very page is written in MDX.** The note you're reading is a real `<Callout>` React component
-> embedded directly in the Markdown prose and server-rendered by nifra.
-
-### Content collections
-
-`defineCollection` turns a folder of Markdown into a typed, schema-validated source. The frontmatter is
-validated against a `t` schema, so a typo'd or missing field fails the build - not production - and the
-entries are fully typed into your loaders:
-
-```ts
-import { defineCollection } from "@nifrajs/content/fs"
-import { t } from "@nifrajs/schema"
-
-export const blog = defineCollection({
-  dir: "content/blog",
-  schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),
-})
-
-// in a loader - typed + validated entries (a typo'd field fails the build, not production):
-const posts = (await blog.all()).filter((p) => !p.frontmatter.draft)
-```
-
-`all()` lists the folder and checks each file for changes on every call, so an edit shows without a
-restart. When the content ships with the build, pass `watch: false` to read it once and reuse that
-snapshot; `get(slug)` still checks its one file.
-
-### MDX routes
-
-Add the MDX plugin to your build and any `routes/**/*.mdx` file becomes a page - Markdown that can
-`import` and render components inline, and `export const meta`, exactly like a `.tsx` route:
-
-```ts
-import { mdxBunPlugin } from "@nifrajs/content/mdx"
-
-// build.ts - every routes/**/*.mdx file compiles to a component for your framework
-await buildClient({
-  routesDir: "./routes",
-  clientModule: "@nifrajs/web-react/client",
-  plugins: [mdxBunPlugin({ jsxImportSource: "react" })],
-})
-```
-
-### MDX on all five frameworks
-
-MDX is framework-agnostic in Nifra - same as everything else. Each framework gets a build plugin that
-compiles `.mdx` to *its* component model:
-
-```ts
-// React / Preact / Vue - one plugin, pick the JSX runtime:
-import { mdxBunPlugin } from "@nifrajs/content/mdx"
-mdxBunPlugin({ jsxImportSource: "react" }) // or "preact" | "vue"
-
-// Solid - compile-time transform + an intrinsics runtime:
-import { solidMdxBunPlugin } from "@nifrajs/web-solid/mdx"
-solidMdxBunPlugin("ssr") // "dom" for the client build
-
-// Svelte - through mdsvex (Svelte's own Markdown compiler):
-import { svelteMdxBunPlugin } from "@nifrajs/web-svelte/mdx"
-svelteMdxBunPlugin("ssr")
-```
-
-React, Preact, and Vue share one plugin (their JSX runtimes differ only by `jsxImportSource`). Solid
-needs its compile-time transform, so `@nifrajs/web-solid/mdx` runs `babel-preset-solid` over the MDX and
-maps intrinsic tags through `<Dynamic>`. Svelte has no JSX, so `@nifrajs/web-svelte/mdx` routes MDX through
-`mdsvex` - Svelte's own Markdown compiler. All five server-render and hydrate.
 
 ## Nifra - Framework contract
 
@@ -11737,14 +11628,6 @@ session, a tenant), mount routes of its own, or hook the request lifecycle. That
 `definePlugin` - a few lines, typed end-to-end. For everything else, an import
 at the top of the file is the whole integration.
 
-### GraphQL
-
-`@nifrajs/graphql` mounts a GraphQL-over-HTTP endpoint with
-`mountGraphql`, executed by the `graphql` package's own parser and
-executor, with your typed nifra context passed to the resolvers. Subscriptions run over
-nifra's WebSocket lane with `graphql-ws`. The request body goes through the same
-bounded parser as every other route, and the query text is never logged.
-
 ## Nifra - Keep-alive
 
 > Pages that stay mounted after the visitor leaves them: back and forward bring back the same page, with its scroll, form input and component state, and a sign-out drops them in every tab.
@@ -12985,10 +12868,6 @@ mount small and temporary, and use typed routes for every migrated endpoint.
 `/*` for a subtree. By default the legacy app sees the original URL. Set
 `stripPrefix: true` when the legacy app declares paths relative to its mount point.
 The platform object is forwarded as the second argument when the runtime supplies one.
-
-An auth plugin used before the mount, such as `bearer()` or
-`jwt()`, guards it like a route: a request it refuses never reaches the legacy
-app. Mount before the plugin when the legacy app keeps its own auth.
 
 A mounted fetch handler carries HTTP only. A WebSocket upgrade under the mount reaches it as
 an ordinary request and never becomes a socket, so keep the legacy app's sockets on its own
@@ -14920,14 +14799,6 @@ $ nifra context        # the same contract as compact text - pipe into any agent
 $ nifra mcp            # the same data over an MCP server - Claude Code & Cursor read it
 ```
 
-### In the editor
-
-`@nifrajs/ts-plugin` is a TypeScript language-service plugin. Add
-`{ "name": "@nifrajs/ts-plugin" }` to `compilerOptions.plugins` and
-go-to-definition on a route path such as `"/orders"` opens the
-`routes/` file that serves it. It also marks, as you type, an import the build
-would refuse: backend code in a page, or a server package in browser code.
-
 ### Known limitations
 
 -
@@ -16608,21 +16479,6 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/content
 ```
 
-## Rendering an entry
-
-`entry.html` is `marked` output, unsanitized: raw HTML and `javascript:` links in the Markdown pass
-through. That is right for content you author. Mark it trusted for an adapter's `<Content>`:
-
-```tsx
-import { trustHtml } from "@nifrajs/web"
-import { Content } from "@nifrajs/web-react/content"
-
-<Content html={trustHtml(entry.html)} />
-```
-
-For a collection that contributors or a CMS write, pass `sanitizeHtml(entry.html, sanitizer)` with an
-allowlist sanitizer you choose instead.
-
 ## Docs
 
 - Reference: <https://nifra.dev/docs>
@@ -16995,6 +16851,10 @@ The plugin is enabled by default only when `NODE_ENV=development`. It records a 
 and serves the overlay stream at `/_nifra/devtools`; remote hosts and cross-origin access stay denied
 unless explicitly allowed. Leave it unregistered in production for zero request-path overhead.
 
+In an app with [`keepAlive`](https://nifra.dev/docs/keep-alive) routes, the overlay also lists the
+kept pages under its request log: each one's path and instance, how long it has been hidden and how
+many elements it renders.
+
 Each SSE connection also has a finite pending-byte budget (`maxPendingBytes`, default 64 KiB),
 including keep-alive frames. A slow reader that fills that budget is closed and releases its
 connection slot. Already queued frames drain before EOF; the overflow frame is dropped. Browser
@@ -17165,9 +17025,9 @@ Every value in `process.env` is a `string | undefined`; these turn it into the v
 | helper | type | notes |
 | --- | --- | --- |
 | `env.string({ default?, optional? })` | `string` | empty string counts as unset |
-| `env.number({ default?, optional? })` | `number` | plain decimal (`42`, `-3.5`; not `0x10` or `1e3`); blank counts as unset |
-| `env.port({ default? })` | `number` | decimal integer 1-65535; blank counts as unset |
-| `env.boolean({ default? })` | `boolean` | `true`/`1`/`yes`/`on` vs `false`/`0`/`no`/`off`; empty is `default`, else `false` |
+| `env.number({ default?, optional? })` | `number` | finite, coerced |
+| `env.port({ default? })` | `number` | integer 1-65535 |
+| `env.boolean({ default? })` | `boolean` | `true`/`1`/`yes`/`on` vs `false`/`0`/`no`/`off`/empty |
 | `env.enum([...], { default? })` | union | one of the listed values |
 | `env.url({ default?, optional? })` | `string` | parses with WHATWG `URL`, returns the normalized href |
 
@@ -17829,10 +17689,8 @@ const mcp = serveDatabaseAsMcp(new Database("app.db"), {
 ```
 
 Only `list_tables` and `describe_table` are exposed by default, restricted to the explicit table
-allowlist. `list_tables` counts rows in the same lane as `run_query`, within its time limit, and
-reuses the counts for 10 seconds. `run_query` requires an authorization hook and is guarded by SQLite
-query-only mode, single-statement/read-only checks, verification of the compiled statement, and
-bounded output. D1 is not supported
+allowlist. `run_query` requires an authorization hook and is guarded by SQLite query-only mode,
+single-statement/read-only checks, query-plan verification, and bounded output. D1 is not supported
 because it cannot provide the same engine-level read-only guarantee.
 
 ## The engine: `@nifrajs/mcp-db/engine`
@@ -17891,9 +17749,8 @@ Each layer refuses on its own, in this order:
 1. **Host.** Only loopback, `*.localhost` and unix sockets connect unless `allowHosts` names the host.
    URL parameters other than host, port, user, password, database and `sslmode` are ignored.
 2. **Tokenizer.** One SELECT, WITH, VALUES or TABLE statement; row-locking clauses, unicode-escaped
-   identifiers, functions that reach outside a query (server files, `dblink`, `set_config`, advisory
-   locks, `pg_notify`, `nextval`, backend signals) and functions that run SQL from a string the plan
-   check cannot see (`query_to_xml`, `ts_stat`, `ts_rewrite`, `crosstab`, `connectby`) are refused.
+   identifiers and functions that reach outside a query (server files, `dblink`, `set_config`,
+   advisory locks, `pg_notify`, `nextval`, `query_to_xml`, backend signals) are refused.
 3. **Read-only transaction.** `BEGIN READ ONLY` with `statement_timeout`, `lock_timeout` and
    `idle_in_transaction_session_timeout` set to `timeoutMs`, always rolled back. Sessions also start
    with `default_transaction_read_only = on`.
@@ -17908,9 +17765,7 @@ Each layer refuses on its own, in this order:
    every `pg_catalog` function scanned in FROM must sit in `schemas` (default `public`) and outside
    `exclude`. With `redaction`, a column `redaction.column` matches that any plan expression uses
    (output, filter, join, sort or index condition), or a whole row holding one, is refused
-   (`NIFRA_DB_COLUMN_REFUSED`). A plan names a scan's columns by the table's column alias list
-   (`FROM users AS t(a, b)`), so while any relation the query reads holds a matching column, a query
-   that gives a table one is refused as well.
+   (`NIFRA_DB_COLUMN_REFUSED`).
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`
@@ -17954,9 +17809,12 @@ const app = server()
   .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
-  // Keyed by the caller IP the server resolved. MemoryStore refuses production unless given
-  // { allowInProduction: true } for a single instance; several instances need one shared store.
-  .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
+  .use(rateLimit({
+    store: new MemoryStore(),
+    max: 100,
+    windowMs: 60_000,
+    key: (req) => req.headers.get("x-user-id") ?? "anonymous",
+  }))
   .use(timing())
   .get("/", () => ({ ok: true }))
 ```
@@ -18495,7 +18353,7 @@ const upstream = createProxy({ upstream: "http://127.0.0.1:8081" })
 const app = server().mountFetch("/api", upstream, { stripPrefix: true })
 ```
 
-The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Every inbound `Forwarded` and `X-Forwarded-*` header is dropped; caller IP/protocol metadata is re-added only under `forwardClientIp: true`, and any other forwarding header only as a fixed `headers` entry. The one exception is `trustForwardedFor: true` (with `forwardClientIp`), which keeps the inbound `X-Forwarded-For` chain and appends the caller: set it only behind a proxy you control, since any caller that reaches this one directly can forge the leading entries. The inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
+The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Every inbound `Forwarded` and `X-Forwarded-*` header is dropped; caller IP/protocol metadata is re-added only under `forwardClientIp: true`, and any other forwarding header only as a fixed `headers` entry. The inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
 
 ## Docs
 
@@ -18578,9 +18436,8 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
 - **Validating string formats** - `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
   validate *and* annotate; register more with `registerFormat`.
 - **`toOpenAPI`** - richest from a contract (it carries `response` schemas + op names →
-  `operationId`s); also works on a live app. A Standard Schema that also implements Standard JSON
-  Schema (zod 4 does) is described like `t`; one that exposes no JSON Schema is emitted without a
-  detailed schema.
+  `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
+  emitted without a detailed schema (Standard Schema exposes no JSON Schema).
 
 ### Static validators for edge runtimes
 
@@ -18672,10 +18529,9 @@ cost - TypeBox carries the whole JSON Schema type system, so `t` adds meaningful
 
 nifra validates through **Standard Schema**, so any Standard-Schema validator works on a route with
 no adapter - `{ body: v.object({ ... }) }` with valibot, for instance. A validated app built on a
-lean validator like valibot is a fraction of the size (measured ~16 KB gzipped), which matters for
-edge/Workers cold-starts. The trade is the one noted above: a validator that exposes no JSON Schema
-(valibot without a Standard JSON Schema wrapper) gives those routes no OpenAPI/MCP detail. One that
-implements Standard JSON Schema (`~standard.jsonSchema`, as zod 4 does) is described from it.
+lean validator like valibot is lighter (a minimal app measures about 38 KB gzipped on valibot and
+about 62 KB on `t`, `bun run bench:size`), which matters for edge/Workers cold-starts. The trade is the one noted above: a bring-your-own validator exposes no
+JSON Schema, so those routes carry no OpenAPI/MCP detail.
 
 Rule of thumb: reach for `t` when you want the contract (OpenAPI/MCP) for free; bring valibot (or any
 Standard-Schema validator) when bundle size on the edge is the priority. Both are first-class - the
@@ -18691,22 +18547,13 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
 - **Non-200 responses** and **non-JSON content** - a contract op's `responses` map declares extra status
   codes; `requestContentType` / `responseContentType` set media types other than `application/json`.
 - **`$ref` reuse** - a schema with a `$id` (`t.object({…}, { $id: "User" })`) is hoisted into
-  `components.schemas` once and referenced by `$ref` everywhere it's used. A Standard JSON Schema's
-  `$defs` are hoisted the same way, so its refs resolve inside the document.
-- **Framework errors** - the responses the server answers before a handler runs, as the shared
-  `NifraError` (`{ ok: false, error }`) and `NifraValidationError` (`{ ok: false, error: "validation",
-  issues }`) components: `400`, `413` and `415` on a route with a body, `422` on any route with a request
-  schema (left out when an `onValidationError` hook writes that body). A declared response wins.
-- **Tagged unions** - a union whose members all pin one required property to distinct values is
-  emitted as a `oneOf`. When every member is a component (a `$id`) it also gets a `discriminator`
-  with a `mapping`, so a client generator can build a tagged union; OpenAPI discriminators never
-  consider inline members.
+  `components.schemas` once and referenced by `$ref` everywhere it's used.
 - Per-operation **`summary`**, **`description`**, **`tags`**, **`deprecated`** - declared on the contract op.
 
 A **contract** is richest (its ops carry all of the above); in **app** mode a route's response is a
 generic `200` with no schema - declare a `defineContract` with `response` schemas, or pass
-`options.operations` (keyed by `"METHOD /path"`) to enrich app routes. Routes using a schema that
-exposes no JSON Schema are still emitted without body/response detail.
+`options.operations` (keyed by `"METHOD /path"`) to enrich app routes. Routes using a BYO Standard Schema
+are still emitted without body/response detail (Standard Schema exposes no JSON Schema).
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
 
@@ -19518,7 +19365,7 @@ open page.
 - WebMCP registration is not authorization. Enforce authorization again at the server boundary.
 - Keep inputs narrow and annotations honest. A safety hint is not a permission.
 - Predictions are pure local transforms and cannot grant capability or bypass core policy.
-- Receipts contain status, bounded evidence, and error codes—not credentials, request bodies, secrets, or
+- Receipts contain status, bounded evidence, and error codes - not credentials, request bodies, secrets, or
   stack traces.
 - Normal browsers and non-WebMCP hosts receive a safe unsupported report.
 

@@ -31,15 +31,17 @@ export default function Query() {
       <h1 className="page">Query cache</h1>
       <p className="lead">
         For client-side data that isn't a route loader - lists, widgets, anything refetchable -
-        Nifra ships a keyed query cache (TanStack-Query-style), agnostic across React and Solid.
+        Nifra ships a keyed query cache (TanStack-Query-style), agnostic across all five adapters.
       </p>
 
       <h2>useQuery / createQuery</h2>
       <p>
-        <code>useQuery(key, fn)</code> (React) and <code>createQuery(key, fn)</code> (Solid) subscribe
-        a component to a cached, keyed query. Concurrent reads of the same key <b>dedup</b> into one
-        in-flight fetch; results are cached with a <code>staleTime</code>, a background refetch, and
-        bounded GC.
+        <code>useQuery(key, fn)</code> (React, Preact, Vue and Svelte) and{" "}
+        <code>createQuery(key, fn)</code> (Solid), each from the adapter&apos;s <code>/query</code>{" "}
+        entry, subscribe a component to a cached, keyed query. Concurrent reads of the same key{" "}
+        <b>dedup</b> into one in-flight fetch; results are cached with a <code>staleTime</code> (the
+        third argument&apos;s option), a background refetch, and bounded GC. React also has{" "}
+        <code>useMutation</code>, <code>useInfiniteQuery</code> and <code>HydrationBoundary</code>.
       </p>
       <CodeBlock code={USE_QUERY} />
 
@@ -55,9 +57,9 @@ export default function Query() {
         the server publishes one of them.
       </p>
       <p>
-        It's the same agnostic core under both adapters: the cache, dedup, and invalidation logic
-        live in <code>@nifrajs/web</code>; the bindings are thin <code>useSyncExternalStore</code> /
-        signal wrappers.
+        It's the same agnostic core under every adapter: the cache, dedup, and invalidation logic
+        live in <code>@nifrajs/web</code>; each binding is a thin wrapper in its framework&apos;s own
+        reactivity (<code>useSyncExternalStore</code>, a signal, a <code>shallowRef</code>, a store).
       </p>
     </div>
   )

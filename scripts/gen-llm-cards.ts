@@ -343,7 +343,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     'This is the unscoped **meta-entry** - it re-exports `@nifrajs/core` only, so `import { server } from "nifra"` works. Everything else (web, client, schema, …) lives under `@nifrajs/*`; import those directly.',
   ],
   "create-nifra": [
-    "Scaffolding CLI (`bun create nifra <dir>`), not a library - there are no runtime exports to import.",
+    "Scaffolding CLI (`bun create nifra <dir>`). Its one library entry is `create-nifra/scaffold`, whose `scaffold()` writes the same starter for a tool that generates apps; importing it never starts the CLI.",
   ],
 }
 

@@ -231,7 +231,8 @@ export default function Data() {
 
       <p>
         For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
-        on both React and Solid.
+        on all five adapters: see <a href="/docs/mutations">fetchers</a> and{" "}
+        <a href="/docs/query">the query cache</a>.
       </p>
     </div>
   )

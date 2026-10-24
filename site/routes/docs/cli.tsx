@@ -229,7 +229,7 @@ export default function Cli() {
             <td>
               <code>nifra cdn-check &lt;url&gt;</code>
             </td>
-            <td>Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations getting page data rather than the cached document.</td>
+            <td>Check a deployed page behind a CDN: served from cache, no internal headers reaching visitors, and soft navigations and slot swaps getting their own answer rather than the cached document.</td>
           </tr>
           <tr>
             <td>

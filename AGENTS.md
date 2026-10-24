@@ -1,8 +1,8 @@
 # AGENTS.md - Nifra quick reference for coding agents
 
 Nifra is a Bun-native, multi-runtime, end-to-end-typed full-stack TS framework. This is the
-copy-paste cookbook so you don't have to read the source. Deeper docs live in `docs/` and at
-`/docs/contract`. Machine surfaces for agents: **`nifra check --json`** (the done-gate),
+copy-paste cookbook so you don't have to read the source. Deeper docs live at
+<https://nifra.dev/docs> (source in `site/routes/docs/`). Machine surfaces for agents: **`nifra check --json`** (the done-gate),
 **`nifra context`**, and the MCP server (`nifra mcp`).
 
 ## 1 · Define a route (typed, chainable)

@@ -106,7 +106,7 @@ open page.
 - WebMCP registration is not authorization. Enforce authorization again at the server boundary.
 - Keep inputs narrow and annotations honest. A safety hint is not a permission.
 - Predictions are pure local transforms and cannot grant capability or bypass core policy.
-- Receipts contain status, bounded evidence, and error codes—not credentials, request bodies, secrets, or
+- Receipts contain status, bounded evidence, and error codes - not credentials, request bodies, secrets, or
   stack traces.
 - Normal browsers and non-WebMCP hosts receive a safe unsupported report.
 

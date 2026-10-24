@@ -147,7 +147,8 @@ export default function Streaming() {
         <code>body</code> is a POST stream: the body validates as on any POST, and{" "}
         <code>.subscribe(onEvent, &#123; body &#125;)</code> sends it. A GET stream reconnects after a
         drop and resumes with <code>Last-Event-ID</code>; a POST stream does not reconnect unless you
-        pass <code>reconnect: true</code>, since a reconnect sends the body again. The client&apos;s{" "}
+        pass <code>reconnect: true</code>, since a reconnect sends the body again. A{" "}
+        <code>204</code> answer closes the stream for good. The client&apos;s{" "}
         <code>onRequest</code> hook runs before each connect, so a refreshed token reaches the stream.
       </p>
       <CodeBlock code={TYPED_SSE} />
