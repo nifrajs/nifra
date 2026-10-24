@@ -57,14 +57,22 @@ function share(prev: unknown, next: unknown, depth: number, json: boolean): unkn
     if (depth >= 128) throw TOO_DEEP
     const out: unknown[] = []
     let same = prev.length === next.length
-    let byId: Map<unknown, unknown> | undefined
+    let byId: Map<unknown, number> | undefined
     let completeIndex = false
+    // Which old elements a new one took, from the first id lookup on: each pairs at most once, so
+    // duplicate ids never put one old object at two places. Every element before that lookup took
+    // its own position.
+    let taken: Uint8Array | undefined
     let kept = 0
     let i = 0
     for (const item of next) {
-      let old: unknown = prev[i]
+      let old: unknown = taken?.[i] === 1 ? undefined : prev[i]
       const id = isPlain(item) ? item.id : undefined
       if (id !== undefined && !(isPlain(old) && old.id === id)) {
+        if (taken === undefined) {
+          taken = new Uint8Array(prev.length)
+          taken.fill(1, 0, i)
+        }
         if (byId === undefined || (i >= 32 && !completeIndex)) {
           // Index only IDs needed by the sample until a kept row makes a full index worthwhile.
           const wanted =
@@ -84,7 +92,8 @@ function share(prev: unknown, next: unknown, depth: number, json: boolean): unkn
             max = Math.max(max, key)
           }
           byId = new Map()
-          for (const entry of prev) {
+          for (let at = 0; at < prev.length; at++) {
+            const entry = prev[at]
             if (!isPlain(entry)) continue
             const entryId = entry.id
             if (
@@ -92,10 +101,14 @@ function share(prev: unknown, next: unknown, depth: number, json: boolean): unkn
               ((typeof entryId !== "number" || !(entryId < min || entryId > max)) &&
                 wanted.has(entryId))
             )
-              byId.set(entryId, entry)
+              byId.set(entryId, at)
           }
         }
-        old = byId.get(id)
+        const at = byId.get(id)
+        old = at === undefined || taken[at] === 1 ? undefined : prev[at]
+        if (at !== undefined) taken[at] = 1
+      } else if (taken !== undefined && i < taken.length && old !== undefined) {
+        taken[i] = 1
       }
       const value = share(old, item, depth + 1, json)
       out.push(value)

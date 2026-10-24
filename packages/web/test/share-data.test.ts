@@ -104,6 +104,61 @@ describe("shareData", () => {
     for (let i = 0; i < 50; i++) expect(again[i]).toBe(prev[49 - i])
   })
 
+  test("each old row is kept for at most one new row, whichever pairing reaches it first", () => {
+    const distinct = (values: readonly unknown[]): boolean => new Set(values).size === values.length
+    // A lookup by id first, then the same old row at its own position.
+    const prev = [
+      { id: 2, n: "b" },
+      { id: 1, n: "a" },
+    ]
+    const looked = shareData(
+      prev,
+      fresh([
+        { id: 1, n: "a" },
+        { id: 1, n: "a" },
+      ]),
+      true,
+    )
+    expect(looked[0]).toBe(prev[1])
+    expect(distinct(looked)).toBe(true)
+    expect(looked).toEqual([
+      { id: 1, n: "a" },
+      { id: 1, n: "a" },
+    ])
+    // Its own position first, then a lookup by id for the same old row.
+    const before = [
+      { id: 1, n: "a" },
+      { id: 3, n: "c" },
+    ]
+    const positioned = shareData(
+      before,
+      fresh([
+        { id: 1, n: "a" },
+        { id: 1, n: "a" },
+      ]),
+      true,
+    )
+    expect(positioned[0]).toBe(before[0])
+    expect(distinct(positioned)).toBe(true)
+    // Two lookups by id for one old row, and a nested child that only one copy shares.
+    const nested: { id: number; tags?: string[] }[] = [{ id: 9 }, { id: 1, tags: ["x"] }]
+    const twice = shareData<typeof nested>(
+      nested,
+      fresh([
+        { id: 1, tags: ["x"] },
+        { id: 1, tags: ["x"] },
+      ]),
+      true,
+    )
+    expect(twice[0]).toBe(nested[1])
+    expect(twice[1]).not.toBe(nested[1])
+    expect(twice[1]?.tags).not.toBe(nested[1]?.tags)
+    // Unique ids still pair every unchanged row, by id after a prepend.
+    const rows50 = rows(50)
+    const prepended = shareData(rows50, [{ id: -1, label: "new", tags: [] }, ...fresh(rows50)])
+    for (let i = 0; i < 50; i++) expect(prepended[i + 1]).toBe(rows50[i])
+  })
+
   test("a removed last row shortens the array", () => {
     const prev = rows(3)
     const shared = shareData(prev, fresh(rows(2)))
