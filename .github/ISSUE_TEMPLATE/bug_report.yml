@@ -18,7 +18,6 @@ body:
     attributes:
       label: Reproduction
       description: A repository link, or the smallest set of files and commands that shows the bug. `bun create nifra repro` gives a starting point.
-      render: shell
     validations:
       required: true
   - type: input
@@ -60,6 +59,7 @@ body:
         - Svelte
         - Solid
         - Preact
+        - Vanilla (@nifrajs/web-vanilla)
         - None (API only)
     validations:
       required: true
