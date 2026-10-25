@@ -18,6 +18,7 @@ import { recipe as v5_3_0 } from "./5.3.0.ts"
 import { recipe as v5_4_0 } from "./5.4.0.ts"
 import { recipe as v5_5_0 } from "./5.5.0.ts"
 import { recipe as v5_6_0 } from "./5.6.0.ts"
+import { recipe as v5_7_0 } from "./5.7.0.ts"
 
 /** A pin rule: every dependency whose name starts with `match` is set to version `to`. */
 export interface PinRule {
@@ -32,6 +33,19 @@ export interface DependencyMove {
   readonly from: string
   readonly to: string
   readonly toVersion: string
+}
+
+/**
+ * A package an import needs that a project may only have had through another package. When a source
+ * file imports one of `imports`, or a subpath of one, and the nearest package.json lists `add` in no
+ * dependency field, the upgrade adds it at the target version beside the imported package, or beside
+ * one of `beside` when the imported package is not listed there.
+ */
+export interface DependencyAdd {
+  /** Import specifiers, matched after the release's import moves. */
+  readonly imports: readonly string[]
+  readonly add: string
+  readonly beside?: readonly string[]
 }
 
 /** An exact import-specifier rewrite (string-level, not AST): `from` → `to`. */
@@ -52,6 +66,7 @@ export interface UpgradeRecipe {
   readonly pins: readonly PinRule[]
   readonly dependencyMoves?: readonly DependencyMove[]
   readonly importMoves: readonly ImportMove[]
+  readonly dependencyAdds?: readonly DependencyAdd[]
   readonly retiredMarkers?: readonly RetiredMarker[]
   /** Human notes printed after the plan - e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]
@@ -76,6 +91,7 @@ const RECIPES: Record<string, UpgradeRecipe> = {
   [v5_4_0.version]: v5_4_0,
   [v5_5_0.version]: v5_5_0,
   [v5_6_0.version]: v5_6_0,
+  [v5_7_0.version]: v5_7_0,
 }
 
 export function getRecipe(version: string): UpgradeRecipe | undefined {

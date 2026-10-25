@@ -759,6 +759,18 @@ Every public export of every package and documented subpath - name, kind, signat
 - **signInUrl** _(function)_ - `signInUrl: (providerId: string, options: { readonly basePath?: string; readonly callbackUrl: string; }) => string`
   Build `/api/auth/signin/:provider?callbackUrl=…` without touching `window` (testable).
 
+### `@nifrajs/authjs/react`
+
+- **AuthSession** _(interface)_ - `interface AuthSession`
+- **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode`
+  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new `initialSession` (a loader re-run on navigation) replaces the session, as a remount would.
+- **AuthSessionProviderProps** _(interface)_ - `interface AuthSessionProviderProps`
+- **AuthStatus** _(type)_ - `type AuthStatus = "loading" | "authenticated" | "unauthenticated"`
+- **Session** _(interface)_ - `interface Session`
+  The active session of the logged in user.
+- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession`
+  Read the Auth.js session (`{ status, session }`). Throws if no `<AuthSessionProvider>` is above.
+
 ## @nifrajs/aws-lambda
 
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
@@ -6953,18 +6965,6 @@ _No named exports (side-effect entrypoint)._
 
 - **reactAdapter** _(const)_ - `reactAdapter: RenderAdapter`
   The React server render adapter - pass to
-
-### `@nifrajs/web-react/auth`
-
-- **AuthSession** _(interface)_ - `interface AuthSession`
-- **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode`
-  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. A new `initialSession` (a loader re-run on navigation) replaces the session, as a remount would.
-- **AuthSessionProviderProps** _(interface)_ - `interface AuthSessionProviderProps`
-- **AuthStatus** _(type)_ - `type AuthStatus = "loading" | "authenticated" | "unauthenticated"`
-- **Session** _(interface)_ - `interface Session`
-  The active session of the logged in user.
-- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession`
-  Read the Auth.js session (`{ status, session }`). Throws if no `<AuthSessionProvider>` is above.
 
 ### `@nifrajs/web-react/await`
 

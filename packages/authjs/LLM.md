@@ -10,24 +10,26 @@ Official Auth.js integration for nifra - mount Auth.js (OAuth, OIDC, credentials
 
 ## Public entrypoints
 
-`@nifrajs/authjs` · `@nifrajs/authjs/client`
+`@nifrajs/authjs` · `@nifrajs/authjs/client` · `@nifrajs/authjs/react`
 
 ## Key exports
 
+- **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode` · from `@nifrajs/authjs/react`
 - **authjs** _(function)_ - `authjs: (config: AuthJSConfig, options?: AuthJSOptions) => import("@nifrajs/core").IdentityPlugin<never>` · from `@nifrajs/authjs`
 - **createAuthClient** _(function)_ - `createAuthClient: (options?: AuthClientOptions) => AuthClient` · from `@nifrajs/authjs/client`
 - **getSession** _(function)_ - `getSession: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<Session | null>` · from `@nifrajs/authjs`
 - **requireAuthUser** _(function)_ - `requireAuthUser: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<NonNullable<Session["user"]>>` · from `@nifrajs/authjs`
 - **signInUrl** _(function)_ - `signInUrl: (providerId: string, options: { readonly basePath?: string; readonly callbackUrl: string; }) => string` · from `@nifrajs/authjs/client`
+- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession` · from `@nifrajs/authjs/react`
 - **AuthClient** _(interface)_ - `interface AuthClient` · from `@nifrajs/authjs/client`
 - **AuthClientOptions** _(interface)_ - `interface AuthClientOptions` · from `@nifrajs/authjs/client`
 - **AuthGuardOptions** _(interface)_ - `interface AuthGuardOptions` · from `@nifrajs/authjs`
 - **AuthJSOptions** _(interface)_ - `interface AuthJSOptions` · from `@nifrajs/authjs`
+- **AuthSession** _(interface)_ - `interface AuthSession` · from `@nifrajs/authjs/react`
+- **AuthSessionProviderProps** _(interface)_ - `interface AuthSessionProviderProps` · from `@nifrajs/authjs/react`
 - **Session** _(interface)_ - `interface Session` · from `@nifrajs/authjs`
-- **SignInOptions** _(interface)_ - `interface SignInOptions` · from `@nifrajs/authjs/client`
-- **SignOutOptions** _(interface)_ - `interface SignOutOptions` · from `@nifrajs/authjs/client`
-- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse` · from `@nifrajs/authjs`
-- **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">` · from `@nifrajs/authjs`
+
+_…and 5 more - see [`api-reference.md`](../../api-reference.md#nifrajsauthjs) for the complete list._
 
 ## Footguns
 

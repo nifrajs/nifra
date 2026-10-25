@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test"
-import type { AuthClient, Session } from "@nifrajs/authjs/client"
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import type { AuthClient, Session } from "../src/client.ts"
 
 // A server render forgets state, so a prop change after mount cannot be seen there. Here state cells
 // outlive each render the way a client root keeps them, and a render that sets state renders again,
@@ -38,7 +38,7 @@ afterAll(() => {
   mock.module("react", () => real)
 })
 
-const { AuthSessionProvider, useAuthSession } = await import("../src/auth.ts")
+const { AuthSessionProvider, useAuthSession } = await import("../src/react.ts")
 
 const client: AuthClient = {
   getSession: async () => null,
