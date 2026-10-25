@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { RESERVED_EXACT_KEYS, RESERVED_VERB_KEYS } from "../../client/src/reserved.ts"
+import {
+  NAMESPACED_KEYS,
+  RESERVED_EXACT_KEYS,
+  RESERVED_VERB_KEYS,
+} from "../../client/src/reserved.ts"
 import { generateLlmsTxt } from "../src/llms-txt.ts"
 
 /** A schema node the way a `t`/Standard Schema exposes it: the raw JSON Schema hangs off `.jsonSchema`. */
@@ -113,6 +117,7 @@ describe("generateLlmsTxt", () => {
       ...RESERVED_VERB_KEYS,
       ...RESERVED_VERB_KEYS.map((key) => key.toUpperCase()),
       ...RESERVED_EXACT_KEYS,
+      ...NAMESPACED_KEYS,
     ]
     const out = await generateLlmsTxt(true, [], {
       routes: () =>
@@ -142,6 +147,17 @@ describe("generateLlmsTxt", () => {
     expect(out).toContain("await api.filtered.delete({ body, query })")
     expect(out).toContain("await api.queried.delete({ query })")
     expect(out).toContain("await api.empty.delete()")
+  })
+
+  test("a QUERY route is a `$query` call and a method with no typed call is a fetch", async () => {
+    const out = await generateLlmsTxt(true, [], {
+      routes: () => [
+        { method: "QUERY", path: "/search", schema: { body: schema({ type: "object" }) } },
+        { method: "PURGE", path: "/cache" },
+      ],
+    })
+    expect(out).toContain("await api.search.$query(body)")
+    expect(out).toContain('await fetch(url, { method: "PURGE" })')
   })
 
   test("reports when no API routes are registered", async () => {
