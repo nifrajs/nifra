@@ -891,11 +891,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // One count per visitor change the page has seen, and the count the page on screen was loaded at.
   let visitor = 0
   let shownFor = 0
-  // The navigation, submit or reload that owns the page while it is in flight: the count it began at,
-  // and how to start it again for a new visitor. A submit never starts again: its POST has to land.
-  let running:
-    | { readonly gen: number; readonly seen: number; readonly again?: () => void }
-    | undefined
+  // The generation of the navigation, submit or reload that owns the page while it is in flight. It
+  // answers a visitor change itself: a load loads once more, a submit reloads the page once it settles.
+  let loading: number | undefined
   // Snapshot listeners to defend against accidental un/subscribe during notification. The adapters
   // don't do this (un/subscribe runs in effect/cleanup ticks), so the overhead is negligible
   // (5-20 listeners typically), and the defensiveness is valuable.
@@ -1153,23 +1151,34 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // Refetch what is on screen + republish, single-flight via the shared `generation`. Shared by
   // `invalidate` and targeted revalidation: `inScope` says which paths to refresh, and a page or held
   // target outside it is kept. Rejects if the page's fetch fails (clearing its own `pending` first).
-  const reloadAgain = (): void => void refetchActive().catch(() => {})
-  const refetchActive = async (inScope?: (path: string) => boolean): Promise<void> => {
+  // A reload for a visitor change: a change while it runs is taken as its own, so a server that rotates
+  // the epoch on every response costs one reload, never a loop.
+  const reloadForChange = (): void => void refetchActive(undefined, false).catch(() => {})
+  const refetchActive = async (
+    inScope?: (path: string) => boolean,
+    again = true,
+  ): Promise<void> => {
     const page = inScope === undefined || inScope(pagePathOf(state))
     const target = state.intercepted !== undefined && (inScope === undefined || inScope(state.path))
     if (!page && !target) return
     const mine = ++generation
     const seen = visitor
-    running = { gen: mine, seen, again: reloadAgain }
+    loading = mine
     navAbort?.abort()
     const ac = new AbortController()
     navAbort = ac
     state = { ...state, pending: true }
     emit()
     try {
-      const { fields, route } = await reloadActive(ac.signal, page, target, mine)
+      let { fields, route } = await reloadActive(ac.signal, page, target, mine)
+      // A visitor change while it loaded: what came back may be the previous visitor's.
+      checkEpoch()
+      if (again && mine === generation && seen !== visitor) {
+        ;({ fields, route } = await reloadActive(ac.signal, page, target, mine))
+        checkEpoch()
+      }
       if (mine !== generation) return // superseded - drop the stale result
-      if (page) shownFor = seen
+      if (page) shownFor = visitor
       // A terminal answer for the page (the session expired, the record is gone) replaces it, and any
       // boundary over it, with its status route, as a navigation to this URL would.
       state =
@@ -1192,7 +1201,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       throw err
     } finally {
       // Never a reload of its own here: a reload that keeps failing would retry forever.
-      if (running?.gen === mine) running = undefined
+      if (loading === mine) loading = undefined
     }
   }
 
@@ -1360,15 +1369,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   }
 
   const reloadIfStale = (): void => {
-    if (shownFor !== visitor) reloadAgain()
+    if (shownFor !== visitor) reloadForChange()
   }
-  // The page on screen reloads in place, shown as it was and pending until the reload lands, and what
-  // is loading for the previous visitor starts again. A submit is left to finish; once it settles, the
-  // page reloads if its reads began before the change.
+  // The page on screen reloads in place, shown as it was and pending until the reload lands. A load in
+  // flight answers the change itself, inside the call its caller awaits.
   const reloadForVisitor = (): void => {
-    const now = running?.gen === generation ? running : undefined
-    if (now === undefined) reloadIfStale()
-    else if (now.seen !== visitor) now.again?.()
+    if (loading !== generation) reloadIfStale()
   }
 
   // Warmed pages and what every fetcher holds were loaded for the previous visitor. Another tab's
@@ -1401,7 +1407,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     })
   }
 
-  const self: ClientRouter = {
+  return {
     match,
     snapshot: () => {
       checkEpoch()
@@ -1457,14 +1463,22 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
       const mine = ++generation
       const seen = visitor
-      running = { gen: mine, seen, again: () => void self.navigate(path).catch(() => {}) }
+      loading = mine
       navAbort?.abort() // abandon any in-flight navigation's stream
       const ac = new AbortController()
       navAbort = ac
       state = { ...state, pending: true, pendingPath: path }
       emit()
       try {
-        const [to, target, loaded] = await loadFollowing(mine, path, matched, ac.signal, true, true)
+        let [to, target, loaded] = await loadFollowing(mine, path, matched, ac.signal, true, true)
+        // A visitor change while it loaded: what came back may be the previous visitor's, so it loads
+        // once more, and that answer stands.
+        checkEpoch()
+        if (mine === generation && seen !== visitor) {
+          ;[to, target, loaded] = await loadFollowing(mine, path, matched, ac.signal, true, true)
+          checkEpoch()
+        }
+        const loadedFor = visitor
         if (mine !== generation) return // a newer navigation superseded this one - drop the stale result
         cachePut(to, loaded) // keep the keyed cache coherent with what we publish
         // The swap can wait a frame for the presenter, and a newer navigation started meanwhile owns it.
@@ -1503,7 +1517,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             pending: false,
           }
           shownPage = loaded
-          shownFor = seen
+          shownFor = loadedFor
           emit()
         })
       } catch (err) {
@@ -1516,14 +1530,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         emit()
         throw err
       } finally {
-        if (running?.gen === mine) running = undefined
+        if (loading === mine) loading = undefined
         if (mine === generation) reloadIfStale()
       }
     },
     submit: async (action, body, opts) => {
       checkEpoch()
       const mine = ++generation
-      running = { gen: mine, seen: visitor }
+      loading = mine
       const previousActionData = state.actionData
       // An action posted to the target an intercept boundary holds answers that boundary, not the page.
       const actionBoundary =
@@ -1682,7 +1696,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         const owner = actionBoundary === undefined ? pagePathOf(state) : state.path
         throw redirectOf(err) === undefined ? redirected(landing ?? owner, err) : err
       } finally {
-        if (running?.gen === mine) running = undefined
+        if (loading === mine) loading = undefined
         if (mine === generation) reloadIfStale()
       }
     },
@@ -1757,5 +1771,4 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
   }
-  return self
 }
