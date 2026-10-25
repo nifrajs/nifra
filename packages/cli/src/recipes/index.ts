@@ -35,6 +35,19 @@ export interface DependencyMove {
   readonly toVersion: string
 }
 
+/**
+ * A package an import needs that a project may only have had through another package. When a source
+ * file imports one of `imports`, or a subpath of one, and the nearest package.json lists `add` in no
+ * dependency field, the upgrade adds it at the target version beside the imported package, or beside
+ * one of `beside` when the imported package is not listed there.
+ */
+export interface DependencyAdd {
+  /** Import specifiers, matched after the release's import moves. */
+  readonly imports: readonly string[]
+  readonly add: string
+  readonly beside?: readonly string[]
+}
+
 /** An exact import-specifier rewrite (string-level, not AST): `from` → `to`. */
 export interface ImportMove {
   readonly from: string
@@ -53,6 +66,7 @@ export interface UpgradeRecipe {
   readonly pins: readonly PinRule[]
   readonly dependencyMoves?: readonly DependencyMove[]
   readonly importMoves: readonly ImportMove[]
+  readonly dependencyAdds?: readonly DependencyAdd[]
   readonly retiredMarkers?: readonly RetiredMarker[]
   /** Human notes printed after the plan - e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]

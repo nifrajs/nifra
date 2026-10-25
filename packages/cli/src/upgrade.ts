@@ -12,7 +12,9 @@
  *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
  *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
- *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface. It reads the
+ *   4. **dependency adds** - add a package an imported entry needs to the manifest that imports it,
+ *      beside the package the entry belongs to, when that manifest lists it nowhere.
+ *   5. **verify** - reuse the existing `nifra check` gate; no new verification surface. It reads the
  *      installed packages, so while the edited pins are not installed yet it is skipped with the
  *      install command to run first: a check then would judge the release being left.
  *
@@ -60,7 +62,12 @@ import {
   type StaleLinkLock,
   staleLinkLocks,
 } from "./lock-links.ts"
-import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "./recipes/index.ts"
+import {
+  type DependencyAdd,
+  getRecipe,
+  listRecipeVersions,
+  type UpgradeRecipe,
+} from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
 
 export interface UpgradeOptions {
@@ -115,6 +122,17 @@ export interface DependencyMoveChange {
   readonly action: "renamed" | "removed"
 }
 
+/** A package added to a manifest because a source file beneath it imports an entry that needs it. */
+export interface DependencyAddChange {
+  readonly file: string
+  readonly field: string
+  readonly name: string
+  readonly version: string
+  /** The first source file found importing that entry, and the specifier it uses. */
+  readonly importer: string
+  readonly specifier: string
+}
+
 /** An agent file whose MCP launch pins another `@nifrajs/cli`, re-pinned to the target. */
 export interface AgentPinChange {
   readonly file: string
@@ -141,6 +159,7 @@ export interface UpgradePlan {
   readonly agentPins: readonly AgentPinChange[]
   readonly dependencyMoves: readonly DependencyMoveChange[]
   readonly importMoves: readonly ImportChange[]
+  readonly dependencyAdds: readonly DependencyAddChange[]
   /** Pins refused because the target is BELOW the installed version (a rollback). Empty when allowed. */
   readonly downgrades: readonly PinChange[]
   /** Comments a release in the chain stopped honoring. Listed only, never rewritten. */
@@ -632,6 +651,138 @@ export function applyImportMoves(
 }
 
 const SOURCE_GLOB = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+// Svelte and Vue components import adapter entries too.
+const ADD_SOURCE_GLOB = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,svelte,vue}"
+
+const IMPORTED_SPEC = (prefix: string): RegExp =>
+  new RegExp(
+    `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|\\bimport\\s+)(['"])(${escapeRegExp(prefix)}(?:/[^'"]*)?)\\1`,
+  )
+
+/** The first specifier in `text` that names one of `imports` or a subpath of one. */
+export function importedSpecifier(text: string, imports: readonly string[]): string | undefined {
+  for (const prefix of imports) {
+    const match = IMPORTED_SPEC(prefix).exec(text)
+    if (match !== null) return match[2]
+  }
+  return undefined
+}
+
+const packageOf = (specifier: string): string =>
+  specifier
+    .split("/")
+    .slice(0, specifier.startsWith("@") ? 2 : 1)
+    .join("/")
+
+const MEMBER = /("(?:[^"\\]|\\.)*")\s*:\s*"(?:[^"\\]|\\.)*"/g
+
+/**
+ * Add `"name": "version"` to the `field` object of a package.json text without reserializing it,
+ * creating the field at the end of the root when absent. The entry goes before the first larger name
+ * when the members are sorted, last otherwise.
+ */
+function insertDependencyEntry(text: string, field: string, name: string, version: string): string {
+  const entry = `${JSON.stringify(name)}: ${JSON.stringify(version)}`
+  const unit = /\n([ \t]+)"/.exec(text)?.[1] ?? "  "
+  const range = objectRangeAt(text, [field])
+  if (range === undefined) {
+    const root = objectRangeAt(text, [])
+    if (root === undefined) return text
+    const body = text.slice(root.start, root.end)
+    const at = root.start + body.trimEnd().length
+    const comma = body.trim() === "" ? "" : ","
+    const close = /^[ \t]*\n/.test(text.slice(at)) ? "" : "\n"
+    const object = `${JSON.stringify(field)}: {\n${unit}${unit}${entry}\n${unit}}`
+    return `${text.slice(0, at)}${comma}\n${unit}${object}${close}${text.slice(at)}`
+  }
+  const body = text.slice(range.start, range.end)
+  const members = [...body.matchAll(MEMBER)]
+  const first = members[0]
+  const last = members.at(-1)
+  if (first === undefined || last === undefined) {
+    const lineStart = text.lastIndexOf("\n", range.start) + 1
+    const indent = /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? ""
+    return `${text.slice(0, range.start)}\n${indent}${unit}${entry}\n${indent}${text.slice(range.end)}`
+  }
+  const names = members.map((member): unknown => JSON.parse(member[1] ?? '""'))
+  const newline = body.lastIndexOf("\n", first.index)
+  const separator = newline === -1 ? " " : `\n${body.slice(newline + 1, first.index)}`
+  const sorted = names.every(
+    (current, index) =>
+      typeof current === "string" && (index === 0 || String(names[index - 1]) <= current),
+  )
+  const before = sorted ? members.find((_, index) => String(names[index]) > name) : undefined
+  const at = range.start + (before === undefined ? last.index + last[0].length : before.index)
+  const insert = before === undefined ? `,${separator}${entry}` : `${entry},${separator}`
+  return text.slice(0, at) + insert + text.slice(at)
+}
+
+/**
+ * Add `rule.add` to a package.json text beside the first anchor it lists - the imported entry's own
+ * package, then each of `rule.beside` - in every field that anchor is in, with the anchor's range
+ * style; in `dependencies` when no anchor is listed. Undefined when the manifest already lists the
+ * package in any field, is that package, or the edit would not parse.
+ */
+export function addDependencyText(
+  text: string,
+  rule: DependencyAdd,
+  specifier: string,
+  version: string,
+  exact = false,
+): { text: string; changes: Array<{ field: string; name: string; version: string }> } | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined
+  const manifest: object = parsed
+  if (Reflect.get(manifest, "name") === rule.add) return undefined
+  const specIn = (from: object, field: string, name: string): string | undefined => {
+    const deps: unknown = Reflect.get(from, field)
+    if (typeof deps !== "object" || deps === null || !Object.hasOwn(deps, name)) return undefined
+    const spec: unknown = Reflect.get(deps, name)
+    return typeof spec === "string" ? spec : undefined
+  }
+  if (DEP_FIELDS.some((field) => specIn(manifest, field, rule.add) !== undefined)) return undefined
+  const fallback = exact ? version : `^${version}`
+  const rangeFor = (spec: string): string =>
+    rewriteVersionSpec(spec, version, exact) ?? (specVersion(spec) === version ? spec : fallback)
+  let placed: Array<{ field: string; name: string; version: string }> = []
+  for (const anchor of [packageOf(specifier), ...(rule.beside ?? [])]) {
+    placed = DEP_FIELDS.flatMap((field) => {
+      const spec = specIn(manifest, field, anchor)
+      return spec === undefined ? [] : [{ field, name: rule.add, version: rangeFor(spec) }]
+    })
+    if (placed.length > 0) break
+  }
+  if (placed.length === 0) placed = [{ field: "dependencies", name: rule.add, version: fallback }]
+  let out = text
+  for (const change of placed)
+    out = insertDependencyEntry(out, change.field, rule.add, change.version)
+  // The edit is textual; a result that does not parse, or lacks an entry, is never written.
+  let written: unknown
+  try {
+    written = JSON.parse(out)
+  } catch {
+    return undefined
+  }
+  if (typeof written !== "object" || written === null) return undefined
+  const result: object = written
+  if (placed.some((change) => specIn(result, change.field, rule.add) !== change.version))
+    return undefined
+  return { text: out, changes: placed }
+}
+
+/** The package.json nearest above `file`, both relative to `cwd`; undefined when none is under it. */
+function nearestManifest(cwd: string, file: string): string | undefined {
+  for (let dir = dirname(file); ; dir = dirname(dir)) {
+    const manifest = dir === "." ? "package.json" : `${dir}/package.json`
+    if (plainFileAt(cwd, manifest)) return manifest
+    if (dir === ".") return undefined
+  }
+}
 const IGNORED_DIRECTORIES = new Set(["node_modules", "dist", "build", ".git", "coverage", ".next"])
 
 // Any directory on the path counts, the top-level one included (`dist/index.js`). Bun's glob yields
@@ -1153,6 +1304,7 @@ export function chainRecipes(target: string, installed: string | null): ChainedR
     pins: [...pins].map(([match, to]) => ({ match, to })),
     dependencyMoves: recipes.flatMap((recipe) => recipe.dependencyMoves ?? []),
     importMoves: recipes.flatMap((recipe) => recipe.importMoves),
+    dependencyAdds: recipes.flatMap((recipe) => recipe.dependencyAdds ?? []),
     retiredMarkers: recipes.flatMap((recipe) => recipe.retiredMarkers ?? []),
     notes: recipes.flatMap((recipe) =>
       (recipe.notes ?? []).map((note) => `${recipe.version}: ${note}`),
@@ -1174,6 +1326,7 @@ export function computeUpgrade(
   const planned = new Map<string, string>()
   const dependencyMoves: DependencyMoveChange[] = []
   const importMoves: ImportChange[] = []
+  const dependencyAdds: DependencyAddChange[] = []
   const downgrades: PinChange[] = []
   const retiredMarkers: RetiredMarkerSite[] = []
   const linkedOutside = installedGroupPackages(cwd)
@@ -1216,14 +1369,38 @@ export function computeUpgrade(
     if (write) writeFileSync(abs, Buffer.from(text, "latin1"))
   }
 
+  const movedSources = new Map<string, string>()
   if (recipe.importMoves.length > 0) {
     for (const rel of scan(cwd, SOURCE_GLOB)) {
       const abs = join(cwd, rel)
       const text = readFileSync(abs, "utf8")
       const result = applyImportMoves(text, recipe.importMoves)
       if (result.changes.length === 0) continue
+      movedSources.set(rel, result.text)
       for (const change of result.changes) importMoves.push({ file: rel, ...change })
       if (write) writeFileSync(abs, result.text)
+    }
+  }
+
+  // Read the sources as the import moves leave them, and each manifest as the pins left it.
+  const adds = recipe.dependencyAdds ?? []
+  if (adds.length > 0) {
+    for (const rel of scan(cwd, ADD_SOURCE_GLOB)) {
+      const source = movedSources.get(rel) ?? readFileSync(join(cwd, rel), "utf8")
+      for (const rule of adds) {
+        const specifier = importedSpecifier(source, rule.imports)
+        if (specifier === undefined) continue
+        const file = nearestManifest(cwd, rel)
+        if (file === undefined) continue
+        const abs = resolve(cwd, file)
+        const current = manifests.get(abs) ?? readFileSync(abs, "utf8")
+        const added = addDependencyText(current, rule, specifier, recipe.version, exact)
+        if (added === undefined) continue
+        manifests.set(abs, added.text)
+        for (const change of added.changes)
+          dependencyAdds.push({ file, ...change, importer: rel, specifier })
+        if (write) writeFileSync(abs, added.text)
+      }
     }
   }
 
@@ -1254,6 +1431,7 @@ export function computeUpgrade(
     agentPins,
     dependencyMoves,
     importMoves,
+    dependencyAdds,
     downgrades,
     retiredMarkers,
     linkedOutside,
@@ -1292,6 +1470,7 @@ function renderPlan(
     plan.agentPins.length === 0 &&
     plan.dependencyMoves.length === 0 &&
     plan.importMoves.length === 0 &&
+    plan.dependencyAdds.length === 0 &&
     plan.retiredMarkers.length === 0 &&
     plan.linkedOutside.length === 0 &&
     plan.linkedSkew.length === 0 &&
@@ -1328,6 +1507,15 @@ function renderPlan(
     const total = plan.importMoves.reduce((n, m) => n + m.count, 0)
     lines.push(`${verb} ${total} import move(s) across ${plan.importMoves.length} file(s):`)
     for (const m of plan.importMoves) lines.push(`  ${m.file}  ${m.from} → ${m.to}  (${m.count})`)
+    lines.push("")
+  }
+  if (plan.dependencyAdds.length > 0) {
+    lines.push(`${verb} ${plan.dependencyAdds.length} dependency addition(s):`)
+    for (const add of plan.dependencyAdds) {
+      lines.push(
+        `  ${add.file}  ${add.field}: ${add.name}@${add.version}  (${add.importer} imports ${add.specifier})`,
+      )
+    }
     lines.push("")
   }
   if (plan.retiredMarkers.length > 0) {
@@ -1470,7 +1658,11 @@ export function pendingInstall(cwd: string, plan: UpgradePlan): PendingInstall |
   const installed = installedGroupPackages(cwd)
     .filter((entry) => entry.inside && entry.version !== plan.version)
     .map(({ package: name, version }) => ({ package: name, version }))
-  const edited = plan.pins.length > 0 || plan.dependencyMoves.length > 0 || plan.lockPruned
+  const edited =
+    plan.pins.length > 0 ||
+    plan.dependencyMoves.length > 0 ||
+    plan.dependencyAdds.length > 0 ||
+    plan.lockPruned
   if (!edited && installed.length === 0) return undefined
   const command =
     INSTALL_COMMANDS.find(([lockfile]) => existsSync(join(cwd, lockfile)))?.[1] ?? "bun install"

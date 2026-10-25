@@ -4,11 +4,13 @@ import { join } from "node:path"
 import { ancestorPins } from "../src/init-agents.ts"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
+  addDependencyText,
   applyImportMoves,
   chainRecipes,
   compareSemverSpec,
   computeUpgrade,
   groupSurface,
+  importedSpecifier,
   installedGroupVersion,
   moveDependenciesText,
   pendingInstall,
@@ -1264,5 +1266,174 @@ describe("a linked repository that loads its own nifra", () => {
     const app = await hoistedLayout("skew-hoisted-none", "5.1.0")
     const { value } = await quiet(() => runUpgrade(app, { ...options, write: true }))
     expect(value).toBe(true)
+  })
+})
+
+// ── dependency adds ───────────────────────────────────────────────────────────
+
+const IMAGE = { imports: ["@nifrajs/web-react/image"], add: "@nifrajs/image" }
+const AUTHJS = {
+  imports: ["@nifrajs/authjs"],
+  add: "@nifrajs/authjs",
+  beside: ["@nifrajs/web-react"],
+}
+const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`
+
+describe("dependency adds", () => {
+  test("an import names its entry or a subpath of it, never a lookalike package", () => {
+    const source =
+      'import { a } from "@nifrajs/authjs-extra"\nconst b = await import("@nifrajs/authjs/react")'
+    expect(importedSpecifier(source, ["@nifrajs/authjs"])).toBe("@nifrajs/authjs/react")
+    expect(importedSpecifier('export * from "@nifrajs/authjs"', ["@nifrajs/authjs"])).toBe(
+      "@nifrajs/authjs",
+    )
+    expect(importedSpecifier('import "@nifrajs/authjs-extra"', ["@nifrajs/authjs"])).toBeUndefined()
+  })
+
+  test("the package goes beside the imported adapter, in each field it is in, in sorted place", () => {
+    const manifest = json({
+      name: "ui",
+      peerDependencies: { "@nifrajs/web-react": "^5.0.0", react: "^19.0.0" },
+      devDependencies: { "@nifrajs/core": "5.7.0", "@nifrajs/web-react": "5.7.0" },
+    })
+    const added = addDependencyText(manifest, IMAGE, "@nifrajs/web-react/image", "5.7.0")
+    expect(added?.changes).toEqual([
+      { field: "devDependencies", name: "@nifrajs/image", version: "5.7.0" },
+      { field: "peerDependencies", name: "@nifrajs/image", version: "^5.7.0" },
+    ])
+    expect(added?.text).toBe(
+      json({
+        name: "ui",
+        peerDependencies: {
+          "@nifrajs/image": "^5.7.0",
+          "@nifrajs/web-react": "^5.0.0",
+          react: "^19.0.0",
+        },
+        devDependencies: {
+          "@nifrajs/core": "5.7.0",
+          "@nifrajs/image": "5.7.0",
+          "@nifrajs/web-react": "5.7.0",
+        },
+      }),
+    )
+  })
+
+  test("a package the import names itself goes beside the listed anchor, with its range", () => {
+    const manifest = json({ dependencies: { react: "^19.0.0", "@nifrajs/web-react": "~5.7.0" } })
+    const added = addDependencyText(manifest, AUTHJS, "@nifrajs/authjs/react", "5.7.0")
+    // Unsorted members keep their order: the entry goes last.
+    expect(added?.text).toBe(
+      json({
+        dependencies: {
+          react: "^19.0.0",
+          "@nifrajs/web-react": "~5.7.0",
+          "@nifrajs/authjs": "~5.7.0",
+        },
+      }),
+    )
+    expect(
+      addDependencyText(manifest, AUTHJS, "@nifrajs/authjs/react", "5.7.0", true)?.changes,
+    ).toEqual([{ field: "dependencies", name: "@nifrajs/authjs", version: "5.7.0" }])
+  })
+
+  test("with no anchor listed, dependencies is created at the end of the manifest", () => {
+    const manifest = '{\n\t"name": "app",\n\t"private": true\n}\n'
+    expect(addDependencyText(manifest, AUTHJS, "@nifrajs/authjs", "5.7.0")?.text).toBe(
+      '{\n\t"name": "app",\n\t"private": true,\n\t"dependencies": {\n\t\t"@nifrajs/authjs": "^5.7.0"\n\t}\n}\n',
+    )
+    expect(
+      addDependencyText('{ "dependencies": {} }', IMAGE, "@nifrajs/web-react/image", "5.7.0")?.text,
+    ).toBe('{ "dependencies": {\n  "@nifrajs/image": "^5.7.0"\n} }')
+  })
+
+  test("a manifest that lists the package anywhere, or is that package, is left alone", () => {
+    const listed = json({
+      dependencies: { "@nifrajs/web-react": "^5.7.0" },
+      devDependencies: { "@nifrajs/image": "^5.7.0" },
+    })
+    expect(addDependencyText(listed, IMAGE, "@nifrajs/web-react/image", "5.7.0")).toBeUndefined()
+    const own = json({
+      name: "@nifrajs/authjs",
+      devDependencies: { "@nifrajs/web-react": "5.7.0" },
+    })
+    expect(addDependencyText(own, AUTHJS, "@nifrajs/authjs/react", "5.7.0")).toBeUndefined()
+    expect(addDependencyText("{ not json", AUTHJS, "@nifrajs/authjs", "5.7.0")).toBeUndefined()
+  })
+
+  test("upgrading to 5.7 adds what each importing package reached through an adapter", async () => {
+    const root = join(FIXTURES, "v5-7-adds")
+    await mkdir(join(root, "src"), { recursive: true })
+    await mkdir(join(root, "packages/ui/src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      json({
+        name: "app",
+        workspaces: ["packages/*"],
+        dependencies: { "@nifrajs/core": "^5.6.0", "@nifrajs/web-react": "^5.6.0" },
+      }),
+    )
+    await writeFile(
+      join(root, "src/session.tsx"),
+      'import { AuthSessionProvider } from "@nifrajs/web-react/auth"\nexport { AuthSessionProvider }\n',
+    )
+    await writeFile(
+      join(root, "src/hero.tsx"),
+      'import { Image } from "@nifrajs/web-react/image"\nimport { t } from "@nifrajs/schema"\nexport { Image, t }\n',
+    )
+    await writeFile(
+      join(root, "packages/ui/package.json"),
+      json({
+        name: "ui",
+        dependencies: { "@nifrajs/image": "^5.6.0", "@nifrajs/web-svelte": "^5.6.0" },
+      }),
+    )
+    await writeFile(
+      join(root, "packages/ui/src/Greeting.svelte"),
+      '<script>\n  import { useT } from "@nifrajs/web-svelte/i18n"\n  import { Image } from "@nifrajs/web-svelte/image"\n</script>\n',
+    )
+
+    const recipe = chainRecipes("5.7.0", "5.6.0")
+    const planned = computeUpgrade(root, recipe, false)
+    const added = planned.dependencyAdds.map((add) => [add.file, add.field, add.name, add.version])
+    expect(added).toEqual([
+      ["packages/ui/package.json", "dependencies", "@nifrajs/i18n", "^5.7.0"],
+      ["package.json", "dependencies", "@nifrajs/image", "^5.7.0"],
+      ["package.json", "dependencies", "@nifrajs/schema", "^5.7.0"],
+      ["package.json", "dependencies", "@nifrajs/authjs", "^5.7.0"],
+    ])
+    expect(planned.dependencyAdds.find((add) => add.name === "@nifrajs/authjs")).toMatchObject({
+      importer: "src/session.tsx",
+      specifier: "@nifrajs/authjs/react",
+    })
+    expect(await readFile(join(root, "package.json"), "utf8")).not.toContain("@nifrajs/authjs")
+    expect(pendingInstall(root, planned)).toBeDefined()
+
+    const { out } = await captureConsole(() =>
+      runUpgrade(root, { version: "5.7.0", verify: false, cliVersion: "5.7.0" }),
+    )
+    expect(out).toContain("Planned 4 dependency addition(s):")
+    expect(out).toContain(
+      "package.json  dependencies: @nifrajs/authjs@^5.7.0  (src/session.tsx imports @nifrajs/authjs/react)",
+    )
+
+    computeUpgrade(root, recipe, true)
+    const app = JSON.parse(await readFile(join(root, "package.json"), "utf8"))
+    expect(app.dependencies).toEqual({
+      "@nifrajs/authjs": "^5.7.0",
+      "@nifrajs/core": "^5.7.0",
+      "@nifrajs/image": "^5.7.0",
+      "@nifrajs/schema": "^5.7.0",
+      "@nifrajs/web-react": "^5.7.0",
+    })
+    const ui = JSON.parse(await readFile(join(root, "packages/ui/package.json"), "utf8"))
+    expect(ui.dependencies).toEqual({
+      "@nifrajs/i18n": "^5.7.0",
+      "@nifrajs/image": "^5.7.0",
+      "@nifrajs/web-svelte": "^5.7.0",
+    })
+    expect(await readFile(join(root, "src/session.tsx"), "utf8")).toContain(
+      '"@nifrajs/authjs/react"',
+    )
+    expect(computeUpgrade(root, recipe, true).dependencyAdds).toEqual([])
   })
 })
