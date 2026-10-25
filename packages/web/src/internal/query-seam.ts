@@ -2,6 +2,7 @@
  * What a query client tells the live client. `@nifrajs/web/live-client` installs the seam; a page
  * without live refresh never does, so its queries keep no live state and ship none of it.
  */
+import { onIdentityChange } from "../identity.ts"
 import type { QueryClient } from "../query.ts"
 
 export interface LiveQuery {
@@ -38,9 +39,17 @@ export function installQuerySeam(seam: QuerySeam): void {
 export const queryClients = (): readonly WeakRef<QueryClient>[] =>
   Reflect.get(globalThis, CLIENTS) ?? []
 
+/** Another viewer: no query client keeps data loaded for the last one. */
+export function clearQueryClients(): void {
+  for (const ref of queryClients()) ref.deref()?.clear()
+}
+
 export function adoptClient(client: QueryClient): void {
   // A server builds a client per request; none of them outlives it or sees a viewer switch.
   if (typeof Reflect.get(globalThis, "window") === "undefined") return
+  // One watch per page, whichever copy of the package makes the list. Not another tab's message: this
+  // tab hears its own `identityChanged()` there a task later, and would drop what loaded since.
+  if (Reflect.get(globalThis, CLIENTS) === undefined) onIdentityChange(clearQueryClients)
   // Each new client sheds the ones the page let go, so the list never outgrows the live clients.
   const clients = queryClients().filter((ref) => ref.deref() !== undefined)
   clients.push(new WeakRef(client))

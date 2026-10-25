@@ -304,7 +304,8 @@ export default function KeepAlive() {
         with the session cookie's lifetime. A tab that reads a new epoch drops every page it kept and
         tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
         session that expires while the visitor is away, is covered the same way: back compares the
-        epoch before it shows a kept page.
+        epoch before it shows a kept page. The page on screen reloads in place at the next render or
+        navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
       </p>
       <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default
@@ -324,7 +325,9 @@ export default function KeepAlive() {
       <CodeBlock code={ROTATE} />
       <p>
         When identity lives in client storage, as a bearer token, call <code>identityChanged()</code>{" "}
-        at sign-in and sign-out:
+        at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
+        and reloads the page on screen in place. A navigation still loading starts again, and a
+        submit still posting finishes first:
       </p>
       <CodeBlock code={TOKEN} />
       <p>

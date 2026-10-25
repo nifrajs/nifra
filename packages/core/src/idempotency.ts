@@ -233,6 +233,9 @@ function keepLossyNumberText(
   return mayHoldLossyNumber(source) ? rawJson(source) : value
 }
 
+// Not fatal: Deno's fatal decode costs several times a replacing one; U+FFFD is checked for instead.
+const utf8 = new TextDecoder()
+
 /** Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request. */
 export function canonicalizeIdempotencyBody(
   body: Uint8Array,
@@ -241,7 +244,10 @@ export function canonicalizeIdempotencyBody(
   const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase() ?? ""
   if (mediaType !== "application/json" && !mediaType.endsWith("+json")) return body
   try {
-    const text = new TextDecoder().decode(body)
+    const text = utf8.decode(body)
+    // Every invalid byte decodes to U+FFFD, so two different bodies could read the same: such a
+    // body, or one that writes U+FFFD itself, keeps its exact bytes.
+    if (text.includes("\uFFFD")) return body
     const parsed: unknown = mayHoldLossyNumber(text)
       ? JSON.parse(text, keepLossyNumberText)
       : JSON.parse(text)

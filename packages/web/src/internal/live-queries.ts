@@ -3,8 +3,9 @@
  * live client matches its keys to the tags each live load grants. Importing this module installs the
  * seam.
  */
-import { installQuerySeam, type LiveQuery, queryClients } from "./query-seam.ts"
+import { installQuerySeam, type LiveQuery } from "./query-seam.ts"
 
+export { clearQueryClients } from "./query-seam.ts"
 export type { LiveQuery }
 
 let tick = 0
@@ -41,11 +42,6 @@ export function watchLiveQueries(watcher: () => void): () => void {
   return () => {
     watchers.delete(watcher)
   }
-}
-
-/** Another viewer: no query client keeps data loaded for the last one. */
-export function clearQueryClients(): void {
-  for (const ref of queryClients()) ref.deref()?.clear()
 }
 
 installQuerySeam({

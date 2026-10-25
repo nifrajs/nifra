@@ -66,6 +66,12 @@ export default function Mutations() {
         affected data (via the <code>X-Nifra-Revalidate</code> header).
       </p>
       <CodeBlock code={FETCHERS} />
+      <p>
+        A fetcher holds nothing for the next visitor: <code>identityChanged()</code> returns every
+        fetcher to idle. In an app with a <a href="/docs/keep-alive#sign-in">keepAlive</a> route, so
+        does the identity epoch cookie a sign-in or sign-out response rotates, on the next{" "}
+        <code>useFetcher</code> read.
+      </p>
     </div>
   )
 }

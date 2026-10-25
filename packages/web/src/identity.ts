@@ -1,7 +1,7 @@
 /**
  * The identity epoch: a value the server rotates whenever a response signs a visitor in or out, so a
- * page kept mounted for one visitor is never shown to the next. Browser-safe and free of module-level
- * state, so a client bundle that never calls it carries none of it.
+ * page kept mounted for one visitor is never shown to the next. Browser-safe; its one module-level
+ * value, the epoch {@link documentEpoch} read, goes with that function from a bundle that never calls it.
  */
 
 /** The readable cookie holding the epoch on an `https:` origin. */
@@ -36,6 +36,23 @@ export function epochOf(cookie: string): string {
     if (name === LOCAL_EPOCH_COOKIE) local = part.slice(at + 1).trim()
   }
   return local
+}
+
+// Read once per synchronous run: `document.cookie` costs microseconds a read, and a cookie a response
+// sets lands in a later task, never partway through a run.
+let runEpoch: string | undefined
+
+/** The epoch in this document's cookies, or `""` with no document or none set. */
+export function documentEpoch(): string {
+  if (runEpoch !== undefined) return runEpoch
+  // Read without the DOM types: its callers also build in tsconfigs that leave the DOM lib out.
+  const cookie: unknown = Reflect.get(Reflect.get(globalThis, "document") ?? {}, "cookie")
+  const epoch = typeof cookie === "string" ? epochOf(cookie) : ""
+  runEpoch = epoch
+  queueMicrotask(() => {
+    runEpoch = undefined
+  })
+  return epoch
 }
 
 /** Run `listener` when this document hears that the visitor changed; returns its removal. */
