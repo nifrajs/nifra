@@ -14,6 +14,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => DefinePluginResult<In, Out>`
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => Conte…`
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<Adde…`
@@ -23,9 +24,8 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
-- **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
 
-_…and 134 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 137 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

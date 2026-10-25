@@ -558,6 +558,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { idempotency, MemoryIdempotencyStore } from \"@nifrajs/middleware\"\n\n// A retried POST with the same Idempotency-Key replays the first response instead of\n// re-running the side effect. Shared store in production (atomic claim); dev-only memory store.\nconst app = server()\napp.use(idempotency({ store: new MemoryIdempotencyStore() }))"
   },
   {
+    "name": "REQUEST_LOCALS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { carryRequestLocals, requestLocal, server } from \"@nifrajs/core/server\"\n\n// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.\nconst requestId = requestLocal<string>()\n\nconst billing = server().get(\"/invoices\", (c) => ({ requestId: requestId.get(c.req) }))\n\nexport const app = server()\n  .onRequest((req) => {\n    requestId.set(req, req.headers.get(\"x-request-id\") ?? crypto.randomUUID())\n  })\n  // The child sees a copy of the request with /billing stripped, and reads the same value.\n  .mount({ path: \"/billing\", app: billing, stripPrefix: true })\n\n// A wrapper that rebuilds the request carries the values itself.\nexport const fetch = (req: Request): Response | Promise<Response> => {\n  const url = new URL(req.url)\n  url.host = \"app.internal\"\n  const rebuilt = new Request(url.href, req)\n  carryRequestLocals(req, rebuilt)\n  return app.fetch(rebuilt)\n}"
+  },
+  {
     "name": "SESSION_TIERS",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

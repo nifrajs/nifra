@@ -142,6 +142,29 @@ const app = server().use(limiter)
 const key = await limiter.keyOf(new Request("http://x/api/exports/csv"), { clientIp: "203.0.113.9" })
 if (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit`
 
+const REQUEST_LOCALS = `import { carryRequestLocals, requestLocal, server } from "@nifrajs/core/server"
+
+// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.
+const requestId = requestLocal<string>()
+
+const billing = server().get("/invoices", (c) => ({ requestId: requestId.get(c.req) }))
+
+export const app = server()
+  .onRequest((req) => {
+    requestId.set(req, req.headers.get("x-request-id") ?? crypto.randomUUID())
+  })
+  // The child sees a copy of the request with /billing stripped, and reads the same value.
+  .mount({ path: "/billing", app: billing, stripPrefix: true })
+
+// A wrapper that rebuilds the request carries the values itself.
+export const fetch = (req: Request): Response | Promise<Response> => {
+  const url = new URL(req.url)
+  url.host = "app.internal"
+  const rebuilt = new Request(url.href, req)
+  carryRequestLocals(req, rebuilt)
+  return app.fetch(rebuilt)
+}`
+
 const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
 import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
@@ -417,6 +440,24 @@ export default function Plugins() {
         <code>500</code>. A thrown <code>Response</code> or <code>status()</code> value is sent as
         if returned.
       </p>
+
+      <h3 id="request-locals">State that follows the request</h3>
+      <p>
+        A value tied to one request - a verified client IP, a request id, an auth decision - is often
+        kept in a <code>WeakMap&lt;Request, T&gt;</code>, which loses it at the first copy of the
+        request. nifra copies requests itself: a <code>mount()</code> that strips its prefix, a
+        WebSocket pass reused for HTTP, a target it resolves, and the transport and idempotency
+        lanes, as do <code>methodOverride()</code>, a rewriting <code>trimTrailingSlash()</code> or{" "}
+        <code>appendTrailingSlash()</code>, and a live load. <code>requestLocal&lt;T&gt;()</code> from{" "}
+        <code>@nifrajs/core/server</code> is a slot with <code>get</code>, <code>set</code>,{" "}
+        <code>has</code> and <code>delete</code> whose value every one of those copies shares: a
+        value set before a mount is read in the child, and one the child sets is read through the
+        parent&apos;s request. Where your own code rebuilds a request - a wrapper in front of the app,
+        an <code>onRequest</code> hook returning a new one - call{" "}
+        <code>carryRequestLocals(from, to)</code> right after <code>new Request(url, req)</code>; a
+        copy made without it starts empty. Values are held weakly and never cross requests.
+      </p>
+      <CodeBlock code={REQUEST_LOCALS} />
 
       <h3>Which hooks run where</h3>
       <p>

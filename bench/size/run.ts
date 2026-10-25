@@ -287,15 +287,19 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 41.9,
+  // Request locals carried across the kernel's request copies (mount strip, target resolution, the
+  // transport and idempotency lanes): bare 38,453 -> 38,495 B, idempotency 42,850 -> 42,915, sse
+  // 39,315 -> 39,370, typebox-t 65,416 -> 65,496, typebox-form 70,396 -> 70,452 (Bun 1.4.4). Only
+  // the four caps crossed take the next 0.1 KiB step.
+  "nifra-idempotency": 42.0,
   "nifra-effect-ledger": 39.6,
   "nifra-mcp": 37.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.4,
+  "nifra-sse": 38.5,
   "nifra-valibot": 38.6,
-  "nifra-typebox-t": 63.9,
+  "nifra-typebox-t": 64.0,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 68.8,
+  "nifra-typebox-form": 68.9,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

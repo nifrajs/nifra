@@ -12769,6 +12769,20 @@
     "doc": "/** Per-request ledger. `append` is synchronous (hot-path safe); `seal` is idempotent and async. */"
   },
   {
+    "name": "RequestLocal",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface RequestLocal<T> {\n    /** The value set through `request` or any request in its scope, else `undefined`. */\n    get(request: Request): T | undefined;\n    /** Set the value for `request`'s whole scope. */\n    set(request: Request, value: T): void;\n    has(request: Request): boolean;\n    /** Remove the value from `request`'s scope; `true` when there was one. */\n    delete(request: Request): boolean;\n}",
+    "doc": "/** One request-local slot from {@link requestLocal}. */"
+  },
+  {
+    "name": "RequestLocal",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface RequestLocal<T> {\n    /** The value set through `request` or any request in its scope, else `undefined`. */\n    get(request: Request): T | undefined;\n    /** Set the value for `request`'s whole scope. */\n    set(request: Request, value: T): void;\n    has(request: Request): boolean;\n    /** Remove the value from `request`'s scope; `true` when there was one. */\n    delete(request: Request): boolean;\n}",
+    "doc": "/** One request-local slot from {@link requestLocal}. */"
+  },
+  {
     "name": "RequestLogFields",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -18114,6 +18128,20 @@
     "doc": "/**\n * Record the process's console and stream output into `feed`: every line as a log entry, and core's\n * `unhandled request error` line additionally as an `api` error with a full Diagnostic. The one sink\n * both dev servers and `nifra_run` use. Returns the detach function.\n */"
   },
   {
+    "name": "carryRequestLocals",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function carryRequestLocals(from: Request, to: Request): void;",
+    "doc": "/**\n * Join `to` to `from`'s request-local scope: each then reads every value set through either, now\n * and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a\n * replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value\n * `to` already holds is kept where `from` has none.\n */"
+  },
+  {
+    "name": "carryRequestLocals",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function carryRequestLocals(from: Request, to: Request): void;",
+    "doc": "/**\n * Join `to` to `from`'s request-local scope: each then reads every value set through either, now\n * and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a\n * replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value\n * `to` already holds is kept where `from` has none.\n */"
+  },
+  {
     "name": "catalogFixPrompts",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -23310,6 +23338,20 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function requestId(options?: RequestIdOptions): ContextPlugin<{\n    requestId: string;\n}>;",
     "doc": "/**\n * A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound\n * `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed,\n * threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw\n * `Response`s and redirects, `onRequest` short-circuits (an auth 401, an admission 429), and\n * framework-generated 404/405/422/timeout responses included. Core deliberately does not merge\n * `c.set.headers` onto a handler-returned `Response`, so the echo lives in an app-global\n * `onResponse` hook (paired with the derive through a `WeakMap` keyed on the request) with a node\n * twin, keeping the Node adapter on its direct writer with no request-walk cost. Idempotent -\n * applying it twice is a no-op.\n *\n * ```ts\n * app.use(requestId())          // c.requestId available downstream; X-Request-Id on responses\n * ```\n */"
+  },
+  {
+    "name": "requestLocal",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function requestLocal<T>(): RequestLocal<T>;",
+    "doc": "/**\n * A slot for one per-request value - a verified client IP, a request id, an auth decision - that\n * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,\n * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any\n * other way starts empty. Values are held weakly and never cross requests.\n *\n * ```ts\n * const clientIp = requestLocal<string>()\n * app.onRequest((req, platform) => { clientIp.set(req, platform?.clientIp ?? \"\") })\n * // ... in a mounted child app, after the prefix strip:\n * clientIp.get(c.req)\n * ```\n */"
+  },
+  {
+    "name": "requestLocal",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function requestLocal<T>(): RequestLocal<T>;",
+    "doc": "/**\n * A slot for one per-request value - a verified client IP, a request id, an auth decision - that\n * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,\n * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any\n * other way starts empty. Values are held weakly and never cross requests.\n *\n * ```ts\n * const clientIp = requestLocal<string>()\n * app.onRequest((req, platform) => { clientIp.set(req, platform?.clientIp ?? \"\") })\n * // ... in a mounted child app, after the prefix strip:\n * clientIp.get(c.req)\n * ```\n */"
   },
   {
     "name": "requireAuthUser",

@@ -1694,6 +1694,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
+  One request-local slot from {@link requestLocal}.
 - **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
   The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
@@ -1776,6 +1778,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
   Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
+  Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value `to` already…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -1810,6 +1814,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
+- **requestLocal** _(function)_ - `requestLocal: <T>() => RequestLocal<T>`
+  A slot for one per-request value - a verified client IP, a request id, an auth decision - that survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP, target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any other wa…
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
@@ -3006,6 +3012,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
+  One request-local slot from {@link requestLocal}.
 - **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
   The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
@@ -3085,6 +3093,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
   Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
+  Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value `to` already…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -3119,6 +3129,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
+- **requestLocal** _(function)_ - `requestLocal: <T>() => RequestLocal<T>`
+  A slot for one per-request value - a verified client IP, a request id, an auth decision - that survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP, target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any other wa…
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
@@ -7919,6 +7931,8 @@ _No named exports (side-effect entrypoint)._
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
+  One request-local slot from {@link requestLocal}.
 - **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
   The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
@@ -8001,6 +8015,8 @@ _No named exports (side-effect entrypoint)._
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
   Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
+  Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value `to` already…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -8035,6 +8051,8 @@ _No named exports (side-effect entrypoint)._
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
+- **requestLocal** _(function)_ - `requestLocal: <T>() => RequestLocal<T>`
+  A slot for one per-request value - a verified client IP, a request id, an auth decision - that survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP, target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any other wa…
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`

@@ -119,6 +119,11 @@ export type {
   RouteInfoFor,
 } from "./server/registry.ts"
 export { replacedRequestOf } from "./server/request-lineage.ts"
+export {
+  carryRequestLocals,
+  type RequestLocal,
+  requestLocal,
+} from "./server/request-local.ts"
 export { writableResponse } from "./server/respond.ts"
 export { routeTemplateOf } from "./server/route-template.ts"
 export {
