@@ -1378,6 +1378,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           this.staticResponseHeaders,
           // Response hooks write next, and they run for this same request object.
           ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
+          this.onResponseHooks.length === 0,
         )
   private readonly responseRequests: WeakMap<Request, Request>
   /** A request the WebSocket handshake check ran the onRequest hooks on and then passed to HTTP →
