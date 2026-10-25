@@ -1316,6 +1316,23 @@ The client's `Result` carries the body, not the response headers. A value the
 caller acts on, such as how long to wait, belongs in the declared body; set the matching
 header too when proxies or plain HTTP clients read it.
 
+### Query, header and cookie values are text
+
+A query string, header values and a `Cookie` header always arrive as text. A
+`t.object`, `t.query`, `t.headers` or `t.cookies`
+schema in one of those slots converts the text to the types it declares:
+`?archived=true` and `?archived=1` are `true`,
+`?page=2` is `2`, and text that is neither, such as
+`?archived=yes`, is a `422`. A list is read from repeated keys (
+`?tag=a&tag=b`), and a comma stays inside its value. A JSON body is already
+typed, so a `body` schema converts nothing.
+
+Another Standard Schema gets the text as it came and converts what it says it does. With
+zod, `z.coerce.boolean()` is `Boolean(value)`, so `"false"`
+and `"0"` are both `true`. Use `z.stringbool()`, which reads
+`false`, `0`, `no` and `off` as false and refuses
+other text; `nifra check` reports the first as NF-C055.
+
 ### Typed request cookies (schema.cookies)
 
 `c.cookies` is the request's `Cookie` header as a name-to-value record,
@@ -1356,8 +1373,8 @@ or malformed header is a `422` (`onValidationError` receives the kind
 `"headers"`), and `c.headers` becomes the schema's typed output.
 Every client sends headers no route declares - `host`, `user-agent`,
 `accept` - so a closed `t.object` validates only the names it declares,
-each read case-insensitively, which is also how the OpenAPI document lists them: one
-`in: header` parameter per declared name.
+each read case-insensitively and converted from text, which is also how the OpenAPI document
+lists them: one `in: header` parameter per declared name.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -18830,6 +18847,9 @@ schema whose `validate` does more than check its `jsonSchema`, custom registry k
 runtime-only metadata, and known TypeBox compiler escape hazards. Use the ordinary `t` adapter for
 these shapes. This opt-in build step leaves the existing validation API and runtime behavior intact.
 
+A compiled schema in a route's `query`, `headers` or `cookies` slot reads the text there the way the
+schema it was compiled from does: `?archived=true` is `true` for both.
+
 ### Forms and files - `@nifrajs/schema/form`
 
 The `t` exported from `@nifrajs/schema/form` is the same builder plus `t.file` and `t.form`. A
@@ -18915,9 +18935,10 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
   route. A declared response wins, so an app whose `onError` or `notFound()` writes another body
   declares it in `errors`.
 - **Query, header and cookie values** - a list is read from repeated keys and declared as
-  `style: form, explode: true` (`?tag=a,b` is the one value `"a,b"`). A boolean that `t.query`,
-  `t.headers` or `t.cookies` reads also accepts `1`/`0` and either case, listed on the parameter as
-  `x-nifra-boolean-literals`; a schema that does not coerce lists none.
+  `style: form, explode: true` (`?tag=a,b` is the one value `"a,b"`). A boolean read from that text
+  (by `t.query`, `t.headers`, `t.cookies`, or a `t.object` in one of those slots) also accepts
+  `1`/`0` and either case, listed on the parameter as `x-nifra-boolean-literals`; another Standard
+  Schema lists none.
 - **Tagged unions** - a union whose members all pin one required property to distinct values is
   emitted as a `oneOf`. When every member is a component (a `$id`) it also gets a `discriminator`
   with a `mapping`, so a client generator can build a tagged union; OpenAPI discriminators never

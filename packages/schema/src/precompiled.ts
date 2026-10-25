@@ -2,7 +2,9 @@ import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/c
 import type { Static, TSchema } from "@sinclair/typebox"
 import { FormatRegistry } from "@sinclair/typebox"
 import { Errors } from "@sinclair/typebox/errors"
+import { Convert } from "@sinclair/typebox/value"
 import { ensureDefaultFormats } from "./formats.ts"
+import { COERCES, TEXT_SLOT } from "./marks.ts"
 
 export { Kind, OptionalKind, ReadonlyKind } from "@sinclair/typebox"
 export { Hash as compiledHash } from "@sinclair/typebox/value"
@@ -18,7 +20,7 @@ export function fromPrecompiled<T extends TSchema>(
   schema: T,
   check: (value: unknown) => boolean,
 ): StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T } {
-  return {
+  const result: StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T } = {
     jsonSchema: schema,
     "~standard": {
       version: 1,
@@ -47,4 +49,17 @@ export function fromPrecompiled<T extends TSchema>(
       types: undefined as unknown as StandardTypes<Static<T>, Static<T>>,
     },
   }
+  // The same text form `fromTypeBox` offers a query, header or cookie slot: the values converted to
+  // the schema's types, then the generated checker.
+  let textForm: typeof result | undefined
+  Object.defineProperty(result["~standard"].validate, TEXT_SLOT, {
+    get: () => {
+      if (textForm !== undefined) return textForm
+      const validate = (value: unknown) => result["~standard"].validate(Convert(schema, value))
+      Object.defineProperty(validate, COERCES, { value: true })
+      textForm = { ...result, "~standard": { ...result["~standard"], validate } }
+      return textForm
+    },
+  })
+  return result
 }
