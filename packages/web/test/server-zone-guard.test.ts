@@ -152,6 +152,51 @@ describe("buildServer builds", () => {
   })
 })
 
+describe("a built-in the runtime provides", () => {
+  const hashing = () => {
+    write(
+      "backend/hash.ts",
+      'import { createHash } from "node:crypto"\nexport const use = () => createHash("sha256").digest("hex")\n',
+    )
+    routeUsing("../backend/hash.ts")
+  }
+
+  test("stays the runtime's own import in an edge bundle, where Bun would inline a stand-in", async () => {
+    hashing()
+    const { worker } = await buildServer({
+      routesDir: join(root, "routes"),
+      serverEntry: join(root, "worker.ts"),
+      outDir: join(root, "dist"),
+      clientEntry: "/assets/entry.js",
+      minify: false,
+      providedBuiltins: ["node:crypto"],
+    })
+    const code = await Bun.file(worker).text()
+    expect(code).toContain('from "node:crypto"')
+    // Bun's stand-in carries crypto-browserify's constants.
+    expect(code).not.toContain("POINT_CONVERSION_HYBRID")
+  })
+
+  test("passes the Vite edge build, which refuses it otherwise", async () => {
+    hashing()
+    const vite = (providedBuiltins: readonly string[] = []) =>
+      buildServerVite({
+        routesDir: join(root, "routes"),
+        serverEntry: join(root, "worker.ts"),
+        outDir: join(root, "dist"),
+        clientEntry: "/assets/entry.js",
+        target: "browser",
+        minify: false,
+        providedBuiltins,
+      })
+    await expect(vite()).rejects.toThrow(
+      "Node built-in(s) reached an edge server bundle: node:crypto",
+    )
+    const { worker } = await vite(["node:crypto"])
+    expect(await Bun.file(worker).text()).toContain("node:crypto")
+  })
+})
+
 describe("unsupportedBuiltins", () => {
   const LIB = "node_modules/lib/llms.js"
   const graph = (
@@ -214,6 +259,15 @@ describe("unsupportedBuiltins", () => {
     expect(
       found(graph({ path: "bun:sqlite", original: "bun:sqlite", external: true }), "node"),
     ).toEqual([["bun:sqlite", [LIB]]])
+  })
+
+  test("a built-in the runtime provides is not refused; the others still are", () => {
+    const crypto: GraphImport = { path: "node:crypto", original: "node:crypto", external: true }
+    const provided = new Set(["node:crypto"])
+    expect([...unsupportedBuiltins(graph(crypto), "browser", (id) => id, provided)]).toEqual([])
+    expect([...unsupportedBuiltins(graph(fsStatic), "browser", (id) => id, provided)]).toEqual([
+      ["node:fs", [LIB]],
+    ])
   })
 
   test("a built-in the bundler polyfilled is not refused", () => {

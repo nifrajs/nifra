@@ -80,21 +80,27 @@ function replaceOnce(text: string, from: string, to: string): string {
 
 /**
  * The generated Deno entry from its static section on, as a module for Deno itself: core's subpaths
- * from source, a stub app answering its first argument, the root at `dir`, and a loopback listener
- * on a free port.
+ * and the Deno adapter from source, a stub app answering its first argument, the root at `dir`, and a
+ * loopback listener on a free port.
  */
 function denoModule(src: string): string {
   const core = new URL("../../../packages/core/src/", import.meta.url)
+  const adapter = new URL("../../../packages/deno/src/index.ts", import.meta.url)
   const imports = src
     .split("\n")
     .filter(
       (line) =>
-        line.startsWith("import ") && (line.includes('"@nifrajs/core/') || line.includes('"node:')),
+        line.startsWith("import ") &&
+        (line.includes('"@nifrajs/core/') ||
+          line.includes('"@nifrajs/deno"') ||
+          line.includes('"node:')),
     )
     .map((line) =>
-      line.replace(/"@nifrajs\/core\/([a-z-]+)"/, (_, name: string) =>
-        JSON.stringify(new URL(`${name}.ts`, core).href),
-      ),
+      line
+        .replace(/"@nifrajs\/core\/([a-z-]+)"/, (_, name: string) =>
+          JSON.stringify(new URL(`${name}.ts`, core).href),
+        )
+        .replace('"@nifrajs/deno"', JSON.stringify(adapter.href)),
     )
   let section = src.slice(src.indexOf("const STATIC_ROOT"))
   section = replaceOnce(
@@ -104,8 +110,8 @@ function denoModule(src: string): string {
   )
   section = replaceOnce(
     section,
-    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") },',
-    'Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: (at) => console.log("listening " + at.port) },',
+    'port: Number(Deno.env.get("PORT") ?? "3000"),',
+    'hostname: "127.0.0.1", port: 0,',
   )
   return [
     ...imports,
@@ -142,7 +148,7 @@ async function startDeno(binary: string, src: string): Promise<void> {
   const decoder = new TextDecoder()
   let out = ""
   for (;;) {
-    const port = /listening (\d+)/.exec(out)?.[1]
+    const port = /localhost:(\d+)/.exec(out)?.[1]
     if (port !== undefined) {
       reader.releaseLock()
       denoBase = `http://127.0.0.1:${port}`

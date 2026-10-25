@@ -60,7 +60,7 @@ import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
-import { nodeAdapterRefusal } from "./internal/node-adapter.ts"
+import { adapterRefusal } from "./internal/node-adapter.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
@@ -877,6 +877,10 @@ export interface BuildServerOptions {
    * only apply to the `"browser"` target; `"node"`/`"bun"` resolve their own renderer builds via the
    * matching condition. */
   readonly target?: "browser" | "node" | "bun"
+  /** Node built-ins the runtime that runs the bundle has besides what `target` implies, kept as imports
+   * of the runtime's own module: neither polyfilled nor refused. `buildTarget` passes `node:crypto` for
+   * Deno, where Bun's `browser` stand-in for it has no working `createHash`. */
+  readonly providedBuiltins?: readonly string[]
   /** **Lazy/code-split routes** (default `false`): emit `() => import(route)` loaders + bundle with
    * `splitting`, so each route is its own chunk loaded on first request (smaller cold-start parse)
    * instead of all parsed at boot. The output becomes the worker entry **+ chunk files** in `outDir`
@@ -1174,6 +1178,18 @@ const solidWebServerPlugin = (from: string): BunPlugin => ({
   },
 })
 
+/** Keeps each of `provided` an import of the runtime's own module. Bun.build's `external` loses to its
+ * `browser` stand-in for a Node built-in; an `onResolve` answer does not. */
+function providedBuiltinsPlugin(provided: ReadonlySet<string>): BunPlugin {
+  const filter = new RegExp(`^(?:${[...provided].map((name) => RegExp.escape(name)).join("|")})$`)
+  return {
+    name: "nifra:provided-builtins",
+    setup(build) {
+      build.onResolve({ filter }, (args) => ({ path: args.path, external: true }))
+    },
+  }
+}
+
 /**
  * Build a self-contained **worker bundle** for a file-routed app on a disk-less edge (Cloudflare
  * Workers / workerd). Discovers routes (build-time fs), codegens the static-import server manifest
@@ -1234,6 +1250,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     }),
   )
 
+  const provided = new Set(options.providedBuiltins)
   const result = await Bun.build({
     entrypoints: [serverEntry],
     outdir: outDir,
@@ -1256,6 +1273,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     // Lazy → one chunk per route (loaded on first request); eager → a single self-contained file.
     splitting: lazy,
     plugins: [
+      ...(provided.size > 0 ? [providedBuiltinsPlugin(provided)] : []),
       ...declaredSingleCopyPlugins(resolvePath(dirname(routesDir))),
       ...(edge ? [reactDomEdgePlugin(entryDir), solidWebServerPlugin(entryDir)] : []),
       reactDedupePlugin(entryDir),
@@ -1306,7 +1324,8 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
         sourceOf,
         privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
       }),
-    ) ?? formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf), target)
+    ) ??
+    formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf, provided), target)
   if (refusal !== undefined) {
     // Bun wrote the bundle already; a refused build leaves nothing a deploy step could pick up.
     for (const output of result.outputs) rmSync(output.path, { force: true })
@@ -1353,6 +1372,44 @@ export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption
 export type ServerEntryClientIp = "platform"
 
 /**
+ * Settings the server of a self-hosting target (`bun`, `node`, `deno`) starts with; an edge target has
+ * no process of its own and ignores them. `gracefulSignals` stops the server gracefully on SIGTERM and
+ * SIGINT (`docker stop`, Ctrl-C): `true`, or the `{ drainMs, delayMs }` its `stop()` takes.
+ * `idleTimeoutSec` is how long Bun keeps a connection that moves no bytes, a whole number from `0`
+ * (never) to 255, a request whose handler is still working included. Node and Deno do not close a
+ * connection while its request is being handled, so they ignore it.
+ */
+export interface ServerEntrySelfHost {
+  readonly gracefulSignals?: boolean | { readonly drainMs?: number; readonly delayMs?: number }
+  readonly idleTimeoutSec?: number
+}
+
+/** What is wrong with a {@link ServerEntrySelfHost}, or `undefined` when it is valid. */
+function selfHostProblem(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return "must be an object"
+  const signals: unknown = Reflect.get(value, "gracefulSignals")
+  if (signals !== undefined && typeof signals !== "boolean") {
+    if (typeof signals !== "object" || signals === null) {
+      return "gracefulSignals must be a boolean or { drainMs, delayMs }"
+    }
+    for (const key of ["drainMs", "delayMs"]) {
+      const ms: unknown = Reflect.get(signals, key)
+      if (ms !== undefined && !(typeof ms === "number" && Number.isFinite(ms) && ms >= 0)) {
+        return `gracefulSignals.${key} must be a number of milliseconds, 0 or more`
+      }
+    }
+  }
+  const idle: unknown = Reflect.get(value, "idleTimeoutSec")
+  if (
+    idle !== undefined &&
+    !(typeof idle === "number" && Number.isInteger(idle) && idle >= 0 && idle <= 255)
+  ) {
+    return "idleTimeoutSec must be a whole number of seconds from 0 to 255"
+  }
+  return undefined
+}
+
+/**
  * The header each edge platform sets to the caller's address, replacing any value the client sent.
  * That replacement is the whole trust: the same bundle served without the platform's edge in front
  * (`wrangler pages dev`, a self-hosted workerd) hands the header straight from the client, which is
@@ -1379,7 +1436,7 @@ const PRERENDERED_DIR = "_prerendered"
  * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires
  * the right host:
  *   - `cloudflare` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
- *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.
+ *   - `deno`: a `@nifrajs/deno` server that serves the client bundle with Deno's file API.
  *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those
  *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).
  * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) -
@@ -1407,6 +1464,8 @@ export function generateServerEntry(options: {
   readonly hashedFiles?: readonly string[]
   /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
+  /** How a self-hosted server stops and keeps idle connections. See {@link ServerEntrySelfHost}. */
+  readonly selfHost?: ServerEntrySelfHost
   /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */
   readonly copyChunks?: boolean
   /** `bun` / `node` only: the pages the build prerendered into `_prerendered/`, by request path, which
@@ -1423,6 +1482,7 @@ export function generateServerEntry(options: {
     publicFiles = [],
     hashedFiles,
     clientIp,
+    selfHost,
   } = options
   if (clientIp !== undefined && clientIp !== "platform") {
     throw new Error(
@@ -1430,6 +1490,15 @@ export function generateServerEntry(options: {
     )
   }
   const clientIpHeader = clientIp === "platform" ? PLATFORM_CLIENT_IP_HEADERS[target] : undefined
+  const selfHostIssue = selfHost === undefined ? undefined : selfHostProblem(selfHost)
+  if (selfHostIssue !== undefined) {
+    throw new Error(`[nifra/web] generateServerEntry: selfHost ${selfHostIssue}`)
+  }
+  const gracefulSignals =
+    selfHost?.gracefulSignals === undefined || selfHost.gracefulSignals === false
+      ? undefined
+      : JSON.stringify(selfHost.gracefulSignals)
+  const idleTimeoutSec = target === "bun" ? selfHost?.idleTimeoutSec : undefined
   // Identifiers come only from the fixed list, never from the caller's keys, so generated code names
   // nothing the list does not.
   const importedOptions = SERVER_ENTRY_OPTIONS.filter((name) => optionImports[name] !== undefined)
@@ -1482,6 +1551,7 @@ export function generateServerEntry(options: {
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "bun") lines.push('import { pathnameOf } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
+  if (target === "deno") lines.push('import { serve } from "@nifrajs/deno"')
   if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
   if (target === "deno") {
     lines.push(
@@ -1524,6 +1594,10 @@ export function generateServerEntry(options: {
     // Core's own `{ header }` trust, so the mounted backend and every loader see the derived caller.
     ...(clientIpHeader !== undefined
       ? [`  server: { clientIp: { header: ${JSON.stringify(clientIpHeader)} } },`]
+      : []),
+    // Bun's listen() installs the handlers the app's own options ask for; the adapters take `signals`.
+    ...(target === "bun" && gracefulSignals !== undefined
+      ? [`  server: { gracefulSignals: ${gracefulSignals} },`]
       : []),
     "})",
     "",
@@ -1579,6 +1653,7 @@ export function generateServerEntry(options: {
     lines.push(
       "await serve(app, {",
       "  port: Number(process.env.PORT ?? 3000),",
+      ...(gracefulSignals !== undefined ? [`  signals: ${gracefulSignals},`] : []),
       "  static: [",
       "    {",
       '      dir: fileURLToPath(new URL("./assets/", import.meta.url)),',
@@ -1630,6 +1705,7 @@ export function generateServerEntry(options: {
     lines.push(
       "// listen() puts this in front of every route, so a file wins over a page at the same path.",
       "const server = app.listen(Number(Bun.env.PORT ?? 3000), {",
+      ...(idleTimeoutSec !== undefined ? [`  idleTimeoutSec: ${idleTimeoutSec},`] : []),
       "  static(req) {",
       "    const pathname = pathnameOf(req.url)",
       `    return staticPath(pathname) !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}`,
@@ -1643,21 +1719,21 @@ export function generateServerEntry(options: {
     )
     return `${lines.join("\n")}\n`
   }
-  // Deno.serve delimits the body itself, so its declared length is the transport frame - the
-  // guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
-  const markFramed =
-    '(req as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true'
   lines.push(
-    "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req, info) => {',
-    "  const { pathname } = new URL(req.url)",
-    "  const filePath = staticPath(pathname)",
-    `  if (filePath !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}) {`,
-    "    return staticResponse(req, filePath, pathname)",
-    "  }",
-    `  ${markFramed}`,
-    "  return app.fetch(req, { clientIp: info.remoteAddr.hostname })",
+    "// serve() puts this in front of every route, so a file wins over a page at the same path.",
+    "const server = await serve(app, {",
+    "  // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    '  port: Number(Deno.env.get("PORT") ?? "3000"),',
+    ...(gracefulSignals !== undefined ? [`  signals: ${gracefulSignals},`] : []),
+    "  static(req) {",
+    "    const { pathname } = new URL(req.url)",
+    "    const filePath = staticPath(pathname)",
+    `    return filePath !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}`,
+    "      ? staticResponse(req, filePath, pathname)",
+    "      : undefined",
+    "  },",
     "})",
+    `console.log(\`nifra (Deno) → http://localhost:$${"{server.port}"}\`)`,
   )
   return `${lines.join("\n")}\n`
 }
@@ -1898,6 +1974,9 @@ export interface BuildTargetOptions {
   /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by
    * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
+  /** How a `bun`, `node` or `deno` server stops and keeps idle connections. See
+   * {@link ServerEntrySelfHost}. */
+  readonly selfHost?: ServerEntrySelfHost
   /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */
   readonly live?: LiveClientEntry | undefined
 }
@@ -1975,6 +2054,7 @@ export const bunBundler: Bundler = {
       ...(input.root !== undefined ? { root: input.root } : {}),
       ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...(input.providedBuiltins !== undefined ? { providedBuiltins: input.providedBuiltins } : {}),
     }),
 }
 
@@ -2067,6 +2147,11 @@ export async function buildTargetWith(
       "[nifra/web] buildTarget: `optionImports.live` and `live` go together - the server's runtime and the client entry that reaches it",
     )
   }
+  // Before the client build, which a wrong value would otherwise run to completion first.
+  const selfHostIssue =
+    options.selfHost === undefined ? undefined : selfHostProblem(options.selfHost)
+  if (selfHostIssue !== undefined)
+    throw new Error(`[nifra/web] buildTarget: selfHost ${selfHostIssue}`)
   const requestedCssCodeSplit =
     options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
   const requestedCssLoading =
@@ -2087,8 +2172,8 @@ export async function buildTargetWith(
   assertDisposableDir("outDir", outDir, sources)
   assertDisposableDir("workDir", workDir, sources)
   // Before anything is cleared, so a refused build leaves the last deploy dir in place.
-  if (targetPlan.target === "node") {
-    const refusal = nodeAdapterRefusal(workDir)
+  if (targetPlan.target === "node" || targetPlan.target === "deno") {
+    const refusal = adapterRefusal(targetPlan.target, workDir)
     if (refusal !== undefined) throw new Error(refusal)
   }
   const { rmSync } = await import("node:fs")
@@ -2222,6 +2307,7 @@ export async function buildTargetWith(
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
       hashedFiles: client.assets,
       ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
+      ...(options.selfHost !== undefined ? { selfHost: options.selfHost } : {}),
       ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
       ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
     }),
@@ -2246,6 +2332,8 @@ export async function buildTargetWith(
     root: resolvePath(dirname(routesDir)),
     generatedFiles: [resolvePath(workDir, options.adapterImport)],
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+    // The Deno entry tags its files with node:crypto, which Deno provides itself.
+    ...(targetPlan.target === "deno" ? { providedBuiltins: ["node:crypto"] } : {}),
   })
 
   // (3) Assemble the deploy dir for the target.

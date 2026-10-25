@@ -5709,6 +5709,8 @@ _No named exports (side-effect entrypoint)._
 - **ServerEntryOption** _(type)_ - `type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]`
 - **ServerEntryOptionImports** _(type)_ - `type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>`
   Each importable option mapped to the specifier of the module that exports it.
+- **ServerEntrySelfHost** _(interface)_ - `interface ServerEntrySelfHost`
+  Settings the server of a self-hosting target (`bun`, `node`, `deno`) starts with; an edge target has no process of its own and ignores them. `gracefulSignals` stops the server gracefully on SIGTERM and SIGINT (`docker stop`, Ctrl-C): `true`, or the `{ drainMs, delayMs }` its `stop()` takes. `idleTi…
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
 - **ServerPrerenderedPage** _(interface)_ - `interface ServerPrerenderedPage`

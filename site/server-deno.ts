@@ -1,11 +1,12 @@
 /**
- * The site on Deno - the same Nifra app, served by `@nifrajs/deno` (Deno.serve under the hood). Like
- * the Node entry, it wraps `app.fetch` with a `/assets/*` static handler (reading the client bundle
- * via `Deno.readFile`), since the adapter serves `app.fetch` only.
+ * The site on Deno - the same Nifra app, served by `@nifrajs/deno` (Deno.serve under the hood). The
+ * adapter's `static` answers the machine surfaces and the client bundle under `/assets/` (read with
+ * `Deno.readFile`) ahead of every route.
  *
  *   deno run --allow-net --allow-read --allow-env site/dist-deno/server-deno.js   (built by build-deno.ts)
  */
 import { inProcessClient } from "@nifrajs/client"
+import { contentTypeOf } from "@nifrajs/core/static-file"
 import { serve } from "@nifrajs/deno"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
@@ -22,33 +23,27 @@ const app = createWebApp({
 })
 
 const ASSETS_DIR = new URL("./assets/", import.meta.url)
-const CONTENT_TYPE: Readonly<Record<string, string>> = {
-  js: "text/javascript",
-  css: "text/css",
-  map: "application/json",
+
+// Each segment is a plain name, never `.` or `..`, so the path stays inside ASSETS_DIR.
+const safeSegment = (segment: string): boolean =>
+  segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)
+
+async function asset(name: string): Promise<Response> {
+  if (!name.split("/").every(safeSegment)) return new Response("bad request", { status: 400 })
+  try {
+    const body = await Deno.readFile(new URL(name, ASSETS_DIR))
+    return new Response(body, { headers: { "content-type": contentTypeOf(name) } })
+  } catch {
+    return new Response("not found", { status: 404 })
+  }
 }
 
-await serve(
-  {
-    async fetch(req) {
-      const { pathname } = new URL(req.url)
-      const machineSurface = machineSurfaceFor(req)
-      if (machineSurface !== undefined) return machineSurface
-      if (pathname.startsWith("/assets/")) {
-        const name = pathname.slice("/assets/".length)
-        if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })
-        try {
-          const body = await Deno.readFile(new URL(name, ASSETS_DIR))
-          const ext = name.slice(name.lastIndexOf(".") + 1)
-          return new Response(body, {
-            headers: { "content-type": CONTENT_TYPE[ext] ?? "application/octet-stream" },
-          })
-        } catch {
-          return new Response("not found", { status: 404 })
-        }
-      }
-      return app.fetch(req)
-    },
+await serve(app, {
+  port: Number(Deno.env.get("PORT") ?? "3000"),
+  static(req) {
+    const machineSurface = machineSurfaceFor(req)
+    if (machineSurface !== undefined) return machineSurface
+    const { pathname } = new URL(req.url)
+    return pathname.startsWith("/assets/") ? asset(pathname.slice("/assets/".length)) : undefined
   },
-  { port: Number(Deno.env.get("PORT") ?? "3000") },
-)
+})

@@ -28,6 +28,21 @@ await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful s
 await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
 
+## Files ahead of the app
+
+```ts
+await serve(app, {
+  port: 3000,
+  static: (req) =>
+    new URL(req.url).pathname === "/robots.txt" ? new Response("User-agent: *\n") : undefined,
+})
+```
+
+`static` sees every request before the app does, so a file it answers wins over any route at the
+same path. It returns a response, or `undefined` (or a promise of one) to let the app route the
+request. No hook of the app runs for a request it answers, and a throw answers a plain `500`. The
+server `nifra build --target deno` emits serves its client bundle and public files this way.
+
 ## Client disconnect and `c.req.signal`
 
 `Deno.serve` aborts a request's `signal` when the client goes away and, by default, also once a

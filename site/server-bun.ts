@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url"
 import { inProcessClient } from "@nifrajs/client"
-import { createWebApp } from "@nifrajs/web"
+import { pathnameOf } from "@nifrajs/core/server"
+import { createWebApp, servePublicDir } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { backend } from "./backend/app"
 import { machineSurfaceFor } from "./backend/machine-surfaces"
@@ -13,33 +15,25 @@ const app = createWebApp({
   title: "nifra site",
 })
 
-// Bun (Nifra's flagship runtime): Bun.serve handles app.fetch; serve the client bundle (/assets/*)
-// from disk with Bun.file. Assets live next to this file in the built dist-bun/ output.
-const ASSETS = new URL("./assets/", import.meta.url)
-const TYPES: Readonly<Record<string, string>> = {
-  js: "text/javascript",
-  css: "text/css",
-  svg: "image/svg+xml",
-  png: "image/png",
-}
+// Bun (Nifra's flagship runtime) on app.listen(): `static` answers the machine surfaces and the client
+// bundle ahead of every route, Bun's route table included. The bundle sits in assets/ next to this file
+// in the built dist-bun/ output. Its manifest names the content-hashed files, the only ones cached as
+// immutable: the fonts and media copied beside them keep their names across builds.
+const built: unknown = await Bun.file(new URL("./assets/manifest.json", import.meta.url)).json()
+const hashed: unknown =
+  typeof built === "object" && built !== null ? Reflect.get(built, "assets") : []
+const assets = servePublicDir({
+  dir: fileURLToPath(new URL("./", import.meta.url)),
+  hashedFiles: new Set(
+    Array.isArray(hashed) ? hashed.filter((path) => typeof path === "string") : [],
+  ),
+})
 
-const server = Bun.serve({
-  port: Number(Bun.env.PORT ?? 3000),
-  async fetch(req) {
-    const { pathname } = new URL(req.url)
+const server = app.listen(Number(Bun.env.PORT ?? 3000), {
+  static(req) {
     const machineSurface = machineSurfaceFor(req)
     if (machineSurface !== undefined) return machineSurface
-    if (pathname.startsWith("/assets/")) {
-      const name = pathname.slice("/assets/".length)
-      if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })
-      const file = Bun.file(new URL(name, ASSETS))
-      if (!(await file.exists())) return new Response("not found", { status: 404 })
-      const ext = name.slice(name.lastIndexOf(".") + 1)
-      return new Response(file, {
-        headers: { "content-type": TYPES[ext] ?? "application/octet-stream" },
-      })
-    }
-    return app.fetch(req)
+    return pathnameOf(req.url).startsWith("/assets/") ? assets(req) : undefined
   },
 })
 console.log(`nifra (Bun) → http://localhost:${server.port}`)

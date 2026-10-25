@@ -27,8 +27,16 @@ export const EDGE_NODE_BUILTINS: ReadonlySet<string> = new Set([
   "node:util",
 ])
 
-/** Whether a server bundle for `target` cannot load the built-in `specifier`. */
-export function unsupportedBuiltin(specifier: string, target: ServerBundleTarget): boolean {
+const NONE: ReadonlySet<string> = new Set()
+
+/** Whether a server bundle for `target` cannot load the built-in `specifier`. `provided` are the ones
+ * its runtime has besides the target's own (see `BuildServerOptions.providedBuiltins`). */
+export function unsupportedBuiltin(
+  specifier: string,
+  target: ServerBundleTarget,
+  provided: ReadonlySet<string> = NONE,
+): boolean {
+  if (provided.has(specifier)) return false
   if (target === "browser" && EDGE_NODE_BUILTINS.has(specifier)) return false
   return UNSUPPORTED[target].some((prefix) => specifier.startsWith(prefix))
 }
@@ -45,9 +53,10 @@ export function unsupportedBuiltins(
   graph: ClientModuleGraph,
   target: ServerBundleTarget,
   labelOf: (id: string) => string,
+  provided: ReadonlySet<string> = NONE,
 ): ReadonlyMap<string, readonly string[]> {
   if (UNSUPPORTED[target].length === 0) return new Map()
-  const unsupported = (spec: string) => unsupportedBuiltin(spec, target)
+  const unsupported = (spec: string) => unsupportedBuiltin(spec, target, provided)
   const specOf = (im: GraphImport) => im.original ?? im.path ?? ""
   const chunks = Object.values(graph.chunks)
   const evidence = chunks.every((chunk) => chunk.imports !== undefined)
