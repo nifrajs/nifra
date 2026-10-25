@@ -50,9 +50,9 @@ export function carryToCopy(from: Request, to: Request): void {
 
 /**
  * Join `to` to `from`'s request-local scope: each then reads every value set through either, now
- * and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a
- * replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value
- * `to` already holds is kept where `from` has none.
+ * and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an
+ * `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is
+ * kept where `from` has none.
  */
 export function carryRequestLocals(from: Request, to: Request): void {
   const links = linksOf()

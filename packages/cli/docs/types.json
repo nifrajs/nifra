@@ -18153,14 +18153,14 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function carryRequestLocals(from: Request, to: Request): void;",
-    "doc": "/**\n * Join `to` to `from`'s request-local scope: each then reads every value set through either, now\n * and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a\n * replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value\n * `to` already holds is kept where `from` has none.\n */"
+    "doc": "/**\n * Join `to` to `from`'s request-local scope: each then reads every value set through either, now\n * and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an\n * `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is\n * kept where `from` has none.\n */"
   },
   {
     "name": "carryRequestLocals",
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function carryRequestLocals(from: Request, to: Request): void;",
-    "doc": "/**\n * Join `to` to `from`'s request-local scope: each then reads every value set through either, now\n * and later. nifra calls it wherever it rebuilds a request and when an `onRequest` hook returns a\n * replacement; call it where a wrapper rebuilds one, right after `new Request(url, req)`. A value\n * `to` already holds is kept where `from` has none.\n */"
+    "doc": "/**\n * Join `to` to `from`'s request-local scope: each then reads every value set through either, now\n * and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an\n * `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is\n * kept where `from` has none.\n */"
   },
   {
     "name": "catalogFixPrompts",
