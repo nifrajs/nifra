@@ -11,7 +11,7 @@
  * {@link extended}; `unsafe` is used only for fixed text this file writes.
  */
 
-import { lexPostgres } from "./pg-lexer.ts"
+import { functionCalls, lexPostgres, type PgCall } from "./pg-lexer.ts"
 import { type DbRefusal, dbRefusal } from "./shared.ts"
 
 /** A pending query: awaitable for object rows, or `.values()` for array rows (checked by readers). */
@@ -165,6 +165,8 @@ export interface PlanReads {
    * When the list is not the relation's full column list, it is exactly what was asked for and counts.
    */
   readonly outputs: readonly PlanOutput[]
+  /** Every function a plan expression calls or a Function Scan runs, views' bodies included. */
+  readonly calls: readonly PgCall[]
 }
 
 /** Plain columns of one relation that a node outputs, as listed. */
@@ -306,11 +308,21 @@ export function planReads(plan: unknown): PlanReads {
       }
     }
   }
+  const calls = new Map<string, PgCall>()
+  for (const { schema, name } of functions.values()) {
+    calls.set(JSON.stringify([schema, name]), { schema: schema === "" ? null : schema, name })
+  }
+  for (const text of expressions) {
+    for (const call of functionCalls(text)) {
+      calls.set(JSON.stringify([call.schema ?? "", call.name]), call)
+    }
+  }
   return {
     relations: [...relations.values()],
     functions: [...functions.values()],
     columns: [...columns.values()],
     outputs,
+    calls: [...calls.values()],
   }
 }
 
@@ -342,6 +354,9 @@ export interface CursorOptions {
  */
 const withColumnNames = (sql: string): string =>
   `SELECT (SELECT json_agg(nifra_k)::text FROM json_object_keys(row_to_json(nifra_q)) AS nifra_k) AS nifra_columns, nifra_q.* FROM (\n${sql}\n) AS nifra_q`
+
+/** The functions {@link withColumnNames} adds to every checked plan. */
+export const WRAPPER_CALLS: readonly PgCall[] = functionCalls(withColumnNames(""))
 
 /**
  * Declare the caller's query as a NO SCROLL cursor (the server accepts only SELECT/VALUES there and

@@ -11,6 +11,14 @@ import {
   planReads,
 } from "../src/internal/pg-exec.ts"
 import {
+  definerRefusal,
+  type Exposure,
+  grantRefusal,
+  judgeExposure,
+  partialGrantRefusal,
+} from "../src/internal/pg-grants.ts"
+import {
+  functionCalls,
   lexPostgres,
   lintPostgres,
   tableAliasLists,
@@ -31,6 +39,7 @@ import {
   queryPostgres,
   readPostgresSchema,
 } from "../src/postgres.ts"
+import { generate, KNOWN, mulberry32 } from "./fixtures/canary-grammar.ts"
 import { HOSTILE_CORPUS } from "./fixtures/hostile-corpus.ts"
 
 const code = (value: unknown): string | undefined => (isDbRefusal(value) ? value.code : undefined)
@@ -189,7 +198,8 @@ describe("tokenizer layer", () => {
     for (const entry of HOSTILE_CORPUS) {
       if (entry.postgres === null) continue
       const linted = lintPostgresStatement(entry.sql)
-      if (serverOwned.has(entry.name)) {
+      // Function refusals come from the catalog allowlist once connected: the live suite owns them.
+      if (serverOwned.has(entry.name) || entry.postgres === "NIFRA_DB_FUNCTION_REFUSED") {
         expect({ name: entry.name, code: code(linted) }).toEqual({
           name: entry.name,
           code: undefined,
@@ -236,24 +246,29 @@ describe("tokenizer layer", () => {
     expect(message("SELECT (1")).toContain("leaves a parenthesis open")
     expect(message('"select" 1')).toContain("not SELECT")
     expect(message("SELECT * FROM t FOR KEY SHARE")).toContain("row-locking")
-    expect(lintPostgres("SELECT dblink_connect('x')")).toMatchObject({
-      kind: "function",
-      name: "dblink_connect",
-    })
+    expect(lintPostgres("SELECT dblink_connect('x')")).toBeUndefined()
   })
 
-  test("refuses the functions that run SQL from a string", () => {
-    for (const [sql, name] of [
-      ["SELECT word FROM ts_stat('SELECT to_tsvector(api_key) FROM secrets')", "ts_stat"],
-      ["SELECT ts_rewrite('a'::tsquery, 'SELECT q, s FROM secrets')", "ts_rewrite"],
-      ["SELECT * FROM public.crosstab('SELECT 1, 2, 3') AS c(a int, b int)", "crosstab"],
-      ["SELECT * FROM connectby('secrets', 'id', 'parent', '1', 0) AS c(a int)", "connectby"],
-    ] as const) {
-      expect({ sql, lint: lintPostgres(sql) }).toMatchObject({
-        sql,
-        lint: { kind: "function", name },
-      })
-    }
+  test("functionCalls names every call as the server resolves it, strings and comments skipped", () => {
+    const named = (sql: string) =>
+      functionCalls(sql).map(({ schema, name }) => (schema === null ? name : `${schema}.${name}`))
+    expect(named("SELECT word FROM ts_stat('SELECT to_tsvector(api_key) FROM secrets')")).toEqual([
+      "ts_stat",
+    ])
+    expect(named("SELECT * FROM public.crosstab('x') AS c(a int, b int)")).toEqual([
+      "public.crosstab",
+      "c",
+    ])
+    expect(named('SELECT PG_CATALOG . "Lower" /* x */ (Upper(a)), $$f(1)$$, -- g(\n 1')).toEqual([
+      "pg_catalog.Lower",
+      "upper",
+    ])
+    // Only ASCII folds, as Postgres downcases a bare identifier; every name is cut to 63 bytes.
+    expect(named("SELECT \u00C9TAT(1), Ab(2), ab(3)")).toEqual(["\u00C9tat", "ab"])
+    const long = `f${"x".repeat(80)}`
+    expect(named(`SELECT ${long}(1)`)).toEqual([long.slice(0, 63)])
+    expect(named(`SELECT "${"\u00E9".repeat(40)}"(1)`)).toEqual(["\u00E9".repeat(31)])
+    expect(named("SELECT 1")).toEqual([])
   })
 
   test("tableAliasLists finds a table given a column alias list, and nothing else", () => {
@@ -314,6 +329,20 @@ describe("tokenizer layer", () => {
     expect(withoutTerminator("SELECT 1; -- done")).toBe("SELECT 1")
     expect(withoutTerminator("SELECT ';'")).toBe("SELECT ';'")
     expect(withoutTerminator("")).toBe("")
+  })
+})
+
+describe("canary grammar", () => {
+  test("a seed fixes the cases, which mix refused and answered reads and all pass the tokenizer", () => {
+    const cases = generate(mulberry32(0x5eed), 2000)
+    expect(generate(mulberry32(0x5eed), 2000)).toEqual(cases)
+    expect(cases.some((testCase) => testCase.refuse)).toBe(true)
+    expect(cases.some((testCase) => !testCase.refuse)).toBe(true)
+    // The oracle is for the layers behind the tokenizer: a case it refuses would prove nothing there.
+    const linted = [...KNOWN, ...cases].filter(
+      (testCase) => lintPostgres(testCase.sql) !== undefined,
+    )
+    expect(linted).toEqual([])
   })
 })
 
@@ -383,6 +412,7 @@ describe("plans", () => {
       functions: [{ schema: "pg_catalog", name: "generate_series" }],
       columns: [],
       outputs: [],
+      calls: [{ schema: "pg_catalog", name: "generate_series" }],
     })
     let deep: unknown = { "Relation Name": "deep", Schema: "public" }
     for (let level = 0; level < 300; level++) deep = { Plan: deep }
@@ -586,6 +616,219 @@ const plan = (
 
 const QUERY = { timeoutMs: 2_000, maxRows: 2, maxResultBytes: 4096, exclude: ["secrets"] }
 
+/** `pg_proc` facts for the function allowlist, keyed by name: volatility, parallel safety, flags. */
+const PROCS: Readonly<Record<string, readonly Record<string, unknown>[]>> = {
+  generate_series: [{ schema: "pg_catalog", volatility: "i", parallel: "s" }],
+  lower: [{ schema: "pg_catalog", volatility: "i", parallel: "s" }],
+  random: [{ schema: "pg_catalog", volatility: "v", parallel: "r" }],
+  pg_sleep: [{ schema: "pg_catalog", volatility: "v", parallel: "s" }],
+  table_to_xml: [{ schema: "pg_catalog", volatility: "s", parallel: "r" }],
+  ts_rewrite: [
+    { schema: "pg_catalog", volatility: "i", parallel: "s" },
+    { schema: "pg_catalog", volatility: "v", parallel: "u" },
+  ],
+  dblink: [{ schema: "public", volatility: "v", parallel: "r", extension: true }],
+  crosstab: [{ schema: "public", volatility: "s", parallel: "u", extension: true }],
+  uuid_generate_v4: [{ schema: "public", volatility: "v", parallel: "s", extension: true }],
+  full_name: [{ schema: "public", volatility: "s", parallel: "u" }],
+  bump: [{ schema: "public", volatility: "v", parallel: "u" }],
+  owner_read: [{ schema: "public", volatility: "s", parallel: "s", definer: true }],
+  my_agg: [{ schema: "public", volatility: "i", parallel: "s", aggregate: true }],
+  off_path: [{ schema: "other", volatility: "v", parallel: "u" }],
+}
+
+const procRule: Rule = [
+  /p\.proname = ANY\(ARRAY/,
+  (values) => {
+    const names = Array.isArray(values[0])
+      ? values[0].filter((name) => typeof name === "string")
+      : []
+    return {
+      rows: names.flatMap((name) =>
+        (PROCS[name] ?? []).map((proc) => ({
+          name,
+          definer: false,
+          aggregate: false,
+          extension: false,
+          // The fake search path: pg_catalog, then public.
+          visible: proc.schema === "pg_catalog" || proc.schema === "public",
+          ...proc,
+        })),
+      ),
+    }
+  },
+]
+
+describe("grant gate", () => {
+  const exposure = (
+    name: string,
+    columns: Record<string, boolean>,
+    patch: Partial<Exposure> = {},
+  ): Exposure => ({
+    relation: { schema: "public", name },
+    kind: "r",
+    readable: Object.values(columns).some(Boolean),
+    columns: Object.entries(columns).map(([column, readable]) => ({ name: column, readable })),
+    ancestors: [],
+    reads: [],
+    ...patch,
+  })
+  const scope = { exclude: ["secrets"] }
+  const masked = (name: string) => name === "password_hash"
+
+  test("a role that may read a masked column, an excluded table or a view over either is refused", () => {
+    const exposures = [
+      exposure("orders", { id: true }),
+      exposure(
+        "secret_copy",
+        { value: true },
+        {
+          kind: "m",
+          reads: [{ relation: { schema: "public", name: "secrets" }, column: "value" }],
+        },
+      ),
+      exposure("secrets", { value: true }),
+      exposure("users", { id: true, password_hash: true }),
+    ]
+    const refused = grantRefusal("reader", exposures, judgeExposure(exposures, scope, masked))
+    expect(code(refused)).toBe("NIFRA_DB_ROLE_GRANTS")
+    expect(isDbRefusal(refused) ? refused.message : "").toBe(
+      'role "reader" may read public.secret_copy (it is a view that reads public.secrets, which is hidden), public.secrets (devDatabase.exclude leaves it out), public.users.password_hash (masked as a credential); the database must refuse what the declaration hides, so connect as a role that cannot read it',
+    )
+    expect(isDbRefusal(refused) ? refused.fix : "").toContain("nifra db role")
+    const granted = [
+      exposure("orders", { id: true }),
+      exposure(
+        "secret_copy",
+        { value: false },
+        {
+          kind: "m",
+          reads: [{ relation: { schema: "public", name: "secrets" }, column: "value" }],
+        },
+      ),
+      exposure("secrets", { value: false }),
+      exposure("users", { id: true, password_hash: false }),
+    ]
+    expect(grantRefusal("reader", granted, judgeExposure(granted, scope, masked))).toBeUndefined()
+    // Without masking, only exclusion hides anything.
+    expect(grantRefusal("reader", granted, judgeExposure(granted, {}, undefined))).toBeUndefined()
+  })
+
+  test("the refusal lists four and counts the rest", () => {
+    const exposures = ["a", "b", "c", "d", "e", "f"].map((name) =>
+      exposure(name, { password_hash: true }),
+    )
+    const refused = grantRefusal("r", exposures, judgeExposure(exposures, {}, masked))
+    expect(isDbRefusal(refused) ? refused.message : "").toContain("public.d.password_hash")
+    expect(isDbRefusal(refused) ? refused.message : "").toContain(", and 2 more;")
+    expect(isDbRefusal(refused) ? refused.message : "").not.toContain("public.e.")
+  })
+
+  test("a whole-row or no-column view read, and a view over an out-of-schema relation, hide the view", () => {
+    const view = (reads: Exposure["reads"]) => exposure("v", { x: true }, { kind: "v", reads })
+    const hidden = (reads: Exposure["reads"]) =>
+      judgeExposure([view(reads)], scope, masked).hidden.has(JSON.stringify(["public", "v"]))
+    expect(
+      hidden([{ relation: { schema: "public", name: "users" }, column: "password_hash" }]),
+    ).toBe(true)
+    expect(hidden([{ relation: { schema: "public", name: "users" }, column: "email" }])).toBe(false)
+    expect(hidden([{ relation: { schema: "public", name: "secrets" }, column: null }])).toBe(true)
+    expect(hidden([{ relation: { schema: "auth", name: "users" }, column: "id" }])).toBe(true)
+    expect(hidden([])).toBe(false)
+  })
+
+  test("a server refusal of a partly granted table names the columns it may not read", () => {
+    const exposures = [
+      exposure("users", { id: true, email: true, password_hash: false }),
+      exposure("secrets", { value: false }),
+    ]
+    const denied = (errno: string, message: string) =>
+      partialGrantRefusal(Object.assign(new Error(message), { errno }), exposures)
+    expect(denied("42501", "permission denied for table users")).toMatchObject({
+      code: "NIFRA_DB_COLUMN_REFUSED",
+      message:
+        "the role may read only some columns of public.users, not password_hash: select the others by name",
+    })
+    expect(denied("42501", 'permission denied for relation "users"')).toMatchObject({
+      code: "NIFRA_DB_COLUMN_REFUSED",
+    })
+    expect(denied("42501", "permission denied for table secrets")).toBeUndefined()
+    expect(denied("42501", "permission denied for function f")).toBeUndefined()
+    expect(denied("42P01", "permission denied for table users")).toBeUndefined()
+    expect(partialGrantRefusal("permission denied for table users", exposures)).toBeUndefined()
+  })
+
+  test("over a scripted client: refused before the statement, and a column denial is named", async () => {
+    const exposureRows = (passwordReadable: boolean) => ({
+      rows: [
+        {
+          schema: "public",
+          name: "users",
+          kind: "r",
+          readable: true,
+          names: ["id", "password_hash"],
+          granted: [true, passwordReadable],
+          ancestors: null,
+          reads: null,
+        },
+      ],
+    })
+    const options = { ...QUERY, redaction: { column: masked } }
+    const broad = fakeClient([
+      [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+      [/AS readable/, exposureRows(true)],
+    ])
+    expect(code(await queryPostgres(broad.client, "SELECT id FROM users", options))).toBe(
+      "NIFRA_DB_ROLE_GRANTS",
+    )
+    expect(broad.log.some((line) => line.startsWith("DECLARE"))).toBe(false)
+    const narrow = fakeClient([
+      [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+      [/AS readable/, exposureRows(false)],
+      [/^DECLARE/, fail("42501", "permission denied for table users")],
+    ])
+    expect(await queryPostgres(narrow.client, "SELECT * FROM users", options)).toMatchObject({
+      code: "NIFRA_DB_COLUMN_REFUSED",
+      message: expect.stringContaining("not password_hash"),
+    })
+    expect(narrow.log.slice(-2)).toEqual(["ROLLBACK", "release"])
+  })
+
+  test("a SECURITY DEFINER function the role may execute refuses it unless allowFunctions names it", async () => {
+    const definers = [
+      { schema: "public", name: "Owner_Hash", args: "integer" },
+      { schema: "app", name: "sum_secret", args: "x numeric" },
+    ]
+    expect(definerRefusal("reader", [], undefined)).toBeUndefined()
+    expect(definerRefusal("reader", definers, ["owner_hash", "APP.sum_secret"])).toBeUndefined()
+    expect(definerRefusal("reader", definers, ["public.owner_hash"])?.message).toStartWith(
+      'role "reader" may execute app.sum_secret(x numeric), which run SECURITY DEFINER code',
+    )
+    const many = Array.from({ length: 6 }, (_, index) => ({
+      schema: "s",
+      name: `f${index}`,
+      args: "",
+    }))
+    expect(definerRefusal("reader", many, undefined)?.message).toContain(
+      "s.f0(), s.f1(), s.f2(), s.f3(), and 2 more,",
+    )
+    const scripted = fakeClient([
+      [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+      [/AS readable/, { rows: [] }],
+      [/WITH reach AS/, (values) => ({ rows: values[0] === ROLE_ROW.role ? definers : [] })],
+    ])
+    expect(code(await queryPostgres(scripted.client, "SELECT 1", QUERY))).toBe(
+      "NIFRA_DB_ROLE_GRANTS",
+    )
+    expect(scripted.log.some((line) => line.startsWith("DECLARE"))).toBe(false)
+    const accepted = await queryPostgres(scripted.client, "SELECT 1", {
+      ...QUERY,
+      allowFunctions: ["owner_hash", "sum_secret"],
+    })
+    expect(code(accepted)).not.toBe("NIFRA_DB_ROLE_GRANTS")
+  })
+})
+
 describe("extended", () => {
   test("hands Bun.SQL a template object it takes as one statement", async () => {
     const seen: TemplateStringsArray[] = []
@@ -654,10 +897,15 @@ describe("query layers over a scripted client", () => {
     expect(log[0]).toBe(
       "BEGIN READ ONLY; SET LOCAL statement_timeout = 2000; SET LOCAL lock_timeout = 2000; SET LOCAL idle_in_transaction_session_timeout = 2000; SELECT pg_catalog.set_config('jit', 'off', true) WHERE pg_catalog.current_setting('server_version_num')::int >= 110000",
     )
-    expect(log[2]).toStartWith(
+    const declared = log.findIndex((line) => line.startsWith("DECLARE"))
+    expect(log[declared]).toStartWith(
       "DECLARE nifra_c NO SCROLL CURSOR FOR SELECT (SELECT json_agg(nifra_k)",
     )
-    expect(log[2]).toContain("FROM ( SELECT o.id, o.id FROM orders o ) AS nifra_q")
+    expect(log[declared]).toContain("FROM ( SELECT o.id, o.id FROM orders o ) AS nifra_q")
+    // The grant gate reads the role's privileges before the statement is planned.
+    const granted = log.findIndex((line) => line.includes("has_any_column_privilege"))
+    expect(granted).toBeGreaterThan(0)
+    expect(granted).toBeLessThan(declared)
     expect(log.slice(-2)).toEqual(["ROLLBACK", "release"])
     const empty = fakeClient([
       [/current_user::text AS role/, { rows: [ROLE_ROW] }],
@@ -675,6 +923,7 @@ describe("query layers over a scripted client", () => {
     const scoped = async (reads: Answer, ancestors: readonly Record<string, unknown>[] = []) => {
       const { client } = fakeClient([
         [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        procRule,
         [/^EXPLAIN \(VERBOSE/, reads],
         [
           /WITH RECURSIVE planned/,
@@ -702,6 +951,79 @@ describe("query layers over a scripted client", () => {
     )
     expect(code(await scoped(plan([], [["public", "dblink"]])))).toBe("NIFRA_DB_FUNCTION_REFUSED")
     expect(code(await scoped(plan([], [["pg_catalog", "generate_series"]])))).toBeUndefined()
+  })
+
+  test("the function allowlist reads pg_proc for the statement's calls before planning, and the plan's after", async () => {
+    const called = async (sql: string, planned: Answer = plan([]), allowFunctions?: string[]) => {
+      const { client, log } = fakeClient([
+        [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        procRule,
+        [/^EXPLAIN \(VERBOSE/, planned],
+        [/^FETCH/, { values: [] }],
+      ])
+      const result = await queryPostgres(client, sql, {
+        ...QUERY,
+        ...(allowFunctions === undefined ? {} : { allowFunctions }),
+      })
+      return { result, declared: log.some((line) => line.startsWith("DECLARE")) }
+    }
+    for (const [sql, reason] of [
+      ["SELECT pg_sleep(1)", "volatile"],
+      ["SELECT table_to_xml('secrets', true, false, '')", "not parallel safe"],
+      ["SELECT ts_rewrite('a'::tsquery, 'SELECT 1')", "volatile"],
+      ["SELECT * FROM dblink('x', 'y') AS t(a int)", "volatile"],
+      ["SELECT * FROM crosstab('SELECT 1') AS t(a int)", "not parallel safe"],
+      ["SELECT bump()", "volatile"],
+      ["SELECT owner_read(1)", "SECURITY DEFINER"],
+      ["SELECT my_agg(x) FROM generate_series(1, 2) AS g(x)", "aggregate"],
+      ['SELECT "public".bump()', "volatile"],
+      ["SELECT other.off_path()", "volatile"],
+    ] as const) {
+      const { result, declared } = await called(sql)
+      expect({ sql, code: code(result), declared }).toEqual({
+        sql,
+        code: "NIFRA_DB_FUNCTION_REFUSED",
+        declared: false,
+      })
+      expect({ sql, message: isDbRefusal(result) ? result.message : "" }).toEqual({
+        sql,
+        message: expect.stringContaining(reason),
+      })
+    }
+    for (const sql of [
+      "SELECT lower('A'), random(), uuid_generate_v4(), full_name(1)",
+      "SELECT * FROM generate_series(1, 2) AS g(x)",
+      "SELECT pg_catalog.bump()",
+      "SELECT nothing_by_this_name(1)",
+      // Off the search path, an unqualified name cannot resolve to it.
+      "SELECT off_path()",
+    ]) {
+      expect({ sql, code: code((await called(sql)).result) }).toEqual({ sql, code: undefined })
+    }
+    expect(code((await called("SELECT bump()", plan([]), ["bump"])).result)).toBeUndefined()
+    expect(code((await called("SELECT bump()", plan([]), ["PUBLIC.bump"])).result)).toBeUndefined()
+    expect(code((await called("SELECT bump()", plan([]), ["other.bump"])).result)).toBe(
+      "NIFRA_DB_FUNCTION_REFUSED",
+    )
+    // A call the statement's text does not show, from a view's body, is caught in the plan.
+    const viaView = {
+      rows: [
+        {
+          "QUERY PLAN": [
+            {
+              Plan: {
+                "Relation Name": "orders",
+                Schema: "public",
+                Output: ["owner_read(orders.id)"],
+              },
+            },
+          ],
+        },
+      ],
+    }
+    expect(code((await called("SELECT * FROM orders", viaView)).result)).toBe(
+      "NIFRA_DB_FUNCTION_REFUSED",
+    )
   })
 
   test("the role gate runs inside the transaction before the statement", async () => {
@@ -1015,17 +1337,55 @@ describe("schema and role SQL over a scripted client", () => {
     expect(code(hidden)).toBe("NIFRA_DB_TABLE_EXCLUDED")
   })
 
-  const roleClient = (version: number, excluded: readonly Record<string, unknown>[] = []) =>
+  const roleClient = (version: number, exposures: readonly Record<string, unknown>[] = []) =>
     fakeClient([
       [/current_database\(\)::text AS database/, { rows: [{ database: 'app"db', version }] }],
+      [/AS readable/, { rows: exposures }],
+    ])
+
+  const relation = (
+    schema: string,
+    name: string,
+    columns: readonly string[],
+    patch: Record<string, unknown> = {},
+  ) => ({
+    schema,
+    name,
+    kind: "r",
+    readable: true,
+    names: columns,
+    granted: columns.map(() => true),
+    ancestors: null,
+    reads: null,
+    ...patch,
+  })
+
+  test("lists, as comments, the REVOKE FROM PUBLIC each SECURITY DEFINER function needs", async () => {
+    const scripted = fakeClient([
+      [/current_database\(\)::text AS database/, { rows: [{ database: "app", version: 180000 }] }],
       [
-        /WITH RECURSIVE picked/,
-        (values) => {
-          expect(values).toEqual([["public", "sales"], ["secrets"], ["secrets"]])
-          return { rows: excluded }
-        },
+        /WITH reach AS/,
+        (values) => ({
+          rows:
+            values[0] === "public"
+              ? [
+                  { schema: "public", name: "Owner Hash", args: "id integer" },
+                  { schema: "public", name: "trusted", args: "" },
+                ]
+              : [],
+        }),
       ],
     ])
+    const sql = await postgresRoleSql(scripted.client, {
+      timeoutMs: 1000,
+      allowFunctions: ["trusted"],
+    })
+    if (isDbRefusal(sql)) throw new Error(sql.message)
+    expect(sql.statements.at(-1)).toBe(
+      '-- REVOKE EXECUTE ON FUNCTION "public"."Owner Hash"(id integer) FROM PUBLIC;',
+    )
+    expect(sql.statements.join("\n")).not.toContain('"trusted"')
+  })
 
   test("Postgres 14+ with nothing excluded grants the allowed schemas only, never pg_read_all_data", async () => {
     const sql = await postgresRoleSql(roleClient(160002).client, { timeoutMs: 1000 })
@@ -1054,19 +1414,58 @@ describe("schema and role SQL over a scripted client", () => {
       'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "we""ird";',
       'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" GRANT SELECT ON TABLES TO "we""ird";',
     ])
-    const excluded = await postgresRoleSql(
-      roleClient(180000, [
-        { schema: "public", name: "secrets" },
-        { schema: "sales", name: "secrets_2026" },
-      ]).client,
-      { timeoutMs: 1000, schemas: ["public", "sales"], exclude: ["Secrets"] },
-    )
+    const exposures = [
+      // Listed before the view it reads, which only a second pass hides.
+      relation("public", "a_copy_of_copy", ["value"], {
+        kind: "v",
+        reads: [["public", "secret_copy", "value"]],
+      }),
+      relation("public", "catalog_view", ["relname"], {
+        kind: "v",
+        reads: [["pg_catalog", "pg_class", "relname"]],
+      }),
+      relation("public", "hash_copy", ["id", "ph"], {
+        kind: "m",
+        reads: [
+          ["public", "users", "id"],
+          ["public", "users", "password_hash"],
+        ],
+      }),
+      relation("public", "only_secret", ["api_key"]),
+      relation("public", "orders", ["id", "total"]),
+      relation("public", "secret_copy", ["value"], {
+        kind: "m",
+        reads: [["public", "secrets", "value"]],
+      }),
+      relation("public", "secrets", ["id", "value"]),
+      relation("public", "user_emails", ["email"], {
+        kind: "v",
+        reads: [["public", "users", "email"]],
+      }),
+      relation("public", "users", ["id", "email", "password_hash"]),
+      relation("sales", "secrets_2026", ["id", "value"], {
+        ancestors: [["public", "secrets"]],
+      }),
+    ]
+    const excluded = await postgresRoleSql(roleClient(180000, exposures).client, {
+      timeoutMs: 1000,
+      schemas: ["public", "sales"],
+      exclude: ["Secrets"],
+      redaction: { column: (name) => name === "password_hash" || name === "api_key" },
+    })
     if (isDbRefusal(excluded)) throw new Error(excluded.message)
     expect(excluded.statements.some((line) => line.includes("pg_read_all_data"))).toBe(false)
-    expect(excluded.statements.filter((line) => line.startsWith("GRANT SELECT"))).toHaveLength(2)
-    expect(excluded.statements.slice(-2)).toEqual([
-      'REVOKE SELECT ON TABLE "public"."secrets" FROM "nifra_dev_reader";',
-      'REVOKE SELECT ON TABLE "sales"."secrets_2026" FROM "nifra_dev_reader";',
+    const who = '"nifra_dev_reader"'
+    expect(excluded.statements.slice(-9)).toEqual([
+      `REVOKE SELECT ON TABLE "public"."a_copy_of_copy" FROM ${who};`,
+      `REVOKE SELECT ON TABLE "public"."catalog_view" FROM ${who};`,
+      `REVOKE SELECT ON TABLE "public"."hash_copy" FROM ${who};`,
+      `REVOKE SELECT ON TABLE "public"."only_secret" FROM ${who};`,
+      `REVOKE SELECT ON TABLE "public"."secret_copy" FROM ${who};`,
+      `REVOKE SELECT ON TABLE "public"."secrets" FROM ${who};`,
+      `REVOKE SELECT ON TABLE "public"."users" FROM ${who};`,
+      `GRANT SELECT ("id", "email") ON TABLE "public"."users" TO ${who};`,
+      `REVOKE SELECT ON TABLE "sales"."secrets_2026" FROM ${who};`,
     ])
   })
 })

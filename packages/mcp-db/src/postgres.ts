@@ -15,12 +15,19 @@
  *  4. Transaction: every connection starts with `default_transaction_read_only=on`; each call runs in
  *     `BEGIN READ ONLY` with `statement_timeout`, `lock_timeout` and
  *     `idle_in_transaction_session_timeout` set locally, and always rolls back.
- *  5. Statement gate: the query goes over the extended protocol (the server refuses a second
+ *  5. Grant gate: the role itself must be unable to read a masked column, an excluded table (or one
+ *     inheriting from it), or a view or materialized view that reads either or reaches outside the
+ *     allowed schemas. The database's privileges then refuse what a function or a materialized view
+ *     would read past the plan check. {@link postgresRoleSql} writes those grants.
+ *  6. Function allowlist: every function the statement names, and every one its plan calls, is looked
+ *     up in `pg_proc` and must be immutable or stable, parallel safe when it is built in or comes from
+ *     an extension, and not SECURITY DEFINER, unless `allowFunctions` names it.
+ *  7. Statement gate: the query goes over the extended protocol (the server refuses a second
  *     statement) as `DECLARE ... NO SCROLL CURSOR` (the server accepts only a query there), and at most
- *     `maxRows + 1` rows are fetched. A tokenizer in front refuses side-effect functions.
- *  6. Table scope: the plan's relations (and every table they inherit from) must sit in the allowed
- *     schemas and outside `exclude`. A function can still read a table internally; hard isolation
- *     comes from the role's grants, which {@link postgresRoleSql} writes with a REVOKE per exclusion.
+ *     `maxRows + 1` rows are fetched.
+ *  8. Table scope: the plan's relations (and every table they inherit from) must sit in the allowed
+ *     schemas and outside `exclude`, and no plan expression may use a masked column. This is the
+ *     second line behind the grant gate.
  *
  *   const target = parsePostgresUrl("postgres://nifra_dev_reader@localhost:5432/app")
  *   const client = connectPostgres(target, { timeoutMs: 5000 })
@@ -34,17 +41,22 @@ import {
   fetchThroughCursor,
   inReadOnlyTransaction,
   type PgConnection,
-  type PlanReads,
-  type PlanRelation,
   type PostgresClient,
   records,
+  WRAPPER_CALLS,
 } from "./internal/pg-exec.ts"
 import {
-  DENIED_FUNCTION_PREFIXES,
-  lintPostgres,
-  tableAliasLists,
-  withoutTerminator,
-} from "./internal/pg-lexer.ts"
+  definerRefusal,
+  type Exposure,
+  grantRefusal,
+  judgeExposure,
+  partialGrantRefusal,
+  readDefiners,
+  readExposure,
+  unacceptedDefiners,
+} from "./internal/pg-grants.ts"
+import { functionCalls, lintPostgres, type PgCall, withoutTerminator } from "./internal/pg-lexer.ts"
+import { checkScope, functionRefusal } from "./internal/pg-scope.ts"
 import {
   type DbPlan,
   type DbRedaction,
@@ -310,14 +322,13 @@ export function postgresRoleRefusal(
   return undefined
 }
 
-/** Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function. */
+/**
+ * Refuse what the tokenizer layer refuses before connecting: a non-query, several statements, a row
+ * lock, text it cannot read safely. Functions are checked against the catalog once connected.
+ */
 export function lintPostgresStatement(sql: string): DbRefusal | undefined {
   const refusal = lintPostgres(sql)
-  if (refusal === undefined) return undefined
-  return dbRefusal(
-    refusal.kind === "function" ? "NIFRA_DB_FUNCTION_REFUSED" : "NIFRA_DB_WRITE_REFUSED",
-    refusal.message,
-  )
+  return refusal === undefined ? undefined : dbRefusal("NIFRA_DB_WRITE_REFUSED", refusal.message)
 }
 
 /** Which relations a query may read. */
@@ -328,135 +339,20 @@ export interface PostgresScope {
   readonly exclude?: readonly string[]
 }
 
-function scopeMatcher(scope: PostgresScope): (relation: PlanRelation) => string | undefined {
-  const schemas = new Set((scope.schemas ?? ["public"]).map((name) => name.toLowerCase()))
-  const excluded = new Set((scope.exclude ?? []).map((name) => name.toLowerCase()))
-  return ({ schema, name }) => {
-    const qualified = `${schema}.${name}`
-    if (!schemas.has(schema.toLowerCase())) {
-      return `the query reads ${qualified}, outside the allowed schemas (${[...schemas].join(", ")})`
-    }
-    if (excluded.has(name.toLowerCase()) || excluded.has(qualified.toLowerCase())) {
-      return `the query reads ${qualified}, which devDatabase.exclude leaves out`
-    }
-    return undefined
-  }
-}
-
-/**
- * The plan-level table check: each relation, and every table it inherits from (partitions too). A
- * `pg_*` function in FROM reads server state the way a catalog does - a system view such as
- * `pg_stat_activity` plans as one once the planner drops its catalog joins - so it is out of scope too.
- * With `masked`, a plan expression that uses a masked column, or a whole row holding one, is refused,
- * and so is any masked column of a relation `statement` reads when it gives a table a column alias list.
- */
-function checkScope(
-  scope: PostgresScope,
-  masked: ((column: string) => boolean) | undefined,
-  statement: string,
-) {
-  const outOfScope = scopeMatcher(scope)
-  return async (connection: PgConnection, reads: PlanReads): Promise<DbRefusal | undefined> => {
-    for (const fn of reads.functions) {
-      const name = fn.name.toLowerCase()
-      if (fn.schema === "pg_catalog" && name.startsWith("pg_")) {
-        return dbRefusal(
-          "NIFRA_DB_TABLE_EXCLUDED",
-          `the query reads server state through ${fn.schema}.${fn.name}(), a system catalog function`,
-        )
-      }
-      if (DENIED_FUNCTION_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-        return dbRefusal(
-          "NIFRA_DB_FUNCTION_REFUSED",
-          `the query calls ${fn.schema}.${fn.name}(), which reaches outside a read-only query`,
-        )
-      }
-    }
-    const { relations } = reads
-    for (const relation of relations) {
-      const reason = outOfScope(relation)
-      if (reason !== undefined) return dbRefusal("NIFRA_DB_TABLE_EXCLUDED", reason)
-    }
-    if (relations.length === 0) return undefined
-    const ancestors = records(
-      await connection`
-      WITH RECURSIVE planned AS (
-        SELECT pg_catalog.to_regclass(pg_catalog.quote_ident(r.schema) || '.' || pg_catalog.quote_ident(r.name))::oid AS oid
-        FROM pg_catalog.json_to_recordset(${[...relations]}::json) AS r(schema text, name text)
-      ), up(oid) AS (
-        SELECT i.inhparent FROM pg_catalog.pg_inherits i JOIN planned p ON i.inhrelid = p.oid
-        UNION
-        SELECT i.inhparent FROM pg_catalog.pg_inherits i JOIN up ON i.inhrelid = up.oid
-      )
-      SELECT n.nspname::text AS schema, c.relname::text AS name
-      FROM up JOIN pg_catalog.pg_class c ON c.oid = up.oid
-      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace`,
-    )
-    for (const row of ancestors) {
-      const reason = outOfScope({ schema: String(row.schema), name: String(row.name) })
-      if (reason !== undefined) return dbRefusal("NIFRA_DB_TABLE_EXCLUDED", reason)
-    }
-    if (masked === undefined) return undefined
-    const hits = new Set<string>()
-    const wholeRows: PlanRelation[] = []
-    for (const { relation, column } of reads.columns) {
-      if (column === "*") wholeRows.push(relation)
-      else if (masked(column)) hits.add(`${relation.name}.${column}`)
-    }
-    // The plan names an alias-listed scan's columns by the list, which can reuse a real column's name.
-    const renamed = tableAliasLists(statement)
-    if (renamed.length > 0) wholeRows.push(...reads.relations)
-    const listed = [...wholeRows, ...reads.outputs.map((output) => output.relation)]
-    if (listed.length > 0) {
-      const live = new Map<string, string[]>()
-      const rows = records(
-        await connection`
-        SELECT r.schema, r.name, a.attname::text AS column
-        FROM pg_catalog.json_to_recordset(${listed}::json) AS r(schema text, name text)
-        JOIN pg_catalog.pg_attribute a
-          ON a.attrelid = pg_catalog.to_regclass(pg_catalog.quote_ident(r.schema) || '.' || pg_catalog.quote_ident(r.name))
-        WHERE a.attnum > 0 AND NOT a.attisdropped`,
-      )
-      for (const row of rows) {
-        const key = `${String(row.schema)}.${String(row.name)}`
-        live.set(key, [...(live.get(key) ?? []), String(row.column)])
-      }
-      const columnsOf = (relation: PlanRelation): readonly string[] =>
-        live.get(`${relation.schema}.${relation.name}`) ?? []
-      for (const relation of wholeRows) {
-        for (const column of columnsOf(relation))
-          if (masked(column)) hits.add(`${relation.name}.${column}`)
-      }
-      for (const output of reads.outputs) {
-        const all = columnsOf(output.relation)
-        // Every column is the physical target list: the parent's expressions say what it uses.
-        if (all.length > 0 && all.every((column) => output.columns.includes(column))) continue
-        for (const column of output.columns)
-          if (masked(column)) hits.add(`${output.relation.name}.${column}`)
-      }
-    }
-    if (hits.size === 0) return undefined
-    const [aliased] = renamed
-    if (aliased !== undefined) {
-      return dbRefusal(
-        "NIFRA_DB_COLUMN_REFUSED",
-        `the query renames the columns of ${aliased.table} with the alias list ${aliased.alias}(...), so the plan cannot show which columns it reads, and it reads a relation holding ${[...hits].join(", ")}, masked as ${hits.size === 1 ? "a credential" : "credentials"}; alias columns in the select list instead`,
-      )
-    }
-    return dbRefusal(
-      "NIFRA_DB_COLUMN_REFUSED",
-      `the query reads ${[...hits].join(", ")}, masked as ${hits.size === 1 ? "a credential" : "credentials"}`,
-    )
-  }
-}
-
 /** Options for {@link queryPostgres}. */
 export interface PostgresQueryOptions extends ShapeRowsOptions, PostgresScope {
   readonly timeoutMs: number
   /** Extensions or untrusted languages to accept although the role can use them. */
   readonly allowExtensions?: readonly string[]
+  /** Functions (`name` or `schema.name`) to accept although the function allowlist refuses them. */
+  readonly allowFunctions?: readonly string[]
 }
 
+/**
+ * The layers in front of the statement, in one read-only transaction: role and extension gate, grant
+ * gate, then the function allowlist over the calls the statement names - before the server plans it,
+ * since planning already runs immutable functions on constants.
+ */
 async function gated<T>(
   client: PostgresClient,
   sql: string,
@@ -466,16 +362,59 @@ async function gated<T>(
   const linted = lintPostgresStatement(sql)
   if (linted !== undefined) return linted
   return inReadOnlyTransaction(client, options.timeoutMs, async (connection) => {
-    const refusal = postgresRoleRefusal(await readRole(connection), options)
+    const role = await readRole(connection)
+    const refusal = postgresRoleRefusal(role, options)
     if (refusal !== undefined) return refusal
-    return work(connection, withoutTerminator(sql.trim()))
+    const exposures = await readExposure(connection, options.schemas ?? ["public"])
+    const verdict = judgeExposure(exposures, options, options.redaction?.column)
+    const ungranted = grantRefusal(role.role, exposures, verdict)
+    if (ungranted !== undefined) return ungranted
+    const definers = await readDefiners(connection, role.role)
+    const unguarded = definerRefusal(role.role, definers, options.allowFunctions)
+    if (unguarded !== undefined) return unguarded
+    const statement = withoutTerminator(sql.trim())
+    const called = await functionRefusal(
+      connection,
+      statementCalls(statement),
+      options.allowFunctions,
+    )
+    if (called !== undefined) return called
+    return columnGrantsNamed(exposures, () => work(connection, statement))
   })
 }
 
+async function columnGrantsNamed<T>(
+  exposures: readonly Exposure[],
+  run: () => Promise<T>,
+): Promise<T | DbRefusal> {
+  try {
+    return await run()
+  } catch (error) {
+    const refusal = partialGrantRefusal(error, exposures)
+    if (refusal !== undefined) return refusal
+    throw error
+  }
+}
+
+// The statement's own calls and the cursor wrapper's: looked up before planning, skipped after it.
+const statementCalls = (statement: string): readonly PgCall[] => [
+  ...functionCalls(statement),
+  ...WRAPPER_CALLS,
+]
+
+const scopeCheck = (options: PostgresQueryOptions, statement: string) =>
+  checkScope(options, {
+    masked: options.redaction?.column,
+    statement,
+    allowFunctions: options.allowFunctions,
+    checkedCalls: statementCalls(statement),
+  })
+
 /**
  * Run one read-only query through every layer and return capped rows. A column `redaction.column`
- * masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a
- * filter, or within a whole row); a matching result name is masked as well.
+ * masks is one the role may not read (the grant gate), and is refused wherever the plan uses it
+ * (selected under any alias, inside an expression, in a filter, or within a whole row); a matching
+ * result name is masked as well.
  */
 export async function queryPostgres(
   client: PostgresClient,
@@ -485,7 +424,7 @@ export async function queryPostgres(
   const fetched = await gated(client, sql, options, (connection, statement) =>
     fetchThroughCursor(connection, statement, {
       maxRows: options.maxRows,
-      scope: checkScope(options, options.redaction?.column, statement),
+      scope: scopeCheck(options, statement),
     }),
   )
   if (isDbRefusal(fetched)) return fetched
@@ -514,7 +453,7 @@ export async function explainPostgres(
   const explained = await gated(client, sql, options, (connection, statement) =>
     explainThroughServer(connection, statement, {
       analyze: options.analyze === true,
-      scope: checkScope(options, options.redaction?.column, statement),
+      scope: scopeCheck(options, statement),
     }),
   )
   if (isDbRefusal(explained)) return explained
@@ -592,7 +531,7 @@ export async function readPostgresSchema(
       FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition
         AND n.nspname = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${schemas}::json)))
-        AND pg_catalog.has_table_privilege(c.oid, 'SELECT')
+        AND pg_catalog.has_any_column_privilege(c.oid, 'SELECT')
       ORDER BY 1, 2`,
     )
     const columns = records(
@@ -718,6 +657,10 @@ export interface PostgresRoleSqlOptions extends PostgresScope {
   readonly timeoutMs: number
   /** The role to create (default `nifra_dev_reader`). */
   readonly role?: string
+  /** The masking the queries will run with: its masked columns are left out of the grants. */
+  readonly redaction?: DbRedaction
+  /** The `allowFunctions` the queries will run with: SECURITY DEFINER functions it names are accepted. */
+  readonly allowFunctions?: readonly string[]
 }
 
 /** The SQL that creates a read-only role for this database, for the developer to run themselves. */
@@ -729,10 +672,13 @@ export interface PostgresRoleSql {
 }
 
 /**
- * Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT`
- * per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions.
- * `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a
- * REVOKE. Nothing is executed.
+ * Write the SQL for a login role that can read the allowed schemas and nothing the declaration hides:
+ * `GRANT SELECT` per schema plus default privileges, then a `REVOKE` for each excluded table, its
+ * partitions and children, and each view or materialized view that reads hidden data, and, for a table
+ * with a masked column, a `REVOKE` followed by a column-level `GRANT` of the other columns. That is
+ * what the grant gate checks before each query. A SECURITY DEFINER function every role may execute is
+ * listed in comments with the `REVOKE ... FROM PUBLIC` the gate needs, since that reaches other roles. `pg_read_all_data` is never used: it reaches every
+ * schema, present and future, and overrides a REVOKE. Nothing is executed.
  */
 export async function postgresRoleSql(
   client: PostgresClient,
@@ -740,38 +686,21 @@ export async function postgresRoleSql(
 ): Promise<PostgresRoleSql | DbRefusal> {
   const role = options.role ?? "nifra_dev_reader"
   const schemas = options.schemas ?? ["public"]
-  const exclude = (options.exclude ?? []).map((name) => name.toLowerCase())
   return inReadOnlyTransaction(client, options.timeoutMs, async (connection) => {
     const [facts] = records(
       await connection`
       SELECT pg_catalog.current_database()::text AS database,
         pg_catalog.current_setting('server_version_num')::int AS version`,
     )
-    const excluded =
-      exclude.length === 0
-        ? []
-        : records(
-            await connection`
-      WITH RECURSIVE picked AS (
-        SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-          AND n.nspname = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${[...schemas]}::json)))
-          AND (lower(c.relname) = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${exclude}::json)))
-            OR lower(n.nspname || '.' || c.relname) = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${exclude}::json))))
-        UNION
-        SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN picked p ON i.inhparent = p.oid
-      )
-      SELECT n.nspname::text AS schema, c.relname::text AS name
-      FROM picked JOIN pg_catalog.pg_class c ON c.oid = picked.oid
-      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-      ORDER BY 1, 2`,
-          )
+    const exposures = await readExposure(connection, schemas)
+    const verdict = judgeExposure(exposures, options, options.redaction?.column)
     const database = String(facts?.database ?? "")
     const version = Number(facts?.version ?? 0)
     const who = quoteIdent(role)
     const statements = [
       `-- Run as the owner of the app's tables (or a superuser). Then set the password from psql with \\password ${role}`,
       `-- and point devDatabase.url at postgres://${role}:<password>@localhost/${database}`,
+      "-- Run nifra db role again after adding a table or view: default privileges grant every column of a new one.",
       `CREATE ROLE ${who} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`,
       `ALTER ROLE ${who} SET default_transaction_read_only = on;`,
       `GRANT CONNECT ON DATABASE ${quoteIdent(database)} TO ${who};`,
@@ -783,9 +712,33 @@ export async function postgresRoleSql(
         `ALTER DEFAULT PRIVILEGES IN SCHEMA ${quoteIdent(schema)} GRANT SELECT ON TABLES TO ${who};`,
       )
     }
-    for (const row of excluded) {
+    for (const exposure of exposures) {
+      const key = verdict.key(exposure.relation)
+      const table = `${quoteIdent(exposure.relation.schema)}.${quoteIdent(exposure.relation.name)}`
+      const masked = verdict.masked.get(key)
+      if (!verdict.hidden.has(key) && masked === undefined) continue
+      statements.push(`REVOKE SELECT ON TABLE ${table} FROM ${who};`)
+      if (masked === undefined) continue
+      const shown = exposure.columns.filter((column) => !masked.includes(column.name))
+      if (shown.length > 0) {
+        statements.push(
+          `GRANT SELECT (${shown.map((column) => quoteIdent(column.name)).join(", ")}) ON TABLE ${table} TO ${who};`,
+        )
+      }
+    }
+    // Comments, not statements: revoking from PUBLIC changes what every other role may call.
+    const definers = unacceptedDefiners(
+      await readDefiners(connection, "public"),
+      options.allowFunctions,
+    )
+    if (definers.length > 0) {
       statements.push(
-        `REVOKE SELECT ON TABLE ${quoteIdent(String(row.schema))}.${quoteIdent(String(row.name))} FROM ${who};`,
+        "-- Every role may execute these, which run SECURITY DEFINER code with their owner's rights past the grants above.",
+        "-- The grant gate refuses the role until each is revoked from PUBLIC (grant EXECUTE back to the roles that call it) or named in devDatabase.allowFunctions:",
+        ...definers.map(
+          (definer) =>
+            `-- REVOKE EXECUTE ON FUNCTION ${quoteIdent(definer.schema)}.${quoteIdent(definer.name)}(${definer.args}) FROM PUBLIC;`,
+        ),
       )
     }
     return { role, database, serverVersionNum: version, statements }

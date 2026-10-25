@@ -4829,7 +4829,7 @@
     "name": "DbRefusalCode",
     "kind": "type",
     "package": "@nifrajs/mcp-db",
-    "signature": "export type DbRefusalCode = \"NIFRA_DB_NOT_DECLARED\" | \"NIFRA_DB_CONFIG\" | \"NIFRA_DB_OUTSIDE_ROOT\" | \"NIFRA_DB_REMOTE_HOST\" | \"NIFRA_DB_SUPERUSER\" | \"NIFRA_DB_EXTENSION\" | \"NIFRA_DB_QUERY_OFF\" | \"NIFRA_DB_WRITE_REFUSED\" | \"NIFRA_DB_FUNCTION_REFUSED\" | \"NIFRA_DB_TABLE_EXCLUDED\" | \"NIFRA_DB_COLUMN_REFUSED\" | \"NIFRA_DB_TIMEOUT\" | \"NIFRA_DB_QUERY_FAILED\" | \"NIFRA_DB_DRIVER\";",
+    "signature": "export type DbRefusalCode = \"NIFRA_DB_NOT_DECLARED\" | \"NIFRA_DB_CONFIG\" | \"NIFRA_DB_OUTSIDE_ROOT\" | \"NIFRA_DB_REMOTE_HOST\" | \"NIFRA_DB_SUPERUSER\" | \"NIFRA_DB_EXTENSION\" | \"NIFRA_DB_ROLE_GRANTS\" | \"NIFRA_DB_QUERY_OFF\" | \"NIFRA_DB_WRITE_REFUSED\" | \"NIFRA_DB_FUNCTION_REFUSED\" | \"NIFRA_DB_TABLE_EXCLUDED\" | \"NIFRA_DB_COLUMN_REFUSED\" | \"NIFRA_DB_TIMEOUT\" | \"NIFRA_DB_QUERY_FAILED\" | \"NIFRA_DB_DRIVER\";",
     "doc": "/** Every reason a database call is refused or fails, as a stable code. */"
   },
   {
@@ -11284,7 +11284,7 @@
     "name": "PostgresQueryOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp-db",
-    "signature": "export interface PostgresQueryOptions extends ShapeRowsOptions, PostgresScope {\n    readonly timeoutMs: number;\n    /** Extensions or untrusted languages to accept although the role can use them. */\n    readonly allowExtensions?: readonly string[];\n}",
+    "signature": "export interface PostgresQueryOptions extends ShapeRowsOptions, PostgresScope {\n    readonly timeoutMs: number;\n    /** Extensions or untrusted languages to accept although the role can use them. */\n    readonly allowExtensions?: readonly string[];\n    /** Functions (`name` or `schema.name`) to accept although the function allowlist refuses them. */\n    readonly allowFunctions?: readonly string[];\n}",
     "doc": "/** Options for {@link queryPostgres}. */"
   },
   {
@@ -11311,7 +11311,7 @@
     "name": "PostgresRoleSqlOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp-db",
-    "signature": "export interface PostgresRoleSqlOptions extends PostgresScope {\n    readonly timeoutMs: number;\n    /** The role to create (default `nifra_dev_reader`). */\n    readonly role?: string;\n}",
+    "signature": "export interface PostgresRoleSqlOptions extends PostgresScope {\n    readonly timeoutMs: number;\n    /** The role to create (default `nifra_dev_reader`). */\n    readonly role?: string;\n    /** The masking the queries will run with: its masked columns are left out of the grants. */\n    readonly redaction?: DbRedaction;\n    /** The `allowFunctions` the queries will run with: SECURITY DEFINER functions it names are accepted. */\n    readonly allowFunctions?: readonly string[];\n}",
     "doc": "/** Options for {@link postgresRoleSql}. */"
   },
   {
@@ -21319,7 +21319,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function lintPostgresStatement(sql: string): DbRefusal | undefined;",
-    "doc": "/** Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function. */"
+    "doc": "/**\n * Refuse what the tokenizer layer refuses before connecting: a non-query, several statements, a row\n * lock, text it cannot read safely. Functions are checked against the catalog once connected.\n */"
   },
   {
     "name": "listFixRecipes",
@@ -22577,7 +22577,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function postgresRoleSql(client: PostgresClient, options: PostgresRoleSqlOptions): Promise<PostgresRoleSql | DbRefusal>;",
-    "doc": "/**\n * Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT`\n * per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions.\n * `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a\n * REVOKE. Nothing is executed.\n */"
+    "doc": "/**\n * Write the SQL for a login role that can read the allowed schemas and nothing the declaration hides:\n * `GRANT SELECT` per schema plus default privileges, then a `REVOKE` for each excluded table, its\n * partitions and children, and each view or materialized view that reads hidden data, and, for a table\n * with a masked column, a `REVOKE` followed by a column-level `GRANT` of the other columns. That is\n * what the grant gate checks before each query. A SECURITY DEFINER function every role may execute is\n * listed in comments with the `REVOKE ... FROM PUBLIC` the gate needs, since that reaches other roles. `pg_read_all_data` is never used: it reaches every\n * schema, present and future, and overrides a REVOKE. Nothing is executed.\n */"
   },
   {
     "name": "poweredBy",
@@ -22752,7 +22752,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function queryPostgres(client: PostgresClient, sql: string, options: PostgresQueryOptions): Promise<DbRows | DbRefusal>;",
-    "doc": "/**\n * Run one read-only query through every layer and return capped rows. A column `redaction.column`\n * masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a\n * filter, or within a whole row); a matching result name is masked as well.\n */"
+    "doc": "/**\n * Run one read-only query through every layer and return capped rows. A column `redaction.column`\n * masks is one the role may not read (the grant gate), and is refused wherever the plan uses it\n * (selected under any alias, inside an expression, in a filter, or within a whole row); a matching\n * result name is masked as well.\n */"
   },
   {
     "name": "querySqlite",

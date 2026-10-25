@@ -4178,7 +4178,7 @@ _No named exports (side-effect entrypoint)._
 - **isLocalPostgresHost** _(function)_ - `isLocalPostgresHost: (host: string) => boolean`
   True for `localhost`, `*.localhost`, 127.0.0.0/8 and `::1` (also as an IPv4-mapped address).
 - **lintPostgresStatement** _(function)_ - `lintPostgresStatement: (sql: string) => DbRefusal | undefined`
-  Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function.
+  Refuse what the tokenizer layer refuses before connecting: a non-query, several statements, a row lock, text it cannot read safely. Functions are checked against the catalog once connected.
 - **parsePostgresUrl** _(function)_ - `parsePostgresUrl: (url: string) => PostgresTarget | DbRefusal`
   Parse a `postgres://` (or `postgresql://`) URL. Only the host, port, user, password, database and `sslmode` are read - any other parameter (`options=-c ...` included) is ignored, so a URL cannot switch off the read-only session settings.
 - **postgresHostRefusal** _(function)_ - `postgresHostRefusal: (target: PostgresTarget, allowHosts?: readonly string[]) => DbRefusal | undefined`
@@ -4186,9 +4186,9 @@ _No named exports (side-effect entrypoint)._
 - **postgresRoleRefusal** _(function)_ - `postgresRoleRefusal: (report: PostgresRoleReport, options?: { readonly allowExtensions?: readonly string[]; }) => DbRefusal | undefined`
   The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}.
 - **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
-  Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions. `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a REVOKE. Not…
+  Write the SQL for a login role that can read the allowed schemas and nothing the declaration hides: `GRANT SELECT` per schema plus default privileges, then a `REVOKE` for each excluded table, its partitions and children, and each view or materialized view that reads hidden data, and, for a table wi…
 - **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
-  Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name is masked as well.
+  Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is one the role may not read (the grant gate), and is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name …
 - **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`
   Describe the readable tables and views in the allowed schemas from `pg_catalog`, with queries this module writes (no caller SQL runs), so it works on any role: columns, primary keys, foreign keys, indexes and the planner's row estimate.
 

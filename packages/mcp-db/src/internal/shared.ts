@@ -33,6 +33,7 @@ export type DbRefusalCode =
   | "NIFRA_DB_REMOTE_HOST"
   | "NIFRA_DB_SUPERUSER"
   | "NIFRA_DB_EXTENSION"
+  | "NIFRA_DB_ROLE_GRANTS"
   | "NIFRA_DB_QUERY_OFF"
   | "NIFRA_DB_WRITE_REFUSED"
   | "NIFRA_DB_FUNCTION_REFUSED"
@@ -63,12 +64,14 @@ const REFUSAL_FIXES: Readonly<Record<DbRefusalCode, string>> = {
     "Connect as a read-only role: run `nifra db role`, apply the SQL it prints, and use that role in devDatabase.url. `nifra db schema` keeps working meanwhile.",
   NIFRA_DB_EXTENSION:
     "Connect as a role that cannot use the extension or language, or name it in devDatabase.allowExtensions to accept that a query can reach outside this database.",
+  NIFRA_DB_ROLE_GRANTS:
+    "Connect as the role `nifra db role` writes: apply the SQL it prints. It grants only the unmasked columns and revokes the excluded tables and the views that read hidden data, so the database refuses them itself. Run it again after adding a table or view: default privileges grant every column of a new one. A SECURITY DEFINER function the role may execute reads past those grants: revoke EXECUTE on it from PUBLIC, or name it in devDatabase.allowFunctions to trust it.",
   NIFRA_DB_QUERY_OFF:
     "devDatabase.query is false. Remove it to allow read-only queries, or use `nifra db schema`.",
   NIFRA_DB_WRITE_REFUSED:
     "Send one read-only SELECT (or WITH ... SELECT). Writes, DDL, CALL, DO, COPY and several statements at once are refused.",
   NIFRA_DB_FUNCTION_REFUSED:
-    "Remove the named function: it reaches outside a read-only query (server files, other sessions, settings, locks, sequences, notifications or another database).",
+    "Remove the named function. A query may call built-in and extension functions that are immutable or stable and parallel safe, and the database's own immutable or stable functions that are not SECURITY DEFINER; every function a name can resolve to is checked. If the function is safe to call, name it in devDatabase.allowFunctions.",
   NIFRA_DB_TABLE_EXCLUDED:
     "The query reads a relation the declaration does not expose: a table in devDatabase.exclude, a system catalog, a schema outside the allowed ones, or a name that does not exist. Run `nifra db schema` for what is exposed.",
   NIFRA_DB_COLUMN_REFUSED:
